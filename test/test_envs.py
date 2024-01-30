@@ -31,6 +31,8 @@ def test_simxarm(task, from_pixels, pixels_only):
     print("observation_spec:", env.observation_spec)
     print("action_spec:", env.action_spec)
     print("reward_spec:", env.reward_spec)
+    print("done_spec:", env.done_spec)
+    print("success_spec:", env.success_spec)
 
     td = env.reset()
     print("reset tensordict", td)

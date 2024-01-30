@@ -1,2 +1,71 @@
 seed: 1337
 log_dir: logs/2024_01_26_train
+
+# env
+env: simxarm
+task: lift
+from_pixels: True
+pixels_only: False
+image_size: 84
+
+
+# pixels
+frame_stack: 1
+num_channels: 32
+img_size: 84
+
+
+# TDMPC
+
+# planning
+mpc: true
+iterations: 6
+num_samples: 512
+num_elites: 50
+mixture_coef: 0.1
+min_std: 0.05
+max_std: 2.0
+temperature: 0.5
+momentum: 0.1
+uncertainty_cost: 1
+
+# actor
+log_std_min: -10
+log_std_max: 2
+
+# learning
+batch_size: 256
+max_buffer_size: 10000
+horizon: 5
+reward_coef: 0.5
+value_coef: 0.1
+consistency_coef: 20
+rho: 0.5
+kappa: 0.1
+lr: 3e-4
+std_schedule: ${min_std}
+horizon_schedule: ${horizon}
+per: true
+per_alpha: 0.6
+per_beta: 0.4
+grad_clip_norm: 10
+seed_steps: 0
+update_freq: 2
+tau: 0.01
+utd: 1
+
+
+# architecture
+enc_dim: 256
+num_q: 5
+mlp_dim: 512
+latent_dim: 50
+
+
+# xarm_lift
+A_scaling: 3.0
+expectile: 0.9
+episode_length: 25
+modality: 'all'
+action_repeat: 2
+discount: 0.9
