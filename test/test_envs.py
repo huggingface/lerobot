@@ -2,7 +2,7 @@ import pytest
 from tensordict import TensorDict
 from torchrl.envs.utils import check_env_specs, step_mdp
 
-from lerobot.lib.envs import SimxarmEnv
+from lerobot.common.envs import SimxarmEnv
 
 
 @pytest.mark.parametrize(
