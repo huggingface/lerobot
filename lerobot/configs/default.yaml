@@ -1,5 +1,14 @@
 seed: 1337
 log_dir: logs/2024_01_26_train
+exp_name: default
+device: cuda
+buffer_device: cuda
+eval_freq: 1000
+save_freq: 10000
+eval_episodes: 20
+save_video: false
+save_model: false
+save_buffer: false
 
 # env
 env: simxarm
@@ -8,6 +17,14 @@ from_pixels: True
 pixels_only: False
 image_size: 84
 
+reward_scale: 1.0
+
+# xarm_lift
+episode_length: 25
+modality: 'all'
+action_repeat: 2 # TODO(rcadene): verify we use this
+discount: 0.9
+train_steps: 50000
 
 # pixels
 frame_stack: 1
@@ -54,6 +71,19 @@ update_freq: 2
 tau: 0.01
 utd: 1
 
+# offline rl
+# dataset_dir: ???
+data_first_percent: 1.0
+is_data_clip: true
+data_clip_eps: 1e-5
+expectile: 0.9
+A_scaling: 3.0
+
+# offline->online
+offline_steps: ${train_steps}/2
+pretrained_model_path: ""
+balanced_sampling: true
+demo_schedule: 0.5
 
 # architecture
 enc_dim: 256
@@ -61,11 +91,8 @@ num_q: 5
 mlp_dim: 512
 latent_dim: 50
 
+# wandb
+use_wandb: false
+wandb_project: FOWM
+wandb_entity: rcadene  # insert your own
 
-# xarm_lift
-A_scaling: 3.0
-expectile: 0.9
-episode_length: 25
-modality: 'all'
-action_repeat: 2
-discount: 0.9

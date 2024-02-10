@@ -7,6 +7,7 @@ def make_env(cfg):
     assert cfg.env == "simxarm"
     env = SimxarmEnv(
         task=cfg.task,
+        frame_skip=cfg.action_repeat,
         from_pixels=cfg.from_pixels,
         pixels_only=cfg.pixels_only,
         image_size=cfg.image_size,

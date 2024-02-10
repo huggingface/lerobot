@@ -5,6 +5,7 @@ wandb
 data
 outputs
 .vscode
+rl
 
 # HPC
 nautilus/*.yaml
