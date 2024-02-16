@@ -19,6 +19,7 @@ from lerobot.common.logger import Logger
 from lerobot.common.tdmpc import TDMPC
 from lerobot.common.utils import set_seed
 from lerobot.scripts.eval import eval_policy
+from rl.torchrl.collectors.collectors import SyncDataCollector
 
 
 @hydra.main(version_base=None, config_name="default", config_path="../configs")
@@ -29,8 +30,10 @@ def train(cfg: dict):
 
     env = make_env(cfg)
     policy = TDMPC(cfg)
-    # ckpt_path = "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/offline.pt"
-    ckpt_path = "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/final.pt"
+    ckpt_path = "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/offline.pt"
+    policy.step = 25000
+    # ckpt_path = "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/final.pt"
+    # policy.step = 100000
     policy.load(ckpt_path)
 
     td_policy = TensorDictModule(
@@ -54,7 +57,7 @@ def train(cfg: dict):
         strict_length=False,
     )
 
-    # TODO(rcadene): use PrioritizedReplayBuffer
+    # TODO(rcadene): add PrioritizedSliceSampler inside Simxarm to not have to `sampler.extend(index)` here
     offline_buffer = SimxarmExperienceReplay(
         dataset_id,
         # download="force",
@@ -68,9 +71,22 @@ def train(cfg: dict):
     index = torch.arange(0, num_steps, 1)
     sampler.extend(index)
 
-    # offline_buffer._storage.device = torch.device("cuda")
-    # offline_buffer._storage._storage.to(torch.device("cuda"))
-    # TODO(rcadene): add online_buffer
+    if cfg.balanced_sampling:
+        online_sampler = PrioritizedSliceSampler(
+            max_capacity=100_000,
+            alpha=0.7,
+            beta=0.9,
+            num_slices=num_traj_per_batch,
+            strict_length=False,
+        )
+
+        online_buffer = TensorDictReplayBuffer(
+            storage=LazyMemmapStorage(100_000),
+            sampler=online_sampler,
+            # batch_size=3,
+            # pin_memory=False,
+            # prefetch=3,
+        )
 
     # Observation encoder
     # Dynamics predictor
@@ -81,11 +97,14 @@ def train(cfg: dict):
 
     L = Logger(cfg.log_dir, cfg)
 
-    episode_idx = 0
+    online_episode_idx = 0
     start_time = time.time()
     step = 0
     last_log_step = 0
     last_save_step = 0
+
+    # TODO(rcadene): remove
+    step = 25000
 
     while step < cfg.train_steps:
         is_offline = True
@@ -93,47 +112,65 @@ def train(cfg: dict):
         _step = step + num_updates
         rollout_metrics = {}
 
-        # if step >= cfg.offline_steps:
-        #     is_offline = False
+        if step >= cfg.offline_steps:
+            is_offline = False
 
-        #     # Collect trajectory
-        #     obs = env.reset()
-        #     episode = Episode(cfg, obs)
-        #     success = False
-        #     while not episode.done:
-        #         action = policy.act(obs, step=step, t0=episode.first)
-        #         obs, reward, done, info = env.step(action.cpu().numpy())
-        #         reward = reward_normalizer(reward)
-        #         mask = 1.0 if (not done or "TimeLimit.truncated" in info) else 0.0
-        #         success = info.get('success', False)
-        #         episode += (obs, action, reward, done, mask, success)
-        #     assert len(episode) <= cfg.episode_length
-        #     buffer += episode
-        #     episode_idx += 1
-        #     rollout_metrics = {
-        #         'episode_reward': episode.cumulative_reward,
-        #         'episode_success': float(success),
-        #         'episode_length': len(episode)
-        #     }
-        #     num_updates = len(episode) * cfg.utd
-        #     _step = min(step + len(episode), cfg.train_steps)
+            # TODO: use SyncDataCollector for that?
+            rollout = env.rollout(
+                max_steps=cfg.episode_length,
+                policy=td_policy,
+            )
+            assert len(rollout) <= cfg.episode_length
+            rollout["episode"] = torch.tensor(
+                [online_episode_idx] * len(rollout), dtype=torch.int
+            )
+            online_buffer.extend(rollout)
+
+            # Collect trajectory
+            # obs = env.reset()
+            # episode = Episode(cfg, obs)
+            # success = False
+            # while not episode.done:
+            #     action = policy.act(obs, step=step, t0=episode.first)
+            #     obs, reward, done, info = env.step(action.cpu().numpy())
+            #     reward = reward_normalizer(reward)
+            #     mask = 1.0 if (not done or "TimeLimit.truncated" in info) else 0.0
+            #     success = info.get('success', False)
+            #     episode += (obs, action, reward, done, mask, success)
+
+            ep_reward = rollout["next", "reward"].sum()
+            ep_success = rollout["next", "success"].any()
+
+            online_episode_idx += 1
+            rollout_metrics = {
+                # 'episode_reward': episode.cumulative_reward,
+                # 'episode_success': float(success),
+                # 'episode_length': len(episode)
+                "avg_reward": np.nanmean(ep_reward),
+                "pc_success": np.nanmean(ep_success) * 100,
+            }
+            num_updates = len(rollout) * cfg.utd
+            _step = min(step + len(rollout), cfg.train_steps)
 
         # Update model
         train_metrics = {}
         if is_offline:
             for i in range(num_updates):
                 train_metrics.update(policy.update(offline_buffer, step + i))
-        # else:
-        #     for i in range(num_updates):
-        #         train_metrics.update(
-        #             policy.update(buffer, step + i // cfg.utd,
-        #                          demo_buffer=offline_buffer if cfg.balanced_sampling else None)
-        #         )
+        else:
+            for i in range(num_updates):
+                train_metrics.update(
+                    policy.update(
+                        online_buffer,
+                        step + i // cfg.utd,
+                        demo_buffer=offline_buffer if cfg.balanced_sampling else None,
+                    )
+                )
 
         # Log training metrics
         env_step = int(_step * cfg.action_repeat)
         common_metrics = {
-            "episode": episode_idx,
+            "episode": online_episode_idx,
             "step": _step,
             "env_step": env_step,
             "total_time": time.time() - start_time,

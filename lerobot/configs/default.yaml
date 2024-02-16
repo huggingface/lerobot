@@ -80,7 +80,7 @@ expectile: 0.9
 A_scaling: 3.0
 
 # offline->online
-offline_steps: ${train_steps}/2
+offline_steps: 25000 # ${train_steps}/2
 pretrained_model_path: ""
 balanced_sampling: true
 demo_schedule: 0.5
