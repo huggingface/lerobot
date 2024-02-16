@@ -21,6 +21,15 @@ python setup.py develop
 - [x] self.step=100000 should be updated at every step to adjust to horizon of planner
 - [ ] prefetch replay buffer to speedup training
 - [ ] parallelize env to speedup eval
+- [ ] clean checkpointing / loading
+- [ ] clean logging
+- [ ] clean config
+- [ ] clean hyperparameter tuning
+- [ ] add pusht
+- [ ] add aloha
+- [ ] add act
+- [ ] add diffusion
+- [ ] add aloha 2
 
 ## Contribute
 
