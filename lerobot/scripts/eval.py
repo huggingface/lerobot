@@ -36,13 +36,15 @@ def eval_policy(
             # render first frame before rollout
             rendering_callback(env)
 
-        rollout = env.rollout(
-            max_steps=max_steps,
-            policy=policy,
-            callback=rendering_callback if save_video else None,
-            auto_reset=False,
-            tensordict=tensordict,
-        )
+        with torch.inference_mode():
+            rollout = env.rollout(
+                max_steps=max_steps,
+                policy=policy,
+                callback=rendering_callback if save_video else None,
+                auto_reset=False,
+                tensordict=tensordict,
+                auto_cast_to_device=True,
+            )
         # print(", ".join([f"{x:.3f}" for x in rollout["next", "reward"][:,0].tolist()]))
         ep_reward = rollout["next", "reward"].sum()
         ep_success = rollout["next", "success"].any()
