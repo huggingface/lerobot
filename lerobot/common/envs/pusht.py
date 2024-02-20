@@ -16,79 +16,80 @@ from torchrl.envs.libs.gym import _gym_to_torchrl_spec_transform
 from lerobot.common.utils import set_seed
 
 _has_gym = importlib.util.find_spec("gym") is not None
-_has_simxarm = importlib.util.find_spec("simxarm") is not None and _has_gym
+_has_diffpolicy = importlib.util.find_spec("diffusion_policy") is not None and _has_gym
 
 
-class SimxarmEnv(EnvBase):
+class PushtEnv(EnvBase):
 
     def __init__(
         self,
-        task,
         frame_skip: int = 1,
         from_pixels: bool = False,
         pixels_only: bool = False,
         image_size=None,
         seed=1337,
         device="cpu",
+        max_episode_length=25,  # TODO: verify
     ):
         super().__init__(device=device, batch_size=[])
-        self.task = task
         self.frame_skip = frame_skip
         self.from_pixels = from_pixels
         self.pixels_only = pixels_only
         self.image_size = image_size
+        self.max_episode_length = max_episode_length
 
         if pixels_only:
             assert from_pixels
         if from_pixels:
             assert image_size
 
-        if not _has_simxarm:
-            raise ImportError("Cannot import simxarm.")
+        if not _has_diffpolicy:
+            raise ImportError("Cannot import diffusion_policy.")
         if not _has_gym:
             raise ImportError("Cannot import gym.")
 
         import gym
+        from diffusion_policy.env.pusht.pusht_env import PushTEnv
+        from diffusion_policy.env.pusht.pusht_image_env import PushTImageEnv
         from gym.wrappers import TimeLimit
-        from simxarm import TASKS
 
-        if self.task not in TASKS:
-            raise ValueError(
-                f"Unknown task {self.task}. Must be one of {list(TASKS.keys())}"
-            )
+        self._env = PushTImageEnv(render_size=self.image_size)
+        self._env = TimeLimit(self._env, self.max_episode_length)
 
-        self._env = TASKS[self.task]["env"]()
-        self._env = TimeLimit(self._env, TASKS[self.task]["episode_length"])
-
-        MAX_NUM_ACTIONS = 4
-        num_actions = len(TASKS[self.task]["action_space"])
-        self._action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(num_actions,))
-        self._action_padding = np.zeros(
-            (MAX_NUM_ACTIONS - num_actions), dtype=np.float32
-        )
-        if "w" not in TASKS[self.task]["action_space"]:
-            self._action_padding[-1] = 1.0
+        # MAX_NUM_ACTIONS = 4
+        # num_actions = len(TASKS[self.task]["action_space"])
+        # self._action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(num_actions,))
+        # self._action_padding = np.zeros(
+        #     (MAX_NUM_ACTIONS - num_actions), dtype=np.float32
+        # )
+        # if "w" not in TASKS[self.task]["action_space"]:
+        #     self._action_padding[-1] = 1.0
 
         self._make_spec()
         self.set_seed(seed)
 
     def render(self, mode="rgb_array", width=384, height=384):
-        return self._env.render(mode, width=width, height=height)
+        if width != height:
+            raise NotImplementedError()
+        tmp = self._env.render_size
+        self._env.render_size = width
+        out = self._env.render(mode)
+        self._env.render_size = tmp
+        return out
 
     def _format_raw_obs(self, raw_obs):
         if self.from_pixels:
-            image = self.render(
-                mode="rgb_array", width=self.image_size, height=self.image_size
-            )
-            image = image.transpose(2, 0, 1)  # (H, W, C) -> (C, H, W)
-            image = torch.tensor(image.copy(), dtype=torch.uint8)
-
-            obs = {"image": image}
+            obs = {"image": torch.from_numpy(raw_obs["image"])}
 
             if not self.pixels_only:
-                obs["state"] = torch.tensor(self._env.robot_state, dtype=torch.float32)
+                obs["state"] = torch.from_numpy(raw_obs["agent_pos"]).type(
+                    torch.float32
+                )
         else:
-            obs = {"state": torch.tensor(raw_obs["observation"], dtype=torch.float32)}
+            # TODO:
+            obs = {
+                "state": torch.from_numpy(raw_obs["observation"]).type(torch.float32)
+            }
 
         obs = TensorDict(obs, batch_size=[])
         return obs
@@ -113,7 +114,6 @@ class SimxarmEnv(EnvBase):
         td = tensordict
         action = td["action"].numpy()
         # step expects shape=(4,) so we pad if necessary
-        action = np.concatenate([action, self._action_padding])
         # TODO(rcadene): add info["is_success"] and info["success"] ?
         sum_reward = 0
         for t in range(self.frame_skip):
@@ -124,8 +124,9 @@ class SimxarmEnv(EnvBase):
             {
                 "observation": self._format_raw_obs(raw_obs),
                 "reward": torch.tensor([sum_reward], dtype=torch.float32),
+                # succes and done are true when coverage > self.success_threshold in env
                 "done": torch.tensor([done], dtype=torch.bool),
-                "success": torch.tensor([info["success"]], dtype=torch.bool),
+                "success": torch.tensor([done], dtype=torch.bool),
             },
             batch_size=[],
         )
@@ -136,20 +137,23 @@ class SimxarmEnv(EnvBase):
         if self.from_pixels:
             obs["image"] = BoundedTensorSpec(
                 low=0,
-                high=255,
+                high=1,
                 shape=(3, self.image_size, self.image_size),
-                dtype=torch.uint8,
+                dtype=torch.float32,
                 device=self.device,
             )
             if not self.pixels_only:
-                obs["state"] = UnboundedContinuousTensorSpec(
-                    shape=(len(self._env.robot_state),),
+                obs["state"] = BoundedTensorSpec(
+                    low=0,
+                    high=512,
+                    shape=self._env.observation_space["agent_pos"].shape,
                     dtype=torch.float32,
                     device=self.device,
                 )
         else:
             # TODO(rcadene): add observation_space achieved_goal and desired_goal?
             obs["state"] = UnboundedContinuousTensorSpec(
+                # TODO:
                 shape=self._env.observation_space["observation"].shape,
                 dtype=torch.float32,
                 device=self.device,
@@ -157,7 +161,7 @@ class SimxarmEnv(EnvBase):
         self.observation_spec = CompositeSpec({"observation": obs})
 
         self.action_spec = _gym_to_torchrl_spec_transform(
-            self._action_space,
+            self._env.action_space,
             device=self.device,
         )
 

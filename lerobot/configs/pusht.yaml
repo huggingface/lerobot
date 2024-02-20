@@ -1,0 +1,12 @@
+defaults:
+  - default
+
+hydra:
+  job:
+    name: pusht
+
+# env
+env: pusht
+image_size: 96
+frame_skip: 1
+

@@ -29,7 +29,7 @@ train_steps: 50000
 # pixels
 frame_stack: 1
 num_channels: 32
-img_size: 84
+img_size: ${image_size}
 
 
 # TDMPC
@@ -82,6 +82,8 @@ A_scaling: 3.0
 # offline->online
 offline_steps: 25000 # ${train_steps}/2
 pretrained_model_path: ""
+# pretrained_model_path: "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/offline.pt"
+# pretrained_model_path: "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/final.pt"
 balanced_sampling: true
 demo_schedule: 0.5
 
