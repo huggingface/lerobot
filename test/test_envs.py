@@ -2,6 +2,7 @@ import pytest
 from tensordict import TensorDict
 from torchrl.envs.utils import check_env_specs, step_mdp
 
+from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.pusht import PushtEnv
 from lerobot.common.envs.simxarm import SimxarmEnv
 
@@ -54,7 +55,7 @@ def test_simxarm(task, from_pixels, pixels_only):
         pixels_only=pixels_only,
         image_size=84 if from_pixels else None,
     )
-    print_spec_rollout(env)
+    # print_spec_rollout(env)
     check_env_specs(env)
 
 
@@ -70,5 +71,26 @@ def test_pusht(from_pixels, pixels_only):
         pixels_only=pixels_only,
         image_size=96 if from_pixels else None,
     )
-    print_spec_rollout(env)
+    # print_spec_rollout(env)
+    check_env_specs(env)
+
+
+@pytest.mark.parametrize(
+    "config_name",
+    [
+        "default",
+        "pusht",
+    ],
+)
+def test_factory(config_name):
+    import hydra
+    from hydra import compose, initialize
+
+    config_path = "../lerobot/configs"
+    hydra.core.global_hydra.GlobalHydra.instance().clear()
+    initialize(config_path=config_path)
+    cfg = compose(config_name=config_name)
+
+    env = make_env(cfg)
+
     check_env_specs(env)

@@ -48,22 +48,15 @@ class PushtEnv(EnvBase):
         if not _has_gym:
             raise ImportError("Cannot import gym.")
 
-        import gym
         from diffusion_policy.env.pusht.pusht_env import PushTEnv
+
+        if not from_pixels:
+            raise NotImplementedError("Use PushTEnv, instead of PushTImageEnv")
         from diffusion_policy.env.pusht.pusht_image_env import PushTImageEnv
         from gym.wrappers import TimeLimit
 
         self._env = PushTImageEnv(render_size=self.image_size)
         self._env = TimeLimit(self._env, self.max_episode_length)
-
-        # MAX_NUM_ACTIONS = 4
-        # num_actions = len(TASKS[self.task]["action_space"])
-        # self._action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(num_actions,))
-        # self._action_padding = np.zeros(
-        #     (MAX_NUM_ACTIONS - num_actions), dtype=np.float32
-        # )
-        # if "w" not in TASKS[self.task]["action_space"]:
-        #     self._action_padding[-1] = 1.0
 
         self._make_spec()
         self.set_seed(seed)
