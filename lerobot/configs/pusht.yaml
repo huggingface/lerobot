@@ -5,8 +5,12 @@ hydra:
   job:
     name: pusht
 
+video_dir: tmp/2024_02_21_pusht
+
 # env
 env: pusht
 image_size: 96
 frame_skip: 1
-
+state_dim: 2
+action_dim: 2
+fps: 10

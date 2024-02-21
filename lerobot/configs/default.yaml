@@ -1,5 +1,6 @@
 seed: 1337
 log_dir: logs/2024_01_26_train
+video_dir: tmp/2024_01_26_xarm_lift_medium
 exp_name: default
 device: cuda
 buffer_device: cuda
@@ -16,6 +17,7 @@ task: lift
 from_pixels: True
 pixels_only: False
 image_size: 84
+fps: 15
 
 reward_scale: 1.0
 
@@ -30,7 +32,8 @@ train_steps: 50000
 frame_stack: 1
 num_channels: 32
 img_size: ${image_size}
-
+state_dim: 4
+action_dim: 4
 
 # TDMPC
 
@@ -97,4 +100,3 @@ latent_dim: 50
 use_wandb: false
 wandb_project: FOWM
 wandb_entity: rcadene  # insert your own
-
