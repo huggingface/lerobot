@@ -1,7 +1,10 @@
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.name}
+  job:
+    name: default
+
 seed: 1337
-log_dir: logs/2024_01_26_train
-video_dir: tmp/2024_01_26_xarm_lift_medium
-exp_name: default
 device: cuda
 buffer_device: cuda
 eval_freq: 1000
@@ -20,6 +23,7 @@ image_size: 84
 fps: 15
 
 reward_scale: 1.0
+
 
 # xarm_lift
 episode_length: 25
@@ -97,6 +101,7 @@ mlp_dim: 512
 latent_dim: 50
 
 # wandb
-use_wandb: false
-wandb_project: FOWM
+use_wandb: true
+wandb_project: lerobot
 wandb_entity: rcadene  # insert your own
+notes: ""

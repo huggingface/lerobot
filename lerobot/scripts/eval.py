@@ -21,19 +21,22 @@ def eval_policy(
     save_video: bool = False,
     video_dir: Path = None,
     fps: int = 15,
+    env_step: int = None,
+    wandb=None,
 ):
-    rewards = []
+    if wandb is not None:
+        assert env_step is not None
+    sum_rewards = []
+    max_rewards = []
     successes = []
     for i in range(num_episodes):
         ep_frames = []
 
         def rendering_callback(env, td=None):
-            nonlocal ep_frames
-            frame = env.render()
-            ep_frames.append(frame)
+            ep_frames.append(env.render())
 
         tensordict = env.reset()
-        if save_video:
+        if save_video or wandb:
             # render first frame before rollout
             rendering_callback(env)
 
@@ -41,35 +44,54 @@ def eval_policy(
             rollout = env.rollout(
                 max_steps=max_steps,
                 policy=policy,
-                callback=rendering_callback if save_video else None,
+                callback=rendering_callback if save_video or wandb else None,
                 auto_reset=False,
                 tensordict=tensordict,
                 auto_cast_to_device=True,
             )
         # print(", ".join([f"{x:.3f}" for x in rollout["next", "reward"][:,0].tolist()]))
-        ep_reward = rollout["next", "reward"].sum()
+        ep_sum_reward = rollout["next", "reward"].sum()
+        ep_max_reward = rollout["next", "reward"].max()
         ep_success = rollout["next", "success"].any()
-        rewards.append(ep_reward.item())
+        sum_rewards.append(ep_sum_reward.item())
+        max_rewards.append(ep_max_reward.item())
         successes.append(ep_success.item())
 
-        if save_video:
-            video_dir.mkdir(parents=True, exist_ok=True)
-            # TODO(rcadene): make fps configurable
-            video_path = video_dir / f"eval_episode_{i}.mp4"
-            imageio.mimsave(video_path, np.stack(ep_frames), fps=fps)
+        if save_video or wandb:
+            stacked_frames = np.stack(ep_frames)
+
+            if save_video:
+                video_dir.mkdir(parents=True, exist_ok=True)
+                video_path = video_dir / f"eval_episode_{i}.mp4"
+                imageio.mimsave(video_path, stacked_frames, fps=fps)
+
+            first_episode = i == 0
+            if wandb and first_episode:
+                eval_video = wandb.Video(
+                    stacked_frames.transpose(0, 3, 1, 2), fps=fps, format="mp4"
+                )
+                wandb.log({"eval_video": eval_video}, step=env_step)
 
     metrics = {
-        "avg_reward": np.nanmean(rewards),
+        "avg_sum_reward": np.nanmean(sum_rewards),
+        "avg_max_reward": np.nanmean(max_rewards),
         "pc_success": np.nanmean(successes) * 100,
     }
     return metrics
 
 
 @hydra.main(version_base=None, config_name="default", config_path="../configs")
-def eval(cfg: dict):
+def eval_cli(cfg: dict):
+    eval(cfg, out_dir=hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
+
+
+def eval(cfg: dict, out_dir=None):
+    if out_dir is None:
+        raise NotImplementedError()
+
     assert torch.cuda.is_available()
     set_seed(cfg.seed)
-    print(colored("Log dir:", "yellow", attrs=["bold"]), cfg.log_dir)
+    print(colored("Log dir:", "yellow", attrs=["bold"]), out_dir)
 
     env = make_env(cfg)
 
@@ -95,13 +117,14 @@ def eval(cfg: dict):
     metrics = eval_policy(
         env,
         policy=policy,
-        num_episodes=20,
         save_video=True,
-        video_dir=Path(cfg.video_dir),
+        video_dir=Path(out_dir) / "eval",
         fps=cfg.fps,
+        max_steps=cfg.episode_length,
+        num_episodes=cfg.eval_episodes,
     )
     print(metrics)
 
 
 if __name__ == "__main__":
-    eval()
+    eval_cli()

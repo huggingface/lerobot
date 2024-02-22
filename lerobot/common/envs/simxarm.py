@@ -49,7 +49,6 @@ class SimxarmEnv(EnvBase):
             raise ImportError("Cannot import gym.")
 
         import gym
-        from gym.wrappers import TimeLimit
         from simxarm import TASKS
 
         if self.task not in TASKS:
@@ -58,7 +57,6 @@ class SimxarmEnv(EnvBase):
             )
 
         self._env = TASKS[self.task]["env"]()
-        self._env = TimeLimit(self._env, TASKS[self.task]["episode_length"])
 
         MAX_NUM_ACTIONS = 4
         num_actions = len(TASKS[self.task]["action_space"])

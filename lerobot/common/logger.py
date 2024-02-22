@@ -11,8 +11,9 @@ from termcolor import colored
 CONSOLE_FORMAT = [
     ("episode", "E", "int"),
     ("env_step", "S", "int"),
-    ("avg_reward", "R", "float"),
-    ("pc_success", "R", "float"),
+    ("avg_sum_reward", "RS", "float"),
+    ("avg_max_reward", "RM", "float"),
+    ("pc_success", "S", "float"),
     ("total_time", "T", "time"),
 ]
 AGENT_METRICS = [
@@ -69,7 +70,11 @@ def print_run(cfg, reward=None):
 
 def cfg_to_group(cfg, return_list=False):
     """Return a wandb-safe group name for logging. Optionally returns group name as list."""
-    lst = [cfg.task, cfg.modality, re.sub("[^0-9a-zA-Z]+", "-", cfg.exp_name)]
+    # lst = [cfg.task, cfg.modality, re.sub("[^0-9a-zA-Z]+", "-", cfg.exp_name)]
+    lst = [
+        f"env:{cfg.env}",
+        f"seed:{cfg.seed}",
+    ]
     return lst if return_list else "-".join(lst)
 
 
@@ -120,8 +125,9 @@ class VideoRecorder:
 class Logger(object):
     """Primary logger object. Logs either locally or using wandb."""
 
-    def __init__(self, log_dir, cfg):
+    def __init__(self, log_dir, job_name, cfg):
         self._log_dir = make_dir(Path(log_dir))
+        self._job_name = job_name
         self._model_dir = make_dir(self._log_dir / "models")
         self._buffer_dir = make_dir(self._log_dir / "buffers")
         self._save_model = cfg.save_model
@@ -131,9 +137,8 @@ class Logger(object):
         self._cfg = cfg
         self._eval = []
         print_run(cfg)
-        project, entity = cfg.get("wandb_project", "none"), cfg.get(
-            "wandb_entity", "none"
-        )
+        project = cfg.get("wandb_project", "none")
+        entity = cfg.get("wandb_entity", "none")
         run_offline = (
             not cfg.get("use_wandb", False) or project == "none" or entity == "none"
         )
@@ -141,35 +146,39 @@ class Logger(object):
             print(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
             self._wandb = None
         else:
-            try:
-                os.environ["WANDB_SILENT"] = "true"
-                import wandb
+            # try:
+            os.environ["WANDB_SILENT"] = "true"
+            import wandb
 
-                wandb.init(
-                    project=project,
-                    entity=entity,
-                    name=str(cfg.seed),
-                    notes=cfg.notes,
-                    group=self._group,
-                    tags=cfg_to_group(cfg, return_list=True) + [f"seed:{cfg.seed}"],
-                    dir=self._log_dir,
-                    config=OmegaConf.to_container(cfg, resolve=True),
-                )
-                print(
-                    colored("Logs will be synced with wandb.", "blue", attrs=["bold"])
-                )
-                self._wandb = wandb
-            except:
-                print(
-                    colored(
-                        "Warning: failed to init wandb. Make sure `wandb_entity` is set to your username in `config.yaml`. Logs will be saved locally.",
-                        "yellow",
-                        attrs=["bold"],
-                    )
-                )
-                self._wandb = None
+            wandb.init(
+                project=project,
+                entity=entity,
+                name=job_name,
+                notes=cfg.notes,
+                # group=self._group,
+                tags=cfg_to_group(cfg, return_list=True),
+                dir=self._log_dir,
+                config=OmegaConf.to_container(cfg, resolve=True),
+                # TODO(rcadene): try set to True
+                save_code=False,
+                # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
+                job_type="train_eval",
+                # TODO(rcadene): add resume option
+                resume=None,
+            )
+            print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
+            self._wandb = wandb
+            # except:
+            #     print(
+            #         colored(
+            #             "Warning: failed to init wandb. Make sure `wandb_entity` is set to your username in `config.yaml`. Logs will be saved locally.",
+            #             "yellow",
+            #             attrs=["bold"],
+            #         )
+            #     )
+            #     self._wandb = None
         self._video = (
-            VideoRecorder(log_dir, self._wandb)
+            VideoRecorder(self._log_dir, self._wandb)
             if self._wandb and cfg.save_video
             else None
         )
@@ -235,7 +244,7 @@ class Logger(object):
                 self._wandb.log({category + "/" + k: v}, step=d["env_step"])
         if category == "eval":
             # keys = ['env_step', 'avg_reward']
-            keys = ["env_step", "avg_reward", "pc_success"]
+            keys = ["env_step", "avg_sum_reward", "avg_max_reward", "pc_success"]
             self._eval.append(np.array([d[key] for key in keys]))
             pd.DataFrame(np.array(self._eval)).to_csv(
                 self._log_dir / "eval.log", header=keys, index=None

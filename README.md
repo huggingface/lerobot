@@ -15,6 +15,31 @@ conda activate lerobot
 python setup.py develop
 ```
 
+## Usage
+
+
+### Train
+
+```
+python lerobot/scripts/train.py \
+--config-name=pusht hydra.job.name=pusht
+```
+
+### Visualize offline buffer
+
+```
+python lerobot/scripts/visualize_dataset.py \
+--config-name=pusht hydra.run.dir=tmp/$(date +"%Y_%m_%d")
+```
+
+### Visualize online buffer / Eval
+
+```
+python lerobot/scripts/eval.py \
+--config-name=pusht hydra.run.dir=tmp/$(date +"%Y_%m_%d")
+```
+
+
 ## TODO
 
 - [x] priority update doesnt match FOWM or original paper

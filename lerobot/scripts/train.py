@@ -20,24 +20,47 @@ from lerobot.scripts.eval import eval_policy
 
 
 @hydra.main(version_base=None, config_name="default", config_path="../configs")
-def train(cfg: dict):
+def train_cli(cfg: dict):
+    train(
+        cfg,
+        out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
+        job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
+    )
+
+
+def train_notebook(
+    out_dir=None, job_name=None, config_name="default", config_path="../configs"
+):
+    from hydra import compose, initialize
+
+    hydra.core.global_hydra.GlobalHydra.instance().clear()
+    initialize(config_path=config_path)
+    cfg = compose(config_name=config_name)
+    train(cfg, out_dir=out_dir, job_name=job_name)
+
+
+def train(cfg: dict, out_dir=None, job_name=None):
+    if out_dir is None:
+        raise NotImplementedError()
+    if job_name is None:
+        raise NotImplementedError()
+
     assert torch.cuda.is_available()
     set_seed(cfg.seed)
-    print(colored("Work dir:", "yellow", attrs=["bold"]), cfg.log_dir)
+    print(colored("Work dir:", "yellow", attrs=["bold"]), out_dir)
 
     env = make_env(cfg)
     policy = TDMPC(cfg)
     if cfg.pretrained_model_path:
-        ckpt_path = (
-            "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/offline.pt"
-        )
-        if "offline" in cfg.pretrained_model_path:
-            policy.step = 25000
-        elif "final" in cfg.pretrained_model_path:
-            policy.step = 100000
-        else:
-            raise NotImplementedError()
-        policy.load(ckpt_path)
+        # TODO(rcadene): hack for old pretrained models from fowm
+        if "fowm" in cfg.pretrained_model_path:
+            if "offline" in cfg.pretrained_model_path:
+                policy.step = 25000
+            elif "final" in cfg.pretrained_model_path:
+                policy.step = 100000
+            else:
+                raise NotImplementedError()
+        policy.load(cfg.pretrained_model_path)
 
     td_policy = TensorDictModule(
         policy,
@@ -65,7 +88,7 @@ def train(cfg: dict):
             sampler=online_sampler,
         )
 
-    L = Logger(cfg.log_dir, cfg)
+    L = Logger(out_dir, job_name, cfg)
 
     online_episode_idx = 0
     start_time = time.time()
@@ -95,12 +118,14 @@ def train(cfg: dict):
             )
             online_buffer.extend(rollout)
 
-            ep_reward = rollout["next", "reward"].sum()
+            ep_sum_reward = rollout["next", "reward"].sum()
+            ep_max_reward = rollout["next", "reward"].max()
             ep_success = rollout["next", "success"].any()
 
             online_episode_idx += 1
             rollout_metrics = {
-                "avg_reward": np.nanmean(ep_reward),
+                "avg_sum_reward": np.nanmean(ep_sum_reward),
+                "avg_max_reward": np.nanmean(ep_max_reward),
                 "pc_success": np.nanmean(ep_success) * 100,
             }
             num_updates = len(rollout) * cfg.utd
@@ -137,23 +162,23 @@ def train(cfg: dict):
                 env,
                 td_policy,
                 num_episodes=cfg.eval_episodes,
-                # TODO(rcadene): add step, env_step, L.video
+                env_step=env_step,
+                wandb=L._wandb,
             )
 
             common_metrics.update(eval_metrics)
-
             L.log(common_metrics, category="eval")
             last_log_step = env_step - env_step % cfg.eval_freq
 
         # Save model periodically
-        # if cfg.save_model and env_step - last_save_step >= cfg.save_freq:
-        #     L.save_model(policy, identifier=env_step)
-        #     print(f"Model has been checkpointed at step {env_step}")
-        #     last_save_step = env_step - env_step % cfg.save_freq
+        if cfg.save_model and env_step - last_save_step >= cfg.save_freq:
+            L.save_model(policy, identifier=env_step)
+            print(f"Model has been checkpointed at step {env_step}")
+            last_save_step = env_step - env_step % cfg.save_freq
 
-        # if cfg.save_model and is_offline and _step >= cfg.offline_steps:
-        #     # save the model after offline training
-        #     L.save_model(policy, identifier="offline")
+        if cfg.save_model and is_offline and _step >= cfg.offline_steps:
+            # save the model after offline training
+            L.save_model(policy, identifier="offline")
 
         step = _step
 
@@ -177,4 +202,4 @@ def train(cfg: dict):
 
 
 if __name__ == "__main__":
-    train()
+    train_cli()
