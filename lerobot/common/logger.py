@@ -146,7 +146,6 @@ class Logger(object):
             print(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
             self._wandb = None
         else:
-            # try:
             os.environ["WANDB_SILENT"] = "true"
             import wandb
 
@@ -168,15 +167,6 @@ class Logger(object):
             )
             print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
             self._wandb = wandb
-            # except:
-            #     print(
-            #         colored(
-            #             "Warning: failed to init wandb. Make sure `wandb_entity` is set to your username in `config.yaml`. Logs will be saved locally.",
-            #             "yellow",
-            #             attrs=["bold"],
-            #         )
-            #     )
-            #     self._wandb = None
         self._video = (
             VideoRecorder(self._log_dir, self._wandb)
             if self._wandb and cfg.save_video
