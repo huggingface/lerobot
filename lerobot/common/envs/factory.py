@@ -11,7 +11,6 @@ def make_env(cfg):
         "from_pixels": cfg.from_pixels,
         "pixels_only": cfg.pixels_only,
         "image_size": cfg.image_size,
-        "max_episode_length": cfg.episode_length,
     }
 
     if cfg.env == "simxarm":

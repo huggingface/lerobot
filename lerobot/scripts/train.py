@@ -80,7 +80,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
             alpha=cfg.per_alpha,
             beta=cfg.per_beta,
             num_slices=num_traj_per_batch,
-            strict_length=False,
+            strict_length=True,
         )
 
         online_buffer = TensorDictReplayBuffer(

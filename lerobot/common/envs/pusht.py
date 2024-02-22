@@ -29,14 +29,12 @@ class PushtEnv(EnvBase):
         image_size=None,
         seed=1337,
         device="cpu",
-        max_episode_length=300,
     ):
         super().__init__(device=device, batch_size=[])
         self.frame_skip = frame_skip
         self.from_pixels = from_pixels
         self.pixels_only = pixels_only
         self.image_size = image_size
-        self.max_episode_length = max_episode_length
 
         if pixels_only:
             assert from_pixels
