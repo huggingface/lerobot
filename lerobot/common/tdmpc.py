@@ -51,7 +51,7 @@ class TOLD(nn.Module):
         """Predicts next latent state (d) and single-step reward (R)."""
         x = torch.cat([z, a], dim=-1)
         return self._dynamics(x), self._reward(x)
-    
+
     def next_dynamics(self, z, a):
         """Predicts next latent state (d)."""
         x = torch.cat([z, a], dim=-1)

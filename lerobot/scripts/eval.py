@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 
 import hydra
@@ -11,10 +12,11 @@ from torchrl.envs import EnvBase
 from lerobot.common.envs.factory import make_env
 from lerobot.common.tdmpc import TDMPC
 from lerobot.common.utils import set_seed
-import threading
+
 
 def write_video(video_path, stacked_frames, fps):
     imageio.mimsave(video_path, stacked_frames, fps=fps)
+
 
 def eval_policy(
     env: EnvBase,
