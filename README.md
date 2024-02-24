@@ -56,6 +56,35 @@ python lerobot/scripts/eval.py \
 - [ ] add diffusion
 - [ ] add aloha 2
 
+## Profile
+
+**Example**
+```python
+from torch.profiler import profile, record_function, ProfilerActivity
+
+def trace_handler(prof):
+    prof.export_chrome_trace(f"tmp/trace_schedule_{prof.step_num}.json")
+
+with profile(
+    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+    schedule=torch.profiler.schedule(
+        wait=2,
+        warmup=2,
+        active=3,
+    ),
+    on_trace_ready=trace_handler
+) as prof:
+    with record_function("eval_policy"):
+        for i in range(num_episodes):
+            prof.step()
+```
+
+```bash
+python lerobot/scripts/eval.py \
+pretrained_model_path=/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/final.pt \
+eval_episodes=7
+```
+
 ## Contribute
 
 **style**
