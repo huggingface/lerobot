@@ -13,21 +13,18 @@ eval_episodes: 20
 save_video: false
 save_model: false
 save_buffer: false
-
-# env
-env: simxarm
-task: lift
-from_pixels: True
-pixels_only: False
-image_size: 84
+train_steps: 50000
 fps: 15
 
-
-
-# xarm_lift
-action_repeat: 2
-episode_length: 25
-train_steps: 50000
+env:
+  name: simxarm
+  task: lift
+  from_pixels: True
+  pixels_only: False
+  image_size: 84
+  action_repeat: 2
+  episode_length: 25
+  fps: ${fps}
 
 
 policy:
@@ -37,14 +34,14 @@ policy:
 
   # xarm_lift
   train_steps: ${train_steps}
-  episode_length: ${episode_length}
+  episode_length: ${env.episode_length}
   discount: 0.9
   modality: 'all'
 
   # pixels
   frame_stack: 1
   num_channels: 32
-  img_size: ${image_size}
+  img_size: ${env.image_size}
   state_dim: 4
   action_dim: 4
 

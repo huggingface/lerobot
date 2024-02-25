@@ -51,7 +51,7 @@ def print_run(cfg, reward=None):
 
     kvs = [
         ("task", cfg.task),
-        ("train steps", f"{int(cfg.train_steps * cfg.action_repeat):,}"),
+        ("train steps", f"{int(cfg.train_steps * cfg.env.action_repeat):,}"),
         # ('observations', 'x'.join([str(s) for s in cfg.obs_shape])),
         # ('actions', cfg.action_dim),
         # ('experiment', cfg.exp_name),
@@ -117,7 +117,11 @@ class VideoRecorder:
         if self.enabled:
             frames = np.stack(self.frames).transpose(0, 3, 1, 2)
             self._wandb.log(
-                {"eval_video": self._wandb.Video(frames, fps=self.fps, format="mp4")},
+                {
+                    "eval_video": self._wandb.Video(
+                        frames, fps=self.env.fps, format="mp4"
+                    )
+                },
                 step=step,
             )
 

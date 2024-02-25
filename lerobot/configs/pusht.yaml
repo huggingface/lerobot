@@ -6,16 +6,19 @@ hydra:
   job:
     name: pusht
 
-# env
-env: pusht
-task: pusht
-image_size: 96
-action_repeat: 1
-state_dim: 2
-action_dim: 2
-fps: 10
 eval_episodes: 50
-episode_length: 300
 eval_freq: 7500
 save_freq: 75000
+fps: 10
 
+env:
+  name: pusht
+  task: pusht
+  image_size: 96
+  fps: ${fps}
+  action_repeat: 1
+  episode_length: 300
+
+policy:
+  state_dim: 2
+  action_dim: 2
