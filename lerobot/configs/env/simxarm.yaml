@@ -1,9 +1,5 @@
 # @package _global_
 
-hydra:
-  job:
-    name: simxarm
-
 eval_episodes: 20
 eval_freq: 1000
 save_freq: 10000

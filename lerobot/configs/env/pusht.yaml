@@ -1,9 +1,5 @@
 # @package _global_
 
-hydra:
-  job:
-    name: pusht
-
 eval_episodes: 50
 eval_freq: 7500
 save_freq: 75000
