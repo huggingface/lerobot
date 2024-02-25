@@ -89,8 +89,8 @@ eval_episodes=7
 
 **Style**
 ```
-isort lerobot && isort test && black lerobot && black test
-pylint lerobot && pylint test  # not enforce for now
+isort lerobot && isort tests && black lerobot && black tests
+pylint lerobot && pylint tests  # not enforce for now
 ```
 
 **Tests**
