@@ -40,6 +40,7 @@ state_dim: 4
 action_dim: 4
 
 # TDMPC
+policy: tdmpc
 
 # planning
 mpc: true

@@ -1,4 +1,5 @@
 defaults:
+  - _self_
   - default
 
 hydra:

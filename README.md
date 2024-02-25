@@ -89,9 +89,6 @@ eval_episodes=7
 
 **style**
 ```
-isort lerobot
-black lerobot
-isort test
-black test
-pylint lerobot
+isort lerobot && isort test && black lerobot && black test
+pylint lerobot && pylint test  # not enforce for now
 ```

@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-import lerobot.common.tdmpc_helper as h
+import lerobot.common.policies.tdmpc_helper as h
 
 
 class TOLD(nn.Module):

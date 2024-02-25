@@ -6,6 +6,8 @@ from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.pusht import PushtEnv
 from lerobot.common.envs.simxarm import SimxarmEnv
 
+from .utils import init_config
+
 
 def print_spec_rollout(env):
     print("observation_spec:", env.observation_spec)
@@ -83,14 +85,6 @@ def test_pusht(from_pixels, pixels_only):
     ],
 )
 def test_factory(config_name):
-    import hydra
-    from hydra import compose, initialize
-
-    config_path = "../lerobot/configs"
-    hydra.core.global_hydra.GlobalHydra.instance().clear()
-    initialize(config_path=config_path)
-    cfg = compose(config_name=config_name)
-
+    cfg = init_config(config_name)
     env = make_env(cfg)
-
     check_env_specs(env)
