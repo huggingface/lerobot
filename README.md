@@ -87,8 +87,13 @@ eval_episodes=7
 
 ## Contribute
 
-**style**
+**Style**
 ```
 isort lerobot && isort test && black lerobot && black test
 pylint lerobot && pylint test  # not enforce for now
+```
+
+**Tests**
+```
+pytest -sx tests
 ```
