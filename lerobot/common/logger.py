@@ -50,7 +50,7 @@ def print_run(cfg, reward=None):
         )
 
     kvs = [
-        ("task", cfg.task),
+        ("task", cfg.env.task),
         ("train steps", f"{int(cfg.train_steps * cfg.env.action_repeat):,}"),
         # ('observations', 'x'.join([str(s) for s in cfg.obs_shape])),
         # ('actions', cfg.action_dim),
@@ -72,7 +72,7 @@ def cfg_to_group(cfg, return_list=False):
     """Return a wandb-safe group name for logging. Optionally returns group name as list."""
     # lst = [cfg.task, cfg.modality, re.sub("[^0-9a-zA-Z]+", "-", cfg.exp_name)]
     lst = [
-        f"env:{cfg.env}",
+        f"env:{cfg.env.name}",
         f"seed:{cfg.seed}",
     ]
     return lst if return_list else "-".join(lst)

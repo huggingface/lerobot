@@ -78,13 +78,13 @@ def test_pusht(from_pixels, pixels_only):
 
 
 @pytest.mark.parametrize(
-    "config_name",
+    "env_name",
     [
-        "default",
+        "simxarm",
         "pusht",
     ],
 )
-def test_factory(config_name):
-    cfg = init_config(config_name)
+def test_factory(env_name):
+    cfg = init_config(overrides=[f"env={env_name}"])
     env = make_env(cfg)
     check_env_specs(env)

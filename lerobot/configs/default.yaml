@@ -1,31 +1,24 @@
+defaults:
+  - _self_
+  - env: simxarm
+
 hydra:
   run:
     dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.name}
-  job:
-    name: default
 
 seed: 1337
 device: cuda
 buffer_device: cuda
-eval_freq: 1000
-save_freq: 10000
-eval_episodes: 20
+eval_freq: ???
+save_freq: ???
+eval_episodes: ???
 save_video: false
 save_model: false
 save_buffer: false
-train_steps: 50000
-fps: 15
+train_steps: ???
+fps: ???
 
-env:
-  name: simxarm
-  task: lift
-  from_pixels: True
-  pixels_only: False
-  image_size: 84
-  action_repeat: 2
-  episode_length: 25
-  fps: ${fps}
-
+env: ???
 
 policy:
   name: tdmpc
@@ -42,8 +35,8 @@ policy:
   frame_stack: 1
   num_channels: 32
   img_size: ${env.image_size}
-  state_dim: 4
-  action_dim: 4
+  state_dim: ???
+  action_dim: ???
 
   # planning
   mpc: true

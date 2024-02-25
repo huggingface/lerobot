@@ -1,6 +1,4 @@
-defaults:
-  - default
-  - _self_
+# @package _global_
 
 hydra:
   job:
@@ -9,11 +7,15 @@ hydra:
 eval_episodes: 50
 eval_freq: 7500
 save_freq: 75000
+train_steps: 50000  # TODO: same as simxarm, need to adjust
+
 fps: 10
 
 env:
   name: pusht
   task: pusht
+  from_pixels: True
+  pixels_only: False
   image_size: 96
   action_repeat: 1
   episode_length: 300

@@ -1,7 +1,5 @@
 from torchrl.envs.transforms import StepCounter, TransformedEnv
 
-from lerobot.common.envs.pusht import PushtEnv
-from lerobot.common.envs.simxarm import SimxarmEnv
 from lerobot.common.envs.transforms import Prod
 
 
@@ -14,9 +12,13 @@ def make_env(cfg):
     }
 
     if cfg.env.name == "simxarm":
+        from lerobot.common.envs.simxarm import SimxarmEnv
+
         kwargs["task"] = cfg.env.task
         clsfunc = SimxarmEnv
     elif cfg.env.name == "pusht":
+        from lerobot.common.envs.pusht import PushtEnv
+
         clsfunc = PushtEnv
     else:
         raise ValueError(cfg.env.name)

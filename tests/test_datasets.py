@@ -1,6 +1,6 @@
 import pytest
 
-from lerobot.common.policies.factory import make_policy
+from lerobot.common.datasets.factory import make_offline_buffer
 
 from .utils import init_config
 
@@ -14,4 +14,4 @@ from .utils import init_config
 )
 def test_factory(env_name):
     cfg = init_config(overrides=[f"env={env_name}"])
-    policy = make_policy(cfg)
+    offline_buffer = make_offline_buffer(cfg)

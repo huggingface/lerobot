@@ -1,0 +1,26 @@
+# @package _global_
+
+hydra:
+  job:
+    name: simxarm
+
+eval_episodes: 20
+eval_freq: 1000
+save_freq: 10000
+train_steps: 50000
+
+fps: 15
+
+env:
+  name: simxarm
+  task: lift
+  from_pixels: True
+  pixels_only: False
+  image_size: 84
+  action_repeat: 2
+  episode_length: 25
+  fps: ${fps}
+
+policy:
+  state_dim: 4
+  action_dim: 4
