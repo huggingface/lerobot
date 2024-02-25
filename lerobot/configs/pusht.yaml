@@ -1,6 +1,6 @@
 defaults:
-  - _self_
   - default
+  - _self_
 
 hydra:
   job:
