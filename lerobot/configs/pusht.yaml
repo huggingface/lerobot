@@ -15,7 +15,6 @@ env:
   name: pusht
   task: pusht
   image_size: 96
-  fps: ${fps}
   action_repeat: 1
   episode_length: 300
 
