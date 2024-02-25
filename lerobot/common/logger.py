@@ -137,11 +137,10 @@ class Logger(object):
         self._cfg = cfg
         self._eval = []
         print_run(cfg)
-        project = cfg.get("wandb_project", "none")
-        entity = cfg.get("wandb_entity", "none")
-        run_offline = (
-            not cfg.get("use_wandb", False) or project == "none" or entity == "none"
-        )
+        project = cfg.get("wandb", {}).get("project")
+        entity = cfg.get("wandb", {}).get("entity")
+        enable_wandb = cfg.get("wandb", {}).get("enable", False)
+        run_offline = not enable_wandb or not project or not entity
         if run_offline:
             print(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
             self._wandb = None
@@ -153,7 +152,7 @@ class Logger(object):
                 project=project,
                 entity=entity,
                 name=job_name,
-                notes=cfg.notes,
+                notes=cfg.get("wandb", {}).get("notes"),
                 # group=self._group,
                 tags=cfg_to_group(cfg, return_list=True),
                 dir=self._log_dir,

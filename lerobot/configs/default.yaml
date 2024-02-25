@@ -107,8 +107,8 @@ policy:
   mlp_dim: 512
   latent_dim: 50
 
-# wandb
-use_wandb: true
-wandb_project: lerobot
-wandb_entity: rcadene  # insert your own
-notes: ""
+wandb:
+  enable: true
+  project: lerobot
+  entity: rcadene  # insert your own
+  notes: ""
