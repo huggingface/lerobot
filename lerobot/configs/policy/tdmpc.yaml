@@ -5,8 +5,6 @@ policy:
 
   reward_scale: 1.0
 
-  # xarm_lift
-  train_steps: ${train_steps}
   episode_length: ${env.episode_length}
   discount: 0.9
   modality: 'all'

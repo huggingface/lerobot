@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+from diffusion_policy.model.vision.multi_image_obs_encoder import MultiImageObsEncoder
 from diffusion_policy.policy.diffusion_unet_image_policy import DiffusionUnetImagePolicy
 
 

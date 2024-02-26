@@ -4,6 +4,26 @@ from lerobot.common.datasets.pusht import PushtExperienceReplay
 from lerobot.common.datasets.simxarm import SimxarmExperienceReplay
 from rl.torchrl.data.replay_buffers.samplers import PrioritizedSliceSampler
 
+# TODO(rcadene): implement
+
+# dataset_d4rl = D4RLExperienceReplay(
+#     dataset_id="maze2d-umaze-v1",
+#     split_trajs=False,
+#     batch_size=1,
+#     sampler=SamplerWithoutReplacement(drop_last=False),
+#     prefetch=4,
+#     direct_download=True,
+# )
+
+# dataset_openx = OpenXExperienceReplay(
+#     "cmu_stretch",
+#     batch_size=1,
+#     num_slices=1,
+#     #download="force",
+#     streaming=False,
+#     root="data",
+# )
+
 
 def make_offline_buffer(cfg, sampler=None):
 

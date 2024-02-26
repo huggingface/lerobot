@@ -38,6 +38,40 @@ def train_notebook(
     train(cfg, out_dir=out_dir, job_name=job_name)
 
 
+def log_training_metrics(L, metrics, step, online_episode_idx, start_time, is_offline):
+    common_metrics = {
+        "episode": online_episode_idx,
+        "step": step,
+        "total_time": time.time() - start_time,
+        "is_offline": float(is_offline),
+    }
+    metrics.update(common_metrics)
+    L.log(metrics, category="train")
+
+
+def eval_policy_and_log(
+    env, td_policy, step, online_episode_idx, start_time, is_offline, cfg, L
+):
+    common_metrics = {
+        "episode": online_episode_idx,
+        "step": step,
+        "total_time": time.time() - start_time,
+        "is_offline": float(is_offline),
+    }
+    metrics, first_video = eval_policy(
+        env,
+        td_policy,
+        num_episodes=cfg.eval_episodes,
+        return_first_video=True,
+    )
+    metrics.update(common_metrics)
+    L.log(metrics, category="eval")
+
+    if cfg.wandb.enable:
+        eval_video = L._wandb.Video(first_video, fps=cfg.fps, format="mp4")
+        L._wandb.log({"eval_video": eval_video}, step=step)
+
+
 def train(cfg: dict, out_dir=None, job_name=None):
     if out_dir is None:
         raise NotImplementedError()
@@ -84,115 +118,89 @@ def train(cfg: dict, out_dir=None, job_name=None):
     online_episode_idx = 0
     start_time = time.time()
     step = 0
-    last_log_step = 0
-    last_save_step = 0
 
-    while step < cfg.train_steps:
-        is_offline = True
-        num_updates = cfg.env.episode_length
-        _step = step + num_updates
-        rollout_metrics = {}
+    # First eval with a random model or pretrained
+    eval_policy_and_log(
+        env, td_policy, step, online_episode_idx, start_time, is_offline, cfg, L
+    )
 
-        # TODO(rcadene): move offline_steps outside policy
-        if step >= cfg.policy.offline_steps:
-            is_offline = False
+    # Train offline
+    for _ in range(cfg.offline_steps):
+        # TODO(rcadene): is it ok if step_t=0 = 0 and not 1 as previously done?
+        metrics = policy.update(offline_buffer, step)
 
-            # TODO: use SyncDataCollector for that?
-            with torch.no_grad():
-                rollout = env.rollout(
-                    max_steps=cfg.env.episode_length,
-                    policy=td_policy,
-                    auto_cast_to_device=True,
-                )
-            assert len(rollout) <= cfg.env.episode_length
-            rollout["episode"] = torch.tensor(
-                [online_episode_idx] * len(rollout), dtype=torch.int
+        if step % cfg.log_freq == 0:
+            log_training_metrics(
+                L, metrics, step, online_episode_idx, start_time, is_offline=False
             )
-            online_buffer.extend(rollout)
 
-            ep_sum_reward = rollout["next", "reward"].sum()
-            ep_max_reward = rollout["next", "reward"].max()
-            ep_success = rollout["next", "success"].any()
+        if step > 0 and step % cfg.eval_freq == 0:
+            eval_policy_and_log(
+                env, td_policy, step, online_episode_idx, start_time, is_offline, cfg, L
+            )
 
-            online_episode_idx += 1
-            rollout_metrics = {
-                "avg_sum_reward": np.nanmean(ep_sum_reward),
-                "avg_max_reward": np.nanmean(ep_max_reward),
-                "pc_success": np.nanmean(ep_success) * 100,
-            }
-            num_updates = len(rollout) * cfg.policy.utd
-            _step = min(step + len(rollout), cfg.train_steps)
+        if step > 0 and cfg.save_model and step % cfg.save_freq == 0:
+            print(f"Checkpoint model at step {step}")
+            L.save_model(policy, identifier=step)
 
-        # Update model
-        for i in range(num_updates):
-            if is_offline:
-                train_metrics = policy.update(offline_buffer, step + i)
-            else:
-                train_metrics = policy.update(
-                    online_buffer,
-                    step + i // cfg.policy.utd,
-                    demo_buffer=(
-                        offline_buffer if cfg.policy.balanced_sampling else None
-                    ),
-                )
+        step += 1
 
-        # Log training metrics
-        env_step = int(_step * cfg.env.action_repeat)
-        common_metrics = {
-            "episode": online_episode_idx,
-            "step": _step,
-            "env_step": env_step,
-            "total_time": time.time() - start_time,
-            "is_offline": float(is_offline),
+    # Train online
+    demo_buffer = offline_buffer if cfg.policy.balanced_sampling else None
+    for _ in range(cfg.online_steps):
+        # TODO: use SyncDataCollector for that?
+        with torch.no_grad():
+            rollout = env.rollout(
+                max_steps=cfg.env.episode_length,
+                policy=td_policy,
+                auto_cast_to_device=True,
+            )
+        assert len(rollout) <= cfg.env.episode_length
+        rollout["episode"] = torch.tensor(
+            [online_episode_idx] * len(rollout), dtype=torch.int
+        )
+        online_buffer.extend(rollout)
+
+        ep_sum_reward = rollout["next", "reward"].sum()
+        ep_max_reward = rollout["next", "reward"].max()
+        ep_success = rollout["next", "success"].any()
+        metrics = {
+            "avg_sum_reward": np.nanmean(ep_sum_reward),
+            "avg_max_reward": np.nanmean(ep_max_reward),
+            "pc_success": np.nanmean(ep_success) * 100,
         }
-        train_metrics.update(common_metrics)
-        train_metrics.update(rollout_metrics)
-        L.log(train_metrics, category="train")
 
-        # Evaluate policy periodically
-        if step == 0 or env_step - last_log_step >= cfg.eval_freq:
+        online_episode_idx += 1
 
-            eval_metrics = eval_policy(
-                env,
-                td_policy,
-                num_episodes=cfg.eval_episodes,
-                env_step=env_step,
-                wandb=L._wandb,
+        for _ in range(cfg.policy.utd):
+            train_metrics = policy.update(
+                online_buffer,
+                step,
+                demo_buffer=demo_buffer,
             )
+            metrics.update(train_metrics)
+            if step % cfg.log_freq == 0:
+                log_training_metrics(
+                    L, metrics, step, online_episode_idx, start_time, is_offline=False
+                )
 
-            common_metrics.update(eval_metrics)
-            L.log(common_metrics, category="eval")
-            last_log_step = env_step - env_step % cfg.eval_freq
+            if step > 0 and step & cfg.eval_freq == 0:
+                eval_policy_and_log(
+                    env,
+                    td_policy,
+                    step,
+                    online_episode_idx,
+                    start_time,
+                    is_offline,
+                    cfg,
+                    L,
+                )
 
-        # Save model periodically
-        if cfg.save_model and env_step - last_save_step >= cfg.save_freq:
-            L.save_model(policy, identifier=env_step)
-            print(f"Model has been checkpointed at step {env_step}")
-            last_save_step = env_step - env_step % cfg.save_freq
+            if step > 0 and cfg.save_model and step % cfg.save_freq == 0:
+                print(f"Checkpoint model at step {step}")
+                L.save_model(policy, identifier=step)
 
-        if cfg.save_model and is_offline and _step >= cfg.offline_steps:
-            # save the model after offline training
-            L.save_model(policy, identifier="offline")
-
-        step = _step
-
-    # dataset_d4rl = D4RLExperienceReplay(
-    #     dataset_id="maze2d-umaze-v1",
-    #     split_trajs=False,
-    #     batch_size=1,
-    #     sampler=SamplerWithoutReplacement(drop_last=False),
-    #     prefetch=4,
-    #     direct_download=True,
-    # )
-
-    # dataset_openx = OpenXExperienceReplay(
-    #     "cmu_stretch",
-    #     batch_size=1,
-    #     num_slices=1,
-    #     #download="force",
-    #     streaming=False,
-    #     root="data",
-    # )
+            step += 1
 
 
 if __name__ == "__main__":
