@@ -197,7 +197,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
                     L, metrics, step, online_episode_idx, start_time, is_offline=False
                 )
 
-            if step > 0 and step & cfg.eval_freq == 0:
+            if step > 0 and step % cfg.eval_freq == 0:
                 eval_policy_and_log(
                     env,
                     td_policy,
