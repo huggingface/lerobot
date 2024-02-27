@@ -3,6 +3,7 @@
 eval_episodes: 50
 eval_freq: 7500
 save_freq: 75000
+log_freq: 250
 # TODO: same as simxarm, need to adjust
 offline_steps: 25000
 online_steps: 25000

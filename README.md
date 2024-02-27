@@ -22,21 +22,24 @@ python setup.py develop
 
 ```
 python lerobot/scripts/train.py \
---config-name=pusht hydra.job.name=pusht
+hydra.job.name=pusht \
+env=pusht
 ```
 
 ### Visualize offline buffer
 
 ```
 python lerobot/scripts/visualize_dataset.py \
---config-name=pusht hydra.run.dir=tmp/$(date +"%Y_%m_%d")
+hydra.run.dir=tmp/$(date +"%Y_%m_%d") \
+env=pusht
 ```
 
 ### Visualize online buffer / Eval
 
 ```
 python lerobot/scripts/eval.py \
---config-name=pusht hydra.run.dir=tmp/$(date +"%Y_%m_%d")
+hydra.run.dir=tmp/$(date +"%Y_%m_%d") \
+env=pusht
 ```
 
 

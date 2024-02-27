@@ -21,6 +21,9 @@ past_action_visible: False
 keypoint_visible_rate: 1.0
 obs_as_global_cond: True
 
+offline_steps: 50000
+online_steps: 0
+
 policy:
   name: diffusion
 

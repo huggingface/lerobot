@@ -50,7 +50,7 @@ def log_training_metrics(L, metrics, step, online_episode_idx, start_time, is_of
 
 
 def eval_policy_and_log(
-    env, td_policy, step, online_episode_idx, start_time, is_offline, cfg, L
+    env, td_policy, step, online_episode_idx, start_time, cfg, L, is_offline
 ):
     common_metrics = {
         "episode": online_episode_idx,
@@ -83,7 +83,10 @@ def train(cfg: dict, out_dir=None, job_name=None):
     set_seed(cfg.seed)
     print(colored("Work dir:", "yellow", attrs=["bold"]), out_dir)
 
+    print("make_env")
     env = make_env(cfg)
+
+    print("make_policy")
     policy = make_policy(cfg)
 
     td_policy = TensorDictModule(
@@ -92,12 +95,12 @@ def train(cfg: dict, out_dir=None, job_name=None):
         out_keys=["action"],
     )
 
-    # initialize offline dataset
-
+    print("make_offline_buffer")
     offline_buffer = make_offline_buffer(cfg)
 
     # TODO(rcadene): move balanced_sampling, per_alpha, per_beta outside policy
     if cfg.policy.balanced_sampling:
+        print("make online_buffer")
         num_traj_per_batch = cfg.policy.batch_size
 
         online_sampler = PrioritizedSliceSampler(
@@ -117,15 +120,16 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     online_episode_idx = 0
     start_time = time.time()
-    step = 0
+    step = 0  # number of policy update
 
-    # First eval with a random model or pretrained
+    print("First eval_policy_and_log with a random model or pretrained")
     eval_policy_and_log(
-        env, td_policy, step, online_episode_idx, start_time, is_offline, cfg, L
+        env, td_policy, step, online_episode_idx, start_time, cfg, L, is_offline=True
     )
 
-    # Train offline
-    for _ in range(cfg.offline_steps):
+    for offline_step in range(cfg.offline_steps):
+        if offline_step == 0:
+            print("Start offline training on a fixed dataset")
         # TODO(rcadene): is it ok if step_t=0 = 0 and not 1 as previously done?
         metrics = policy.update(offline_buffer, step)
 
@@ -136,7 +140,14 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
         if step > 0 and step % cfg.eval_freq == 0:
             eval_policy_and_log(
-                env, td_policy, step, online_episode_idx, start_time, is_offline, cfg, L
+                env,
+                td_policy,
+                step,
+                online_episode_idx,
+                start_time,
+                cfg,
+                L,
+                is_offline=True,
             )
 
         if step > 0 and cfg.save_model and step % cfg.save_freq == 0:
@@ -145,10 +156,12 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
         step += 1
 
-    # Train online
     demo_buffer = offline_buffer if cfg.policy.balanced_sampling else None
-    for _ in range(cfg.online_steps):
+    for env_step in range(cfg.online_steps):
+        if env_step == 0:
+            print("Start online training by interacting with environment")
         # TODO: use SyncDataCollector for that?
+        # TODO: add configurable number of rollout? (default=1)
         with torch.no_grad():
             rollout = env.rollout(
                 max_steps=cfg.env.episode_length,
@@ -191,9 +204,9 @@ def train(cfg: dict, out_dir=None, job_name=None):
                     step,
                     online_episode_idx,
                     start_time,
-                    is_offline,
                     cfg,
                     L,
+                    is_offline=False,
                 )
 
             if step > 0 and cfg.save_model and step % cfg.save_freq == 0:

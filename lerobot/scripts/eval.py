@@ -5,6 +5,7 @@ import hydra
 import imageio
 import numpy as np
 import torch
+import tqdm
 from tensordict.nn import TensorDictModule
 from termcolor import colored
 from torchrl.envs import EnvBase
@@ -32,7 +33,7 @@ def eval_policy(
     max_rewards = []
     successes = []
     threads = []
-    for i in range(num_episodes):
+    for i in tqdm.tqdm(range(num_episodes)):
         tensordict = env.reset()
 
         ep_frames = []
