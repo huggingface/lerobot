@@ -6,7 +6,7 @@
 #SBATCH --time=2-00:00:00
 #SBATCH --output=/home/rcadene/slurm/%j.out
 #SBATCH --error=/home/rcadene/slurm/%j.err
-#SBATCH --qos=low
+#SBATCH --qos=medium
 #SBATCH --mail-user=re.cadene@gmail.com
 #SBATCH --mail-type=ALL
 

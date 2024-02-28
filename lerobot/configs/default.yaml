@@ -12,6 +12,7 @@ hydra:
 seed: 1337
 device: cuda
 buffer_device: cuda
+prefetch: 4
 eval_freq: ???
 save_freq: ???
 eval_episodes: ???

@@ -21,7 +21,12 @@ past_action_visible: False
 keypoint_visible_rate: 1.0
 obs_as_global_cond: True
 
-offline_steps: 50000
+eval_episodes: 50
+eval_freq: 10000
+save_freq: 100000
+log_freq: 250
+
+offline_steps: 1344000
 online_steps: 0
 
 policy:
@@ -48,8 +53,7 @@ policy:
   per_alpha: 0.6
   per_beta: 0.4
 
-  balanced_sampling: true
-
+  balanced_sampling: false
   utd: 1
   offline_steps: ${offline_steps}
   use_ema: true
