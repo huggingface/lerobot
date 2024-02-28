@@ -62,7 +62,7 @@ policy:
   A_scaling: 3.0
 
   # offline->online
-  offline_steps: 25000 # ${train_steps}/2
+  offline_steps: ${offline_steps}
   pretrained_model_path: ""
   # pretrained_model_path: "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/offline.pt"
   # pretrained_model_path: "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/final.pt"
