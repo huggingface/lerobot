@@ -2,7 +2,8 @@ import torch
 
 from lerobot.common.datasets.pusht import PushtExperienceReplay
 from lerobot.common.datasets.simxarm import SimxarmExperienceReplay
-from rl.torchrl.data.replay_buffers.samplers import PrioritizedSliceSampler
+# from rl.torchrl.data.replay_buffers.samplers import PrioritizedSliceSampler
+from torchrl.data.replay_buffers import PrioritizedSliceSampler
 
 # TODO(rcadene): implement
 

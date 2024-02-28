@@ -9,6 +9,41 @@ conda env create -f environment.yaml
 conda activate lerobot
 ```
 
+Install `torchrl`, `tensordict` and `diffusion_policy` dev builds
+```
+cd path/to/root
+git clone https://github.com/pytorch/tensordict
+git clone https://github.com/pytorch/rl
+git clone https://github.com/real-stanford/diffusion_policy
+cd tensordict
+python setup.py develop
+cd ../rl
+python setup.py develop
+cd ../diffusion_policy
+python setup.py develop
+```
+
+Install additional modules
+```
+pip install \
+    hydra \
+    termcolor \
+    einops \
+    pygame \
+    pymunk \
+    zarr \
+    gym \
+    shapely \
+    opencv-python \
+    scikit-image \
+    mpmath==1.3.0 \
+```
+
+Fix Hydra
+```
+pip install hydra-core --upgrade
+```
+
 **dev**
 
 ```
