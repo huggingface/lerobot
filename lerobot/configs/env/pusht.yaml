@@ -18,6 +18,7 @@ env:
   image_size: 96
   action_repeat: 1
   episode_length: 300
+  fps: ${fps}
 
 policy:
   state_dim: 2

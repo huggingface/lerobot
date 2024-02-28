@@ -109,7 +109,7 @@ def eval(cfg: dict, out_dir=None):
 
     env = make_env(cfg)
 
-    if cfg.pretrained_model_path:
+    if cfg.policy.pretrained_model_path:
         policy = make_policy(cfg)
         policy = TensorDictModule(
             policy,
