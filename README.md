@@ -2,52 +2,32 @@
 
 ## Installation
 
-Install dependencies using `conda`:
-
+Create a virtual environment with python 3.10, e.g. using `conda`:
 ```
-conda env create -f environment.yaml
+conda create -y -n lerobot python=3.10
 conda activate lerobot
 ```
 
-Install `torchrl`, `tensordict` and `diffusion_policy` dev builds
+[Install `poetry`](https://python-poetry.org/docs/#installation) (if you don't have it already)
 ```
-cd path/to/root
-git clone https://github.com/pytorch/tensordict
-git clone https://github.com/pytorch/rl
+curl -sSL https://install.python-poetry.org | python3 -
+```
+
+Install dependencies
+```
+poetry install
+```
+
+If you encounter a disk space error, try to change your tmp dir to a location where you have enough disk space, e.g.
+```
+mkdir ~/tmp
+export TMPDIR='~/tmp'
+```
+
+Install `diffusion_policy` #HACK
+```
 git clone https://github.com/real-stanford/diffusion_policy
-cd tensordict
-python setup.py develop
-cd ../rl
-python setup.py develop
-cd ../diffusion_policy
-python setup.py develop
-```
-
-Install additional modules
-```
-pip install \
-    hydra \
-    termcolor \
-    einops \
-    pygame \
-    pymunk \
-    zarr \
-    gym \
-    shapely \
-    opencv-python \
-    scikit-image \
-    mpmath==1.3.0 \
-```
-
-Fix Hydra
-```
-pip install hydra-core --upgrade
-```
-
-**dev**
-
-```
-python setup.py develop
+cp -r diffusion_policy/diffusion_policy $(poetry env info -p)/lib/python3.10/site-packages/
 ```
 
 ## Usage
