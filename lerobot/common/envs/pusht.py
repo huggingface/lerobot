@@ -44,6 +44,9 @@ class PushtEnv(EnvBase):
         if not _has_gym:
             raise ImportError("Cannot import gym.")
 
+        # TODO(rcadene) (PushTEnv is similar to PushTImageEnv, but without the image rendering, it's faster to iterate on)
+        # from diffusion_policy.env.pusht.pusht_env import PushTEnv
+
         if not from_pixels:
             raise NotImplementedError("Use PushTEnv, instead of PushTImageEnv")
         from diffusion_policy.env.pusht.pusht_image_env import PushTImageEnv
