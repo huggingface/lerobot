@@ -18,5 +18,5 @@ apptainer exec --nv \
 
 source ~/.bashrc
 conda activate fowm
- 
+
 srun $CMD

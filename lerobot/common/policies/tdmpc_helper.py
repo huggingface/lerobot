@@ -5,11 +5,15 @@ import re
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from torch import distributions as pyd
 from torch.distributions.utils import _standard_normal
 
-__REDUCE__ = lambda b: "mean" if b else "none"
+DEFAULT_ACT_FN = nn.Mish()
+
+
+def __REDUCE__(b):  # noqa: N802, N807
+    return "mean" if b else "none"
 
 
 def l1(pred, target, reduce=False):
@@ -36,11 +40,7 @@ def l2_expectile(diff, expectile=0.7, reduce=False):
 def _get_out_shape(in_shape, layers):
     """Utility function. Returns the output shape of a network for a given input shape."""
     x = torch.randn(*in_shape).unsqueeze(0)
-    return (
-        (nn.Sequential(*layers) if isinstance(layers, list) else layers)(x)
-        .squeeze(0)
-        .shape
-    )
+    return (nn.Sequential(*layers) if isinstance(layers, list) else layers)(x).squeeze(0).shape
 
 
 def gaussian_logprob(eps, log_std):
@@ -73,7 +73,7 @@ def orthogonal_init(m):
 def ema(m, m_target, tau):
     """Update slow-moving average of online network (target network) at rate tau."""
     with torch.no_grad():
-        for p, p_target in zip(m.parameters(), m_target.parameters()):
+        for p, p_target in zip(m.parameters(), m_target.parameters(), strict=False):
             p_target.data.lerp_(p.data, tau)
 
 
@@ -86,6 +86,8 @@ def set_requires_grad(net, value):
 class TruncatedNormal(pyd.Normal):
     """Utility class implementing the truncated normal distribution."""
 
+    default_sample_shape = torch.Size()
+
     def __init__(self, loc, scale, low=-1.0, high=1.0, eps=1e-6):
         super().__init__(loc, scale, validate_args=False)
         self.low = low
@@ -97,7 +99,7 @@ class TruncatedNormal(pyd.Normal):
         x = x - x.detach() + clamped_x.detach()
         return x
 
-    def sample(self, clip=None, sample_shape=torch.Size()):
+    def sample(self, clip=None, sample_shape=default_sample_shape):
         shape = self._extended_shape(sample_shape)
         eps = _standard_normal(shape, dtype=self.loc.dtype, device=self.loc.device)
         eps *= self.scale
@@ -136,7 +138,7 @@ def enc(cfg):
     """Returns a TOLD encoder."""
     pixels_enc_layers, state_enc_layers = None, None
     if cfg.modality in {"pixels", "all"}:
-        C = int(3 * cfg.frame_stack)
+        C = int(3 * cfg.frame_stack)  # noqa: N806
         pixels_enc_layers = [
             NormalizeImg(),
             nn.Conv2d(C, cfg.num_channels, 7, stride=2),
@@ -184,7 +186,7 @@ def enc(cfg):
     return Multiplexer(nn.ModuleDict(encoders))
 
 
-def mlp(in_dim, mlp_dim, out_dim, act_fn=nn.Mish()):
+def mlp(in_dim, mlp_dim, out_dim, act_fn=DEFAULT_ACT_FN):
     """Returns an MLP."""
     if isinstance(mlp_dim, int):
         mlp_dim = [mlp_dim, mlp_dim]
@@ -199,7 +201,7 @@ def mlp(in_dim, mlp_dim, out_dim, act_fn=nn.Mish()):
     )
 
 
-def dynamics(in_dim, mlp_dim, out_dim, act_fn=nn.Mish()):
+def dynamics(in_dim, mlp_dim, out_dim, act_fn=DEFAULT_ACT_FN):
     """Returns a dynamics network."""
     return nn.Sequential(
         mlp(in_dim, mlp_dim, out_dim, act_fn),
@@ -327,7 +329,7 @@ class RandomShiftsAug(nn.Module):
         return F.grid_sample(x, grid, padding_mode="zeros", align_corners=False)
 
 
-class Episode(object):
+class Episode:
     """Storage object for a single episode."""
 
     def __init__(self, cfg, init_obs):
@@ -354,18 +356,10 @@ class Episode(object):
                 self.obses[k][0] = torch.tensor(v, dtype=dtype, device=self.device)
         else:
             raise ValueError
-        self.actions = torch.empty(
-            (cfg.episode_length, action_dim), dtype=torch.float32, device=self.device
-        )
-        self.rewards = torch.empty(
-            (cfg.episode_length,), dtype=torch.float32, device=self.device
-        )
-        self.dones = torch.empty(
-            (cfg.episode_length,), dtype=torch.bool, device=self.device
-        )
-        self.masks = torch.empty(
-            (cfg.episode_length,), dtype=torch.float32, device=self.device
-        )
+        self.actions = torch.empty((cfg.episode_length, action_dim), dtype=torch.float32, device=self.device)
+        self.rewards = torch.empty((cfg.episode_length,), dtype=torch.float32, device=self.device)
+        self.dones = torch.empty((cfg.episode_length,), dtype=torch.bool, device=self.device)
+        self.masks = torch.empty((cfg.episode_length,), dtype=torch.float32, device=self.device)
         self.cumulative_reward = 0
         self.done = False
         self.success = False
@@ -380,23 +374,17 @@ class Episode(object):
 
         if cfg.modality in {"pixels", "state"}:
             episode = cls(cfg, obses[0])
-            episode.obses[1:] = torch.tensor(
-                obses[1:], dtype=episode.obses.dtype, device=episode.device
-            )
+            episode.obses[1:] = torch.tensor(obses[1:], dtype=episode.obses.dtype, device=episode.device)
         elif cfg.modality == "all":
             episode = cls(cfg, {k: v[0] for k, v in obses.items()})
-            for k, v in obses.items():
+            for k in obses:
                 episode.obses[k][1:] = torch.tensor(
                     obses[k][1:], dtype=episode.obses[k].dtype, device=episode.device
                 )
         else:
             raise NotImplementedError
-        episode.actions = torch.tensor(
-            actions, dtype=episode.actions.dtype, device=episode.device
-        )
-        episode.rewards = torch.tensor(
-            rewards, dtype=episode.rewards.dtype, device=episode.device
-        )
+        episode.actions = torch.tensor(actions, dtype=episode.actions.dtype, device=episode.device)
+        episode.rewards = torch.tensor(rewards, dtype=episode.rewards.dtype, device=episode.device)
         episode.dones = (
             torch.tensor(dones, dtype=episode.dones.dtype, device=episode.device)
             if dones is not None
@@ -428,9 +416,7 @@ class Episode(object):
                     v, dtype=self.obses[k].dtype, device=self.obses[k].device
                 )
         else:
-            self.obses[self._idx + 1] = torch.tensor(
-                obs, dtype=self.obses.dtype, device=self.obses.device
-            )
+            self.obses[self._idx + 1] = torch.tensor(obs, dtype=self.obses.dtype, device=self.obses.device)
         self.actions[self._idx] = action
         self.rewards[self._idx] = reward
         self.dones[self._idx] = done
@@ -453,7 +439,7 @@ def get_dataset_dict(cfg, env, return_reward_normalizer=False):
     ]
 
     if cfg.task.startswith("xarm"):
-        dataset_path = os.path.join(cfg.dataset_dir, f"buffer.pkl")
+        dataset_path = os.path.join(cfg.dataset_dir, "buffer.pkl")
         print(f"Using offline dataset '{dataset_path}'")
         with open(dataset_path, "rb") as f:
             dataset_dict = pickle.load(f)
@@ -461,7 +447,7 @@ def get_dataset_dict(cfg, env, return_reward_normalizer=False):
             if k not in dataset_dict and k[:-1] in dataset_dict:
                 dataset_dict[k] = dataset_dict.pop(k[:-1])
     elif cfg.task.startswith("legged"):
-        dataset_path = os.path.join(cfg.dataset_dir, f"buffer.pkl")
+        dataset_path = os.path.join(cfg.dataset_dir, "buffer.pkl")
         print(f"Using offline dataset '{dataset_path}'")
         with open(dataset_path, "rb") as f:
             dataset_dict = pickle.load(f)
@@ -475,10 +461,7 @@ def get_dataset_dict(cfg, env, return_reward_normalizer=False):
 
         for i in range(len(dones) - 1):
             if (
-                np.linalg.norm(
-                    dataset_dict["observations"][i + 1]
-                    - dataset_dict["next_observations"][i]
-                )
+                np.linalg.norm(dataset_dict["observations"][i + 1] - dataset_dict["next_observations"][i])
                 > 1e-6
                 or dataset_dict["terminals"][i] == 1.0
             ):
@@ -501,7 +484,7 @@ def get_dataset_dict(cfg, env, return_reward_normalizer=False):
     dataset_dict["rewards"] = reward_normalizer(dataset_dict["rewards"])
 
     for key in required_keys:
-        assert key in dataset_dict.keys(), f"Missing `{key}` in dataset."
+        assert key in dataset_dict, f"Missing `{key}` in dataset."
 
     if return_reward_normalizer:
         return dataset_dict, reward_normalizer
@@ -553,9 +536,7 @@ def get_reward_normalizer(cfg, dataset):
         return lambda x: x - 1.0
     elif cfg.task.split("-")[0] in ["hopper", "halfcheetah", "walker2d"]:
         (_, _, episode_returns) = get_trajectory_boundaries_and_returns(dataset)
-        return (
-            lambda x: x / (np.max(episode_returns) - np.min(episode_returns)) * 1000.0
-        )
+        return lambda x: x / (np.max(episode_returns) - np.min(episode_returns)) * 1000.0
     elif hasattr(cfg, "reward_scale"):
         return lambda x: x * cfg.reward_scale
     return lambda x: x
@@ -571,12 +552,12 @@ def linear_schedule(schdl, step):
     except ValueError:
         match = re.match(r"linear\((.+),(.+),(.+),(.+)\)", schdl)
         if match:
-            init, final, start, end = [float(g) for g in match.groups()]
+            init, final, start, end = (float(g) for g in match.groups())
             mix = np.clip((step - start) / (end - start), 0.0, 1.0)
             return (1.0 - mix) * init + mix * final
         match = re.match(r"linear\((.+),(.+),(.+)\)", schdl)
         if match:
-            init, final, duration = [float(g) for g in match.groups()]
+            init, final, duration = (float(g) for g in match.groups())
             mix = np.clip(step / duration, 0.0, 1.0)
             return (1.0 - mix) * init + mix * final
     raise NotImplementedError(schdl)
