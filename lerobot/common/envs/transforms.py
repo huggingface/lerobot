@@ -5,7 +5,6 @@ from torchrl.envs.transforms import ObservationTransform
 
 
 class Prod(ObservationTransform):
-
     def __init__(self, in_keys: Sequence[NestedKey], prod: float):
         super().__init__()
         self.in_keys = in_keys

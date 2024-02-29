@@ -70,6 +70,7 @@ def make_offline_buffer(cfg, sampler=None):
         offline_buffer = PushtExperienceReplay(
             "pusht",
             # download="force",
+            # TODO(aliberts): automate download
             download=False,
             streaming=False,
             root="data",

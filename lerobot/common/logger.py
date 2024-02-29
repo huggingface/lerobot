@@ -1,6 +1,6 @@
+import contextlib
 import datetime
 import os
-import re
 from pathlib import Path
 
 import numpy as np
@@ -29,10 +29,8 @@ AGENT_METRICS = [
 
 def make_dir(dir_path):
     """Create directory if it does not already exist."""
-    try:
+    with contextlib.suppress(OSError):
         dir_path.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        pass
     return dir_path
 
 
@@ -59,9 +57,7 @@ def print_run(cfg, reward=None):
         # ('experiment', cfg.exp_name),
     ]
     if reward is not None:
-        kvs.append(
-            ("episode reward", colored(str(int(reward)), "white", attrs=["bold"]))
-        )
+        kvs.append(("episode reward", colored(str(int(reward)), "white", attrs=["bold"])))
     w = np.max([len(limstr(str(kv[1]))) for kv in kvs]) + 21
     div = "-" * w
     print(div)
@@ -80,7 +76,7 @@ def cfg_to_group(cfg, return_list=False):
     return lst if return_list else "-".join(lst)
 
 
-class Logger(object):
+class Logger:
     """Primary logger object. Logs either locally or using wandb."""
 
     def __init__(self, log_dir, job_name, cfg):
@@ -183,7 +179,5 @@ class Logger(object):
         if category == "eval":
             keys = ["step", "avg_sum_reward", "avg_max_reward", "pc_success"]
             self._eval.append(np.array([d[key] for key in keys]))
-            pd.DataFrame(np.array(self._eval)).to_csv(
-                self._log_dir / "eval.log", header=keys, index=None
-            )
+            pd.DataFrame(np.array(self._eval)).to_csv(self._log_dir / "eval.log", header=keys, index=None)
         self._print(d, category)

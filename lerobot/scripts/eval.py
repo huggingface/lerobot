@@ -37,10 +37,11 @@ def eval_policy(
         tensordict = env.reset()
 
         ep_frames = []
+
         if save_video or (return_first_video and i == 0):
 
             def rendering_callback(env, td=None):
-                ep_frames.append(env.render())
+                ep_frames.append(env.render())  # noqa: B023
 
             # render first frame before rollout
             rendering_callback(env)
