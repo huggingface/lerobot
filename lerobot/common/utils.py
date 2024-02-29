@@ -33,7 +33,7 @@ def init_logging():
     logging.getLogger().addHandler(console_handler)
 
 
-def format_number_KMB(num):
+def format_big_number(num):
     suffixes = ["", "K", "M", "B", "T", "Q"]
     divisor = 1000.0
 

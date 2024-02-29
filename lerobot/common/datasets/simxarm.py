@@ -8,9 +8,7 @@ import torchrl
 import tqdm
 from tensordict import TensorDict
 from torchrl.data.datasets.utils import _get_root_dir
-from torchrl.data.replay_buffers.replay_buffers import (
-    TensorDictReplayBuffer,
-)
+from torchrl.data.replay_buffers.replay_buffers import TensorDictReplayBuffer
 from torchrl.data.replay_buffers.samplers import (
     Sampler,
     SliceSampler,

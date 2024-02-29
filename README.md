@@ -108,7 +108,10 @@ eval_episodes=7
 
 **Style**
 ```
+# install if needed
 pre-commit install
+# apply style and linter checks before git commit
+pre-commit run -a
 ```
 
 **Tests**

@@ -3,9 +3,7 @@ from pathlib import Path
 import hydra
 import imageio
 import torch
-from torchrl.data.replay_buffers import (
-    SliceSamplerWithoutReplacement,
-)
+from torchrl.data.replay_buffers import SliceSamplerWithoutReplacement
 
 from lerobot.common.datasets.factory import make_offline_buffer
 

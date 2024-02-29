@@ -1,12 +1,11 @@
 import contextlib
-import datetime
 import os
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 from omegaconf import OmegaConf
 from termcolor import colored
+
 
 def make_dir(dir_path):
     """Create directory if it does not already exist."""

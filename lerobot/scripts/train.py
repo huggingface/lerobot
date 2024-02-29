@@ -1,5 +1,4 @@
 import logging
-import time
 
 import hydra
 import numpy as np
@@ -13,7 +12,7 @@ from lerobot.common.datasets.factory import make_offline_buffer
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.utils import format_number_KMB, init_logging, set_seed
+from lerobot.common.utils import format_big_number, init_logging, set_seed
 from lerobot.scripts.eval import eval_policy
 
 
@@ -49,11 +48,11 @@ def log_train_info(logger, info, step, cfg, offline_buffer, is_offline):
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / offline_buffer.num_samples
     log_items = [
-        f"step:{format_number_KMB(step)}",
+        f"step:{format_big_number(step)}",
         # number of samples seen during training
-        f"smpl:{format_number_KMB(num_samples)}",
+        f"smpl:{format_big_number(num_samples)}",
         # number of episodes seen during training
-        f"ep:{format_number_KMB(num_episodes)}",
+        f"ep:{format_big_number(num_episodes)}",
         # number of time all unique samples are seen
         f"epch:{num_epochs:.2f}",
         f"loss:{loss:.3f}",
@@ -86,11 +85,11 @@ def log_eval_info(logger, info, step, cfg, offline_buffer, is_offline):
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / offline_buffer.num_samples
     log_items = [
-        f"step:{format_number_KMB(step)}",
+        f"step:{format_big_number(step)}",
         # number of samples seen during training
-        f"smpl:{format_number_KMB(num_samples)}",
+        f"smpl:{format_big_number(num_samples)}",
         # number of episodes seen during training
-        f"ep:{format_number_KMB(num_episodes)}",
+        f"ep:{format_big_number(num_episodes)}",
         # number of time all unique samples are seen
         f"epch:{num_epochs:.2f}",
         f"∑rwrd:{avg_sum_reward:.3f}",
@@ -156,7 +155,6 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     logger = Logger(out_dir, job_name, cfg)
 
-    online_ep_idx = 0
     step = 0  # number of policy update
 
     is_offline = True
@@ -200,7 +198,8 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 auto_cast_to_device=True,
             )
         assert len(rollout) <= cfg.env.episode_length
-        rollout["episode"] = torch.tensor([online_ep_idx] * len(rollout), dtype=torch.int)
+        # set same episode index for all time steps contained in this rollout
+        rollout["episode"] = torch.tensor([env_step] * len(rollout), dtype=torch.int)
         online_buffer.extend(rollout)
 
         ep_sum_reward = rollout["next", "reward"].sum()
@@ -210,11 +209,9 @@ def train(cfg: dict, out_dir=None, job_name=None):
             "avg_sum_reward": np.nanmean(ep_sum_reward),
             "avg_max_reward": np.nanmean(ep_max_reward),
             "pc_success": np.nanmean(ep_success) * 100,
-            "online_ep_idx": online_ep_idx,
+            "env_step": env_step,
             "ep_length": len(rollout),
         }
-
-        online_ep_idx += 1
 
         for _ in range(cfg.policy.utd):
             train_info = policy.update(
@@ -233,7 +230,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
                     num_episodes=cfg.eval_episodes,
                     return_first_video=True,
                 )
-                log_eval_info(L, eval_info, step, cfg, offline_buffer, is_offline)
+                log_eval_info(logger, eval_info, step, cfg, offline_buffer, is_offline)
                 if cfg.wandb.enable:
                     logger.log_video(first_video, step, mode="eval")
 
