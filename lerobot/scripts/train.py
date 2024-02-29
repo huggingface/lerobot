@@ -1,3 +1,4 @@
+import logging
 import time
 
 import hydra
@@ -12,7 +13,7 @@ from lerobot.common.datasets.factory import make_offline_buffer
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.utils import set_seed
+from lerobot.common.utils import format_number_KMB, init_logging, set_seed
 from lerobot.scripts.eval import eval_policy
 
 
@@ -34,36 +35,77 @@ def train_notebook(out_dir=None, job_name=None, config_name="default", config_pa
     train(cfg, out_dir=out_dir, job_name=job_name)
 
 
-def log_training_metrics(logger, metrics, step, online_episode_idx, start_time, is_offline):
-    common_metrics = {
-        "episode": online_episode_idx,
-        "step": step,
-        "total_time": time.time() - start_time,
-        "is_offline": float(is_offline),
-    }
-    metrics.update(common_metrics)
-    logger.log(metrics, category="train")
+def log_train_info(logger, info, step, cfg, offline_buffer, is_offline):
+    loss = info["loss"]
+    grad_norm = info["grad_norm"]
+    lr = info["lr"]
+    data_s = info["data_s"]
+    update_s = info["update_s"]
+
+    # A sample is an (observation,action) pair, where observation and action
+    # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
+    num_samples = (step + 1) * cfg.policy.batch_size
+    avg_samples_per_ep = offline_buffer.num_samples / offline_buffer.num_episodes
+    num_episodes = num_samples / avg_samples_per_ep
+    num_epochs = num_samples / offline_buffer.num_samples
+    log_items = [
+        f"step:{format_number_KMB(step)}",
+        # number of samples seen during training
+        f"smpl:{format_number_KMB(num_samples)}",
+        # number of episodes seen during training
+        f"ep:{format_number_KMB(num_episodes)}",
+        # number of time all unique samples are seen
+        f"epch:{num_epochs:.2f}",
+        f"loss:{loss:.3f}",
+        f"grdn:{grad_norm:.3f}",
+        f"lr:{lr:0.1e}",
+        # in seconds
+        f"data_s:{data_s:.3f}",
+        f"updt_s:{update_s:.3f}",
+    ]
+    logging.info(" ".join(log_items))
+
+    info["step"] = step
+    info["num_samples"] = num_samples
+    info["num_episodes"] = num_episodes
+    info["num_epochs"] = num_epochs
+    info["is_offline"] = is_offline
+
+    logger.log_dict(info, step, mode="train")
 
 
-def eval_policy_and_log(env, td_policy, step, online_episode_idx, start_time, cfg, logger, is_offline):
-    common_metrics = {
-        "episode": online_episode_idx,
-        "step": step,
-        "total_time": time.time() - start_time,
-        "is_offline": float(is_offline),
-    }
-    metrics, first_video = eval_policy(
-        env,
-        td_policy,
-        num_episodes=cfg.eval_episodes,
-        return_first_video=True,
-    )
-    metrics.update(common_metrics)
-    logger.log(metrics, category="eval")
+def log_eval_info(logger, info, step, cfg, offline_buffer, is_offline):
+    eval_s = info["eval_s"]
+    avg_sum_reward = info["avg_sum_reward"]
+    pc_success = info["pc_success"]
 
-    if cfg.wandb.enable:
-        eval_video = logger._wandb.Video(first_video, fps=cfg.fps, format="mp4")
-        logger._wandb.log({"eval_video": eval_video}, step=step)
+    # A sample is an (observation,action) pair, where observation and action
+    # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
+    num_samples = (step + 1) * cfg.policy.batch_size
+    avg_samples_per_ep = offline_buffer.num_samples / offline_buffer.num_episodes
+    num_episodes = num_samples / avg_samples_per_ep
+    num_epochs = num_samples / offline_buffer.num_samples
+    log_items = [
+        f"step:{format_number_KMB(step)}",
+        # number of samples seen during training
+        f"smpl:{format_number_KMB(num_samples)}",
+        # number of episodes seen during training
+        f"ep:{format_number_KMB(num_episodes)}",
+        # number of time all unique samples are seen
+        f"epch:{num_epochs:.2f}",
+        f"∑rwrd:{avg_sum_reward:.3f}",
+        f"success:{pc_success:.1f}%",
+        f"eval_s:{eval_s:.3f}",
+    ]
+    logging.info(" ".join(log_items))
+
+    info["step"] = step
+    info["num_samples"] = num_samples
+    info["num_episodes"] = num_episodes
+    info["num_epochs"] = num_epochs
+    info["is_offline"] = is_offline
+
+    logger.log_dict(info, step, mode="eval")
 
 
 def train(cfg: dict, out_dir=None, job_name=None):
@@ -72,15 +114,17 @@ def train(cfg: dict, out_dir=None, job_name=None):
     if job_name is None:
         raise NotImplementedError()
 
+    init_logging()
+
     assert torch.cuda.is_available()
     torch.backends.cudnn.benchmark = True
     set_seed(cfg.seed)
-    print(colored("Work dir:", "yellow", attrs=["bold"]), out_dir)
+    logging.info(colored("Work dir:", "yellow", attrs=["bold"]) + f" {out_dir}")
 
-    print("make_env")
+    logging.info("make_env")
     env = make_env(cfg)
 
-    print("make_policy")
+    logging.info("make_policy")
     policy = make_policy(cfg)
 
     td_policy = TensorDictModule(
@@ -89,12 +133,12 @@ def train(cfg: dict, out_dir=None, job_name=None):
         out_keys=["action"],
     )
 
-    print("make_offline_buffer")
+    logging.info("make_offline_buffer")
     offline_buffer = make_offline_buffer(cfg)
 
     # TODO(rcadene): move balanced_sampling, per_alpha, per_beta outside policy
     if cfg.policy.balanced_sampling:
-        print("make online_buffer")
+        logging.info("make online_buffer")
         num_traj_per_batch = cfg.policy.batch_size
 
         online_sampler = PrioritizedSliceSampler(
@@ -112,41 +156,41 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     logger = Logger(out_dir, job_name, cfg)
 
-    online_episode_idx = 0
-    start_time = time.time()
+    online_ep_idx = 0
     step = 0  # number of policy update
 
+    is_offline = True
     for offline_step in range(cfg.offline_steps):
         if offline_step == 0:
-            print("Start offline training on a fixed dataset")
+            logging.info("Start offline training on a fixed dataset")
         # TODO(rcadene): is it ok if step_t=0 = 0 and not 1 as previously done?
-        metrics = policy.update(offline_buffer, step)
-
+        train_info = policy.update(offline_buffer, step)
         if step % cfg.log_freq == 0:
-            log_training_metrics(logger, metrics, step, online_episode_idx, start_time, is_offline=False)
+            log_train_info(logger, train_info, step, cfg, offline_buffer, is_offline)
 
         if step > 0 and step % cfg.eval_freq == 0:
-            eval_policy_and_log(
+            eval_info, first_video = eval_policy(
                 env,
                 td_policy,
-                step,
-                online_episode_idx,
-                start_time,
-                cfg,
-                logger,
-                is_offline=True,
+                num_episodes=cfg.eval_episodes,
+                return_first_video=True,
             )
+            log_eval_info(logger, eval_info, step, cfg, offline_buffer, is_offline)
+            if cfg.wandb.enable:
+                logger.log_video(first_video, step, mode="eval")
 
         if step > 0 and cfg.save_model and step % cfg.save_freq == 0:
-            print(f"Checkpoint model at step {step}")
+            logging.info(f"Checkpoint model at step {step}")
             logger.save_model(policy, identifier=step)
 
         step += 1
 
     demo_buffer = offline_buffer if cfg.policy.balanced_sampling else None
+    online_step = 0
+    is_offline = False
     for env_step in range(cfg.online_steps):
         if env_step == 0:
-            print("Start online training by interacting with environment")
+            logging.info("Start online training by interacting with environment")
         # TODO: use SyncDataCollector for that?
         # TODO: add configurable number of rollout? (default=1)
         with torch.no_grad():
@@ -156,47 +200,49 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 auto_cast_to_device=True,
             )
         assert len(rollout) <= cfg.env.episode_length
-        rollout["episode"] = torch.tensor([online_episode_idx] * len(rollout), dtype=torch.int)
+        rollout["episode"] = torch.tensor([online_ep_idx] * len(rollout), dtype=torch.int)
         online_buffer.extend(rollout)
 
         ep_sum_reward = rollout["next", "reward"].sum()
         ep_max_reward = rollout["next", "reward"].max()
         ep_success = rollout["next", "success"].any()
-        metrics = {
+        rollout_info = {
             "avg_sum_reward": np.nanmean(ep_sum_reward),
             "avg_max_reward": np.nanmean(ep_max_reward),
             "pc_success": np.nanmean(ep_success) * 100,
+            "online_ep_idx": online_ep_idx,
+            "ep_length": len(rollout),
         }
 
-        online_episode_idx += 1
+        online_ep_idx += 1
 
         for _ in range(cfg.policy.utd):
-            train_metrics = policy.update(
+            train_info = policy.update(
                 online_buffer,
                 step,
                 demo_buffer=demo_buffer,
             )
-            metrics.update(train_metrics)
             if step % cfg.log_freq == 0:
-                log_training_metrics(logger, metrics, step, online_episode_idx, start_time, is_offline=False)
+                train_info.update(rollout_info)
+                log_train_info(logger, train_info, step, cfg, offline_buffer, is_offline)
 
             if step > 0 and step % cfg.eval_freq == 0:
-                eval_policy_and_log(
+                eval_info, first_video = eval_policy(
                     env,
                     td_policy,
-                    step,
-                    online_episode_idx,
-                    start_time,
-                    cfg,
-                    logger,
-                    is_offline=False,
+                    num_episodes=cfg.eval_episodes,
+                    return_first_video=True,
                 )
+                log_eval_info(L, eval_info, step, cfg, offline_buffer, is_offline)
+                if cfg.wandb.enable:
+                    logger.log_video(first_video, step, mode="eval")
 
             if step > 0 and cfg.save_model and step % cfg.save_freq == 0:
-                print(f"Checkpoint model at step {step}")
+                logging.info(f"Checkpoint model at step {step}")
                 logger.save_model(policy, identifier=step)
 
             step += 1
+            online_step += 1
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 # ruff: noqa: N806
 
+import time
 from copy import deepcopy
 
 import einops
@@ -285,6 +286,7 @@ class TDMPC(nn.Module):
 
     def update(self, replay_buffer, step, demo_buffer=None):
         """Main update function. Corresponds to one iteration of the model learning."""
+        start_time = time.time()
 
         num_slices = self.cfg.batch_size
         batch_size = self.cfg.horizon * num_slices
@@ -325,6 +327,14 @@ class TDMPC(nn.Module):
                 "state": batch["next", "observation", "state"],
             }
             reward = batch["next", "reward"]
+
+            # TODO(rcadene): add non_blocking=True
+            # for key in obs:
+            #     obs[key] = obs[key].to(self.device, non_blocking=True)
+            #     next_obses[key] = next_obses[key].to(self.device, non_blocking=True)
+
+            # action = action.to(self.device, non_blocking=True)
+            # reward = reward.to(self.device, non_blocking=True)
 
             # TODO(rcadene): rearrange directly in offline dataset
             if reward.ndim == 2:
@@ -398,6 +408,8 @@ class TDMPC(nn.Module):
         self.optim.zero_grad(set_to_none=True)
         self.std = h.linear_schedule(self.cfg.std_schedule, step)
         self.model.train()
+
+        data_s = time.time() - start_time
 
         # Compute targets
         with torch.no_grad():
@@ -482,21 +494,23 @@ class TDMPC(nn.Module):
             h.ema(self.model._Qs, self.model_target._Qs, self.cfg.tau)
 
         self.model.eval()
-        metrics = {
+
+        info = {
             "consistency_loss": float(consistency_loss.mean().item()),
             "reward_loss": float(reward_loss.mean().item()),
             "Q_value_loss": float(q_value_loss.mean().item()),
             "V_value_loss": float(v_value_loss.mean().item()),
-            "total_loss": float(total_loss.mean().item()),
-            "weighted_loss": float(weighted_loss.mean().item()),
+            "sum_loss": float(total_loss.mean().item()),
+            "loss": float(weighted_loss.mean().item()),
             "grad_norm": float(grad_norm),
+            "lr": self.cfg.lr,
+            "data_s": data_s,
+            "update_s": time.time() - start_time,
         }
-        # for key in ["demo_batch_size", "expectile"]:
-        #     if hasattr(self, key):
-        metrics["demo_batch_size"] = demo_batch_size
-        metrics["expectile"] = expectile
-        metrics.update(value_info)
-        metrics.update(pi_update_info)
+        info["demo_batch_size"] = demo_batch_size
+        info["expectile"] = expectile
+        info.update(value_info)
+        info.update(pi_update_info)
 
         self.step[0] = step
-        return metrics
+        return info

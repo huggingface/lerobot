@@ -1,4 +1,5 @@
 import copy
+import time
 
 import hydra
 import torch
@@ -110,6 +111,8 @@ class DiffusionPolicy(nn.Module):
         return action
 
     def update(self, replay_buffer, step):
+        start_time = time.time()
+
         self.diffusion.train()
 
         num_slices = self.cfg.batch_size
@@ -125,18 +128,30 @@ class DiffusionPolicy(nn.Module):
 
             out = {
                 "obs": {
-                    "image": batch["observation", "image"].to(self.device),
-                    "agent_pos": batch["observation", "state"].to(self.device),
+                    "image": batch["observation", "image"].to(
+                        self.device, non_blocking=True
+                    ),
+                    "agent_pos": batch["observation", "state"].to(
+                        self.device, non_blocking=True
+                    ),
                 },
-                "action": batch["action"].to(self.device),
+                "action": batch["action"].to(self.device, non_blocking=True),
             }
             return out
 
         batch = replay_buffer.sample(batch_size) if self.cfg.balanced_sampling else replay_buffer.sample()
         batch = process_batch(batch, self.cfg.horizon, num_slices)
 
+        data_s = time.time() - start_time
+
         loss = self.diffusion.compute_loss(batch)
         loss.backward()
+
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            self.diffusion.parameters(),
+            self.cfg.grad_clip_norm,
+            error_if_nonfinite=False,
+        )
 
         self.optimizer.step()
         self.optimizer.zero_grad()
@@ -145,9 +160,12 @@ class DiffusionPolicy(nn.Module):
         if self.ema is not None:
             self.ema.step(self.diffusion)
 
-        metrics = {
-            "total_loss": loss.item(),
+        info = {
+            "loss": loss.item(),
+            "grad_norm": float(grad_norm),
             "lr": self.lr_scheduler.get_last_lr()[0],
+            "data_s": data_s,
+            "update_s": time.time() - start_time,
         }
 
         # TODO(rcadene): remove hardcoding
@@ -155,7 +173,7 @@ class DiffusionPolicy(nn.Module):
         if step % 168 == 0:
             self.global_step += 1
 
-        return metrics
+        return info
 
     def save(self, fp):
         torch.save(self.state_dict(), fp)

@@ -178,6 +178,14 @@ class PushtExperienceReplay(TensorDictReplayBuffer):
         )
 
     @property
+    def num_samples(self):
+        return len(self)
+
+    @property
+    def num_episodes(self):
+        return len(self._storage._storage["episode"].unique())
+
+    @property
     def data_path_root(self):
         if self.streaming:
             return None

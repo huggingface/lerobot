@@ -59,6 +59,7 @@ policy:
   use_ema: true
   lr_scheduler: cosine
   lr_warmup_steps: 500
+  grad_clip_norm: 0
 
 noise_scheduler:
   # _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
