@@ -10,7 +10,7 @@ conda activate lerobot
 
 [Install `poetry`](https://python-poetry.org/docs/#installation) (if you don't have it already)
 ```
-curl -sSL https://install.python-poetry.org | python3 -
+curl -sSL https://install.python-poetry.org | python -
 ```
 
 Install dependencies
@@ -26,6 +26,7 @@ export TMPDIR='~/tmp'
 
 Install `diffusion_policy` #HACK
 ```
+# from this directory
 git clone https://github.com/real-stanford/diffusion_policy
 cp -r diffusion_policy/diffusion_policy $(poetry env info -p)/lib/python3.10/site-packages/
 ```
@@ -107,8 +108,7 @@ eval_episodes=7
 
 **Style**
 ```
-isort lerobot && isort tests && black lerobot && black tests
-pylint lerobot && pylint tests  # not enforce for now
+pre-commit install
 ```
 
 **Tests**
