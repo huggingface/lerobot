@@ -73,7 +73,6 @@ def make_offline_buffer(cfg, sampler=None):
     elif cfg.env.name == "pusht":
         offline_buffer = PushtExperienceReplay(
             "pusht",
-            download=True,
             streaming=False,
             root=DATA_PATH,
             sampler=sampler,
