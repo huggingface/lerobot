@@ -80,7 +80,7 @@ obs_encoder:
   random_crop: True
   use_group_norm: True
   share_rgb_model: False
-  imagenet_norm: True
+  imagenet_norm: False  # TODO(rcadene): was set to True
 
 rgb_model:
   #_target_: diffusion_policy.model.vision.model_getter.get_resnet
