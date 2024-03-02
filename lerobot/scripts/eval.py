@@ -11,8 +11,8 @@ import tqdm
 from tensordict.nn import TensorDictModule
 from termcolor import colored
 from torchrl.envs import EnvBase
-from lerobot.common.datasets.factory import make_offline_buffer
 
+from lerobot.common.datasets.factory import make_offline_buffer
 from lerobot.common.envs.factory import make_env
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils import set_seed
