@@ -4,7 +4,7 @@ def make_policy(cfg):
 
         policy = TDMPC(cfg.policy)
     elif cfg.policy.name == "diffusion":
-        from lerobot.common.policies.diffusion import DiffusionPolicy
+        from lerobot.common.policies.diffusion.policy import DiffusionPolicy
 
         policy = DiffusionPolicy(
             cfg=cfg.policy,

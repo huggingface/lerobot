@@ -147,7 +147,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     env = make_env(cfg, transform=offline_buffer._transform)
 
     logging.info("make_policy")
-    policy = make_policy(cfg, transform=offline_buffer._transform)
+    policy = make_policy(cfg)
 
     td_policy = TensorDictModule(
         policy,

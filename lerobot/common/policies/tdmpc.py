@@ -138,9 +138,6 @@ class TDMPC(nn.Module):
             "state": observation["state"].contiguous(),
         }
         action = self.act(obs, t0=t0, step=self.step.item())
-
-        # TODO(rcadene): hack to postprocess action (e.g. unnormalize)
-        # action = action * self.action_std + self.action_mean
         return action
 
     @torch.no_grad()

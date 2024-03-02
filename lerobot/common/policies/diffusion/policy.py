@@ -1,6 +1,7 @@
 import copy
 import time
 
+import einops
 import hydra
 import torch
 import torch.nn as nn
@@ -8,8 +9,9 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
 from diffusion_policy.model.vision.model_getter import get_resnet
-from diffusion_policy.model.vision.multi_image_obs_encoder import MultiImageObsEncoder
-from diffusion_policy.policy.diffusion_unet_image_policy import DiffusionUnetImagePolicy
+
+from .diffusion_unet_image_policy import DiffusionUnetImagePolicy
+from .multi_image_obs_encoder import MultiImageObsEncoder
 
 FIRST_ACTION = 0
 
@@ -99,10 +101,15 @@ class DiffusionPolicy(nn.Module):
         # TODO(rcadene): remove unused step_count
         del step_count
 
+        # TODO(rcadene): remove unsqueeze hack...
+        if observation["image"].ndim == 3:
+            observation["image"] = observation["image"].unsqueeze(0)
+            observation["state"] = observation["state"].unsqueeze(0)
+
         obs_dict = {
-            # c h w -> b t c h w (b=1, t=1)
-            "image": observation["image"][None, None, ...],
-            "agent_pos": observation["state"][None, None, ...],
+            # TODO(rcadene): hack to add temporal dim
+            "image": einops.rearrange(observation["image"], "b c h w -> b 1 c h w"),
+            "agent_pos": einops.rearrange(observation["state"], "b c -> b 1 c"),
         }
         out = self.diffusion.predict_action(obs_dict)
 
