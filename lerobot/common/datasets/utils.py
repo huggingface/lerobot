@@ -3,7 +3,9 @@ import zipfile
 from pathlib import Path
 
 import requests
+from tensordict import TensorDictBase
 import tqdm
+
 
 
 def download_and_extract_zip(url: str, destination_folder: Path) -> bool:
@@ -28,3 +30,4 @@ def download_and_extract_zip(url: str, destination_folder: Path) -> bool:
         return True
     else:
         return False
+
