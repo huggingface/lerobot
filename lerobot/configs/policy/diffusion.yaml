@@ -13,7 +13,7 @@ shape_meta:
     shape: [2]
 
 horizon: 16
-n_obs_steps: 1 # TODO(rcadene): before 2
+n_obs_steps: 2
 n_action_steps: 8
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
