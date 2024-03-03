@@ -1,5 +1,4 @@
 import logging
-import warnings
 
 import hydra
 import numpy as np
@@ -119,7 +118,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     if cfg.device == "cuda":
         assert torch.cuda.is_available()
     else:
-        warnings.warn("Using CPU, this will be slow.", UserWarning, stacklevel=1)
+        logging.warning("Using CPU, this will be slow.")
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
