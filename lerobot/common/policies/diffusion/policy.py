@@ -12,8 +12,6 @@ from diffusion_policy.model.vision.model_getter import get_resnet
 from .diffusion_unet_image_policy import DiffusionUnetImagePolicy
 from .multi_image_obs_encoder import MultiImageObsEncoder
 
-FIRST_ACTION = 0
-
 
 class DiffusionPolicy(nn.Module):
     def __init__(
@@ -110,8 +108,7 @@ class DiffusionPolicy(nn.Module):
         }
         out = self.diffusion.predict_action(obs_dict)
 
-        # TODO(rcadene): add possibility to return >1 timestemps
-        action = out["action"].squeeze(0)[FIRST_ACTION]
+        action = out["action"].squeeze(0)
         return action
 
     def update(self, replay_buffer, step):

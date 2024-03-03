@@ -157,13 +157,20 @@ class PushtEnv(EnvBase):
 
     def _step(self, tensordict: TensorDict):
         td = tensordict
-        # remove batch dim
-        action = td["action"].squeeze(0).numpy()
+        action = td["action"].numpy()
         # step expects shape=(4,) so we pad if necessary
         # TODO(rcadene): add info["is_success"] and info["success"] ?
         sum_reward = 0
-        for _ in range(self.frame_skip):
-            raw_obs, reward, done, info = self._env.step(action)
+
+        if action.ndim == 1:
+            action = action.repeat(self.frame_skip, 1)
+        else:
+            if self.frame_skip > 1:
+                raise NotImplementedError()
+
+        num_action_steps = action.shape[0]
+        for i in range(num_action_steps):
+            raw_obs, reward, done, info = self._env.step(action[i])
             sum_reward += reward
 
             obs = self._format_raw_obs(raw_obs)
