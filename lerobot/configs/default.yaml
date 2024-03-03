@@ -10,8 +10,7 @@ hydra:
     name: default
 
 seed: 1337
-device: cuda
-buffer_device: cuda
+device: cuda  # cpu
 prefetch: 4
 eval_freq: ???
 save_freq: ???
