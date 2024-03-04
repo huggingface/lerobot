@@ -1,5 +1,6 @@
 import copy
 import time
+from collections import OrderedDict
 
 import hydra
 import torch
@@ -61,6 +62,19 @@ class DiffusionPolicy(nn.Module):
             # parameters passed to step
             **kwargs,
         )
+
+        ckpt = torch.load(
+            "/admin/home/remi_cadene/code/lerobot/outputs/diffusion_policy/experiments/pusht/policy_cnn_train_0/checkpoints/pusht_vision_100ep.ckpt"
+        )
+        ckpt_image = OrderedDict()
+        ckpt_noise = OrderedDict()
+        for key in ckpt:
+            if "vision_encoder." in key:
+                ckpt_image[key.replace("vision_encoder.", "")] = ckpt[key]
+            if "noise_pred_net." in key:
+                ckpt_noise[key.replace("noise_pred_net.", "")] = ckpt[key]
+        self.diffusion.obs_encoder.key_model_map.image.load_state_dict(ckpt_image)
+        self.diffusion.model.load_state_dict(ckpt_noise)
 
         self.device = torch.device("cuda")
         self.diffusion.cuda()
