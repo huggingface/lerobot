@@ -174,7 +174,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
     logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
-    step = 0  # number of policy update
+    step = 0  # number of policy update (forward + backward + optim)
 
     is_offline = True
     for offline_step in range(cfg.offline_steps):
