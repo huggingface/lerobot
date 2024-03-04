@@ -21,6 +21,8 @@ save_buffer: false
 train_steps: ???
 fps: ???
 
+offline_prioritized_sampler: true
+
 n_action_steps: ???
 env: ???
 
