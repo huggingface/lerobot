@@ -118,7 +118,7 @@ def eval(cfg: dict, out_dir=None):
     offline_buffer = make_offline_buffer(cfg)
 
     logging.info("make_env")
-    env = make_env(cfg, transform=offline_buffer.transform)
+    env = make_env(cfg, transform=offline_buffer._transform)
 
     if cfg.policy.pretrained_model_path:
         policy = make_policy(cfg)
@@ -137,7 +137,7 @@ def eval(cfg: dict, out_dir=None):
         save_video=True,
         video_dir=Path(out_dir) / "eval",
         fps=cfg.env.fps,
-        max_steps=cfg.env.episode_length,
+        max_steps=cfg.env.episode_length // cfg.n_action_steps,
         num_episodes=cfg.eval_episodes,
     )
     print(metrics)

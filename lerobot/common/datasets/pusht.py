@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Callable
@@ -134,19 +135,31 @@ class PushtExperienceReplay(TensorDictReplayBuffer):
         else:
             storage = TensorStorage(TensorDict.load_memmap(self.root / dataset_id))
 
-        mean_std = self._compute_or_load_mean_std(storage)
-        mean_std["next", "observation", "image"] = mean_std["observation", "image"]
-        mean_std["next", "observation", "state"] = mean_std["observation", "state"]
+        stats = self._compute_or_load_stats(storage)
         transform = NormalizeTransform(
-            mean_std,
+            stats,
             in_keys=[
-                ("observation", "image"),
+                # TODO(rcadene): imagenet normalization is applied inside diffusion policy
+                # We need to automate this for tdmpc and others
+                # ("observation", "image"),
                 ("observation", "state"),
-                ("next", "observation", "image"),
-                ("next", "observation", "state"),
+                # TODO(rcadene): for tdmpc, we might want next image and state
+                # ("next", "observation", "image"),
+                # ("next", "observation", "state"),
                 ("action"),
             ],
+            mode="min_max",
         )
+
+        # TODO(rcadene): make normalization strategy configurable between mean_std, min_max, manual_min_max, min_max_from_spec
+        transform.stats["observation", "state", "min"] = torch.tensor(
+            [13.456424, 32.938293], dtype=torch.float32
+        )
+        transform.stats["observation", "state", "max"] = torch.tensor(
+            [496.14618, 510.9579], dtype=torch.float32
+        )
+        transform.stats["action", "min"] = torch.tensor([12.0, 25.0], dtype=torch.float32)
+        transform.stats["action", "max"] = torch.tensor([511.0, 511.0], dtype=torch.float32)
 
         if writer is None:
             writer = ImmutableDatasetWriter()
@@ -282,24 +295,50 @@ class PushtExperienceReplay(TensorDictReplayBuffer):
 
         return TensorStorage(td_data.lock_())
 
-    def _compute_mean_std(self, storage, num_batch=10, batch_size=32):
+    def _compute_stats(self, storage, num_batch=100, batch_size=32):
         rb = TensorDictReplayBuffer(
             storage=storage,
             batch_size=batch_size,
             prefetch=True,
         )
         batch = rb.sample()
-        image_mean = torch.zeros(batch["observation", "image"].shape[1])
-        image_std = torch.zeros(batch["observation", "image"].shape[1])
-        state_mean = torch.zeros(batch["observation", "state"].shape[1])
-        state_std = torch.zeros(batch["observation", "state"].shape[1])
-        action_mean = torch.zeros(batch["action"].shape[1])
-        action_std = torch.zeros(batch["action"].shape[1])
+
+        image_channels = batch["observation", "image"].shape[1]
+        image_mean = torch.zeros(image_channels)
+        image_std = torch.zeros(image_channels)
+        image_max = torch.tensor([-math.inf] * image_channels)
+        image_min = torch.tensor([math.inf] * image_channels)
+
+        state_channels = batch["observation", "state"].shape[1]
+        state_mean = torch.zeros(state_channels)
+        state_std = torch.zeros(state_channels)
+        state_max = torch.tensor([-math.inf] * state_channels)
+        state_min = torch.tensor([math.inf] * state_channels)
+
+        action_channels = batch["action"].shape[1]
+        action_mean = torch.zeros(action_channels)
+        action_std = torch.zeros(action_channels)
+        action_max = torch.tensor([-math.inf] * action_channels)
+        action_min = torch.tensor([math.inf] * action_channels)
 
         for _ in tqdm.tqdm(range(num_batch)):
-            image_mean += einops.reduce(batch["observation", "image"], "b c h w -> c", reduction="mean")
-            state_mean += batch["observation", "state"].mean(dim=0)
-            action_mean += batch["action"].mean(dim=0)
+            image_mean += einops.reduce(batch["observation", "image"], "b c h w -> c", "mean")
+            state_mean += einops.reduce(batch["observation", "state"], "b c -> c", "mean")
+            action_mean += einops.reduce(batch["action"], "b c -> c", "mean")
+
+            b_image_max = einops.reduce(batch["observation", "image"], "b c h w -> c", "max")
+            b_image_min = einops.reduce(batch["observation", "image"], "b c h w -> c", "min")
+            b_state_max = einops.reduce(batch["observation", "state"], "b c -> c", "max")
+            b_state_min = einops.reduce(batch["observation", "state"], "b c -> c", "min")
+            b_action_max = einops.reduce(batch["action"], "b c -> c", "max")
+            b_action_min = einops.reduce(batch["action"], "b c -> c", "min")
+            image_max = torch.maximum(image_max, b_image_max)
+            image_min = torch.maximum(image_min, b_image_min)
+            state_max = torch.maximum(state_max, b_state_max)
+            state_min = torch.maximum(state_min, b_state_min)
+            action_max = torch.maximum(action_max, b_action_max)
+            action_min = torch.maximum(action_min, b_action_min)
+
             batch = rb.sample()
 
         image_mean /= num_batch
@@ -307,10 +346,26 @@ class PushtExperienceReplay(TensorDictReplayBuffer):
         action_mean /= num_batch
 
         for i in tqdm.tqdm(range(num_batch)):
-            image_mean_batch = einops.reduce(batch["observation", "image"], "b c h w -> c", reduction="mean")
-            image_std += (image_mean_batch - image_mean) ** 2
-            state_std += (batch["observation", "state"].mean(dim=0) - state_mean) ** 2
-            action_std += (batch["action"].mean(dim=0) - action_mean) ** 2
+            b_image_mean = einops.reduce(batch["observation", "image"], "b c h w -> c", "mean")
+            b_state_mean = einops.reduce(batch["observation", "state"], "b c -> c", "mean")
+            b_action_mean = einops.reduce(batch["action"], "b c -> c", "mean")
+            image_std += (b_image_mean - image_mean) ** 2
+            state_std += (b_state_mean - state_mean) ** 2
+            action_std += (b_action_mean - action_mean) ** 2
+
+            b_image_max = einops.reduce(batch["observation", "image"], "b c h w -> c", "max")
+            b_image_min = einops.reduce(batch["observation", "image"], "b c h w -> c", "min")
+            b_state_max = einops.reduce(batch["observation", "state"], "b c -> c", "max")
+            b_state_min = einops.reduce(batch["observation", "state"], "b c -> c", "min")
+            b_action_max = einops.reduce(batch["action"], "b c -> c", "max")
+            b_action_min = einops.reduce(batch["action"], "b c -> c", "min")
+            image_max = torch.maximum(image_max, b_image_max)
+            image_min = torch.maximum(image_min, b_image_min)
+            state_max = torch.maximum(state_max, b_state_max)
+            state_min = torch.maximum(state_min, b_state_min)
+            action_max = torch.maximum(action_max, b_action_max)
+            action_min = torch.maximum(action_min, b_action_min)
+
             if i < num_batch - 1:
                 batch = rb.sample()
 
@@ -318,25 +373,33 @@ class PushtExperienceReplay(TensorDictReplayBuffer):
         state_std = torch.sqrt(state_std / num_batch)
         action_std = torch.sqrt(action_std / num_batch)
 
-        mean_std = TensorDict(
+        stats = TensorDict(
             {
                 ("observation", "image", "mean"): image_mean[None, :, None, None],
                 ("observation", "image", "std"): image_std[None, :, None, None],
+                ("observation", "image", "max"): image_max[None, :, None, None],
+                ("observation", "image", "min"): image_min[None, :, None, None],
                 ("observation", "state", "mean"): state_mean[None, :],
                 ("observation", "state", "std"): state_std[None, :],
+                ("observation", "state", "max"): state_max[None, :],
+                ("observation", "state", "min"): state_min[None, :],
                 ("action", "mean"): action_mean[None, :],
                 ("action", "std"): action_std[None, :],
+                ("action", "max"): action_max[None, :],
+                ("action", "min"): action_min[None, :],
             },
             batch_size=[],
         )
-        return mean_std
+        stats["next", "observation", "image"] = stats["observation", "image"]
+        stats["next", "observation", "state"] = stats["observation", "state"]
+        return stats
 
-    def _compute_or_load_mean_std(self, storage) -> TensorDict:
-        mean_std_path = self.root / self.dataset_id / "mean_std.pth"
-        if mean_std_path.exists():
-            mean_std = torch.load(mean_std_path)
+    def _compute_or_load_stats(self, storage) -> TensorDict:
+        stats_path = self.root / self.dataset_id / "stats.pth"
+        if stats_path.exists():
+            stats = torch.load(stats_path)
         else:
-            logging.info(f"compute_mean_std and save to {mean_std_path}")
-            mean_std = self._compute_mean_std(storage)
-            torch.save(mean_std, mean_std_path)
-        return mean_std
+            logging.info(f"compute_stats and save to {stats_path}")
+            stats = self._compute_stats(storage)
+            torch.save(stats, stats_path)
+        return stats

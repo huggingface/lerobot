@@ -1,7 +1,5 @@
 from torchrl.envs.transforms import StepCounter, TransformedEnv
 
-from lerobot.common.envs.transforms import Prod
-
 
 def make_env(cfg, transform=None):
     kwargs = {
@@ -9,6 +7,8 @@ def make_env(cfg, transform=None):
         "from_pixels": cfg.env.from_pixels,
         "pixels_only": cfg.env.pixels_only,
         "image_size": cfg.env.image_size,
+        # TODO(rcadene): do we want a specific eval_env_seed?
+        "seed": cfg.seed,
     }
 
     if cfg.env.name == "simxarm":
@@ -19,6 +19,8 @@ def make_env(cfg, transform=None):
     elif cfg.env.name == "pusht":
         from lerobot.common.envs.pusht import PushtEnv
 
+        # assert kwargs["seed"] > 200, "Seed 0-200 are used for the demonstration dataset, so we don't want to seed the eval env with this range."
+
         clsfunc = PushtEnv
     else:
         raise ValueError(cfg.env.name)
@@ -28,12 +30,8 @@ def make_env(cfg, transform=None):
     # limit rollout to max_steps
     env = TransformedEnv(env, StepCounter(max_steps=cfg.env.episode_length))
 
-    if cfg.env.name == "pusht":
-        # to ensure pusht is in [0,255] like simxarm
-        env.append_transform(Prod(in_keys=[("observation", "image")], prod=255.0))
-
     if transform is not None:
-        # useful to add mean and std normalization
+        # useful to add normalization
         env.append_transform(transform)
 
     return env
