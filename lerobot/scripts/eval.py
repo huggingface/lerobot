@@ -137,7 +137,7 @@ def eval(cfg: dict, out_dir=None):
         save_video=True,
         video_dir=Path(out_dir) / "eval",
         fps=cfg.env.fps,
-        max_steps=cfg.env.episode_length,
+        max_steps=cfg.env.episode_length // cfg.n_action_steps,
         num_episodes=cfg.eval_episodes,
     )
     print(metrics)

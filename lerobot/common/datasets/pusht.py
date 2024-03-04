@@ -143,12 +143,23 @@ class PushtExperienceReplay(TensorDictReplayBuffer):
             in_keys=[
                 # ("observation", "image"),
                 ("observation", "state"),
+                # TODO(rcadene): for tdmpc, we might want image and state
                 # ("next", "observation", "image"),
-                ("next", "observation", "state"),
+                # ("next", "observation", "state"),
                 ("action"),
             ],
             mode="min_max",
         )
+
+        # TODO(rcadene): make normalization strategy configurable between mean_std, min_max, min_max_spec
+        transform.stats["observation", "state", "min"] = torch.tensor(
+            [13.456424, 32.938293], dtype=torch.float32
+        )
+        transform.stats["observation", "state", "max"] = torch.tensor(
+            [496.14618, 510.9579], dtype=torch.float32
+        )
+        transform.stats["action", "min"] = torch.tensor([12.0, 25.0], dtype=torch.float32)
+        transform.stats["action", "max"] = torch.tensor([511.0, 511.0], dtype=torch.float32)
 
         if writer is None:
             writer = ImmutableDatasetWriter()

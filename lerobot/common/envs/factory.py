@@ -7,6 +7,8 @@ def make_env(cfg, transform=None):
         "from_pixels": cfg.env.from_pixels,
         "pixels_only": cfg.env.pixels_only,
         "image_size": cfg.env.image_size,
+        # TODO(rcadene): do we want a specific eval_env_seed?
+        "seed": cfg.seed,
     }
 
     if cfg.env.name == "simxarm":
@@ -16,6 +18,8 @@ def make_env(cfg, transform=None):
         clsfunc = SimxarmEnv
     elif cfg.env.name == "pusht":
         from lerobot.common.envs.pusht import PushtEnv
+
+        # assert kwargs["seed"] > 200, "Seed 0-200 are used for the demonstration dataset, so we don't want to seed the eval env with this range."
 
         clsfunc = PushtEnv
     else:
