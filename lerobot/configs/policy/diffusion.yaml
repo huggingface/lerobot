@@ -29,6 +29,8 @@ log_freq: 250
 offline_steps: 1344000
 online_steps: 0
 
+offline_prioritized_sampler: true
+
 policy:
   name: diffusion
 

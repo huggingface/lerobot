@@ -1,8 +1,9 @@
+import logging
 import os
 from pathlib import Path
 
 import torch
-from torchrl.data.replay_buffers import PrioritizedSliceSampler
+from torchrl.data.replay_buffers import PrioritizedSliceSampler, SliceSampler
 
 from lerobot.common.datasets.pusht import PushtExperienceReplay
 from lerobot.common.datasets.simxarm import SimxarmExperienceReplay
@@ -50,13 +51,22 @@ def make_offline_buffer(cfg, sampler=None):
         num_traj_per_batch = cfg.policy.batch_size  # // cfg.horizon
         # TODO(rcadene): Sampler outputs a batch_size <= cfg.batch_size.
         # We would need to add a transform to pad the tensordict to ensure batch_size == cfg.batch_size.
-        sampler = PrioritizedSliceSampler(
-            max_capacity=100_000,
-            alpha=cfg.policy.per_alpha,
-            beta=cfg.policy.per_beta,
-            num_slices=num_traj_per_batch,
-            strict_length=False,
-        )
+
+        if cfg.offline_prioritized_sampler:
+            logging.info("use prioritized sampler for offline dataset")
+            sampler = PrioritizedSliceSampler(
+                max_capacity=100_000,
+                alpha=cfg.policy.per_alpha,
+                beta=cfg.policy.per_beta,
+                num_slices=num_traj_per_batch,
+                strict_length=False,
+            )
+        else:
+            logging.info("use simple sampler for offline dataset")
+            sampler = SliceSampler(
+                num_slices=num_traj_per_batch,
+                strict_length=False,
+            )
 
     if cfg.env.name == "simxarm":
         # TODO(rcadene): add PrioritizedSliceSampler inside Simxarm to not have to `sampler.extend(index)` here
