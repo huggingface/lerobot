@@ -1,0 +1,94 @@
+name: Test
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      POETRY_VERSION: 1.8.1
+    steps:
+      #----------------------------------------------
+      #       check-out repo and set-up python
+      #----------------------------------------------
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up python
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      #----------------------------------------------
+      #         install & configure poetry
+      #----------------------------------------------
+      - name: Load cached Poetry installation
+        id: cached-poetry
+        uses: actions/cache@v4
+        with:
+          path: ~/.local  # the path depends on the OS
+          key: poetry-${{ env.POETRY_VERSION }}  # increment to reset cache
+      - name: Install Poetry
+        if: steps.cached-poetry.outputs.cache-hit != 'true'
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: true
+          installer-parallel: true
+      - name: Configure Poetry
+        run: poetry config virtualenvs.in-project true
+      #----------------------------------------------
+      #       load cached venv if cache exists
+      #----------------------------------------------
+      - name: Load cached venv
+        id: cached-poetry-dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
+      #----------------------------------------------
+      # install dependencies if cache does not exist
+      #----------------------------------------------
+      - name: Install dependencies
+        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+        run: |
+          poetry install --no-interaction --no-root
+          git clone https://github.com/real-stanford/diffusion_policy
+          cp -r diffusion_policy/diffusion_policy $(poetry env info -p)/lib/python3.10/site-packages/
+      #----------------------------------------------
+      #             install project
+      #----------------------------------------------
+      - name: Install project
+        run: poetry install --no-interaction
+      #----------------------------------------------
+      #               run tests
+      #----------------------------------------------
+      - name: Activate venv
+        run: |
+          source .venv/bin/activate
+      - name: Test train pusht end-to-end
+        run: python lerobot/scripts/train.py \
+          hydra.job.name=pusht \
+          env=pusht \
+          wandb.enable=False \
+          offline_steps=1 \
+          online_steps=1 \
+          device=cpu
+      # - name: Test eval pusht
+      #   run: python lerobot/scripts/eval.py
+      #     hydra.job.name=pusht \
+      #     env=pusht \
+      #     wandb.enable=False \
+      #     eval_episodes=1 \
+      #     device=cpu
+      #----------------------------------------------
+      #              cleanup
+      #----------------------------------------------
+      - name: Cleanup
+        run: |
+          rm -rf diffusion_policy data
