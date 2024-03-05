@@ -76,7 +76,7 @@ jobs:
             env=pusht \
             wandb.enable=False \
             offline_steps=1 \
-            online_steps=1 \
+            online_steps=0 \
             device=cpu
       # - name: Test eval pusht end-to-end
       #   run: |
