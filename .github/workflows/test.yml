@@ -68,24 +68,25 @@ jobs:
       #----------------------------------------------
       #               run tests
       #----------------------------------------------
-      - name: Activate venv
+      - name: Test train pusht end-to-end
         run: |
           source .venv/bin/activate
-      - name: Test train pusht end-to-end
-        run: python lerobot/scripts/train.py \
-          hydra.job.name=pusht \
-          env=pusht \
-          wandb.enable=False \
-          offline_steps=1 \
-          online_steps=1 \
-          device=cpu
-      # - name: Test eval pusht
-      #   run: python lerobot/scripts/eval.py
-      #     hydra.job.name=pusht \
-      #     env=pusht \
-      #     wandb.enable=False \
-      #     eval_episodes=1 \
-      #     device=cpu
+          python lerobot/scripts/train.py \
+            hydra.job.name=pusht \
+            env=pusht \
+            wandb.enable=False \
+            offline_steps=1 \
+            online_steps=1 \
+            device=cpu
+      # - name: Test eval pusht end-to-end
+      #   run: |
+      #     source .venv/bin/activate
+      #     python lerobot/scripts/eval.py
+      #       hydra.job.name=pusht \
+      #       env=pusht \
+      #       wandb.enable=False \
+      #       eval_episodes=1 \
+      #       device=cpu
       #----------------------------------------------
       #              cleanup
       #----------------------------------------------
