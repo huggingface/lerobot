@@ -14,7 +14,7 @@ classifiers=[
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Build Tools",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.10",
 ]
 packages = [{include = "lerobot"}]
 
@@ -46,10 +46,14 @@ mujoco-py = "^2.1.2.14"
 gym = "^0.26.2"
 opencv-python = "^4.9.0.80"
 diffusion-policy = {git = "https://github.com/real-stanford/diffusion_policy"}
+diffusers = "^0.26.3"
+torchvision = "^0.17.1"
 
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.6.2"
+debugpy = "^1.8.1"
+pytest = "^8.1.0"
 
 [build-system]
 requires = ["poetry-core"]
