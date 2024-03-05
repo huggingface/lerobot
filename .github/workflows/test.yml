@@ -78,6 +78,7 @@ jobs:
             offline_steps=1 \
             online_steps=0 \
             device=cpu
+      # TODO(rcadene, aliberts): Add end-to-end test of eval checkpoint post training
       # - name: Test eval pusht end-to-end
       #   run: |
       #     source .venv/bin/activate
