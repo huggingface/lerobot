@@ -29,7 +29,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
         sampler: SliceSampler = None,
         collate_fn: Callable = None,
         writer: Writer = None,
-        transform: "torchrl.envs.Transform" = None,  # noqa-F821
+        transform: "torchrl.envs.Transform" = None,
     ):
         self.dataset_id = dataset_id
         self.shuffle = shuffle

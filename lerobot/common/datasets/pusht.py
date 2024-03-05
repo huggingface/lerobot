@@ -95,7 +95,7 @@ class PushtExperienceReplay(AbstractExperienceReplay):
         sampler: SliceSampler = None,
         collate_fn: Callable = None,
         writer: Writer = None,
-        transform: "torchrl.envs.Transform" = None,  # noqa-F821
+        transform: "torchrl.envs.Transform" = None,
     ):
         super().__init__(
             dataset_id,
