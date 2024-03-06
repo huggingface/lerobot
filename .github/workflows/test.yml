@@ -11,7 +11,9 @@ on:
 
 jobs:
   test:
-    if: contains(github.event.pull_request.labels.*.name, 'CI')
+    if: |
+      ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'CI') }} ||
+      ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     env:
       POETRY_VERSION: 1.8.1
