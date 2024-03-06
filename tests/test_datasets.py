@@ -6,12 +6,17 @@ from .utils import init_config
 
 
 @pytest.mark.parametrize(
-    "env_name",
+    "env_name,dataset_id",
     [
-        "simxarm",
-        "pusht",
+        # TODO(rcadene): simxarm is depreciated for now
+        # ("simxarm", "lift"),
+        ("pusht", "pusht"),
+        ("aloha", "sim_insertion_human"),
+        ("aloha", "sim_insertion_scripted"),
+        ("aloha", "sim_transfer_cube_human"),
+        ("aloha", "sim_transfer_cube_scripted"),
     ],
 )
-def test_factory(env_name):
-    cfg = init_config(overrides=[f"env={env_name}"])
+def test_factory(env_name, dataset_id):
+    cfg = init_config(overrides=[f"env={env_name}", f"env.task={dataset_id}"])
     offline_buffer = make_offline_buffer(cfg)

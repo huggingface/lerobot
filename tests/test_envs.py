@@ -36,6 +36,7 @@ def print_spec_rollout(env):
     print("data from rollout:", simple_rollout(100))
 
 
+@pytest.mark.skip(reason="Simxarm is deprecated")
 @pytest.mark.parametrize(
     "task,from_pixels,pixels_only",
     [
@@ -80,7 +81,7 @@ def test_pusht(from_pixels, pixels_only):
 @pytest.mark.parametrize(
     "env_name",
     [
-        "simxarm",
+        # "simxarm",
         "pusht",
     ],
 )
