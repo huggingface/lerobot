@@ -6,6 +6,10 @@ from omegaconf import OmegaConf
 from termcolor import colored
 
 
+def log_output_dir(out_dir):
+    logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {out_dir}")
+
+
 def cfg_to_group(cfg, return_list=False):
     """Return a wandb-safe group name for logging. Optionally returns group name as list."""
     # lst = [cfg.task, cfg.modality, re.sub("[^0-9a-zA-Z]+", "-", cfg.exp_name)]
