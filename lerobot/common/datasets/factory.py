@@ -66,6 +66,12 @@ def make_offline_buffer(
 
         clsfunc = PushtExperienceReplay
         dataset_id = "pusht"
+
+    elif cfg.env.name == "aloha":
+        from lerobot.common.datasets.aloha import AlohaExperienceReplay
+
+        clsfunc = AlohaExperienceReplay
+        dataset_id = f"aloha_{cfg.env.task}"
     else:
         raise ValueError(cfg.env.name)
 
