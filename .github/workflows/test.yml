@@ -4,13 +4,14 @@ on:
   pull_request:
     branches:
       - main
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches:
       - main
 
 jobs:
   test:
+    if: contains(github.event.pull_request.labels.*.name, 'CI')
     runs-on: ubuntu-latest
     env:
       POETRY_VERSION: 1.8.1
