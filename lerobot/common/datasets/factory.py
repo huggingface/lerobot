@@ -102,7 +102,7 @@ def make_offline_buffer(
         offline_buffer.set_transform(transform)
 
     if not overwrite_sampler:
-        index = torch.arange(0, offline_buffer.num_frames, 1)
+        index = torch.arange(0, offline_buffer.num_samples, 1)
         sampler.extend(index)
 
     return offline_buffer
