@@ -32,38 +32,53 @@ jobs:
       #         install & configure poetry
       #----------------------------------------------
       - name: Load cached Poetry installation
-        id: cached-poetry
-        uses: actions/cache@v4
+        id: restore-poetry-cache
+        uses: actions/cache/restore@v3
         with:
           path: ~/.local  # the path depends on the OS
           key: poetry-${{ env.POETRY_VERSION }}  # increment to reset cache
       - name: Install Poetry
-        if: steps.cached-poetry.outputs.cache-hit != 'true'
+        if: steps.restore-poetry-cache.outputs.cache-hit != 'true'
         uses: snok/install-poetry@v1
         with:
           version: ${{ env.POETRY_VERSION }}
           virtualenvs-create: true
           installer-parallel: true
+      - name: Save cached Poetry installation
+        if: |
+          steps.restore-poetry-cache.outputs.cache-hit != 'true' &&
+          github.ref_name == 'main'
+        id: save-poetry-cache
+        uses: actions/cache/save@v3
+        with:
+          path: ~/.local  # the path depends on the OS
+          key: poetry-${{ env.POETRY_VERSION }}  # increment to reset cache
       - name: Configure Poetry
         run: poetry config virtualenvs.in-project true
       #----------------------------------------------
-      #       load cached venv if cache exists
+      #           install dependencies
       #----------------------------------------------
       - name: Load cached venv
-        id: cached-poetry-dependencies
-        uses: actions/cache@v4
+        id: restore-dependencies-cache
+        uses: actions/cache/restore@v3
         with:
           path: .venv
           key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
-      #----------------------------------------------
-      # install dependencies if cache does not exist
-      #----------------------------------------------
       - name: Install dependencies
-        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+        if: steps.restore-dependencies-cache.outputs.cache-hit != 'true'
         run: |
           poetry install --no-interaction --no-root
           git clone https://github.com/real-stanford/diffusion_policy
           cp -r diffusion_policy/diffusion_policy $(poetry env info -p)/lib/python3.10/site-packages/
+      - name: Save cached venv
+        if: |
+            steps.restore-dependencies-cache.outputs.cache-hit != 'true' &&
+            github.ref_name == 'main'
+        id: save-dependencies-cache
+        uses: actions/cache/save@v3
+        with:
+          path: .venv
+          key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
       #----------------------------------------------
       #             install project
       #----------------------------------------------
@@ -96,5 +111,4 @@ jobs:
       #              cleanup
       #----------------------------------------------
       - name: Cleanup
-        run: |
-          rm -rf diffusion_policy data
+        run: rm -rf diffusion_policy data
