@@ -11,10 +11,11 @@ from .utils import init_config
         # TODO(rcadene): simxarm is depreciated for now
         # ("simxarm", "lift"),
         ("pusht", "pusht"),
-        ("aloha", "sim_insertion_human"),
-        ("aloha", "sim_insertion_scripted"),
-        ("aloha", "sim_transfer_cube_human"),
-        ("aloha", "sim_transfer_cube_scripted"),
+        # TODO(aliberts): add aloha when dataset is available on hub
+        # ("aloha", "sim_insertion_human"),
+        # ("aloha", "sim_insertion_scripted"),
+        # ("aloha", "sim_transfer_cube_human"),
+        # ("aloha", "sim_transfer_cube_scripted"),
     ],
 )
 def test_factory(env_name, dataset_id):
