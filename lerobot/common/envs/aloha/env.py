@@ -370,14 +370,10 @@ class AlohaEnv(EnvBase):
             raise NotImplementedError()
             # self._prev_action_queue = deque(maxlen=self.num_prev_action)
 
-    def render(self, mode="rgb_array", width=384, height=384):
-        if width != height:
-            raise NotImplementedError()
-        tmp = self._env.render_size
-        self._env.render_size = width
-        out = self._env.render(mode)
-        self._env.render_size = tmp
-        return out
+    def render(self, mode="rgb_array", width=640, height=480):
+        # TODO(rcadene): render and visualizer several cameras (e.g. angle, front_close)
+        image = self._env.physics.render(height=height, width=width, camera_id="top")
+        return image
 
     def _format_raw_obs(self, raw_obs):
         if self.from_pixels:
@@ -535,8 +531,10 @@ class AlohaEnv(EnvBase):
         # )
 
         # TODO(rcaene): add bounds (where are they????)
-        self.action_spec = UnboundedContinuousTensorSpec(
+        self.action_spec = BoundedTensorSpec(
             shape=(len(ACTIONS)),
+            low=-1,
+            high=1,
             dtype=torch.float32,
             device=self.device,
         )

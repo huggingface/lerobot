@@ -73,11 +73,11 @@ def download(data_dir, dataset_id):
 
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    gdown.download_folder(FOLDER_URLS[dataset_id], output=data_dir)
+    gdown.download_folder(FOLDER_URLS[dataset_id], output=str(data_dir))
 
     # because of the 50 files limit per directory, two files episode 48 and 49 were missing
-    gdown.download(EP48_URLS[dataset_id], output=data_dir / "episode_48.hdf5", fuzzy=True)
-    gdown.download(EP49_URLS[dataset_id], output=data_dir / "episode_49.hdf5", fuzzy=True)
+    gdown.download(EP48_URLS[dataset_id], output=str(data_dir / "episode_48.hdf5"), fuzzy=True)
+    gdown.download(EP49_URLS[dataset_id], output=str(data_dir / "episode_49.hdf5"), fuzzy=True)
 
 
 class AlohaExperienceReplay(AbstractExperienceReplay):
