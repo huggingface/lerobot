@@ -61,19 +61,10 @@ env=pusht
 
 ## TODO
 
-- [x] priority update doesnt match FOWM or original paper
-- [x] self.step=100000 should be updated at every step to adjust to horizon of planner
-- [ ] prefetch replay buffer to speedup training
-- [ ] parallelize env to speedup eval
-- [ ] clean checkpointing / loading
-- [ ] clean logging
-- [ ] clean config
-- [ ] clean hyperparameter tuning
-- [ ] add pusht
-- [ ] add aloha
-- [ ] add act
-- [ ] add diffusion
-- [ ] add aloha 2
+If you don't know how to contribute or want to know the next features we working on, look on this project page: [LeRobot TODO](https://github.com/users/Cadene/projects/1)
+
+Ask [Remi Cadene](re.cadene@gmail.com) for access if needed.
+
 
 ## Profile
 
