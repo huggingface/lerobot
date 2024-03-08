@@ -17,6 +17,10 @@ def make_policy(cfg):
             n_action_steps=cfg.n_action_steps + cfg.n_latency_steps,
             **cfg.policy,
         )
+    elif cfg.policy.name == "act":
+        from lerobot.common.policies.diffusion.policy import ActionChunkingTransformerPolicy
+
+        policy = ActionChunkingTransformerPolicy(cfg.policy)
     else:
         raise ValueError(cfg.policy.name)
 

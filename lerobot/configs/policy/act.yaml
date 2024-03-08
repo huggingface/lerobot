@@ -1,0 +1,22 @@
+# @package _global_
+
+n_action_steps: 1
+
+state_dim: 14
+
+policy:
+  name: act
+
+  lr: 1e-5
+  lr_backbone: 1e-5
+  backbone: resnet18
+  num_queries: 100 # chunk_size
+  kl_weight: 10
+  hidden_dim: 512
+  dim_feedforward: 3200
+  enc_layers: 7
+  dec_layers: 8
+  nheads: 8
+  camera_names: top
+
+  batch_size: 8
