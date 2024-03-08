@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       POETRY_VERSION: 1.8.1
+      DATA_DIR: tests/data
     steps:
       #----------------------------------------------
       #       check-out repo and set-up python
