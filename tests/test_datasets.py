@@ -12,10 +12,10 @@ from .utils import init_config
         # ("simxarm", "lift"),
         ("pusht", "pusht"),
         # TODO(aliberts): add aloha when dataset is available on hub
-        # ("aloha", "sim_insertion_human"),
-        # ("aloha", "sim_insertion_scripted"),
-        # ("aloha", "sim_transfer_cube_human"),
-        # ("aloha", "sim_transfer_cube_scripted"),
+        ("aloha", "sim_insertion_human"),
+        ("aloha", "sim_insertion_scripted"),
+        ("aloha", "sim_transfer_cube_human"),
+        ("aloha", "sim_transfer_cube_scripted"),
     ],
 )
 def test_factory(env_name, dataset_id):

@@ -83,6 +83,7 @@ def test_pusht(from_pixels, pixels_only):
     [
         # "simxarm",
         "pusht",
+        "aloha",
     ],
 )
 def test_factory(env_name):

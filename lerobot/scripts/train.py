@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import hydra
 import numpy as np
@@ -192,6 +193,8 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 num_episodes=cfg.eval_episodes,
                 max_steps=cfg.env.episode_length // cfg.n_action_steps,
                 return_first_video=True,
+                video_dir=Path(out_dir) / "eval",
+                save_video=True,
             )
             log_eval_info(logger, eval_info, step, cfg, offline_buffer, is_offline)
             if cfg.wandb.enable:
