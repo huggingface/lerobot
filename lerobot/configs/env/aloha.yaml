@@ -15,7 +15,7 @@ env:
   task: sim_insertion_human
   from_pixels: True
   pixels_only: False
-  image_size: 96
+  image_size: [3, 480, 640]
   action_repeat: 1
   episode_length: 300
   fps: ${fps}

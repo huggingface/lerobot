@@ -1,8 +1,10 @@
 import collections
 import importlib
+import logging
 from collections import deque
 from typing import Optional
 
+import einops
 import numpy as np
 import torch
 from dm_control import mujoco
@@ -16,59 +18,60 @@ from torchrl.data.tensor_specs import (
     UnboundedContinuousTensorSpec,
 )
 from torchrl.envs import EnvBase
-from torchrl.envs.libs.gym import _gym_to_torchrl_spec_transform
 
 from lerobot.common.utils import set_seed
 
 from .constants import (
+    ACTIONS,
     ASSETS_DIR,
     DT,
+    JOINTS,
     PUPPET_GRIPPER_POSITION_CLOSE,
-    PUPPET_GRIPPER_POSITION_NORMALIZE_FN,
-    PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN,
-    PUPPET_GRIPPER_VELOCITY_NORMALIZE_FN,
     START_ARM_POSE,
+    normalize_puppet_gripper_position,
+    normalize_puppet_gripper_velocity,
+    unnormalize_puppet_gripper_position,
 )
 from .utils import sample_box_pose, sample_insertion_pose
 
 _has_gym = importlib.util.find_spec("gym") is not None
 
 
-def make_ee_sim_env(task_name):
-    """
-    Environment for simulated robot bi-manual manipulation, with end-effector control.
-    Action space:      [left_arm_pose (7),             # position and quaternion for end effector
-                        left_gripper_positions (1),    # normalized gripper position (0: close, 1: open)
-                        right_arm_pose (7),            # position and quaternion for end effector
-                        right_gripper_positions (1),]  # normalized gripper position (0: close, 1: open)
+# def make_ee_sim_env(task_name):
+#     """
+#     Environment for simulated robot bi-manual manipulation, with end-effector control.
+#     Action space:      [left_arm_pose (7),             # position and quaternion for end effector
+#                         left_gripper_positions (1),    # normalized gripper position (0: close, 1: open)
+#                         right_arm_pose (7),            # position and quaternion for end effector
+#                         right_gripper_positions (1),]  # normalized gripper position (0: close, 1: open)
 
-    Observation space: {"qpos": Concat[ left_arm_qpos (6),         # absolute joint position
-                                        left_gripper_position (1),  # normalized gripper position (0: close, 1: open)
-                                        right_arm_qpos (6),         # absolute joint position
-                                        right_gripper_qpos (1)]     # normalized gripper position (0: close, 1: open)
-                        "qvel": Concat[ left_arm_qvel (6),         # absolute joint velocity (rad)
-                                        left_gripper_velocity (1),  # normalized gripper velocity (pos: opening, neg: closing)
-                                        right_arm_qvel (6),         # absolute joint velocity (rad)
-                                        right_gripper_qvel (1)]     # normalized gripper velocity (pos: opening, neg: closing)
-                        "images": {"main": (480x640x3)}        # h, w, c, dtype='uint8'
-    """
-    if "sim_transfer_cube" in task_name:
-        xml_path = ASSETS_DIR / "bimanual_viperx_ee_transfer_cube.xml"
-        physics = mujoco.Physics.from_xml_path(xml_path)
-        task = TransferCubeEETask(random=False)
-        env = control.Environment(
-            physics, task, time_limit=20, control_timestep=DT, n_sub_steps=None, flat_observation=False
-        )
-    elif "sim_insertion" in task_name:
-        xml_path = ASSETS_DIR / "bimanual_viperx_ee_insertion.xml"
-        physics = mujoco.Physics.from_xml_path(xml_path)
-        task = InsertionEETask(random=False)
-        env = control.Environment(
-            physics, task, time_limit=20, control_timestep=DT, n_sub_steps=None, flat_observation=False
-        )
-    else:
-        raise NotImplementedError
-    return env
+#     Observation space: {"qpos": Concat[ left_arm_qpos (6),         # absolute joint position
+#                                         left_gripper_position (1),  # normalized gripper position (0: close, 1: open)
+#                                         right_arm_qpos (6),         # absolute joint position
+#                                         right_gripper_qpos (1)]     # normalized gripper position (0: close, 1: open)
+#                         "qvel": Concat[ left_arm_qvel (6),         # absolute joint velocity (rad)
+#                                         left_gripper_velocity (1),  # normalized gripper velocity (pos: opening, neg: closing)
+#                                         right_arm_qvel (6),         # absolute joint velocity (rad)
+#                                         right_gripper_qvel (1)]     # normalized gripper velocity (pos: opening, neg: closing)
+#                         "images": {"main": (480x640x3)}        # h, w, c, dtype='uint8'
+#     """
+#     if "sim_transfer_cube" in task_name:
+#         xml_path = ASSETS_DIR / "bimanual_viperx_ee_transfer_cube.xml"
+#         physics = mujoco.Physics.from_xml_path(xml_path)
+#         task = TransferCubeEETask(random=False)
+#         env = control.Environment(
+#             physics, task, time_limit=20, control_timestep=DT, n_sub_steps=None, flat_observation=False
+#         )
+#     elif "sim_insertion" in task_name:
+#         xml_path = ASSETS_DIR / "bimanual_viperx_ee_insertion.xml"
+#         physics = mujoco.Physics.from_xml_path(xml_path)
+#         task = InsertionEETask(random=False)
+#         env = control.Environment(
+#             physics, task, time_limit=20, control_timestep=DT, n_sub_steps=None, flat_observation=False
+#         )
+#     else:
+#         raise NotImplementedError
+#     return env
 
 
 class BimanualViperXEETask(base.Task):
@@ -89,8 +92,8 @@ class BimanualViperXEETask(base.Task):
         np.copyto(physics.data.mocap_quat[1], action_right[3:7])
 
         # set gripper
-        g_left_ctrl = PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN(action_left[7])
-        g_right_ctrl = PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN(action_right[7])
+        g_left_ctrl = unnormalize_puppet_gripper_position(action_left[7])
+        g_right_ctrl = unnormalize_puppet_gripper_position(action_right[7])
         np.copyto(physics.data.ctrl, np.array([g_left_ctrl, -g_left_ctrl, g_right_ctrl, -g_right_ctrl]))
 
     def initialize_robots(self, physics):
@@ -131,8 +134,8 @@ class BimanualViperXEETask(base.Task):
         right_qpos_raw = qpos_raw[8:16]
         left_arm_qpos = left_qpos_raw[:6]
         right_arm_qpos = right_qpos_raw[:6]
-        left_gripper_qpos = [PUPPET_GRIPPER_POSITION_NORMALIZE_FN(left_qpos_raw[6])]
-        right_gripper_qpos = [PUPPET_GRIPPER_POSITION_NORMALIZE_FN(right_qpos_raw[6])]
+        left_gripper_qpos = [normalize_puppet_gripper_position(left_qpos_raw[6])]
+        right_gripper_qpos = [normalize_puppet_gripper_position(right_qpos_raw[6])]
         return np.concatenate([left_arm_qpos, left_gripper_qpos, right_arm_qpos, right_gripper_qpos])
 
     @staticmethod
@@ -142,8 +145,8 @@ class BimanualViperXEETask(base.Task):
         right_qvel_raw = qvel_raw[8:16]
         left_arm_qvel = left_qvel_raw[:6]
         right_arm_qvel = right_qvel_raw[:6]
-        left_gripper_qvel = [PUPPET_GRIPPER_VELOCITY_NORMALIZE_FN(left_qvel_raw[6])]
-        right_gripper_qvel = [PUPPET_GRIPPER_VELOCITY_NORMALIZE_FN(right_qvel_raw[6])]
+        left_gripper_qvel = [normalize_puppet_gripper_velocity(left_qvel_raw[6])]
+        right_gripper_qvel = [normalize_puppet_gripper_velocity(right_qvel_raw[6])]
         return np.concatenate([left_arm_qvel, left_gripper_qvel, right_arm_qvel, right_gripper_qvel])
 
     @staticmethod
@@ -156,7 +159,7 @@ class BimanualViperXEETask(base.Task):
         obs["qpos"] = self.get_qpos(physics)
         obs["qvel"] = self.get_qvel(physics)
         obs["env_state"] = self.get_env_state(physics)
-        obs["images"] = dict()
+        obs["images"] = {}
         obs["images"]["top"] = physics.render(height=480, width=640, camera_id="top")
         obs["images"]["angle"] = physics.render(height=480, width=640, camera_id="angle")
         obs["images"]["vis"] = physics.render(height=480, width=640, camera_id="front_close")
@@ -234,7 +237,9 @@ class InsertionEETask(BimanualViperXEETask):
         self.initialize_robots(physics)
         # randomize peg and socket position
         peg_pose, socket_pose = sample_insertion_pose()
-        id2index = lambda j_id: 16 + (j_id - 16) * 7  # first 16 is robot qpos, 7 is pose dim # hacky
+
+        def id2index(j_id):
+            return 16 + (j_id - 16) * 7  # first 16 is robot qpos, 7 is pose dim # hacky
 
         peg_start_id = physics.model.name2id("red_peg_joint", "joint")
         peg_start_idx = id2index(peg_start_id)
@@ -333,19 +338,22 @@ class AlohaEnv(EnvBase):
         if not from_pixels:
             raise NotImplementedError()
 
+        # time limit is controlled by StepCounter in factory
+        time_limit = float("inf")
+
         if "sim_transfer_cube" in task:
             xml_path = ASSETS_DIR / "bimanual_viperx_ee_transfer_cube.xml"
-            physics = mujoco.Physics.from_xml_path(xml_path)
+            physics = mujoco.Physics.from_xml_path(str(xml_path))
             task = TransferCubeEETask(random=False)
             env = control.Environment(
-                physics, task, time_limit=20, control_timestep=DT, n_sub_steps=None, flat_observation=False
+                physics, task, time_limit, control_timestep=DT, n_sub_steps=None, flat_observation=False
             )
         elif "sim_insertion" in task:
             xml_path = ASSETS_DIR / "bimanual_viperx_ee_insertion.xml"
-            physics = mujoco.Physics.from_xml_path(xml_path)
+            physics = mujoco.Physics.from_xml_path(str(xml_path))
             task = InsertionEETask(random=False)
             env = control.Environment(
-                physics, task, time_limit=20, control_timestep=DT, n_sub_steps=None, flat_observation=False
+                physics, task, time_limit, control_timestep=DT, n_sub_steps=None, flat_observation=False
             )
         else:
             raise NotImplementedError
@@ -373,14 +381,16 @@ class AlohaEnv(EnvBase):
 
     def _format_raw_obs(self, raw_obs):
         if self.from_pixels:
-            image = torch.from_numpy(raw_obs["image"])
-            obs = {"image": image}
+            image = torch.from_numpy(raw_obs["images"]["top"].copy())
+            image = einops.rearrange(image, "h w c -> c h w")
+            obs = {"image": image.type(torch.float32) / 255.0}
 
             if not self.pixels_only:
-                obs["state"] = torch.from_numpy(raw_obs["agent_pos"]).type(torch.float32)
+                obs["state"] = torch.from_numpy(raw_obs["qpos"]).type(torch.float32)
         else:
-            # TODO:
-            obs = {"state": torch.from_numpy(raw_obs["observation"]).type(torch.float32)}
+            # TODO(rcadene):
+            raise NotImplementedError()
+            # obs = {"state": torch.from_numpy(raw_obs["observation"]).type(torch.float32)}
 
         return obs
 
@@ -391,9 +401,10 @@ class AlohaEnv(EnvBase):
             self._current_seed += 1
             self.set_seed(self._current_seed)
             raw_obs = self._env.reset()
-            assert self._current_seed == self._env._seed
+            # TODO(rcadene): add assert
+            # assert self._current_seed == self._env._seed
 
-            obs = self._format_raw_obs(raw_obs)
+            obs = self._format_raw_obs(raw_obs.observation)
 
             if self.num_prev_obs > 0:
                 stacked_obs = {}
@@ -435,9 +446,12 @@ class AlohaEnv(EnvBase):
 
         num_action_steps = action.shape[0]
         for i in range(num_action_steps):
-            raw_obs, reward, done, info = self._env.step(action[i])
-            sum_reward += reward
+            _, reward, discount, raw_obs = self._env.step(action[i])
+            del discount  # not used
 
+            # TOOD(rcadene): add an enum
+            success = done = reward == 4
+            sum_reward += reward
             obs = self._format_raw_obs(raw_obs)
 
             if self.num_prev_obs > 0:
@@ -456,7 +470,7 @@ class AlohaEnv(EnvBase):
                 "reward": torch.tensor([sum_reward], dtype=torch.float32),
                 # succes and done are true when coverage > self.success_threshold in env
                 "done": torch.tensor([done], dtype=torch.bool),
-                "success": torch.tensor([done], dtype=torch.bool),
+                "success": torch.tensor([success], dtype=torch.bool),
             },
             batch_size=[],
         )
@@ -464,8 +478,17 @@ class AlohaEnv(EnvBase):
 
     def _make_spec(self):
         obs = {}
+        from omegaconf import OmegaConf
+
         if self.from_pixels:
-            image_shape = (3, self.image_size, self.image_size)
+            if isinstance(self.image_size, int):
+                image_shape = (3, self.image_size, self.image_size)
+            elif OmegaConf.is_list(self.image_size):
+                assert len(self.image_size) == 3  # c h w
+                assert self.image_size[0] == 3  # c is RGB
+                image_shape = tuple(self.image_size)
+            else:
+                raise ValueError(self.image_size)
             if self.num_prev_obs > 0:
                 image_shape = (self.num_prev_obs + 1, *image_shape)
 
@@ -477,33 +500,44 @@ class AlohaEnv(EnvBase):
                 device=self.device,
             )
             if not self.pixels_only:
-                state_shape = self._env.observation_space["agent_pos"].shape
+                state_shape = (len(JOINTS),)
                 if self.num_prev_obs > 0:
                     state_shape = (self.num_prev_obs + 1, *state_shape)
 
-                obs["state"] = BoundedTensorSpec(
-                    low=0,
-                    high=512,
+                obs["state"] = UnboundedContinuousTensorSpec(
+                    # TODO: add low and high bounds
                     shape=state_shape,
                     dtype=torch.float32,
                     device=self.device,
                 )
         else:
             # TODO(rcadene): add observation_space achieved_goal and desired_goal?
-            state_shape = self._env.observation_space["observation"].shape
+            state_shape = (len(JOINTS),)
             if self.num_prev_obs > 0:
                 state_shape = (self.num_prev_obs + 1, *state_shape)
 
             obs["state"] = UnboundedContinuousTensorSpec(
-                # TODO:
+                # TODO: add low and high bounds
                 shape=state_shape,
                 dtype=torch.float32,
                 device=self.device,
             )
         self.observation_spec = CompositeSpec({"observation": obs})
 
-        self.action_spec = _gym_to_torchrl_spec_transform(
-            self._env.action_space,
+        # TODO(rcadene): valid when controling end effector?
+        # action_space = self._env.action_spec()
+        # self.action_spec = BoundedTensorSpec(
+        #     low=action_space.minimum,
+        #     high=action_space.maximum,
+        #     shape=action_space.shape,
+        #     dtype=torch.float32,
+        #     device=self.device,
+        # )
+
+        # TODO(rcaene): add bounds (where are they????)
+        self.action_spec = UnboundedContinuousTensorSpec(
+            shape=(len(ACTIONS)),
+            dtype=torch.float32,
             device=self.device,
         )
 
@@ -532,4 +566,6 @@ class AlohaEnv(EnvBase):
 
     def _set_seed(self, seed: Optional[int]):
         set_seed(seed)
-        self._env.seed(seed)
+        # TODO(rcadene): seed the env
+        # self._env.seed(seed)
+        logging.warning("Aloha env is not seeded")

@@ -26,6 +26,7 @@ def make_env(cfg, transform=None):
     elif cfg.env.name == "aloha":
         from lerobot.common.envs.aloha.env import AlohaEnv
 
+        kwargs["task"] = cfg.env.task
         clsfunc = AlohaEnv
     else:
         raise ValueError(cfg.env.name)
