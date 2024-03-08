@@ -38,27 +38,18 @@ def eval_policy(
     successes = []
     threads = []
     for i in tqdm.tqdm(range(num_episodes)):
-        tensordict = env.reset()
-
         ep_frames = []
-
         if save_video or (return_first_video and i == 0):
 
-            def rendering_callback(env, td=None):
+            def render_frame(env):
                 ep_frames.append(env.render())  # noqa: B023
 
-            # render first frame before rollout
-            rendering_callback(env)
-        else:
-            rendering_callback = None
+            env.register_rendering_hook(render_frame)
 
         with torch.inference_mode():
             rollout = env.rollout(
                 max_steps=max_steps,
                 policy=policy,
-                callback=rendering_callback,
-                auto_reset=False,
-                tensordict=tensordict,
                 auto_cast_to_device=True,
             )
         # print(", ".join([f"{x:.3f}" for x in rollout["next", "reward"][:,0].tolist()]))
@@ -84,6 +75,8 @@ def eval_policy(
 
             if return_first_video and i == 0:
                 first_video = stacked_frames.transpose(0, 3, 1, 2)
+
+    env.reset_rendering_hooks()
 
     for thread in threads:
         thread.join()

@@ -1,0 +1,58 @@
+# @package _global_
+
+offline_steps: 1344000
+online_steps: 0
+
+eval_episodes: 1
+eval_freq: 10000
+save_freq: 100000
+log_freq: 250
+
+horizon: 100
+n_obs_steps: 1
+n_latency_steps: 0
+# when temporal_agg=False, n_action_steps=horizon
+n_action_steps: ${horizon}
+
+policy:
+  name: act
+
+  pretrained_model_path:
+
+  lr: 1e-5
+  lr_backbone: 1e-5
+  weight_decay: 1e-4
+  grad_clip_norm: 10
+  backbone: resnet18
+  num_queries: ${horizon} # chunk_size
+  horizon: ${horizon} # chunk_size
+  kl_weight: 10
+  hidden_dim: 512
+  dim_feedforward: 3200
+  enc_layers: 4
+  dec_layers: 7
+  nheads: 8
+  #camera_names: [top, front_close, left_pillar, right_pillar]
+  camera_names: [top]
+  position_embedding: sine
+  masks: false
+  dilation: false
+  dropout: 0.1
+  pre_norm: false
+
+  vae: true
+
+  batch_size: 8
+
+  per_alpha: 0.6
+  per_beta: 0.4
+
+  balanced_sampling: false
+  utd: 1
+
+  n_obs_steps: ${n_obs_steps}
+
+  temporal_agg: false
+
+  state_dim: ???
+  action_dim: ???

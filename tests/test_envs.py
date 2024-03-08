@@ -1,6 +1,8 @@
 import pytest
 from tensordict import TensorDict
+import torch
 from torchrl.envs.utils import check_env_specs, step_mdp
+from lerobot.common.datasets.factory import make_offline_buffer
 
 from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.pusht.env import PushtEnv
@@ -83,9 +85,24 @@ def test_pusht(from_pixels, pixels_only):
     [
         # "simxarm",
         "pusht",
+        "aloha",
     ],
 )
 def test_factory(env_name):
     cfg = init_config(overrides=[f"env={env_name}"])
+
+    offline_buffer = make_offline_buffer(cfg)
+
     env = make_env(cfg)
+    for key in offline_buffer.image_keys:
+        assert env.reset().get(key).dtype == torch.uint8
+    check_env_specs(env)
+
+    env = make_env(cfg, transform=offline_buffer.transform)
+    for key in offline_buffer.image_keys:
+        img = env.reset().get(key)
+        assert img.dtype == torch.float32
+        # TODO(rcadene): we assume for now that image normalization takes place in the model
+        assert img.max() <= 1.0
+        assert img.min() >= 0.0
     check_env_specs(env)

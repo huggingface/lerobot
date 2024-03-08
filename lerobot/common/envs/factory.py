@@ -23,6 +23,11 @@ def make_env(cfg, transform=None):
         # assert kwargs["seed"] > 200, "Seed 0-200 are used for the demonstration dataset, so we don't want to seed the eval env with this range."
 
         clsfunc = PushtEnv
+    elif cfg.env.name == "aloha":
+        from lerobot.common.envs.aloha.env import AlohaEnv
+
+        kwargs["task"] = cfg.env.task
+        clsfunc = AlohaEnv
     else:
         raise ValueError(cfg.env.name)
 
