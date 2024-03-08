@@ -115,6 +115,25 @@ pre-commit run -a
 ```
 
 **Tests**
+
+Install [git lfs](https://git-lfs.com/) to retrieve test artifacts (if you don't have it already).
+On Mac:
 ```
-pytest -sx tests
+brew install git-lfs
+git lfs install
+```
+
+On Ubuntu:
+```
+sudo apt-get install git-lfs
+git lfs install
+```
+
+Pull artifacts if they're not in [tests/data](tests/data)
+```
+git lfs pull
+```
+
+```
+DATA_DIR="tests/data" pytest -sx tests
 ```
