@@ -87,6 +87,10 @@ jobs:
       #----------------------------------------------
       #               run tests
       #----------------------------------------------
+      - name: Run tests
+        run: |
+          source .venv/bin/activate
+          pytest tests
       - name: Test train pusht end-to-end
         run: |
           source .venv/bin/activate

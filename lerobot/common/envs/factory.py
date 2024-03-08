@@ -9,6 +9,7 @@ def make_env(cfg, transform=None):
         "image_size": cfg.env.image_size,
         # TODO(rcadene): do we want a specific eval_env_seed?
         "seed": cfg.seed,
+        "num_prev_obs": cfg.n_obs_steps - 1,
     }
 
     if cfg.env.name == "simxarm":
