@@ -23,6 +23,8 @@ jobs:
       #----------------------------------------------
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          lfs: true
       - name: Set up python
         id: setup-python
         uses: actions/setup-python@v5
