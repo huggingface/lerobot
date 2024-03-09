@@ -97,9 +97,6 @@ jobs:
       - name: Test train pusht end-to-end
         run: |
           source .venv/bin/activate
-          ls -lash tests/data/pusht
-          ls -lash tests/data/pusht/next
-          ls -lash tests/data/pusht/observation
           python lerobot/scripts/train.py \
             hydra.job.name=pusht \
             env=pusht \
