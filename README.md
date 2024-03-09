@@ -134,6 +134,12 @@ Pull artifacts if they're not in [tests/data](tests/data)
 git lfs pull
 ```
 
+When adding a new dataset, mock it with
+```
+python tests/scripts/mock_dataset.py --in-data-dir data/<dataset_id> --out-data-dir tests/data/<dataset_id>
+```
+
+Run tests
 ```
 DATA_DIR="tests/data" pytest -sx tests
 ```
