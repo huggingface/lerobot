@@ -101,19 +101,22 @@ jobs:
             hydra.job.name=pusht \
             env=pusht \
             wandb.enable=False \
-            offline_steps=1 \
+            offline_steps=2 \
             online_steps=0 \
-            device=cpu
-      # TODO(rcadene, aliberts): Add end-to-end test of eval checkpoint post training
-      # - name: Test eval pusht end-to-end
-      #   run: |
-      #     source .venv/bin/activate
-      #     python lerobot/scripts/eval.py
-      #       hydra.job.name=pusht \
-      #       env=pusht \
-      #       wandb.enable=False \
-      #       eval_episodes=1 \
-      #       device=cpu
+            device=cpu \
+            save_model=true \
+            save_freq=1 \
+            hydra.run.dir=tests/outputs/
+      - name: Test eval pusht end-to-end
+        run: |
+          source .venv/bin/activate
+          python lerobot/scripts/eval.py
+            hydra.job.name=pusht \
+            env=pusht \
+            wandb.enable=False \
+            eval_episodes=1 \
+            device=cpu \
+            policy.pretrained_model_path=tests/outputs/models/1.pt
       #----------------------------------------------
       #              cleanup
       #----------------------------------------------
