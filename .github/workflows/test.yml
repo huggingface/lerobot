@@ -110,7 +110,7 @@ jobs:
       - name: Test eval pusht end-to-end
         run: |
           source .venv/bin/activate
-          python lerobot/scripts/eval.py
+          python lerobot/scripts/eval.py \
             hydra.job.name=pusht \
             env=pusht \
             wandb.enable=False \
