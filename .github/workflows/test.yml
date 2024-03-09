@@ -115,10 +115,6 @@ jobs:
             env=pusht \
             wandb.enable=False \
             eval_episodes=1 \
+            env.episode_length=8 \
             device=cpu \
             policy.pretrained_model_path=tests/outputs/models/1.pt
-      #----------------------------------------------
-      #              cleanup
-      #----------------------------------------------
-      - name: Cleanup
-        run: rm -rf diffusion_policy data
