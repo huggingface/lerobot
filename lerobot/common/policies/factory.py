@@ -18,9 +18,9 @@ def make_policy(cfg):
             **cfg.policy,
         )
     elif cfg.policy.name == "act":
-        from lerobot.common.policies.diffusion.policy import ActionChunkingTransformerPolicy
+        from lerobot.common.policies.act.policy import ActionChunkingTransformerPolicy
 
-        policy = ActionChunkingTransformerPolicy(cfg.policy)
+        policy = ActionChunkingTransformerPolicy(cfg.policy, cfg.device)
     else:
         raise ValueError(cfg.policy.name)
 

@@ -3,13 +3,10 @@ Various positional encodings for the transformer.
 """
 import math
 
-import IPython
 import torch
 from torch import nn
 
 from .utils import NestedTensor
-
-e = IPython.embed
 
 
 class PositionEmbeddingSine(nn.Module):
