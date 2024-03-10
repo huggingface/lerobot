@@ -18,7 +18,7 @@ def make_env(cfg, transform=None):
         kwargs["task"] = cfg.env.task
         clsfunc = SimxarmEnv
     elif cfg.env.name == "pusht":
-        from lerobot.common.envs.pusht import PushtEnv
+        from lerobot.common.envs.pusht.pusht import PushtEnv
 
         # assert kwargs["seed"] > 200, "Seed 0-200 are used for the demonstration dataset, so we don't want to seed the eval env with this range."
 
