@@ -29,15 +29,18 @@ policy:
   kl_weight: 10
   hidden_dim: 512
   dim_feedforward: 3200
-  enc_layers: 7
-  dec_layers: 8
+  enc_layers: 4
+  dec_layers: 7
   nheads: 8
+  #camera_names: [top, front_close, left_pillar, right_pillar]
   camera_names: [top]
   position_embedding: sine
   masks: false
   dilation: false
   dropout: 0.1
   pre_norm: false
+
+  vae: true
 
   batch_size: 8
 

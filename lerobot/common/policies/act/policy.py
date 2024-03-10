@@ -11,7 +11,6 @@ from lerobot.common.policies.act.detr_vae import build
 
 def build_act_model_and_optimizer(cfg):
     model = build(cfg)
-    model.cuda()
 
     param_dicts = [
         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
@@ -50,6 +49,8 @@ class ActionChunkingTransformerPolicy(nn.Module):
         self.model, self.optimizer = build_act_model_and_optimizer(cfg)
         self.kl_weight = self.cfg.kl_weight
         logging.info(f"KL Weight {self.kl_weight}")
+
+        self.to(self.device)
 
     def update(self, replay_buffer, step):
         del step
@@ -192,20 +193,25 @@ class ActionChunkingTransformerPolicy(nn.Module):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         image = normalize(image)
 
-        is_train_mode = actions is not None
-        if is_train_mode:  # training time
+        is_training = actions is not None
+        if is_training:  # training time
             actions = actions[:, : self.model.num_queries]
             if is_pad is not None:
                 is_pad = is_pad[:, : self.model.num_queries]
 
             a_hat, is_pad_hat, (mu, logvar) = self.model(qpos, image, env_state, actions, is_pad)
-            total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
-            loss_dict = {}
+
             all_l1 = F.l1_loss(actions, a_hat, reduction="none")
             l1 = all_l1.mean() if is_pad is None else (all_l1 * ~is_pad.unsqueeze(-1)).mean()
+
+            loss_dict = {}
             loss_dict["l1"] = l1
-            loss_dict["kl"] = total_kld[0]
-            loss_dict["loss"] = loss_dict["l1"] + loss_dict["kl"] * self.kl_weight
+            if self.cfg.vae:
+                total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
+                loss_dict["kl"] = total_kld[0]
+                loss_dict["loss"] = loss_dict["l1"] + loss_dict["kl"] * self.kl_weight
+            else:
+                loss_dict["loss"] = loss_dict["l1"]
             return loss_dict
         else:
             action, _, (_, _) = self.model(qpos, image, env_state)  # no action, sample from prior

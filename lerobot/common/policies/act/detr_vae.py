@@ -27,7 +27,9 @@ def get_sinusoid_encoding_table(n_position, d_hid):
 class DETRVAE(nn.Module):
     """This is the DETR module that performs object detection"""
 
-    def __init__(self, backbones, transformer, encoder, state_dim, action_dim, num_queries, camera_names):
+    def __init__(
+        self, backbones, transformer, encoder, state_dim, action_dim, num_queries, camera_names, vae
+    ):
         """Initializes the model.
         Parameters:
             backbones: torch module of the backbone to be used. See backbone.py
@@ -42,6 +44,7 @@ class DETRVAE(nn.Module):
         self.camera_names = camera_names
         self.transformer = transformer
         self.encoder = encoder
+        self.vae = vae
         hidden_dim = transformer.d_model
         self.action_head = nn.Linear(hidden_dim, action_dim)
         self.is_pad_head = nn.Linear(hidden_dim, 1)
@@ -86,7 +89,7 @@ class DETRVAE(nn.Module):
         is_training = actions is not None  # train or val
         bs, _ = qpos.shape
         ### Obtain latent z from action sequence
-        if is_training:
+        if self.vae and is_training:
             # project action sequence to embedding dim, and concat with a CLS token
             action_embed = self.encoder_action_proj(actions)  # (bs, seq, hidden_dim)
             qpos_embed = self.encoder_joint_proj(qpos)  # (bs, hidden_dim)
@@ -200,6 +203,7 @@ def build(args):
         action_dim=args.action_dim,
         num_queries=args.num_queries,
         camera_names=args.camera_names,
+        vae=args.vae,
     )
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)

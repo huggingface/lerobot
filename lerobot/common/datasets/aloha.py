@@ -124,9 +124,6 @@ class AlohaExperienceReplay(AbstractExperienceReplay):
     def image_keys(self) -> list:
         return [("observation", "image", cam) for cam in CAMERAS[self.dataset_id]]
 
-    # def _is_downloaded(self) -> bool:
-    #     return False
-
     def _download_and_preproc(self):
         raw_dir = self.data_dir.parent / f"{self.data_dir.name}_raw"
         if not raw_dir.is_dir():

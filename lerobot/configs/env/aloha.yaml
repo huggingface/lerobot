@@ -17,7 +17,7 @@ env:
   pixels_only: False
   image_size: [3, 480, 640]
   action_repeat: 1
-  episode_length: 300
+  episode_length: 400
   fps: ${fps}
 
 policy:
