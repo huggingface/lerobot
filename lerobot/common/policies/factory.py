@@ -1,6 +1,6 @@
 def make_policy(cfg):
     if cfg.policy.name == "tdmpc":
-        from lerobot.common.policies.tdmpc import TDMPC
+        from lerobot.common.policies.tdmpc.policy import TDMPC
 
         policy = TDMPC(cfg.policy, cfg.device)
     elif cfg.policy.name == "diffusion":

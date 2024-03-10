@@ -8,8 +8,6 @@ import pymunk
 import torch
 import torchrl
 import tqdm
-from diffusion_policy.common.replay_buffer import ReplayBuffer as DiffusionPolicyReplayBuffer
-from diffusion_policy.env.pusht.pusht_env import pymunk_to_shapely
 from tensordict import TensorDict
 from torchrl.data.replay_buffers.samplers import SliceSampler
 from torchrl.data.replay_buffers.storages import TensorStorage
@@ -17,11 +15,12 @@ from torchrl.data.replay_buffers.writers import Writer
 
 from lerobot.common.datasets.abstract import AbstractExperienceReplay
 from lerobot.common.datasets.utils import download_and_extract_zip
+from lerobot.common.envs.pusht.pusht_env import pymunk_to_shapely
+from lerobot.common.policies.diffusion.replay_buffer import ReplayBuffer as DiffusionPolicyReplayBuffer
 
 # as define in env
 SUCCESS_THRESHOLD = 0.95  # 95% coverage,
 
-DEFAULT_TEE_MASK = pymunk.ShapeFilter.ALL_MASKS()
 PUSHT_URL = "https://diffusion-policy.cs.columbia.edu/data/training/pusht.zip"
 PUSHT_ZARR = Path("pusht/pusht_cchi_v7_replay.zarr")
 
@@ -49,8 +48,10 @@ def add_tee(
     angle,
     scale=30,
     color="LightSlateGray",
-    mask=DEFAULT_TEE_MASK,
+    mask=None,
 ):
+    if mask is None:
+        mask = pymunk.ShapeFilter.ALL_MASKS()
     mass = 1
     length = 4
     vertices1 = [

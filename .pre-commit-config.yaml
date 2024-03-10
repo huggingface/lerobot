@@ -1,4 +1,4 @@
-exclude: ^(data/|tests/|diffusion_policy/)
+exclude: ^(data/|tests/)
 default_language_version:
     python: python3.10
 repos:

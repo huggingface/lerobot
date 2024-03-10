@@ -74,7 +74,6 @@ noise_scheduler:
   prediction_type: epsilon # or sample
 
 obs_encoder:
-  # _target_: diffusion_policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
   shape_meta: ${shape_meta}
   # resize_shape: null
   # crop_shape: [76, 76]
@@ -85,12 +84,12 @@ obs_encoder:
   imagenet_norm: True
 
 rgb_model:
-  _target_: diffusion_policy.model.vision.model_getter.get_resnet
+  _target_: lerobot.common.policies.diffusion.pytorch_utils.get_resnet
   name: resnet18
   weights: null
 
 ema:
-  _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
+  _target_: lerobot.common.policies.diffusion.model.ema_model.EMAModel
   update_after_step: 0
   inv_gamma: 1.0
   power: 0.75

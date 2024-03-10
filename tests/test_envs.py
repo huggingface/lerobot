@@ -3,7 +3,7 @@ from tensordict import TensorDict
 from torchrl.envs.utils import check_env_specs, step_mdp
 
 from lerobot.common.envs.factory import make_env
-from lerobot.common.envs.pusht import PushtEnv
+from lerobot.common.envs.pusht.env import PushtEnv
 from lerobot.common.envs.simxarm import SimxarmEnv
 
 from .utils import init_config

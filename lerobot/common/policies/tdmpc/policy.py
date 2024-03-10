@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-import lerobot.common.policies.tdmpc_helper as h
+import lerobot.common.policies.tdmpc.helper as h
 
 FIRST_FRAME = 0
 

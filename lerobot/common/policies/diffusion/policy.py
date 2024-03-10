@@ -4,10 +4,10 @@ import time
 import hydra
 import torch
 import torch.nn as nn
-from diffusion_policy.model.common.lr_scheduler import get_scheduler
 
-from .diffusion_unet_image_policy import DiffusionUnetImagePolicy
-from .multi_image_obs_encoder import MultiImageObsEncoder
+from lerobot.common.policies.diffusion.diffusion_unet_image_policy import DiffusionUnetImagePolicy
+from lerobot.common.policies.diffusion.model.lr_scheduler import get_scheduler
+from lerobot.common.policies.diffusion.model.multi_image_obs_encoder import MultiImageObsEncoder
 
 
 class DiffusionPolicy(nn.Module):

@@ -5,9 +5,9 @@ import torch
 import torch.nn as nn
 import torchvision
 
-from diffusion_policy.common.pytorch_util import replace_submodules
-from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
-from diffusion_policy.model.vision.crop_randomizer import CropRandomizer
+from lerobot.common.policies.diffusion.model.crop_randomizer import CropRandomizer
+from lerobot.common.policies.diffusion.model.module_attr_mixin import ModuleAttrMixin
+from lerobot.common.policies.diffusion.pytorch_utils import replace_submodules
 
 
 class MultiImageObsEncoder(ModuleAttrMixin):
