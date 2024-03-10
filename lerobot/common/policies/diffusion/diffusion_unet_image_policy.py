@@ -5,11 +5,33 @@ import torch.nn.functional as F  # noqa: N812
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from einops import reduce
 
-from diffusion_policy.common.pytorch_util import dict_apply
-from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
-from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
-from diffusion_policy.model.vision.multi_image_obs_encoder import MultiImageObsEncoder
-from diffusion_policy.policy.base_image_policy import BaseImagePolicy
+from lerobot.common.policies.diffusion.model.conditional_unet1d import ConditionalUnet1D
+from lerobot.common.policies.diffusion.model.mask_generator import LowdimMaskGenerator
+from lerobot.common.policies.diffusion.model.module_attr_mixin import ModuleAttrMixin
+from lerobot.common.policies.diffusion.model.multi_image_obs_encoder import MultiImageObsEncoder
+from lerobot.common.policies.diffusion.model.normalizer import LinearNormalizer
+from lerobot.common.policies.diffusion.pytorch_utils import dict_apply
+
+
+class BaseImagePolicy(ModuleAttrMixin):
+    # init accepts keyword argument shape_meta, see config/task/*_image.yaml
+
+    def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """
+        obs_dict:
+            str: B,To,*
+        return: B,Ta,Da
+        """
+        raise NotImplementedError()
+
+    # reset state for stateful policies
+    def reset(self):
+        pass
+
+    # ========== training ===========
+    # no standard training interface except setting normalizer
+    def set_normalizer(self, normalizer: LinearNormalizer):
+        raise NotImplementedError()
 
 
 class DiffusionUnetImagePolicy(BaseImagePolicy):
