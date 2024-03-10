@@ -24,12 +24,6 @@ mkdir ~/tmp
 export TMPDIR='~/tmp'
 ```
 
-Install `diffusion_policy` #HACK
-```
-# from this directory
-git clone https://github.com/real-stanford/diffusion_policy
-cp -r diffusion_policy/diffusion_policy $(poetry env info -p)/lib/python3.10/site-packages/
-```
 
 ## Usage
 

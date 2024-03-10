@@ -69,10 +69,7 @@ jobs:
           key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
       - name: Install dependencies
         if: steps.restore-dependencies-cache.outputs.cache-hit != 'true'
-        run: |
-          poetry install --no-interaction --no-root
-          git clone https://github.com/real-stanford/diffusion_policy
-          cp -r diffusion_policy/diffusion_policy $(poetry env info -p)/lib/python3.10/site-packages/
+        run: poetry install --no-interaction --no-root
       - name: Save cached venv
         if: |
             steps.restore-dependencies-cache.outputs.cache-hit != 'true' &&

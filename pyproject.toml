@@ -45,7 +45,6 @@ mujoco = "^3.1.2"
 mujoco-py = "^2.1.2.14"
 gym = "^0.26.2"
 opencv-python = "^4.9.0.80"
-diffusion-policy = {git = "https://github.com/real-stanford/diffusion_policy"}
 diffusers = "^0.26.3"
 torchvision = "^0.17.1"
 h5py = "^3.10.0"
