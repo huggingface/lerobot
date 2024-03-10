@@ -21,5 +21,5 @@ env:
   fps: ${fps}
 
 policy:
-  state_dim: 2
-  action_dim: 2
+  state_dim: 14
+  action_dim: 14

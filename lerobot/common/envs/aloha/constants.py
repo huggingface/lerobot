@@ -26,8 +26,6 @@ JOINTS = [
     "right_arm_gripper",
 ]
 
-# TODO(rcadene): this is for end to end, not when we control end effector
-# TODO(rcadene): dimension names are wrong
 ACTIONS = [
     # position and quaternion for end effector
     "left_arm_waist",
@@ -36,19 +34,16 @@ ACTIONS = [
     "left_arm_forearm_roll",
     "left_arm_wrist_angle",
     "left_arm_wrist_rotate",
-    "left_arm_left_finger",
     # normalized gripper position (0: close, 1: open)
-    "left_arm_right_finger",
-    # position and quaternion for end effector
+    "left_arm_gripper",
     "right_arm_waist",
     "right_arm_shoulder",
     "right_arm_elbow",
     "right_arm_forearm_roll",
     "right_arm_wrist_angle",
     "right_arm_wrist_rotate",
-    "right_arm_left_finger",
     # normalized gripper position (0: close, 1: open)
-    "right_arm_right_finger",
+    "right_arm_gripper",
 ]
 
 

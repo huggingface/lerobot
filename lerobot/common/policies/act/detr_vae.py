@@ -27,7 +27,7 @@ def get_sinusoid_encoding_table(n_position, d_hid):
 class DETRVAE(nn.Module):
     """This is the DETR module that performs object detection"""
 
-    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names):
+    def __init__(self, backbones, transformer, encoder, state_dim, action_dim, num_queries, camera_names):
         """Initializes the model.
         Parameters:
             backbones: torch module of the backbone to be used. See backbone.py
@@ -43,17 +43,18 @@ class DETRVAE(nn.Module):
         self.transformer = transformer
         self.encoder = encoder
         hidden_dim = transformer.d_model
-        self.action_head = nn.Linear(hidden_dim, state_dim)
+        self.action_head = nn.Linear(hidden_dim, action_dim)
         self.is_pad_head = nn.Linear(hidden_dim, 1)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         if backbones is not None:
             self.input_proj = nn.Conv2d(backbones[0].num_channels, hidden_dim, kernel_size=1)
             self.backbones = nn.ModuleList(backbones)
-            self.input_proj_robot_state = nn.Linear(14, hidden_dim)
+            self.input_proj_robot_state = nn.Linear(state_dim, hidden_dim)
         else:
             # input_dim = 14 + 7 # robot_state + env_state
-            self.input_proj_robot_state = nn.Linear(14, hidden_dim)
-            self.input_proj_env_state = nn.Linear(7, hidden_dim)
+            self.input_proj_robot_state = nn.Linear(state_dim, hidden_dim)
+            # TODO(rcadene): understand what is env_state, and why it needs to be 7
+            self.input_proj_env_state = nn.Linear(state_dim // 2, hidden_dim)
             self.pos = torch.nn.Embedding(2, hidden_dim)
             self.backbones = None
 
@@ -180,8 +181,6 @@ def build_encoder(args):
 
 
 def build(args):
-    state_dim = 14  # TODO hardcode
-
     # From state
     # backbone = None # from state for now, no need for conv nets
     # From image
@@ -197,7 +196,8 @@ def build(args):
         backbones,
         transformer,
         encoder,
-        state_dim=state_dim,
+        state_dim=args.state_dim,
+        action_dim=args.action_dim,
         num_queries=args.num_queries,
         camera_names=args.camera_names,
     )

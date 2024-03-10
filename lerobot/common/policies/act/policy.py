@@ -25,29 +25,6 @@ def build_act_model_and_optimizer(cfg):
     return model, optimizer
 
 
-# def build_CNNMLP_model_and_optimizer(cfg):
-#     parser = argparse.ArgumentParser('DETR training and evaluation script', parents=[get_args_parser()])
-#     args = parser.parse_args()
-
-#     for k, v in cfg.items():
-#         setattr(args, k, v)
-
-#     model = build_CNNMLP_model(args)
-#     model.cuda()
-
-#     param_dicts = [
-#         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
-#         {
-#             "params": [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad],
-#             "lr": args.lr_backbone,
-#         },
-#     ]
-#     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
-#                                   weight_decay=args.weight_decay)
-
-#     return model, optimizer
-
-
 def kl_divergence(mu, logvar):
     batch_size = mu.size(0)
     assert batch_size != 0
@@ -65,9 +42,10 @@ def kl_divergence(mu, logvar):
 
 
 class ActionChunkingTransformerPolicy(nn.Module):
-    def __init__(self, cfg, device):
+    def __init__(self, cfg, device, n_action_steps=1):
         super().__init__()
         self.cfg = cfg
+        self.n_action_steps = n_action_steps
         self.device = device
         self.model, self.optimizer = build_act_model_and_optimizer(cfg)
         self.kl_weight = self.cfg.kl_weight
@@ -179,11 +157,34 @@ class ActionChunkingTransformerPolicy(nn.Module):
         observation["image"] = observation["image"].unsqueeze(0)
         observation["state"] = observation["state"].unsqueeze(0)
 
+        # TODO(rcadene): remove hack
+        # add 1 camera dimension
+        observation["image"] = observation["image"].unsqueeze(1)
+
         obs_dict = {
             "image": observation["image"],
             "agent_pos": observation["state"],
         }
         action = self._forward(qpos=obs_dict["agent_pos"], image=obs_dict["image"])
+
+        if self.cfg.temporal_agg:
+            # TODO(rcadene): implement temporal aggregation
+            raise NotImplementedError()
+            # all_time_actions[[t], t:t+num_queries] = action
+            # actions_for_curr_step = all_time_actions[:, t]
+            # actions_populated = torch.all(actions_for_curr_step != 0, axis=1)
+            # actions_for_curr_step = actions_for_curr_step[actions_populated]
+            # k = 0.01
+            # exp_weights = np.exp(-k * np.arange(len(actions_for_curr_step)))
+            # exp_weights = exp_weights / exp_weights.sum()
+            # exp_weights = torch.from_numpy(exp_weights).cuda().unsqueeze(dim=1)
+            # raw_action = (actions_for_curr_step * exp_weights).sum(dim=0, keepdim=True)
+
+        # remove bsize=1
+        action = action.squeeze(0)
+
+        # take first predicted action or n first actions
+        action = action[0] if self.n_action_steps == 1 else action[: self.n_action_steps]
         return action
 
     def _forward(self, qpos, image, actions=None, is_pad=None):
@@ -209,46 +210,3 @@ class ActionChunkingTransformerPolicy(nn.Module):
         else:
             action, _, (_, _) = self.model(qpos, image, env_state)  # no action, sample from prior
             return action
-
-
-# class CNNMLPPolicy(nn.Module):
-#     def __init__(self, cfg):
-#         super().__init__()
-#         model, optimizer = build_CNNMLP_model_and_optimizer(cfg)
-#         self.model = model # decoder
-#         self.optimizer = optimizer
-
-#     def __call__(self, qpos, image, actions=None, is_pad=None):
-#         env_state = None # TODO
-#         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-#                                          std=[0.229, 0.224, 0.225])
-#         image = normalize(image)
-#         if actions is not None: # training time
-#             actions = actions[:, 0]
-#             a_hat = self.model(qpos, image, env_state, actions)
-#             mse = F.mse_loss(actions, a_hat)
-#             loss_dict = dict()
-#             loss_dict['mse'] = mse
-#             loss_dict['loss'] = loss_dict['mse']
-#             return loss_dict
-#         else: # inference time
-#             a_hat = self.model(qpos, image, env_state) # no action, sample from prior
-#             return a_hat
-
-#     def configure_optimizers(self):
-#         return self.optimizer
-
-# def kl_divergence(mu, logvar):
-#     batch_size = mu.size(0)
-#     assert batch_size != 0
-#     if mu.data.ndimension() == 4:
-#         mu = mu.view(mu.size(0), mu.size(1))
-#     if logvar.data.ndimension() == 4:
-#         logvar = logvar.view(logvar.size(0), logvar.size(1))
-
-#     klds = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
-#     total_kld = klds.sum(1).mean(0, True)
-#     dimension_wise_kld = klds.mean(0)
-#     mean_kld = klds.mean(1).mean(0, True)
-
-#     return total_kld, dimension_wise_kld, mean_kld
