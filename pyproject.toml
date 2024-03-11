@@ -18,6 +18,7 @@ classifiers=[
 ]
 packages = [{include = "lerobot"}]
 
+
 [tool.poetry.dependencies]
 python = "^3.10"
 cython = "^3.0.8"
@@ -55,9 +56,6 @@ pre-commit = "^3.6.2"
 debugpy = "^1.8.1"
 pytest = "^8.1.0"
 
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
 
 [tool.ruff]
 line-length = 110
@@ -86,5 +84,15 @@ exclude = [
     "venv",
 ]
 
+
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "N", "B", "C4", "SIM"]
+
+
+[tool.poetry-dynamic-versioning]
+enable = true
+
+
+[build-system]
+requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
+build-backend = "poetry_dynamic_versioning.backend"
