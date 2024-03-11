@@ -126,7 +126,7 @@ def eval(cfg: dict, out_dir=None):
     offline_buffer = make_offline_buffer(cfg)
 
     logging.info("make_env")
-    env = make_env(cfg, transform=offline_buffer._transform)
+    env = make_env(cfg, transform=offline_buffer.transform)
 
     if cfg.policy.pretrained_model_path:
         policy = make_policy(cfg)
