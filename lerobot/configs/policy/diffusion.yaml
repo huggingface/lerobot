@@ -84,9 +84,9 @@ obs_encoder:
   imagenet_norm: True
 
 rgb_model:
-  _target_: lerobot.common.policies.diffusion.pytorch_utils.get_resnet
-  name: resnet18
-  weights: null
+  model_name: resnet18
+  pretrained: false
+  num_keypoints: 32
 
 ema:
   _target_: lerobot.common.policies.diffusion.model.ema_model.EMAModel

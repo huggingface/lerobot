@@ -48,6 +48,8 @@ opencv-python = "^4.9.0.80"
 diffusers = "^0.26.3"
 torchvision = "^0.17.1"
 h5py = "^3.10.0"
+robomimic = "0.2.0"
+timm = "^0.9.16"
 
 
 [tool.poetry.group.dev.dependencies]
