@@ -1,3 +1,5 @@
+""" To enable `lerobot.__version__` """
+
 from importlib.metadata import PackageNotFoundError, version
 
 try:
