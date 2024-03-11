@@ -13,8 +13,7 @@ from torchrl.data.replay_buffers.replay_buffers import TensorDictReplayBuffer
 from torchrl.data.replay_buffers.samplers import SliceSampler
 from torchrl.data.replay_buffers.storages import TensorStorage, _collate_id
 from torchrl.data.replay_buffers.writers import ImmutableDatasetWriter, Writer
-
-from rl.torchrl.envs.transforms.transforms import Compose
+from torchrl.envs.transforms.transforms import Compose
 
 
 class AbstractExperienceReplay(TensorDictReplayBuffer):
