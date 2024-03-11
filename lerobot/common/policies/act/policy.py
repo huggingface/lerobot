@@ -49,7 +49,6 @@ class ActionChunkingTransformerPolicy(nn.Module):
         self.model, self.optimizer = build_act_model_and_optimizer(cfg)
         self.kl_weight = self.cfg.kl_weight
         logging.info(f"KL Weight {self.kl_weight}")
-
         self.to(self.device)
 
     def update(self, replay_buffer, step):
@@ -156,7 +155,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
 
         # TODO(rcadene): remove unsqueeze hack to add bsize=1
         observation["image"] = observation["image"].unsqueeze(0)
-        observation["state"] = observation["state"].unsqueeze(0)
+        # observation["state"] = observation["state"].unsqueeze(0)
 
         # TODO(rcadene): remove hack
         # add 1 camera dimension

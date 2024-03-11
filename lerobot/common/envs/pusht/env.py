@@ -11,39 +11,38 @@ from torchrl.data.tensor_specs import (
     DiscreteTensorSpec,
     UnboundedContinuousTensorSpec,
 )
-from torchrl.envs import EnvBase
 from torchrl.envs.libs.gym import _gym_to_torchrl_spec_transform
 
+from lerobot.common.envs.abstract import AbstractEnv
 from lerobot.common.utils import set_seed
 
 _has_gym = importlib.util.find_spec("gym") is not None
 
 
-class PushtEnv(EnvBase):
+class PushtEnv(AbstractEnv):
     def __init__(
         self,
+        task="pusht",
         frame_skip: int = 1,
         from_pixels: bool = False,
         pixels_only: bool = False,
         image_size=None,
         seed=1337,
         device="cpu",
-        num_prev_obs=0,
+        num_prev_obs=1,
         num_prev_action=0,
     ):
-        super().__init__(device=device, batch_size=[])
-        self.frame_skip = frame_skip
-        self.from_pixels = from_pixels
-        self.pixels_only = pixels_only
-        self.image_size = image_size
-        self.num_prev_obs = num_prev_obs
-        self.num_prev_action = num_prev_action
-
-        if pixels_only:
-            assert from_pixels
-        if from_pixels:
-            assert image_size
-
+        super().__init__(
+            task=task,
+            frame_skip=frame_skip,
+            from_pixels=from_pixels,
+            pixels_only=pixels_only,
+            image_size=image_size,
+            seed=seed,
+            device=device,
+            num_prev_obs=num_prev_obs,
+            num_prev_action=num_prev_action,
+        )
         if not _has_gym:
             raise ImportError("Cannot import gym.")
 
@@ -55,16 +54,6 @@ class PushtEnv(EnvBase):
         from lerobot.common.envs.pusht.pusht_image_env import PushTImageEnv
 
         self._env = PushTImageEnv(render_size=self.image_size)
-
-        self._make_spec()
-        self._current_seed = self.set_seed(seed)
-
-        if self.num_prev_obs > 0:
-            self._prev_obs_image_queue = deque(maxlen=self.num_prev_obs)
-            self._prev_obs_state_queue = deque(maxlen=self.num_prev_obs)
-        if self.num_prev_action > 0:
-            raise NotImplementedError()
-            # self._prev_action_queue = deque(maxlen=self.num_prev_action)
 
     def render(self, mode="rgb_array", width=384, height=384):
         if width != height:
