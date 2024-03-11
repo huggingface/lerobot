@@ -38,7 +38,7 @@ class Logger:
         project = cfg.get("wandb", {}).get("project")
         entity = cfg.get("wandb", {}).get("entity")
         enable_wandb = cfg.get("wandb", {}).get("enable", False)
-        run_offline = not enable_wandb or not project or not entity
+        run_offline = not enable_wandb or not project
         if run_offline:
             logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
             self._wandb = None
@@ -63,6 +63,7 @@ class Logger:
                 resume=None,
             )
             print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
+            logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
             self._wandb = wandb
 
     def save_model(self, policy, identifier):
