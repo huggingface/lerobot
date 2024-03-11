@@ -144,3 +144,8 @@ Run tests
 ```
 DATA_DIR="tests/data" pytest -sx tests
 ```
+
+## Acknowledgements
+- Our Diffusion policy and Pusht environment are adapted from [Diffusion Policy](https://diffusion-policy.cs.columbia.edu/)
+- Our TDMPC policy and Simxarm environment are adapted from [FOWM](https://www.yunhaifeng.com/FOWM/)
+- Our ACT policy and ALOHA environment are adapted from [ALOHA](https://tonyzhaozh.github.io/aloha/)
