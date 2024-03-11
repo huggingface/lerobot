@@ -114,7 +114,7 @@ class AlohaExperienceReplay(AbstractExperienceReplay):
     def stats_patterns(self) -> dict:
         d = {
             ("observation", "state"): "b c -> 1 c",
-            ("action"): "b c -> 1 c",
+            ("action",): "b c -> 1 c",
         }
         for cam in CAMERAS[self.dataset_id]:
             d[("observation", "image", cam)] = "b c h w -> 1 c 1 1"

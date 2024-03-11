@@ -13,6 +13,7 @@ from torchrl.data.replay_buffers.replay_buffers import TensorDictReplayBuffer
 from torchrl.data.replay_buffers.samplers import SliceSampler
 from torchrl.data.replay_buffers.storages import TensorStorage, _collate_id
 from torchrl.data.replay_buffers.writers import ImmutableDatasetWriter, Writer
+from torchrl.envs.transforms.transforms import Compose
 
 
 class AbstractExperienceReplay(TensorDictReplayBuffer):
@@ -54,7 +55,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
         return {
             ("observation", "state"): "b c -> 1 c",
             ("observation", "image"): "b c h w -> 1 c 1 1",
-            ("action"): "b c -> 1 c",
+            ("action",): "b c -> 1 c",
         }
 
     @property
@@ -73,8 +74,16 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
     def num_episodes(self) -> int:
         return len(self._storage._storage["episode"].unique())
 
+    @property
+    def transform(self):
+        return self._transform
+
     def set_transform(self, transform):
-        self.transform = transform
+        if not isinstance(transform, Compose):
+            # required since torchrl calls `len(self._transform)` downstream
+            self._transform = Compose(transform)
+        else:
+            self._transform = transform
 
     def compute_or_load_stats(self, num_batch=100, batch_size=32) -> TensorDict:
         stats_path = self.data_dir / "stats.pth"

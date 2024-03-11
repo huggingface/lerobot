@@ -142,11 +142,11 @@ def train(cfg: dict, out_dir=None, job_name=None):
         online_buffer = TensorDictReplayBuffer(
             storage=LazyMemmapStorage(100_000),
             sampler=online_sampler,
-            transform=offline_buffer._transform,
+            transform=offline_buffer.transform,
         )
 
     logging.info("make_env")
-    env = make_env(cfg, transform=offline_buffer._transform)
+    env = make_env(cfg, transform=offline_buffer.transform)
 
     logging.info("make_policy")
     policy = make_policy(cfg)
