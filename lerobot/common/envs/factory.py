@@ -1,6 +1,4 @@
-from torchrl.envs.transforms import StepCounter, TransformedEnv
-
-from rl.torchrl.envs.transforms.transforms import Compose, Transform
+from torchrl.envs.transforms import Compose, StepCounter, Transform, TransformedEnv
 
 
 def make_env(cfg, transform=None):
