@@ -123,6 +123,8 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                 if imagenet_norm:
                     # TODO(rcadene): move normalizer to dataset and env
                     this_normalizer = torchvision.transforms.Normalize(
+                        # Note: This matches the normalization in the original impl. for PushT Image. This may not be
+                        # the case for other tasks.
                         mean=[127.5, 127.5, 127.5],
                         std=[127.5, 127.5, 127.5],
                     )

@@ -42,8 +42,8 @@ policy:
   num_inference_steps: 100
   obs_as_global_cond: ${obs_as_global_cond}
   # crop_shape: null
-  diffusion_step_embed_dim: 256  # before 128
-  down_dims: [256, 512, 1024]  # before [512, 1024, 2048]
+  diffusion_step_embed_dim: 128
+  down_dims: [512, 1024, 2048]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
@@ -109,13 +109,13 @@ training:
   debug: False
   resume: True
   # optimization
-  # lr_scheduler: cosine
-  # lr_warmup_steps: 500
-  num_epochs: 8000
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  num_epochs: 500
   # gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
-  # use_ema: True
+  use_ema: True
   freeze_encoder: False
   # training loop control
   # in epochs
