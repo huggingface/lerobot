@@ -110,6 +110,16 @@ class AlohaExperienceReplay(AbstractExperienceReplay):
             transform=transform,
         )
 
+    def compute_or_load_stats(self, num_batch=100, batch_size=32) -> TensorDict:
+        stats_path = self.data_dir / "stats.pth"
+        if stats_path.exists():
+            stats = torch.load(stats_path)
+        else:
+            logging.info(f"compute_stats and save to {stats_path}")
+            stats = self._compute_stats(num_batch, batch_size)
+            torch.save(stats, stats_path)
+        return stats
+
     @property
     def stats_patterns(self) -> dict:
         d = {

@@ -37,4 +37,12 @@ def make_policy(cfg):
                 raise NotImplementedError()
         policy.load(cfg.policy.pretrained_model_path)
 
+    if cfg.env.name == "aloha" and cfg.env.task == "sim_transfer_cube_scripted" and cfg.policy.name == "act":
+        import torch
+
+        state_dict = torch.load(
+            "/home/rcadene/code/act/tmp/2024_03_10_sim_transfer_cube_scripted/policy_best.ckpt"
+        )
+        policy.load_state_dict(state_dict)
+
     return policy

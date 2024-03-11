@@ -121,7 +121,8 @@ def eval(cfg: dict, out_dir=None):
     logging.info("make_env")
     env = make_env(cfg, transform=offline_buffer.transform)
 
-    if cfg.policy.pretrained_model_path:
+    # if cfg.policy.pretrained_model_path:
+    if True:
         policy = make_policy(cfg)
         policy = TensorDictModule(
             policy,
