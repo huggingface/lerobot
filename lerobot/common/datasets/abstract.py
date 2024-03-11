@@ -54,7 +54,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
         return {
             ("observation", "state"): "b c -> 1 c",
             ("observation", "image"): "b c h w -> 1 c 1 1",
-            ("action"): "b c -> 1 c",
+            "action": "b c -> 1 c",
         }
 
     @property
