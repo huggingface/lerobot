@@ -24,6 +24,12 @@ mkdir ~/tmp
 export TMPDIR='~/tmp'
 ```
 
+To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiments tracking, login with
+```
+wandb login
+```
+
+
 
 ## Usage
 
@@ -111,6 +117,7 @@ pre-commit run -a
 **Tests**
 
 Install [git lfs](https://git-lfs.com/) to retrieve test artifacts (if you don't have it already).
+
 On Mac:
 ```
 brew install git-lfs

@@ -31,5 +31,5 @@ policy: ???
 wandb:
   enable: true
   project: lerobot
-  entity: rcadene  # insert your own
+  # entity: rcadene  # insert your own
   notes: ""
