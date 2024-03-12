@@ -99,6 +99,9 @@ jobs:
           path: .venv
           key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
 
+      - name: Install libegl1-mesa-dev (to use MUJOCO_GL=egl)
+        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
+
       #----------------------------------------------
       #             install project
       #----------------------------------------------
