@@ -82,8 +82,8 @@ jobs:
 
       - name: Info
         run: |
-          du -sh /tmp
-          df -h
+          sudo du -sh /tmp
+          sudo df -h
 
       - name: Install dependencies
         if: steps.restore-dependencies-cache.outputs.cache-hit != 'true'
