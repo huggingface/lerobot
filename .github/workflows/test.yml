@@ -21,6 +21,9 @@ jobs:
       TMPDIR: ~/tmp
       TEMP: ~/tmp
       TMP: ~/tmp
+      PYOPENGL_PLATFORM: egl
+      MUJOCO_GL: egl
+      LEROBOT_TESTS_DEVICE: cpu
     steps:
       #----------------------------------------------
       #       check-out repo and set-up python
