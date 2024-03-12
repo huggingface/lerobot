@@ -81,7 +81,7 @@ obs_encoder:
   # random_crop: True
   use_group_norm: True
   share_rgb_model: False
-  imagenet_norm: True
+  norm_mean_std: [0.5, 0.5]  # for PushT the original impl normalizes to [-1, 1] (maybe not the case for robomimic envs)
 
 rgb_model:
   model_name: resnet18
