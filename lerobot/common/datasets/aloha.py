@@ -73,11 +73,11 @@ def download(data_dir, dataset_id):
 
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    gdown.download_folder(FOLDER_URLS[dataset_id], output=data_dir)
+    gdown.download_folder(FOLDER_URLS[dataset_id], output=str(data_dir))
 
     # because of the 50 files limit per directory, two files episode 48 and 49 were missing
-    gdown.download(EP48_URLS[dataset_id], output=data_dir / "episode_48.hdf5", fuzzy=True)
-    gdown.download(EP49_URLS[dataset_id], output=data_dir / "episode_49.hdf5", fuzzy=True)
+    gdown.download(EP48_URLS[dataset_id], output=str(data_dir / "episode_48.hdf5"), fuzzy=True)
+    gdown.download(EP49_URLS[dataset_id], output=str(data_dir / "episode_49.hdf5"), fuzzy=True)
 
 
 class AlohaExperienceReplay(AbstractExperienceReplay):
@@ -123,9 +123,6 @@ class AlohaExperienceReplay(AbstractExperienceReplay):
     @property
     def image_keys(self) -> list:
         return [("observation", "image", cam) for cam in CAMERAS[self.dataset_id]]
-
-    # def _is_downloaded(self) -> bool:
-    #     return False
 
     def _download_and_preproc(self):
         raw_dir = self.data_dir.parent / f"{self.data_dir.name}_raw"

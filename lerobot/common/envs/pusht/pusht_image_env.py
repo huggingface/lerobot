@@ -25,7 +25,7 @@ class PushTImageEnv(PushTEnv):
         img = super()._render_frame(mode="rgb_array")
 
         agent_pos = np.array(self.agent.position)
-        img_obs = np.moveaxis(img.astype(np.float32) / 255, -1, 0)
+        img_obs = np.moveaxis(img, -1, 0)
         obs = {"image": img_obs, "agent_pos": agent_pos}
 
         # draw action

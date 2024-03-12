@@ -81,7 +81,10 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
     def set_transform(self, transform):
         if not isinstance(transform, Compose):
             # required since torchrl calls `len(self._transform)` downstream
-            self._transform = Compose(transform)
+            if isinstance(transform, list):
+                self._transform = Compose(*transform)
+            else:
+                self._transform = Compose(transform)
         else:
             self._transform = transform
 

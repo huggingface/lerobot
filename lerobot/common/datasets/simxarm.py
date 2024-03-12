@@ -1,4 +1,5 @@
 import pickle
+import zipfile
 from pathlib import Path
 from typing import Callable
 
@@ -13,6 +14,22 @@ from torchrl.data.replay_buffers.storages import TensorStorage
 from torchrl.data.replay_buffers.writers import Writer
 
 from lerobot.common.datasets.abstract import AbstractExperienceReplay
+
+
+def download():
+    raise NotImplementedError()
+    import gdown
+
+    url = "https://drive.google.com/uc?id=1nhxpykGtPDhmQKm-_B8zBSywVRdgeVya"
+    download_path = "data.zip"
+    gdown.download(url, download_path, quiet=False)
+    print("Extracting...")
+    with zipfile.ZipFile(download_path, "r") as zip_f:
+        for member in zip_f.namelist():
+            if member.startswith("data/xarm") and member.endswith(".pkl"):
+                print(member)
+                zip_f.extract(member=member)
+    Path(download_path).unlink()
 
 
 class SimxarmExperienceReplay(AbstractExperienceReplay):
@@ -48,8 +65,8 @@ class SimxarmExperienceReplay(AbstractExperienceReplay):
         )
 
     def _download_and_preproc(self):
-        # download
-        # TODO(rcadene)
+        # TODO(rcadene): finish download
+        download()
 
         dataset_path = self.data_dir / "buffer.pkl"
         print(f"Using offline dataset '{dataset_path}'")
