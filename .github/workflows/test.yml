@@ -18,6 +18,7 @@ jobs:
     env:
       POETRY_VERSION: 1.8.1
       DATA_DIR: tests/data
+      TMPDIR: ~/tmp
     steps:
       #----------------------------------------------
       #       check-out repo and set-up python
@@ -69,7 +70,9 @@ jobs:
           key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
       - name: Install dependencies
         if: steps.restore-dependencies-cache.outputs.cache-hit != 'true'
-        run: poetry install --no-interaction --no-root
+        run: |
+          mkdir ~/tmp
+          poetry install --no-interaction --no-root
       - name: Save cached venv
         if: |
             steps.restore-dependencies-cache.outputs.cache-hit != 'true' &&
