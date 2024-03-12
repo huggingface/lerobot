@@ -19,6 +19,8 @@ jobs:
       POETRY_VERSION: 1.8.1
       DATA_DIR: tests/data
       TMPDIR: ~/tmp
+      TEMP: ~/tmp
+      TMP: ~/tmp
     steps:
       #----------------------------------------------
       #       check-out repo and set-up python
@@ -27,11 +29,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
+
       - name: Set up python
         id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
       #----------------------------------------------
       #         install & configure poetry
       #----------------------------------------------
@@ -41,6 +45,7 @@ jobs:
         with:
           path: ~/.local  # the path depends on the OS
           key: poetry-${{ env.POETRY_VERSION }}  # increment to reset cache
+
       - name: Install Poetry
         if: steps.restore-poetry-cache.outputs.cache-hit != 'true'
         uses: snok/install-poetry@v1
@@ -48,6 +53,7 @@ jobs:
           version: ${{ env.POETRY_VERSION }}
           virtualenvs-create: true
           installer-parallel: true
+
       - name: Save cached Poetry installation
         if: |
           steps.restore-poetry-cache.outputs.cache-hit != 'true' &&
@@ -57,8 +63,10 @@ jobs:
         with:
           path: ~/.local  # the path depends on the OS
           key: poetry-${{ env.POETRY_VERSION }}  # increment to reset cache
+
       - name: Configure Poetry
         run: poetry config virtualenvs.in-project true
+
       #----------------------------------------------
       #           install dependencies
       #----------------------------------------------
@@ -68,11 +76,16 @@ jobs:
         with:
           path: .venv
           key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
+
       - name: Install dependencies
         if: steps.restore-dependencies-cache.outputs.cache-hit != 'true'
         run: |
           mkdir ~/tmp
+          echo $TMPDIR
+          echo $TEMP
+          echo $TMP
           poetry install --no-interaction --no-root
+
       - name: Save cached venv
         if: |
             steps.restore-dependencies-cache.outputs.cache-hit != 'true' &&
@@ -82,11 +95,13 @@ jobs:
         with:
           path: .venv
           key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
+
       #----------------------------------------------
       #             install project
       #----------------------------------------------
       - name: Install project
         run: poetry install --no-interaction
+
       #----------------------------------------------
       #               run tests
       #----------------------------------------------
@@ -94,6 +109,7 @@ jobs:
         run: |
           source .venv/bin/activate
           pytest tests
+
       - name: Test train pusht end-to-end
         run: |
           source .venv/bin/activate
@@ -107,6 +123,7 @@ jobs:
             save_model=true \
             save_freq=1 \
             hydra.run.dir=tests/outputs/
+
       - name: Test eval pusht end-to-end
         run: |
           source .venv/bin/activate
