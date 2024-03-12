@@ -17,6 +17,7 @@ apptainer exec --nv \
 ~/apptainer/nvidia_cuda:12.2.2-devel-ubuntu22.04.sif $SHELL
 
 source ~/.bashrc
-conda activate fowm
+#conda activate fowm
+conda activate lerobot
 
 srun $CMD

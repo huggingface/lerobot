@@ -2,7 +2,7 @@ import pytest
 
 from lerobot.common.policies.factory import make_policy
 
-from .utils import init_config
+from .utils import DEVICE, init_config
 
 
 @pytest.mark.parametrize(
@@ -19,6 +19,7 @@ def test_factory(env_name, policy_name):
         overrides=[
             f"env={env_name}",
             f"policy={policy_name}",
+            f"device={DEVICE}",
         ]
     )
     policy = make_policy(cfg)

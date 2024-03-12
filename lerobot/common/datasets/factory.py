@@ -5,7 +5,7 @@ from pathlib import Path
 import torch
 from torchrl.data.replay_buffers import PrioritizedSliceSampler, SliceSampler
 
-from lerobot.common.envs.transforms import NormalizeTransform
+from lerobot.common.envs.transforms import NormalizeTransform, Prod
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
 
@@ -84,6 +84,16 @@ def make_offline_buffer(
         prefetch=prefetch if isinstance(prefetch, int) else None,
     )
 
+    if cfg.policy.name == "tdmpc":
+        img_keys = []
+        for key in offline_buffer.image_keys:
+            img_keys.append(("next", *key))
+        img_keys += offline_buffer.image_keys
+    else:
+        img_keys = offline_buffer.image_keys
+
+    transforms = [Prod(in_keys=img_keys, prod=1 / 255)]
+
     if normalize:
         # TODO(rcadene): make normalization strategy configurable between mean_std, min_max, manual_min_max, min_max_from_spec
         stats = offline_buffer.compute_or_load_stats()
@@ -92,11 +102,10 @@ def make_offline_buffer(
         in_keys = [("observation", "state"), ("action")]
 
         if cfg.policy.name == "tdmpc":
-            for key in offline_buffer.image_keys:
-                # TODO(rcadene): imagenet normalization is applied inside diffusion policy, but no normalization inside tdmpc
-                in_keys.append(key)
-                # since we use next observations in tdmpc
-                in_keys.append(("next", *key))
+            # TODO(rcadene): we add img_keys to the keys to normalize for tdmpc only, since diffusion and act policies normalize the image inside the model for now
+            in_keys += img_keys
+            # TODO(racdene): since we use next observations in tdmpc, we also add them to the normalization. We are wasting a bit of compute on this for now.
+            in_keys += [("next", *key) for key in img_keys]
             in_keys.append(("next", "observation", "state"))
 
         if cfg.policy.name == "diffusion" and cfg.env.name == "pusht":
@@ -106,8 +115,11 @@ def make_offline_buffer(
             stats["action", "min"] = torch.tensor([12.0, 25.0], dtype=torch.float32)
             stats["action", "max"] = torch.tensor([511.0, 511.0], dtype=torch.float32)
 
-        transform = NormalizeTransform(stats, in_keys, mode="min_max")
-        offline_buffer.set_transform(transform)
+        # TODO(rcadene): remove this and put it in config. Ideally we want to reproduce SOTA results just with mean_std
+        normalization_mode = "mean_std" if cfg.env.name == "aloha" else "min_max"
+        transforms.append(NormalizeTransform(stats, in_keys, mode=normalization_mode))
+
+    offline_buffer.set_transform(transforms)
 
     if not overwrite_sampler:
         index = torch.arange(0, offline_buffer.num_samples, 1)

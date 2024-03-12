@@ -2,7 +2,7 @@
 
 ## Installation
 
-Create a virtual environment with python 3.10, e.g. using `conda`:
+Create a virtual environment with Python 3.10, e.g. using `conda`:
 ```
 conda create -y -n lerobot python=3.10
 conda activate lerobot
@@ -24,12 +24,10 @@ mkdir ~/tmp
 export TMPDIR='~/tmp'
 ```
 
-To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiments tracking, login with
+To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiments tracking, log in with
 ```
 wandb login
 ```
-
-
 
 ## Usage
 
@@ -61,19 +59,10 @@ env=pusht
 
 ## TODO
 
-- [x] priority update doesnt match FOWM or original paper
-- [x] self.step=100000 should be updated at every step to adjust to horizon of planner
-- [ ] prefetch replay buffer to speedup training
-- [ ] parallelize env to speedup eval
-- [ ] clean checkpointing / loading
-- [ ] clean logging
-- [ ] clean config
-- [ ] clean hyperparameter tuning
-- [ ] add pusht
-- [ ] add aloha
-- [ ] add act
-- [ ] add diffusion
-- [ ] add aloha 2
+If you are not sure how to contribute or want to know the next features we working on, look on this project page: [LeRobot TODO](https://github.com/users/Cadene/projects/1)
+
+Ask [Remi Cadene](re.cadene@gmail.com) for access if needed.
+
 
 ## Profile
 
@@ -145,7 +134,7 @@ Run tests
 DATA_DIR="tests/data" pytest -sx tests
 ```
 
-## Acknowledgements
+## Acknowledgment
 - Our Diffusion policy and Pusht environment are adapted from [Diffusion Policy](https://diffusion-policy.cs.columbia.edu/)
 - Our TDMPC policy and Simxarm environment are adapted from [FOWM](https://www.yunhaifeng.com/FOWM/)
 - Our ACT policy and ALOHA environment are adapted from [ALOHA](https://tonyzhaozh.github.io/aloha/)
