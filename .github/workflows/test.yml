@@ -80,6 +80,11 @@ jobs:
           path: .venv
           key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
 
+      - name: Info
+        run: |
+          du -sh /tmp
+          df -h
+
       - name: Install dependencies
         if: steps.restore-dependencies-cache.outputs.cache-hit != 'true'
         run: |
