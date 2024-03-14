@@ -46,8 +46,8 @@ jobs:
         id: restore-poetry-cache
         uses: actions/cache/restore@v3
         with:
-          path: ~/.local  # the path depends on the OS
-          key: poetry-${{ env.POETRY_VERSION }}  # increment to reset cache
+          path: ~/.local
+          key: poetry-${{ env.POETRY_VERSION }}
 
       - name: Install Poetry
         if: steps.restore-poetry-cache.outputs.cache-hit != 'true'
@@ -64,8 +64,8 @@ jobs:
         id: save-poetry-cache
         uses: actions/cache/save@v3
         with:
-          path: ~/.local  # the path depends on the OS
-          key: poetry-${{ env.POETRY_VERSION }}  # increment to reset cache
+          path: ~/.local
+          key: poetry-${{ env.POETRY_VERSION }}
 
       - name: Configure Poetry
         run: poetry config virtualenvs.in-project true
@@ -73,6 +73,10 @@ jobs:
       #----------------------------------------------
       #           install dependencies
       #----------------------------------------------
+      # TODO(aliberts): move to gpu runners
+      - name: Select cpu dependencies  # HACK
+        run: cp -t . .github/poetry/cpu/pyproject.toml .github/poetry/cpu/poetry.lock
+
       - name: Load cached venv
         id: restore-dependencies-cache
         uses: actions/cache/restore@v3
@@ -80,18 +84,10 @@ jobs:
           path: .venv
           key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
 
-      - name: Info
-        run: |
-          sudo du -sh /tmp
-          sudo df -h
-
       - name: Install dependencies
         if: steps.restore-dependencies-cache.outputs.cache-hit != 'true'
         run: |
           mkdir ~/tmp
-          echo $TMPDIR
-          echo $TEMP
-          echo $TMP
           poetry install --no-interaction --no-root
 
       - name: Save cached venv
