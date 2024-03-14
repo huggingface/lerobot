@@ -10,6 +10,8 @@ hydra:
     name: default
 
 seed: 1337
+# batch size for TorchRL SerialEnv. Each underlying env will get the seed = seed + env_index
+rollout_batch_size: 10
 device: cuda  # cpu
 prefetch: 4
 eval_freq: ???

@@ -168,42 +168,31 @@ class AlohaEnv(AbstractEnv):
     def _step(self, tensordict: TensorDict):
         td = tensordict
         action = td["action"].numpy()
-        # step expects shape=(4,) so we pad if necessary
+        assert action.ndim == 1
         # TODO(rcadene): add info["is_success"] and info["success"] ?
-        sum_reward = 0
 
-        if action.ndim == 1:
-            action = einops.repeat(action, "c -> t c", t=self.frame_skip)
-        else:
-            if self.frame_skip > 1:
-                raise NotImplementedError()
+        _, reward, _, raw_obs = self._env.step(action)
 
-        num_action_steps = action.shape[0]
-        for i in range(num_action_steps):
-            _, reward, discount, raw_obs = self._env.step(action[i])
-            del discount  # not used
+        # TODO(rcadene): add an enum
+        success = done = reward == 4
+        obs = self._format_raw_obs(raw_obs)
 
-            # TOOD(rcadene): add an enum
-            success = done = reward == 4
-            sum_reward += reward
-            obs = self._format_raw_obs(raw_obs)
+        if self.num_prev_obs > 0:
+            stacked_obs = {}
+            if "image" in obs:
+                self._prev_obs_image_queue.append(obs["image"]["top"])
+                stacked_obs["image"] = {"top": torch.stack(list(self._prev_obs_image_queue))}
+            if "state" in obs:
+                self._prev_obs_state_queue.append(obs["state"])
+                stacked_obs["state"] = torch.stack(list(self._prev_obs_state_queue))
+            obs = stacked_obs
 
-            if self.num_prev_obs > 0:
-                stacked_obs = {}
-                if "image" in obs:
-                    self._prev_obs_image_queue.append(obs["image"]["top"])
-                    stacked_obs["image"] = {"top": torch.stack(list(self._prev_obs_image_queue))}
-                if "state" in obs:
-                    self._prev_obs_state_queue.append(obs["state"])
-                    stacked_obs["state"] = torch.stack(list(self._prev_obs_state_queue))
-                obs = stacked_obs
-
-            self.call_rendering_hooks()
+        self.call_rendering_hooks()
 
         td = TensorDict(
             {
                 "observation": TensorDict(obs, batch_size=[]),
-                "reward": torch.tensor([sum_reward], dtype=torch.float32),
+                "reward": torch.tensor([reward], dtype=torch.float32),
                 # succes and done are true when coverage > self.success_threshold in env
                 "done": torch.tensor([done], dtype=torch.bool),
                 "success": torch.tensor([success], dtype=torch.bool),

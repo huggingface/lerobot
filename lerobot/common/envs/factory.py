@@ -1,15 +1,17 @@
 from torchrl.envs.transforms import Compose, StepCounter, Transform, TransformedEnv
 
 
-def make_env(cfg, transform=None):
+def make_env(cfg, seed=None, transform=None):
+    """
+    Provide seed to override the seed in the cfg (useful for batched environments).
+    """
     kwargs = {
         "frame_skip": cfg.env.action_repeat,
         "from_pixels": cfg.env.from_pixels,
         "pixels_only": cfg.env.pixels_only,
         "image_size": cfg.env.image_size,
-        # TODO(rcadene): do we want a specific eval_env_seed?
-        "seed": cfg.seed,
         "num_prev_obs": cfg.n_obs_steps - 1,
+        "seed": seed if seed is not None else cfg.seed,
     }
 
     if cfg.env.name == "simxarm":
