@@ -49,6 +49,8 @@ opencv-python = "^4.9.0.80"
 diffusers = "^0.26.3"
 torchvision = {version = "^0.17.1", source = "torch-cpu"}
 h5py = "^3.10.0"
+dm = "^1.3"
+dm-control = "^1.0.16"
 
 
 [tool.poetry.group.dev.dependencies]
