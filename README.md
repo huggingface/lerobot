@@ -103,6 +103,18 @@ pre-commit install
 pre-commit run -a
 ```
 
+**Adding dependencies (temporary)**
+
+Right now, for the CI to work, whenever a new dependency is added it needs to be also added to the cpu env, eg:
+
+```
+# Run in this directory, adds the package to the main env with cuda
+poetry add some-package
+
+# Adds the same package to the cpu env
+cd .github/poetry/cpu && poetry add some-package
+```
+
 **Tests**
 
 Install [git lfs](https://git-lfs.com/) to retrieve test artifacts (if you don't have it already).
