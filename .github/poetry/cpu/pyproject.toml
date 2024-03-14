@@ -1,0 +1,104 @@
+[tool.poetry]
+name = "lerobot"
+version = "0.1.0"
+description = "Le robot is learning"
+authors = [
+    "Rémi Cadène <re.cadene@gmail.com>",
+    "Simon Alibert <alibert.sim@gmail.com>",
+]
+repository = "https://github.com/Cadene/lerobot"
+readme = "README.md"
+license = "MIT"
+classifiers=[
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+]
+packages = [{include = "lerobot"}]
+
+
+[tool.poetry.dependencies]
+python = "^3.10"
+cython = "^3.0.8"
+termcolor = "^2.4.0"
+omegaconf = "^2.3.0"
+dm-env = "^1.6"
+pandas = "^2.2.1"
+wandb = "^0.16.3"
+moviepy = "^1.0.3"
+imageio = {extras = ["pyav"], version = "^2.34.0"}
+gdown = "^5.1.0"
+hydra-core = "^1.3.2"
+einops = "^0.7.0"
+pygame = "^2.5.2"
+pymunk = "^6.6.0"
+zarr = "^2.17.0"
+shapely = "^2.0.3"
+scikit-image = "^0.22.0"
+numba = "^0.59.0"
+mpmath = "^1.3.0"
+torch = {version = "^2.2.1", source = "torch-cpu"}
+tensordict = {git = "https://github.com/pytorch/tensordict"}
+torchrl = {git = "https://github.com/pytorch/rl", rev = "13bef426dcfa5887c6e5034a6e9697993fa92c37"}
+mujoco = "^3.1.2"
+mujoco-py = "^2.1.2.14"
+gym = "^0.26.2"
+opencv-python = "^4.9.0.80"
+diffusers = "^0.26.3"
+torchvision = {version = "^0.17.1", source = "torch-cpu"}
+h5py = "^3.10.0"
+
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^3.6.2"
+debugpy = "^1.8.1"
+pytest = "^8.1.0"
+
+
+[[tool.poetry.source]]
+name = "torch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "supplemental"
+
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+]
+
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "N", "B", "C4", "SIM"]
+
+
+[tool.poetry-dynamic-versioning]
+enable = true
+
+
+[build-system]
+requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
+build-backend = "poetry_dynamic_versioning.backend"
