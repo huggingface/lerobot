@@ -90,7 +90,7 @@ class PushtExperienceReplay(AbstractExperienceReplay):
         batch_size: int = None,
         *,
         shuffle: bool = True,
-        root: Path = None,
+        root: Path | None = None,
         pin_memory: bool = False,
         prefetch: int = None,
         sampler: SliceSampler = None,
@@ -111,8 +111,9 @@ class PushtExperienceReplay(AbstractExperienceReplay):
             transform=transform,
         )
 
-    def _download_and_preproc(self):
-        raw_dir = self.data_dir.parent / f"{self.data_dir.name}_raw"
+    def _download_and_preproc_obsolete(self):
+        assert self.root is not None
+        raw_dir = self.root / f"{self.dataset_id}_raw"
         zarr_path = (raw_dir / PUSHT_ZARR).resolve()
         if not zarr_path.is_dir():
             raw_dir.mkdir(parents=True, exist_ok=True)
@@ -208,7 +209,7 @@ class PushtExperienceReplay(AbstractExperienceReplay):
 
             if episode_id == 0:
                 # hack to initialize tensordict data structure to store episodes
-                td_data = ep_td[0].expand(total_frames).memmap_like(self.data_dir)
+                td_data = ep_td[0].expand(total_frames).memmap_like(self.root / f"{self.dataset_id}")
 
             td_data[idxtd : idxtd + len(ep_td)] = ep_td
 
