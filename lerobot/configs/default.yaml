@@ -32,5 +32,7 @@ policy: ???
 
 wandb:
   enable: true
+  # Set to true to disable saving an artifact despite save_model == True
+  disable_artifact: false
   project: lerobot
   notes: ""
