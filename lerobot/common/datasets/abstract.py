@@ -85,7 +85,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
             self._transform = transform
 
     def compute_or_load_stats(self, num_batch=100, batch_size=32) -> TensorDict:
-        stats_path = self.data_dir / "stats.pth"
+        stats_path = Path(self.data_dir) / "stats.pth"
         if stats_path.exists():
             stats = torch.load(stats_path)
         else:
