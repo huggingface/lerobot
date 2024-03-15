@@ -1,13 +1,13 @@
 import logging
 import os
-from pathlib import Path
 
 import torch
 from torchrl.data.replay_buffers import PrioritizedSliceSampler, SliceSampler
 
 from lerobot.common.envs.transforms import NormalizeTransform, Prod
 
-DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
+# used for unit tests
+DATA_DIR = os.environ.get("DATA_DIR", None)
 
 
 def make_offline_buffer(
@@ -77,9 +77,9 @@ def make_offline_buffer(
 
     offline_buffer = clsfunc(
         dataset_id=dataset_id,
-        root=DATA_DIR,
         sampler=sampler,
         batch_size=batch_size,
+        root=DATA_DIR,
         pin_memory=pin_memory,
         prefetch=prefetch if isinstance(prefetch, int) else None,
     )
