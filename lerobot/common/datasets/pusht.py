@@ -90,7 +90,7 @@ class PushtExperienceReplay(AbstractExperienceReplay):
         batch_size: int = None,
         *,
         shuffle: bool = True,
-        root: Path = None,
+        root: Path | None = None,
         pin_memory: bool = False,
         prefetch: int = None,
         sampler: SliceSampler = None,

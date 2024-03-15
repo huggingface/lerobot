@@ -1,13 +1,16 @@
 import logging
 import os
+from pathlib import Path
 
 import torch
 from torchrl.data.replay_buffers import PrioritizedSliceSampler, SliceSampler
 
 from lerobot.common.envs.transforms import NormalizeTransform, Prod
 
-# used for unit tests
-DATA_DIR = os.environ.get("DATA_DIR", None)
+# DATA_DIR specifies to location where datasets are loaded. By default, DATA_DIR is None and
+# we load from `$HOME/.cache/huggingface/hub/datasets`. For our unit tests, we set `DATA_DIR=tests/data`
+# to load a subset of our datasets for faster continuous integration.
+DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
 
 def make_offline_buffer(

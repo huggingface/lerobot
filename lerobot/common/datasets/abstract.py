@@ -22,7 +22,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
         batch_size: int = None,
         *,
         shuffle: bool = True,
-        root: Path = None,
+        root: Path | None = None,
         pin_memory: bool = False,
         prefetch: int = None,
         sampler: SliceSampler = None,
@@ -32,7 +32,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
     ):
         self.dataset_id = dataset_id
         self.shuffle = shuffle
-        self.root = root if root is None else Path(root)
+        self.root = root
         storage = self._download_or_load_dataset()
 
         super().__init__(
