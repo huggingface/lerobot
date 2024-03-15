@@ -65,10 +65,11 @@ class SimxarmExperienceReplay(AbstractExperienceReplay):
         )
 
     def _download_and_preproc_obsolete(self):
+        assert self.root is not None
         # TODO(rcadene): finish download
         download()
 
-        dataset_path = Path(self.root) / "data" / "buffer.pkl"
+        dataset_path = self.root / f"{self.dataset_id}_raw" / "buffer.pkl"
         print(f"Using offline dataset '{dataset_path}'")
         with open(dataset_path, "rb") as f:
             dataset_dict = pickle.load(f)
@@ -110,7 +111,7 @@ class SimxarmExperienceReplay(AbstractExperienceReplay):
 
             if episode_id == 0:
                 # hack to initialize tensordict data structure to store episodes
-                td_data = episode[0].expand(total_frames).memmap_like(Path(self.root) / f"{self.dataset_id}")
+                td_data = episode[0].expand(total_frames).memmap_like(self.root / f"{self.dataset_id}")
 
             td_data[idx0:idx1] = episode
 

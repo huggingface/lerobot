@@ -32,7 +32,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
     ):
         self.dataset_id = dataset_id
         self.shuffle = shuffle
-        self.root = root
+        self.root = root if root is None else Path(root)
         storage = self._download_or_load_dataset()
 
         super().__init__(
@@ -98,7 +98,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
         if self.root is None:
             self.data_dir = snapshot_download(repo_id=f"cadene/{self.dataset_id}", repo_type="dataset")
         else:
-            self.data_dir = Path(self.root) / self.dataset_id
+            self.data_dir = self.root / self.dataset_id
         return TensorStorage(TensorDict.load_memmap(self.data_dir))
 
     def _compute_stats(self, num_batch=100, batch_size=32):

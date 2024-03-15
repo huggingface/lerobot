@@ -124,8 +124,9 @@ class AlohaExperienceReplay(AbstractExperienceReplay):
     def image_keys(self) -> list:
         return [("observation", "image", cam) for cam in CAMERAS[self.dataset_id]]
 
-    def _download_and_preproc_obsolete(self, data_dir="data"):
-        raw_dir = Path(data_dir) / f"{self.dataset_id}_raw"
+    def _download_and_preproc_obsolete(self):
+        assert self.root is not None
+        raw_dir = self.root / f"{self.dataset_id}_raw"
         if not raw_dir.is_dir():
             download(raw_dir, self.dataset_id)
 
@@ -174,9 +175,7 @@ class AlohaExperienceReplay(AbstractExperienceReplay):
 
                 if ep_id == 0:
                     # hack to initialize tensordict data structure to store episodes
-                    td_data = (
-                        ep_td[0].expand(total_num_frames).memmap_like(Path(self.root) / f"{self.dataset_id}")
-                    )
+                    td_data = ep_td[0].expand(total_num_frames).memmap_like(self.root / f"{self.dataset_id}")
 
                 td_data[idxtd : idxtd + len(ep_td)] = ep_td
                 idxtd = idxtd + len(ep_td)
