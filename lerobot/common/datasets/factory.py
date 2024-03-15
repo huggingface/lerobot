@@ -7,7 +7,10 @@ from torchrl.data.replay_buffers import PrioritizedSliceSampler, SliceSampler
 
 from lerobot.common.envs.transforms import NormalizeTransform, Prod
 
-DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
+# DATA_DIR specifies to location where datasets are loaded. By default, DATA_DIR is None and
+# we load from `$HOME/.cache/huggingface/hub/datasets`. For our unit tests, we set `DATA_DIR=tests/data`
+# to load a subset of our datasets for faster continuous integration.
+DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
 
 def make_offline_buffer(
@@ -77,9 +80,9 @@ def make_offline_buffer(
 
     offline_buffer = clsfunc(
         dataset_id=dataset_id,
-        root=DATA_DIR,
         sampler=sampler,
         batch_size=batch_size,
+        root=DATA_DIR,
         pin_memory=pin_memory,
         prefetch=prefetch if isinstance(prefetch, int) else None,
     )

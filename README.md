@@ -146,6 +146,25 @@ Run tests
 DATA_DIR="tests/data" pytest -sx tests
 ```
 
+**Datasets**
+
+To add a pytorch rl dataset to the hub, first login and use a token generated from [huggingface settings](https://huggingface.co/settings/tokens) with write access:
+```
+huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
+```
+
+Then you can upload it to the hub with:
+```
+HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload --repo-type dataset $HF_USER/$DATASET data/$DATASET
+```
+
+For instance, for [cadene/pusht](https://huggingface.co/datasets/cadene/pusht), we used:
+```
+HF_USER=cadene
+DATASET=pusht
+```
+
+
 ## Acknowledgment
 - Our Diffusion policy and Pusht environment are adapted from [Diffusion Policy](https://diffusion-policy.cs.columbia.edu/)
 - Our TDMPC policy and Simxarm environment are adapted from [FOWM](https://www.yunhaifeng.com/FOWM/)
