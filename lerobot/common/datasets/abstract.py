@@ -96,7 +96,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
 
     def _download_or_load_dataset(self) -> torch.StorageBase:
         if self.root is None:
-            self.data_dir = snapshot_download(repo_id=f"cadene/{self.dataset_id}", repo_type="dataset")
+            self.data_dir = Path(snapshot_download(repo_id=f"cadene/{self.dataset_id}", repo_type="dataset"))
         else:
             self.data_dir = self.root / self.dataset_id
         return TensorStorage(TensorDict.load_memmap(self.data_dir))
