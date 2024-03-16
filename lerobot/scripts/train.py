@@ -25,15 +25,6 @@ def train_cli(cfg: dict):
     )
 
 
-def train_notebook(out_dir=None, job_name=None, config_name="default", config_path="../configs"):
-    from hydra import compose, initialize
-
-    hydra.core.global_hydra.GlobalHydra.instance().clear()
-    initialize(config_path=config_path)
-    cfg = compose(config_name=config_name)
-    train(cfg, out_dir=out_dir, job_name=job_name)
-
-
 def log_train_info(logger, info, step, cfg, offline_buffer, is_offline):
     loss = info["loss"]
     grad_norm = info["grad_norm"]

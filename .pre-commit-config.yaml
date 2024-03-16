@@ -23,6 +23,13 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+  - repo: https://github.com/nbQA-dev/nbQA
+    rev: 1.8.4
+    hooks:
+      - id: nbqa-ruff
+      - id: nbqa-pyupgrade
+        args: ["--py310-plus"]
+      - id: nbqa-isort
   - repo: https://github.com/python-poetry/poetry
     rev: 1.8.0
     hooks:

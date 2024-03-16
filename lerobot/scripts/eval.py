@@ -145,6 +145,7 @@ def eval(cfg: dict, out_dir=None):
     logging.info("make_env")
     env = make_env(cfg, transform=offline_buffer.transform)
 
+    # TODO(aliberts, Cadene): fetch pretrained model from HF hub
     if cfg.policy.pretrained_model_path:
         policy = make_policy(cfg)
         policy = TensorDictModule(

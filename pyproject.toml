@@ -60,6 +60,13 @@ debugpy = "^1.8.1"
 pytest = "^8.1.0"
 
 
+[tool.poetry.group.examples]
+optional = true
+
+
+[tool.poetry.group.examples.dependencies]
+jupyter = "^1.0.0"
+
 [tool.ruff]
 line-length = 110
 target-version = "py310"

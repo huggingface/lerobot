@@ -1,3 +1,7 @@
+# Apple
+.DS_Store
+._.DS_Store
+
 # Logging
 logs
 tmp
