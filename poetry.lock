@@ -2950,7 +2950,7 @@ mpmath = ">=0.19"
 
 [[package]]
 name = "tensordict"
-version = "0.4.0+ca4256e"
+version = "0.4.0+f1c833e"
 description = ""
 optional = false
 python-versions = "*"
@@ -2971,7 +2971,7 @@ tests = ["pytest", "pytest-benchmark", "pytest-instafail", "pytest-rerunfailures
 type = "git"
 url = "https://github.com/pytorch/tensordict"
 reference = "HEAD"
-resolved_reference = "b4c91e8828c538ca0a50d8383fd99311a9afb078"
+resolved_reference = "f1c833ecf495aa61f3f76bf09f94dd708db496ec"
 
 [[package]]
 name = "termcolor"
@@ -3104,8 +3104,8 @@ utils = ["git", "hydra-core (>=1.1)", "hydra-submitit-launcher", "tensorboard", 
 [package.source]
 type = "git"
 url = "https://github.com/pytorch/rl"
-reference = "13bef426dcfa5887c6e5034a6e9697993fa92c37"
-resolved_reference = "13bef426dcfa5887c6e5034a6e9697993fa92c37"
+reference = "HEAD"
+resolved_reference = "c371266ce5a71cb4b1a319cc56ad59d9b492cb9d"
 
 [[package]]
 name = "torchvision"
@@ -3328,4 +3328,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "ee86b84a795e6a3e9c2d79f244a87b55589adbe46d549ac38adf48be27c04cf9"
+content-hash = "e9f0d66c6b070050c1cc29b3bfbb0a1383bd356536091dbebf664c9a0db1f57c"
