@@ -30,7 +30,7 @@ conda activate lerobot
 curl -sSL https://install.python-poetry.org | python -
 ```
 
-Install dependencies
+Install the project
 ```
 poetry install
 ```
@@ -47,6 +47,13 @@ wandb login
 ```
 
 ## Usage
+
+### Example
+
+To use the [notebook example](./examples/pretrained.ipynb), install the project with jupyter dependencies
+```
+poetry install --with examples
+```
 
 
 ### Train
