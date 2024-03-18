@@ -181,6 +181,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
         if offline_step == 0:
             logging.info("Start offline training on a fixed dataset")
         # TODO(rcadene): is it ok if step_t=0 = 0 and not 1 as previously done?
+        policy.train()
         train_info = policy.update(offline_buffer, step)
         if step % cfg.log_freq == 0:
             log_train_info(logger, train_info, step, cfg, offline_buffer, is_offline)
