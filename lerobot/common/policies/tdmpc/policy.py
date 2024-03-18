@@ -291,7 +291,7 @@ class TDMPC(nn.Module):
 
     def update(self, replay_buffer, step, demo_buffer=None):
         """Main update function. Corresponds to one iteration of the model learning."""
-        start_time = time.time()
+        start_time = time.monotonic()
 
         num_slices = self.cfg.batch_size
         batch_size = self.cfg.horizon * num_slices
@@ -405,7 +405,7 @@ class TDMPC(nn.Module):
         self.std = h.linear_schedule(self.cfg.std_schedule, step)
         self.model.train()
 
-        data_s = time.time() - start_time
+        data_s = time.monotonic() - start_time
 
         # Compute targets
         with torch.no_grad():
@@ -501,7 +501,7 @@ class TDMPC(nn.Module):
             "grad_norm": float(grad_norm),
             "lr": self.cfg.lr,
             "data_s": data_s,
-            "update_s": time.time() - start_time,
+            "update_s": time.monotonic() - start_time,
         }
         info["demo_batch_size"] = demo_batch_size
         info["expectile"] = expectile

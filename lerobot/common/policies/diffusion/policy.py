@@ -111,7 +111,7 @@ class DiffusionPolicy(nn.Module):
         return action
 
     def update(self, replay_buffer, step):
-        start_time = time.time()
+        start_time = time.monotonic()
 
         self.diffusion.train()
 
@@ -158,7 +158,7 @@ class DiffusionPolicy(nn.Module):
         batch = replay_buffer.sample(batch_size)
         batch = process_batch(batch, self.cfg.horizon, num_slices)
 
-        data_s = time.time() - start_time
+        data_s = time.monotonic() - start_time
 
         loss = self.diffusion.compute_loss(batch)
         loss.backward()
@@ -181,7 +181,7 @@ class DiffusionPolicy(nn.Module):
             "grad_norm": float(grad_norm),
             "lr": self.lr_scheduler.get_last_lr()[0],
             "data_s": data_s,
-            "update_s": time.time() - start_time,
+            "update_s": time.monotonic() - start_time,
         }
 
         # TODO(rcadene): remove hardcoding

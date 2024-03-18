@@ -54,7 +54,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
     def update(self, replay_buffer, step):
         del step
 
-        start_time = time.time()
+        start_time = time.monotonic()
 
         self.train()
 
@@ -104,7 +104,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
         batch = replay_buffer.sample(batch_size)
         batch = process_batch(batch, self.cfg.horizon, num_slices)
 
-        data_s = time.time() - start_time
+        data_s = time.monotonic() - start_time
 
         loss = self.compute_loss(batch)
         loss.backward()
@@ -125,7 +125,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
             # "lr": self.lr_scheduler.get_last_lr()[0],
             "lr": self.cfg.lr,
             "data_s": data_s,
-            "update_s": time.time() - start_time,
+            "update_s": time.monotonic() - start_time,
         }
 
         return info
