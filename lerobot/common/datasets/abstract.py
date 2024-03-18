@@ -14,6 +14,8 @@ from torchrl.data.replay_buffers.storages import TensorStorage, _collate_id
 from torchrl.data.replay_buffers.writers import ImmutableDatasetWriter, Writer
 from torchrl.envs.transforms.transforms import Compose
 
+from lerobot.common.datasets.transforms import DecodeVideoTransform
+
 
 class AbstractExperienceReplay(TensorDictReplayBuffer):
     def __init__(
@@ -33,7 +35,14 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
         self.dataset_id = dataset_id
         self.shuffle = shuffle
         self.root = root
-        storage = self._download_or_load_dataset()
+        storage, meta_data = self._download_or_load_dataset()
+
+        if transform is not None and "video_id_to_path" in meta_data:
+            # hack to access video paths
+            assert isinstance(transform, Compose)
+            for tf in transform:
+                if isinstance(tf, DecodeVideoTransform):
+                    tf.set_video_id_to_path(meta_data["video_id_to_path"])
 
         super().__init__(
             storage=storage,
@@ -99,7 +108,13 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
             self.data_dir = Path(snapshot_download(repo_id=f"cadene/{self.dataset_id}", repo_type="dataset"))
         else:
             self.data_dir = self.root / self.dataset_id
-        return TensorStorage(TensorDict.load_memmap(self.data_dir))
+
+        storage = TensorStorage(TensorDict.load_memmap(self.data_dir / "replay_buffer"))
+        # required to not send cuda frames to cpu by default
+        storage._storage.clear_device_()
+
+        meta_data = torch.load(self.data_dir / "meta_data.pth")
+        return storage, meta_data
 
     def _compute_stats(self, num_batch=100, batch_size=32):
         rb = TensorDictReplayBuffer(

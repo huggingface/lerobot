@@ -3,6 +3,7 @@ import zipfile
 from pathlib import Path
 
 import requests
+import torch
 import tqdm
 
 
@@ -28,3 +29,26 @@ def download_and_extract_zip(url: str, destination_folder: Path) -> bool:
         return True
     else:
         return False
+
+
+def yuv_to_rgb(frames):
+    assert frames.dtype == torch.uint8
+    assert frames.ndim == 4
+    assert frames.shape[1] == 3
+
+    frames = frames.cpu().to(torch.float)
+    y = frames[..., 0, :, :]
+    u = frames[..., 1, :, :]
+    v = frames[..., 2, :, :]
+
+    y /= 255
+    u = u / 255 - 0.5
+    v = v / 255 - 0.5
+
+    r = y + 1.14 * v
+    g = y + -0.396 * u - 0.581 * v
+    b = y + 2.029 * u
+
+    rgb = torch.stack([r, g, b], 1)
+    rgb = (rgb * 255).clamp(0, 255).to(torch.uint8)
+    return rgb

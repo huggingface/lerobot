@@ -87,17 +87,30 @@ def make_offline_buffer(
         prefetch=prefetch if isinstance(prefetch, int) else None,
     )
 
-    if cfg.policy.name == "tdmpc":
-        img_keys = []
-        for key in offline_buffer.image_keys:
-            img_keys.append(("next", *key))
-        img_keys += offline_buffer.image_keys
-    else:
-        img_keys = offline_buffer.image_keys
+    transforms = []
 
-    transforms = [Prod(in_keys=img_keys, prod=1 / 255)]
+    # transforms = [
+    #     ViewSliceHorizonTransform(num_slices, cfg.policy.horizon),
+    #     KeepFrames(positions=[0], in_keys=[("observation")]),
+    #     DecodeVideoTransform(
+    #         data_dir=offline_buffer.data_dir,
+    #         device=cfg.device,
+    #         frame_rate=None,
+    #         in_keys=[("observation", "frame")],
+    #         out_keys=[("observation", "frame", "data")],
+    #     ),
+    # ]
 
     if normalize:
+        if cfg.policy.name == "tdmpc":
+            img_keys = []
+            for key in offline_buffer.image_keys:
+                img_keys.append(("next", *key))
+            img_keys += offline_buffer.image_keys
+        else:
+            img_keys = offline_buffer.image_keys
+        transforms.append(Prod(in_keys=img_keys, prod=1 / 255))
+
         # TODO(rcadene): make normalization strategy configurable between mean_std, min_max, manual_min_max, min_max_from_spec
         stats = offline_buffer.compute_or_load_stats()
 
