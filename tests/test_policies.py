@@ -84,6 +84,9 @@ def test_abstract_policy_forward():
             self.n_action_steps = n_action_steps
             self.n_policy_invocations = 0
 
+        def update(self):
+            pass
+
         def select_action(self):
             self.n_policy_invocations += 1
             return torch.stack([torch.tensor([i]) for i in range(self.n_action_steps)]).unsqueeze(0)

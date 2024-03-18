@@ -135,8 +135,8 @@ def eval(cfg: dict, out_dir=None):
         cfg.rollout_batch_size,
         create_env_fn=make_env,
         create_env_kwargs=[
-            {"cfg": cfg, "seed": s, "transform": offline_buffer.transform}
-            for s in range(cfg.seed, cfg.seed + cfg.rollout_batch_size)
+            {"cfg": cfg, "seed": env_seed, "transform": offline_buffer.transform}
+            for env_seed in range(cfg.seed, cfg.seed + cfg.rollout_batch_size)
         ],
     )
 
