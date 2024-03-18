@@ -32,6 +32,7 @@ def eval_policy(
     fps: int = 15,
     return_first_video: bool = False,
 ):
+    policy.eval()
     start = time.time()
     sum_rewards = []
     max_rewards = []
