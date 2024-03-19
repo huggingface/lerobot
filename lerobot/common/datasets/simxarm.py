@@ -40,6 +40,7 @@ class SimxarmExperienceReplay(AbstractExperienceReplay):
     def __init__(
         self,
         dataset_id: str,
+        version: str | None = None,
         batch_size: int = None,
         *,
         shuffle: bool = True,
@@ -53,6 +54,7 @@ class SimxarmExperienceReplay(AbstractExperienceReplay):
     ):
         super().__init__(
             dataset_id,
+            version,
             batch_size,
             shuffle=shuffle,
             root=root,
