@@ -138,7 +138,7 @@ git lfs pull
 
 When adding a new dataset, mock it with
 ```
-python tests/scripts/mock_dataset.py --in-data-dir data/<dataset_id> --out-data-dir tests/data/<dataset_id>
+python tests/scripts/mock_dataset.py --in-data-dir data/$DATASET --out-data-dir tests/data/$DATASET
 ```
 
 Run tests
@@ -155,13 +155,43 @@ huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
 
 Then you can upload it to the hub with:
 ```
-HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload --repo-type dataset $HF_USER/$DATASET data/$DATASET
+HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload $HF_USER/$DATASET data/$DATASET \
+--repo-type dataset  \
+--revision v1.0
 ```
 
 For instance, for [cadene/pusht](https://huggingface.co/datasets/cadene/pusht), we used:
 ```
 HF_USER=cadene
 DATASET=pusht
+```
+
+If you want to improve an existing dataset, you can download it locally with:
+```
+mkdir -p data/$DATASET
+HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli download $HF_USER/$DATASET \
+--repo-type dataset \
+--local-dir data/$DATASET \
+--local-dir-use-symlinks=False \
+--revision v1.0
+```
+
+Iterate on your code and dataset with:
+```
+DATA_DIR=data python train.py
+```
+
+Then upload a new version:
+```
+HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload $HF_USER/$DATASET data/$DATASET \
+--repo-type dataset \
+--revision v1.1 \
+--delete "*"
+```
+
+And you might want to mock the dataset if you need to update the unit tests as well:
+```
+python tests/scripts/mock_dataset.py --in-data-dir data/$DATASET --out-data-dir tests/data/$DATASET
 ```
 
 
