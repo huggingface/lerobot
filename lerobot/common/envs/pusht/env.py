@@ -1,4 +1,5 @@
 import importlib
+import logging
 from collections import deque
 from typing import Optional
 
@@ -42,6 +43,7 @@ class PushtEnv(AbstractEnv):
             num_prev_obs=num_prev_obs,
             num_prev_action=num_prev_action,
         )
+        self._reset_warning_issued = False
 
     def _make_env(self):
         if not _has_gym:
@@ -79,39 +81,39 @@ class PushtEnv(AbstractEnv):
         return obs
 
     def _reset(self, tensordict: Optional[TensorDict] = None):
-        td = tensordict
-        if td is None or td.is_empty():
-            # we need to handle seed iteration, since self._env.reset() rely an internal _seed.
-            self._current_seed += 1
-            self.set_seed(self._current_seed)
-            raw_obs = self._env.reset()
-            assert self._current_seed == self._env._seed
+        if tensordict is not None and not self._reset_warning_issued:
+            logging.warning(f"{self.__class__.__name__}._reset ignores the provided tensordict.")
+            self._reset_warning_issued = True
 
-            obs = self._format_raw_obs(raw_obs)
+        # we need to handle seed iteration, since self._env.reset() rely an internal _seed.
+        self._current_seed += 1
+        self.set_seed(self._current_seed)
+        raw_obs = self._env.reset()
+        assert self._current_seed == self._env._seed
 
-            if self.num_prev_obs > 0:
-                stacked_obs = {}
-                if "image" in obs:
-                    self._prev_obs_image_queue = deque(
-                        [obs["image"]] * (self.num_prev_obs + 1), maxlen=(self.num_prev_obs + 1)
-                    )
-                    stacked_obs["image"] = torch.stack(list(self._prev_obs_image_queue))
-                if "state" in obs:
-                    self._prev_obs_state_queue = deque(
-                        [obs["state"]] * (self.num_prev_obs + 1), maxlen=(self.num_prev_obs + 1)
-                    )
-                    stacked_obs["state"] = torch.stack(list(self._prev_obs_state_queue))
-                obs = stacked_obs
+        obs = self._format_raw_obs(raw_obs)
 
-            td = TensorDict(
-                {
-                    "observation": TensorDict(obs, batch_size=[]),
-                    "done": torch.tensor([False], dtype=torch.bool),
-                },
-                batch_size=[],
-            )
-        else:
-            raise NotImplementedError()
+        if self.num_prev_obs > 0:
+            stacked_obs = {}
+            if "image" in obs:
+                self._prev_obs_image_queue = deque(
+                    [obs["image"]] * (self.num_prev_obs + 1), maxlen=(self.num_prev_obs + 1)
+                )
+                stacked_obs["image"] = torch.stack(list(self._prev_obs_image_queue))
+            if "state" in obs:
+                self._prev_obs_state_queue = deque(
+                    [obs["state"]] * (self.num_prev_obs + 1), maxlen=(self.num_prev_obs + 1)
+                )
+                stacked_obs["state"] = torch.stack(list(self._prev_obs_state_queue))
+            obs = stacked_obs
+
+        td = TensorDict(
+            {
+                "observation": TensorDict(obs, batch_size=[]),
+                "done": torch.tensor([False], dtype=torch.bool),
+            },
+            batch_size=[],
+        )
 
         self.call_rendering_hooks()
         return td

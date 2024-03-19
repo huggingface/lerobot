@@ -50,7 +50,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
     def stats_patterns(self) -> dict:
         return {
             ("observation", "state"): "b c -> c",
-            ("observation", "image"): "b c h w -> c",
+            ("observation", "image"): "b c h w -> c 1 1",
             ("action",): "b c -> c",
         }
 

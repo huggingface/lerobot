@@ -117,7 +117,7 @@ class AlohaExperienceReplay(AbstractExperienceReplay):
             ("action",): "b c -> c",
         }
         for cam in CAMERAS[self.dataset_id]:
-            d[("observation", "image", cam)] = "b c h w -> c"
+            d[("observation", "image", cam)] = "b c h w -> c 1 1"
         return d
 
     @property

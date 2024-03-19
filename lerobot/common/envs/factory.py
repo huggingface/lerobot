@@ -1,31 +1,20 @@
+from torchrl.envs import SerialEnv
 from torchrl.envs.transforms import Compose, StepCounter, Transform, TransformedEnv
 
 
 def make_env(cfg, transform=None):
     """
-    Provide seed to override the seed in the cfg (useful for batched environments).
+    Note: The returned environment is wrapped in a torchrl.SerialEnv with cfg.rollout_batch_size underlying
+    environments. The env therefore returns batches.`
     """
-    # assert cfg.rollout_batch_size == 1, \
-    # """
-    # For the time being, rollout batch sizes of > 1 are not supported. This is because the SerialEnv rollout does not
-    # correctly handle terminated environments. If you really want to use a larger batch size, read on...
-
-    # When calling `EnvBase.rollout` with `break_when_any_done == True` all environments stop rolling out as soon as the
-    # first is terminated or truncated. This almost certainly results in incorrect success metrics, as all but the first
-    # environment get an opportunity to reach the goal. A possible work around is to comment out `if any_done: break`
-    # inf `EnvBase._rollout_stop_early`. One potential downside is that the environments `step` function will continue
-    # to be called and the outputs will continue to be added to the rollout.
-
-    # When calling `EnvBase.rollout` with `break_when_any_done == False` environments are reset when done.
-    # """
 
     kwargs = {
         "frame_skip": cfg.env.action_repeat,
         "from_pixels": cfg.env.from_pixels,
         "pixels_only": cfg.env.pixels_only,
         "image_size": cfg.env.image_size,
-        "num_prev_obs": cfg.n_obs_steps - 1,
         "seed": cfg.seed,
+        "num_prev_obs": cfg.n_obs_steps - 1,
     }
 
     if cfg.env.name == "simxarm":
@@ -67,13 +56,14 @@ def make_env(cfg, transform=None):
 
         return env
 
-    # return SerialEnv(
-    #     cfg.rollout_batch_size,
-    #     create_env_fn=_make_env,
-    #     create_env_kwargs={
-    #         "seed": env_seed for env_seed in range(cfg.seed, cfg.seed + cfg.rollout_batch_size)
-    #     },
-    # )
+    return SerialEnv(
+        cfg.rollout_batch_size,
+        create_env_fn=_make_env,
+        create_env_kwargs={
+            "seed": env_seed  # noqa: B035
+            for env_seed in range(cfg.seed, cfg.seed + cfg.rollout_batch_size)
+        },
+    )
 
 
 # def make_env(env_name, frame_skip, device, is_test=False):
