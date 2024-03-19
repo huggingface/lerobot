@@ -61,7 +61,8 @@ def cat_and_write_video(video_path, frames, fps):
         "-crf",
         "0",  # Lossless option
         "-pix_fmt",
-        "yuv420p",  # Specify pixel format
+        # "yuv420p",  # Specify pixel format
+        "yuv444p",  # Specify pixel format
         video_path,
         # video_path.replace(".mp4", ".mkv")
     ]
