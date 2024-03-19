@@ -181,7 +181,7 @@ Iterate on your code and dataset with:
 DATA_DIR=data python train.py
 ```
 
-Then upload a new version:
+Then upload a new version (v2.0 or v1.1 if the changes are respectively more or less significant):
 ```
 HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload $HF_USER/$DATASET data/$DATASET \
 --repo-type dataset \
