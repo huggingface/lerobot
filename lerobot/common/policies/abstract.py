@@ -30,7 +30,7 @@ class AbstractPolicy(nn.Module, ABC):
         Should return a (batch_size, n_action_steps, *) tensor of actions.
         """
 
-    def forward(self, *args, **kwargs):
+    def forward(self, *args, **kwargs) -> Tensor:
         """Inference step that makes multi-step policies compatible with their single-step environments.
 
         WARNING: In general, this should not be overriden.

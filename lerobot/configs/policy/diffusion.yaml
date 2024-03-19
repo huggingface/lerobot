@@ -22,8 +22,8 @@ keypoint_visible_rate: 1.0
 obs_as_global_cond: True
 
 eval_episodes: 1
-eval_freq: 10000
-save_freq: 100000
+eval_freq: 5000
+save_freq: 5000
 log_freq: 250
 
 offline_steps: 1344000
