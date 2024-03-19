@@ -35,6 +35,12 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
         self.version = version
         self.shuffle = shuffle
         self.root = root
+
+        if self.root is not None and self.version is not None:
+            logging.warning(
+                f"The version of the dataset ({self.version}) is not enforced when root is provided ({self.root})."
+            )
+
         storage = self._download_or_load_dataset()
 
         super().__init__(

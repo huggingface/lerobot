@@ -148,9 +148,9 @@ DATA_DIR="tests/data" pytest -sx tests
 
 **Datasets**
 
-To add a pytorch rl dataset to the hub, first login and use a token generated from [huggingface settings](https://huggingface.co/settings/tokens) with write access:
+To add a dataset to the hub, first login and use a token generated from [huggingface settings](https://huggingface.co/settings/tokens) with write access:
 ```
-huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
+huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
 Then you can upload it to the hub with:
@@ -159,6 +159,12 @@ HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload $HF_USER/$DATASET data/$DATAS
 --repo-type dataset  \
 --revision v1.0
 ```
+
+You will need to set the corresponding version as a default argument in your dataset class:
+```python
+  version: str | None = "v1.0",
+```
+See: [`lerobot/common/datasets/pusht.py`](https://github.com/Cadene/lerobot/blob/main/lerobot/common/datasets/pusht.py)
 
 For instance, for [cadene/pusht](https://huggingface.co/datasets/cadene/pusht), we used:
 ```
@@ -169,7 +175,7 @@ DATASET=pusht
 If you want to improve an existing dataset, you can download it locally with:
 ```
 mkdir -p data/$DATASET
-HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli download $HF_USER/$DATASET \
+HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli download ${HF_USER}/$DATASET \
 --repo-type dataset \
 --local-dir data/$DATASET \
 --local-dir-use-symlinks=False \
@@ -181,7 +187,7 @@ Iterate on your code and dataset with:
 DATA_DIR=data python train.py
 ```
 
-Then upload a new version (v2.0 or v1.1 if the changes are respectively more or less significant):
+Upload a new version (v2.0 or v1.1 if the changes are respectively more or less significant):
 ```
 HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload $HF_USER/$DATASET data/$DATASET \
 --repo-type dataset \
@@ -189,7 +195,14 @@ HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload $HF_USER/$DATASET data/$DATAS
 --delete "*"
 ```
 
-And you might want to mock the dataset if you need to update the unit tests as well:
+Then you will need to set the corresponding version as a default argument in your dataset class:
+```python
+  version: str | None = "v1.1",
+```
+See: [`lerobot/common/datasets/pusht.py`](https://github.com/Cadene/lerobot/blob/main/lerobot/common/datasets/pusht.py)
+
+
+Finally, you might want to mock the dataset if you need to update the unit tests as well:
 ```
 python tests/scripts/mock_dataset.py --in-data-dir data/$DATASET --out-data-dir tests/data/$DATASET
 ```
