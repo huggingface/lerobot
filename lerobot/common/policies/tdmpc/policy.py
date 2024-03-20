@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 
 import lerobot.common.policies.tdmpc.helper as h
+from lerobot.common.policies.abstract import AbstractPolicy
 
 FIRST_FRAME = 0
 
@@ -85,11 +86,11 @@ class TOLD(nn.Module):
         return torch.min(Q1, Q2) if return_type == "min" else (Q1 + Q2) / 2
 
 
-class TDMPC(nn.Module):
+class TDMPC(AbstractPolicy):
     """Implementation of TD-MPC learning + inference."""
 
     def __init__(self, cfg, device):
-        super().__init__()
+        super().__init__(None)
         self.action_dim = cfg.action_dim
 
         self.cfg = cfg
@@ -124,20 +125,19 @@ class TDMPC(nn.Module):
         self.model_target.load_state_dict(d["model_target"])
 
     @torch.no_grad()
-    def forward(self, observation, step_count):
-        t0 = step_count.item() == 0
+    def select_actions(self, observation, step_count):
+        if observation["image"].shape[0] != 1:
+            raise NotImplementedError("Batch size > 1 not handled")
 
-        # TODO(rcadene): remove unsqueeze hack...
-        if observation["image"].ndim == 3:
-            observation["image"] = observation["image"].unsqueeze(0)
-            observation["state"] = observation["state"].unsqueeze(0)
+        t0 = step_count.item() == 0
 
         obs = {
             # TODO(rcadene): remove contiguous hack...
             "rgb": observation["image"].contiguous(),
             "state": observation["state"].contiguous(),
         }
-        action = self.act(obs, t0=t0, step=self.step.item())
+        # Note: unsqueeze needed because `act` still uses non-batch logic.
+        action = self.act(obs, t0=t0, step=self.step.item()).unsqueeze(0)
         return action
 
     @torch.no_grad()

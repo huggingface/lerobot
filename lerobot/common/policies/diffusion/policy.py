@@ -3,14 +3,14 @@ import time
 
 import hydra
 import torch
-import torch.nn as nn
 
+from lerobot.common.policies.abstract import AbstractPolicy
 from lerobot.common.policies.diffusion.diffusion_unet_image_policy import DiffusionUnetImagePolicy
 from lerobot.common.policies.diffusion.model.lr_scheduler import get_scheduler
 from lerobot.common.policies.diffusion.model.multi_image_obs_encoder import MultiImageObsEncoder
 
 
-class DiffusionPolicy(nn.Module):
+class DiffusionPolicy(AbstractPolicy):
     def __init__(
         self,
         cfg,
@@ -34,7 +34,7 @@ class DiffusionPolicy(nn.Module):
         # parameters passed to step
         **kwargs,
     ):
-        super().__init__()
+        super().__init__(n_action_steps)
         self.cfg = cfg
 
         noise_scheduler = hydra.utils.instantiate(cfg_noise_scheduler)
@@ -93,21 +93,16 @@ class DiffusionPolicy(nn.Module):
         )
 
     @torch.no_grad()
-    def forward(self, observation, step_count):
+    def select_actions(self, observation, step_count):
         # TODO(rcadene): remove unused step_count
         del step_count
-
-        # TODO(rcadene): remove unsqueeze hack to add bsize=1
-        observation["image"] = observation["image"].unsqueeze(0)
-        observation["state"] = observation["state"].unsqueeze(0)
 
         obs_dict = {
             "image": observation["image"],
             "agent_pos": observation["state"],
         }
         out = self.diffusion.predict_action(obs_dict)
-
-        action = out["action"].squeeze(0)
+        action = out["action"]
         return action
 
     def update(self, replay_buffer, step):

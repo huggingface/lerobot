@@ -115,11 +115,11 @@ class AlohaExperienceReplay(AbstractExperienceReplay):
     @property
     def stats_patterns(self) -> dict:
         d = {
-            ("observation", "state"): "b c -> 1 c",
-            ("action",): "b c -> 1 c",
+            ("observation", "state"): "b c -> c",
+            ("action",): "b c -> c",
         }
         for cam in CAMERAS[self.dataset_id]:
-            d[("observation", "image", cam)] = "b c h w -> 1 c 1 1"
+            d[("observation", "image", cam)] = "b c h w -> c 1 1"
         return d
 
     @property

@@ -2,10 +2,10 @@ import logging
 import time
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 import torchvision.transforms as transforms
 
+from lerobot.common.policies.abstract import AbstractPolicy
 from lerobot.common.policies.act.detr_vae import build
 
 
@@ -40,9 +40,9 @@ def kl_divergence(mu, logvar):
     return total_kld, dimension_wise_kld, mean_kld
 
 
-class ActionChunkingTransformerPolicy(nn.Module):
+class ActionChunkingTransformerPolicy(AbstractPolicy):
     def __init__(self, cfg, device, n_action_steps=1):
-        super().__init__()
+        super().__init__(n_action_steps)
         self.cfg = cfg
         self.n_action_steps = n_action_steps
         self.device = device
@@ -147,15 +147,14 @@ class ActionChunkingTransformerPolicy(nn.Module):
         return loss
 
     @torch.no_grad()
-    def forward(self, observation, step_count):
+    def select_actions(self, observation, step_count):
+        if observation["image"].shape[0] != 1:
+            raise NotImplementedError("Batch size > 1 not handled")
+
         # TODO(rcadene): remove unused step_count
         del step_count
 
         self.eval()
-
-        # TODO(rcadene): remove unsqueeze hack to add bsize=1
-        observation["image", "top"] = observation["image", "top"].unsqueeze(0)
-        # observation["state"] = observation["state"].unsqueeze(0)
 
         # TODO(rcadene): remove hack
         # add 1 camera dimension
@@ -180,11 +179,8 @@ class ActionChunkingTransformerPolicy(nn.Module):
             # exp_weights = torch.from_numpy(exp_weights).cuda().unsqueeze(dim=1)
             # raw_action = (actions_for_curr_step * exp_weights).sum(dim=0, keepdim=True)
 
-        # remove bsize=1
-        action = action.squeeze(0)
-
         # take first predicted action or n first actions
-        action = action[0] if self.n_action_steps == 1 else action[: self.n_action_steps]
+        action = action[: self.n_action_steps]
         return action
 
     def _forward(self, qpos, image, actions=None, is_pad=None):

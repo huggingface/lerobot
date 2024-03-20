@@ -1,4 +1,7 @@
 def make_policy(cfg):
+    if cfg.policy.name != "diffusion" and cfg.rollout_batch_size > 1:
+        raise NotImplementedError("Only diffusion policy supports rollout_batch_size > 1 for the time being.")
+
     if cfg.policy.name == "tdmpc":
         from lerobot.common.policies.tdmpc.policy import TDMPC
 

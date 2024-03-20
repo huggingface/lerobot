@@ -112,6 +112,8 @@ def train(cfg: dict, out_dir=None, job_name=None):
         raise NotImplementedError()
     if job_name is None:
         raise NotImplementedError()
+    if cfg.online_steps > 0:
+        assert cfg.rollout_batch_size == 1, "rollout_batch_size > 1 not supported for online training steps"
 
     init_logging()
 
@@ -192,7 +194,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 env,
                 td_policy,
                 num_episodes=cfg.eval_episodes,
-                max_steps=cfg.env.episode_length // cfg.n_action_steps,
+                max_steps=cfg.env.episode_length,
                 return_first_video=True,
                 video_dir=Path(out_dir) / "eval",
                 save_video=True,
@@ -218,11 +220,11 @@ def train(cfg: dict, out_dir=None, job_name=None):
         # TODO: add configurable number of rollout? (default=1)
         with torch.no_grad():
             rollout = env.rollout(
-                max_steps=cfg.env.episode_length // cfg.n_action_steps,
+                max_steps=cfg.env.episode_length,
                 policy=td_policy,
                 auto_cast_to_device=True,
             )
-        assert len(rollout) <= cfg.env.episode_length // cfg.n_action_steps
+        assert len(rollout) <= cfg.env.episode_length
         # set same episode index for all time steps contained in this rollout
         rollout["episode"] = torch.tensor([env_step] * len(rollout), dtype=torch.int)
         online_buffer.extend(rollout)

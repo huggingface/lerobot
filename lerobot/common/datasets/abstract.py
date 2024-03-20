@@ -57,9 +57,9 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
     @property
     def stats_patterns(self) -> dict:
         return {
-            ("observation", "state"): "b c -> 1 c",
-            ("observation", "image"): "b c h w -> 1 c 1 1",
-            ("action",): "b c -> 1 c",
+            ("observation", "state"): "b c -> c",
+            ("observation", "image"): "b c h w -> c 1 1",
+            ("action",): "b c -> c",
         }
 
     @property

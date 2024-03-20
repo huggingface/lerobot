@@ -35,6 +35,8 @@ _has_gym = importlib.util.find_spec("gym") is not None
 
 
 class AlohaEnv(AbstractEnv):
+    _reset_warning_issued = False
+
     def __init__(
         self,
         task,
@@ -120,90 +122,76 @@ class AlohaEnv(AbstractEnv):
         return obs
 
     def _reset(self, tensordict: Optional[TensorDict] = None):
-        td = tensordict
-        if td is None or td.is_empty():
-            # we need to handle seed iteration, since self._env.reset() rely an internal _seed.
-            self._current_seed += 1
-            self.set_seed(self._current_seed)
+        if tensordict is not None and not AlohaEnv._reset_warning_issued:
+            logging.warning(f"{self.__class__.__name__}._reset ignores the provided tensordict.")
+            AlohaEnv._reset_warning_issued = True
 
-            # TODO(rcadene): do not use global variable for this
-            if "sim_transfer_cube" in self.task:
-                BOX_POSE[0] = sample_box_pose()  # used in sim reset
-            elif "sim_insertion" in self.task:
-                BOX_POSE[0] = np.concatenate(sample_insertion_pose())  # used in sim reset
+        # we need to handle seed iteration, since self._env.reset() rely an internal _seed.
+        self._current_seed += 1
+        self.set_seed(self._current_seed)
 
-            raw_obs = self._env.reset()
-            # TODO(rcadene): add assert
-            # assert self._current_seed == self._env._seed
+        # TODO(rcadene): do not use global variable for this
+        if "sim_transfer_cube" in self.task:
+            BOX_POSE[0] = sample_box_pose()  # used in sim reset
+        elif "sim_insertion" in self.task:
+            BOX_POSE[0] = np.concatenate(sample_insertion_pose())  # used in sim reset
 
-            obs = self._format_raw_obs(raw_obs.observation)
+        raw_obs = self._env.reset()
+        # TODO(rcadene): add assert
+        # assert self._current_seed == self._env._seed
 
-            if self.num_prev_obs > 0:
-                stacked_obs = {}
-                if "image" in obs:
-                    self._prev_obs_image_queue = deque(
-                        [obs["image"]["top"]] * (self.num_prev_obs + 1), maxlen=(self.num_prev_obs + 1)
-                    )
-                    stacked_obs["image"] = {"top": torch.stack(list(self._prev_obs_image_queue))}
-                if "state" in obs:
-                    self._prev_obs_state_queue = deque(
-                        [obs["state"]] * (self.num_prev_obs + 1), maxlen=(self.num_prev_obs + 1)
-                    )
-                    stacked_obs["state"] = torch.stack(list(self._prev_obs_state_queue))
-                obs = stacked_obs
+        obs = self._format_raw_obs(raw_obs.observation)
 
-            td = TensorDict(
-                {
-                    "observation": TensorDict(obs, batch_size=[]),
-                    "done": torch.tensor([False], dtype=torch.bool),
-                },
-                batch_size=[],
-            )
-        else:
-            raise NotImplementedError()
+        if self.num_prev_obs > 0:
+            stacked_obs = {}
+            if "image" in obs:
+                self._prev_obs_image_queue = deque(
+                    [obs["image"]["top"]] * (self.num_prev_obs + 1), maxlen=(self.num_prev_obs + 1)
+                )
+                stacked_obs["image"] = {"top": torch.stack(list(self._prev_obs_image_queue))}
+            if "state" in obs:
+                self._prev_obs_state_queue = deque(
+                    [obs["state"]] * (self.num_prev_obs + 1), maxlen=(self.num_prev_obs + 1)
+                )
+                stacked_obs["state"] = torch.stack(list(self._prev_obs_state_queue))
+            obs = stacked_obs
 
-        self.call_rendering_hooks()
+        td = TensorDict(
+            {
+                "observation": TensorDict(obs, batch_size=[]),
+                "done": torch.tensor([False], dtype=torch.bool),
+            },
+            batch_size=[],
+        )
+
         return td
 
     def _step(self, tensordict: TensorDict):
         td = tensordict
         action = td["action"].numpy()
-        # step expects shape=(4,) so we pad if necessary
+        assert action.ndim == 1
         # TODO(rcadene): add info["is_success"] and info["success"] ?
-        sum_reward = 0
 
-        if action.ndim == 1:
-            action = einops.repeat(action, "c -> t c", t=self.frame_skip)
-        else:
-            if self.frame_skip > 1:
-                raise NotImplementedError()
+        _, reward, _, raw_obs = self._env.step(action)
 
-        num_action_steps = action.shape[0]
-        for i in range(num_action_steps):
-            _, reward, discount, raw_obs = self._env.step(action[i])
-            del discount  # not used
+        # TODO(rcadene): add an enum
+        success = done = reward == 4
+        obs = self._format_raw_obs(raw_obs)
 
-            # TOOD(rcadene): add an enum
-            success = done = reward == 4
-            sum_reward += reward
-            obs = self._format_raw_obs(raw_obs)
-
-            if self.num_prev_obs > 0:
-                stacked_obs = {}
-                if "image" in obs:
-                    self._prev_obs_image_queue.append(obs["image"]["top"])
-                    stacked_obs["image"] = {"top": torch.stack(list(self._prev_obs_image_queue))}
-                if "state" in obs:
-                    self._prev_obs_state_queue.append(obs["state"])
-                    stacked_obs["state"] = torch.stack(list(self._prev_obs_state_queue))
-                obs = stacked_obs
-
-            self.call_rendering_hooks()
+        if self.num_prev_obs > 0:
+            stacked_obs = {}
+            if "image" in obs:
+                self._prev_obs_image_queue.append(obs["image"]["top"])
+                stacked_obs["image"] = {"top": torch.stack(list(self._prev_obs_image_queue))}
+            if "state" in obs:
+                self._prev_obs_state_queue.append(obs["state"])
+                stacked_obs["state"] = torch.stack(list(self._prev_obs_state_queue))
+            obs = stacked_obs
 
         td = TensorDict(
             {
                 "observation": TensorDict(obs, batch_size=[]),
-                "reward": torch.tensor([sum_reward], dtype=torch.float32),
+                "reward": torch.tensor([reward], dtype=torch.float32),
                 # succes and done are true when coverage > self.success_threshold in env
                 "done": torch.tensor([done], dtype=torch.bool),
                 "success": torch.tensor([success], dtype=torch.bool),
