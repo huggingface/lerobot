@@ -145,17 +145,24 @@ def eval(cfg: dict, out_dir=None):
     logging.info("make_env")
     env = make_env(cfg, transform=offline_buffer.transform)
 
+    # WIP
+    policy = make_policy(cfg)
+    policy = TensorDictModule(
+        policy,
+        in_keys=["observation", "step_count"],
+        out_keys=["action"],
+    )
     # TODO(aliberts, Cadene): fetch pretrained model from HF hub
-    if cfg.policy.pretrained_model_path:
-        policy = make_policy(cfg)
-        policy = TensorDictModule(
-            policy,
-            in_keys=["observation", "step_count"],
-            out_keys=["action"],
-        )
-    else:
-        # when policy is None, rollout a random policy
-        policy = None
+    # if cfg.policy.pretrained_model_path:
+    #     policy = make_policy(cfg)
+    #     policy = TensorDictModule(
+    #         policy,
+    #         in_keys=["observation", "step_count"],
+    #         out_keys=["action"],
+    #     )
+    # else:
+    #     # when policy is None, rollout a random policy
+    #     policy = None
 
     metrics = eval_policy(
         env,
