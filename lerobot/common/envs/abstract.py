@@ -1,4 +1,3 @@
-import abc
 from collections import deque
 from typing import Optional
 
@@ -44,26 +43,20 @@ class AbstractEnv(EnvBase):
             raise NotImplementedError()
             # self._prev_action_queue = deque(maxlen=self.num_prev_action)
 
-    @abc.abstractmethod
     def render(self, mode="rgb_array", width=640, height=480):
-        raise NotImplementedError()
+        raise NotImplementedError("Abstract method")
 
-    @abc.abstractmethod
     def _reset(self, tensordict: Optional[TensorDict] = None):
-        raise NotImplementedError()
+        raise NotImplementedError("Abstract method")
 
-    @abc.abstractmethod
     def _step(self, tensordict: TensorDict):
-        raise NotImplementedError()
+        raise NotImplementedError("Abstract method")
 
-    @abc.abstractmethod
     def _make_env(self):
-        raise NotImplementedError()
+        raise NotImplementedError("Abstract method")
 
-    @abc.abstractmethod
     def _make_spec(self):
-        raise NotImplementedError()
+        raise NotImplementedError("Abstract method")
 
-    @abc.abstractmethod
     def _set_seed(self, seed: Optional[int]):
-        raise NotImplementedError()
+        raise NotImplementedError("Abstract method")
