@@ -15,6 +15,7 @@ from torchrl.envs.batched_envs import BatchedEnvBase
 from lerobot.common.datasets.factory import make_offline_buffer
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import log_output_dir
+from lerobot.common.policies.abstract import AbstractPolicy
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils import init_logging, set_seed
 
@@ -25,7 +26,7 @@ def write_video(video_path, stacked_frames, fps):
 
 def eval_policy(
     env: BatchedEnvBase,
-    policy: TensorDictModule = None,
+    policy: AbstractPolicy,
     num_episodes: int = 10,
     max_steps: int = 30,
     save_video: bool = False,
@@ -53,6 +54,7 @@ def eval_policy(
         with torch.inference_mode():
             # TODO(alexander-soare): When `break_when_any_done == False` this rolls out for max_steps even when all
             # envs are done the first time. But we only use the first rollout. This is a waste of compute.
+            policy.clear_action_queue()
             rollout = env.rollout(
                 max_steps=max_steps,
                 policy=policy,
