@@ -101,8 +101,6 @@ def eval_policy(
             if return_first_video and i == 0:
                 first_video = batch_stacked_frames[0].transpose(0, 3, 1, 2)
 
-    env.reset_rendering_hooks()
-
     for thread in threads:
         thread.join()
 

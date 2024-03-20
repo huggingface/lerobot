@@ -116,7 +116,6 @@ class PushtEnv(AbstractEnv):
             batch_size=[],
         )
 
-        self.call_rendering_hooks()
         return td
 
     def _step(self, tensordict: TensorDict):
@@ -138,8 +137,6 @@ class PushtEnv(AbstractEnv):
                 self._prev_obs_state_queue.append(obs["state"])
                 stacked_obs["state"] = torch.stack(list(self._prev_obs_state_queue))
             obs = stacked_obs
-
-        self.call_rendering_hooks()
 
         td = TensorDict(
             {

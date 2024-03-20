@@ -27,7 +27,6 @@ class AbstractEnv(EnvBase):
         self.image_size = image_size
         self.num_prev_obs = num_prev_obs
         self.num_prev_action = num_prev_action
-        self._rendering_hooks = []
 
         if pixels_only:
             assert from_pixels
@@ -44,16 +43,6 @@ class AbstractEnv(EnvBase):
         if self.num_prev_action > 0:
             raise NotImplementedError()
             # self._prev_action_queue = deque(maxlen=self.num_prev_action)
-
-    def register_rendering_hook(self, func):
-        self._rendering_hooks.append(func)
-
-    def call_rendering_hooks(self):
-        for func in self._rendering_hooks:
-            func(self)
-
-    def reset_rendering_hooks(self):
-        self._rendering_hooks = []
 
     @abc.abstractmethod
     def render(self, mode="rgb_array", width=640, height=480):
