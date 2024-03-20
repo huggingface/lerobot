@@ -13,7 +13,6 @@ def make_env(cfg, transform=None):
         "from_pixels": cfg.env.from_pixels,
         "pixels_only": cfg.env.pixels_only,
         "image_size": cfg.env.image_size,
-        "seed": cfg.seed,
         "num_prev_obs": cfg.n_obs_steps - 1,
     }
 
@@ -59,10 +58,9 @@ def make_env(cfg, transform=None):
     return SerialEnv(
         cfg.rollout_batch_size,
         create_env_fn=_make_env,
-        create_env_kwargs={
-            "seed": env_seed  # noqa: B035
-            for env_seed in range(cfg.seed, cfg.seed + cfg.rollout_batch_size)
-        },
+        create_env_kwargs=[
+            {"seed": env_seed} for env_seed in range(cfg.seed, cfg.seed + cfg.rollout_batch_size)
+        ],
     )
 
 
