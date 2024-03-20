@@ -1,13 +1,38 @@
 import copy
-from typing import Dict, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
+import timm
 import torch
 import torch.nn as nn
 import torchvision
+from robomimic.models.base_nets import SpatialSoftmax
 
 from lerobot.common.policies.diffusion.model.crop_randomizer import CropRandomizer
 from lerobot.common.policies.diffusion.model.module_attr_mixin import ModuleAttrMixin
 from lerobot.common.policies.diffusion.pytorch_utils import replace_submodules
+
+
+class RgbEncoder(nn.Module):
+    """Following `VisualCore` from Robomimic 0.2.0."""
+
+    def __init__(self, input_shape, model_name="resnet18", pretrained=False, num_keypoints=32):
+        """
+        input_shape: channel-first input shape (C, H, W)
+        resnet_name: a timm model name.
+        pretrained: whether to use timm pretrained weights.
+        num_keypoints: Number of keypoints for SpatialSoftmax (default value of 32 matches PushT Image).
+        """
+        super().__init__()
+        self.backbone = timm.create_model(model_name, pretrained, num_classes=0, global_pool="")
+        # self.backbone = ResNet18Conv(input_channel=input_shape[0])
+        # Figure out the feature map shape.
+        with torch.inference_mode():
+            feat_map_shape = tuple(self.backbone(torch.zeros(size=(1, *input_shape))).shape[1:])
+        self.pool = SpatialSoftmax(feat_map_shape, num_kp=num_keypoints)
+        self.out = nn.Linear(num_keypoints * 2, num_keypoints * 2)
+
+    def forward(self, x):
+        return self.out(torch.flatten(self.pool(self.backbone(x)), start_dim=1))
 
 
 class MultiImageObsEncoder(ModuleAttrMixin):
@@ -24,7 +49,7 @@ class MultiImageObsEncoder(ModuleAttrMixin):
         share_rgb_model: bool = False,
         # renormalize rgb input with imagenet normalization
         # assuming input in [0,1]
-        imagenet_norm: bool = False,
+        norm_mean_std: Optional[tuple[float, float]] = None,
     ):
         """
         Assumes rgb input: B,C,H,W
@@ -98,10 +123,9 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                         this_normalizer = torchvision.transforms.CenterCrop(size=(h, w))
                 # configure normalizer
                 this_normalizer = nn.Identity()
-                if imagenet_norm:
-                    # TODO(rcadene): move normalizer to dataset and env
+                if norm_mean_std is not None:
                     this_normalizer = torchvision.transforms.Normalize(
-                        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                        mean=norm_mean_std[0], std=norm_mean_std[1]
                     )
 
                 this_transform = nn.Sequential(this_resizer, this_randomizer, this_normalizer)
@@ -124,6 +148,17 @@ class MultiImageObsEncoder(ModuleAttrMixin):
     def forward(self, obs_dict):
         batch_size = None
         features = []
+
+        # process lowdim input
+        for key in self.low_dim_keys:
+            data = obs_dict[key]
+            if batch_size is None:
+                batch_size = data.shape[0]
+            else:
+                assert batch_size == data.shape[0]
+            assert data.shape[1:] == self.key_shape_map[key]
+            features.append(data)
+
         # process rgb input
         if self.share_rgb_model:
             # pass all rgb obs to rgb model
@@ -147,6 +182,7 @@ class MultiImageObsEncoder(ModuleAttrMixin):
             feature = torch.moveaxis(feature, 0, 1)
             # (B,N*D)
             feature = feature.reshape(batch_size, -1)
+            # feature = torch.nn.functional.relu(feature)  # TODO: make optional
             features.append(feature)
         else:
             # run each rgb obs to independent models
@@ -159,17 +195,8 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                 assert img.shape[1:] == self.key_shape_map[key]
                 img = self.key_transform_map[key](img)
                 feature = self.key_model_map[key](img)
+                # feature = torch.nn.functional.relu(feature)  # TODO: make optional
                 features.append(feature)
-
-        # process lowdim input
-        for key in self.low_dim_keys:
-            data = obs_dict[key]
-            if batch_size is None:
-                batch_size = data.shape[0]
-            else:
-                assert batch_size == data.shape[0]
-            assert data.shape[1:] == self.key_shape_map[key]
-            features.append(data)
 
         # concatenate all features
         result = torch.cat(features, dim=-1)

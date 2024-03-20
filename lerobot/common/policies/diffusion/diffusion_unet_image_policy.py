@@ -190,11 +190,10 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
 
         # run sampling
         nsample = self.conditional_sample(
-            cond_data, cond_mask, local_cond=local_cond, global_cond=global_cond, **self.kwargs
+            cond_data, cond_mask, local_cond=local_cond, global_cond=global_cond
         )
 
         action_pred = nsample[..., :action_dim]
-
         # get action
         start = n_obs_steps - 1
         end = start + self.n_action_steps
