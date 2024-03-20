@@ -16,7 +16,6 @@ def make_policy(cfg):
             cfg_rgb_model=cfg.rgb_model,
             cfg_obs_encoder=cfg.obs_encoder,
             cfg_optimizer=cfg.optimizer,
-            cfg_ema=cfg.ema,
             n_action_steps=cfg.n_action_steps + cfg.n_latency_steps,
             **cfg.policy,
         )
@@ -41,7 +40,7 @@ def make_policy(cfg):
         policy.load(cfg.policy.pretrained_model_path)
 
     # import torch
-    # loaded = torch.load('/home/alexander/Downloads/dp_ema.pth')
+    # loaded = torch.load('/home/alexander/Downloads/dp.pth')
     # aligned = {}
 
     # their_prefix = "obs_encoder.obs_nets.image.backbone"

@@ -21,12 +21,12 @@ past_action_visible: False
 keypoint_visible_rate: 1.0
 obs_as_global_cond: True
 
-eval_episodes: 1
-eval_freq: 10000
-save_freq: 100000
+eval_episodes: 50
+eval_freq: 5000
+save_freq: 5000
 log_freq: 250
 
-offline_steps: 1344000
+offline_steps: 50000
 online_steps: 0
 
 offline_prioritized_sampler: true
@@ -58,7 +58,9 @@ policy:
   balanced_sampling: false
   utd: 1
   offline_steps: ${offline_steps}
-  use_ema: true
+  ema:
+    enable: true
+    rate: 0.999
   lr_scheduler: cosine
   lr_warmup_steps: 500
   grad_clip_norm: 10
@@ -87,14 +89,7 @@ rgb_model:
   model_name: resnet18
   pretrained: false
   num_keypoints: 32
-
-ema:
-  _target_: lerobot.common.policies.diffusion.model.ema_model.EMAModel
-  update_after_step: 0
-  inv_gamma: 1.0
-  power: 0.75
-  min_value: 0.0
-  max_value: 0.9999
+  relu: true
 
 optimizer:
   _target_: torch.optim.AdamW

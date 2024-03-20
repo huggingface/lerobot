@@ -1,4 +1,3 @@
-import cv2
 import numpy as np
 from gym import spaces
 
@@ -34,14 +33,14 @@ class PushTImageEnv(PushTEnv):
             coord = (action / 512 * 96).astype(np.int32)
             marker_size = int(8 / 96 * self.render_size)
             thickness = int(1 / 96 * self.render_size)
-            cv2.drawMarker(
-                img,
-                coord,
-                color=(255, 0, 0),
-                markerType=cv2.MARKER_CROSS,
-                markerSize=marker_size,
-                thickness=thickness,
-            )
+            # cv2.drawMarker(
+            #     img,
+            #     coord,
+            #     color=(255, 0, 0),
+            #     markerType=cv2.MARKER_CROSS,
+            #     markerSize=marker_size,
+            #     thickness=thickness,
+            # )
         self.render_cache = img
 
         return obs
