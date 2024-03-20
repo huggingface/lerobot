@@ -2,11 +2,13 @@
 
 #### State-of-the-art meaching learning for real-world robotics
 
-Le Robot aims to provide models, datasets, and tools for real-world robotics in pytorch. The goal is to lower the barrier for entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
+Le Robot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier for entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
 
 Le Robot contains state-of-the-art approaches that have been shown to transfer to the real-world with a focus on imitation learning and reinforcement learning.
 
 Le Robot already provides a set of pretrained models, datasets with human collected demonstrations, and simulated environments so that everyone can get started. In the coming weeks, the plan is to add more and more supports for real-world robotics on the most affordable robots out there.
+
+Le Robot is built upon [TorchRL](https://github.com/pytorch/rl) which provides abstrations and utilities for Reinforcement Learning.
 
 ## Acknowledgment
 
@@ -221,4 +223,3 @@ Finally, you might want to mock the dataset if you need to update the unit tests
 ```
 python tests/scripts/mock_dataset.py --in-data-dir data/$DATASET --out-data-dir tests/data/$DATASET
 ```
-
