@@ -1,4 +1,3 @@
-import cv2
 import numpy as np
 from gym import spaces
 
@@ -28,20 +27,6 @@ class PushTImageEnv(PushTEnv):
         img_obs = np.moveaxis(img, -1, 0)
         obs = {"image": img_obs, "agent_pos": agent_pos}
 
-        # draw action
-        if self.latest_action is not None:
-            action = np.array(self.latest_action)
-            coord = (action / 512 * 96).astype(np.int32)
-            marker_size = int(8 / 96 * self.render_size)
-            thickness = int(1 / 96 * self.render_size)
-            cv2.drawMarker(
-                img,
-                coord,
-                color=(255, 0, 0),
-                markerType=cv2.MARKER_CROSS,
-                markerSize=marker_size,
-                thickness=thickness,
-            )
         self.render_cache = img
 
         return obs

@@ -12,6 +12,7 @@ shape_meta:
   action:
     shape: [2]
 
+seed: 100000
 horizon: 16
 n_obs_steps: 2
 n_action_steps: 8
@@ -21,12 +22,12 @@ past_action_visible: False
 keypoint_visible_rate: 1.0
 obs_as_global_cond: True
 
-eval_episodes: 1
-eval_freq: 10000
-save_freq: 100000
+eval_episodes: 50
+eval_freq: 5000
+save_freq: 5000
 log_freq: 250
 
-offline_steps: 1344000
+offline_steps: 200000
 online_steps: 0
 
 offline_prioritized_sampler: true
@@ -42,8 +43,8 @@ policy:
   num_inference_steps: 100
   obs_as_global_cond: ${obs_as_global_cond}
   # crop_shape: null
-  diffusion_step_embed_dim: 256  # before 128
-  down_dims: [256, 512, 1024]  # before [512, 1024, 2048]
+  diffusion_step_embed_dim: 128
+  down_dims: [512, 1024, 2048]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
@@ -76,17 +77,17 @@ noise_scheduler:
 obs_encoder:
   shape_meta: ${shape_meta}
   # resize_shape: null
-  # crop_shape: [76, 76]
+  crop_shape: [84, 84]
   # constant center crop
-  # random_crop: True
+  random_crop: True
   use_group_norm: True
   share_rgb_model: False
-  imagenet_norm: True
+  norm_mean_std: [0.5, 0.5]  # for PushT the original impl normalizes to [-1, 1] (maybe not the case for robomimic envs)
 
 rgb_model:
-  _target_: lerobot.common.policies.diffusion.pytorch_utils.get_resnet
-  name: resnet18
-  weights: null
+  pretrained: false
+  num_keypoints: 32
+  relu: true
 
 ema:
   _target_: lerobot.common.policies.diffusion.model.ema_model.EMAModel

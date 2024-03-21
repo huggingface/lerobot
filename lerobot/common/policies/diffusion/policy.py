@@ -1,4 +1,5 @@
 import copy
+import logging
 import time
 
 import hydra
@@ -7,7 +8,7 @@ import torch
 from lerobot.common.policies.abstract import AbstractPolicy
 from lerobot.common.policies.diffusion.diffusion_unet_image_policy import DiffusionUnetImagePolicy
 from lerobot.common.policies.diffusion.model.lr_scheduler import get_scheduler
-from lerobot.common.policies.diffusion.model.multi_image_obs_encoder import MultiImageObsEncoder
+from lerobot.common.policies.diffusion.model.multi_image_obs_encoder import MultiImageObsEncoder, RgbEncoder
 from lerobot.common.utils import get_safe_torch_device
 
 
@@ -39,7 +40,10 @@ class DiffusionPolicy(AbstractPolicy):
         self.cfg = cfg
 
         noise_scheduler = hydra.utils.instantiate(cfg_noise_scheduler)
-        rgb_model = hydra.utils.instantiate(cfg_rgb_model)
+        rgb_model_input_shape = copy.deepcopy(shape_meta.obs.image.shape)
+        if cfg_obs_encoder.crop_shape is not None:
+            rgb_model_input_shape[1:] = cfg_obs_encoder.crop_shape
+        rgb_model = RgbEncoder(input_shape=rgb_model_input_shape, **cfg_rgb_model)
         obs_encoder = MultiImageObsEncoder(
             rgb_model=rgb_model,
             **cfg_obs_encoder,
@@ -66,11 +70,13 @@ class DiffusionPolicy(AbstractPolicy):
         self.device = get_safe_torch_device(cfg_device)
         self.diffusion.to(self.device)
 
+        self.ema_diffusion = None
         self.ema = None
         if self.cfg.use_ema:
+            self.ema_diffusion = copy.deepcopy(self.diffusion)
             self.ema = hydra.utils.instantiate(
                 cfg_ema,
-                model=copy.deepcopy(self.diffusion),
+                model=self.ema_diffusion,
             )
 
         self.optimizer = hydra.utils.instantiate(
@@ -94,6 +100,9 @@ class DiffusionPolicy(AbstractPolicy):
 
     @torch.no_grad()
     def select_actions(self, observation, step_count):
+        """
+        Note: this uses the ema model weights if self.training == False, otherwise the non-ema model weights.
+        """
         # TODO(rcadene): remove unused step_count
         del step_count
 
@@ -101,7 +110,10 @@ class DiffusionPolicy(AbstractPolicy):
             "image": observation["image"],
             "agent_pos": observation["state"],
         }
-        out = self.diffusion.predict_action(obs_dict)
+        if self.training:
+            out = self.diffusion.predict_action(obs_dict)
+        else:
+            out = self.ema_diffusion.predict_action(obs_dict)
         action = out["action"]
         return action
 
@@ -191,4 +203,10 @@ class DiffusionPolicy(AbstractPolicy):
 
     def load(self, fp):
         d = torch.load(fp)
-        self.load_state_dict(d)
+        missing_keys, unexpected_keys = self.load_state_dict(d, strict=False)
+        if len(missing_keys) > 0:
+            assert all(k.startswith("ema_diffusion.") for k in missing_keys)
+            logging.warning(
+                "DiffusionPolicy.load expected ema parameters in loaded state dict but none were found."
+            )
+        assert len(unexpected_keys) == 0
