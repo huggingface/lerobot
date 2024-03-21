@@ -51,7 +51,6 @@ def eval_policy(
 
         def maybe_render_frame(env: EnvBase, _):
             if save_video or (return_first_video and i == 0):  # noqa: B023
-                # TODO now: generalize kwarg or maybe just remove it
                 ep_frames.append(env.render())  # noqa: B023
 
         with torch.inference_mode():
