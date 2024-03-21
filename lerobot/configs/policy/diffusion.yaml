@@ -12,6 +12,7 @@ shape_meta:
   action:
     shape: [2]
 
+seed: 100000
 horizon: 16
 n_obs_steps: 2
 n_action_steps: 8
@@ -26,7 +27,7 @@ eval_freq: 5000
 save_freq: 5000
 log_freq: 250
 
-offline_steps: 50000
+offline_steps: 200000
 online_steps: 0
 
 offline_prioritized_sampler: true
@@ -58,9 +59,7 @@ policy:
   balanced_sampling: false
   utd: 1
   offline_steps: ${offline_steps}
-  ema:
-    enable: true
-    rate: 0.999
+  use_ema: true
   lr_scheduler: cosine
   lr_warmup_steps: 500
   grad_clip_norm: 10
@@ -86,10 +85,17 @@ obs_encoder:
   norm_mean_std: [0.5, 0.5]  # for PushT the original impl normalizes to [-1, 1] (maybe not the case for robomimic envs)
 
 rgb_model:
-  model_name: resnet18
   pretrained: false
   num_keypoints: 32
   relu: true
+
+ema:
+  _target_: lerobot.common.policies.diffusion.model.ema_model.EMAModel
+  update_after_step: 0
+  inv_gamma: 1.0
+  power: 0.75
+  min_value: 0.0
+  max_value: 0.9999
 
 optimizer:
   _target_: torch.optim.AdamW
