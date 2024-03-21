@@ -1,4 +1,5 @@
 # ruff: noqa
+from pathlib import Path
 from pprint import pprint
 
 from hydra import compose, initialize
@@ -16,6 +17,7 @@ def config_notebook(
     device: str = "cpu",
     config_name=DEFAULT_CONFIG,
     config_path=CONFIG_DIR,
+    pretrained_model_path: str = None,
     print_config: bool = False,
 ) -> DictConfig:
     GlobalHydra.instance().clear()
@@ -24,6 +26,9 @@ def config_notebook(
         f"env={env}",
         f"policy={policy}",
         f"device={device}",
+        f"policy.pretrained_model_path={pretrained_model_path}",
+        f"eval_episodes=1",
+        f"env.episode_length=200",
     ]
     cfg = compose(config_name=config_name, overrides=overrides)
     if print_config:

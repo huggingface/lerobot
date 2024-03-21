@@ -202,7 +202,7 @@ class DiffusionPolicy(AbstractPolicy):
         torch.save(self.state_dict(), fp)
 
     def load(self, fp):
-        d = torch.load(fp)
+        d = torch.load(fp, map_location=torch.device(self.device))
         missing_keys, unexpected_keys = self.load_state_dict(d, strict=False)
         if len(missing_keys) > 0:
             assert all(k.startswith("ema_diffusion.") for k in missing_keys)
