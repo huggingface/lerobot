@@ -12,14 +12,14 @@ hydra:
 seed: 1337
 # batch size for TorchRL SerialEnv. Each underlying env will get the seed = seed + env_index
 # NOTE: only diffusion policy supports rollout_batch_size > 1
-rollout_batch_size: 10
+rollout_batch_size: 1
 device: cuda  # cpu
 prefetch: 4
 eval_freq: ???
 save_freq: ???
 eval_episodes: ???
 save_video: false
-save_model: true
+save_model: false
 save_buffer: false
 train_steps: ???
 fps: ???
@@ -34,6 +34,6 @@ policy: ???
 wandb:
   enable: true
   # Set to true to disable saving an artifact despite save_model == True
-  disable_artifact: true
+  disable_artifact: false
   project: lerobot
   notes: ""
