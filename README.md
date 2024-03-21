@@ -1,4 +1,21 @@
-# LeRobot
+# Le Robot
+
+#### State-of-the-art machine learning for real-world robotics
+
+Le Robot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier for entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
+
+Le Robot contains state-of-the-art approaches that have been shown to transfer to the real-world with a focus on imitation learning and reinforcement learning.
+
+Le Robot already provides a set of pretrained models, datasets with human collected demonstrations, and simulated environments so that everyone can get started. In the coming weeks, the plan is to add more and more supports for real-world robotics on the most affordable and capable robots out there.
+
+Le Robot is built upon [TorchRL](https://github.com/pytorch/rl) which provides abstractions and utilities for Reinforcement Learning.
+
+## Acknowledgment
+
+- Our ACT policy and ALOHA environment are adapted from [ALOHA](https://tonyzhaozh.github.io/aloha/)
+- Our Diffusion policy and Pusht environment are adapted from [Diffusion Policy](https://diffusion-policy.cs.columbia.edu/)
+- Our TDMPC policy and Simxarm environment are adapted from [FOWM](https://www.yunhaifeng.com/FOWM/)
+
 
 ## Installation
 
@@ -206,9 +223,3 @@ Finally, you might want to mock the dataset if you need to update the unit tests
 ```
 python tests/scripts/mock_dataset.py --in-data-dir data/$DATASET --out-data-dir tests/data/$DATASET
 ```
-
-
-## Acknowledgment
-- Our Diffusion policy and Pusht environment are adapted from [Diffusion Policy](https://diffusion-policy.cs.columbia.edu/)
-- Our TDMPC policy and Simxarm environment are adapted from [FOWM](https://www.yunhaifeng.com/FOWM/)
-- Our ACT policy and ALOHA environment are adapted from [ALOHA](https://tonyzhaozh.github.io/aloha/)

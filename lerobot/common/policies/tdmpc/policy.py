@@ -10,6 +10,7 @@ import torch.nn as nn
 
 import lerobot.common.policies.tdmpc.helper as h
 from lerobot.common.policies.abstract import AbstractPolicy
+from lerobot.common.utils import get_safe_torch_device
 
 FIRST_FRAME = 0
 
@@ -94,9 +95,10 @@ class TDMPC(AbstractPolicy):
         self.action_dim = cfg.action_dim
 
         self.cfg = cfg
-        self.device = torch.device(device)
+        self.device = get_safe_torch_device(device)
         self.std = h.linear_schedule(cfg.std_schedule, 0)
-        self.model = TOLD(cfg).cuda() if torch.cuda.is_available() and device == "cuda" else TOLD(cfg)
+        self.model = TOLD(cfg)
+        self.model.to(self.device)
         self.model_target = deepcopy(self.model)
         self.optim = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
         self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr)

@@ -1,11 +1,10 @@
-from abc import ABC, abstractmethod
 from collections import deque
 
 import torch
 from torch import Tensor, nn
 
 
-class AbstractPolicy(nn.Module, ABC):
+class AbstractPolicy(nn.Module):
     """Base policy which all policies should be derived from.
 
     The forward method should generally not be overriden as it plays the role of handling multi-step policies. See its
@@ -22,9 +21,9 @@ class AbstractPolicy(nn.Module, ABC):
         self.n_action_steps = n_action_steps
         self.clear_action_queue()
 
-    @abstractmethod
     def update(self, replay_buffer, step):
         """One step of the policy's learning algorithm."""
+        raise NotImplementedError("Abstract method")
 
     def save(self, fp):
         torch.save(self.state_dict(), fp)
@@ -33,13 +32,13 @@ class AbstractPolicy(nn.Module, ABC):
         d = torch.load(fp)
         self.load_state_dict(d)
 
-    @abstractmethod
     def select_actions(self, observation) -> Tensor:
         """Select an action (or trajectory of actions) based on an observation during rollout.
 
         If n_action_steps was provided at initialization, this should return a (batch_size, n_action_steps, *) tensor of
         actions. Otherwise if n_actions_steps is None, this should return a (batch_size, *) tensor of actions.
         """
+        raise NotImplementedError("Abstract method")
 
     def clear_action_queue(self):
         """This should be called whenever the environment is reset."""
