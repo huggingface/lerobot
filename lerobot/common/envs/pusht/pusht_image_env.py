@@ -7,7 +7,8 @@ from lerobot.common.envs.pusht.pusht_env import PushTEnv
 class PushTImageEnv(PushTEnv):
     metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
 
-    def __init__(self, legacy=False, block_cog=None, damping=None, render_size=96):
+    # Note: legacy defaults to True for compatibility with original
+    def __init__(self, legacy=True, block_cog=None, damping=None, render_size=96):
         super().__init__(
             legacy=legacy, block_cog=block_cog, damping=damping, render_size=render_size, render_action=False
         )

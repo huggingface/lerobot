@@ -183,7 +183,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 video_dir=Path(out_dir) / "eval",
                 save_video=True,
             )
-            log_eval_info(logger, eval_info, step, cfg, offline_buffer, is_offline)
+            log_eval_info(logger, eval_info["macro"], step, cfg, offline_buffer, is_offline)
             if cfg.wandb.enable:
                 logger.log_video(first_video, step, mode="eval")
             logging.info("Resume training")
