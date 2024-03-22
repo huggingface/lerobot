@@ -146,7 +146,7 @@ def eval_policy(
         thread.join()
 
     info = {
-        "micro": [
+        "per_episode": [
             {
                 "episode_ix": i,
                 "sum_reward": sum_reward,
@@ -164,7 +164,7 @@ def eval_policy(
                 )
             )
         ],
-        "macro": {
+        "aggregated": {
             "avg_sum_reward": np.nanmean(sum_rewards[:num_episodes]),
             "avg_max_reward": np.nanmean(max_rewards[:num_episodes]),
             "pc_success": np.nanmean(successes[:num_episodes]) * 100,
@@ -218,7 +218,7 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
         max_steps=cfg.env.episode_length,
         num_episodes=cfg.eval_episodes,
     )
-    print(info["macro"])
+    print(info["aggregated"])
 
     # Save info
     with open(Path(out_dir) / "eval_info.json", "w") as f:
