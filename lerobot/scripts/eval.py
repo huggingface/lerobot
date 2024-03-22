@@ -244,4 +244,5 @@ if __name__ == "__main__":
     eval(
         cfg,
         out_dir=f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{cfg.env.name}_{cfg.policy.name}",
+        stats_path=stats_path,
     )
