@@ -1,14 +1,9 @@
 import logging
-from omegaconf import OmegaConf
-from pathlib import Path
-
-from lerobot.scripts.eval import eval_policy
-from huggingface_hub import snapshot_download
-
-import logging
 from pathlib import Path
 
 import torch
+from huggingface_hub import snapshot_download
+from omegaconf import OmegaConf
 from tensordict.nn import TensorDictModule
 
 from lerobot.common.datasets.factory import make_offline_buffer
@@ -16,15 +11,16 @@ from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import log_output_dir
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils import get_safe_torch_device, init_logging, set_seed
+from lerobot.scripts.eval import eval_policy
 
-folder = Path(snapshot_download('lerobot/diffusion_policy_pusht_image', revision="v1.0"))
+folder = Path(snapshot_download("lerobot/diffusion_policy_pusht_image", revision="v1.0"))
 cfg = OmegaConf.load(folder / "config.yaml")
 cfg.policy.pretrained_model_path = folder / "model.pt"
 cfg.eval_episodes = 1
 cfg.episode_length = 50
-cfg.device = "cpu"
+# cfg.device = "cpu"
 
-out_dir = "test"
+out_dir = "tmp/"
 
 if out_dir is None:
     raise NotImplementedError()
