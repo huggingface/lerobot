@@ -87,8 +87,10 @@ class TOLD(nn.Module):
         return torch.min(Q1, Q2) if return_type == "min" else (Q1 + Q2) / 2
 
 
-class TDMPC(AbstractPolicy):
+class TDMPCPolicy(AbstractPolicy):
     """Implementation of TD-MPC learning + inference."""
+
+    name = "tdmpc"
 
     def __init__(self, cfg, device):
         super().__init__(None)

@@ -9,7 +9,18 @@ class AbstractPolicy(nn.Module):
 
     The forward method should generally not be overriden as it plays the role of handling multi-step policies. See its
     documentation for more information.
+
+    Note:
+        When implementing a concrete class (e.g. `AlohaDataset`, `PushtEnv`, `DiffusionPolicy`), you need to:
+            1. set the required class attributes:
+                - for classes inheriting from `AbstractDataset`: `available_datasets`
+                - for classes inheriting from `AbstractEnv`: `name`, `available_tasks`
+                - for classes inheriting from `AbstractPolicy`: `name`
+            2. update variables in `lerobot/__init__.py` (e.g. `available_envs`, `available_datasets_per_envs`, `available_policies`)
+            3. update variables in `tests/test_available.py` by importing your new class
     """
+
+    name: str | None = None  # same name should be used to instantiate the policy in factory.py
 
     def __init__(self, n_action_steps: int | None):
         """
@@ -18,6 +29,7 @@ class AbstractPolicy(nn.Module):
             adds that dimension.
         """
         super().__init__()
+        assert self.name is not None, "Subclasses of `AbstractPolicy` should set the `name` class attribute."
         self.n_action_steps = n_action_steps
         self.clear_action_queue()
 

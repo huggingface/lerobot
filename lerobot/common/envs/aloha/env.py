@@ -35,6 +35,8 @@ _has_gym = importlib.util.find_spec("gymnasium") is not None
 
 
 class AlohaEnv(AbstractEnv):
+    name = "aloha"
+    available_tasks = ["sim_insertion", "sim_transfer_cube"]
     _reset_warning_issued = False
 
     def __init__(

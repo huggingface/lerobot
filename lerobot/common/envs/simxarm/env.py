@@ -24,6 +24,9 @@ _has_gym = importlib.util.find_spec("gymnasium") is not None
 
 
 class SimxarmEnv(AbstractEnv):
+    name = "simxarm"
+    available_tasks = ["lift"]
+
     def __init__(
         self,
         task,

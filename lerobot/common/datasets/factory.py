@@ -5,7 +5,7 @@ from pathlib import Path
 import torch
 from torchrl.data.replay_buffers import PrioritizedSliceSampler, SliceSampler
 
-from lerobot.common.envs.transforms import NormalizeTransform, Prod
+from lerobot.common.transforms import NormalizeTransform, Prod
 
 # DATA_DIR specifies to location where datasets are loaded. By default, DATA_DIR is None and
 # we load from `$HOME/.cache/huggingface/hub/datasets`. For our unit tests, we set `DATA_DIR=tests/data`
@@ -16,6 +16,7 @@ DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 def make_offline_buffer(
     cfg,
     overwrite_sampler=None,
+    # set normalize=False to remove all transformations and keep images unnormalized in [0,255]
     normalize=True,
     overwrite_batch_size=None,
     overwrite_prefetch=None,
@@ -64,24 +65,26 @@ def make_offline_buffer(
         sampler = overwrite_sampler
 
     if cfg.env.name == "simxarm":
-        from lerobot.common.datasets.simxarm import SimxarmExperienceReplay
+        from lerobot.common.datasets.simxarm import SimxarmDataset
 
-        clsfunc = SimxarmExperienceReplay
-        dataset_id = f"xarm_{cfg.env.task}_medium"
+        clsfunc = SimxarmDataset
 
     elif cfg.env.name == "pusht":
-        from lerobot.common.datasets.pusht import PushtExperienceReplay
+        from lerobot.common.datasets.pusht import PushtDataset
 
-        clsfunc = PushtExperienceReplay
-        dataset_id = "pusht"
+        clsfunc = PushtDataset
 
     elif cfg.env.name == "aloha":
-        from lerobot.common.datasets.aloha import AlohaExperienceReplay
+        from lerobot.common.datasets.aloha import AlohaDataset
 
-        clsfunc = AlohaExperienceReplay
-        dataset_id = f"aloha_{cfg.env.task}"
+        clsfunc = AlohaDataset
     else:
         raise ValueError(cfg.env.name)
+
+    # TODO(rcadene): backward compatiblity to load pretrained pusht policy
+    dataset_id = cfg.get("dataset_id")
+    if dataset_id is None and cfg.env.name == "pusht":
+        dataset_id = "pusht"
 
     offline_buffer = clsfunc(
         dataset_id=dataset_id,
@@ -100,36 +103,40 @@ def make_offline_buffer(
     else:
         img_keys = offline_buffer.image_keys
 
-    transforms = [Prod(in_keys=img_keys, prod=1 / 255)]
+        if normalize:
+            transforms = [Prod(in_keys=img_keys, prod=1 / 255)]
 
-    if normalize:
-        # TODO(rcadene): make normalization strategy configurable between mean_std, min_max, manual_min_max,
-        # min_max_from_spec
-        stats = offline_buffer.compute_or_load_stats() if stats_path is None else torch.load(stats_path)
+            # TODO(rcadene): make normalization strategy configurable between mean_std, min_max, manual_min_max,
+            # min_max_from_spec
+            stats = offline_buffer.compute_or_load_stats() if stats_path is None else torch.load(stats_path)
 
-        # we only normalize the state and action, since the images are usually normalized inside the model for
-        # now (except for tdmpc: see the following)
-        in_keys = [("observation", "state"), ("action")]
+            # we only normalize the state and action, since the images are usually normalized inside the model for
+            # now (except for tdmpc: see the following)
+            in_keys = [("observation", "state"), ("action")]
 
-        if cfg.policy.name == "tdmpc":
-            # TODO(rcadene): we add img_keys to the keys to normalize for tdmpc only, since diffusion and act policies normalize the image inside the model for now
-            in_keys += img_keys
-            # TODO(racdene): since we use next observations in tdmpc, we also add them to the normalization. We are wasting a bit of compute on this for now.
-            in_keys += [("next", *key) for key in img_keys]
-            in_keys.append(("next", "observation", "state"))
+            if cfg.policy.name == "tdmpc":
+                # TODO(rcadene): we add img_keys to the keys to normalize for tdmpc only, since diffusion and act policies normalize the image inside the model for now
+                in_keys += img_keys
+                # TODO(racdene): since we use next observations in tdmpc, we also add them to the normalization. We are wasting a bit of compute on this for now.
+                in_keys += [("next", *key) for key in img_keys]
+                in_keys.append(("next", "observation", "state"))
 
-        if cfg.policy.name == "diffusion" and cfg.env.name == "pusht":
-            # TODO(rcadene): we overwrite stats to have the same as pretrained model, but we should remove this
-            stats["observation", "state", "min"] = torch.tensor([13.456424, 32.938293], dtype=torch.float32)
-            stats["observation", "state", "max"] = torch.tensor([496.14618, 510.9579], dtype=torch.float32)
-            stats["action", "min"] = torch.tensor([12.0, 25.0], dtype=torch.float32)
-            stats["action", "max"] = torch.tensor([511.0, 511.0], dtype=torch.float32)
+            if cfg.policy.name == "diffusion" and cfg.env.name == "pusht":
+                # TODO(rcadene): we overwrite stats to have the same as pretrained model, but we should remove this
+                stats["observation", "state", "min"] = torch.tensor(
+                    [13.456424, 32.938293], dtype=torch.float32
+                )
+                stats["observation", "state", "max"] = torch.tensor(
+                    [496.14618, 510.9579], dtype=torch.float32
+                )
+                stats["action", "min"] = torch.tensor([12.0, 25.0], dtype=torch.float32)
+                stats["action", "max"] = torch.tensor([511.0, 511.0], dtype=torch.float32)
 
-        # TODO(rcadene): remove this and put it in config. Ideally we want to reproduce SOTA results just with mean_std
-        normalization_mode = "mean_std" if cfg.env.name == "aloha" else "min_max"
-        transforms.append(NormalizeTransform(stats, in_keys, mode=normalization_mode))
+            # TODO(rcadene): remove this and put it in config. Ideally we want to reproduce SOTA results just with mean_std
+            normalization_mode = "mean_std" if cfg.env.name == "aloha" else "min_max"
+            transforms.append(NormalizeTransform(stats, in_keys, mode=normalization_mode))
 
-    offline_buffer.set_transform(transforms)
+            offline_buffer.set_transform(transforms)
 
     if not overwrite_sampler:
         index = torch.arange(0, offline_buffer.num_samples, 1)

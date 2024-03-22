@@ -22,6 +22,8 @@ _has_gym = importlib.util.find_spec("gymnasium") is not None
 
 
 class PushtEnv(AbstractEnv):
+    name = "pusht"
+    available_tasks = ["pusht"]
     _reset_warning_issued = False
 
     def __init__(

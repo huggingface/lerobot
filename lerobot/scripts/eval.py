@@ -13,8 +13,10 @@ Examples:
 You have a specific config file to go with trained model weights, and want to run 10 episodes.
 
 ```
-python lerobot/scripts/eval.py --config PATH/TO/FOLDER/config.yaml \
-    policy.pretrained_model_path=PATH/TO/FOLDER/weights.pth` eval_episodes=10
+python lerobot/scripts/eval.py \
+--config PATH/TO/FOLDER/config.yaml \
+policy.pretrained_model_path=PATH/TO/FOLDER/weights.pth \
+eval_episodes=10
 ```
 
 You have a HuggingFace Hub ID, you know which revision you want, and want to run 10 episodes (note that in this case,

@@ -13,17 +13,16 @@ from lerobot.common.policies.abstract import AbstractPolicy
 
 from .utils import DEVICE, init_config
 
-
 @pytest.mark.parametrize(
     "env_name,policy_name,extra_overrides",
     [
         ("simxarm", "tdmpc", ["policy.mpc=true"]),
         ("pusht", "tdmpc", ["policy.mpc=false"]),
         ("pusht", "diffusion", []),
-        ("aloha", "act", ["env.task=sim_insertion_scripted"]),
-        ("aloha", "act", ["env.task=sim_insertion_human"]),
-        ("aloha", "act", ["env.task=sim_transfer_cube_scripted"]),
-        ("aloha", "act", ["env.task=sim_transfer_cube_human"]),
+        ("aloha", "act", ["env.task=sim_insertion", "dataset_id=aloha_sim_insertion_human"]),
+        ("aloha", "act", ["env.task=sim_insertion", "dataset_id=aloha_sim_insertion_scripted"]),
+        ("aloha", "act", ["env.task=sim_transfer_cube", "dataset_id=aloha_sim_transfer_cube_human"]),
+        ("aloha", "act", ["env.task=sim_transfer_cube", "dataset_id=aloha_sim_transfer_cube_scripted"]),
         # TODO(aliberts): simxarm not working with diffusion
         # ("simxarm", "diffusion", []),
     ],
@@ -106,6 +105,8 @@ def test_abstract_policy_forward():
             return
 
     class StubPolicy(AbstractPolicy):
+        name = "stub"
+
         def __init__(self):
             super().__init__(n_action_steps)
             self.n_policy_invocations = 0
