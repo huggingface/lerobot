@@ -106,11 +106,9 @@ class PushtEnv(AbstractEnv):
             logging.warning(f"{self.__class__.__name__}._reset ignores the provided tensordict.")
             PushtEnv._reset_warning_issued = True
 
-        # we need to handle seed iteration, since self._env.reset() rely an internal _seed.
-        self._current_seed += 1
-        self.set_seed(self._current_seed)
+        # Seed the environment and update the seed to be used for the next reset.
+        self._next_seed = self.set_seed(self._next_seed)
         raw_obs = self._env.reset()
-        assert self._current_seed == self._env._seed
 
         obs = self._format_raw_obs(raw_obs)
 
@@ -239,5 +237,7 @@ class PushtEnv(AbstractEnv):
         )
 
     def _set_seed(self, seed: Optional[int]):
+        # Set global seed.
         set_seed(seed)
+        # Set PushTImageEnv seed as it relies on it's own internal _seed attribute.
         self._env.seed(seed)

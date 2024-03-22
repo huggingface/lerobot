@@ -26,6 +26,7 @@ python lerobot/scripts/eval.py --hub-id HUB/ID --revision v1.0 eval_episodes=10
 """
 
 import argparse
+import json
 import logging
 import os.path as osp
 import threading
@@ -72,6 +73,7 @@ def eval_policy(
     sum_rewards = []
     max_rewards = []
     successes = []
+    seeds = []
     threads = []  # for video saving threads
     episode_counter = 0  # for saving the correct number of videos
 
@@ -84,11 +86,16 @@ def eval_policy(
             if save_video or (return_first_video and i == 0):  # noqa: B023
                 ep_frames.append(env.render())  # noqa: B023
 
+        # Clear the policy's action queue before the start of a new rollout.
+        if policy is not None:
+            policy.clear_action_queue()
+
+        if env.is_closed:
+            env.start()  # needed to be able to get the seeds the first time as BatchedEnvs are lazy
+        seeds.extend(env._next_seed)
         with torch.inference_mode():
             # TODO(alexander-soare): When `break_when_any_done == False` this rolls out for max_steps even when all
             # envs are done the first time. But we only use the first rollout. This is a waste of compute.
-            if policy is not None:
-                policy.clear_action_queue()
             rollout = env.rollout(
                 max_steps=max_steps,
                 policy=policy,
@@ -139,11 +146,31 @@ def eval_policy(
         thread.join()
 
     info = {
-        "avg_sum_reward": np.nanmean(sum_rewards[:num_episodes]),
-        "avg_max_reward": np.nanmean(max_rewards[:num_episodes]),
-        "pc_success": np.nanmean(successes[:num_episodes]) * 100,
-        "eval_s": time.time() - start,
-        "eval_ep_s": (time.time() - start) / num_episodes,
+        "per_episode": [
+            {
+                "episode_ix": i,
+                "sum_reward": sum_reward,
+                "max_reward": max_reward,
+                "success": success,
+                "seed": seed,
+            }
+            for i, (sum_reward, max_reward, success, seed) in enumerate(
+                zip(
+                    sum_rewards[:num_episodes],
+                    max_rewards[:num_episodes],
+                    successes[:num_episodes],
+                    seeds[:num_episodes],
+                    strict=True,
+                )
+            )
+        ],
+        "aggregated": {
+            "avg_sum_reward": np.nanmean(sum_rewards[:num_episodes]),
+            "avg_max_reward": np.nanmean(max_rewards[:num_episodes]),
+            "pc_success": np.nanmean(successes[:num_episodes]) * 100,
+            "eval_s": time.time() - start,
+            "eval_ep_s": (time.time() - start) / num_episodes,
+        },
     }
     if return_first_video:
         return info, first_video
@@ -182,7 +209,7 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
         # when policy is None, rollout a random policy
         policy = None
 
-    metrics = eval_policy(
+    info = eval_policy(
         env,
         policy=policy,
         save_video=True,
@@ -191,7 +218,11 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
         max_steps=cfg.env.episode_length,
         num_episodes=cfg.eval_episodes,
     )
-    print(metrics)
+    print(info["aggregated"])
+
+    # Save info
+    with open(Path(out_dir) / "eval_info.json", "w") as f:
+        json.dump(info, f, indent=2)
 
     logging.info("End of eval")
 
