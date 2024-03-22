@@ -126,9 +126,8 @@ class AlohaEnv(AbstractEnv):
             logging.warning(f"{self.__class__.__name__}._reset ignores the provided tensordict.")
             AlohaEnv._reset_warning_issued = True
 
-        # we need to handle seed iteration, since self._env.reset() rely an internal _seed.
-        self._current_seed += 1
-        self.set_seed(self._current_seed)
+        # Seed the environment and update the seed to be used for the next reset.
+        self._next_seed = self.set_seed(self._next_seed)
 
         # TODO(rcadene): do not use global variable for this
         if "sim_transfer_cube" in self.task:
@@ -137,8 +136,6 @@ class AlohaEnv(AbstractEnv):
             BOX_POSE[0] = np.concatenate(sample_insertion_pose())  # used in sim reset
 
         raw_obs = self._env.reset()
-        # TODO(rcadene): add assert
-        # assert self._current_seed == self._env._seed
 
         obs = self._format_raw_obs(raw_obs.observation)
 
