@@ -223,3 +223,38 @@ Finally, you might want to mock the dataset if you need to update the unit tests
 ```
 python tests/scripts/mock_dataset.py --in-data-dir data/$DATASET --out-data-dir tests/data/$DATASET
 ```
+
+**Models**
+
+Once you have trained a model you may upload it to the HuggingFace hub.
+
+Firstly, make sure you have a model repository set up on the hub. The hub ID looks like HF_USER/REPO_NAME.
+
+Secondly, assuming you have trained a model, you need:
+
+- `config.yaml` which you can get from the `.hydra` directory of your training output folder.
+- `model.pt` which should be one of the saved models in the `models` directory of your training output folder (they won't be named `model.pt` but you will need to choose one).
+- `staths.pth` which should point to the same file in the dataset directory (found in `data/{dataset_name}`).
+
+To upload these to the hub, prepare a folder with the following structure (you can use symlinks rather than copying):
+
+```
+to_upload
+    ├── config.yaml
+    ├── model.pt
+    └── stats.pth
+```
+
+With the folder prepared, run the following with a desired revision ID.
+
+```
+huggingface-cli upload $HUB_ID to_upload --revision $REVISION_ID
+```
+
+If you want this to be the default revision also run the following (don't worry, it won't upload the files again; it will just adjust the file pointers):
+
+```
+huggingface-cli upload $HUB_ID to_upload
+```
+
+See `eval.py` for an example of how a user may use your model.

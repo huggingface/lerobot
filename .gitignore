@@ -4,6 +4,7 @@ tmp
 wandb
 data
 outputs
+eval_outputs
 .vscode
 rl
 
