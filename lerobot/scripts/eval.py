@@ -90,7 +90,8 @@ def eval_policy(
         if policy is not None:
             policy.clear_action_queue()
 
-        env.start()  # needed to be able to get the seeds the first time as BatchedEnvs are lazy
+        if env.is_closed:
+            env.start()  # needed to be able to get the seeds the first time as BatchedEnvs are lazy
         seeds.extend(env._next_seed)
         with torch.inference_mode():
             # TODO(alexander-soare): When `break_when_any_done == False` this rolls out for max_steps even when all
