@@ -48,7 +48,6 @@ wandb login
 
 ## Usage
 
-
 ### Train
 
 ```
@@ -65,14 +64,9 @@ hydra.run.dir=tmp/$(date +"%Y_%m_%d") \
 env=pusht
 ```
 
-### Visualize online buffer / Eval
+### Eval
 
-```
-python lerobot/scripts/eval.py \
-hydra.run.dir=tmp/$(date +"%Y_%m_%d") \
-env=pusht
-```
-
+Run `python lerobot/scripts/eval.py --help` for instructions.
 
 ## TODO
 
@@ -106,8 +100,9 @@ with profile(
 
 ```bash
 python lerobot/scripts/eval.py \
-pretrained_model_path=/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/final.pt \
-eval_episodes=7
+    --config /home/rcadene/code/fowm/logs/xarm_lift/all/default/2/.hydra/config.yaml \
+    pretrained_model_path=/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/final.pt \
+    eval_episodes=7
 ```
 
 ## Contribute
