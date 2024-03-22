@@ -135,8 +135,7 @@ jobs:
         run: |
           source .venv/bin/activate
           python lerobot/scripts/eval.py \
-            hydra.job.name=pusht \
-            env=pusht \
+            --config tests/outputs/.hydra/config.yaml \
             wandb.enable=False \
             eval_episodes=1 \
             env.episode_length=8 \
