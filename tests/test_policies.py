@@ -22,6 +22,9 @@ from .utils import DEVICE, init_config
         ("simxarm", "diffusion", []),
         ("pusht", "diffusion", []),
         ("aloha", "act", ["env.task=sim_insertion_scripted"]),
+        ("aloha", "act", ["env.task=sim_insertion_human"]),
+        ("aloha", "act", ["env.task=sim_transfer_cube_scripted"]),
+        ("aloha", "act", ["env.task=sim_transfer_cube_human"]),
     ],
 )
 def test_concrete_policy(env_name, policy_name, extra_overrides):

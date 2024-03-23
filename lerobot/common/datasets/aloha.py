@@ -84,7 +84,7 @@ class AlohaExperienceReplay(AbstractExperienceReplay):
     def __init__(
         self,
         dataset_id: str,
-        version: str | None = "v1.1",
+        version: str | None = "v1.2",
         batch_size: int = None,
         *,
         shuffle: bool = True,
