@@ -19,8 +19,8 @@ from lerobot.common.utils import set_seed
 
 MAX_NUM_ACTIONS = 4
 
-_has_gym = importlib.util.find_spec("gym") is not None
-_has_simxarm = importlib.util.find_spec("simxarm") is not None and _has_gym
+_has_gym = importlib.util.find_spec("gymnasium") is not None
+# _has_simxarm = importlib.util.find_spec("simxarm") is not None and _has_gym
 
 
 class SimxarmEnv(AbstractEnv):
@@ -49,13 +49,14 @@ class SimxarmEnv(AbstractEnv):
         )
 
     def _make_env(self):
-        if not _has_simxarm:
-            raise ImportError("Cannot import simxarm.")
+        # if not _has_simxarm:
+        #     raise ImportError("Cannot import simxarm.")
         if not _has_gym:
             raise ImportError("Cannot import gym.")
 
-        import gym
-        from simxarm import TASKS
+        import gymnasium
+
+        from lerobot.common.envs.simxarm.simxarm import TASKS
 
         if self.task not in TASKS:
             raise ValueError(f"Unknown task {self.task}. Must be one of {list(TASKS.keys())}")
@@ -63,7 +64,7 @@ class SimxarmEnv(AbstractEnv):
         self._env = TASKS[self.task]["env"]()
 
         num_actions = len(TASKS[self.task]["action_space"])
-        self._action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(num_actions,))
+        self._action_space = gymnasium.spaces.Box(low=-1.0, high=1.0, shape=(num_actions,))
         self._action_padding = np.zeros((MAX_NUM_ACTIONS - num_actions), dtype=np.float32)
         if "w" not in TASKS[self.task]["action_space"]:
             self._action_padding[-1] = 1.0
@@ -230,4 +231,7 @@ class SimxarmEnv(AbstractEnv):
 
     def _set_seed(self, seed: Optional[int]):
         set_seed(seed)
-        self._env.seed(seed)
+        # self._env.seed(seed)
+        # self._env.action_space.seed(seed)
+        # self.set_seed(seed)
+        self._seed = seed

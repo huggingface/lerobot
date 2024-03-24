@@ -1,0 +1,51 @@
+<mujoco>
+    <asset>
+        <texture type="skybox" builtin="gradient" rgb1="0.0 0.0 0.0" rgb2="0.0 0.0 0.0" width="32" height="32"></texture>
+        <material name="floor_mat" specular="0" shininess="0.0" reflectance="0" rgba="0.043 0.055 0.051 1"></material>
+
+        <material name="table_mat" specular="0.2" shininess="0.2" reflectance="0" rgba="1 1 1 1"></material>
+        <material name="pedestal_mat" specular="0.35" shininess="0.5" reflectance="0" rgba="0.705 0.585 0.405 1"></material>
+        <material name="block_mat" specular="0.5" shininess="0.9" reflectance="0.05" rgba="0.373 0.678 0.627 1"></material>
+
+        <material name="robot0:geomMat" shininess="0.03" specular="0.4"></material>
+        <material name="robot0:gripper_finger_mat" shininess="0.03" specular="0.4" reflectance="0"></material>
+        <material name="robot0:gripper_mat" shininess="0.03" specular="0.4" reflectance="0"></material>
+        <material name="background:gripper_mat" shininess="0.03" specular="0.4" reflectance="0"></material>
+        <material name="robot0:arm_mat" shininess="0.03" specular="0.4" reflectance="0"></material>
+        <material name="robot0:head_mat" shininess="0.03" specular="0.4" reflectance="0"></material>
+        <material name="robot0:torso_mat" shininess="0.03" specular="0.4" reflectance="0"></material>
+        <material name="robot0:base_mat" shininess="0.03" specular="0.4" reflectance="0"></material>
+
+        <mesh name="link_base" file="link_base.stl" />
+        <mesh name="link1" file="link1.stl" />
+        <mesh name="link2" file="link2.stl" />
+        <mesh name="link3" file="link3.stl" />
+        <mesh name="link4" file="link4.stl" />
+        <mesh name="link5" file="link5.stl" />
+        <mesh name="link6" file="link6.stl" />
+        <mesh name="link7" file="link7.stl" />
+        <mesh name="base_link" file="base_link.stl" />
+        <mesh name="left_outer_knuckle" file="left_outer_knuckle.stl" />
+        <mesh name="left_finger" file="left_finger.stl" />
+        <mesh name="left_inner_knuckle" file="left_inner_knuckle.stl" />
+        <mesh name="right_outer_knuckle" file="right_outer_knuckle.stl" />
+        <mesh name="right_finger" file="right_finger.stl" />
+        <mesh name="right_inner_knuckle" file="right_inner_knuckle.stl" />
+    </asset>
+
+    <equality>
+        <weld body1="robot0:mocap2" body2="link7" solimp="0.9 0.95 0.001" solref="0.02 1"></weld>
+    </equality>
+
+    <default>
+        <joint armature="1" damping="0.1" limited="true"/>
+         <default class="robot0:blue">
+            <geom rgba="0.086 0.506 0.767 1.0"></geom>
+        </default>
+
+        <default class="robot0:grey">
+            <geom rgba="0.356 0.361 0.376 1.0"></geom>
+        </default>
+    </default>
+
+</mujoco>

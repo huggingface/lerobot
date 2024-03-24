@@ -32,6 +32,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
         collate_fn: Callable = None,
         writer: Writer = None,
         transform: "torchrl.envs.Transform" = None,
+        # storage = None,
     ):
         self.dataset_id = dataset_id
         self.version = version
@@ -43,7 +44,12 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
                 f"The version of the dataset ({self.version}) is not enforced when root is provided ({self.root})."
             )
 
-        storage = self._download_or_load_dataset()
+        # HACK
+        if dataset_id == "xarm_lift_medium":
+            self.data_dir = self.root / self.dataset_id
+            storage = self._download_and_preproc_obsolete()
+        else:
+            storage = self._download_or_load_dataset()
 
         super().__init__(
             storage=storage,

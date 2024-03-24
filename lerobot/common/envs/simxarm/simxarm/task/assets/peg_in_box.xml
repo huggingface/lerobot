@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<mujoco>
+	<compiler angle="radian" coordinate="local" meshdir="mesh" texturedir="texture"></compiler>
+	<size nconmax="2000" njmax="500"/>
+
+	<option timestep="0.001">
+		<flag warmstart="enable"></flag>
+	</option>
+
+	<include file="shared.xml"></include>
+
+	<worldbody>
+		<body name="floor0" pos="0 0 0">
+			<geom name="floorgeom0" pos="1.2 -2.0 0" size="1.0 10.0 1" type="plane" condim="3" material="floor_mat"></geom>
+		</body>
+
+		<include file="xarm.xml"></include>
+
+		<body pos="0.75 0 0.6325" name="pedestal0">
+			<geom name="pedestalgeom0" size="0.1 0.1 0.01" pos="0.32 0.27 0" type="box" mass="2000" material="pedestal_mat"></geom>
+			<site pos="0.30 0.30 0" size="0.075 0.075 0.002" type="box" name="robotmountsite0" rgba="0.55 0.54 0.53 1" />
+		</body>
+
+		<body pos="1.5 0.075 0.3425" name="table0">
+			<geom name="tablegeom0" size="0.3 0.6 0.2" pos="0 0 0" type="box" material="table_mat" density="2000" friction="1 0.005 0.0002"></geom>
+		</body>
+
+		<body name="box0" pos="1.605 0.25 0.55">
+			<joint name="box_joint0" type="free" limited="false"></joint>
+			<site name="box_site" pos="0 0.075 -0.01" size="0.02" rgba="0 0 0 0" type="sphere"></site>
+			<geom name="box_side0" pos="0 0 0" size="0.065 0.002 0.04" type= "box" rgba="0.8 0.1 0.1 1" mass ="1" condim="4" />
+			<geom name="box_side1" pos="0 0.149 0" size="0.065 0.002 0.04" type="box" rgba="0.9 0.2 0.2 1" mass ="2" condim="4" />
+			<geom name="box_side2" pos="0.064 0.074 0" size="0.002 0.075 0.04" type="box" rgba="0.8 0.1 0.1 1" mass ="2" condim="4" />
+			<geom name="box_side3" pos="-0.064 0.074 0" size="0.002 0.075 0.04" type="box" rgba="0.9 0.2 0.2 1" mass ="2" condim="4" />
+			<geom name="box_side4" pos="-0 0.074 -0.038" size="0.065 0.075 0.002" type="box" rgba="0.5 0 0 1" mass ="2" condim="4"/>
+		</body>
+
+		<body name="object0" pos="1.4 0.25 0.65">
+			<joint name="object_joint0" type="free" limited="false"></joint>
+			<geom name="object_target0" type="cylinder" pos="0 0 -0.05" size="0.03 0.035" rgba="0.6 0.8 0.5 1" mass ="0.1" condim="3"  />
+			<site name="object_site" pos="0 0 -0.05" size="0.0325 0.0375" rgba="0 0 0 0" type="cylinder"></site>
+			<body name="B0" pos="0 0 0" euler="0 0 0 ">
+				<joint name="B0:joint" type="slide" limited="true" axis="0 0 1" damping="0.05" range="0.0001 0.0001001" solimpfriction="0.98 0.98 0.95" frictionloss="1"></joint>
+				<geom type="capsule" size="0.002 0.03" rgba="0 0 0 1" mass="0.001" condim="4"/>
+				<body name="B1" pos="0 0 0.04" euler="0 3.14 0 ">
+					<joint name="B1:joint1" type="hinge" axis="1 0 0" range="-0.1 0.1"  frictionloss="1"></joint>
+					<joint name="B1:joint2" type="hinge" axis="0 1 0" range="-0.1 0.1"  frictionloss="1"></joint>
+					<joint name="B1:joint3" type="hinge" axis="0 0 1" range="-0.1 0.1"  frictionloss="1"></joint>
+					<geom type="capsule" size="0.002 0.004" rgba="1 0 0 0" mass="0.001" condim="4"/>
+				</body>
+			</body>
+		</body>
+
+		<light directional="true" ambient="0.1 0.1 0.1" diffuse="0 0 0" specular="0 0 0" castshadow="false" pos="1.65 0 10" dir="-0.57 -0.57 -0.57" name="light0"></light>
+		<light directional="true" ambient="0.1 0.1 0.1" diffuse="0 0 0" specular="0 0 0" castshadow="false" pos="0 -4 4" dir="0 1 -0.1" name="light1"></light>
+		<light directional="true" ambient="0.05 0.05 0.05" diffuse="0 0 0" specular="0 0 0" castshadow="false" pos="2.13 1.6 2.5" name="light2"></light>
+		<light pos="0 0 2" dir="0.2 0.2 -0.8" directional="true"  diffuse="0.3 0.3 0.3"  castshadow="false" name="light3"></light>
+
+		<camera fovy="50" name="camera0" pos="0.9559 1.0 1.1" euler="-1.1 -0.6 3.4" />
+	</worldbody>
+
+	<equality>
+		<connect body2="left_finger" body1="left_inner_knuckle" anchor="0.0 0.035 0.042" solimp="0.9 0.95 0.001 0.5 2" solref="0.0002 1.0" ></connect>
+		<connect body2="right_finger" body1="right_inner_knuckle" anchor="0.0 -0.035 0.042" solimp="0.9 0.95 0.001 0.5 2" solref="0.0002 1.0" ></connect>
+		<weld body1="right_hand" body2="B1" solimp="0.99 0.99 0.99" solref="0.02 1"></weld>
+		<joint joint1="left_inner_knuckle_joint" joint2="right_inner_knuckle_joint"></joint>
+	</equality>
+
+	<actuator>
+		<motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="left_inner_knuckle_joint" gear="200.0"/>
+		<motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="right_inner_knuckle_joint" gear="200.0"/>
+	</actuator>
+</mujoco>

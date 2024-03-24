@@ -67,11 +67,11 @@ class SimxarmExperienceReplay(AbstractExperienceReplay):
         )
 
     def _download_and_preproc_obsolete(self):
-        assert self.root is not None
+        # assert self.root is not None
         # TODO(rcadene): finish download
-        download()
+        # download()
 
-        dataset_path = self.root / f"{self.dataset_id}_raw" / "buffer.pkl"
+        dataset_path = self.root / f"{self.dataset_id}" / "buffer.pkl"
         print(f"Using offline dataset '{dataset_path}'")
         with open(dataset_path, "rb") as f:
             dataset_dict = pickle.load(f)
@@ -105,8 +105,8 @@ class SimxarmExperienceReplay(AbstractExperienceReplay):
                     "frame_id": torch.arange(0, num_frames, 1),
                     ("next", "observation", "image"): next_image,
                     ("next", "observation", "state"): next_state,
-                    ("next", "observation", "reward"): next_reward,
-                    ("next", "observation", "done"): next_done,
+                    ("next", "reward"): next_reward,
+                    ("next", "done"): next_done,
                 },
                 batch_size=num_frames,
             )
