@@ -155,10 +155,9 @@ class Base(robot_env.MujocoRobotEnv):
 
     def render(self, mode="rgb_array", width=384, height=384):
         self._render_callback()
-        # if mode == 'rgb_array':
-        # 	return self.sim.render(width, height, camera_name='camera0', depth=False)[::-1, :, :]
-        # elif mode == "human":
-        # 	self._get_viewer(mode).render()
+        # hack
+        self.model.vis.global_.offwidth = width
+        self.model.vis.global_.offheight = height
         return self.mujoco_renderer.render(mode)
 
     def close(self):

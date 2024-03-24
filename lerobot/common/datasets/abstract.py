@@ -44,9 +44,9 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
                 f"The version of the dataset ({self.version}) is not enforced when root is provided ({self.root})."
             )
 
-        # HACK
-        if dataset_id == "xarm_lift_medium":
-            self.data_dir = self.root / self.dataset_id
+        # HACK: to remove before merge
+        self.data_dir = self.root / self.dataset_id
+        if not (self.data_dir / "replay_buffer").exists():
             storage = self._download_and_preproc_obsolete()
         else:
             storage = self._download_or_load_dataset()

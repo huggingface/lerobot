@@ -113,7 +113,11 @@ class SimxarmExperienceReplay(AbstractExperienceReplay):
 
             if episode_id == 0:
                 # hack to initialize tensordict data structure to store episodes
-                td_data = episode[0].expand(total_frames).memmap_like(self.root / f"{self.dataset_id}")
+                td_data = (
+                    episode[0]
+                    .expand(total_frames)
+                    .memmap_like(self.root / f"{self.dataset_id}" / "replay_buffer")
+                )
 
             td_data[idx0:idx1] = episode
 
