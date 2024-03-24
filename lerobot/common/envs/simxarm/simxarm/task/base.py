@@ -63,7 +63,8 @@ class Base(robot_env.MujocoRobotEnv):
         return self._get_obs()
 
     def _step_callback(self):
-        self.sim.forward()
+        # self.sim.forward()
+        self._mujoco.mj_forward(self.model, self.data)
 
     def _limit_gripper(self, gripper_pos, pos_ctrl):
         if gripper_pos[0] > self.center_of_table[0] - 0.105 + 0.15:
@@ -88,7 +89,12 @@ class Base(robot_env.MujocoRobotEnv):
             self._utils.get_site_xpos(self.model, self.data, "grasp"), pos_ctrl
         ) * (1 / self.n_substeps)
         gripper_ctrl = np.array([gripper_ctrl, gripper_ctrl])
-        mocap.apply_action(self.sim, np.concatenate([pos_ctrl, self.gripper_rotation, gripper_ctrl]))
+        mocap.apply_action(
+            self.model,
+            self._model_names,
+            self.data,
+            np.concatenate([pos_ctrl, self.gripper_rotation, gripper_ctrl]),
+        )
 
     def _viewer_setup(self):
         body_id = self.sim.model.body_name2id("link7")
@@ -144,8 +150,9 @@ class Base(robot_env.MujocoRobotEnv):
         assert action.shape == (4,)
         assert self.action_space.contains(action), "{!r} ({}) invalid".format(action, type(action))
         self._apply_action(action)
-        for _ in range(2):
-            self.sim.step()
+        # for _ in range(2):
+        #     self.sim.step()
+        self._mujoco.mj_step(self.model, self.data, nstep=2)
         self._step_callback()
         obs = self._get_obs()
         reward = self.get_reward()
