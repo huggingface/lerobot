@@ -4,6 +4,7 @@ import gym
 import numpy as np
 from gym.wrappers import TimeLimit
 
+from lerobot.common.envs.simxarm.simxarm.task.base import Base as Base
 from lerobot.common.envs.simxarm.simxarm.task.lift import Lift
 from lerobot.common.envs.simxarm.simxarm.task.peg_in_box import PegInBox
 from lerobot.common.envs.simxarm.simxarm.task.push import Push
