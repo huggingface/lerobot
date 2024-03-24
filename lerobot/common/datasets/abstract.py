@@ -14,6 +14,8 @@ from torchrl.data.replay_buffers.storages import TensorStorage, _collate_id
 from torchrl.data.replay_buffers.writers import ImmutableDatasetWriter, Writer
 from torchrl.envs.transforms.transforms import Compose
 
+HF_USER = "lerobot"
+
 
 class AbstractExperienceReplay(TensorDictReplayBuffer):
     def __init__(
@@ -106,7 +108,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
         if self.root is None:
             self.data_dir = Path(
                 snapshot_download(
-                    repo_id=f"cadene/{self.dataset_id}", repo_type="dataset", revision=self.version
+                    repo_id=f"{HF_USER}/{self.dataset_id}", repo_type="dataset", revision=self.version
                 )
             )
         else:
