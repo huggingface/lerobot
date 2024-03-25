@@ -84,7 +84,7 @@ class SimxarmEnv(AbstractEnv):
         else:
             obs = {"state": torch.tensor(raw_obs["observation"], dtype=torch.float32)}
 
-        obs = TensorDict(obs, batch_size=[])
+        # obs = TensorDict(obs, batch_size=[])
         return obs
 
     def _reset(self, tensordict: Optional[TensorDict] = None):

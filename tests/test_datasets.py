@@ -10,9 +10,8 @@ from .utils import DEVICE, init_config
     "env_name,dataset_id",
     [
         # TODO(rcadene): simxarm is depreciated for now
-        # ("simxarm", "lift"),
+        ("simxarm", "lift"),
         ("pusht", "pusht"),
-        # TODO(aliberts): add aloha when dataset is available on hub
         ("aloha", "sim_insertion_human"),
         ("aloha", "sim_insertion_scripted"),
         ("aloha", "sim_transfer_cube_human"),
