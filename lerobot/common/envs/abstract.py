@@ -4,7 +4,7 @@ from typing import Optional
 from tensordict import TensorDict
 from torchrl.envs import EnvBase
 
-from lerobot.common.utils import set_seed
+from lerobot.common.utils import set_global_seed
 
 
 class AbstractEnv(EnvBase):
@@ -67,4 +67,4 @@ class AbstractEnv(EnvBase):
         raise NotImplementedError("Abstract method")
 
     def _set_seed(self, seed: Optional[int]):
-        set_seed(seed)
+        set_global_seed(seed)

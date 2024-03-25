@@ -26,7 +26,7 @@ def get_safe_torch_device(cfg_device: str, log: bool = False) -> torch.device:
     return device
 
 
-def set_seed(seed):
+def set_global_seed(seed):
     """Set seed for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)

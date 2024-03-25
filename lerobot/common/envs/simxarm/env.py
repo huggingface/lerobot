@@ -1,4 +1,5 @@
 import importlib
+import logging
 from collections import deque
 from typing import Optional
 
@@ -15,7 +16,7 @@ from torchrl.data.tensor_specs import (
 from torchrl.envs.libs.gym import _gym_to_torchrl_spec_transform
 
 from lerobot.common.envs.abstract import AbstractEnv
-from lerobot.common.utils import set_seed
+from lerobot.common.utils import set_global_seed
 
 MAX_NUM_ACTIONS = 4
 
@@ -229,8 +230,9 @@ class SimxarmEnv(AbstractEnv):
         )
 
     def _set_seed(self, seed: Optional[int]):
-        set_seed(seed)
+        set_global_seed(seed)
         # self._env.seed(seed)
         # self._env.action_space.seed(seed)
         # self.set_seed(seed)
+        logging.warning("simxarm env is not seeded")
         self._seed = seed

@@ -39,14 +39,13 @@ def print_spec_rollout(env):
     print("data from rollout:", simple_rollout(100))
 
 
-# @pytest.mark.skip(reason="Simxarm is deprecated")
 @pytest.mark.parametrize(
     "task,from_pixels,pixels_only",
     [
         ("lift", False, False),
         ("lift", True, False),
         ("lift", True, True),
-        # TODO(aliberts): Add simxarm other task or remove them completely from repo
+        # TODO(aliberts): Add simxarm other tasks
         # ("reach", False, False),
         # ("reach", True, False),
         # ("push", False, False),

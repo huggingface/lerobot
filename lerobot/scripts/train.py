@@ -12,7 +12,7 @@ from lerobot.common.datasets.factory import make_offline_buffer
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.utils import format_big_number, get_safe_torch_device, init_logging, set_seed
+from lerobot.common.utils import format_big_number, get_safe_torch_device, init_logging, set_global_seed
 from lerobot.scripts.eval import eval_policy
 
 
@@ -122,7 +122,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    set_seed(cfg.seed)
+    set_global_seed(cfg.seed)
 
     logging.info("make_offline_buffer")
     offline_buffer = make_offline_buffer(cfg)

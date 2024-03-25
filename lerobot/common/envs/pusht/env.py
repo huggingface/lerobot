@@ -16,7 +16,7 @@ from torchrl.data.tensor_specs import (
 from torchrl.envs.libs.gym import _gym_to_torchrl_spec_transform
 
 from lerobot.common.envs.abstract import AbstractEnv
-from lerobot.common.utils import set_seed
+from lerobot.common.utils import set_global_seed
 
 _has_gym = importlib.util.find_spec("gymnasium") is not None
 
@@ -238,6 +238,6 @@ class PushtEnv(AbstractEnv):
 
     def _set_seed(self, seed: Optional[int]):
         # Set global seed.
-        set_seed(seed)
+        set_global_seed(seed)
         # Set PushTImageEnv seed as it relies on it's own internal _seed attribute.
         self._env.seed(seed)

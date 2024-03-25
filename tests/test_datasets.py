@@ -9,7 +9,6 @@ from .utils import DEVICE, init_config
 @pytest.mark.parametrize(
     "env_name,dataset_id",
     [
-        # TODO(rcadene): simxarm is depreciated for now
         ("simxarm", "lift"),
         ("pusht", "pusht"),
         ("aloha", "sim_insertion_human"),

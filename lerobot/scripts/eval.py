@@ -50,7 +50,7 @@ from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import log_output_dir
 from lerobot.common.policies.abstract import AbstractPolicy
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.utils import get_safe_torch_device, init_logging, set_seed
+from lerobot.common.utils import get_safe_torch_device, init_logging, set_global_seed
 
 
 def write_video(video_path, stacked_frames, fps):
@@ -188,7 +188,7 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    set_seed(cfg.seed)
+    set_global_seed(cfg.seed)
 
     log_output_dir(out_dir)
 
