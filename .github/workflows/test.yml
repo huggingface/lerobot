@@ -18,9 +18,6 @@ jobs:
     env:
       POETRY_VERSION: 1.8.2
       DATA_DIR: tests/data
-      TMPDIR: ~/tmp
-      TEMP: ~/tmp
-      TMP: ~/tmp
       MUJOCO_GL: egl
       LEROBOT_TESTS_DEVICE: cpu
     steps:
@@ -85,6 +82,10 @@ jobs:
 
       - name: Install dependencies
         if: steps.restore-dependencies-cache.outputs.cache-hit != 'true'
+        env:
+          TMPDIR: ~/tmp
+          TEMP: ~/tmp
+          TMP: ~/tmp
         run: |
           mkdir ~/tmp
           poetry install --no-interaction --no-root
