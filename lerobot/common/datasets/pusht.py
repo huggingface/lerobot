@@ -192,19 +192,21 @@ class PushtExperienceReplay(AbstractExperienceReplay):
             # last step of demonstration is considered done
             done[-1] = True
 
+            # Note: for the "next" key we take data[1:] and then append on one more frame as a copy of the
+            # last.
             ep_td = TensorDict(
                 {
-                    ("observation", "image"): image[:-1],
-                    ("observation", "state"): agent_pos[:-1],
-                    "action": actions[idx0:idx1][:-1],
-                    "episode": episode_ids[idx0:idx1][:-1],
-                    "frame_id": torch.arange(0, num_frames - 1, 1),
-                    ("next", "observation", "image"): image[1:],
-                    ("next", "observation", "state"): agent_pos[1:],
-                    # TODO: verify that reward and done are aligned with image and agent_pos
-                    ("next", "reward"): reward[1:],
-                    ("next", "done"): done[1:],
-                    ("next", "success"): success[1:],
+                    ("observation", "image"): image,
+                    ("observation", "state"): agent_pos,
+                    "action": actions[idx0:idx1],
+                    "episode": episode_ids[idx0:idx1],
+                    "frame_id": torch.arange(0, num_frames, 1),
+                    ("next", "observation", "image"): torch.cat([image[1:], image[-1].unsqueeze(0)]),
+                    ("next", "observation", "state"): torch.cat([agent_pos[1:], agent_pos[-1].unsqueeze(0)]),
+                    # TODO(rcadene): verify that reward and done are aligned with image and agent_pos
+                    ("next", "reward"): torch.cat([reward[1:], reward[-1].unsqueeze(0)]),
+                    ("next", "done"): torch.cat([done[1:], done[-1].unsqueeze(0)]),
+                    ("next", "success"): torch.cat([success[1:], success[-1].unsqueeze(0)]),
                 },
                 batch_size=num_frames - 1,
             )
