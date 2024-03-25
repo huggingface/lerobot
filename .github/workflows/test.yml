@@ -16,12 +16,11 @@ jobs:
       ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     env:
-      POETRY_VERSION: 1.8.1
+      POETRY_VERSION: 1.8.2
       DATA_DIR: tests/data
       TMPDIR: ~/tmp
       TEMP: ~/tmp
       TMP: ~/tmp
-      PYOPENGL_PLATFORM: egl
       MUJOCO_GL: egl
       LEROBOT_TESTS_DEVICE: cpu
     steps:
