@@ -42,7 +42,6 @@ torch = "^2.2.1"
 tensordict = {git = "https://github.com/pytorch/tensordict"}
 torchrl = {git = "https://github.com/pytorch/rl", rev = "13bef426dcfa5887c6e5034a6e9697993fa92c37"}
 mujoco = "2.3.7"
-gym = "^0.26.2"
 opencv-python = "^4.9.0.80"
 diffusers = "^0.26.3"
 torchvision = "^0.17.1"
@@ -51,6 +50,7 @@ dm-control = "1.0.14"
 huggingface-hub = {extras = ["hf-transfer"], version = "^0.21.4"}
 robomimic = "0.2.0"
 gymnasium-robotics = "^1.2.4"
+gymnasium = "^0.29.1"
 
 
 [tool.poetry.group.dev.dependencies]

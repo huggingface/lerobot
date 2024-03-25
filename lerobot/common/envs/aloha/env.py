@@ -31,7 +31,7 @@ from lerobot.common.envs.aloha.tasks.sim_end_effector import (
 from lerobot.common.envs.aloha.utils import sample_box_pose, sample_insertion_pose
 from lerobot.common.utils import set_seed
 
-_has_gym = importlib.util.find_spec("gym") is not None
+_has_gym = importlib.util.find_spec("gymnasium") is not None
 
 
 class AlohaEnv(AbstractEnv):

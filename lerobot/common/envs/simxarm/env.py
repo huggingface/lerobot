@@ -20,7 +20,6 @@ from lerobot.common.utils import set_seed
 MAX_NUM_ACTIONS = 4
 
 _has_gym = importlib.util.find_spec("gymnasium") is not None
-# _has_simxarm = importlib.util.find_spec("simxarm") is not None and _has_gym
 
 
 class SimxarmEnv(AbstractEnv):

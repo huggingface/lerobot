@@ -1,8 +1,8 @@
 from collections import OrderedDict, deque
 
-import gym
+import gymnasium as gym
 import numpy as np
-from gym.wrappers import TimeLimit
+from gymnasium.wrappers import TimeLimit
 
 from lerobot.common.envs.simxarm.simxarm.task.base import Base as Base
 from lerobot.common.envs.simxarm.simxarm.task.lift import Lift

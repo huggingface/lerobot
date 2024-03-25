@@ -794,44 +794,6 @@ files = [
 protobuf = ["grpcio-tools (>=1.62.1)"]
 
 [[package]]
-name = "gym"
-version = "0.26.2"
-description = "Gym: A universal API for reinforcement learning environments"
-optional = false
-python-versions = ">=3.6"
-files = [
-    {file = "gym-0.26.2.tar.gz", hash = "sha256:e0d882f4b54f0c65f203104c24ab8a38b039f1289986803c7d02cdbe214fbcc4"},
-]
-
-[package.dependencies]
-cloudpickle = ">=1.2.0"
-gym_notices = ">=0.0.4"
-numpy = ">=1.18.0"
-
-[package.extras]
-accept-rom-license = ["autorom[accept-rom-license] (>=0.4.2,<0.5.0)"]
-all = ["ale-py (>=0.8.0,<0.9.0)", "box2d-py (==2.3.5)", "imageio (>=2.14.1)", "lz4 (>=3.1.0)", "matplotlib (>=3.0)", "moviepy (>=1.0.0)", "mujoco (==2.2)", "mujoco_py (>=2.1,<2.2)", "opencv-python (>=3.0)", "pygame (==2.1.0)", "pytest (==7.0.1)", "swig (==4.*)"]
-atari = ["ale-py (>=0.8.0,<0.9.0)"]
-box2d = ["box2d-py (==2.3.5)", "pygame (==2.1.0)", "swig (==4.*)"]
-classic-control = ["pygame (==2.1.0)"]
-mujoco = ["imageio (>=2.14.1)", "mujoco (==2.2)"]
-mujoco-py = ["mujoco_py (>=2.1,<2.2)"]
-other = ["lz4 (>=3.1.0)", "matplotlib (>=3.0)", "moviepy (>=1.0.0)", "opencv-python (>=3.0)"]
-testing = ["box2d-py (==2.3.5)", "imageio (>=2.14.1)", "lz4 (>=3.1.0)", "matplotlib (>=3.0)", "moviepy (>=1.0.0)", "mujoco (==2.2)", "mujoco_py (>=2.1,<2.2)", "opencv-python (>=3.0)", "pygame (==2.1.0)", "pytest (==7.0.1)", "swig (==4.*)"]
-toy-text = ["pygame (==2.1.0)"]
-
-[[package]]
-name = "gym-notices"
-version = "0.0.8"
-description = "Notices for gym"
-optional = false
-python-versions = "*"
-files = [
-    {file = "gym-notices-0.0.8.tar.gz", hash = "sha256:ad25e200487cafa369728625fe064e88ada1346618526102659b4640f2b4b911"},
-    {file = "gym_notices-0.0.8-py3-none-any.whl", hash = "sha256:e5f82e00823a166747b4c2a07de63b6560b1acb880638547e0cabf825a01e463"},
-]
-
-[[package]]
 name = "gymnasium"
 version = "0.29.1"
 description = "A standard API for reinforcement learning and a diverse set of reference environments (formerly Gym)."
@@ -3254,4 +3216,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "2c49c37a048b4298ca81f3c0a304021129148a0b4746208c14117b3423d9a67f"
+content-hash = "93c406139c456780b3d309d7ed3d68ea60cc0e8893c1ee717692984e573d3404"

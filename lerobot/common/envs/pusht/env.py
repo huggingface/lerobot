@@ -18,7 +18,7 @@ from torchrl.envs.libs.gym import _gym_to_torchrl_spec_transform
 from lerobot.common.envs.abstract import AbstractEnv
 from lerobot.common.utils import set_seed
 
-_has_gym = importlib.util.find_spec("gym") is not None
+_has_gym = importlib.util.find_spec("gymnasium") is not None
 
 
 class PushtEnv(AbstractEnv):
