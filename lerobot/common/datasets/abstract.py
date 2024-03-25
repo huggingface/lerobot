@@ -21,7 +21,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
     def __init__(
         self,
         dataset_id: str,
-        version: str | None = "v1.0",
+        version: str | None,
         batch_size: int = None,
         *,
         shuffle: bool = True,
