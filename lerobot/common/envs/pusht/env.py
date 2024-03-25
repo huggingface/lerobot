@@ -50,7 +50,7 @@ class PushtEnv(AbstractEnv):
 
     def _make_env(self):
         if not _has_gym:
-            raise ImportError("Cannot import gym.")
+            raise ImportError("Cannot import gymnasium.")
 
         # TODO(rcadene) (PushTEnv is similar to PushTImageEnv, but without the image rendering, it's faster to iterate on)
         # from lerobot.common.envs.pusht.pusht_env import PushTEnv

@@ -49,10 +49,8 @@ class SimxarmEnv(AbstractEnv):
         )
 
     def _make_env(self):
-        # if not _has_simxarm:
-        #     raise ImportError("Cannot import simxarm.")
         if not _has_gym:
-            raise ImportError("Cannot import gym.")
+            raise ImportError("Cannot import gymnasium.")
 
         import gymnasium
 
@@ -231,8 +229,6 @@ class SimxarmEnv(AbstractEnv):
 
     def _set_seed(self, seed: Optional[int]):
         set_global_seed(seed)
-        # self._env.seed(seed)
-        # self._env.action_space.seed(seed)
-        # self.set_seed(seed)
-        logging.warning("simxarm env is not seeded")
         self._seed = seed
+        # TODO(aliberts): change self._reset so that it takes in a seed value
+        logging.warning("simxarm env is not properly seeded")

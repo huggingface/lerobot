@@ -63,7 +63,7 @@ class AlohaEnv(AbstractEnv):
 
     def _make_env(self):
         if not _has_gym:
-            raise ImportError("Cannot import gym.")
+            raise ImportError("Cannot import gymnasium.")
 
         if not self.from_pixels:
             raise NotImplementedError()

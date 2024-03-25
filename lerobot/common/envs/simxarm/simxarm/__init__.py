@@ -4,11 +4,11 @@ import gymnasium as gym
 import numpy as np
 from gymnasium.wrappers import TimeLimit
 
-from lerobot.common.envs.simxarm.simxarm.task.base import Base as Base
-from lerobot.common.envs.simxarm.simxarm.task.lift import Lift
-from lerobot.common.envs.simxarm.simxarm.task.peg_in_box import PegInBox
-from lerobot.common.envs.simxarm.simxarm.task.push import Push
-from lerobot.common.envs.simxarm.simxarm.task.reach import Reach
+from lerobot.common.envs.simxarm.simxarm.tasks.base import Base as Base
+from lerobot.common.envs.simxarm.simxarm.tasks.lift import Lift
+from lerobot.common.envs.simxarm.simxarm.tasks.peg_in_box import PegInBox
+from lerobot.common.envs.simxarm.simxarm.tasks.push import Push
+from lerobot.common.envs.simxarm.simxarm.tasks.reach import Reach
 
 TASKS = OrderedDict(
     (

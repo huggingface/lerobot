@@ -231,7 +231,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
         num_parallel_env = rollout.batch_size[0]
         if num_parallel_env != 1:
-            # TODO(rcadene): when num_parallel_env > 1, episode needs to be incremented and we need to add tests
+            # TODO(rcadene): when num_parallel_env > 1, rollout["episode"] needs to be properly set and we need to add tests
             raise NotImplementedError()
 
         num_max_steps = rollout.batch_size[1]

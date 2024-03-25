@@ -21,7 +21,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
     def __init__(
         self,
         dataset_id: str,
-        version: str | None,
+        version: str | None = None,
         batch_size: int = None,
         *,
         shuffle: bool = True,
@@ -32,7 +32,6 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
         collate_fn: Callable = None,
         writer: Writer = None,
         transform: "torchrl.envs.Transform" = None,
-        # storage = None,
     ):
         self.dataset_id = dataset_id
         self.version = version
