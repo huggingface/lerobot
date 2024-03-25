@@ -1,11 +1,7 @@
 import os
 
-import glfw
 import mujoco
 import numpy as np
-
-# import gym
-# from gym.envs.robotics import robot_env
 from gymnasium_robotics.envs import robot_env
 
 from lerobot.common.envs.simxarm.simxarm.task import mocap
@@ -63,7 +59,6 @@ class Base(robot_env.MujocoRobotEnv):
         return self._get_obs()
 
     def _step_callback(self):
-        # self.sim.forward()
         self._mujoco.mj_forward(self.model, self.data)
 
     def _limit_gripper(self, gripper_pos, pos_ctrl):
@@ -96,36 +91,19 @@ class Base(robot_env.MujocoRobotEnv):
             np.concatenate([pos_ctrl, self.gripper_rotation, gripper_ctrl]),
         )
 
-    def _viewer_setup(self):
-        body_id = self.sim.model.body_name2id("link7")
-        lookat = self.sim.data.body_xpos[body_id]
-        for idx, value in enumerate(lookat):
-            self.viewer.cam.lookat[idx] = value
-        self.viewer.cam.distance = 4.0
-        self.viewer.cam.azimuth = 132.0
-        self.viewer.cam.elevation = -14.0
-
     def _render_callback(self):
-        # self.sim.forward()
         self._mujoco.mj_forward(self.model, self.data)
 
     def _reset_sim(self):
-        # self.sim.set_state(self.initial_state)
         self.data.time = self.initial_time
         self.data.qpos[:] = np.copy(self.initial_qpos)
         self.data.qvel[:] = np.copy(self.initial_qvel)
         self._sample_goal()
-        for _ in range(10):
-            # self.sim.step()
-            self._mujoco.mj_forward(self.model, self.data)
+        self._mujoco.mj_step(self.model, self.data, nstep=10)
         return True
 
     def _set_gripper(self, gripper_pos, gripper_rotation):
-        # self.data.set_mocap_pos('robot0:mocap2', gripper_pos)
-        # self.data.set_mocap_quat('robot0:mocap2', gripper_rotation)
-        # self.data.set_joint_qpos('right_outer_knuckle_joint', 0)
         self._utils.set_mocap_pos(self.model, self.data, "robot0:mocap", gripper_pos)
-        # self._utils.set_mocap_pos(self.model, self.data, "robot0:mocap", gripper_rotation)
         self._utils.set_mocap_quat(self.model, self.data, "robot0:mocap", gripper_rotation)
         self._utils.set_joint_qpos(self.model, self.data, "right_outer_knuckle_joint", 0)
         self.data.qpos[10] = 0.0
@@ -133,13 +111,10 @@ class Base(robot_env.MujocoRobotEnv):
 
     def _env_setup(self, initial_qpos):
         for name, value in initial_qpos.items():
-            # self.sim.data.set_joint_qpos(name, value)
             self.data.set_joint_qpos(name, value)
         mocap.reset(self.model, self.data)
         mujoco.mj_forward(self.model, self.data)
-        # self.sim.forward()
         self._sample_goal()
-        # self.sim.forward()
         mujoco.mj_forward(self.model, self.data)
 
     def reset(self):
@@ -150,8 +125,6 @@ class Base(robot_env.MujocoRobotEnv):
         assert action.shape == (4,)
         assert self.action_space.contains(action), "{!r} ({}) invalid".format(action, type(action))
         self._apply_action(action)
-        # for _ in range(2):
-        #     self.sim.step()
         self._mujoco.mj_step(self.model, self.data, nstep=2)
         self._step_callback()
         obs = self._get_obs()
@@ -162,15 +135,11 @@ class Base(robot_env.MujocoRobotEnv):
 
     def render(self, mode="rgb_array", width=384, height=384):
         self._render_callback()
-        # hack
+        # HACK
         self.model.vis.global_.offwidth = width
         self.model.vis.global_.offheight = height
         return self.mujoco_renderer.render(mode)
 
     def close(self):
-        if self.viewer is not None:
-            # self.viewer.finish()
-            print("Closing window glfw")
-            glfw.destroy_window(self.viewer.window)
-            self.viewer = None
-        self._viewers = {}
+        if self.mujoco_renderer is not None:
+            self.mujoco_renderer.close()

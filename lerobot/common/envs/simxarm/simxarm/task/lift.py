@@ -85,7 +85,6 @@ class Lift(Base):
         object_pos[1] += self.np_random.uniform(-0.05, 0.05, size=1)
         object_qpos = self._utils.get_joint_qpos(self.model, self.data, "object_joint0")
         object_qpos[:3] = object_pos
-        # self.sim.data.set_joint_qpos('object_joint0', object_qpos)
         self._utils.set_joint_qpos(self.model, self.data, "object_joint0", object_qpos)
         self._init_z = object_pos[2]
 
