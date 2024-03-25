@@ -21,7 +21,7 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
     def __init__(
         self,
         dataset_id: str,
-        version: str | None = None,
+        version: str | None = "v1.0",
         batch_size: int = None,
         *,
         shuffle: bool = True,
@@ -45,11 +45,12 @@ class AbstractExperienceReplay(TensorDictReplayBuffer):
             )
 
         # HACK: to remove before merge
-        self.data_dir = self.root / self.dataset_id
-        if not (self.data_dir / "replay_buffer").exists():
-            storage = self._download_and_preproc_obsolete()
-        else:
-            storage = self._download_or_load_dataset()
+        # self.data_dir = self.root / self.dataset_id
+        # if not (self.data_dir / "replay_buffer").exists():
+        #     storage = self._download_and_preproc_obsolete()
+        # else:
+        #     storage = self._download_or_load_dataset()
+        storage = self._download_or_load_dataset()
 
         super().__init__(
             storage=storage,
