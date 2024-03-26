@@ -206,7 +206,7 @@ class AlohaEnv(AbstractEnv):
         if self.from_pixels:
             if isinstance(self.image_size, int):
                 image_shape = (3, self.image_size, self.image_size)
-            elif OmegaConf.is_list(self.image_size):
+            elif OmegaConf.is_list(self.image_size) or isinstance(self.image_size, list):
                 assert len(self.image_size) == 3  # c h w
                 assert self.image_size[0] == 3  # c is RGB
                 image_shape = tuple(self.image_size)

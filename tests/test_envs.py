@@ -7,6 +7,7 @@ from lerobot.common.datasets.factory import make_offline_buffer
 from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.pusht.env import PushtEnv
 from lerobot.common.envs.simxarm.env import SimxarmEnv
+from lerobot.common.envs.aloha.env import AlohaEnv
 
 from .utils import DEVICE, init_config
 
@@ -36,6 +37,27 @@ def print_spec_rollout(env):
         return data
 
     print("data from rollout:", simple_rollout(100))
+
+
+@pytest.mark.parametrize(
+    "task,from_pixels,pixels_only",
+    [
+        ("sim_insertion", True, False),
+        ("sim_insertion", True, True),
+        ("sim_transfer_cube", True, False),
+        ("sim_transfer_cube", True, True),
+        # TODO(aliberts): Add aloha other tasks
+    ],
+)
+def test_aloha(task, from_pixels, pixels_only):
+    env = AlohaEnv(
+        task,
+        from_pixels=from_pixels,
+        pixels_only=pixels_only,
+        image_size=[3, 480, 640] if from_pixels else None,
+    )
+    # print_spec_rollout(env)
+    check_env_specs(env)
 
 
 @pytest.mark.parametrize(
