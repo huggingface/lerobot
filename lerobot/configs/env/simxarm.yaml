@@ -9,6 +9,8 @@ online_steps: 25000
 
 fps: 15
 
+dataset_id: xarm_lift_medium
+
 env:
   name: simxarm
   task: lift

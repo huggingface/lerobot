@@ -42,6 +42,8 @@ def kl_divergence(mu, logvar):
 
 
 class ActionChunkingTransformerPolicy(AbstractPolicy):
+    name = "act"
+
     def __init__(self, cfg, device, n_action_steps=1):
         super().__init__(n_action_steps)
         self.cfg = cfg

@@ -8,12 +8,12 @@ import torchrl
 import tqdm
 from tensordict import TensorDict
 from torchrl.data.replay_buffers.samplers import (
-    SliceSampler,
+    Sampler,
 )
 from torchrl.data.replay_buffers.storages import TensorStorage
 from torchrl.data.replay_buffers.writers import Writer
 
-from lerobot.common.datasets.abstract import AbstractExperienceReplay
+from lerobot.common.datasets.abstract import AbstractDataset
 
 
 def download():
@@ -32,7 +32,7 @@ def download():
     Path(download_path).unlink()
 
 
-class SimxarmExperienceReplay(AbstractExperienceReplay):
+class SimxarmDataset(AbstractDataset):
     available_datasets = [
         "xarm_lift_medium",
     ]
@@ -41,15 +41,15 @@ class SimxarmExperienceReplay(AbstractExperienceReplay):
         self,
         dataset_id: str,
         version: str | None = "v1.1",
-        batch_size: int = None,
+        batch_size: int | None = None,
         *,
         shuffle: bool = True,
         root: Path | None = None,
         pin_memory: bool = False,
         prefetch: int = None,
-        sampler: SliceSampler = None,
-        collate_fn: Callable = None,
-        writer: Writer = None,
+        sampler: Sampler | None = None,
+        collate_fn: Callable | None = None,
+        writer: Writer | None = None,
         transform: "torchrl.envs.Transform" = None,
     ):
         super().__init__(

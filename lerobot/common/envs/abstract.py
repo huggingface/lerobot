@@ -8,6 +8,20 @@ from lerobot.common.utils import set_global_seed
 
 
 class AbstractEnv(EnvBase):
+    """
+    Note:
+        When implementing a concrete class (e.g. `AlohaDataset`, `PushtEnv`, `DiffusionPolicy`), you need to:
+            1. set the required class attributes:
+                - for classes inheriting from `AbstractDataset`: `available_datasets`
+                - for classes inheriting from `AbstractEnv`: `name`, `available_tasks`
+                - for classes inheriting from `AbstractPolicy`: `name`
+            2. update variables in `lerobot/__init__.py` (e.g. `available_envs`, `available_datasets_per_envs`, `available_policies`)
+            3. update variables in `tests/test_available.py` by importing your new class
+    """
+
+    name: str | None = None  # same name should be used to instantiate the environment in factory.py
+    available_tasks: list[str] | None = None  # for instance: sim_insertion, sim_transfer_cube, pusht, lift
+
     def __init__(
         self,
         task,
@@ -21,6 +35,14 @@ class AbstractEnv(EnvBase):
         num_prev_action=0,
     ):
         super().__init__(device=device, batch_size=[])
+        assert self.name is not None, "Subclasses of `AbstractEnv` should set the `name` class attribute."
+        assert (
+            self.available_tasks is not None
+        ), "Subclasses of `AbstractEnv` should set the `available_tasks` class attribute."
+        assert (
+            task in self.available_tasks
+        ), f"The provided task ({task}) is not on the list of available tasks {self.available_tasks}."
+
         self.task = task
         self.frame_skip = frame_skip
         self.from_pixels = from_pixels

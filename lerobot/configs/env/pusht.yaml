@@ -10,6 +10,8 @@ online_steps: 25000
 
 fps: 10
 
+dataset_id: pusht
+
 env:
   name: pusht
   task: pusht

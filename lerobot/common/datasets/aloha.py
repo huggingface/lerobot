@@ -9,11 +9,11 @@ import torch
 import torchrl
 import tqdm
 from tensordict import TensorDict
-from torchrl.data.replay_buffers.samplers import SliceSampler
+from torchrl.data.replay_buffers.samplers import Sampler
 from torchrl.data.replay_buffers.storages import TensorStorage
 from torchrl.data.replay_buffers.writers import Writer
 
-from lerobot.common.datasets.abstract import AbstractExperienceReplay
+from lerobot.common.datasets.abstract import AbstractDataset
 
 DATASET_IDS = [
     "aloha_sim_insertion_human",
@@ -80,24 +80,24 @@ def download(data_dir, dataset_id):
     gdown.download(EP49_URLS[dataset_id], output=str(data_dir / "episode_49.hdf5"), fuzzy=True)
 
 
-class AlohaExperienceReplay(AbstractExperienceReplay):
+class AlohaDataset(AbstractDataset):
+    available_datasets = DATASET_IDS
+
     def __init__(
         self,
         dataset_id: str,
         version: str | None = "v1.2",
-        batch_size: int = None,
+        batch_size: int | None = None,
         *,
         shuffle: bool = True,
         root: Path | None = None,
         pin_memory: bool = False,
         prefetch: int = None,
-        sampler: SliceSampler = None,
-        collate_fn: Callable = None,
-        writer: Writer = None,
+        sampler: Sampler | None = None,
+        collate_fn: Callable | None = None,
+        writer: Writer | None = None,
         transform: "torchrl.envs.Transform" = None,
     ):
-        assert dataset_id in DATASET_IDS
-
         super().__init__(
             dataset_id,
             version,

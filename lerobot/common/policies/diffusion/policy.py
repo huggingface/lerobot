@@ -13,6 +13,8 @@ from lerobot.common.utils import get_safe_torch_device
 
 
 class DiffusionPolicy(AbstractPolicy):
+    name = "diffusion"
+
     def __init__(
         self,
         cfg,

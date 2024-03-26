@@ -5,7 +5,7 @@ from pathlib import Path
 import torch
 from torchrl.data.replay_buffers import PrioritizedSliceSampler, SliceSampler
 
-from lerobot.common.envs.transforms import NormalizeTransform, Prod
+from lerobot.common.transforms import NormalizeTransform, Prod
 
 # DATA_DIR specifies to location where datasets are loaded. By default, DATA_DIR is None and
 # we load from `$HOME/.cache/huggingface/hub/datasets`. For our unit tests, we set `DATA_DIR=tests/data`
@@ -16,6 +16,7 @@ DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 def make_offline_buffer(
     cfg,
     overwrite_sampler=None,
+    # set normalize=False to remove all transformations and keep images unnormalized in [0,255]
     normalize=True,
     overwrite_batch_size=None,
     overwrite_prefetch=None,
@@ -64,24 +65,26 @@ def make_offline_buffer(
         sampler = overwrite_sampler
 
     if cfg.env.name == "simxarm":
-        from lerobot.common.datasets.simxarm import SimxarmExperienceReplay
+        from lerobot.common.datasets.simxarm import SimxarmDataset
 
-        clsfunc = SimxarmExperienceReplay
-        dataset_id = f"xarm_{cfg.env.task}_medium"
+        clsfunc = SimxarmDataset
 
     elif cfg.env.name == "pusht":
-        from lerobot.common.datasets.pusht import PushtExperienceReplay
+        from lerobot.common.datasets.pusht import PushtDataset
 
-        clsfunc = PushtExperienceReplay
-        dataset_id = "pusht"
+        clsfunc = PushtDataset
 
     elif cfg.env.name == "aloha":
-        from lerobot.common.datasets.aloha import AlohaExperienceReplay
+        from lerobot.common.datasets.aloha import AlohaDataset
 
-        clsfunc = AlohaExperienceReplay
-        dataset_id = f"aloha_{cfg.env.task}"
+        clsfunc = AlohaDataset
     else:
         raise ValueError(cfg.env.name)
+
+    # TODO(rcadene): backward compatiblity to load pretrained pusht policy
+    dataset_id = cfg.get("dataset_id")
+    if dataset_id is None and cfg.env.name == "pusht":
+        dataset_id = "pusht"
 
     offline_buffer = clsfunc(
         dataset_id=dataset_id,
@@ -100,9 +103,9 @@ def make_offline_buffer(
     else:
         img_keys = offline_buffer.image_keys
 
-    transforms = [Prod(in_keys=img_keys, prod=1 / 255)]
-
     if normalize:
+        transforms = [Prod(in_keys=img_keys, prod=1 / 255)]
+
         # TODO(rcadene): make normalization strategy configurable between mean_std, min_max, manual_min_max,
         # min_max_from_spec
         stats = offline_buffer.compute_or_load_stats() if stats_path is None else torch.load(stats_path)
@@ -129,7 +132,7 @@ def make_offline_buffer(
         normalization_mode = "mean_std" if cfg.env.name == "aloha" else "min_max"
         transforms.append(NormalizeTransform(stats, in_keys, mode=normalization_mode))
 
-    offline_buffer.set_transform(transforms)
+        offline_buffer.set_transform(transforms)
 
     if not overwrite_sampler:
         index = torch.arange(0, offline_buffer.num_samples, 1)
