@@ -12,7 +12,7 @@ from lerobot.common.datasets.factory import make_offline_buffer
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.utils import format_big_number, get_safe_torch_device, init_logging, set_seed
+from lerobot.common.utils import format_big_number, get_safe_torch_device, init_logging, set_global_seed
 from lerobot.scripts.eval import eval_policy
 
 
@@ -122,7 +122,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    set_seed(cfg.seed)
+    set_global_seed(cfg.seed)
 
     logging.info("make_offline_buffer")
     offline_buffer = make_offline_buffer(cfg)
@@ -224,7 +224,22 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 policy=td_policy,
                 auto_cast_to_device=True,
             )
-        assert len(rollout) <= cfg.env.episode_length
+
+        assert (
+            len(rollout.batch_size) == 2
+        ), "2 dimensions expected: number of env in parallel x max number of steps during rollout"
+
+        num_parallel_env = rollout.batch_size[0]
+        if num_parallel_env != 1:
+            # TODO(rcadene): when num_parallel_env > 1, rollout["episode"] needs to be properly set and we need to add tests
+            raise NotImplementedError()
+
+        num_max_steps = rollout.batch_size[1]
+        assert num_max_steps <= cfg.env.episode_length
+
+        # reshape to have a list of steps to insert into online_buffer
+        rollout = rollout.reshape(num_parallel_env * num_max_steps)
+
         # set same episode index for all time steps contained in this rollout
         rollout["episode"] = torch.tensor([env_step] * len(rollout), dtype=torch.int)
         online_buffer.extend(rollout)

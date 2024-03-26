@@ -1,0 +1,88 @@
+<mujoco model="xarm7">
+    <body mocap="true" name="robot0:mocap2" pos="0 0 0">
+        <geom conaffinity="0" contype="0" pos="0 0 0" rgba="0 0.5 0 0" size="0.005 0.005 0.005" type="box"></geom>
+        <geom conaffinity="0" contype="0" pos="0 0 0" rgba="0.5 0 0 0" size="1 0.005 0.005" type="box"></geom>
+        <geom conaffinity="0" contype="0" pos="0 0 0" rgba="0 0 0.5 0" size="0.005 1 0.001" type="box"></geom>
+        <geom conaffinity="0" contype="0" pos="0 0 0" rgba="0.5 0.5 0 0" size="0.005 0.005 1" type="box"></geom>
+    </body>
+
+    <body name="link0" pos="1.09 0.28 0.655">
+        <geom name="bb" type="mesh" mesh="link_base" material="robot0:base_mat" rgba="1 1 1 1"/>
+        <body name="link1" pos="0 0 0.267">
+            <inertial pos="-0.0042142 0.02821 -0.0087788" quat="0.917781 -0.277115 0.0606681 0.277858" mass="0.42603" diaginertia="0.00144551 0.00137757 0.000823511" />
+            <joint name="joint1" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28319 6.28319" damping="10" frictionloss="1" />
+            <geom name="j1" type="mesh" mesh="link1" material="robot0:arm_mat" rgba="1 1 1 1"/>
+            <body name="link2" pos="0 0 0" quat="0.707105 -0.707108 0 0">
+                <inertial pos="-3.3178e-05 -0.12849 0.026337" quat="0.447793 0.894132 -0.00224061 0.00218314" mass="0.56095" diaginertia="0.00319151 0.00311598 0.000980804" />
+                <joint name="joint2" pos="0 0 0" axis="0 0 1" limited="true" range="-2.059 2.0944" damping="10" frictionloss="1" />
+                <geom name="j2"  type="mesh" mesh="link2" material="robot0:head_mat" rgba="1 1 1 1"/>
+                <body name="link3" pos="0 -0.293 0" quat="0.707105 0.707108 0 0">
+                    <inertial pos="0.04223 -0.023258 -0.0096674" quat="0.883205 0.339803 0.323238 0.000542237" mass="0.44463" diaginertia="0.00133227 0.00119126 0.000780475" />
+                    <joint name="joint3" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28319 6.28319" damping="5" frictionloss="1" />
+                    <geom name="j3" type="mesh" mesh="link3" material="robot0:gripper_mat" rgba="1 1 1 1"/>
+                    <body name="link4" pos="0.0525 0 0" quat="0.707105 0.707108 0 0">
+                        <inertial pos="0.067148 -0.10732 0.024479" quat="0.0654142 0.483317 -0.738663 0.465298" mass="0.52387" diaginertia="0.00288984 0.00282705 0.000894409" />
+                        <joint name="joint4" pos="0 0 0" axis="0 0 1" limited="true" range="-0.19198 3.927" damping="5" frictionloss="1" />
+                        <geom name="j4" type="mesh" mesh="link4" material="robot0:arm_mat" rgba="1 1 1 1"/>
+                        <body name="link5" pos="0.0775 -0.3425 0" quat="0.707105 0.707108 0 0">
+                            <inertial pos="-0.00023397 0.036705 -0.080064" quat="0.981064 -0.19003 0.00637998 0.0369004" mass="0.18554" diaginertia="0.00099553 0.000988613 0.000247126" />
+                            <joint name="joint5" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28319 6.28319" damping="5" frictionloss="1" />
+                            <geom name="j5" type="mesh"  material="robot0:gripper_mat" rgba="1 1 1 1" mesh="link5" />
+                            <body name="link6" pos="0 0 0" quat="0.707105 0.707108 0 0">
+                                <inertial pos="0.058911 0.028469 0.0068428" quat="-0.188705 0.793535 0.166088 0.554173" mass="0.31344" diaginertia="0.000827892 0.000768871 0.000386708" />
+                                <joint name="joint6" pos="0 0 0" axis="0 0 1" limited="true" range="-1.69297 3.14159" damping="2" frictionloss="1" />
+                                <geom name="j6" type="mesh" material="robot0:gripper_mat" rgba="1 1 1 1" mesh="link6" />
+                                <body name="link7" pos="0.076 0.097 0" quat="0.707105 -0.707108 0 0">
+                                    <inertial pos="-0.000420033 -0.00287433 0.0257078" quat="0.999372 -0.0349129 -0.00605634 0.000551744" mass="0.85624" diaginertia="0.00137671 0.00118744 0.000514968" />
+                                    <joint name="joint7" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28319 6.28319" damping="2" frictionloss="1" />
+                                    <geom name="j8" material="robot0:gripper_mat" type="mesh" rgba="0.753 0.753 0.753 1" mesh="link7" />
+                                    <geom name="j9" material="robot0:gripper_mat" type="mesh" rgba="1 1 1 1" mesh="base_link" />
+                                    <site name="grasp" pos="0 0 0.16" rgba="1 0 0 0" type="sphere" size="0.01" group="1"/>
+                                    <body name="left_outer_knuckle" pos="0 0.035 0.059098">
+                                        <inertial pos="0 0.021559 0.015181" quat="0.47789 0.87842 0 0" mass="0.033618" diaginertia="1.9111e-05 1.79089e-05 1.90167e-06" />
+                                        <joint name="drive_joint" pos="0 0 0" axis="1 0 0" limited="true" range="0 0.85" />
+                                        <geom type="mesh" rgba="0 0 0 1" conaffinity="1" contype="0"  mesh="left_outer_knuckle" />
+                                        <body name="left_finger" pos="0 0.035465 0.042039">
+                                            <inertial pos="0 -0.016413 0.029258" quat="0.697634 0.115353 -0.115353 0.697634" mass="0.048304" diaginertia="1.88037e-05 1.7493e-05 3.56792e-06" />
+                                            <joint name="left_finger_joint" pos="0 0 0" axis="-1 0 0" limited="true" range="0 0.85" />
+                                            <geom name="j10" material="robot0:gripper_finger_mat" type="mesh" rgba="0 0 0 1" conaffinity="3" contype="2"  mesh="left_finger" friction='1.5 1.5 1.5' solref='0.01 1' solimp='0.99 0.99 0.01'/>
+                                            <body name="right_hand" pos="0 -0.03 0.05" quat="-0.7071 0 0 0.7071">
+                                                <site name="ee" pos="0 0 0" rgba="0 0 1 0" type="sphere" group="1"/>
+                                                <site name="ee_x" pos="0 0 0" size="0.005 .1"  quat="0.707105 0.707108 0 0 " rgba="1 0 0 0" type="cylinder" group="1"/>
+                                                <site name="ee_z" pos="0 0 0" size="0.005 .1" quat="0.707105 0 0 0.707108" rgba="0 0 1 0" type="cylinder" group="1"/>
+                                                <site name="ee_y" pos="0 0 0" size="0.005 .1" quat="0.707105 0 0.707108 0 " rgba="0 1 0 0" type="cylinder" group="1"/>
+                                            </body>
+                                        </body>
+                                    </body>
+                                    <body name="left_inner_knuckle" pos="0 0.02 0.074098">
+                                        <inertial pos="1.86601e-06 0.0220468 0.0261335" quat="0.664139 -0.242732 0.242713 0.664146" mass="0.0230126" diaginertia="8.34216e-06 6.0949e-06 2.75601e-06" />
+                                        <joint name="left_inner_knuckle_joint" pos="0 0 0" axis="1 0 0" limited="true" range="0 0.85" />
+                                        <geom type="mesh" rgba="0 0 0 1" conaffinity="1" contype="0"  mesh="left_inner_knuckle" friction='1.5 1.5 1.5' solref='0.01 1' solimp='0.99 0.99 0.01'/>
+                                    </body>
+                                    <body name="right_outer_knuckle" pos="0 -0.035 0.059098">
+                                        <inertial pos="0 -0.021559 0.015181" quat="0.87842 0.47789 0 0" mass="0.033618" diaginertia="1.9111e-05 1.79089e-05 1.90167e-06" />
+                                        <joint name="right_outer_knuckle_joint" pos="0 0 0" axis="-1 0 0" limited="true" range="0 0.85" />
+                                        <geom type="mesh" rgba="0 0 0 1" conaffinity="1" contype="0"  mesh="right_outer_knuckle" />
+                                        <body name="right_finger" pos="0 -0.035465 0.042039">
+                                            <inertial pos="0 0.016413 0.029258" quat="0.697634 -0.115356 0.115356 0.697634" mass="0.048304" diaginertia="1.88038e-05 1.7493e-05 3.56779e-06" />
+                                            <joint name="right_finger_joint" pos="0 0 0" axis="1 0 0" limited="true" range="0 0.85" />
+                                            <geom name="j11" material="robot0:gripper_finger_mat" type="mesh" rgba="0 0 0 1" conaffinity="3" contype="2" mesh="right_finger" friction='1.5 1.5 1.5' solref='0.01 1' solimp='0.99 0.99 0.01'/>
+                                            <body name="left_hand" pos="0 0.03 0.05" quat="-0.7071 0 0 0.7071">
+                                                <site name="ee_2" pos="0 0 0" rgba="1 0 0 0" type="sphere" size="0.01" group="1"/>
+                                            </body>
+                                        </body>
+                                    </body>
+                                    <body name="right_inner_knuckle" pos="0 -0.02 0.074098">
+                                        <inertial pos="1.866e-06 -0.022047 0.026133" quat="0.66415 0.242702 -0.242721 0.664144" mass="0.023013" diaginertia="8.34209e-06 6.0949e-06 2.75601e-06" />
+                                        <joint name="right_inner_knuckle_joint" pos="0 0 0" axis="-1 0 0" limited="true" range="0 0.85" />
+                                        <geom type="mesh" rgba="0 0 0 1" conaffinity="1" contype="0" mesh="right_inner_knuckle" friction='1.5 1.5 1.5' solref='0.01 1' solimp='0.99 0.99 0.01'/>
+                                    </body>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                </body>
+            </body>
+        </body>
+    </body>
+</mujoco>

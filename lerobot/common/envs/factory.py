@@ -17,7 +17,7 @@ def make_env(cfg, transform=None):
     }
 
     if cfg.env.name == "simxarm":
-        from lerobot.common.envs.simxarm import SimxarmEnv
+        from lerobot.common.envs.simxarm.env import SimxarmEnv
 
         kwargs["task"] = cfg.env.task
         clsfunc = SimxarmEnv

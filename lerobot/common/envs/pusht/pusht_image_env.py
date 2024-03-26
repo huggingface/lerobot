@@ -1,5 +1,5 @@
 import numpy as np
-from gym import spaces
+from gymnasium import spaces
 
 from lerobot.common.envs.pusht.pusht_env import PushTEnv
 

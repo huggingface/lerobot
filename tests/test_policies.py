@@ -19,12 +19,13 @@ from .utils import DEVICE, init_config
     [
         ("simxarm", "tdmpc", ["policy.mpc=true"]),
         ("pusht", "tdmpc", ["policy.mpc=false"]),
-        ("simxarm", "diffusion", []),
         ("pusht", "diffusion", []),
         ("aloha", "act", ["env.task=sim_insertion_scripted"]),
         ("aloha", "act", ["env.task=sim_insertion_human"]),
         ("aloha", "act", ["env.task=sim_transfer_cube_scripted"]),
         ("aloha", "act", ["env.task=sim_transfer_cube_human"]),
+        # TODO(aliberts): simxarm not working with diffusion
+        # ("simxarm", "diffusion", []),
     ],
 )
 def test_concrete_policy(env_name, policy_name, extra_overrides):
@@ -45,13 +46,6 @@ def test_concrete_policy(env_name, policy_name, extra_overrides):
     # Check that we can make the policy object.
     policy = make_policy(cfg)
     # Check that we run select_actions and get the appropriate output.
-    if env_name == "simxarm":
-        # TODO(rcadene): Not implemented
-        return
-    if policy_name == "tdmpc":
-        # TODO(alexander-soare): TDMPC does not use n_obs_steps but the environment requires this.
-        with open_dict(cfg):
-            cfg["n_obs_steps"] = 1
     offline_buffer = make_offline_buffer(cfg)
     env = make_env(cfg, transform=offline_buffer.transform)
 

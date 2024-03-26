@@ -1,1 +1,2 @@
 *.memmap filter=lfs diff=lfs merge=lfs -text
+*.stl filter=lfs diff=lfs merge=lfs -text

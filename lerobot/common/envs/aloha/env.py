@@ -29,9 +29,9 @@ from lerobot.common.envs.aloha.tasks.sim_end_effector import (
     TransferCubeEndEffectorTask,
 )
 from lerobot.common.envs.aloha.utils import sample_box_pose, sample_insertion_pose
-from lerobot.common.utils import set_seed
+from lerobot.common.utils import set_global_seed
 
-_has_gym = importlib.util.find_spec("gym") is not None
+_has_gym = importlib.util.find_spec("gymnasium") is not None
 
 
 class AlohaEnv(AbstractEnv):
@@ -63,7 +63,7 @@ class AlohaEnv(AbstractEnv):
 
     def _make_env(self):
         if not _has_gym:
-            raise ImportError("Cannot import gym.")
+            raise ImportError("Cannot import gymnasium.")
 
         if not self.from_pixels:
             raise NotImplementedError()
@@ -290,7 +290,7 @@ class AlohaEnv(AbstractEnv):
         )
 
     def _set_seed(self, seed: Optional[int]):
-        set_seed(seed)
+        set_global_seed(seed)
         # TODO(rcadene): seed the env
         # self._env.seed(seed)
         logging.warning("Aloha env is not seeded")

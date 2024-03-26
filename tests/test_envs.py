@@ -7,7 +7,7 @@ from lerobot.common.datasets.factory import make_offline_buffer
 
 from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.pusht.env import PushtEnv
-from lerobot.common.envs.simxarm import SimxarmEnv
+from lerobot.common.envs.simxarm.env import SimxarmEnv
 
 from .utils import DEVICE, init_config
 
@@ -39,19 +39,19 @@ def print_spec_rollout(env):
     print("data from rollout:", simple_rollout(100))
 
 
-@pytest.mark.skip(reason="Simxarm is deprecated")
 @pytest.mark.parametrize(
     "task,from_pixels,pixels_only",
     [
         ("lift", False, False),
         ("lift", True, False),
         ("lift", True, True),
-        ("reach", False, False),
-        ("reach", True, False),
-        ("push", False, False),
-        ("push", True, False),
-        ("peg_in_box", False, False),
-        ("peg_in_box", True, False),
+        # TODO(aliberts): Add simxarm other tasks
+        # ("reach", False, False),
+        # ("reach", True, False),
+        # ("push", False, False),
+        # ("push", True, False),
+        # ("peg_in_box", False, False),
+        # ("peg_in_box", True, False),
     ],
 )
 def test_simxarm(task, from_pixels, pixels_only):
@@ -84,7 +84,7 @@ def test_pusht(from_pixels, pixels_only):
 @pytest.mark.parametrize(
     "env_name",
     [
-        # "simxarm",
+        "simxarm",
         "pusht",
         "aloha",
     ],

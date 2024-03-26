@@ -1,14 +1,14 @@
 import collections
 
 import cv2
-import gym
+import gymnasium as gym
 import numpy as np
 import pygame
 import pymunk
 import pymunk.pygame_util
 import shapely.geometry as sg
 import skimage.transform as st
-from gym import spaces
+from gymnasium import spaces
 from pymunk.vec2d import Vec2d
 
 from lerobot.common.envs.pusht.pymunk_override import DrawOptions

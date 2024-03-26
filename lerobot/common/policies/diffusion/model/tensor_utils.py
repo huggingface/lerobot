@@ -2,6 +2,7 @@
 A collection of utilities for working with nested tensor structures consisting
 of numpy arrays and torch tensors.
 """
+
 import collections
 
 import numpy as np

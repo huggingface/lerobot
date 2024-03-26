@@ -40,7 +40,7 @@ class SimxarmExperienceReplay(AbstractExperienceReplay):
     def __init__(
         self,
         dataset_id: str,
-        version: str | None = None,
+        version: str | None = "v1.1",
         batch_size: int = None,
         *,
         shuffle: bool = True,
@@ -67,11 +67,11 @@ class SimxarmExperienceReplay(AbstractExperienceReplay):
         )
 
     def _download_and_preproc_obsolete(self):
-        assert self.root is not None
+        # assert self.root is not None
         # TODO(rcadene): finish download
-        download()
+        # download()
 
-        dataset_path = self.root / f"{self.dataset_id}_raw" / "buffer.pkl"
+        dataset_path = self.root / f"{self.dataset_id}" / "buffer.pkl"
         print(f"Using offline dataset '{dataset_path}'")
         with open(dataset_path, "rb") as f:
             dataset_dict = pickle.load(f)
@@ -105,15 +105,19 @@ class SimxarmExperienceReplay(AbstractExperienceReplay):
                     "frame_id": torch.arange(0, num_frames, 1),
                     ("next", "observation", "image"): next_image,
                     ("next", "observation", "state"): next_state,
-                    ("next", "observation", "reward"): next_reward,
-                    ("next", "observation", "done"): next_done,
+                    ("next", "reward"): next_reward,
+                    ("next", "done"): next_done,
                 },
                 batch_size=num_frames,
             )
 
             if episode_id == 0:
                 # hack to initialize tensordict data structure to store episodes
-                td_data = episode[0].expand(total_frames).memmap_like(self.root / f"{self.dataset_id}")
+                td_data = (
+                    episode[0]
+                    .expand(total_frames)
+                    .memmap_like(self.root / f"{self.dataset_id}" / "replay_buffer")
+                )
 
             td_data[idx0:idx1] = episode
 
