@@ -109,15 +109,25 @@ jobs:
         run: poetry install --no-interaction
 
       #----------------------------------------------
-      #               run tests
+      #            run tests & coverage
       #----------------------------------------------
       - name: Run tests
         env:
           LEROBOT_TESTS_DEVICE: cpu
         run: |
           source .venv/bin/activate
-          pytest --cov=lerobot tests
+          pytest --cov=./lerobot --cov-report=xml tests
 
+      #   TODO(aliberts): Link with HF Codecov account
+      # - name: Upload coverage reports to Codecov with GitHub Action
+      #   uses: codecov/codecov-action@v4
+      #   with:
+      #     files: ./coverage.xml
+      #     verbose: true
+
+      #----------------------------------------------
+      #            run end-to-end tests
+      #----------------------------------------------
       - name: Test train ACT on ALOHA end-to-end
         run: |
           source .venv/bin/activate
