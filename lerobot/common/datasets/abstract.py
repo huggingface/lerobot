@@ -59,6 +59,8 @@ class AbstractDataset(TensorDictReplayBuffer):
         collate_fn: Callable | None = None,
         writer: Writer | None = None,
         transform: "torchrl.envs.Transform" = None,
+        # Don't actually load any data. This is a stand-in solution to get the transforms.
+        dummy: bool = False,
     ):
         assert (
             self.available_datasets is not None
@@ -77,7 +79,7 @@ class AbstractDataset(TensorDictReplayBuffer):
                 f"The version of the dataset ({self.version}) is not enforced when root is provided ({self.root})."
             )
 
-        storage = self._download_or_load_dataset()
+        storage = self._download_or_load_dataset() if not dummy else None
 
         super().__init__(
             storage=storage,

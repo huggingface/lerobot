@@ -1,9 +1,13 @@
 import logging
+import os.path as osp
 import random
 from datetime import datetime
+from pathlib import Path
 
+import hydra
 import numpy as np
 import torch
+from omegaconf import DictConfig
 
 
 def get_safe_torch_device(cfg_device: str, log: bool = False) -> torch.device:
@@ -63,3 +67,29 @@ def format_big_number(num):
         num /= divisor
 
     return num
+
+
+def _relative_path_between(path1: Path, path2: Path) -> Path:
+    """Returns path1 relative to path2."""
+    path1 = path1.absolute()
+    path2 = path2.absolute()
+    try:
+        return path1.relative_to(path2)
+    except ValueError:  # most likely because path1 is not a subpath of path2
+        common_parts = Path(osp.commonpath([path1, path2])).parts
+        return Path(
+            "/".join([".."] * (len(path2.parts) - len(common_parts)) + list(path1.parts[len(common_parts) :]))
+        )
+
+
+def init_hydra_config(config_path: str, overrides: list[str] | None = None) -> DictConfig:
+    """Initialize a Hydra config given only the path to the relevant config file.
+
+    For config resolution, it is assumed that the config file's parent is the Hydra config dir.
+    """
+    # Hydra needs a path relative to this file.
+    hydra.initialize(
+        str(_relative_path_between(Path(config_path).absolute().parent, Path(__file__).absolute().parent))
+    )
+    cfg = hydra.compose(Path(config_path).stem, overrides)
+    return cfg
