@@ -1,4 +1,4 @@
-name: Test
+name: Tests
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ on:
       - main
 
 jobs:
-  test:
+  tests:
     if: |
       ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'CI') }} ||
       ${{ github.event_name == 'push' }}
@@ -19,7 +19,6 @@ jobs:
       POETRY_VERSION: 1.8.2
       DATA_DIR: tests/data
       MUJOCO_GL: egl
-      LEROBOT_TESTS_DEVICE: cpu
     steps:
       #----------------------------------------------
       #       check-out repo and set-up python
@@ -113,31 +112,110 @@ jobs:
       #               run tests
       #----------------------------------------------
       - name: Run tests
+        env:
+          LEROBOT_TESTS_DEVICE: cpu
         run: |
           source .venv/bin/activate
-          pytest tests
+          pytest --cov=lerobot tests
 
-      - name: Test train pusht end-to-end
+      - name: Test train ACT on ALOHA end-to-end
         run: |
           source .venv/bin/activate
           python lerobot/scripts/train.py \
-            hydra.job.name=pusht \
+            policy=act \
+            env=aloha \
+            wandb.enable=False \
+            offline_steps=2 \
+            online_steps=0 \
+            device=cpu \
+            save_model=true \
+            save_freq=2 \
+            hydra.run.dir=tests/outputs/act/
+
+      - name: Test eval ACT on ALOHA end-to-end
+        run: |
+          source .venv/bin/activate
+          python lerobot/scripts/eval.py \
+            --config tests/outputs/act/.hydra/config.yaml \
+            eval_episodes=1 \
+            env.episode_length=8 \
+            device=cpu \
+            policy.pretrained_model_path=tests/outputs/act/models/2.pt
+
+      - name: Test eval ACT on ALOHA end-to-end (policy is None)
+        run: |
+          source .venv/bin/activate
+          python lerobot/scripts/eval.py \
+            --config lerobot/configs/default.yaml \
+            policy=act \
+            env=aloha \
+            eval_episodes=1 \
+            device=cpu
+
+      - name: Test train Diffusion on PushT end-to-end
+        run: |
+          source .venv/bin/activate
+          python lerobot/scripts/train.py \
+            policy=diffusion \
             env=pusht \
             wandb.enable=False \
             offline_steps=2 \
             online_steps=0 \
             device=cpu \
             save_model=true \
-            save_freq=1 \
-            hydra.run.dir=tests/outputs/
+            save_freq=2 \
+            hydra.run.dir=tests/outputs/diffusion/
 
-      - name: Test eval pusht end-to-end
+      - name: Test eval Diffusion on PushT end-to-end
         run: |
           source .venv/bin/activate
           python lerobot/scripts/eval.py \
-            --config tests/outputs/.hydra/config.yaml \
-            wandb.enable=False \
+            --config tests/outputs/diffusion/.hydra/config.yaml \
             eval_episodes=1 \
             env.episode_length=8 \
             device=cpu \
-            policy.pretrained_model_path=tests/outputs/models/1.pt
+            policy.pretrained_model_path=tests/outputs/diffusion/models/2.pt
+
+      - name: Test eval Diffusion on PushT end-to-end (policy is None)
+        run: |
+          source .venv/bin/activate
+          python lerobot/scripts/eval.py \
+            --config lerobot/configs/default.yaml \
+            policy=diffusion  \
+            env=pusht \
+            eval_episodes=1 \
+            device=cpu
+
+      - name: Test train TDMPC on Simxarm end-to-end
+        run: |
+          source .venv/bin/activate
+          python lerobot/scripts/train.py \
+            policy=tdmpc \
+            env=simxarm \
+            wandb.enable=False \
+            offline_steps=1 \
+            online_steps=1 \
+            device=cpu \
+            save_model=true \
+            save_freq=2 \
+            hydra.run.dir=tests/outputs/tdmpc/
+
+      - name: Test eval TDMPC on Simxarm end-to-end
+        run: |
+          source .venv/bin/activate
+          python lerobot/scripts/eval.py \
+            --config tests/outputs/tdmpc/.hydra/config.yaml \
+            eval_episodes=1 \
+            env.episode_length=8 \
+            device=cpu \
+            policy.pretrained_model_path=tests/outputs/tdmpc/models/2.pt
+
+      - name: Test eval TDPMC on Simxarm end-to-end (policy is None)
+        run: |
+          source .venv/bin/activate
+          python lerobot/scripts/eval.py \
+            --config lerobot/configs/default.yaml \
+            policy=tdmpc  \
+            env=simxarm \
+            eval_episodes=1 \
+            device=cpu
