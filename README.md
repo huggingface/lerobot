@@ -135,11 +135,7 @@ hydra.run.dir=outputs/visualize_dataset/example
 
 ### Evaluate a pretrained policy
 
-You can import our environment class, download pretrained policies from the HuggingFace hub, and use our rollout utilities with rendering:
-```python
-""" Copy pasted from `examples/2_evaluate_pretrained_policy.py`
-# TODO
-```
+Check out [example 2](./examples/2_evaluate_pretrained_policy.py) to see how you can load a pretrained policy from HuggingFace hub, load up the corresponding environment and model, and run an evaluation.
 
 Or you can achieve the same result by executing our script from the command line:
 ```bash
@@ -150,7 +146,7 @@ eval_episodes=10 \
 hydra.run.dir=outputs/eval/example_hub
 ```
 
-After launching training of your own policy, you can also re-evaluate the checkpoints with:
+After training your own policy, you can also re-evaluate the checkpoints with:
 ```bash
 python lerobot/scripts/eval.py \
 --config PATH/TO/FOLDER/config.yaml \
@@ -163,19 +159,9 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ### Train your own policy
 
-You can import our dataset, environment, policy classes, and use our training utilities (if some data is missing, it will be automatically downloaded from HuggingFace hub):
-```python
-""" Copy pasted from `examples/3_train_policy.py`
-# TODO
-```
+You can import our dataset, environment, policy classes, and use our training utilities (if some data is missing, it will be automatically downloaded from HuggingFace hub): check out [example 3](./examples/3_train_policy.py). After you run this, you may want to revisit [example 2](./examples/2_evaluate_pretrained_policy.py) to evaluate your training output!
 
-Or you can achieve the same result by executing our script from the command line:
-```bash
-python lerobot/scripts/train.py \
-hydra.run.dir=outputs/train/example
-```
-
-You can easily train any policy on any environment:
+In general, you can use our training script to easily train any policy on any environment:
 ```bash
 python lerobot/scripts/train.py \
 env=aloha \

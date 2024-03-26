@@ -14,7 +14,7 @@ from lerobot.scripts.eval import eval
 hub_id = "lerobot/diffusion_policy_pusht_image"
 folder = Path(snapshot_download(hub_id))
 # OR uncomment the following to evaluate a policy from the local outputs/train folder.
-folder = Path("outputs/train/example_pusht_diffusion")
+# folder = Path("outputs/train/example_pusht_diffusion")
 
 config_path = folder / "config.yaml"
 weights_path = folder / "model.pt"

@@ -46,11 +46,25 @@ def test_examples_3_and_2():
     with open(path, "r") as file:
         file_contents = file.read()
 
-    # Do less evals and use CPU.
+    # Do less evals, use CPU, and use the local model.
     file_contents = _find_and_replace(
         file_contents,
-        ['"eval_episodes=10"', '"rollout_batch_size=10"', '"device=cuda"'],
-        ['"eval_episodes=1"', '"rollout_batch_size=1"','"device=cpu"'],
+        [
+            '"eval_episodes=10"',
+            '"rollout_batch_size=10"',
+            '"device=cuda"',
+            '# folder = Path("outputs/train/example_pusht_diffusion")',
+            'hub_id = "lerobot/diffusion_policy_pusht_image"',
+            "folder = Path(snapshot_download(hub_id)",
+        ],
+        [
+            '"eval_episodes=1"',
+            '"rollout_batch_size=1"',
+            '"device=cpu"',
+            'folder = Path("outputs/train/example_pusht_diffusion")',
+            "",
+            "",
+        ],
     )
 
     assert Path(f"outputs/train/example_pusht_diffusion").exists()
