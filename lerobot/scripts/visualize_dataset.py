@@ -27,8 +27,7 @@ def visualize_dataset_cli(cfg: dict):
 def cat_and_write_video(video_path, frames, fps):
     # Expects images in [0, 255].
     frames = torch.cat(frames)
-    assert frames.max() <= 1 and frames.min() >= 0
-    frames = (255 * frames).to(dtype=torch.uint8)
+    assert frames.dtype == torch.uint8
     frames = einops.rearrange(frames, "b c h w -> b h w c").numpy()
     imageio.mimsave(video_path, frames, fps=fps)
 
