@@ -1,3 +1,5 @@
+import os
+
 from torchrl.data.replay_buffers import SamplerWithoutReplacement
 
 import lerobot
@@ -10,7 +12,7 @@ print(lerobot.available_datasets)
 # we use this sampler to sample 1 frame after the other
 sampler = SamplerWithoutReplacement(shuffle=False)
 
-dataset = AlohaDataset("aloha_sim_transfer_cube_human", sampler=sampler)
+dataset = AlohaDataset("aloha_sim_transfer_cube_human", sampler=sampler, root=os.environ.get("DATA_DIR"))
 
 video_paths = render_dataset(
     dataset,
