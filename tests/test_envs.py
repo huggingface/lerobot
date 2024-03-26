@@ -46,7 +46,6 @@ def print_spec_rollout(env):
         ("sim_insertion", True, True),
         ("sim_transfer_cube", True, False),
         ("sim_transfer_cube", True, True),
-        # TODO(aliberts): Add aloha other tasks
     ],
 )
 def test_aloha(task, from_pixels, pixels_only):
