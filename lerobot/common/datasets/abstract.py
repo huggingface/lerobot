@@ -70,7 +70,7 @@ class AbstractDataset(TensorDictReplayBuffer):
         self.dataset_id = dataset_id
         self.version = version
         self.shuffle = shuffle
-        self.root = root
+        self.root = root if root is None else Path(root)
 
         if self.root is not None and self.version is not None:
             logging.warning(
