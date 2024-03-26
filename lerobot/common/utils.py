@@ -87,6 +87,8 @@ def init_hydra_config(config_path: str, overrides: list[str] | None = None) -> D
 
     For config resolution, it is assumed that the config file's parent is the Hydra config dir.
     """
+    # TODO(alexander-soare): Resolve configs without Hydra initialization.
+    hydra.core.global_hydra.GlobalHydra.instance().clear()
     # Hydra needs a path relative to this file.
     hydra.initialize(
         str(_relative_path_between(Path(config_path).absolute().parent, Path(__file__).absolute().parent))
