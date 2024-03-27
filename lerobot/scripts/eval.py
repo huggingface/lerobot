@@ -249,7 +249,7 @@ if __name__ == "__main__":
         # TODO(alexander-soare): Save and load stats in trained model directory.
         stats_path = None
     elif args.hub_id is not None:
-        folder = Path(snapshot_download(args.hub_id, revision="v1.0"))
+        folder = Path(snapshot_download(args.hub_id, revision=args.revision))
         cfg = init_hydra_config(
             folder / "config.yaml", [f"policy.pretrained_model_path={folder / 'model.pt'}", *args.overrides]
         )

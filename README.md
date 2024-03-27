@@ -141,7 +141,6 @@ Or you can achieve the same result by executing our script from the command line
 ```bash
 python lerobot/scripts/eval.py \
 --hub-id lerobot/diffusion_policy_pusht_image \
---revision v1.0 \
 eval_episodes=10 \
 hydra.run.dir=outputs/eval/example_hub
 ```
