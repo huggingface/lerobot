@@ -140,6 +140,8 @@ jobs:
             device=cpu \
             save_model=true \
             save_freq=2 \
+            horizon=20 \
+            policy.batch_size=2 \
             hydra.run.dir=tests/outputs/act/
 
       - name: Test eval ACT on ALOHA end-to-end
