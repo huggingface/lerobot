@@ -97,7 +97,6 @@ class AlohaDataset(AbstractDataset):
         collate_fn: Callable | None = None,
         writer: Writer | None = None,
         transform: "torchrl.envs.Transform" = None,
-        dummy: bool = False,
     ):
         super().__init__(
             dataset_id,
@@ -111,7 +110,6 @@ class AlohaDataset(AbstractDataset):
             collate_fn=collate_fn,
             writer=writer,
             transform=transform,
-            dummy=dummy,
         )
 
     @property

@@ -194,7 +194,7 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
 
     logging.info("Making transforms.")
     # TODO(alexander-soare): Completely decouple datasets from evaluation.
-    offline_buffer = make_offline_buffer(cfg, stats_path=stats_path, dummy=stats_path is not None)
+    offline_buffer = make_offline_buffer(cfg, stats_path=stats_path)
 
     logging.info("Making environment.")
     env = make_env(cfg, transform=offline_buffer.transform)

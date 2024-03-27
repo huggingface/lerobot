@@ -51,7 +51,6 @@ class SimxarmDataset(AbstractDataset):
         collate_fn: Callable | None = None,
         writer: Writer | None = None,
         transform: "torchrl.envs.Transform" = None,
-        dummy: bool = False,
     ):
         super().__init__(
             dataset_id,
@@ -65,7 +64,6 @@ class SimxarmDataset(AbstractDataset):
             collate_fn=collate_fn,
             writer=writer,
             transform=transform,
-            dummy=dummy,
         )
 
     def _download_and_preproc_obsolete(self):
