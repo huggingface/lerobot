@@ -268,7 +268,7 @@ if __name__ == "__main__":
         # TODO(alexander-soare): Save and load stats in trained model directory.
         stats_path = None
     elif args.hub_id is not None:
-        folder = Path(snapshot_download(args.hub_id, revision="v1.0"))
+        folder = Path(snapshot_download(args.hub_id, revision=args.revision))
         cfg = hydra.initialize(config_path=str(_relative_path_between(folder, Path(__file__).parent)))
         cfg = hydra.compose("config", args.overrides)
         cfg.policy.pretrained_model_path = folder / "model.pt"
