@@ -64,7 +64,8 @@ As of now, this repository is tested on Python 3.10 and PyTorch 2.2.1.
 
 We don't have a build released yet (coming soon!), so to install 🤗 LeRobot you need to clone this repo first:
 ```bash
-git clone https://github.com/scikit-build/cmake-python-distributions.git
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
 ```
 
 You should install 🤗 LeRobot in a [virtual environment](https://docs.python.org/3/library/venv.html). If you're unfamiliar with Python virtual environments, check out the [user guide](https://packaging.python.org/guides/installing-using-pip-and-virtual-environments/).
