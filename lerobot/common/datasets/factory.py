@@ -86,13 +86,8 @@ def make_offline_buffer(
     else:
         raise ValueError(cfg.env.name)
 
-    # TODO(rcadene): backward compatiblity to load pretrained pusht policy
-    dataset_id = cfg.get("dataset_id")
-    if dataset_id is None and cfg.env.name == "pusht":
-        dataset_id = "pusht"
-
     offline_buffer = clsfunc(
-        dataset_id=dataset_id,
+        dataset_id=cfg.dataset_id,
         sampler=sampler,
         batch_size=batch_size,
         root=DATA_DIR,
