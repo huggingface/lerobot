@@ -224,11 +224,11 @@ hydra.run.dir=outputs/train/aloha_act
 
 Feel free to open issues and PRs, and to coordinate your efforts with the community on our [Discord Channel](https://discord.gg/VjFz58wn3R). For specific inquiries, reach out to [Remi Cadene](remi.cadene@huggingface.co).
 
-**TODO**
+### TODO
 
 If you are not sure how to contribute or want to know the next features we working on, look on this project page: [LeRobot TODO](https://github.com/orgs/huggingface/projects/46)
 
-**Follow our style**
+### Follow our style
 
 ```bash
 # install if needed
@@ -237,7 +237,7 @@ pre-commit install
 pre-commit
 ```
 
-**Add dependencies**
+### Add dependencies
 Instead of using `pip` directly, we use `poetry` for development purposes to easily track our dependencies.
 If you don't have it already, follow the [instructions](https://python-poetry.org/docs/#installation) to install it.
 
@@ -262,7 +262,7 @@ cd .github/poetry/cpu
 poetry add some-package
 ```
 
-**Run tests locally**
+### Run tests locally
 
 Install [git lfs](https://git-lfs.com/) to retrieve test artifacts (if you don't have it already).
 
@@ -293,7 +293,7 @@ Run tests
 DATA_DIR="tests/data" pytest -sx tests
 ```
 
-**Add a new dataset**
+### Add a new dataset
 
 To add a dataset to the hub, first login and use a token generated from [huggingface settings](https://huggingface.co/settings/tokens) with write access:
 ```bash
@@ -354,7 +354,7 @@ Finally, you might want to mock the dataset if you need to update the unit tests
 python tests/scripts/mock_dataset.py --in-data-dir data/$DATASET --out-data-dir tests/data/$DATASET
 ```
 
-**Add a pretrained policy**
+### Add a pretrained policy
 
 Once you have trained a policy you may upload it to the HuggingFace hub.
 
@@ -390,7 +390,7 @@ huggingface-cli upload $HUB_ID to_upload
 See `eval.py` for an example of how a user may use your policy.
 
 
-**Improve your code with profiling**
+### Improve your code with profiling
 
 An example of a code snippet to profile the evaluation of a policy:
 ```python
