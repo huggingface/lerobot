@@ -8,36 +8,20 @@
   <br/>
 </p>
 
-# LeRobot
+<div align="center">
 
+[![Tests](https://github.com/huggingface/lerobot/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/test.yml?query=branch%3Amain)
+[![Coverage](https://codecov.io/gh/huggingface/lerobot/branch/main/graph/badge.svg?token=TODO)](https://codecov.io/gh/huggingface/lerobot)
+[![Python versions](https://img.shields.io/pypi/pyversions/lerobot)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/huggingface/lerobot/blob/main/LICENSE)
+[![Status](https://img.shields.io/pypi/status/lerobot)](https://pypi.org/project/lerobot/)
+[![Version](https://img.shields.io/pypi/v/lerobot)](https://pypi.org/project/lerobot/)
+[![Examples](https://img.shields.io/badge/Examples-green.svg)](https://github.com/huggingface/lerobot/tree/main/examples)
+[![Discord](https://dcbadge.vercel.app/api/server/C5P34WJ68S?style=flat)](https://discord.gg/s3KuuzsPFb)
 
-<p align="center">
-    <a href="https://github.com/huggingface/lerobot/actions/workflows/test.yml?query=branch%3Amain">
-        <img alt="Tests" src="https://github.com/huggingface/lerobot/actions/workflows/test.yml/badge.svg?branch=main">
-    </a>
-    <a href="https://codecov.io/gh/huggingface/lerobot">
-        <img alt="Coverage" src="https://codecov.io/gh/huggingface/lerobot/branch/main/graph/badge.svg?token=TODO">
-    </a>
-    <a href="https://www.python.org/downloads/">
-        <img alt="Python versions" src="https://img.shields.io/pypi/pyversions/lerobot">
-    </a>
-    <a href="https://github.com/huggingface/lerobot/blob/main/LICENSE">
-        <img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg">
-        <!-- TODO(aliberts) <img alt="License" src="https://img.shields.io/github/license/huggingface/lerobot.svg?color=blue"> -->
-    </a>
-    <a href="https://pypi.org/project/lerobot/">
-        <img alt="Status" src="https://img.shields.io/pypi/status/lerobot">
-    </a>
-    <a href="https://pypi.org/project/lerobot/">
-        <img alt="Version" src="https://img.shields.io/pypi/v/lerobot">
-    </a>
-    <a href="https://github.com/huggingface/lerobot/tree/main/examples">
-        <img alt="Examples" src="https://img.shields.io/badge/Examples-green.svg">
-    </a>
-    <a href="https://discord.gg/s3KuuzsPFb">
-        <img alt="Discord" src="https://dcbadge.vercel.app/api/server/C5P34WJ68S?style=flat">
-    </a>
-</p>
+</div>
+
+---
 
 **State-of-the-art machine learning for real-world robotics**
 
