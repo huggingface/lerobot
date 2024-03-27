@@ -21,9 +21,12 @@
 
 </div>
 
+<h3 align="center">
+    <p>State-of-the-art Machine Learning for real-world robotics</p>
+</h3>
+
 ---
 
-**State-of-the-art machine learning for real-world robotics**
 
 🤗 LeRobot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier for entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
 
@@ -57,23 +60,42 @@
 
 ## Installation
 
-Create a virtual environment with Python 3.10, e.g. using `conda`:
+As of now, this repository is tested on Python 3.10 and PyTorch 2.2.1.
+
+We don't have a build released yet (coming soon!), so to install 🤗 LeRobot you need to clone this repo first:
+```bash
+git clone https://github.com/scikit-build/cmake-python-distributions.git
+```
+
+You should install 🤗 LeRobot in a [virtual environment](https://docs.python.org/3/library/venv.html). If you're unfamiliar with Python virtual environments, check out the [user guide](https://packaging.python.org/guides/installing-using-pip-and-virtual-environments/).
+
+Create a virtual environment with Python 3.10 and activate it.
+
+Using [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 ```bash
 conda create -y -n lerobot python=3.10
 conda activate lerobot
 ```
 
-[Install `poetry`](https://python-poetry.org/docs/#installation) (if you don't have it already)
+Using [`pyenv`](https://github.com/pyenv/pyenv):
 ```bash
-curl -sSL https://install.python-poetry.org | python -
+pyenv install 3.10
+pyenv local 3.10
 ```
 
-Install dependencies
+Then, install 🤗 LeRobot:
+
+### With pip
+```bash
+pip install -r requirements.txt
+```
+
+### With poetry
 ```bash
 poetry install
 ```
 
-If you encounter a disk space error, try to change your tmp dir to a location where you have enough disk space, e.g.
+**Note:** If you encounter a disk space error, try to change your `tmp/` dirrectory to a location where you have enough disk space, e.g.
 ```bash
 mkdir ~/tmp
 export TMPDIR='~/tmp'
@@ -216,8 +238,15 @@ pre-commit
 ```
 
 **Add dependencies**
+Instead of using `pip` directly, we use `poetry` for development purposes to easily track our dependencies.
+If you don't have it already, follow the [instructions](https://python-poetry.org/docs/#installation) to install it.
 
-Instead of `pip install some-package`, we use `poetry` to track the versions of our dependencies:
+Install the project with:
+```bash
+poetry install
+```
+
+Then, the equivalent of `pip install some-package`, would just be:
 ```bash
 poetry add some-package
 ```
