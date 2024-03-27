@@ -96,7 +96,7 @@ pip install .
 poetry install
 ```
 
-**Note:** If you encounter a disk space error, try to change your `tmp/` dirrectory to a location where you have enough disk space, e.g.
+**Note:** If you encounter a disk space error, try to change your `tmp/` directory to a location where you have enough disk space, e.g.
 ```bash
 mkdir ~/tmp
 export TMPDIR='~/tmp'
