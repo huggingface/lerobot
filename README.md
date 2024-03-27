@@ -87,7 +87,7 @@ Then, install 🤗 LeRobot:
 
 ### With pip
 ```bash
-pip install -r requirements.txt
+pip install .
 ```
 
 ### With poetry
