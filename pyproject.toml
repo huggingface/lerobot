@@ -51,6 +51,7 @@ huggingface-hub = {extras = ["hf-transfer"], version = "^0.21.4"}
 robomimic = "0.2.0"
 gymnasium-robotics = "^1.2.4"
 gymnasium = "^0.29.1"
+cmake = "^3.29.0.1"
 
 
 [tool.poetry.group.dev.dependencies]
