@@ -60,46 +60,21 @@
 
 ## Installation
 
-As of now, this repository is tested on Python 3.10 and PyTorch 2.2.1.
-
-We don't have a build released yet (coming soon!), so to install 🤗 LeRobot you need to clone this repo first:
+Download our source code:
 ```bash
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 ```
 
-You should install 🤗 LeRobot in a [virtual environment](https://docs.python.org/3/library/venv.html). If you're unfamiliar with Python virtual environments, check out the [user guide](https://packaging.python.org/guides/installing-using-pip-and-virtual-environments/).
-
-Create a virtual environment with Python 3.10 and activate it.
-
-Using [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
+Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 ```bash
 conda create -y -n lerobot python=3.10
 conda activate lerobot
 ```
 
-Using [`pyenv`](https://github.com/pyenv/pyenv):
-```bash
-pyenv install 3.10
-pyenv local 3.10
-```
-
 Then, install 🤗 LeRobot:
-
-### With pip
 ```bash
-pip install .
-```
-
-### With poetry
-```bash
-poetry install
-```
-
-**Note:** If you encounter a disk space error, try to change your `tmp/` dirrectory to a location where you have enough disk space, e.g.
-```bash
-mkdir ~/tmp
-export TMPDIR='~/tmp'
+python -m pip install .
 ```
 
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiments tracking, log in with
@@ -252,11 +227,11 @@ Then, the equivalent of `pip install some-package`, would just be:
 poetry add some-package
 ```
 
-**NOTE:** Currently, to ensure the CI works properly, any new package must also be added in the CPU-only environment dedicated CI. To do this, you should create a separate environment and add the new package there as well. For example:
+**NOTE:** Currently, to ensure the CI works properly, any new package must also be added in the CPU-only environment dedicated to the CI. To do this, you should create a separate environment and add the new package there as well. For example:
 ```bash
-# add the new package to your main poetry env
+# Add the new package to your main poetry env
 poetry add some-package
-# add the same package to the CPU-only env dedicated to CI
+# Add the same package to the CPU-only env dedicated to CI
 conda create -y -n lerobot-ci python=3.10
 conda activate lerobot-ci
 cd .github/poetry/cpu
