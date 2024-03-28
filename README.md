@@ -214,6 +214,7 @@ pre-commit
 ```
 
 ### Add dependencies
+
 Instead of using `pip` directly, we use `poetry` for development purposes to easily track our dependencies.
 If you don't have it already, follow the [instructions](https://python-poetry.org/docs/#installation) to install it.
 
