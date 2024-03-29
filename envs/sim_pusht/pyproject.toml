@@ -1,0 +1,34 @@
+[tool.poetry]
+name = "sim_pusht"
+version = "0.1.0"
+description = "PushT environment for LeRobot"
+authors = [
+    "Rémi Cadène <re.cadene@gmail.com>",
+]
+maintainers = [
+    "Alexander Soare <alexander.soare159@gmail.com>",
+    "Simon Alibert <alibert.sim@gmail.com>",
+]
+readme = "README.md"
+license = "Apache-2.0"
+classifiers=[
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.10",
+]
+packages = [{include = "pusht"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+gymnasium = "^0.29.1"
+opencv-python = "^4.9.0.80"
+pygame = "^2.5.2"
+pymunk = "^6.6.0"
+shapely = "^2.0.3"
+scikit-image = "^0.22.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
