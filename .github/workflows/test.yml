@@ -106,7 +106,7 @@ jobs:
       #             install project
       #----------------------------------------------
       - name: Install project
-        run: poetry install --no-interaction
+        run: poetry install --no-interaction --without dev --extras pusht
 
       #----------------------------------------------
       #            run tests & coverage
