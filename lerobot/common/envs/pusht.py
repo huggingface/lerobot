@@ -18,7 +18,6 @@ from torchrl.envs.libs.gym import _gym_to_torchrl_spec_transform
 from lerobot.common.envs.abstract import AbstractEnv
 from lerobot.common.utils import set_global_seed
 
-_has_gym = importlib.util.find_spec("gymnasium") is not None
 _has_pusht = importlib.util.find_spec("pusht") is not None
 
 
@@ -52,9 +51,6 @@ class PushtEnv(AbstractEnv):
         )
 
     def _make_env(self):
-        if not _has_gym:
-            raise ImportError("Cannot import gymnasium.")
-
         # TODO(rcadene) (PushTEnv is similar to PushTImageEnv, but without the image rendering, it's faster to iterate on)
         # from lerobot.common.envs.pusht.pusht_env import PushTEnv
         if not self.from_pixels:

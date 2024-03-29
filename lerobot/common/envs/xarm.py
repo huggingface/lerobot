@@ -53,15 +53,14 @@ class SimxarmEnv(AbstractEnv):
         )
 
     def _make_env(self):
-        if not _has_gym:
-            raise ImportError("Cannot import gymnasium.")
-
-        import gymnasium
-
         if not _has_xarm:
             raise ImportError(
                 "Cannot import xarm env. Please install it with `python -m pip install 'lerobot[xarm]'`"
             )
+        if not _has_gym:
+            raise ImportError("Cannot import gymnasium.")
+
+        import gymnasium
 
         from xarm import TASKS
 

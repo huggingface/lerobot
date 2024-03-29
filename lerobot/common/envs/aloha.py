@@ -17,7 +17,6 @@ from torchrl.data.tensor_specs import (
 from lerobot.common.envs.abstract import AbstractEnv
 from lerobot.common.utils import set_global_seed
 
-_has_gym = importlib.util.find_spec("gymnasium") is not None
 _has_aloha = importlib.util.find_spec("aloha") is not None
 
 
@@ -51,9 +50,6 @@ class AlohaEnv(AbstractEnv):
         )
 
     def _make_env(self):
-        if not _has_gym:
-            raise ImportError("Cannot import gymnasium.")
-
         if not self.from_pixels:
             raise NotImplementedError()
 
