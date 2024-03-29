@@ -21,6 +21,7 @@ from lerobot.common.utils import set_global_seed
 MAX_NUM_ACTIONS = 4
 
 _has_gym = importlib.util.find_spec("gymnasium") is not None
+_has_xarm = importlib.util.find_spec("xarm") is not None
 
 
 class SimxarmEnv(AbstractEnv):
@@ -57,7 +58,12 @@ class SimxarmEnv(AbstractEnv):
 
         import gymnasium
 
-        from lerobot.common.envs.simxarm.simxarm import TASKS
+        if not _has_xarm:
+            raise ImportError(
+                "Cannot import xarm env. Please install it with `python -m pip install 'lerobot[xarm]'`"
+            )
+
+        from xarm import TASKS
 
         if self.task not in TASKS:
             raise ValueError(f"Unknown task {self.task}. Must be one of {list(TASKS.keys())}")

@@ -19,6 +19,7 @@ from lerobot.common.envs.abstract import AbstractEnv
 from lerobot.common.utils import set_global_seed
 
 _has_gym = importlib.util.find_spec("gymnasium") is not None
+_has_pusht = importlib.util.find_spec("pusht") is not None
 
 
 class PushtEnv(AbstractEnv):
@@ -56,9 +57,14 @@ class PushtEnv(AbstractEnv):
 
         # TODO(rcadene) (PushTEnv is similar to PushTImageEnv, but without the image rendering, it's faster to iterate on)
         # from lerobot.common.envs.pusht.pusht_env import PushTEnv
-
         if not self.from_pixels:
             raise NotImplementedError("Use PushTEnv, instead of PushTImageEnv")
+
+        if not _has_pusht:
+            raise ImportError(
+                "Cannot import pusht env. Please install it with `python -m pip install 'lerobot[pusht]'`"
+            )
+
         from pusht.pusht_image_env import PushTImageEnv
 
         self._env = PushTImageEnv(render_size=self.image_size)
