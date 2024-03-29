@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<mujoco>
+	<compiler angle="radian" coordinate="local" meshdir="mesh" texturedir="texture"></compiler>
+	<size nconmax="2000" njmax="500"/>
+
+	<option timestep="0.002">
+		<flag warmstart="enable"></flag>
+	</option>
+
+	<include file="shared.xml"></include>
+
+	<worldbody>
+		<body name="floor0" pos="0 0 0">
+			<geom name="floorgeom0" pos="1.2 -2.0 0" size="1.0 10.0 1" type="plane" condim="3" material="floor_mat"></geom>
+			<site name="target0" pos="1.605 0.3 0.58" size="0.0475 0.001" rgba="1 0 0 1" type="cylinder"></site>
+		</body>
+
+		<include file="xarm.xml"></include>
+
+		<body pos="0.75 0 0.6325" name="pedestal0">
+			<geom name="pedestalgeom0" size="0.1 0.1 0.01" pos="0.32 0.27 0" type="box" mass="2000" material="pedestal_mat"></geom>
+			<site pos="0.30 0.30 0" size="0.075 0.075 0.002" type="box" name="robotmountsite0" rgba="0.55 0.54 0.53 1" />
+		</body>
+
+		<body pos="1.5 0.075 0.3425" name="table0">
+			<geom name="tablegeom0" size="0.3 0.6 0.2" pos="0 0 0" type="box" material="table_mat" density="2000" friction="1 0.005 0.0002"></geom>
+		</body>
+
+		<light directional="true" ambient="0.1 0.1 0.1" diffuse="0 0 0" specular="0 0 0" castshadow="false" pos="1.65 0 10" dir="-0.57 -0.57 -0.57" name="light0"></light>
+        <light directional="true" ambient="0.1 0.1 0.1" diffuse="0 0 0" specular="0 0 0" castshadow="false" pos="0 -4 4" dir="0 1 -0.1" name="light1"></light>
+        <light directional="true" ambient="0.05 0.05 0.05" diffuse="0 0 0" specular="0 0 0" castshadow="false" pos="2.13 1.6 2.5" name="light2"></light>
+        <light pos="0 0 2" dir="0.2 0.2 -0.8" directional="true"  diffuse="0.3 0.3 0.3"  castshadow="false" name="light3"></light>
+
+		<camera fovy="50" name="camera0" pos="0.9559 1.0 1.1" euler="-1.1 -0.6 3.4" />
+	</worldbody>
+
+	<equality>
+    	<connect body2="left_finger" body1="left_inner_knuckle" anchor="0.0 0.035 0.042" solimp="0.9 0.95 0.001 0.5 2" solref="0.0002 1.0" ></connect>
+    	<connect body2="right_finger" body1="right_inner_knuckle" anchor="0.0 -0.035 0.042" solimp="0.9 0.95 0.001 0.5 2" solref="0.0002 1.0" ></connect>
+        <joint joint1="left_inner_knuckle_joint" joint2="right_inner_knuckle_joint"></joint>
+    </equality>
+
+    <actuator>
+    	<motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="left_inner_knuckle_joint" gear="200.0"/>
+        <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="right_inner_knuckle_joint" gear="200.0"/>
+    </actuator>
+</mujoco>
