@@ -2893,6 +2893,25 @@ docs = ["matplotlib", "numpydoc (==1.1.*)", "sphinx", "sphinx-book-theme", "sphi
 test = ["pytest", "pytest-cov"]
 
 [[package]]
+name = "sim-pusht"
+version = "0.1.0"
+description = "PushT environment for LeRobot"
+optional = true
+python-versions = "<4.0,>=3.10"
+files = [
+    {file = "sim_pusht-0.1.0-py3-none-any.whl", hash = "sha256:1348dcab5ea8460eff2dc97b7d62dd40f2a382df92bfdc69ff5c0224900690b0"},
+    {file = "sim_pusht-0.1.0.tar.gz", hash = "sha256:d8f6a2207fd781348156206728329aa6338e9785cfc07679c5c48889b34d9b14"},
+]
+
+[package.dependencies]
+gymnasium = ">=0.29.1,<0.30.0"
+opencv-python = ">=4.9.0.80,<5.0.0.0"
+pygame = ">=2.5.2,<3.0.0"
+pymunk = ">=6.6.0,<7.0.0"
+scikit-image = ">=0.22.0,<0.23.0"
+shapely = ">=2.0.3,<3.0.0"
+
+[[package]]
 name = "six"
 version = "1.16.0"
 description = "Python 2 and 3 compatibility utilities"
@@ -3327,7 +3346,10 @@ files = [
 docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "rst.linker (>=1.9)", "sphinx (>=3.5)", "sphinx-lint"]
 testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-ignore-flaky", "pytest-mypy", "pytest-ruff (>=0.2.1)"]
 
+[extras]
+pusht = ["sim-pusht"]
+
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "8800bb8b24312d17b765cd2ce2799f49436171dd5fbf1bec3b07f853cfa9befd"
+content-hash = "1111059e284866eabaf47b85fbb7b3785b10317feb6439f7616da3a485a17520"

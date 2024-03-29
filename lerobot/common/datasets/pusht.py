@@ -15,8 +15,8 @@ from torchrl.data.replay_buffers.writers import Writer
 
 from lerobot.common.datasets.abstract import AbstractDataset
 from lerobot.common.datasets.utils import download_and_extract_zip
-from lerobot.common.envs.pusht.pusht_env import pymunk_to_shapely
 from lerobot.common.policies.diffusion.replay_buffer import ReplayBuffer as DiffusionPolicyReplayBuffer
+from pusht.pusht_env import pymunk_to_shapely
 
 # as define in env
 SUCCESS_THRESHOLD = 0.95  # 95% coverage,

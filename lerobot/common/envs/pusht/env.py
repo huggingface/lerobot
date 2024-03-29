@@ -59,7 +59,7 @@ class PushtEnv(AbstractEnv):
 
         if not self.from_pixels:
             raise NotImplementedError("Use PushTEnv, instead of PushTImageEnv")
-        from lerobot.common.envs.pusht.pusht_image_env import PushTImageEnv
+        from pusht.pusht_image_env import PushTImageEnv
 
         self._env = PushTImageEnv(render_size=self.image_size)
 
