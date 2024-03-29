@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "sim_aloha"
+version = "0.1.0"
+description = "ALOHA environment for LeRobot"
+authors = [
+    "Rémi Cadène <re.cadene@gmail.com>",
+]
+maintainers = [
+    "Alexander Soare <alexander.soare159@gmail.com>",
+    "Quentin Gallouédec <quentin.gallouedec@ec-lyon.fr>",
+    "Simon Alibert <alibert.sim@gmail.com>",
+]
+readme = "README.md"
+license = "Apache-2.0"
+classifiers=[
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.10",
+]
+packages = [{include = "aloha"}]
+
+
+[tool.poetry.dependencies]
+python = "^3.10"
+dm-control = "1.0.14"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

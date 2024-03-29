@@ -1,0 +1,1 @@
+# ALOHA environment for LeRobot
