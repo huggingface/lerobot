@@ -15,9 +15,9 @@ Note:
 import pytest
 import lerobot
 
-from lerobot.common.envs.aloha.env import AlohaEnv
-from lerobot.common.envs.pusht.env import PushtEnv
-from lerobot.common.envs.simxarm.env import SimxarmEnv
+from lerobot.common.envs.aloha import AlohaEnv
+from lerobot.common.envs.pusht import PushtEnv
+from lerobot.common.envs.xarm import SimxarmEnv
 
 from lerobot.common.datasets.simxarm import SimxarmDataset
 from lerobot.common.datasets.aloha import AlohaDataset

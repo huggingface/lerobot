@@ -5,9 +5,9 @@ from torchrl.envs.utils import check_env_specs, step_mdp
 from lerobot.common.datasets.factory import make_offline_buffer
 
 from lerobot.common.envs.factory import make_env
-from lerobot.common.envs.pusht.env import PushtEnv
-from lerobot.common.envs.simxarm.env import SimxarmEnv
-from lerobot.common.envs.aloha.env import AlohaEnv
+from lerobot.common.envs.pusht import PushtEnv
+from lerobot.common.envs.xarm import SimxarmEnv
+from lerobot.common.envs.aloha import AlohaEnv
 
 from .utils import DEVICE, init_config
 

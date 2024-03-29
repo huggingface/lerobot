@@ -17,18 +17,18 @@ def make_env(cfg, transform=None):
     }
 
     if cfg.env.name == "simxarm":
-        from lerobot.common.envs.simxarm.env import SimxarmEnv
+        from lerobot.common.envs.xarm import SimxarmEnv
 
         kwargs["task"] = cfg.env.task
         clsfunc = SimxarmEnv
     elif cfg.env.name == "pusht":
-        from lerobot.common.envs.pusht.env import PushtEnv
+        from lerobot.common.envs.pusht import PushtEnv
 
         # assert kwargs["seed"] > 200, "Seed 0-200 are used for the demonstration dataset, so we don't want to seed the eval env with this range."
 
         clsfunc = PushtEnv
     elif cfg.env.name == "aloha":
-        from lerobot.common.envs.aloha.env import AlohaEnv
+        from lerobot.common.envs.aloha import AlohaEnv
 
         kwargs["task"] = cfg.env.task
         clsfunc = AlohaEnv
