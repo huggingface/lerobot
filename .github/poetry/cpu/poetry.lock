@@ -2912,6 +2912,22 @@ scikit-image = ">=0.22.0,<0.23.0"
 shapely = ">=2.0.3,<3.0.0"
 
 [[package]]
+name = "sim-xarm"
+version = "0.1.0"
+description = "xArm environment for LeRobot"
+optional = true
+python-versions = "<4.0,>=3.10"
+files = [
+    {file = "sim_xarm-0.1.0-py3-none-any.whl", hash = "sha256:2771ca0e8d775dc7d9ccb3360e7fcf42507c5d4791525692e409f53ff5c83eaa"},
+    {file = "sim_xarm-0.1.0.tar.gz", hash = "sha256:90342394369ab37636a8c41a995ba20f1dac79c50563b1b1e4b38eeffbc5588d"},
+]
+
+[package.dependencies]
+gymnasium = ">=0.29.1,<0.30.0"
+gymnasium-robotics = ">=1.2.4,<2.0.0"
+mujoco = ">=2.3.7,<3.0.0"
+
+[[package]]
 name = "six"
 version = "1.16.0"
 description = "Python 2 and 3 compatibility utilities"
@@ -3348,8 +3364,9 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 
 [extras]
 pusht = ["sim-pusht"]
+xarm = ["sim-xarm"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "1111059e284866eabaf47b85fbb7b3785b10317feb6439f7616da3a485a17520"
+content-hash = "752a57c1613f2d61365c5f3e7653bba392056b5413dc944cf44050c7adb5b178"
