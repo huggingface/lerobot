@@ -2893,6 +2893,20 @@ docs = ["matplotlib", "numpydoc (==1.1.*)", "sphinx", "sphinx-book-theme", "sphi
 test = ["pytest", "pytest-cov"]
 
 [[package]]
+name = "sim-aloha"
+version = "0.1.2"
+description = "ALOHA environment for LeRobot"
+optional = true
+python-versions = "<4.0,>=3.10"
+files = [
+    {file = "sim_aloha-0.1.2-py3-none-any.whl", hash = "sha256:3b13c1ee474481f5d686b57bf1a9ed350e01ca4da7d65f7501446eb74b02653a"},
+    {file = "sim_aloha-0.1.2.tar.gz", hash = "sha256:44d36bbdb13e98e0c74f4d2a682f38683f4f63951618da28175f89cbb1c6f324"},
+]
+
+[package.dependencies]
+dm-control = "1.0.14"
+
+[[package]]
 name = "sim-pusht"
 version = "0.1.0"
 description = "PushT environment for LeRobot"
@@ -3363,10 +3377,11 @@ docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "rst.link
 testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-ignore-flaky", "pytest-mypy", "pytest-ruff (>=0.2.1)"]
 
 [extras]
+aloha = ["sim-aloha"]
 pusht = ["sim-pusht"]
 xarm = ["sim-xarm"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "752a57c1613f2d61365c5f3e7653bba392056b5413dc944cf44050c7adb5b178"
+content-hash = "b0e8e2370d437a31354b65e467c75a82f470d4c8bb7c58b48fa767614765920a"

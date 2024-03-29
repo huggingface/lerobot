@@ -60,11 +60,13 @@ gymnasium = "^0.29.1"
 cmake = "^3.29.0.1"
 sim-pusht = { version = "^0.1.0", optional = true}
 sim-xarm = { version = "^0.1.0", optional = true}
+sim-aloha = { version = "^0.1.2", optional = true}
 
 
 [tool.poetry.extras]
 pusht = ["sim-pusht"]
 xarm = ["sim-xarm"]
+aloha = ["sim-aloha"]
 
 
 [tool.poetry.group.dev.dependencies]
