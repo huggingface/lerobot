@@ -55,7 +55,7 @@ class SimxarmEnv(AbstractEnv):
         if not _has_gym:
             raise ImportError("Cannot import gymnasium.")
 
-        import gymnasium
+        import gymnasium as gym
 
         from lerobot.common.envs.simxarm.simxarm import TASKS
 
@@ -65,7 +65,7 @@ class SimxarmEnv(AbstractEnv):
         self._env = TASKS[self.task]["env"]()
 
         num_actions = len(TASKS[self.task]["action_space"])
-        self._action_space = gymnasium.spaces.Box(low=-1.0, high=1.0, shape=(num_actions,))
+        self._action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(num_actions,))
         self._action_padding = np.zeros((MAX_NUM_ACTIONS - num_actions), dtype=np.float32)
         if "w" not in TASKS[self.task]["action_space"]:
             self._action_padding[-1] = 1.0

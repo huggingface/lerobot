@@ -880,6 +880,29 @@ files = [
 protobuf = ["grpcio-tools (>=1.62.1)"]
 
 [[package]]
+name = "gym-pusht"
+version = "0.1.0"
+description = "PushT environment for LeRobot"
+optional = true
+python-versions = "^3.10"
+files = []
+develop = false
+
+[package.dependencies]
+gymnasium = "^0.29.1"
+opencv-python = "^4.9.0.80"
+pygame = "^2.5.2"
+pymunk = "^6.6.0"
+scikit-image = "^0.22.0"
+shapely = "^2.0.3"
+
+[package.source]
+type = "git"
+url = "git@github.com:huggingface/gym-pusht.git"
+reference = "HEAD"
+resolved_reference = "d7e1a39a31b1368741e9674791007d7cccf046a3"
+
+[[package]]
 name = "gymnasium"
 version = "0.29.1"
 description = "A standard API for reinforcement learning and a diverse set of reference environments (formerly Gym)."
@@ -3586,7 +3609,10 @@ files = [
 docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "rst.linker (>=1.9)", "sphinx (>=3.5)", "sphinx-lint"]
 testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-ignore-flaky", "pytest-mypy", "pytest-ruff (>=0.2.1)"]
 
+[extras]
+pusht = ["gym_pusht"]
+
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "174c7d42f8039eedd2c447a4e6cae5169782cbd94346b5606572a0010194ca05"
+content-hash = "3eee17e4bf2b7a570f41ef9c400ec5a24a3113f62a13162229cf43504ca0d005"
