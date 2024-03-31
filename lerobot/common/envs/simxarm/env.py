@@ -38,12 +38,14 @@ class SimxarmEnv(AbstractEnv):
         device="cpu",
         num_prev_obs=0,
         num_prev_action=0,
-        visualization_width=400,
-        visualization_height=400,
+        visualization_width=None,
+        visualization_height=None,
     ):
+        self.from_pixels = from_pixels
+        self.image_size = image_size
         self.visualization_width = visualization_width
         self.visualization_height = visualization_height
-        self.image_size = image_size
+
         super().__init__(
             task=task,
             frame_skip=frame_skip,
@@ -67,12 +69,17 @@ class SimxarmEnv(AbstractEnv):
         if self.task not in TASKS:
             raise ValueError(f"Unknown task {self.task}. Must be one of {list(TASKS.keys())}")
 
-        kwargs = {
-            "width": self.image_size,
-            "height": self.image_size,
-            "visualization_width": self.visualization_width,
-            "visualization_height": self.visualization_height,
-        }
+        kwargs = (
+            {
+                "width": self.image_size,
+                "height": self.image_size,
+                "visualization_width": self.visualization_width,
+                "visualization_height": self.visualization_height,
+            }
+            if self.from_pixels
+            else {}
+        )
+
         self._env = TASKS[self.task]["env"](**kwargs)
 
         num_actions = len(TASKS[self.task]["action_space"])

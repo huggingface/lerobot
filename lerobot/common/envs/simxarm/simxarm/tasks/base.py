@@ -24,8 +24,10 @@ class Base(robot_env.MujocoRobotEnv):
         self.center_of_table = np.array([1.655, 0.3, 0.63625])
         self.max_z = 1.2
         self.min_z = 0.2
-        visualization_width = kwargs.pop("visualization_width")
-        visualization_height = kwargs.pop("visualization_height")
+        visualization_width = kwargs.pop("visualization_width") if "visualization_width" in kwargs else None
+        visualization_height = (
+            kwargs.pop("visualization_height") if "visualization_height" in kwargs else None
+        )
 
         super().__init__(
             model_path=os.path.join(os.path.dirname(__file__), "assets", xml_name + ".xml"),
@@ -35,7 +37,8 @@ class Base(robot_env.MujocoRobotEnv):
             **kwargs,
         )
 
-        self._set_custom_size_renderer(width=visualization_width, height=visualization_height)
+        if visualization_width is not None and visualization_height is not None:
+            self._set_custom_size_renderer(width=visualization_width, height=visualization_height)
 
     @property
     def dt(self):
