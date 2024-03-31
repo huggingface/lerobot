@@ -1,7 +1,9 @@
+# from copy import deepcopy
 import os
 
 import mujoco
 import numpy as np
+from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 from gymnasium_robotics.envs import robot_env
 
 from lerobot.common.envs.simxarm.simxarm.tasks import mocap
@@ -22,6 +24,9 @@ class Base(robot_env.MujocoRobotEnv):
         self.center_of_table = np.array([1.655, 0.3, 0.63625])
         self.max_z = 1.2
         self.min_z = 0.2
+        visualization_width = kwargs.pop("visualization_width")
+        visualization_height = kwargs.pop("visualization_height")
+
         super().__init__(
             model_path=os.path.join(os.path.dirname(__file__), "assets", xml_name + ".xml"),
             n_substeps=20,
@@ -29,6 +34,8 @@ class Base(robot_env.MujocoRobotEnv):
             initial_qpos={},
             **kwargs,
         )
+
+        self._set_custom_size_renderer(width=visualization_width, height=visualization_height)
 
     @property
     def dt(self):
@@ -134,9 +141,26 @@ class Base(robot_env.MujocoRobotEnv):
         info = {"is_success": self.is_success(), "success": self.is_success()}
         return obs, reward, done, info
 
-    def render(self, mode="rgb_array", width=384, height=384):
+    def render(self, mode="rgb_array"):
         self._render_callback()
+
+        if mode == "visualization":
+            return self._custom_size_render()
+
         return self.mujoco_renderer.render(mode, camera_name="camera0")
+
+    def _set_custom_size_renderer(self, width, height):
+        from copy import deepcopy
+
+        # HACK
+        custom_render_model = deepcopy(self.model)
+        custom_render_model.vis.global_.offwidth = width
+        custom_render_model.vis.global_.offheight = height
+        self.custom_size_renderer = MujocoRenderer(custom_render_model, self.data)
+        del custom_render_model
+
+    def _custom_size_render(self):
+        return self.custom_size_renderer.render("rgb_array", camera_name="camera0")
 
     def close(self):
         if self.mujoco_renderer is not None:

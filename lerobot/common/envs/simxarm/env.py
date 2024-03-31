@@ -38,7 +38,11 @@ class SimxarmEnv(AbstractEnv):
         device="cpu",
         num_prev_obs=0,
         num_prev_action=0,
+        visualization_width=400,
+        visualization_height=400,
     ):
+        self.visualization_width = visualization_width
+        self.visualization_height = visualization_height
         self.image_size = image_size
         super().__init__(
             task=task,
@@ -63,7 +67,12 @@ class SimxarmEnv(AbstractEnv):
         if self.task not in TASKS:
             raise ValueError(f"Unknown task {self.task}. Must be one of {list(TASKS.keys())}")
 
-        kwargs = {"width": self.image_size, "height": self.image_size}
+        kwargs = {
+            "width": self.image_size,
+            "height": self.image_size,
+            "visualization_width": self.visualization_width,
+            "visualization_height": self.visualization_height,
+        }
         self._env = TASKS[self.task]["env"](**kwargs)
 
         num_actions = len(TASKS[self.task]["action_space"])
@@ -72,12 +81,12 @@ class SimxarmEnv(AbstractEnv):
         if "w" not in TASKS[self.task]["action_space"]:
             self._action_padding[-1] = 1.0
 
-    def render(self, mode="rgb_array", width=384, height=384):
-        return self._env.render(mode, width=width, height=height)
+    def render(self, mode="rgb_array"):
+        return self._env.render(mode)
 
     def _format_raw_obs(self, raw_obs):
         if self.from_pixels:
-            image = self.render(mode="rgb_array", width=self.image_size, height=self.image_size)
+            image = self.render(mode="rgb_array")
             image = image.transpose(2, 0, 1)  # (H, W, C) -> (C, H, W)
             image = torch.tensor(image.copy(), dtype=torch.uint8)
 

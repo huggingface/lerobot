@@ -20,6 +20,8 @@ def make_env(cfg, transform=None):
         from lerobot.common.envs.simxarm.env import SimxarmEnv
 
         kwargs["task"] = cfg.env.task
+        kwargs["visualization_width"] = cfg.env.visualization_width
+        kwargs["visualization_height"] = cfg.env.visualization_height
         clsfunc = SimxarmEnv
     elif cfg.env.name == "pusht":
         from lerobot.common.envs.pusht.env import PushtEnv

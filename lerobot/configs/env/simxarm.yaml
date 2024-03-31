@@ -20,6 +20,8 @@ env:
   action_repeat: 2
   episode_length: 25
   fps: ${fps}
+  visualization_width: 400
+  visualization_height: 400
 
 policy:
   state_dim: 4

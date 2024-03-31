@@ -86,7 +86,7 @@ def eval_policy(
 
         def maybe_render_frame(env: EnvBase, _):
             if save_video or (return_first_video and i == 0):  # noqa: B023
-                ep_frames.append(env.render())  # noqa: B023
+                ep_frames.append(env.render(mode="visualization"))  # noqa: B023
 
         # Clear the policy's action queue before the start of a new rollout.
         if policy is not None:
