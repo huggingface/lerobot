@@ -4,9 +4,9 @@ from lerobot.common.envs.simxarm.simxarm import Base
 
 
 class Lift(Base):
-    def __init__(self):
+    def __init__(self, **kwargs):
         self._z_threshold = 0.15
-        super().__init__("lift")
+        super().__init__("lift", **kwargs)
 
     @property
     def z_target(self):

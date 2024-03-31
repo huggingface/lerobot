@@ -39,6 +39,7 @@ class SimxarmEnv(AbstractEnv):
         num_prev_obs=0,
         num_prev_action=0,
     ):
+        self.image_size = image_size
         super().__init__(
             task=task,
             frame_skip=frame_skip,
@@ -62,7 +63,8 @@ class SimxarmEnv(AbstractEnv):
         if self.task not in TASKS:
             raise ValueError(f"Unknown task {self.task}. Must be one of {list(TASKS.keys())}")
 
-        self._env = TASKS[self.task]["env"]()
+        kwargs = {"width": self.image_size, "height": self.image_size}
+        self._env = TASKS[self.task]["env"](**kwargs)
 
         num_actions = len(TASKS[self.task]["action_space"])
         self._action_space = gymnasium.spaces.Box(low=-1.0, high=1.0, shape=(num_actions,))

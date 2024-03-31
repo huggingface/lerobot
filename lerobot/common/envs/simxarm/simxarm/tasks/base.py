@@ -15,7 +15,7 @@ class Base(robot_env.MujocoRobotEnv):
             gripper_rotation (list): initial rotation of the gripper (given as a quaternion)
     """
 
-    def __init__(self, xml_name, gripper_rotation=None):
+    def __init__(self, xml_name, gripper_rotation=None, **kwargs):
         if gripper_rotation is None:
             gripper_rotation = [0, 1, 0, 0]
         self.gripper_rotation = np.array(gripper_rotation, dtype=np.float32)
@@ -27,6 +27,7 @@ class Base(robot_env.MujocoRobotEnv):
             n_substeps=20,
             n_actions=4,
             initial_qpos={},
+            **kwargs,
         )
 
     @property
@@ -135,9 +136,6 @@ class Base(robot_env.MujocoRobotEnv):
 
     def render(self, mode="rgb_array", width=384, height=384):
         self._render_callback()
-        # HACK
-        self.model.vis.global_.offwidth = width
-        self.model.vis.global_.offheight = height
         return self.mujoco_renderer.render(mode, camera_name="camera0")
 
     def close(self):
