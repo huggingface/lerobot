@@ -138,7 +138,7 @@ class Base(robot_env.MujocoRobotEnv):
         # HACK
         self.model.vis.global_.offwidth = width
         self.model.vis.global_.offheight = height
-        return self.mujoco_renderer.render(mode)
+        return self.mujoco_renderer.render(mode, camera_name="camera0")
 
     def close(self):
         if self.mujoco_renderer is not None:
