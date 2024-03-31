@@ -26,15 +26,22 @@ def make_policy(cfg):
         policy = ActionChunkingTransformerPolicy(
             cfg.policy, cfg.device, n_action_steps=cfg.n_action_steps + cfg.n_latency_steps
         )
+
+        # if cfg.env.name == "aloha" and cfg.env.task == "sim_transfer_cube_scripted":
+        #     import torch
+        #     state_dict = torch.load(
+        #         "/home/rcadene/code/act/tmp/2024_03_10_sim_transfer_cube_scripted/policy_best.ckpt"
+        #     )
+        #     policy.load_state_dict(state_dict)
     else:
         raise ValueError(cfg.policy.name)
 
     if cfg.policy.pretrained_model_path:
         # TODO(rcadene): hack for old pretrained models from fowm
         if cfg.policy.name == "tdmpc" and "fowm" in cfg.policy.pretrained_model_path:
-            if "offline" in cfg.pretrained_model_path:
+            if "offline" in cfg.policy.pretrained_model_path:
                 policy.step[0] = 25000
-            elif "final" in cfg.pretrained_model_path:
+            elif "final" in cfg.policy.pretrained_model_path:
                 policy.step[0] = 100000
             else:
                 raise NotImplementedError()

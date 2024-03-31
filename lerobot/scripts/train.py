@@ -172,7 +172,8 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     # Note: this helper will be used in offline and online training loops.
     def _maybe_eval_and_maybe_save(step):
-        if step % cfg.eval_freq == 0:
+        # if step % cfg.eval_freq == 0:
+        if True:
             logging.info(f"Eval policy at step {step}")
             eval_info, first_video = eval_policy(
                 env,
@@ -187,8 +188,8 @@ def train(cfg: dict, out_dir=None, job_name=None):
             if cfg.wandb.enable:
                 logger.log_video(first_video, step, mode="eval")
             logging.info("Resume training")
-
-        if cfg.save_model and step % cfg.save_freq == 0:
+        if True:
+            # if cfg.save_model and step % cfg.save_freq == 0:
             logging.info(f"Checkpoint policy after step {step}")
             logger.save_model(policy, identifier=step)
             logging.info("Resume training")

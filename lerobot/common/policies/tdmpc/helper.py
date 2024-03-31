@@ -152,7 +152,7 @@ def enc(cfg):
     if cfg.modality in {"pixels", "all"}:
         C = int(3 * cfg.frame_stack)  # noqa: N806
         pixels_enc_layers = [
-            NormalizeImg(),
+            nn.Identity(),  # NormalizeImg(),  # TODO(rcadene): we need to clean this
             nn.Conv2d(C, cfg.num_channels, 7, stride=2),
             nn.ReLU(),
             nn.Conv2d(cfg.num_channels, cfg.num_channels, 5, stride=2),

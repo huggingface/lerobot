@@ -138,6 +138,9 @@ class Base(robot_env.MujocoRobotEnv):
         # HACK
         self.model.vis.global_.offwidth = width
         self.model.vis.global_.offheight = height
+        if mode in self.mujoco_renderer._viewers:
+            self.mujoco_renderer._viewers.get(mode).viewport.width = width
+            self.mujoco_renderer._viewers.get(mode).viewport.height = height
         return self.mujoco_renderer.render(mode)
 
     def close(self):

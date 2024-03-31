@@ -86,6 +86,8 @@ def eval_policy(
 
         def maybe_render_frame(env: EnvBase, _):
             if save_video or (return_first_video and i == 0):  # noqa: B023
+                # TODO(rcadene): set width and height from config or env
+                # ep_frames.append(env.render(width=384, height=384))  # noqa: B023
                 ep_frames.append(env.render())  # noqa: B023
 
         # Clear the policy's action queue before the start of a new rollout.
@@ -266,7 +268,8 @@ if __name__ == "__main__":
         )
         cfg = hydra.compose(Path(args.config).stem, args.overrides)
         # TODO(alexander-soare): Save and load stats in trained model directory.
-        stats_path = None
+        # stats_path = None
+        stats_path = "/home/rcadene/code/lerobot/outputs/pretrained_models/act_aloha_sim_transfer_cube_scripted/stats.pth"
     elif args.hub_id is not None:
         folder = Path(snapshot_download(args.hub_id, revision=args.revision))
         cfg = hydra.initialize(config_path=str(_relative_path_between(folder, Path(__file__).parent)))
