@@ -8,9 +8,25 @@
   <br/>
 </p>
 
-# LeRobot
+<div align="center">
 
-**State-of-the-art machine learning for real-world robotics**
+[![Tests](https://github.com/huggingface/lerobot/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/test.yml?query=branch%3Amain)
+[![Coverage](https://codecov.io/gh/huggingface/lerobot/branch/main/graph/badge.svg?token=TODO)](https://codecov.io/gh/huggingface/lerobot)
+[![Python versions](https://img.shields.io/pypi/pyversions/lerobot)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/huggingface/lerobot/blob/main/LICENSE)
+[![Status](https://img.shields.io/pypi/status/lerobot)](https://pypi.org/project/lerobot/)
+[![Version](https://img.shields.io/pypi/v/lerobot)](https://pypi.org/project/lerobot/)
+[![Examples](https://img.shields.io/badge/Examples-green.svg)](https://github.com/huggingface/lerobot/tree/main/examples)
+[![Discord](https://dcbadge.vercel.app/api/server/C5P34WJ68S?style=flat)](https://discord.gg/s3KuuzsPFb)
+
+</div>
+
+<h3 align="center">
+    <p>State-of-the-art Machine Learning for real-world robotics</p>
+</h3>
+
+---
+
 
 🤗 LeRobot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier for entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
 
@@ -44,26 +60,21 @@
 
 ## Installation
 
-Create a virtual environment with Python 3.10, e.g. using `conda`:
+Download our source code:
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+```
+
+Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 ```bash
 conda create -y -n lerobot python=3.10
 conda activate lerobot
 ```
 
-[Install `poetry`](https://python-poetry.org/docs/#installation) (if you don't have it already)
+Then, install 🤗 LeRobot:
 ```bash
-curl -sSL https://install.python-poetry.org | python -
-```
-
-Install dependencies
-```bash
-poetry install
-```
-
-If you encounter a disk space error, try to change your tmp dir to a location where you have enough disk space, e.g.
-```bash
-mkdir ~/tmp
-export TMPDIR='~/tmp'
+python -m pip install .
 ```
 
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiments tracking, log in with
@@ -174,11 +185,11 @@ hydra.run.dir=outputs/train/aloha_act
 
 Feel free to open issues and PRs, and to coordinate your efforts with the community on our [Discord Channel](https://discord.gg/VjFz58wn3R). For specific inquiries, reach out to [Remi Cadene](remi.cadene@huggingface.co).
 
-**TODO**
+### TODO
 
 If you are not sure how to contribute or want to know the next features we working on, look on this project page: [LeRobot TODO](https://github.com/orgs/huggingface/projects/46)
 
-**Follow our style**
+### Follow our style
 
 ```bash
 # install if needed
@@ -187,25 +198,33 @@ pre-commit install
 pre-commit
 ```
 
-**Add dependencies**
+### Add dependencies
 
-Instead of `pip install some-package`, we use `poetry` to track the versions of our dependencies:
+Instead of using `pip` directly, we use `poetry` for development purposes to easily track our dependencies.
+If you don't have it already, follow the [instructions](https://python-poetry.org/docs/#installation) to install it.
+
+Install the project with:
+```bash
+poetry install
+```
+
+Then, the equivalent of `pip install some-package`, would just be:
 ```bash
 poetry add some-package
 ```
 
-**NOTE:** Currently, to ensure the CI works properly, any new package must also be added in the CPU-only environment dedicated CI. To do this, you should create a separate environment and add the new package there as well. For example:
+**NOTE:** Currently, to ensure the CI works properly, any new package must also be added in the CPU-only environment dedicated to the CI. To do this, you should create a separate environment and add the new package there as well. For example:
 ```bash
-# add the new package to your main poetry env
+# Add the new package to your main poetry env
 poetry add some-package
-# add the same package to the CPU-only env dedicated to CI
+# Add the same package to the CPU-only env dedicated to CI
 conda create -y -n lerobot-ci python=3.10
 conda activate lerobot-ci
 cd .github/poetry/cpu
 poetry add some-package
 ```
 
-**Run tests locally**
+### Run tests locally
 
 Install [git lfs](https://git-lfs.com/) to retrieve test artifacts (if you don't have it already).
 
@@ -236,7 +255,7 @@ Run tests
 DATA_DIR="tests/data" pytest -sx tests
 ```
 
-**Add a new dataset**
+### Add a new dataset
 
 To add a dataset to the hub, first login and use a token generated from [huggingface settings](https://huggingface.co/settings/tokens) with write access:
 ```bash
@@ -297,7 +316,7 @@ Finally, you might want to mock the dataset if you need to update the unit tests
 python tests/scripts/mock_dataset.py --in-data-dir data/$DATASET --out-data-dir tests/data/$DATASET
 ```
 
-**Add a pretrained policy**
+### Add a pretrained policy
 
 Once you have trained a policy you may upload it to the HuggingFace hub.
 
@@ -333,7 +352,7 @@ huggingface-cli upload $HUB_ID to_upload
 See `eval.py` for an example of how a user may use your policy.
 
 
-**Improve your code with profiling**
+### Improve your code with profiling
 
 An example of a code snippet to profile the evaluation of a policy:
 ```python

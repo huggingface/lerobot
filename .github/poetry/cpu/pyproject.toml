@@ -52,12 +52,14 @@ robomimic = "0.2.0"
 huggingface-hub = "^0.21.4"
 gymnasium-robotics = "^1.2.4"
 gymnasium = "^0.29.1"
+cmake = "^3.29.0.1"
 
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.6.2"
 debugpy = "^1.8.1"
 pytest = "^8.1.0"
+pytest-cov = "^5.0.0"
 
 
 [[tool.poetry.source]]
