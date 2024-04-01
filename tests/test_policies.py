@@ -1,4 +1,3 @@
-from omegaconf import open_dict
 import pytest
 from tensordict import TensorDict
 from tensordict.nn import TensorDictModule
@@ -10,8 +9,8 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.envs.factory import make_env
 from lerobot.common.datasets.factory import make_offline_buffer
 from lerobot.common.policies.abstract import AbstractPolicy
-
-from .utils import DEVICE, init_config
+from lerobot.common.utils import init_hydra_config
+from .utils import DEVICE, DEFAULT_CONFIG_PATH
 
 @pytest.mark.parametrize(
     "env_name,policy_name,extra_overrides",
@@ -34,7 +33,8 @@ def test_concrete_policy(env_name, policy_name, extra_overrides):
         - Updating the policy.
         - Using the policy to select actions at inference time.
     """
-    cfg = init_config(
+    cfg = init_hydra_config(
+        DEFAULT_CONFIG_PATH,
         overrides=[
             f"env={env_name}",
             f"policy={policy_name}",

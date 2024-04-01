@@ -2,8 +2,9 @@ import pytest
 import torch
 
 from lerobot.common.datasets.factory import make_offline_buffer
+from lerobot.common.utils import init_hydra_config
 
-from .utils import DEVICE, init_config
+from .utils import DEVICE, DEFAULT_CONFIG_PATH
 
 
 @pytest.mark.parametrize(
@@ -18,7 +19,10 @@ from .utils import DEVICE, init_config
     ],
 )
 def test_factory(env_name, dataset_id):
-    cfg = init_config(overrides=[f"env={env_name}", f"env.task={dataset_id}", f"device={DEVICE}"])
+    cfg = init_hydra_config(
+        DEFAULT_CONFIG_PATH,
+        overrides=[f"env={env_name}", f"env.task={dataset_id}", f"device={DEVICE}"]
+    )
     offline_buffer = make_offline_buffer(cfg)
     for key in offline_buffer.image_keys:
         img = offline_buffer[0].get(key)

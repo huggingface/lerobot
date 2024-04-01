@@ -4,12 +4,13 @@ import torch
 from torchrl.envs.utils import check_env_specs, step_mdp
 from lerobot.common.datasets.factory import make_offline_buffer
 
+from lerobot.common.envs.aloha.env import AlohaEnv
 from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.pusht.env import PushtEnv
 from lerobot.common.envs.simxarm.env import SimxarmEnv
-from lerobot.common.envs.aloha.env import AlohaEnv
+from lerobot.common.utils import init_hydra_config
 
-from .utils import DEVICE, init_config
+from .utils import DEVICE, DEFAULT_CONFIG_PATH
 
 
 def print_spec_rollout(env):
@@ -110,7 +111,10 @@ def test_pusht(from_pixels, pixels_only):
     ],
 )
 def test_factory(env_name):
-    cfg = init_config(overrides=[f"env={env_name}", f"device={DEVICE}"])
+    cfg = init_hydra_config(
+        DEFAULT_CONFIG_PATH,
+        overrides=[f"env={env_name}", f"device={DEVICE}"],
+    )
 
     offline_buffer = make_offline_buffer(cfg)
 
