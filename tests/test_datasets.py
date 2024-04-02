@@ -36,12 +36,10 @@ def test_factory(env_name, dataset_id):
 
 
 def test_compute_stats():
-    """Check that the correct statistics are computed.
+    """Check that the statistics are computed correctly according to the stats_patterns property.
 
     We compare with taking a straight min, mean, max, std of all the data in one pass (which we can do
     because we are working with a small dataset).
-
-    This test does not check that the stats_patterns are correct (instead, it relies on them).
     """
     cfg = init_hydra_config(
         DEFAULT_CONFIG_PATH, overrides=["env=aloha", "env.task=sim_transfer_cube_human"]
