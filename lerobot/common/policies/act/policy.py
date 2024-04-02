@@ -54,7 +54,7 @@ class ActionChunkingTransformerPolicy(AbstractPolicy):
         Args:
             vae: Whether to use the variational objective. TODO(now): Give more details.
             temporal_agg: Whether to do temporal aggregation. For each timestep during rollout, the action
-                returned as an exponential moving average of previously generated actions for that timestep. 
+                returned as an exponential moving average of previously generated actions for that timestep.
             n_obs_steps: Number of time steps worth of observation to use as input.
             horizon: The number of actions to generate in one forward pass.
             kl_weight: Weight for KL divergence. Defaults to None. Only applicable when using the variational
@@ -120,7 +120,7 @@ class ActionChunkingTransformerPolicy(AbstractPolicy):
                 "action": action.to(self.device, non_blocking=True),
             }
             return out
-        
+
         start_time = time.time()
 
         batch = replay_buffer.sample(batch_size)
