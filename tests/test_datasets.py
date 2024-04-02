@@ -53,7 +53,9 @@ def test_compute_stats():
             batch_size=len(buffer),
             sampler=SamplerWithoutReplacement(),
     ).sample().float()
-    computed_stats = buffer._compute_stats()
+    # Note: we set the batch size to be smaller than the whole dataset to make sure we are testing batched
+    # computation of the statistics.
+    computed_stats = buffer._compute_stats(batch_size=int(len(all_data) * 0.75))
     for k, pattern in buffer.stats_patterns.items():
         expected_mean = einops.reduce(all_data[k], pattern, "mean")
         assert torch.allclose(computed_stats[k]["mean"], expected_mean)
