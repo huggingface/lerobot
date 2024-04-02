@@ -54,7 +54,8 @@ def test_compute_stats():
             sampler=SamplerWithoutReplacement(),
     ).sample().float()
     # Note: we set the batch size to be smaller than the whole dataset to make sure we are testing batched
-    # computation of the statistics.
+    # computation of the statistics. While doing this, we also make sure it works when we don't divide the
+    # dataset into even batches. 
     computed_stats = buffer._compute_stats(batch_size=int(len(all_data) * 0.75))
     for k, pattern in buffer.stats_patterns.items():
         expected_mean = einops.reduce(all_data[k], pattern, "mean")
