@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.autograd import Variable
+from transformers import DetrForObjectDetection
 
 from .backbone import build_backbone
 from .transformer import TransformerEncoder, TransformerEncoderLayer, build_transformer
@@ -24,31 +25,57 @@ def get_sinusoid_encoding_table(n_position, d_hid):
     return torch.FloatTensor(sinusoid_table).unsqueeze(0)
 
 
-class DETRVAE(nn.Module):
-    """This is the DETR module that performs object detection"""
+class ActionChunkingTransformer(nn.Module):
+    """
+    Action Chunking Transformer as per Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware
+    (https://arxiv.org/abs/2304.13705).
+
+    Note: In this code we use the symbols `vae_encoder`, 'encoder', `decoder`. The meanings are as follows.
+        - The `vae_encoder` is, as per the literature around conditional variational auto-encoders (cVAE), the
+          part of the model that encodes the target data (here, a sequence of actions), and the condition
+          (here, we include the robot joint-space state as an input to the encoder).
+        - The `transformer` is the cVAE's decoder. But since we have an option to train this model without the
+          variational objective (in which case we drop the `vae_encoder` altogether), we don't call it the
+          `vae_decoder`.
+        # TODO(now): remove the following
+        - The `encoder` is actually a component of the cVAE's "decoder". But we refer to it as an "encoder"
+          because, in terms of the transformer with cross-attention that forms the cVAE's decoder, it is the
+          "encoder" part. We drop the `vae_` prefix because we have an option to train this model without the
+          variational objective (in which case we drop the `vae_encoder` altogether), and nothing about this
+          model has anything to do with a VAE).
+        - The `decoder` is a building block of the VAE decoder, and is just the "decoder" part of a
+          transformer with cross-attention. For the same reasoning behind the naming of `encoder`, we make
+          this term agnostic to the option to use a variational objective for training.
+
+    """
 
     def __init__(
-        self, backbones, transformer, encoder, state_dim, action_dim, num_queries, camera_names, vae
+        self, backbones, transformer, vae_encoder, state_dim, action_dim, horizon, camera_names, vae
     ):
         """Initializes the model.
         Parameters:
             backbones: torch module of the backbone to be used. See backbone.py
             transformer: torch module of the transformer architecture. See transformer.py
             state_dim: robot state dimension of the environment
-            num_queries: number of object queries, ie detection slot. This is the maximal number of objects
+            horizon: number of object queries, ie detection slot. This is the maximal number of objects
                          DETR can detect in a single image. For COCO, we recommend 100 queries.
-            aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
+
+        Args:
+            state_dim: Robot positional state dimension.
+            action_dim: Action dimension.
+            horizon: The number of actions to generate in one forward pass.
+            vae: Whether to use the variational objective. TODO(now): Give more details.
         """
         super().__init__()
-        self.num_queries = num_queries
         self.camera_names = camera_names
         self.transformer = transformer
-        self.encoder = encoder
+        self.vae_encoder = vae_encoder
         self.vae = vae
         hidden_dim = transformer.d_model
         self.action_head = nn.Linear(hidden_dim, action_dim)
         self.is_pad_head = nn.Linear(hidden_dim, 1)
-        self.query_embed = nn.Embedding(num_queries, hidden_dim)
+        # Positional embedding to be used as input to the latent vae_encoder (if applicable) and for the 
+        self.pos_embed = nn.Embedding(horizon, hidden_dim)
         if backbones is not None:
             self.input_proj = nn.Conv2d(backbones[0].num_channels, hidden_dim, kernel_size=1)
             self.backbones = nn.ModuleList(backbones)
@@ -61,16 +88,16 @@ class DETRVAE(nn.Module):
             self.pos = torch.nn.Embedding(2, hidden_dim)
             self.backbones = None
 
-        # encoder extra parameters
+        # vae_encoder extra parameters
         self.latent_dim = 32  # final size of latent z # TODO tune
         self.cls_embed = nn.Embedding(1, hidden_dim)  # extra cls token embedding
-        self.encoder_action_proj = nn.Linear(14, hidden_dim)  # project action to embedding
-        self.encoder_joint_proj = nn.Linear(14, hidden_dim)  # project qpos to embedding
+        self.vae_encoder_action_proj = nn.Linear(14, hidden_dim)  # project action to embedding
+        self.vae_encoder_joint_proj = nn.Linear(14, hidden_dim)  # project qpos to embedding
         self.latent_proj = nn.Linear(
             hidden_dim, self.latent_dim * 2
         )  # project hidden state to latent std, var
         self.register_buffer(
-            "pos_table", get_sinusoid_encoding_table(1 + 1 + num_queries, hidden_dim)
+            "pos_table", get_sinusoid_encoding_table(1 + 1 + horizon, hidden_dim)
         )  # [CLS], qpos, a_seq
 
         # decoder extra parameters
@@ -91,15 +118,15 @@ class DETRVAE(nn.Module):
         ### Obtain latent z from action sequence
         if self.vae and is_training:
             # project action sequence to embedding dim, and concat with a CLS token
-            action_embed = self.encoder_action_proj(actions)  # (bs, seq, hidden_dim)
-            qpos_embed = self.encoder_joint_proj(qpos)  # (bs, hidden_dim)
+            action_embed = self.vae_encoder_action_proj(actions)  # (bs, seq, hidden_dim)
+            qpos_embed = self.vae_encoder_joint_proj(qpos)  # (bs, hidden_dim)
             qpos_embed = torch.unsqueeze(qpos_embed, axis=1)  # (bs, 1, hidden_dim)
             cls_embed = self.cls_embed.weight  # (1, hidden_dim)
             cls_embed = torch.unsqueeze(cls_embed, axis=0).repeat(bs, 1, 1)  # (bs, 1, hidden_dim)
-            encoder_input = torch.cat(
+            vae_encoder_input = torch.cat(
                 [cls_embed, qpos_embed, action_embed], axis=1
             )  # (bs, seq+1, hidden_dim)
-            encoder_input = encoder_input.permute(1, 0, 2)  # (seq+1, bs, hidden_dim)
+            vae_encoder_input = vae_encoder_input.permute(1, 0, 2)  # (seq+1, bs, hidden_dim)
             # do not mask cls token
             # cls_joint_is_pad = torch.full((bs, 2), False).to(qpos.device)  # False: not a padding
             # is_pad = torch.cat([cls_joint_is_pad, is_pad], axis=1)  # (bs, seq+1)
@@ -107,9 +134,9 @@ class DETRVAE(nn.Module):
             pos_embed = self.pos_table.clone().detach()
             pos_embed = pos_embed.permute(1, 0, 2)  # (seq+1, 1, hidden_dim)
             # query model
-            encoder_output = self.encoder(encoder_input, pos=pos_embed)  # , src_key_padding_mask=is_pad)
-            encoder_output = encoder_output[0]  # take cls output only
-            latent_info = self.latent_proj(encoder_output)
+            vae_encoder_output = self.vae_encoder(vae_encoder_input, pos=pos_embed)  # , src_key_padding_mask=is_pad)
+            vae_encoder_output = vae_encoder_output[0]  # take cls output only
+            latent_info = self.latent_proj(vae_encoder_output)
             mu = latent_info[:, : self.latent_dim]
             logvar = latent_info[:, self.latent_dim :]
             latent_sample = reparametrize(mu, logvar)
@@ -137,7 +164,7 @@ class DETRVAE(nn.Module):
             hs = self.transformer(
                 src,
                 None,
-                self.query_embed.weight,
+                self.pos_embed.weight,
                 pos,
                 latent_input,
                 proprio_input,
@@ -147,7 +174,7 @@ class DETRVAE(nn.Module):
             qpos = self.input_proj_robot_state(qpos)
             env_state = self.input_proj_env_state(env_state)
             transformer_input = torch.cat([qpos, env_state], axis=1)  # seq length = 2
-            hs = self.transformer(transformer_input, None, self.query_embed.weight, self.pos.weight)[0]
+            hs = self.transformer(transformer_input, None, self.pos_embed.weight, self.pos.weight)[0]
         a_hat = self.action_head(hs)
         is_pad_hat = self.is_pad_head(hs)
         return a_hat, is_pad_hat, [mu, logvar]
@@ -165,7 +192,7 @@ def mlp(input_dim, hidden_dim, output_dim, hidden_depth):
     return trunk
 
 
-def build_encoder(args):
+def build_vae_encoder(args):
     d_model = args.hidden_dim  # 256
     dropout = args.dropout  # 0.1
     nhead = args.nheads  # 8
@@ -192,16 +219,16 @@ def build(args):
     backbones.append(backbone)
 
     transformer = build_transformer(args)
+    
+    vae_encoder = build_vae_encoder(args)
 
-    encoder = build_encoder(args)
-
-    model = DETRVAE(
+    model = ActionChunkingTransformer(
         backbones,
         transformer,
-        encoder,
+        vae_encoder,
         state_dim=args.state_dim,
         action_dim=args.action_dim,
-        num_queries=args.num_queries,
+        horizon=args.num_queries,
         camera_names=args.camera_names,
         vae=args.vae,
     )

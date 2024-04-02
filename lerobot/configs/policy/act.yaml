@@ -1,6 +1,6 @@
 # @package _global_
 
-offline_steps: 1344000
+offline_steps: 2000
 online_steps: 0
 
 eval_episodes: 1
@@ -24,7 +24,6 @@ policy:
   weight_decay: 1e-4
   grad_clip_norm: 10
   backbone: resnet18
-  num_queries: ${horizon} # chunk_size
   horizon: ${horizon} # chunk_size
   kl_weight: 10
   hidden_dim: 512

@@ -151,6 +151,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     logging.info("make_policy")
     policy = make_policy(cfg)
+    policy.save("act.pt")
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())

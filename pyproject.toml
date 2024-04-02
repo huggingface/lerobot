@@ -52,6 +52,7 @@ robomimic = "0.2.0"
 gymnasium-robotics = "^1.2.4"
 gymnasium = "^0.29.1"
 cmake = "^3.29.0.1"
+transformers = "^4.39.3"
 
 
 [tool.poetry.group.dev.dependencies]

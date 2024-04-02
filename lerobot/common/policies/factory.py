@@ -1,5 +1,5 @@
 def make_policy(cfg):
-    if cfg.policy.name != "diffusion" and cfg.rollout_batch_size > 1:
+    if cfg.policy.name not in ["diffusion", "act"] and cfg.rollout_batch_size > 1:
         raise NotImplementedError("Only diffusion policy supports rollout_batch_size > 1 for the time being.")
 
     if cfg.policy.name == "tdmpc":
