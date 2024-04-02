@@ -32,6 +32,7 @@ import json
 import logging
 import threading
 import time
+from typing import Tuple, Union
 from datetime import datetime as dt
 from pathlib import Path
 
@@ -66,7 +67,19 @@ def eval_policy(
     video_dir: Path = None,
     fps: int = 15,
     return_first_video: bool = False,
-):
+) -> Union[dict, Tuple[dict, torch.Tensor]]:
+    """ Evaluate a policy on an environment by running rollouts and computing metrics.
+
+    Args:
+        env: The environment to evaluate.
+        policy: The policy to evaluate.
+        num_episodes: The number of episodes to evaluate.
+        max_steps: The maximum number of steps per episode.
+        save_video: Whether to save videos of the evaluation episodes.
+        video_dir: The directory to save the videos.
+        fps: The frames per second for the videos.
+        return_first_video: Whether to return the first video as a tensor.
+    """
     if policy is not None:
         policy.eval()
     start = time.time()
@@ -145,7 +158,7 @@ def eval_policy(
     for thread in threads:
         thread.join()
 
-    info = {
+    info = {  # TODO: change to dataclass
         "per_episode": [
             {
                 "episode_ix": i,
@@ -178,6 +191,13 @@ def eval_policy(
 
 
 def eval(cfg: dict, out_dir=None, stats_path=None):
+    """ Evaluate a policy.
+
+    Args:
+        cfg: The configuration (DictConfig).
+        out_dir: The directory to save the evaluation results (JSON file and videos)
+        stats_path: The path to the stats file.
+    """
     if out_dir is None:
         raise NotImplementedError()
 

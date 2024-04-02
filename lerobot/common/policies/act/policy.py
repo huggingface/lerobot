@@ -136,8 +136,8 @@ class ActionChunkingTransformerPolicy(AbstractPolicy):
     def save(self, fp):
         torch.save(self.state_dict(), fp)
 
-    def load(self, fp):
-        d = torch.load(fp)
+    def load(self, fp, device=None):
+        d = torch.load(fp, map_location=device)
         self.load_state_dict(d)
 
     def compute_loss(self, batch):

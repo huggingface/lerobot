@@ -50,6 +50,6 @@ for offline_step in trange(cfg.offline_steps):
         print(train_info)
 
 # Save the policy, configuration, and normalization stats for later use.
-policy.save(output_directory / "model.pt")
+policy.save_pretrained(output_directory / "model.pt")
 OmegaConf.save(cfg, output_directory / "config.yaml")
 torch.save(offline_buffer.transform[-1].stats, output_directory / "stats.pth")

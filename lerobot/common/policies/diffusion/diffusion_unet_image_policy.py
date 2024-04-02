@@ -32,7 +32,7 @@ assert len(unexpected_keys) == 0
 Then in that same runtime you can also save the weights with the new aligned state_dict:
 
 ```
-policy.save("weights.pt")
+policy.save_pretrained("my-policy")
 ```
 
 Now you can remove the breakpoint and extra code and load in the weights just like with any other lerobot checkpoint.

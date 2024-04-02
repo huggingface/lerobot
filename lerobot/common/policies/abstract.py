@@ -2,13 +2,24 @@ from collections import deque
 
 import torch
 from torch import Tensor, nn
+from huggingface_hub import PyTorchModelHubMixin
 
 
-class AbstractPolicy(nn.Module):
+class AbstractPolicy(nn.Module, PyTorchModelHubMixin):
     """Base policy which all policies should be derived from.
 
     The forward method should generally not be overriden as it plays the role of handling multi-step policies. See its
     documentation for more information.
+
+    The policy is a PyTorchModelHubMixin, which means that it can be saved and loaded from the Hugging Face Hub and/or to a local directory.
+    # Save policy weights to local directory
+    >>> policy.save_pretrained("my-awesome-policy")
+
+    # Push policy weights to the Hub
+    >>> policy.push_to_hub("my-awesome-policy")
+
+    # Download and initialize policy from the Hub
+    >>> policy = MyPolicy.from_pretrained("username/my-awesome-policy")
 
     Note:
         When implementing a concrete class (e.g. `AlohaDataset`, `PushtEnv`, `DiffusionPolicy`), you need to:
@@ -22,7 +33,7 @@ class AbstractPolicy(nn.Module):
 
     name: str | None = None  # same name should be used to instantiate the policy in factory.py
 
-    def __init__(self, n_action_steps: int | None):
+    def __init__(self, n_action_steps: int | None = None):
         """
         n_action_steps: Sets the cache size for storing action trajectories. If None, it is assumed that a single
             action is returned by `select_actions` and that doesn't have a horizon dimension. The `forward` method then

@@ -122,9 +122,9 @@ class TDMPCPolicy(AbstractPolicy):
         """Save state dict of TOLD model to filepath."""
         torch.save(self.state_dict(), fp)
 
-    def load(self, fp):
+    def load(self, fp, device=None):
         """Load a saved state dict from filepath into current agent."""
-        d = torch.load(fp)
+        d = torch.load(fp, map_location=device)
         self.model.load_state_dict(d["model"])
         self.model_target.load_state_dict(d["model_target"])
 

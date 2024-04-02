@@ -5,6 +5,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 from termcolor import colored
 
+from lerobot.common.policies.abstract import AbstractPolicy
 
 def log_output_dir(out_dir):
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {out_dir}")
@@ -67,11 +68,11 @@ class Logger:
             logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
             self._wandb = wandb
 
-    def save_model(self, policy, identifier):
+    def save_model(self, policy: AbstractPolicy, identifier):
         if self._save_model:
             self._model_dir.mkdir(parents=True, exist_ok=True)
             fp = self._model_dir / f"{str(identifier)}.pt"
-            policy.save(fp)
+            policy.save_pretrained(fp)
             if self._wandb and not self._disable_wandb_artifact:
                 # note wandb artifact does not accept ":" in its name
                 artifact = self._wandb.Artifact(
