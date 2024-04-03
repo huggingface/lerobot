@@ -271,7 +271,8 @@ if __name__ == "__main__":
     elif args.hub_id is not None:
         folder = Path(snapshot_download(args.hub_id, revision=args.revision))
         cfg = init_hydra_config(
-            folder / "config.yaml", [f"policy.pretrained_model_path={folder / 'model.pt'}", *args.overrides]
+            folder / "config.yaml", [*args.overrides]
+            # folder / "config.yaml"  # , [f"policy.pretrained_model_path={folder / 'model.pt'}", *args.overrides]
         )
         stats_path = folder / "stats.pth"
 
