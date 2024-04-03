@@ -152,7 +152,13 @@ class AbstractDataset(TensorDictReplayBuffer):
         return TensorStorage(TensorDict.load_memmap(self.data_dir / "replay_buffer"))
 
     def _compute_stats(self, batch_size: int = 32):
-        """Compute dataset statistics including minimum, maximum, mean, and standard deviation."""
+        """Compute dataset statistics including minimum, maximum, mean, and standard deviation.
+
+        TODO(alexander-soare): Add a num_batches argument which essentially allows one to use a subset of the
+            full dataset (for handling very large datasets). The sampling would then have to be random
+            (preferably without replacement). Both stats computation loops would ideally sample the same
+            items.
+        """
         rb = TensorDictReplayBuffer(
             storage=self._storage,
             batch_size=32,
