@@ -58,12 +58,9 @@ def test_compute_stats():
     for k, pattern in buffer.stats_patterns.items():
         expected_mean = einops.reduce(all_data[k], pattern, "mean")
         assert torch.allclose(computed_stats[k]["mean"], expected_mean)
-        try:
-            assert torch.allclose(
-                computed_stats[k]["std"],
-                torch.sqrt(einops.reduce((all_data[k] - expected_mean) ** 2, pattern, "mean"))
-            )
-        except:
-            breakpoint()
+        assert torch.allclose(
+            computed_stats[k]["std"],
+            torch.sqrt(einops.reduce((all_data[k] - expected_mean) ** 2, pattern, "mean"))
+        )
         assert torch.allclose(computed_stats[k]["min"], einops.reduce(all_data[k], pattern, "min"))
         assert torch.allclose(computed_stats[k]["max"], einops.reduce(all_data[k], pattern, "max"))
