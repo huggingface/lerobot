@@ -4,7 +4,7 @@ import torch
 from torch import nn
 
 from .backbone import build_backbone
-from .transformer import TransformerEncoder, TransformerEncoderLayer, build_transformer
+from .transformer import Transformer, TransformerEncoder
 
 
 def get_sinusoid_encoding_table(n_position, d_hid):
@@ -124,16 +124,14 @@ class ActionChunkingTransformer(nn.Module):
             robot_state_embed = self.vae_encoder_robot_state_input_proj(robot_state).unsqueeze(1)  # (B, 1, D)
             action_embed = self.vae_encoder_action_input_proj(actions)  # (B, S, D)
             vae_encoder_input = torch.cat([cls_embed, robot_state_embed, action_embed], axis=1)  # (B, S+2, D)
-            vae_encoder_input = vae_encoder_input.permute(1, 0, 2)  # (S+2, B, D)
             # Note: detach() shouldn't be necessary but leaving it the same as the original code just in case.
             # Prepare fixed positional embedding.
-            pos_embed = self.vae_encoder_pos_enc.clone().detach().permute(1, 0, 2)  # (S+2, 1, D)
+            pos_embed = self.vae_encoder_pos_enc.clone().detach()  # (1, S+2, D)
             # Forward pass through VAE encoder and sample the latent with the reparameterization trick.
-            vae_encoder_output = self.vae_encoder(
-                vae_encoder_input, pos=pos_embed
-            )  # , src_key_padding_mask=is_pad)  # TODO(now)
-            vae_encoder_output = vae_encoder_output[0]  # take cls output only
-            latent_pdf_params = self.vae_encoder_latent_output_proj(vae_encoder_output)
+            cls_token_out = self.vae_encoder(
+                vae_encoder_input.permute(1, 0, 2), pos=pos_embed.permute(1, 0, 2)
+            )[0]  # (B, D)
+            latent_pdf_params = self.vae_encoder_latent_output_proj(cls_token_out)
             mu = latent_pdf_params[:, : self.latent_dim]
             logvar = latent_pdf_params[:, self.latent_dim :]
             # Use reparameterization trick to sample from the latent's PDF.
@@ -151,10 +149,11 @@ class ActionChunkingTransformer(nn.Module):
         all_cam_pos = []
         for cam_id, _ in enumerate(self.camera_names):
             # TODO(now): remove the positional embedding from the backbones.
-            features, pos = self.backbones[0](image[:, cam_id])  # HARDCODED
-            features = features[0]  # take the last layer feature
+            cam_features, pos = self.backbones[0](image[:, cam_id])  # HARDCODED
+            cam_features = cam_features[0]  # take the last layer feature
             pos = pos[0]
-            all_cam_features.append(self.encoder_img_feat_input_proj(features))
+            cam_features = self.encoder_img_feat_input_proj(cam_features)  # (B, C, h, w)
+            all_cam_features.append(cam_features)
             all_cam_pos.append(pos)
         # Concatenate image observation feature maps along the width dimension.
         transformer_input = torch.cat(all_cam_features, axis=3)
@@ -163,36 +162,25 @@ class ActionChunkingTransformer(nn.Module):
         robot_state_embed = self.encoder_robot_state_input_proj(robot_state)
         latent_embed = self.encoder_latent_input_proj(latent_sample)
 
+        # TODO(now): Explain all of this madness.
+        transformer_input = torch.cat(
+            [
+                torch.stack([latent_embed, robot_state_embed], axis=0),
+                transformer_input.flatten(2).permute(2, 0, 1),
+            ]
+        )
+        pos_embed = torch.cat(
+            [self.additional_pos_embed.weight.unsqueeze(1), pos.flatten(2).permute(2, 0, 1)], axis=0
+        )
+
         # Run the transformer and project the outputs to the action space.
         transformer_output = self.transformer(
             transformer_input,
-            query_embed=self.decoder_pos_embed.weight,
-            pos_embed=pos,
-            latent_input=latent_embed,
-            proprio_input=robot_state_embed,
-            additional_pos_embed=self.additional_pos_embed.weight,
-        )
-        a_hat = self.action_head(transformer_output)
-
-        return a_hat, [mu, logvar]
-
-
-def build_vae_encoder(args):
-    d_model = args.hidden_dim  # 256
-    dropout = args.dropout  # 0.1
-    nhead = args.nheads  # 8
-    dim_feedforward = args.dim_feedforward  # 2048
-    num_encoder_layers = args.enc_layers  # 4 # TODO shared with VAE decoder
-    normalize_before = args.pre_norm  # False
-    activation = "relu"
-
-    encoder_layer = TransformerEncoderLayer(
-        d_model, nhead, dim_feedforward, dropout, activation, normalize_before
-    )
-    encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
-    encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
-
-    return encoder
+            encoder_pos=pos_embed,
+            decoder_pos=self.decoder_pos_embed.weight.unsqueeze(1),
+        ).transpose(0, 1)  # back to (B, S, C)
+        actions = self.action_head(transformer_output)
+        return actions, [mu, logvar]
 
 
 def build(args):
@@ -203,9 +191,26 @@ def build(args):
     backbone = build_backbone(args)
     backbones.append(backbone)
 
-    transformer = build_transformer(args)
+    transformer = Transformer(
+        d_model=args.hidden_dim,
+        dropout=args.dropout,
+        nhead=args.nheads,
+        dim_feedforward=args.dim_feedforward,
+        num_encoder_layers=args.enc_layers,
+        num_decoder_layers=args.dec_layers,
+        normalize_before=args.pre_norm,
+    )
 
-    vae_encoder = build_vae_encoder(args)
+    # TODO(now): args.enc_layers shouldn't be shared with the transformer decoder
+    vae_encoder = TransformerEncoder(
+        num_layers=args.enc_layers,
+        d_model=args.hidden_dim,
+        nhead=args.nheads,
+        dim_feedforward=args.dim_feedforward,
+        dropout=args.dropout,
+        activation="relu",
+        normalize_before=args.pre_norm,
+    )
 
     model = ActionChunkingTransformer(
         backbones,
