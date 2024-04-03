@@ -29,7 +29,7 @@ policy:
   hidden_dim: 512
   dim_feedforward: 3200
   enc_layers: 4
-  dec_layers: 7
+  dec_layers: 1
   nheads: 8
   #camera_names: [top, front_close, left_pillar, right_pillar]
   camera_names: [top]

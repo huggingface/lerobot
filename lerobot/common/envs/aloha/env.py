@@ -191,7 +191,6 @@ class AlohaEnv(AbstractEnv):
             {
                 "observation": TensorDict(obs, batch_size=[]),
                 "reward": torch.tensor([reward], dtype=torch.float32),
-                # success and done are true when coverage > self.success_threshold in env
                 "done": torch.tensor([done], dtype=torch.bool),
                 "success": torch.tensor([success], dtype=torch.bool),
             },
