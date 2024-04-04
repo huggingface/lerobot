@@ -33,11 +33,10 @@ policy:
   nheads: 8
   #camera_names: [top, front_close, left_pillar, right_pillar]
   camera_names: [top]
-  position_embedding: sine
-  masks: false
   dilation: false
   dropout: 0.1
   pre_norm: false
+  activation: relu
 
   vae: true
 
