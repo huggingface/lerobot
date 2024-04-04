@@ -72,12 +72,12 @@ class NormalizeTransform(Transform):
             if inkey not in item:
                 continue
             if self.mode == "mean_std":
-                mean = self.stats[inkey]["mean"]
-                std = self.stats[inkey]["std"]
+                mean = self.stats[f"{inkey}.mean"]
+                std = self.stats[f"{inkey}.std"]
                 item[outkey] = (item[inkey] - mean) / (std + 1e-8)
             else:
-                min = self.stats[inkey]["min"]
-                max = self.stats[inkey]["max"]
+                min = self.stats[f"{inkey}.min"]
+                max = self.stats[f"{inkey}.max"]
                 # normalize to [0,1]
                 item[outkey] = (item[inkey] - min) / (max - min)
                 # normalize to [-1, 1]
@@ -89,12 +89,12 @@ class NormalizeTransform(Transform):
             if inkey not in item:
                 continue
             if self.mode == "mean_std":
-                mean = self.stats[inkey]["mean"]
-                std = self.stats[inkey]["std"]
+                mean = self.stats[f"{inkey}.mean"]
+                std = self.stats[f"{inkey}.std"]
                 item[outkey] = item[inkey] * std + mean
             else:
-                min = self.stats[inkey]["min"]
-                max = self.stats[inkey]["max"]
+                min = self.stats[f"{inkey}.min"]
+                max = self.stats[f"{inkey}.max"]
                 item[outkey] = (item[inkey] + 1) / 2
                 item[outkey] = item[outkey] * (max - min) + min
         return item
