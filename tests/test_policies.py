@@ -7,7 +7,7 @@ from torchrl.envs import EnvBase
 
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.envs.factory import make_env
-from lerobot.common.datasets.factory import make_offline_buffer
+from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.policies.abstract import AbstractPolicy
 from lerobot.common.utils import init_hydra_config
 from .utils import DEVICE, DEFAULT_CONFIG_PATH
@@ -45,13 +45,13 @@ def test_concrete_policy(env_name, policy_name, extra_overrides):
     # Check that we can make the policy object.
     policy = make_policy(cfg)
     # Check that we run select_actions and get the appropriate output.
-    offline_buffer = make_offline_buffer(cfg)
-    env = make_env(cfg, transform=offline_buffer.transform)
+    dataset = make_dataset(cfg)
+    env = make_env(cfg, transform=dataset.transform)
 
     if env_name != "aloha":
         # TODO(alexander-soare): Fix this part of the test. PrioritizedSliceSampler raises NotImplementedError:
         # seq_length as a list is not supported for now.
-        policy.update(offline_buffer, torch.tensor(0, device=DEVICE))
+        policy.update(dataset, torch.tensor(0, device=DEVICE))
 
     action = policy(
         env.observation_spec.rand()["observation"].to(DEVICE),

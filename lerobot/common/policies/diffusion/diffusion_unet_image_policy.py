@@ -243,10 +243,9 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         result = {"action": action, "action_pred": action_pred}
         return result
 
-    def compute_loss(self, batch):
-        assert "valid_mask" not in batch
-        nobs = batch["obs"]
-        nactions = batch["action"]
+    def compute_loss(self, obs_dict, action):
+        nobs = obs_dict
+        nactions = action
         batch_size = nactions.shape[0]
         horizon = nactions.shape[1]
 
