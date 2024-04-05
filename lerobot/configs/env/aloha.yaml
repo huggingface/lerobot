@@ -14,7 +14,7 @@ dataset_id: aloha_sim_insertion_human
 
 env:
   name: aloha
-  task: sim_insertion
+  task: insertion
   from_pixels: True
   pixels_only: False
   image_size: [3, 480, 640]
