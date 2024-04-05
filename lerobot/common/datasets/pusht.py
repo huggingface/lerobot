@@ -105,15 +105,17 @@ class PushtDataset(torch.utils.data.Dataset):
         self.transform = transform
         self.delta_timestamps = delta_timestamps
 
-        data_dir = self.root / f"{self.dataset_id}"
-        if (data_dir / "data_dict.pth").exists() and (data_dir / "data_ids_per_episode.pth").exists():
-            self.data_dict = torch.load(data_dir / "data_dict.pth")
-            self.data_ids_per_episode = torch.load(data_dir / "data_ids_per_episode.pth")
+        self.data_dir = self.root / f"{self.dataset_id}"
+        if (self.data_dir / "data_dict.pth").exists() and (
+            self.data_dir / "data_ids_per_episode.pth"
+        ).exists():
+            self.data_dict = torch.load(self.data_dir / "data_dict.pth")
+            self.data_ids_per_episode = torch.load(self.data_dir / "data_ids_per_episode.pth")
         else:
             self._download_and_preproc_obsolete()
-            data_dir.mkdir(parents=True, exist_ok=True)
-            torch.save(self.data_dict, data_dir / "data_dict.pth")
-            torch.save(self.data_ids_per_episode, data_dir / "data_ids_per_episode.pth")
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(self.data_dict, self.data_dir / "data_dict.pth")
+            torch.save(self.data_ids_per_episode, self.data_dir / "data_ids_per_episode.pth")
 
     @property
     def num_samples(self) -> int:

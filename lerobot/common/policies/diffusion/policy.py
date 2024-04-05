@@ -157,7 +157,8 @@ class DiffusionPolicy(nn.Module):
             "image": batch["observation.image"],
             "agent_pos": batch["observation.state"],
         }
-        loss = self.diffusion.compute_loss(obs_dict)
+        action = batch["action"]
+        loss = self.diffusion.compute_loss(obs_dict, action)
         loss.backward()
 
         grad_norm = torch.nn.utils.clip_grad_norm_(

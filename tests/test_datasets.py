@@ -59,11 +59,7 @@ def test_factory(env_name, dataset_id):
 #     )
 #     dataset = make_dataset(cfg)
 #     # Get all of the data.
-#     all_data = TensorDictReplayBuffer(
-#             storage=buffer._storage,
-#             batch_size=len(buffer),
-#             sampler=SamplerWithoutReplacement(),
-#     ).sample().float()
+#     all_data = dataset.data_dict
 #     # Note: we set the batch size to be smaller than the whole dataset to make sure we are testing batched
 #     # computation of the statistics. While doing this, we also make sure it works when we don't divide the
 #     # dataset into even batches. 
