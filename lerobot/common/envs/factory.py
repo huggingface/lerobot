@@ -9,9 +9,17 @@ def make_env(cfg, num_parallel_envs=0) -> gym.Env | gym.vector.SyncVectorEnv:
     kwargs = {}
 
     if cfg.env.name == "simxarm":
-        kwargs["task"] = cfg.env.task
+        import gym_xarm  # noqa: F401
+
+        assert cfg.env.task == "lift"
+        env_fn = lambda: gym.make(
+            "gym_xarm/XarmLift-v0",
+            render_mode="rgb_array",
+            max_episode_steps=cfg.env.episode_length,
+            **kwargs,
+        )
     elif cfg.env.name == "pusht":
-        import gym_pusht  # noqa
+        import gym_pusht  # noqa: F401
 
         # assert kwargs["seed"] > 200, "Seed 0-200 are used for the demonstration dataset, so we don't want to seed the eval env with this range."
         kwargs.update(
