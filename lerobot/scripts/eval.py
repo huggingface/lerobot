@@ -44,42 +44,14 @@ from huggingface_hub import snapshot_download
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.envs.factory import make_env
+from lerobot.common.envs.utils import postprocess_action, preprocess_observation
 from lerobot.common.logger import log_output_dir
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.transforms import apply_inverse_transform
 from lerobot.common.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 
 
 def write_video(video_path, stacked_frames, fps):
     imageio.mimsave(video_path, stacked_frames, fps=fps)
-
-
-def preprocess_observation(observation, transform=None):
-    # map to expected inputs for the policy
-    obs = {
-        "observation.image": torch.from_numpy(observation["pixels"]).float(),
-        "observation.state": torch.from_numpy(observation["agent_pos"]).float(),
-    }
-    # convert to (b c h w) torch format
-    obs["observation.image"] = einops.rearrange(obs["observation.image"], "b h w c -> b c h w")
-
-    # apply same transforms as in training
-    if transform is not None:
-        for key in obs:
-            obs[key] = torch.stack([transform({key: item})[key] for item in obs[key]])
-
-    return obs
-
-
-def postprocess_action(action, transform=None):
-    action = action.to("cpu")
-    # action is a batch (num_env,action_dim) instead of an item (action_dim),
-    # we assume applying inverse transform on a batch works the same
-    action = apply_inverse_transform({"action": action}, transform)["action"].numpy()
-    assert (
-        action.ndim == 2
-    ), "we assume dimensions are respectively the number of parallel envs, action dimensions"
-    return action
 
 
 def eval_policy(
@@ -114,10 +86,10 @@ def eval_policy(
     def maybe_render_frame(env):
         if save_video:  # noqa: B023
             if return_first_video:
-                visu = env.envs[0].render()
+                visu = env.envs[0].render(mode="visualization")
                 visu = visu[None, ...]  # add batch dim
             else:
-                visu = np.stack([env.render() for env in env.envs])
+                visu = np.stack([env.render(mode="visualization") for env in env.envs])
             ep_frames.append(visu)  # noqa: B023
 
     for _ in range(num_episodes):
