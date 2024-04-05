@@ -1,5 +1,4 @@
 import logging
-from itertools import cycle
 from pathlib import Path
 
 import hydra
@@ -7,10 +6,16 @@ import numpy as np
 import torch
 
 from lerobot.common.datasets.factory import make_dataset
+from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.utils import format_big_number, get_safe_torch_device, init_logging, set_global_seed
+from lerobot.common.utils import (
+    format_big_number,
+    get_safe_torch_device,
+    init_logging,
+    set_global_seed,
+)
 from lerobot.scripts.eval import eval_policy
 
 

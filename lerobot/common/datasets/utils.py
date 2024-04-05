@@ -203,3 +203,12 @@ def compute_or_load_stats(dataset, batch_size=32, max_num_samples=None):
 
     torch.save(stats, stats_path)
     return stats
+
+
+def cycle(iterable):
+    iterator = iter(iterable)
+    while True:
+        try:
+            yield next(iterator)
+        except StopIteration:
+            iterator = iter(iterable)
