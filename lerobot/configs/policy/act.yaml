@@ -21,24 +21,27 @@ policy:
 
   lr: 1e-5
   lr_backbone: 1e-5
+  pretrained_backbone: true
   weight_decay: 1e-4
   grad_clip_norm: 10
   backbone: resnet18
   horizon: ${horizon} # chunk_size
   kl_weight: 10
-  hidden_dim: 512
+  d_model: 512
   dim_feedforward: 3200
+  vae_enc_layers: 4
   enc_layers: 4
   dec_layers: 1
-  nheads: 8
+  num_heads: 8
   #camera_names: [top, front_close, left_pillar, right_pillar]
   camera_names: [top]
   dilation: false
   dropout: 0.1
   pre_norm: false
   activation: relu
+  latent_dim: 32
 
-  vae: true
+  use_vae: true
 
   batch_size: 8
 

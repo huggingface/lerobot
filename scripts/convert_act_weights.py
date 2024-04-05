@@ -42,6 +42,8 @@ start_replacements = [
     ("model.transformer.encoder.", "model.encoder."),
     ("model.transformer.decoder.", "model.decoder."),
     ("model.backbones.0.0.body.", "model.backbone."),
+    ("model.additional_pos_embed.weight", "model.encoder_robot_and_latent_pos_embed.weight"),
+    ("model.cls_embed.weight", "model.vae_encoder_cls_embed.weight"),
 ]
 
 for to_replace, replace_with in start_replacements:
