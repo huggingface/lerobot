@@ -6,7 +6,7 @@
 #SBATCH --time=2-00:00:00
 #SBATCH --output=/home/rcadene/slurm/%j.out
 #SBATCH --error=/home/rcadene/slurm/%j.err
-#SBATCH --qos=medium
+#SBATCH --qos=low
 #SBATCH --mail-user=re.cadene@gmail.com
 #SBATCH --mail-type=ALL
 
@@ -19,5 +19,7 @@ apptainer exec --nv \
 source ~/.bashrc
 #conda activate fowm
 conda activate lerobot
+
+export DATA_DIR="data"
 
 srun $CMD

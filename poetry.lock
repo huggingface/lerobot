@@ -904,6 +904,26 @@ reference = "HEAD"
 resolved_reference = "0fe4449cca5a2b08f529f7a07fbf5b9df24962ec"
 
 [[package]]
+name = "gym-xarm"
+version = "0.1.0"
+description = "A gym environment for xArm"
+optional = true
+python-versions = "^3.10"
+files = []
+develop = false
+
+[package.dependencies]
+gymnasium = "^0.29.1"
+gymnasium-robotics = "^1.2.4"
+mujoco = "^2.3.7"
+
+[package.source]
+type = "git"
+url = "git@github.com:huggingface/gym-xarm.git"
+reference = "HEAD"
+resolved_reference = "2eb83fc4fc871b9d271c946d169e42f226ac3a7c"
+
+[[package]]
 name = "gymnasium"
 version = "0.29.1"
 description = "A standard API for reinforcement learning and a diverse set of reference environments (formerly Gym)."
@@ -3695,8 +3715,9 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 
 [extras]
 pusht = ["gym_pusht"]
+xarm = ["gym_xarm"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "3eee17e4bf2b7a570f41ef9c400ec5a24a3113f62a13162229cf43504ca0d005"
+content-hash = "c9524cdf000eaa755a2ab3be669118222b4f8b1c262013f103f6874cbd54eeb6"
