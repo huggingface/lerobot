@@ -17,7 +17,7 @@ env:
   from_pixels: True
   pixels_only: False
   image_size: 84
-  action_repeat: 2
+  # action_repeat: 2  # we can remove if policy has n_action_steps=2
   episode_length: 25
   fps: ${fps}
 

@@ -1,6 +1,6 @@
 # @package _global_
 
-n_action_steps: 1
+n_action_steps: 2
 n_obs_steps: 1
 
 policy:
