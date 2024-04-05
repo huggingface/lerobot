@@ -9,36 +9,7 @@ from lerobot.common.utils import init_hydra_config
 
 from lerobot.common.envs.utils import preprocess_observation
 
-# import dmc_aloha  # noqa: F401
-
 from .utils import DEVICE, DEFAULT_CONFIG_PATH
-
-
-# def print_spec_rollout(env):
-#     print("observation_spec:", env.observation_spec)
-#     print("action_spec:", env.action_spec)
-#     print("reward_spec:", env.reward_spec)
-#     print("done_spec:", env.done_spec)
-
-#     td = env.reset()
-#     print("reset tensordict", td)
-
-#     td = env.rand_step(td)
-#     print("random step tensordict", td)
-
-#     def simple_rollout(steps=100):
-#         # preallocate:
-#         data = TensorDict({}, [steps])
-#         # reset
-#         _data = env.reset()
-#         for i in range(steps):
-#             _data["action"] = env.action_spec.rand()
-#             _data = env.step(_data)
-#             data[i] = _data
-#             _data = step_mdp(_data, keep_other=True)
-#         return data
-
-#     print("data from rollout:", simple_rollout(100))
 
 
 @pytest.mark.parametrize(
@@ -54,7 +25,7 @@ from .utils import DEVICE, DEFAULT_CONFIG_PATH
 def test_aloha(env_task, obs_type):
     from lerobot.common.envs import aloha as gym_aloha  # noqa: F401
     env = gym.make(f"gym_aloha/{env_task}", obs_type=obs_type)
-    check_env(env)
+    check_env(env.unwrapped)
 
 
 
@@ -70,7 +41,7 @@ def test_aloha(env_task, obs_type):
 def test_xarm(env_task, obs_type):
     import gym_xarm  # noqa: F401
     env = gym.make(f"gym_xarm/{env_task}", obs_type=obs_type)
-    check_env(env)
+    check_env(env.unwrapped)
 
 
 
@@ -85,7 +56,7 @@ def test_xarm(env_task, obs_type):
 def test_pusht(env_task, obs_type):
     import gym_pusht  # noqa: F401
     env = gym.make(f"gym_pusht/{env_task}", obs_type=obs_type)
-    check_env(env)
+    check_env(env.unwrapped)
 
 
 @pytest.mark.parametrize(
@@ -93,7 +64,7 @@ def test_pusht(env_task, obs_type):
     [
         "pusht",
         "simxarm",
-        # "aloha",
+        "aloha",
     ],
 )
 def test_factory(env_name):
@@ -104,9 +75,8 @@ def test_factory(env_name):
 
     dataset = make_dataset(cfg)
 
-    env = make_env(cfg)
+    env = make_env(cfg, num_parallel_envs=1)
     obs, info = env.reset()
-    obs = {key: obs[key][None, ...] for key in obs}
     obs = preprocess_observation(obs, transform=dataset.transform)
     for key in dataset.image_keys:
         img = obs[key]
