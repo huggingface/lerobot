@@ -41,7 +41,6 @@ def log_train_info(logger, info, step, cfg, dataset, is_offline):
     loss = info["loss"]
     grad_norm = info["grad_norm"]
     lr = info["lr"]
-    data_s = info["data_s"]
     update_s = info["update_s"]
 
     # A sample is an (observation,action) pair, where observation and action
@@ -62,7 +61,6 @@ def log_train_info(logger, info, step, cfg, dataset, is_offline):
         f"grdn:{grad_norm:.3f}",
         f"lr:{lr:0.1e}",
         # in seconds
-        f"data_s:{data_s:.3f}",
         f"updt_s:{update_s:.3f}",
     ]
     logging.info(" ".join(log_items))
@@ -200,7 +198,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     is_offline = True
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=4,
+        num_workers=0,
         batch_size=cfg.policy.batch_size,
         shuffle=True,
         pin_memory=cfg.device != "cpu",

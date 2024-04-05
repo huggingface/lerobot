@@ -152,7 +152,6 @@ class DiffusionPolicy(nn.Module):
         self.diffusion.train()
 
         data_s = time.time() - start_time
-
         loss = self.diffusion.compute_loss(batch)
         loss.backward()
 
