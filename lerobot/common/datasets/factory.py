@@ -78,15 +78,11 @@ def make_dataset(
             ]
         )
 
-    if cfg.policy.name == "diffusion" and cfg.env.name == "pusht":
-        # TODO(rcadene): implement delta_timestamps in config
-        delta_timestamps = {
-            "observation.image": [-0.1, 0],
-            "observation.state": [-0.1, 0],
-            "action": [-0.1] + [i / clsfunc.fps for i in range(15)],
-        }
-    else:
-        delta_timestamps = None
+    delta_timestamps = cfg.policy.get("delta_timestamps")
+    if delta_timestamps is not None:
+        for key in delta_timestamps:
+            if isinstance(delta_timestamps[key], str):
+                delta_timestamps[key] = eval(delta_timestamps[key])
 
     dataset = clsfunc(
         dataset_id=cfg.dataset_id,

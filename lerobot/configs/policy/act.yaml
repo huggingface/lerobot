@@ -10,7 +10,6 @@ log_freq: 250
 
 horizon: 100
 n_obs_steps: 1
-n_latency_steps: 0
 # when temporal_agg=False, n_action_steps=horizon
 n_action_steps: ${horizon}
 
