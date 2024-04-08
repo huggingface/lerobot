@@ -6,9 +6,9 @@ import pygame
 import pymunk
 import torch
 import tqdm
+from gym_pusht.envs.pusht import pymunk_to_shapely
 
 from lerobot.common.datasets.utils import download_and_extract_zip, load_data_with_delta_timestamps
-from lerobot.common.envs.pusht.pusht_env import pymunk_to_shapely
 from lerobot.common.policies.diffusion.replay_buffer import ReplayBuffer as DiffusionPolicyReplayBuffer
 
 # as define in env

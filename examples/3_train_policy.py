@@ -37,7 +37,7 @@ policy = DiffusionPolicy(
     cfg_obs_encoder=cfg.obs_encoder,
     cfg_optimizer=cfg.optimizer,
     cfg_ema=cfg.ema,
-    n_action_steps=cfg.n_action_steps + cfg.n_latency_steps,
+    n_action_steps=cfg.n_action_steps,
     **cfg.policy,
 )
 policy.train()

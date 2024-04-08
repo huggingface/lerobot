@@ -16,7 +16,6 @@ seed: 100000
 horizon: 16
 n_obs_steps: 2
 n_action_steps: 8
-n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
 keypoint_visible_rate: 1.0
@@ -38,7 +37,6 @@ policy:
   shape_meta: ${shape_meta}
 
   horizon: ${horizon}
-  # n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 100
   obs_as_global_cond: ${obs_as_global_cond}
@@ -63,6 +61,11 @@ policy:
   lr_scheduler: cosine
   lr_warmup_steps: 500
   grad_clip_norm: 10
+
+  delta_timestamps:
+    observation.image: [-.1, 0]
+    observation.state: [-.1, 0]
+    action: [-.1, 0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1.0, 1.1, 1.2, 1.3, 1.4]
 
 noise_scheduler:
   _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler

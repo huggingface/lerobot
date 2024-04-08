@@ -30,7 +30,7 @@ def make_env(cfg, num_parallel_envs=0) -> gym.Env | gym.vector.SyncVectorEnv:
             **kwargs,
         )
     elif cfg.env.name == "aloha":
-        from lerobot.common.envs import aloha as gym_aloha  # noqa: F401
+        import gym_aloha  # noqa: F401
 
         kwargs["task"] = cfg.env.task
 

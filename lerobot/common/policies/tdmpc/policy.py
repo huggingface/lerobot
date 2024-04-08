@@ -154,8 +154,14 @@ class TDMPCPolicy(nn.Module):
         if len(self._queues["action"]) == 0:
             batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch}
 
+            if self.n_obs_steps == 1:
+                # hack to remove the time dimension
+                for key in batch:
+                    assert batch[key].shape[1] == 1
+                    batch[key] = batch[key][:, 0]
+
             actions = []
-            batch_size = batch["observation.image."].shape[0]
+            batch_size = batch["observation.image"].shape[0]
             for i in range(batch_size):
                 obs = {
                     "rgb": batch["observation.image"][[i]],
@@ -165,6 +171,10 @@ class TDMPCPolicy(nn.Module):
                 action = self.act(obs, t0=t0, step=self.step)
                 actions.append(action)
             action = torch.stack(actions)
+
+            # self.act returns an action for 1 timestep only, so we copy it over `n_action_steps` time
+            if i in range(self.n_action_steps):
+                self._queues["action"].append(action)
 
         action = self._queues["action"].popleft()
         return action
@@ -410,22 +420,45 @@ class TDMPCPolicy(nn.Module):
         #     idxs = torch.cat([idxs, demo_idxs])
         #     weights = torch.cat([weights, demo_weights])
 
+        # TODO(rcadene): convert tdmpc with (batch size, time/horizon, channels)
+        # instead of currently (time/horizon, batch size, channels) which is not the pytorch convention
+        # batch size b = 256, time/horizon t = 5
+        # b t ... -> t b ...
+        for key in batch:
+            if batch[key].ndim > 1:
+                batch[key] = batch[key].transpose(1, 0)
+
+        action = batch["action"]
+        reward = batch["next.reward"][:, :, None]  # add extra channel dimension
+        #  idxs = batch["index"]  # TODO(rcadene): use idxs to update sampling weights
+        done = torch.zeros_like(reward, dtype=torch.bool, device=reward.device)
+        mask = torch.ones_like(reward, dtype=torch.bool, device=reward.device)
+        weights = torch.ones_like(reward, dtype=torch.bool, device=reward.device)
+
+        obses = {
+            "rgb": batch["observation.image"],
+            "state": batch["observation.state"],
+        }
+
+        shapes = {}
+        for k in obses:
+            shapes[k] = obses[k].shape
+            obses[k] = einops.rearrange(obses[k], "t b ... -> (t b) ... ")
+
         # Apply augmentations
         aug_tf = h.aug(self.cfg)
-        obs = aug_tf(obs)
+        obses = aug_tf(obses)
 
-        for k in next_obses:
-            next_obses[k] = einops.rearrange(next_obses[k], "h t ... -> (h t) ...")
-        next_obses = aug_tf(next_obses)
-        for k in next_obses:
-            next_obses[k] = einops.rearrange(
-                next_obses[k],
-                "(h t) ... -> h t ...",
-                h=self.cfg.horizon,
-                t=self.cfg.batch_size,
-            )
+        for k in obses:
+            t, b = shapes[k][:2]
+            obses[k] = einops.rearrange(obses[k], "(t b) ... -> t b ... ", b=b, t=t)
 
-        horizon = self.cfg.horizon
+        obs, next_obses = {}, {}
+        for k in obses:
+            obs[k] = obses[k][0]
+            next_obses[k] = obses[k][1:].clone()
+
+        horizon = next_obses["rgb"].shape[0]
         loss_mask = torch.ones_like(mask, device=self.device)
         for t in range(1, horizon):
             loss_mask[t] = loss_mask[t - 1] * (~done[t - 1])
@@ -497,19 +530,19 @@ class TDMPCPolicy(nn.Module):
         )
         self.optim.step()
 
-        if self.cfg.per:
-            # Update priorities
-            priorities = priority_loss.clamp(max=1e4).detach()
-            has_nan = torch.isnan(priorities).any().item()
-            if has_nan:
-                print(f"priorities has nan: {priorities=}")
-            else:
-                replay_buffer.update_priority(
-                    idxs[:num_slices],
-                    priorities[:num_slices],
-                )
-                if demo_batch_size > 0:
-                    demo_buffer.update_priority(demo_idxs, priorities[num_slices:])
+        # if self.cfg.per:
+        #     # Update priorities
+        #     priorities = priority_loss.clamp(max=1e4).detach()
+        #     has_nan = torch.isnan(priorities).any().item()
+        #     if has_nan:
+        #         print(f"priorities has nan: {priorities=}")
+        #     else:
+        #         replay_buffer.update_priority(
+        #             idxs[:num_slices],
+        #             priorities[:num_slices],
+        #         )
+        #         if demo_batch_size > 0:
+        #             demo_buffer.update_priority(demo_idxs, priorities[num_slices:])
 
         # Update policy + target network
         _, pi_update_info = self.update_pi(zs[:-1].detach(), acts=action)
@@ -532,7 +565,7 @@ class TDMPCPolicy(nn.Module):
             "data_s": data_s,
             "update_s": time.time() - start_time,
         }
-        info["demo_batch_size"] = demo_batch_size
+        # info["demo_batch_size"] = demo_batch_size
         info["expectile"] = expectile
         info.update(value_info)
         info.update(pi_update_info)

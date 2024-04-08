@@ -148,8 +148,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     #     )
 
     logging.info("make_env")
-    # TODO(now): uncomment
-    #env = make_env(cfg, num_parallel_envs=cfg.eval_episodes)
+    env = make_env(cfg, num_parallel_envs=cfg.eval_episodes)
 
     logging.info("make_policy")
     policy = make_policy(cfg)

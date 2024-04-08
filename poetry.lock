@@ -881,6 +881,26 @@ files = [
 protobuf = ["grpcio-tools (>=1.62.1)"]
 
 [[package]]
+name = "gym-aloha"
+version = "0.1.0"
+description = "A gym environment for ALOHA"
+optional = true
+python-versions = "^3.10"
+files = []
+develop = false
+
+[package.dependencies]
+dm-control = "1.0.14"
+gymnasium = "^0.29.1"
+mujoco = "^2.3.7"
+
+[package.source]
+type = "git"
+url = "git@github.com:huggingface/gym-aloha.git"
+reference = "HEAD"
+resolved_reference = "ec7200831e36c14e343cf7d275c6b047f2fe9d11"
+
+[[package]]
 name = "gym-pusht"
 version = "0.1.0"
 description = "PushT environment for LeRobot"
@@ -3714,10 +3734,11 @@ docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "rst.link
 testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-ignore-flaky", "pytest-mypy", "pytest-ruff (>=0.2.1)"]
 
 [extras]
+aloha = ["gym_aloha"]
 pusht = ["gym_pusht"]
 xarm = ["gym_xarm"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "c9524cdf000eaa755a2ab3be669118222b4f8b1c262013f103f6874cbd54eeb6"
+content-hash = "6ef509580cef6bc50e9fbb5095097cbf21218d293a2d171155ced4bbe1d3e151"
