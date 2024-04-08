@@ -158,6 +158,7 @@ class AlohaDataset(torch.utils.data.Dataset):
         self.data_ids_per_episode = {}
         ep_dicts = []
 
+        idx0 = idx1 = 0
         logging.info("Initialize and feed offline buffer")
         for ep_id in tqdm.tqdm(range(NUM_EPISODES[self.dataset_id])):
             ep_path = raw_dir / f"episode_{ep_id}.hdf5"
@@ -165,7 +166,7 @@ class AlohaDataset(torch.utils.data.Dataset):
                 num_frames = ep["/action"].shape[0]
 
                 # last step of demonstration is considered done
-                done = torch.zeros(num_frames, 1, dtype=torch.bool)
+                done = torch.zeros(num_frames, dtype=torch.bool)
                 done[-1] = True
 
                 state = torch.from_numpy(ep["/observations/qpos"][:])
@@ -191,6 +192,14 @@ class AlohaDataset(torch.utils.data.Dataset):
                     # ep_dict[f"next.observation.images.{cam}"] = image[1:]
 
                 ep_dicts.append(ep_dict)
+
+            idx1 += num_frames
+
+            assert isinstance(ep_id, int)
+            self.data_ids_per_episode[ep_id] = torch.arange(idx0, idx1, 1)
+            assert len(self.data_ids_per_episode[ep_id]) == num_frames
+
+            idx0 = idx1
 
         self.data_dict = {}
 

@@ -13,7 +13,7 @@ from .utils import DEVICE, DEFAULT_CONFIG_PATH
     "env_name,policy_name,extra_overrides",
     [
         ("simxarm", "tdmpc", ["policy.mpc=true"]),
-        #("pusht", "tdmpc", ["policy.mpc=false"]),
+        ("pusht", "tdmpc", ["policy.mpc=false"]),
         ("pusht", "diffusion", []),
         # ("aloha", "act", ["env.task=sim_insertion", "dataset_id=aloha_sim_insertion_human"]),
         #("aloha", "act", ["env.task=sim_insertion", "dataset_id=aloha_sim_insertion_scripted"]),
