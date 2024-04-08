@@ -165,7 +165,7 @@ class AlohaDataset(torch.utils.data.Dataset):
                 num_frames = ep["/action"].shape[0]
 
                 # last step of demonstration is considered done
-                done = torch.zeros(num_frames, 1, dtype=torch.bool)
+                done = torch.zeros(num_frames, dtype=torch.bool)
                 done[-1] = True
 
                 state = torch.from_numpy(ep["/observations/qpos"][:])

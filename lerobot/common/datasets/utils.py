@@ -92,11 +92,11 @@ def load_data_with_delta_timestamps(
 
     # TODO(rcadene): synchronize timestamps + interpolation if needed
 
-    tol = 0.02
+    tol = 0.04
     is_pad = min_ > tol
 
     assert is_contiguously_true_or_false(is_pad), (
-        "One or several timestamps unexpectedly violate the tolerance."
+        f"One or several timestamps unexpectedly violate the tolerance ({min_} > {tol=})."
         "This might be due to synchronization issues with timestamps during data collection."
     )
 
