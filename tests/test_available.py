@@ -19,7 +19,7 @@ import lerobot
 # from gym_pusht.envs import PushtEnv
 # from gym_xarm.envs import SimxarmEnv
 
-# from lerobot.common.datasets.simxarm import SimxarmDataset
+# from lerobot.common.datasets.xarm import SimxarmDataset
 # from lerobot.common.datasets.aloha import AlohaDataset
 # from lerobot.common.datasets.pusht import PushtDataset
 

@@ -903,7 +903,7 @@ resolved_reference = "ec7200831e36c14e343cf7d275c6b047f2fe9d11"
 [[package]]
 name = "gym-pusht"
 version = "0.1.0"
-description = "PushT environment for LeRobot"
+description = "A gymnasium environment for PushT."
 optional = true
 python-versions = "^3.10"
 files = []
@@ -921,7 +921,7 @@ shapely = "^2.0.3"
 type = "git"
 url = "git@github.com:huggingface/gym-pusht.git"
 reference = "HEAD"
-resolved_reference = "0fe4449cca5a2b08f529f7a07fbf5b9df24962ec"
+resolved_reference = "6c9893504f670ff069d0f759a733e971ea1efdbf"
 
 [[package]]
 name = "gym-xarm"
@@ -3734,11 +3734,11 @@ docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "rst.link
 testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-ignore-flaky", "pytest-mypy", "pytest-ruff (>=0.2.1)"]
 
 [extras]
-aloha = ["gym_aloha"]
-pusht = ["gym_pusht"]
-xarm = ["gym_xarm"]
+aloha = ["gym-aloha"]
+pusht = ["gym-pusht"]
+xarm = ["gym-xarm"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "6ef509580cef6bc50e9fbb5095097cbf21218d293a2d171155ced4bbe1d3e151"
+content-hash = "cb450ac7186e004536d75409edd42cd96062f7b1fd47822a5460d12eab8762f9"

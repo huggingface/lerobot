@@ -27,7 +27,7 @@ from lerobot.__version__ import __version__  # noqa: F401
 available_envs = [
     "aloha",
     "pusht",
-    "simxarm",
+    "xarm",
 ]
 
 available_tasks_per_env = {
@@ -36,7 +36,7 @@ available_tasks_per_env = {
         "sim_transfer_cube",
     ],
     "pusht": ["pusht"],
-    "simxarm": ["lift"],
+    "xarm": ["lift"],
 }
 
 available_datasets_per_env = {
@@ -47,7 +47,7 @@ available_datasets_per_env = {
         "aloha_sim_transfer_cube_scripted",
     ],
     "pusht": ["pusht"],
-    "simxarm": ["xarm_lift_medium"],
+    "xarm": ["xarm_lift_medium"],
 }
 
 available_datasets = [dataset for env in available_envs for dataset in available_datasets_per_env[env]]

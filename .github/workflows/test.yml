@@ -204,7 +204,7 @@ jobs:
           source .venv/bin/activate
           python lerobot/scripts/train.py \
             policy=tdmpc \
-            env=simxarm \
+            env=xarm \
             wandb.enable=False \
             offline_steps=1 \
             online_steps=1 \
@@ -229,6 +229,6 @@ jobs:
           python lerobot/scripts/eval.py \
             --config lerobot/configs/default.yaml \
             policy=tdmpc  \
-            env=simxarm \
+            env=xarm \
             eval_episodes=1 \
             device=cpu
