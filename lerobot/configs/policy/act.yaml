@@ -1,6 +1,6 @@
 # @package _global_
 
-offline_steps: 2000
+offline_steps: 80000
 online_steps: 0
 
 eval_episodes: 1
@@ -54,8 +54,12 @@ policy:
 
   temporal_agg: false
 
-  state_dim: ???
-  action_dim: ???
+  state_dim: 14
+  action_dim: 14
+
+  image_normalization:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
 
   delta_timestamps:
     observation.images.top: [0.0]
