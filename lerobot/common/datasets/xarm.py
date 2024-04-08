@@ -24,7 +24,7 @@ def download(raw_dir):
     zip_path.unlink()
 
 
-class SimxarmDataset(torch.utils.data.Dataset):
+class XarmDataset(torch.utils.data.Dataset):
     available_datasets = [
         "xarm_lift_medium",
     ]

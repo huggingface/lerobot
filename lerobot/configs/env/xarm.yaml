@@ -12,7 +12,9 @@ fps: 15
 dataset_id: xarm_lift_medium
 
 env:
-  name: simxarm
+  name: xarm
+  handle: XarmLift-v0
+  # TODO(aliberts): replace task with handle
   task: lift
   from_pixels: True
   pixels_only: False

@@ -19,10 +19,10 @@ def make_dataset(
     normalize=True,
     stats_path=None,
 ):
-    if cfg.env.name == "simxarm":
-        from lerobot.common.datasets.simxarm import SimxarmDataset
+    if cfg.env.name == "xarm":
+        from lerobot.common.datasets.xarm import XarmDataset
 
-        clsfunc = SimxarmDataset
+        clsfunc = XarmDataset
 
     elif cfg.env.name == "pusht":
         from lerobot.common.datasets.pusht import PushtDataset

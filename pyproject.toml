@@ -52,14 +52,17 @@ robomimic = "0.2.0"
 gymnasium-robotics = "^1.2.4"
 gymnasium = "^0.29.1"
 cmake = "^3.29.0.1"
-gym_pusht = { git = "git@github.com:huggingface/gym-pusht.git", optional = true}
-gym_xarm = { git = "git@github.com:huggingface/gym-xarm.git", optional = true}
-# gym_pusht = { path = "../gym-pusht", develop = true, optional = true}
-# gym_xarm = { path = "../gym-xarm", develop = true, optional = true}
+gym-pusht = { git = "git@github.com:huggingface/gym-pusht.git", optional = true}
+gym-xarm = { git = "git@github.com:huggingface/gym-xarm.git", optional = true}
+gym-aloha = { git = "git@github.com:huggingface/gym-aloha.git", optional = true}
+# gym-pusht = { path = "../gym-pusht", develop = true, optional = true}
+# gym-xarm = { path = "../gym-xarm", develop = true, optional = true}
+# gym-aloha = { path = "../gym-aloha", develop = true, optional = true}
 
 [tool.poetry.extras]
-pusht = ["gym_pusht"]
-xarm = ["gym_xarm"]
+pusht = ["gym-pusht"]
+xarm = ["gym-xarm"]
+aloha = ["gym-aloha"]
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.6.2"

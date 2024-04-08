@@ -11,7 +11,7 @@ from .utils import DEVICE, DEFAULT_CONFIG_PATH
 @pytest.mark.parametrize(
     "env_name,dataset_id,policy_name",
     [
-        ("simxarm", "xarm_lift_medium", "tdmpc"),
+        ("xarm", "xarm_lift_medium", "tdmpc"),
         ("pusht", "pusht", "diffusion"),
         ("aloha", "aloha_sim_insertion_human", "act"),
         ("aloha", "aloha_sim_insertion_scripted", "act"),

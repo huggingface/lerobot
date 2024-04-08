@@ -12,15 +12,15 @@ from .utils import DEVICE, DEFAULT_CONFIG_PATH
 @pytest.mark.parametrize(
     "env_name,policy_name,extra_overrides",
     [
-        ("simxarm", "tdmpc", ["policy.mpc=true"]),
+        ("xarm", "tdmpc", ["policy.mpc=true"]),
         ("pusht", "tdmpc", ["policy.mpc=false"]),
         ("pusht", "diffusion", []),
         # ("aloha", "act", ["env.task=sim_insertion", "dataset_id=aloha_sim_insertion_human"]),
         #("aloha", "act", ["env.task=sim_insertion", "dataset_id=aloha_sim_insertion_scripted"]),
         #("aloha", "act", ["env.task=sim_transfer_cube", "dataset_id=aloha_sim_transfer_cube_human"]),
         #("aloha", "act", ["env.task=sim_transfer_cube", "dataset_id=aloha_sim_transfer_cube_scripted"]),
-        # TODO(aliberts): simxarm not working with diffusion
-        # ("simxarm", "diffusion", []),
+        # TODO(aliberts): xarm not working with diffusion
+        # ("xarm", "diffusion", []),
     ],
 )
 def test_policy(env_name, policy_name, extra_overrides):

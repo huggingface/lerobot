@@ -880,9 +880,29 @@ files = [
 protobuf = ["grpcio-tools (>=1.62.1)"]
 
 [[package]]
+name = "gym-aloha"
+version = "0.1.0"
+description = "A gym environment for ALOHA"
+optional = true
+python-versions = "^3.10"
+files = []
+develop = false
+
+[package.dependencies]
+dm-control = "1.0.14"
+gymnasium = "^0.29.1"
+mujoco = "^2.3.7"
+
+[package.source]
+type = "git"
+url = "git@github.com:huggingface/gym-aloha.git"
+reference = "HEAD"
+resolved_reference = "ec7200831e36c14e343cf7d275c6b047f2fe9d11"
+
+[[package]]
 name = "gym-pusht"
 version = "0.1.0"
-description = "PushT environment for LeRobot"
+description = "A gymnasium environment for PushT."
 optional = true
 python-versions = "^3.10"
 files = []
@@ -900,7 +920,7 @@ shapely = "^2.0.3"
 type = "git"
 url = "git@github.com:huggingface/gym-pusht.git"
 reference = "HEAD"
-resolved_reference = "0fe4449cca5a2b08f529f7a07fbf5b9df24962ec"
+resolved_reference = "6c9893504f670ff069d0f759a733e971ea1efdbf"
 
 [[package]]
 name = "gym-xarm"
@@ -920,7 +940,7 @@ mujoco = "^2.3.7"
 type = "git"
 url = "git@github.com:huggingface/gym-xarm.git"
 reference = "HEAD"
-resolved_reference = "2eb83fc4fc871b9d271c946d169e42f226ac3a7c"
+resolved_reference = "08ddd5a9400783a6898bbf3c3014fc5da3961b9d"
 
 [[package]]
 name = "gymnasium"
@@ -3630,10 +3650,11 @@ docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "rst.link
 testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-ignore-flaky", "pytest-mypy", "pytest-ruff (>=0.2.1)"]
 
 [extras]
-pusht = ["gym_pusht"]
-xarm = ["gym_xarm"]
+aloha = ["gym-aloha"]
+pusht = ["gym-pusht"]
+xarm = ["gym-xarm"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "c9524cdf000eaa755a2ab3be669118222b4f8b1c262013f103f6874cbd54eeb6"
+content-hash = "cb450ac7186e004536d75409edd42cd96062f7b1fd47822a5460d12eab8762f9"
