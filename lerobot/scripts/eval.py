@@ -255,7 +255,7 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
     transform = make_dataset(cfg, stats_path=stats_path).transform
 
     logging.info("Making environment.")
-    env = make_env(cfg, num_parallel_envs=cfg.rollout_batch_size)
+    env = make_env(cfg, num_parallel_envs=cfg.eval_episodes)
 
     # when policy is None, rollout a random policy
     policy = make_policy(cfg) if cfg.policy.pretrained_model_path else None
