@@ -1,3 +1,4 @@
+import importlib
 import pytest
 import torch
 from lerobot.common.datasets.factory import make_dataset
@@ -13,49 +14,25 @@ from .utils import DEVICE, DEFAULT_CONFIG_PATH
 
 
 @pytest.mark.parametrize(
-    "env_task, obs_type",
+    "env_name, task, obs_type",
     [
         # ("AlohaInsertion-v0", "state"),
-        ("AlohaInsertion-v0", "pixels"),
-        ("AlohaInsertion-v0", "pixels_agent_pos"),
-        ("AlohaTransferCube-v0", "pixels"),
-        ("AlohaTransferCube-v0", "pixels_agent_pos"),
+        ("aloha", "AlohaInsertion-v0", "pixels"),
+        ("aloha", "AlohaInsertion-v0", "pixels_agent_pos"),
+        ("aloha", "AlohaTransferCube-v0", "pixels"),
+        ("aloha", "AlohaTransferCube-v0", "pixels_agent_pos"),
+        ("xarm", "XarmLift-v0", "state"),
+        ("xarm", "XarmLift-v0", "pixels"),
+        ("xarm", "XarmLift-v0", "pixels_agent_pos"),
+        ("pusht", "PushT-v0", "state"),
+        ("pusht", "PushT-v0", "pixels"),
+        ("pusht", "PushT-v0", "pixels_agent_pos"),
     ],
 )
-def test_aloha(env_task, obs_type):
-    from lerobot.common.envs import aloha as gym_aloha  # noqa: F401
-    env = gym.make(f"gym_aloha/{env_task}", obs_type=obs_type)
-    check_env(env.unwrapped)
-
-
-
-@pytest.mark.parametrize(
-    "env_task, obs_type",
-    [
-        ("XarmLift-v0", "state"),
-        ("XarmLift-v0", "pixels"),
-        ("XarmLift-v0", "pixels_agent_pos"),
-        # TODO(aliberts): Add gym_xarm other tasks
-    ],
-)
-def test_xarm(env_task, obs_type):
-    import gym_xarm  # noqa: F401
-    env = gym.make(f"gym_xarm/{env_task}", obs_type=obs_type)
-    check_env(env.unwrapped)
-
-
-
-@pytest.mark.parametrize(
-    "env_task, obs_type",
-    [
-        ("PushTPixels-v0", "state"),
-        ("PushTPixels-v0", "pixels"),
-        ("PushTPixels-v0", "pixels_agent_pos"),
-    ],
-)
-def test_pusht(env_task, obs_type):
-    import gym_pusht  # noqa: F401
-    env = gym.make(f"gym_pusht/{env_task}", obs_type=obs_type)
+def test_env(env_name, task, obs_type):
+    package_name = f"gym_{env_name}"
+    importlib.import_module(package_name)
+    env = gym.make(f"{package_name}/{task}", obs_type=obs_type)
     check_env(env.unwrapped)
 
 
@@ -63,7 +40,7 @@ def test_pusht(env_task, obs_type):
     "env_name",
     [
         "pusht",
-        "simxarm",
+        "xarm",
         "aloha",
     ],
 )
@@ -76,7 +53,7 @@ def test_factory(env_name):
     dataset = make_dataset(cfg)
 
     env = make_env(cfg, num_parallel_envs=1)
-    obs, info = env.reset()
+    obs, _ = env.reset()
     obs = preprocess_observation(obs, transform=dataset.transform)
     for key in dataset.image_keys:
         img = obs[key]
