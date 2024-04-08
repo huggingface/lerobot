@@ -89,7 +89,9 @@ def eval_policy(
                 visu = env.envs[0].render(mode="visualization")
                 visu = visu[None, ...]  # add batch dim
             else:
-                visu = np.stack([env.render(mode="visualization") for env in env.envs])
+                # TODO(now): Put mode back in.
+                visu = np.stack([env.render() for env in env.envs])
+                # visu = np.stack([env.render(mode="visualization") for env in env.envs])
             ep_frames.append(visu)  # noqa: B023
 
     for _ in range(num_episodes):
@@ -248,7 +250,7 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
 
     logging.info("Making transforms.")
     # TODO(alexander-soare): Completely decouple datasets from evaluation.
-    dataset = make_dataset(cfg, stats_path=stats_path)
+    transform = make_dataset(cfg, stats_path=stats_path).transform
 
     logging.info("Making environment.")
     env = make_env(cfg, num_parallel_envs=cfg.rollout_batch_size)
@@ -263,7 +265,7 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
         video_dir=Path(out_dir) / "eval",
         fps=cfg.env.fps,
         # TODO(rcadene): what should we do with the transform?
-        transform=dataset.transform,
+        transform=transform,
         seed=cfg.seed,
     )
     print(info["aggregated"])

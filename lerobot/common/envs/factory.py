@@ -35,7 +35,7 @@ def make_env(cfg, num_parallel_envs=0) -> gym.Env | gym.vector.SyncVectorEnv:
         kwargs["task"] = cfg.env.task
 
         env_fn = lambda: gym.make(  # noqa: E731
-            "gym_aloha/AlohaInsertion-v0",
+            "gym_aloha/AlohaTransferCube-v0",
             **kwargs,
         )
     else:
