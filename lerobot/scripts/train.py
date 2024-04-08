@@ -162,7 +162,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     logger = Logger(out_dir, job_name, cfg)
 
     log_output_dir(out_dir)
-    logging.info(f"{cfg.env.handle=}")
+    logging.info(f"{cfg.env.task=}")
     logging.info(f"{cfg.offline_steps=} ({format_big_number(cfg.offline_steps)})")
     logging.info(f"{cfg.online_steps=}")
     logging.info(f"{cfg.env.action_repeat=}")

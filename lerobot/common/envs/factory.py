@@ -26,12 +26,14 @@ def make_env(cfg, num_parallel_envs=0) -> gym.Env | gym.vector.SyncVectorEnv:
         )
         raise e
 
-    handle = f"{package_name}/{cfg.env.handle}"
+    gym_handle = f"{package_name}/{cfg.env.task}"
 
     if num_parallel_envs == 0:
         # non-batched version of the env that returns an observation of shape (c)
-        env = gym.make(handle, **kwargs)
+        env = gym.make(gym_handle, **kwargs)
     else:
         # batched version of the env that returns an observation of shape (b, c)
-        env = gym.vector.SyncVectorEnv([lambda: gym.make(handle, **kwargs) for _ in range(num_parallel_envs)])
+        env = gym.vector.SyncVectorEnv(
+            [lambda: gym.make(gym_handle, **kwargs) for _ in range(num_parallel_envs)]
+        )
     return env

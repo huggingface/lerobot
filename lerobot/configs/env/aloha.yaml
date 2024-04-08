@@ -14,9 +14,7 @@ dataset_id: aloha_sim_insertion_human
 
 env:
   name: aloha
-  handle: AlohaInsertion-v0
-  # TODO(aliberts): replace task with handle
-  task: insertion
+  task: AlohaInsertion-v0
   from_pixels: True
   pixels_only: False
   image_size: [3, 480, 640]

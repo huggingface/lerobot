@@ -14,7 +14,7 @@ from .utils import DEVICE, DEFAULT_CONFIG_PATH
 
 
 @pytest.mark.parametrize(
-    "env_name, handle, obs_type",
+    "env_name, task, obs_type",
     [
         # ("AlohaInsertion-v0", "state"),
         ("aloha", "AlohaInsertion-v0", "pixels"),
@@ -29,10 +29,10 @@ from .utils import DEVICE, DEFAULT_CONFIG_PATH
         ("pusht", "PushT-v0", "pixels_agent_pos"),
     ],
 )
-def test_env(env_name, handle, obs_type):
+def test_env(env_name, task, obs_type):
     package_name = f"gym_{env_name}"
     importlib.import_module(package_name)
-    env = gym.make(f"{package_name}/{handle}", obs_type=obs_type)
+    env = gym.make(f"{package_name}/{task}", obs_type=obs_type)
     check_env(env.unwrapped)
 
 
