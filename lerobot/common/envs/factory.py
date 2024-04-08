@@ -32,12 +32,14 @@ def make_env(cfg, num_parallel_envs=0) -> gym.Env | gym.vector.SyncVectorEnv:
     elif cfg.env.name == "aloha":
         import gym_aloha  # noqa: F401
 
-        kwargs["task"] = cfg.env.task
+        if cfg.env.task == "sim_transfer_cube":
+            env_name = "gym_aloha/AlohaTransferCube-v0"
+        elif cfg.env.task == "sim_insertion":
+            env_name = "gym_aloha/AlohaInsertion-v0"
+        else:
+            raise ValueError(f"`{cfg.env.task}` has no environment implementation.")
 
-        env_fn = lambda: gym.make(  # noqa: E731
-            "gym_aloha/AlohaTransferCube-v0",
-            **kwargs,
-        )
+        env_fn = lambda: gym.make(env_name, **kwargs)  # noqa: E731
     else:
         raise ValueError(cfg.env.name)
 
