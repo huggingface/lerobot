@@ -941,7 +941,7 @@ mujoco = "^2.3.7"
 type = "git"
 url = "git@github.com:huggingface/gym-xarm.git"
 reference = "HEAD"
-resolved_reference = "08ddd5a9400783a6898bbf3c3014fc5da3961b9d"
+resolved_reference = "ce294c0d30def08414d9237e2bf9f373d448ca07"
 
 [[package]]
 name = "gymnasium"
@@ -1329,16 +1329,12 @@ description = "lazy_loader"
 optional = true
 python-versions = ">=3.7"
 files = [
-    {file = "lazy_loader-0.4-py3-none-any.whl", hash = "sha256:342aa8e14d543a154047afb4ba8ef17f5563baad3fc610d7b15b213b0f119efc"},
-    {file = "lazy_loader-0.4.tar.gz", hash = "sha256:47c75182589b91a4e1a85a136c074285a5ad4d9f39c63e0d7fb76391c4574cd1"},
+    {file = "lazy_loader-0.3-py3-none-any.whl", hash = "sha256:1e9e76ee8631e264c62ce10006718e80b2cfc74340d17d1031e0f84af7478554"},
+    {file = "lazy_loader-0.3.tar.gz", hash = "sha256:3b68898e34f5b2a29daaaac172c6555512d0f32074f147e2254e4a6d9d838f37"},
 ]
 
-[package.dependencies]
-packaging = "*"
-
 [package.extras]
-dev = ["changelist (==0.5)"]
-lint = ["pre-commit (==3.7.0)"]
+lint = ["pre-commit (>=3.3)"]
 test = ["pytest (>=7.4)", "pytest-cov (>=4.1)"]
 
 [[package]]
