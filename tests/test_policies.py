@@ -15,10 +15,10 @@ from .utils import DEVICE, DEFAULT_CONFIG_PATH
         ("xarm", "tdmpc", ["policy.mpc=true"]),
         ("pusht", "tdmpc", ["policy.mpc=false"]),
         ("pusht", "diffusion", []),
-        # ("aloha", "act", ["env.task=sim_insertion", "dataset_id=aloha_sim_insertion_human"]),
-        #("aloha", "act", ["env.task=sim_insertion", "dataset_id=aloha_sim_insertion_scripted"]),
-        #("aloha", "act", ["env.task=sim_transfer_cube", "dataset_id=aloha_sim_transfer_cube_human"]),
-        #("aloha", "act", ["env.task=sim_transfer_cube", "dataset_id=aloha_sim_transfer_cube_scripted"]),
+        ("aloha", "act", ["env.task=AlohaInsertion-v0", "dataset_id=aloha_sim_insertion_human"]),
+        ("aloha", "act", ["env.task=AlohaInsertion-v0", "dataset_id=aloha_sim_insertion_scripted"]),
+        ("aloha", "act", ["env.task=AlohaTransferCube-v0", "dataset_id=aloha_sim_transfer_cube_human"]),
+        ("aloha", "act", ["env.task=AlohaTransferCube-v0", "dataset_id=aloha_sim_transfer_cube_scripted"]),
         # TODO(aliberts): xarm not working with diffusion
         # ("xarm", "diffusion", []),
     ],
@@ -49,7 +49,7 @@ def test_policy(env_name, policy_name, extra_overrides):
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=4,
-        batch_size=cfg.policy.batch_size,
+        batch_size=2,
         shuffle=True,
         pin_memory=DEVICE != "cpu",
         drop_last=True,

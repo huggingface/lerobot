@@ -51,6 +51,7 @@ policy:
   utd: 1
 
   n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
 
   temporal_agg: false
 
