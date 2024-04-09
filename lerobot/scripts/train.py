@@ -113,10 +113,11 @@ def train(cfg: dict, out_dir=None, job_name=None):
         raise NotImplementedError()
     if job_name is None:
         raise NotImplementedError()
-    if cfg.online_steps > 0:
-        assert cfg.rollout_batch_size == 1, "rollout_batch_size > 1 not supported for online training steps"
 
     init_logging()
+
+    if cfg.online_steps and cfg.rollout_batch_size == 1:
+        logging.warning("rollout_batch_size > 1 not supported for online training steps")
 
     # Check device is available
     get_safe_torch_device(cfg.device, log=True)

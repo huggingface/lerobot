@@ -107,7 +107,6 @@ class TDMPCPolicy(nn.Module):
         self.model_target = deepcopy(self.model)
         self.optim = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
         self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr)
-        # self.bc_optim = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
         self.model.eval()
         self.model_target.eval()
 
