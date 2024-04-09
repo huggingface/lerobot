@@ -86,10 +86,10 @@ def eval_policy(
     def maybe_render_frame(env):
         if save_video:  # noqa: B023
             if return_first_video:
-                visu = env.envs[0].render(mode="visualization")
+                visu = env.envs[0].render()
                 visu = visu[None, ...]  # add batch dim
             else:
-                visu = np.stack([env.render(mode="visualization") for env in env.envs])
+                visu = np.stack([env.render() for env in env.envs])
             ep_frames.append(visu)  # noqa: B023
 
     for _ in range(num_episodes):
