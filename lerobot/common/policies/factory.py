@@ -25,10 +25,10 @@ def make_policy(cfg):
 
         policy = ActionChunkingTransformerPolicy(
             cfg.policy,
-            cfg.device,
-            n_obs_steps=cfg.n_obs_steps,
-            n_action_steps=cfg.n_action_steps,
+            n_obs_steps=cfg.policy.n_obs_steps,
+            n_action_steps=cfg.policy.n_action_steps,
         )
+        policy.to(cfg.device)
     else:
         raise ValueError(cfg.policy.name)
 

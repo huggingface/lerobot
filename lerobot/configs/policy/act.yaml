@@ -50,8 +50,12 @@ policy:
   utd: 1
 
   n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
 
   temporal_agg: false
 
   state_dim: ???
   action_dim: ???
+
+  delta_timestamps:
+    action: "[i / ${fps} for i in range(${horizon})]"
