@@ -248,7 +248,7 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
 
     logging.info("Making transforms.")
     # TODO(alexander-soare): Completely decouple datasets from evaluation.
-    dataset = make_dataset(cfg, stats_path=stats_path)
+    transform = make_dataset(cfg, stats_path=stats_path).transform
 
     logging.info("Making environment.")
     env = make_env(cfg, num_parallel_envs=cfg.eval_episodes)
@@ -263,7 +263,7 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
         video_dir=Path(out_dir) / "eval",
         fps=cfg.env.fps,
         # TODO(rcadene): what should we do with the transform?
-        transform=dataset.transform,
+        transform=transform,
         seed=cfg.seed,
     )
     print(info["aggregated"])

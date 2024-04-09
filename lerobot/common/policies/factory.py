@@ -23,11 +23,7 @@ def make_policy(cfg):
     elif cfg.policy.name == "act":
         from lerobot.common.policies.act.policy import ActionChunkingTransformerPolicy
 
-        policy = ActionChunkingTransformerPolicy(
-            cfg.policy,
-            n_obs_steps=cfg.policy.n_obs_steps,
-            n_action_steps=cfg.policy.n_action_steps,
-        )
+        policy = ActionChunkingTransformerPolicy(cfg.policy, cfg.device)
         policy.to(cfg.device)
     else:
         raise ValueError(cfg.policy.name)
