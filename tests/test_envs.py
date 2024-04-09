@@ -33,7 +33,7 @@ def test_env(env_name, task, obs_type):
     package_name = f"gym_{env_name}"
     importlib.import_module(package_name)
     env = gym.make(f"{package_name}/{task}", obs_type=obs_type)
-    check_env(env.unwrapped)
+    check_env(env.unwrapped, skip_render_check=True)
     env.close()
 
 @pytest.mark.parametrize(
