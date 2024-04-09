@@ -39,8 +39,6 @@ scikit-image = "^0.22.0"
 numba = "^0.59.0"
 mpmath = "^1.3.0"
 torch = {version = "^2.2.1", source = "torch-cpu"}
-tensordict = {git = "https://github.com/pytorch/tensordict"}
-torchrl = {git = "https://github.com/pytorch/rl", rev = "13bef426dcfa5887c6e5034a6e9697993fa92c37"}
 mujoco = "^2.3.7"
 opencv-python = "^4.9.0.80"
 diffusers = "^0.26.3"
@@ -53,7 +51,12 @@ huggingface-hub = "^0.21.4"
 gymnasium-robotics = "^1.2.4"
 gymnasium = "^0.29.1"
 cmake = "^3.29.0.1"
-
+gym-pusht = { git = "git@github.com:huggingface/gym-pusht.git", optional = true}
+gym-xarm = { git = "git@github.com:huggingface/gym-xarm.git", optional = true}
+gym-aloha = { git = "git@github.com:huggingface/gym-aloha.git", optional = true}
+# gym-pusht = { path = "../gym-pusht", develop = true, optional = true}
+# gym-xarm = { path = "../gym-xarm", develop = true, optional = true}
+# gym-aloha = { path = "../gym-aloha", develop = true, optional = true}
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.6.2"

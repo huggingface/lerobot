@@ -3256,31 +3256,6 @@ packaging = "*"
 protobuf = ">=3.20"
 
 [[package]]
-name = "tensordict"
-version = "0.4.0+b4c91e8"
-description = ""
-optional = false
-python-versions = "*"
-files = []
-develop = false
-
-[package.dependencies]
-cloudpickle = "*"
-numpy = "*"
-torch = ">=2.1.0"
-
-[package.extras]
-checkpointing = ["torchsnapshot-nightly"]
-h5 = ["h5py (>=3.8)"]
-tests = ["pytest", "pytest-benchmark", "pytest-instafail", "pytest-rerunfailures", "pyyaml"]
-
-[package.source]
-type = "git"
-url = "https://github.com/pytorch/tensordict"
-reference = "HEAD"
-resolved_reference = "b4c91e8828c538ca0a50d8383fd99311a9afb078"
-
-[[package]]
 name = "termcolor"
 version = "2.4.0"
 description = "ANSI color formatting for output in terminal"
@@ -3379,40 +3354,6 @@ typing-extensions = ">=4.8.0"
 [package.extras]
 opt-einsum = ["opt-einsum (>=3.3)"]
 optree = ["optree (>=0.9.1)"]
-
-[[package]]
-name = "torchrl"
-version = "0.4.0+13bef42"
-description = ""
-optional = false
-python-versions = "*"
-files = []
-develop = false
-
-[package.dependencies]
-cloudpickle = "*"
-numpy = "*"
-packaging = "*"
-tensordict = ">=0.4.0"
-torch = ">=2.1.0"
-
-[package.extras]
-all = ["ale-py", "atari-py", "dm_control", "git", "gym", "gym[accept-rom-license]", "gymnasium", "h5py", "huggingface_hub", "hydra-core (>=1.1)", "hydra-submitit-launcher", "minari", "moviepy", "mujoco", "pandas", "pettingzoo (>=1.24.1)", "pillow", "pygame", "pytest", "pytest-instafail", "pyyaml", "requests", "scikit-learn", "scipy", "tensorboard", "torchsnapshot", "torchvision", "tqdm", "vmas (>=1.2.10)", "wandb"]
-atari = ["ale-py", "atari-py", "gym", "gym[accept-rom-license]", "pygame"]
-checkpointing = ["torchsnapshot"]
-dm-control = ["dm_control"]
-gym-continuous = ["gymnasium", "mujoco"]
-marl = ["pettingzoo (>=1.24.1)", "vmas (>=1.2.10)"]
-offline-data = ["h5py", "huggingface_hub", "minari", "pandas", "pillow", "requests", "scikit-learn", "torchvision", "tqdm"]
-rendering = ["moviepy"]
-tests = ["pytest", "pytest-instafail", "pyyaml", "scipy"]
-utils = ["git", "hydra-core (>=1.1)", "hydra-submitit-launcher", "tensorboard", "tqdm", "wandb"]
-
-[package.source]
-type = "git"
-url = "https://github.com/pytorch/rl"
-reference = "13bef426dcfa5887c6e5034a6e9697993fa92c37"
-resolved_reference = "13bef426dcfa5887c6e5034a6e9697993fa92c37"
 
 [[package]]
 name = "torchvision"
@@ -3657,4 +3598,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "cb450ac7186e004536d75409edd42cd96062f7b1fd47822a5460d12eab8762f9"
+content-hash = "bf4627c62a45764931729ce373f1038fe289b6caebb01e66d878f6f278c54518"
