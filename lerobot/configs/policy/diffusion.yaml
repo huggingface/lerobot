@@ -38,6 +38,7 @@ policy:
 
   horizon: ${horizon}
   n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
   num_inference_steps: 100
   obs_as_global_cond: ${obs_as_global_cond}
   # crop_shape: null

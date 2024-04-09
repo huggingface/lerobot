@@ -49,7 +49,7 @@ def test_policy(env_name, policy_name, extra_overrides):
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=4,
-        batch_size=cfg.policy.batch_size,
+        batch_size=2,
         shuffle=True,
         pin_memory=DEVICE != "cpu",
         drop_last=True,
