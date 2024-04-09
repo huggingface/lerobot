@@ -164,7 +164,8 @@ def train(cfg: dict, out_dir=None, job_name=None):
     logging.info(f"{cfg.env.task=}")
     logging.info(f"{cfg.offline_steps=} ({format_big_number(cfg.offline_steps)})")
     logging.info(f"{cfg.online_steps=}")
-    logging.info(f"{cfg.env.action_repeat=}")
+    # TODO(now): uncomment
+    # logging.info(f"{cfg.env.action_repeat=}")
     logging.info(f"{dataset.num_samples=} ({format_big_number(dataset.num_samples)})")
     logging.info(f"{dataset.num_episodes=}")
     logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")

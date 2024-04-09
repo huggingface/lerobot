@@ -82,3 +82,5 @@ policy:
     observation.state: "[i / ${fps} for i in range(6)]"
     action: "[i / ${fps} for i in range(5)]"
     next.reward: "[i / ${fps} for i in range(5)]"
+
+  batch_size: 256
