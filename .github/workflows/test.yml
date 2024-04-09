@@ -87,7 +87,7 @@ jobs:
           TMP: ~/tmp
         run: |
           mkdir ~/tmp
-          poetry install --no-interaction --no-root
+          poetry install --no-interaction --no-root --all-extras
 
       - name: Save cached venv
         if: |
@@ -106,7 +106,7 @@ jobs:
       #             install project
       #----------------------------------------------
       - name: Install project
-        run: poetry install --no-interaction
+        run: poetry install --no-interaction --all-extras
 
       #----------------------------------------------
       #            run tests & coverage
