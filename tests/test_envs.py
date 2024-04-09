@@ -34,7 +34,7 @@ def test_env(env_name, task, obs_type):
     importlib.import_module(package_name)
     env = gym.make(f"{package_name}/{task}", obs_type=obs_type)
     check_env(env.unwrapped)
-
+    env.close()
 
 @pytest.mark.parametrize(
     "env_name",
@@ -61,3 +61,5 @@ def test_factory(env_name):
         # TODO(rcadene): we assume for now that image normalization takes place in the model
         assert img.max() <= 1.0
         assert img.min() >= 0.0
+
+    env.close()
