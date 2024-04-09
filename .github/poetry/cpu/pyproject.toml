@@ -58,9 +58,16 @@ xarm = ["gym-xarm"]
 aloha = ["gym-aloha"]
 
 
+[tool.poetry.group.dev]
+optional = true
+
+
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.6.2"
 debugpy = "^1.8.1"
+
+
+[tool.poetry.group.test.dependencies]
 pytest = "^8.1.0"
 pytest-cov = "^5.0.0"
 
