@@ -142,6 +142,7 @@ jobs:
             wandb.enable=False \
             offline_steps=2 \
             online_steps=0 \
+            eval_episodes=1 \
             device=cpu \
             save_model=true \
             save_freq=2 \
@@ -179,6 +180,7 @@ jobs:
             wandb.enable=False \
             offline_steps=2 \
             online_steps=0 \
+            eval_episodes=1 \
             device=cpu \
             save_model=true \
             save_freq=2 \
@@ -202,6 +204,7 @@ jobs:
             policy=diffusion  \
             env=pusht \
             eval_episodes=1 \
+            env.episode_length=8 \
             device=cpu
 
       - name: Test train TDMPC on Simxarm end-to-end
@@ -213,6 +216,7 @@ jobs:
             wandb.enable=False \
             offline_steps=1 \
             online_steps=1 \
+            eval_episodes=1 \
             device=cpu \
             save_model=true \
             save_freq=2 \
