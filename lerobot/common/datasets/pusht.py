@@ -209,16 +209,3 @@ class PushtDataset(torch.utils.data.Dataset):
             self.data_dict[key] = torch.cat([x[key] for x in ep_dicts])
 
         self.data_dict["index"] = torch.arange(0, total_frames, 1)
-
-
-if __name__ == "__main__":
-    dataset = PushtDataset(
-        "pusht",
-        root=Path("data"),
-        delta_timestamps={
-            "observation.image": [0, -1, -0.2, -0.1],
-            "observation.state": [0, -1, -0.2, -0.1],
-            "action": [-0.1, 0, 1, 2, 3],
-        },
-    )
-    dataset[10]
