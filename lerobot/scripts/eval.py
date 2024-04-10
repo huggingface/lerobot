@@ -320,7 +320,6 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
         policy,
         max_episodes_rendered=10,
         video_dir=Path(out_dir) / "eval",
-        # TODO(rcadene): what should we do with the transform?
         transform=transform,
         seed=cfg.seed,
     )
