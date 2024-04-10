@@ -18,7 +18,6 @@ env:
   from_pixels: True
   pixels_only: False
   image_size: 96
-  action_repeat: 1
   episode_length: 300
   fps: ${fps}
 

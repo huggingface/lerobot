@@ -36,6 +36,7 @@ policy:
   log_std_max: 2
 
   # learning
+  batch_size: 256
   max_buffer_size: 10000
   horizon: 5
   reward_coef: 0.5
