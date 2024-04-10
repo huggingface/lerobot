@@ -17,4 +17,4 @@ video_paths = render_dataset(
     max_num_episodes=1,
 )
 print(video_paths)
-# ['outputs/visualize_dataset/example/episode_0.mp4']
+# ['outputs/visualize_dataset/example/episode_0_top.mp4']
