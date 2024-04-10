@@ -236,7 +236,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
         batch_size=cfg.policy.batch_size,
         shuffle=True,
         pin_memory=cfg.device != "cpu",
-        drop_last=True,
+        drop_last=False,
     )
     dl_iter = cycle(dataloader)
 
@@ -283,7 +283,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
         batch_size=cfg.policy.batch_size,
         sampler=sampler,
         pin_memory=cfg.device != "cpu",
-        drop_last=True,
+        drop_last=False,
     )
     dl_iter = cycle(dataloader)
 
