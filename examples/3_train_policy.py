@@ -9,9 +9,8 @@ from pathlib import Path
 
 import torch
 from omegaconf import OmegaConf
-from tqdm import trange
 
-from lerobot.common.datasets.factory import make_offline_buffer
+from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.policies.diffusion.policy import DiffusionPolicy
 from lerobot.common.utils import init_hydra_config
 
@@ -37,19 +36,33 @@ policy = DiffusionPolicy(
     cfg_obs_encoder=cfg.obs_encoder,
     cfg_optimizer=cfg.optimizer,
     cfg_ema=cfg.ema,
-    n_action_steps=cfg.n_action_steps,
     **cfg.policy,
 )
 policy.train()
 
-offline_buffer = make_offline_buffer(cfg)
+dataset = make_dataset(cfg)
 
-for offline_step in trange(cfg.offline_steps):
-    train_info = policy.update(offline_buffer, offline_step)
-    if offline_step % cfg.log_freq == 0:
-        print(train_info)
+# create dataloader for offline training
+dataloader = torch.utils.data.DataLoader(
+    dataset,
+    num_workers=4,
+    batch_size=cfg.policy.batch_size,
+    shuffle=True,
+    pin_memory=cfg.device != "cpu",
+    drop_last=True,
+)
+
+for step, batch in enumerate(dataloader):
+    info = policy(batch, step)
+
+    if step % cfg.log_freq == 0:
+        num_samples = (step + 1) * cfg.policy.batch_size
+        loss = info["loss"]
+        update_s = info["update_s"]
+        print(f"step:{step} samples:{num_samples} loss:{loss:.3f} update_time:{update_s:.3f}(seconds)")
+
 
 # Save the policy, configuration, and normalization stats for later use.
 policy.save(output_directory / "model.pt")
 OmegaConf.save(cfg, output_directory / "config.yaml")
-torch.save(offline_buffer.transform[-1].stats, output_directory / "stats.pth")
+torch.save(dataset.transform.transforms[-1].stats, output_directory / "stats.pth")
