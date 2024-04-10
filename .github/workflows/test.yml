@@ -184,6 +184,7 @@ jobs:
             device=cpu \
             save_model=true \
             save_freq=2 \
+            policy.batch_size=2 \
             hydra.run.dir=tests/outputs/diffusion/
 
       - name: Test eval Diffusion on PushT end-to-end
@@ -220,6 +221,7 @@ jobs:
             device=cpu \
             save_model=true \
             save_freq=2 \
+            policy.batch_size=2 \
             hydra.run.dir=tests/outputs/tdmpc/
 
       - name: Test eval TDMPC on Simxarm end-to-end
