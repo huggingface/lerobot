@@ -74,7 +74,6 @@ def make_dataset(
 
         transforms = v2.Compose(
             [
-                # TODO(rcadene): we need to do something about image_keys
                 Prod(in_keys=clsfunc.image_keys, prod=1 / 255.0),
                 NormalizeTransform(
                     stats,
