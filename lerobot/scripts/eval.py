@@ -135,7 +135,7 @@ def eval_policy(
         # apply inverse transform to unnormalize the action
         action = postprocess_action(action, transform)
 
-        # apply the next
+        # apply the next action
         observation, reward, terminated, truncated, info = env.step(action)
         if max_episodes_rendered > 0:
             render_frame(env)
