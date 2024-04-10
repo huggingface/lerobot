@@ -16,7 +16,7 @@ def preprocess_observation(observation, transform=None):
     for imgkey, img in imgs.items():
         img = torch.from_numpy(img).float()
         # convert to (b c h w) torch format
-        img = einops.rearrange(img, "b h w c -> b c h w")
+        img = einops.rearrange(img, "b h w c -> b c h w").contiguous()
         obs[imgkey] = img
 
     obs["observation.state"] = torch.from_numpy(observation["agent_pos"]).float()
@@ -33,7 +33,9 @@ def postprocess_action(action, transform=None):
     action = action.to("cpu")
     # action is a batch (num_env,action_dim) instead of an item (action_dim),
     # we assume applying inverse transform on a batch works the same
-    action = apply_inverse_transform({"action": action}, transform)["action"].numpy()
+    if transform is not None:
+        action = apply_inverse_transform({"action": action}, transform)["action"]
+    action = action.numpy()
     assert (
         action.ndim == 2
     ), "we assume dimensions are respectively the number of parallel envs, action dimensions"

@@ -183,7 +183,13 @@ class TDMPCPolicy(nn.Module):
     def act(self, obs, t0=False, step=None):
         """Take an action. Uses either MPC or the learned policy, depending on the self.cfg.mpc flag."""
         obs = {k: o.detach() for k, o in obs.items()} if isinstance(obs, dict) else obs.detach()
+        # TODO(now): This is for compatibility with official weights. Remove.
+        # obs['rgb'] = obs['rgb'] * 255
+        # obs_ = torch.load('/tmp/obs.pth')
+        # out_ = torch.load('/tmp/out.pth')
+        # breakpoint()
         z = self.model.encode(obs)
+        # breakpoint()
         if self.cfg.mpc:
             a = self.plan(z, t0=t0, step=step)
         else:

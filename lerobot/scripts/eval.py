@@ -125,6 +125,7 @@ def eval_policy(
 
         # apply inverse transform to unnormalize the action
         action = postprocess_action(action, transform)
+        action = np.array([[0, 0, 0, 0]], dtype=np.float32)
 
         # apply the next
         observation, reward, terminated, truncated, info = env.step(action)
@@ -249,6 +250,8 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
     logging.info("Making transforms.")
     # TODO(alexander-soare): Completely decouple datasets from evaluation.
     transform = make_dataset(cfg, stats_path=stats_path).transform
+    # TODO(now)
+    transform = None
 
     logging.info("Making environment.")
     env = make_env(cfg, num_parallel_envs=cfg.eval_episodes)
