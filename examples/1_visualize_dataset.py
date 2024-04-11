@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 import lerobot
-from lerobot.common.datasets.aloha import PushtDataset
+from lerobot.common.datasets.pusht import PushtDataset
 from lerobot.scripts.visualize_dataset import render_dataset
 
 print(lerobot.available_datasets)
