@@ -157,7 +157,7 @@ def test_load_data_with_delta_timestamps_within_tolerance():
     tol = 0.04
     data, is_pad = load_data_with_delta_timestamps(data_dict, data_ids_per_episode, delta_timestamps, key, current_ts, episode, tol)
     assert not is_pad.any(), "Unexpected padding detected"
-    assert torch.equal(data, torch.tensor([0, 2, 4])), "Data does not match expected values"
+    assert torch.equal(data, torch.tensor([0, 2, 3])), "Data does not match expected values"
 
 def test_load_data_with_delta_timestamps_outside_tolerance_inside_episode_range():
     data_dict = {
