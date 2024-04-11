@@ -120,34 +120,32 @@ wandb login
 You can import our dataset class, download the data from the HuggingFace hub and use our rendering utilities:
 ```python
 """ Copy pasted from `examples/1_visualize_dataset.py` """
+import os
+from pathlib import Path
+
 import lerobot
 from lerobot.common.datasets.aloha import AlohaDataset
-from torchrl.data.replay_buffers import SamplerWithoutReplacement
 from lerobot.scripts.visualize_dataset import render_dataset
 
 print(lerobot.available_datasets)
 # >>> ['aloha_sim_insertion_human', 'aloha_sim_insertion_scripted', 'aloha_sim_transfer_cube_human', 'aloha_sim_transfer_cube_scripted', 'pusht', 'xarm_lift_medium']
 
-# we use this sampler to sample 1 frame after the other
-sampler = SamplerWithoutReplacement(shuffle=False)
-
-dataset = AlohaDataset("aloha_sim_transfer_cube_human", sampler=sampler)
+# TODO(rcadene): remove DATA_DIR
+dataset = AlohaDataset("pusht", root=Path(os.environ.get("DATA_DIR")))
 
 video_paths = render_dataset(
     dataset,
     out_dir="outputs/visualize_dataset/example",
-    max_num_samples=300,
-    fps=50,
+    max_num_episodes=1,
 )
 print(video_paths)
-# >>> ['outputs/visualize_dataset/example/episode_0.mp4']
+# ['outputs/visualize_dataset/example/episode_0.mp4']
 ```
 
 Or you can achieve the same result by executing our script from the command line:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
-env=aloha \
-task=sim_sim_transfer_cube_human \
+env=pusht \
 hydra.run.dir=outputs/visualize_dataset/example
 # >>> ['outputs/visualize_dataset/example/episode_0.mp4']
 ```

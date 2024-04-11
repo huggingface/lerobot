@@ -19,6 +19,7 @@ def preprocess_observation(observation, transform=None):
         img = einops.rearrange(img, "b h w c -> b c h w")
         obs[imgkey] = img
 
+    # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing requirement for "agent_pos"
     obs["observation.state"] = torch.from_numpy(observation["agent_pos"]).float()
 
     # apply same transforms as in training

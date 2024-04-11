@@ -1,10 +1,11 @@
+import logging
 import os
 from pathlib import Path
 
 import torch
 from torchvision.transforms import v2
 
-from lerobot.common.datasets.utils import compute_or_load_stats
+from lerobot.common.datasets.utils import compute_stats
 from lerobot.common.transforms import NormalizeTransform, Prod
 
 # DATA_DIR specifies to location where datasets are loaded. By default, DATA_DIR is None and
@@ -40,7 +41,8 @@ def make_dataset(
     if normalize:
         # TODO(rcadene): make normalization strategy configurable between mean_std, min_max, manual_min_max,
         # min_max_from_spec
-        # stats = dataset.compute_or_load_stats() if stats_path is None else torch.load(stats_path)
+        # TODO(rcadene): remove this and put it in config. Ideally we want to reproduce SOTA results just with mean_std
+        normalization_mode = "mean_std" if cfg.env.name == "aloha" else "min_max"
 
         if cfg.policy.name == "diffusion" and cfg.env.name == "pusht":
             stats = {}
@@ -51,21 +53,27 @@ def make_dataset(
             stats["action"] = {}
             stats["action"]["min"] = torch.tensor([12.0, 25.0], dtype=torch.float32)
             stats["action"]["max"] = torch.tensor([511.0, 511.0], dtype=torch.float32)
-        else:
+        elif stats_path is None:
             # instantiate a one frame dataset with light transform
             stats_dataset = clsfunc(
                 dataset_id=cfg.dataset_id,
                 root=DATA_DIR,
                 transform=Prod(in_keys=clsfunc.image_keys, prod=1 / 255.0),
             )
-            stats = compute_or_load_stats(stats_dataset)
 
-        # TODO(rcadene): remove this and put it in config. Ideally we want to reproduce SOTA results just with mean_std
-        normalization_mode = "mean_std" if cfg.env.name == "aloha" else "min_max"
+            # load stats if the file exists already or compute stats and save it
+            precomputed_stats_path = stats_dataset.data_dir / "stats.pth"
+            if precomputed_stats_path.exists():
+                stats = torch.load(precomputed_stats_path)
+            else:
+                logging.info(f"compute_stats and save to {precomputed_stats_path}")
+                stats = compute_stats(stats_dataset)
+                torch.save(stats, stats_path)
+        else:
+            stats = torch.load(stats_path)
 
         transforms = v2.Compose(
             [
-                # TODO(rcadene): we need to do something about image_keys
                 Prod(in_keys=clsfunc.image_keys, prod=1 / 255.0),
                 NormalizeTransform(
                     stats,

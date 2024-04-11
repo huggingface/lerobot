@@ -99,6 +99,7 @@ def init_hydra_config(config_path: str, overrides: list[str] | None = None) -> D
 
 
 def print_cuda_memory_usage():
+    """Use this function to locate and debug memory leak."""
     import gc
 
     gc.collect()

@@ -11,6 +11,9 @@ rl
 nautilus/*.yaml
 *.key
 
+# Slurm
+sbatch*.sh
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

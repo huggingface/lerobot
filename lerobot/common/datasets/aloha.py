@@ -105,7 +105,7 @@ class AlohaDataset(torch.utils.data.Dataset):
 
     @property
     def num_samples(self) -> int:
-        return len(self.data_dict["index"])
+        return len(self.data_dict["index"]) if "index" in self.data_dict else 0
 
     @property
     def num_episodes(self) -> int:
