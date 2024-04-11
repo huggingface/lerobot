@@ -79,7 +79,7 @@ def render_dataset(dataset, out_dir, max_num_episodes):
 
         out_dir.mkdir(parents=True, exist_ok=True)
         for im_key in dataset.image_keys:
-            if len(dataset.image_keys) > 0:
+            if len(dataset.image_keys) > 1:
                 im_name = im_key.replace("observation.images.", "")
                 video_path = out_dir / f"episode_{ep_id}_{im_name}.mp4"
             else:
