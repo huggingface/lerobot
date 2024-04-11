@@ -15,7 +15,7 @@ def test_example_1():
         file_contents = file.read()
     exec(file_contents)
 
-    assert Path("outputs/visualize_dataset/example/episode_0_top.mp4").exists()
+    assert Path("outputs/visualize_dataset/example/episode_0.mp4").exists()
 
 
 def test_examples_3_and_2():
