@@ -2,14 +2,14 @@ import os
 from pathlib import Path
 
 import lerobot
-from lerobot.common.datasets.aloha import AlohaDataset
+from lerobot.common.datasets.aloha import PushtDataset
 from lerobot.scripts.visualize_dataset import render_dataset
 
 print(lerobot.available_datasets)
 # >>> ['aloha_sim_insertion_human', 'aloha_sim_insertion_scripted', 'aloha_sim_transfer_cube_human', 'aloha_sim_transfer_cube_scripted', 'pusht', 'xarm_lift_medium']
 
 # TODO(rcadene): remove DATA_DIR
-dataset = AlohaDataset("pusht", root=Path(os.environ.get("DATA_DIR")))
+dataset = PushtDataset("pusht", root=Path(os.environ.get("DATA_DIR")))
 
 video_paths = render_dataset(
     dataset,
