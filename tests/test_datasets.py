@@ -150,7 +150,7 @@ def test_load_data_with_delta_timestamps_within_tolerance():
         "index": torch.tensor([0, 1, 2, 3, 4]),
     }
     data_ids_per_episode = {0: torch.tensor([0, 1, 2, 3, 4])}
-    delta_timestamps = {"index": [-0.2, 0, 0.24]}
+    delta_timestamps = {"index": [-0.2, 0, 0.139]}
     key = "index"
     current_ts = 0.3
     episode = 0
@@ -165,11 +165,11 @@ def test_load_data_with_delta_timestamps_outside_tolerance_inside_episode_range(
         "index": torch.tensor([0, 1, 2, 3, 4]),
     }
     data_ids_per_episode = {0: torch.tensor([0, 1, 2, 3, 4])}
-    delta_timestamps = {"index": [-0.2, 0, 0.14, 0.2]}
+    delta_timestamps = {"index": [-0.2, 0, 0.141]}
     key = "index"
     current_ts = 0.3
     episode = 0
-    tol = 0.03
+    tol = 0.04
     with pytest.raises(AssertionError):
         load_data_with_delta_timestamps(data_dict, data_ids_per_episode, delta_timestamps, key, current_ts, episode, tol)
 
