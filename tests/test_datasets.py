@@ -4,7 +4,7 @@ import einops
 import pytest
 import torch
 
-from lerobot.common.datasets.utils import compute_stats, get_stats_einops_patterns, is_contiguously_true_or_false, load_data_with_delta_timestamps
+from lerobot.common.datasets.utils import compute_stats, get_stats_einops_patterns, load_data_with_delta_timestamps
 from lerobot.common.datasets.xarm import XarmDataset
 from lerobot.common.transforms import Prod
 from lerobot.common.utils import init_hydra_config
