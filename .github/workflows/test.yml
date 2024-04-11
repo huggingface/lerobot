@@ -34,6 +34,11 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Add SSH key for installing envs
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
       #----------------------------------------------
       #         install & configure poetry
       #----------------------------------------------
@@ -87,7 +92,7 @@ jobs:
           TMP: ~/tmp
         run: |
           mkdir ~/tmp
-          poetry install --no-interaction --no-root
+          poetry install --no-interaction --no-root --all-extras
 
       - name: Save cached venv
         if: |
@@ -106,7 +111,7 @@ jobs:
       #             install project
       #----------------------------------------------
       - name: Install project
-        run: poetry install --no-interaction
+        run: poetry install --no-interaction --all-extras
 
       #----------------------------------------------
       #            run tests & coverage
@@ -137,6 +142,7 @@ jobs:
             wandb.enable=False \
             offline_steps=2 \
             online_steps=0 \
+            eval_episodes=1 \
             device=cpu \
             save_model=true \
             save_freq=2 \
@@ -154,17 +160,6 @@ jobs:
             device=cpu \
             policy.pretrained_model_path=tests/outputs/act/models/2.pt
 
-      # TODO(aliberts): This takes ~2mn to run, needs to be improved
-      # - name: Test eval ACT on ALOHA end-to-end (policy is None)
-      #   run: |
-      #     source .venv/bin/activate
-      #     python lerobot/scripts/eval.py \
-      #       --config lerobot/configs/default.yaml \
-      #       policy=act \
-      #       env=aloha \
-      #       eval_episodes=1 \
-      #       device=cpu
-
       - name: Test train Diffusion on PushT end-to-end
         run: |
           source .venv/bin/activate
@@ -174,9 +169,11 @@ jobs:
             wandb.enable=False \
             offline_steps=2 \
             online_steps=0 \
+            eval_episodes=1 \
             device=cpu \
             save_model=true \
             save_freq=2 \
+            policy.batch_size=2 \
             hydra.run.dir=tests/outputs/diffusion/
 
       - name: Test eval Diffusion on PushT end-to-end
@@ -189,28 +186,20 @@ jobs:
             device=cpu \
             policy.pretrained_model_path=tests/outputs/diffusion/models/2.pt
 
-      - name: Test eval Diffusion on PushT end-to-end (policy is None)
-        run: |
-          source .venv/bin/activate
-          python lerobot/scripts/eval.py \
-            --config lerobot/configs/default.yaml \
-            policy=diffusion  \
-            env=pusht \
-            eval_episodes=1 \
-            device=cpu
-
       - name: Test train TDMPC on Simxarm end-to-end
         run: |
           source .venv/bin/activate
           python lerobot/scripts/train.py \
             policy=tdmpc \
-            env=simxarm \
+            env=xarm \
             wandb.enable=False \
             offline_steps=1 \
             online_steps=1 \
+            eval_episodes=1 \
             device=cpu \
             save_model=true \
             save_freq=2 \
+            policy.batch_size=2 \
             hydra.run.dir=tests/outputs/tdmpc/
 
       - name: Test eval TDMPC on Simxarm end-to-end
@@ -222,13 +211,3 @@ jobs:
             env.episode_length=8 \
             device=cpu \
             policy.pretrained_model_path=tests/outputs/tdmpc/models/2.pt
-
-      - name: Test eval TDPMC on Simxarm end-to-end (policy is None)
-        run: |
-          source .venv/bin/activate
-          python lerobot/scripts/eval.py \
-            --config lerobot/configs/default.yaml \
-            policy=tdmpc  \
-            env=simxarm \
-            eval_episodes=1 \
-            device=cpu

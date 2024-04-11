@@ -244,8 +244,10 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         return result
 
     def compute_loss(self, batch):
-        assert "valid_mask" not in batch
-        nobs = batch["obs"]
+        nobs = {
+            "image": batch["observation.image"],
+            "agent_pos": batch["observation.state"],
+        }
         nactions = batch["action"]
         batch_size = nactions.shape[0]
         horizon = nactions.shape[1]
@@ -303,6 +305,11 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
 
         loss = F.mse_loss(pred, target, reduction="none")
         loss = loss * loss_mask.type(loss.dtype)
-        loss = reduce(loss, "b ... -> b (...)", "mean")
+
+        if "action_is_pad" in batch:
+            in_episode_bound = ~batch["action_is_pad"]
+            loss = loss * in_episode_bound[:, :, None].type(loss.dtype)
+
+        loss = reduce(loss, "b t c -> b", "mean", b=batch_size)
         loss = loss.mean()
         return loss

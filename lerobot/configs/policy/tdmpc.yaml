@@ -1,6 +1,6 @@
 # @package _global_
 
-n_action_steps: 1
+n_action_steps: 2
 n_obs_steps: 1
 
 policy:
@@ -77,3 +77,9 @@ policy:
   num_q: 5
   mlp_dim: 512
   latent_dim: 50
+
+  delta_timestamps:
+    observation.image: "[i / ${fps} for i in range(6)]"
+    observation.state: "[i / ${fps} for i in range(6)]"
+    action: "[i / ${fps} for i in range(5)]"
+    next.reward: "[i / ${fps} for i in range(5)]"

@@ -1,6 +1,6 @@
 # @package _global_
 
-offline_steps: 1344000
+offline_steps: 80000
 online_steps: 0
 
 eval_episodes: 1
@@ -10,7 +10,6 @@ log_freq: 250
 
 horizon: 100
 n_obs_steps: 1
-n_latency_steps: 0
 # when temporal_agg=False, n_action_steps=horizon
 n_action_steps: ${horizon}
 
@@ -21,26 +20,27 @@ policy:
 
   lr: 1e-5
   lr_backbone: 1e-5
+  pretrained_backbone: true
   weight_decay: 1e-4
   grad_clip_norm: 10
   backbone: resnet18
-  num_queries: ${horizon} # chunk_size
   horizon: ${horizon} # chunk_size
   kl_weight: 10
-  hidden_dim: 512
+  d_model: 512
   dim_feedforward: 3200
+  vae_enc_layers: 4
   enc_layers: 4
-  dec_layers: 7
-  nheads: 8
+  dec_layers: 1
+  num_heads: 8
   #camera_names: [top, front_close, left_pillar, right_pillar]
   camera_names: [top]
-  position_embedding: sine
-  masks: false
   dilation: false
   dropout: 0.1
   pre_norm: false
+  activation: relu
+  latent_dim: 32
 
-  vae: true
+  use_vae: true
 
   batch_size: 8
 
@@ -51,8 +51,18 @@ policy:
   utd: 1
 
   n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
 
   temporal_agg: false
 
-  state_dim: ???
-  action_dim: ???
+  state_dim: 14
+  action_dim: 14
+
+  image_normalization:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+
+  delta_timestamps:
+    observation.images.top: [0.0]
+    observation.state: [0.0]
+    action: "[i / ${fps} for i in range(${horizon})]"

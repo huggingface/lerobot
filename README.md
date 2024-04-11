@@ -62,19 +62,27 @@
 
 Download our source code:
 ```bash
-git clone https://github.com/huggingface/lerobot.git
-cd lerobot
+git clone https://github.com/huggingface/lerobot.git && cd lerobot
 ```
 
 Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 ```bash
-conda create -y -n lerobot python=3.10
-conda activate lerobot
+conda create -y -n lerobot python=3.10 && conda activate lerobot
 ```
 
-Then, install 🤗 LeRobot:
+Install 🤗 LeRobot:
 ```bash
 python -m pip install .
+```
+
+For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
+- [aloha](https://github.com/huggingface/gym-aloha)
+- [xarm](https://github.com/huggingface/gym-xarm)
+- [pusht](https://github.com/huggingface/gym-pusht)
+
+For instance, to install 🤗 LeRobot with aloha and pusht, use:
+```bash
+python -m pip install ".[aloha, pusht]"
 ```
 
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiments tracking, log in with
@@ -89,11 +97,11 @@ wandb login
 ├── lerobot
 |   ├── configs          # contains hydra yaml files with all options that you can override in the command line
 |   |   ├── default.yaml   # selected by default, it loads pusht environment and diffusion policy
-|   |   ├── env            # various sim environments and their datasets: aloha.yaml, pusht.yaml, simxarm.yaml
+|   |   ├── env            # various sim environments and their datasets: aloha.yaml, pusht.yaml, xarm.yaml
 |   |   └── policy         # various policies: act.yaml, diffusion.yaml, tdmpc.yaml
 |   ├── common           # contains classes and utilities
-|   |   ├── datasets       # various datasets of human demonstrations: aloha, pusht, simxarm
-|   |   ├── envs           # various sim environments: aloha, pusht, simxarm
+|   |   ├── datasets       # various datasets of human demonstrations: aloha, pusht, xarm
+|   |   ├── envs           # various sim environments: aloha, pusht, xarm
 |   |   └── policies       # various policies: act, diffusion, tdmpc
 |   └── scripts                  # contains functions to execute via command line
 |       ├── visualize_dataset.py  # load a dataset and render its demonstrations
@@ -112,34 +120,32 @@ wandb login
 You can import our dataset class, download the data from the HuggingFace hub and use our rendering utilities:
 ```python
 """ Copy pasted from `examples/1_visualize_dataset.py` """
+import os
+from pathlib import Path
+
 import lerobot
 from lerobot.common.datasets.aloha import AlohaDataset
-from torchrl.data.replay_buffers import SamplerWithoutReplacement
 from lerobot.scripts.visualize_dataset import render_dataset
 
 print(lerobot.available_datasets)
 # >>> ['aloha_sim_insertion_human', 'aloha_sim_insertion_scripted', 'aloha_sim_transfer_cube_human', 'aloha_sim_transfer_cube_scripted', 'pusht', 'xarm_lift_medium']
 
-# we use this sampler to sample 1 frame after the other
-sampler = SamplerWithoutReplacement(shuffle=False)
-
-dataset = AlohaDataset("aloha_sim_transfer_cube_human", sampler=sampler)
+# TODO(rcadene): remove DATA_DIR
+dataset = AlohaDataset("pusht", root=Path(os.environ.get("DATA_DIR")))
 
 video_paths = render_dataset(
     dataset,
     out_dir="outputs/visualize_dataset/example",
-    max_num_samples=300,
-    fps=50,
+    max_num_episodes=1,
 )
 print(video_paths)
-# >>> ['outputs/visualize_dataset/example/episode_0.mp4']
+# ['outputs/visualize_dataset/example/episode_0.mp4']
 ```
 
 Or you can achieve the same result by executing our script from the command line:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
-env=aloha \
-task=sim_sim_transfer_cube_human \
+env=pusht \
 hydra.run.dir=outputs/visualize_dataset/example
 # >>> ['outputs/visualize_dataset/example/episode_0.mp4']
 ```
@@ -198,20 +204,32 @@ pre-commit install
 pre-commit
 ```
 
-### Add dependencies
+### Dependencies
 
 Instead of using `pip` directly, we use `poetry` for development purposes to easily track our dependencies.
 If you don't have it already, follow the [instructions](https://python-poetry.org/docs/#installation) to install it.
 
-Install the project with:
+Install the project with dev dependencies and all environments:
 ```bash
-poetry install
+poetry install --sync --with dev --all-extras
+```
+This command should be run when pulling code with and updated version of `pyproject.toml` and `poetry.lock` in order to synchronize your virtual environment with the dependencies.
+
+To selectively install environments (for example aloha and pusht) use:
+```bash
+poetry install --sync --with dev --extras "aloha pusht"
 ```
 
-Then, the equivalent of `pip install some-package`, would just be:
+The equivalent of `pip install some-package`, would just be:
 ```bash
 poetry add some-package
 ```
+
+When changes are made to the poetry sections of the `pyproject.toml`, you should run the following command to lock dependencies.
+```bash
+poetry lock --no-update
+```
+
 
 **NOTE:** Currently, to ensure the CI works properly, any new package must also be added in the CPU-only environment dedicated to the CI. To do this, you should create a separate environment and add the new package there as well. For example:
 ```bash

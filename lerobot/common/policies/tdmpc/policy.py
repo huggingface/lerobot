@@ -1,6 +1,7 @@
 # ruff: noqa: N806
 
 import time
+from collections import deque
 from copy import deepcopy
 
 import einops
@@ -9,7 +10,7 @@ import torch
 import torch.nn as nn
 
 import lerobot.common.policies.tdmpc.helper as h
-from lerobot.common.policies.abstract import AbstractPolicy
+from lerobot.common.policies.utils import populate_queues
 from lerobot.common.utils import get_safe_torch_device
 
 FIRST_FRAME = 0
@@ -87,16 +88,18 @@ class TOLD(nn.Module):
         return torch.min(Q1, Q2) if return_type == "min" else (Q1 + Q2) / 2
 
 
-class TDMPCPolicy(AbstractPolicy):
+class TDMPCPolicy(nn.Module):
     """Implementation of TD-MPC learning + inference."""
 
     name = "tdmpc"
 
-    def __init__(self, cfg, device):
-        super().__init__(None)
+    def __init__(self, cfg, n_obs_steps, n_action_steps, device):
+        super().__init__()
         self.action_dim = cfg.action_dim
 
         self.cfg = cfg
+        self.n_obs_steps = n_obs_steps
+        self.n_action_steps = n_action_steps
         self.device = get_safe_torch_device(device)
         self.std = h.linear_schedule(cfg.std_schedule, 0)
         self.model = TOLD(cfg)
@@ -107,7 +110,6 @@ class TDMPCPolicy(AbstractPolicy):
         # self.bc_optim = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
         self.model.eval()
         self.model_target.eval()
-        self.batch_size = cfg.batch_size
 
         self.register_buffer("step", torch.zeros(1))
 
@@ -128,20 +130,54 @@ class TDMPCPolicy(AbstractPolicy):
         self.model.load_state_dict(d["model"])
         self.model_target.load_state_dict(d["model_target"])
 
-    @torch.no_grad()
-    def select_actions(self, observation, step_count):
-        if observation["image"].shape[0] != 1:
-            raise NotImplementedError("Batch size > 1 not handled")
-
-        t0 = step_count.item() == 0
-
-        obs = {
-            # TODO(rcadene): remove contiguous hack...
-            "rgb": observation["image"].contiguous(),
-            "state": observation["state"].contiguous(),
+    def reset(self):
+        """
+        Clear observation and action queues. Should be called on `env.reset()`
+        """
+        self._queues = {
+            "observation.image": deque(maxlen=self.n_obs_steps),
+            "observation.state": deque(maxlen=self.n_obs_steps),
+            "action": deque(maxlen=self.n_action_steps),
         }
-        # Note: unsqueeze needed because `act` still uses non-batch logic.
-        action = self.act(obs, t0=t0, step=self.step.item()).unsqueeze(0)
+
+    @torch.no_grad()
+    def select_action(self, batch, step):
+        assert "observation.image" in batch
+        assert "observation.state" in batch
+        assert len(batch) == 2
+
+        self._queues = populate_queues(self._queues, batch)
+
+        t0 = step == 0
+
+        self.eval()
+
+        if len(self._queues["action"]) == 0:
+            batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch}
+
+            if self.n_obs_steps == 1:
+                # hack to remove the time dimension
+                for key in batch:
+                    assert batch[key].shape[1] == 1
+                    batch[key] = batch[key][:, 0]
+
+            actions = []
+            batch_size = batch["observation.image"].shape[0]
+            for i in range(batch_size):
+                obs = {
+                    "rgb": batch["observation.image"][[i]],
+                    "state": batch["observation.state"][[i]],
+                }
+                # Note: unsqueeze needed because `act` still uses non-batch logic.
+                action = self.act(obs, t0=t0, step=self.step)
+                actions.append(action)
+            action = torch.stack(actions)
+
+            # tdmpc returns an action for 1 timestep only, so we copy it over `n_action_steps` time
+            if i in range(self.n_action_steps):
+                self._queues["action"].append(action)
+
+        action = self._queues["action"].popleft()
         return action
 
     @torch.no_grad()
@@ -290,117 +326,54 @@ class TDMPCPolicy(AbstractPolicy):
     def _td_target(self, next_z, reward, mask):
         """Compute the TD-target from a reward and the observation at the following time step."""
         next_v = self.model.V(next_z)
-        td_target = reward + self.cfg.discount * mask * next_v
+        td_target = reward + self.cfg.discount * mask * next_v.squeeze(2)
         return td_target
 
-    def update(self, replay_buffer, step, demo_buffer=None):
+    def forward(self, batch, step):
         """Main update function. Corresponds to one iteration of the model learning."""
         start_time = time.time()
 
-        num_slices = self.cfg.batch_size
-        batch_size = self.cfg.horizon * num_slices
+        batch_size = batch["index"].shape[0]
 
-        if demo_buffer is None:
-            demo_batch_size = 0
-        else:
-            # Update oversampling ratio
-            demo_pc_batch = h.linear_schedule(self.cfg.demo_schedule, step)
-            demo_num_slices = int(demo_pc_batch * self.batch_size)
-            demo_batch_size = self.cfg.horizon * demo_num_slices
-            batch_size -= demo_batch_size
-            num_slices -= demo_num_slices
-            replay_buffer._sampler.num_slices = num_slices
-            demo_buffer._sampler.num_slices = demo_num_slices
+        # TODO(rcadene): convert tdmpc with (batch size, time/horizon, channels)
+        # instead of currently (time/horizon, batch size, channels) which is not the pytorch convention
+        # batch size b = 256, time/horizon t = 5
+        # b t ... -> t b ...
+        for key in batch:
+            if batch[key].ndim > 1:
+                batch[key] = batch[key].transpose(1, 0)
 
-            assert demo_batch_size % self.cfg.horizon == 0
-            assert demo_batch_size % demo_num_slices == 0
+        action = batch["action"]
+        reward = batch["next.reward"]
+        #  idxs = batch["index"]  # TODO(rcadene): use idxs to update sampling weights
+        done = torch.zeros_like(reward, dtype=torch.bool, device=reward.device)
+        mask = torch.ones_like(reward, dtype=torch.bool, device=reward.device)
+        weights = torch.ones(batch_size, dtype=torch.bool, device=reward.device)
 
-        assert batch_size % self.cfg.horizon == 0
-        assert batch_size % num_slices == 0
+        obses = {
+            "rgb": batch["observation.image"],
+            "state": batch["observation.state"],
+        }
 
-        # Sample from interaction dataset
-
-        def process_batch(batch, horizon, num_slices):
-            # trajectory t = 256, horizon h = 5
-            # (t h) ... -> h t ...
-            batch = batch.reshape(num_slices, horizon).transpose(1, 0).contiguous()
-
-            obs = {
-                "rgb": batch["observation", "image"][FIRST_FRAME].to(self.device, non_blocking=True),
-                "state": batch["observation", "state"][FIRST_FRAME].to(self.device, non_blocking=True),
-            }
-            action = batch["action"].to(self.device, non_blocking=True)
-            next_obses = {
-                "rgb": batch["next", "observation", "image"].to(self.device, non_blocking=True),
-                "state": batch["next", "observation", "state"].to(self.device, non_blocking=True),
-            }
-            reward = batch["next", "reward"].to(self.device, non_blocking=True)
-
-            idxs = batch["index"][FIRST_FRAME].to(self.device, non_blocking=True)
-            weights = batch["_weight"][FIRST_FRAME, :, None].to(self.device, non_blocking=True)
-
-            # TODO(rcadene): rearrange directly in offline dataset
-            if reward.ndim == 2:
-                reward = einops.rearrange(reward, "h t -> h t 1")
-
-            assert reward.ndim == 3
-            assert reward.shape == (horizon, num_slices, 1)
-            # We dont use `batch["next", "done"]` since it only indicates the end of an
-            # episode, but not the end of the trajectory of an episode.
-            # Neither does `batch["next", "terminated"]`
-            done = torch.zeros_like(reward, dtype=torch.bool, device=reward.device)
-            mask = torch.ones_like(reward, dtype=torch.bool, device=reward.device)
-            return obs, action, next_obses, reward, mask, done, idxs, weights
-
-        batch = replay_buffer.sample(batch_size) if self.cfg.balanced_sampling else replay_buffer.sample()
-
-        obs, action, next_obses, reward, mask, done, idxs, weights = process_batch(
-            batch, self.cfg.horizon, num_slices
-        )
-
-        # Sample from demonstration dataset
-        if demo_batch_size > 0:
-            demo_batch = demo_buffer.sample(demo_batch_size)
-            (
-                demo_obs,
-                demo_action,
-                demo_next_obses,
-                demo_reward,
-                demo_mask,
-                demo_done,
-                demo_idxs,
-                demo_weights,
-            ) = process_batch(demo_batch, self.cfg.horizon, demo_num_slices)
-
-            if isinstance(obs, dict):
-                obs = {k: torch.cat([obs[k], demo_obs[k]]) for k in obs}
-                next_obses = {k: torch.cat([next_obses[k], demo_next_obses[k]], dim=1) for k in next_obses}
-            else:
-                obs = torch.cat([obs, demo_obs])
-                next_obses = torch.cat([next_obses, demo_next_obses], dim=1)
-            action = torch.cat([action, demo_action], dim=1)
-            reward = torch.cat([reward, demo_reward], dim=1)
-            mask = torch.cat([mask, demo_mask], dim=1)
-            done = torch.cat([done, demo_done], dim=1)
-            idxs = torch.cat([idxs, demo_idxs])
-            weights = torch.cat([weights, demo_weights])
+        shapes = {}
+        for k in obses:
+            shapes[k] = obses[k].shape
+            obses[k] = einops.rearrange(obses[k], "t b ... -> (t b) ... ")
 
         # Apply augmentations
         aug_tf = h.aug(self.cfg)
-        obs = aug_tf(obs)
+        obses = aug_tf(obses)
 
-        for k in next_obses:
-            next_obses[k] = einops.rearrange(next_obses[k], "h t ... -> (h t) ...")
-        next_obses = aug_tf(next_obses)
-        for k in next_obses:
-            next_obses[k] = einops.rearrange(
-                next_obses[k],
-                "(h t) ... -> h t ...",
-                h=self.cfg.horizon,
-                t=self.cfg.batch_size,
-            )
+        for k in obses:
+            t, b = shapes[k][:2]
+            obses[k] = einops.rearrange(obses[k], "(t b) ... -> t b ... ", b=b, t=t)
 
-        horizon = self.cfg.horizon
+        obs, next_obses = {}, {}
+        for k in obses:
+            obs[k] = obses[k][0]
+            next_obses[k] = obses[k][1:].clone()
+
+        horizon = next_obses["rgb"].shape[0]
         loss_mask = torch.ones_like(mask, device=self.device)
         for t in range(1, horizon):
             loss_mask[t] = loss_mask[t - 1] * (~done[t - 1])
@@ -418,7 +391,7 @@ class TDMPCPolicy(AbstractPolicy):
             td_targets = self._td_target(next_z, reward, mask)
 
         # Latent rollout
-        zs = torch.empty(horizon + 1, self.batch_size, self.cfg.latent_dim, device=self.device)
+        zs = torch.empty(horizon + 1, batch_size, self.cfg.latent_dim, device=self.device)
         reward_preds = torch.empty_like(reward, device=self.device)
         assert reward.shape[0] == horizon
         z = self.model.encode(obs)
@@ -427,22 +400,21 @@ class TDMPCPolicy(AbstractPolicy):
         for t in range(horizon):
             z, reward_pred = self.model.next(z, action[t])
             zs[t + 1] = z
-            reward_preds[t] = reward_pred
+            reward_preds[t] = reward_pred.squeeze(1)
 
         with torch.no_grad():
             v_target = self.model_target.Q(zs[:-1].detach(), action, return_type="min")
 
         # Predictions
         qs = self.model.Q(zs[:-1], action, return_type="all")
+        qs = qs.squeeze(3)
         value_info["Q"] = qs.mean().item()
         v = self.model.V(zs[:-1])
         value_info["V"] = v.mean().item()
 
         # Losses
-        rho = torch.pow(self.cfg.rho, torch.arange(horizon, device=self.device)).view(-1, 1, 1)
-        consistency_loss = (rho * torch.mean(h.mse(zs[1:], z_targets), dim=2, keepdim=True) * loss_mask).sum(
-            dim=0
-        )
+        rho = torch.pow(self.cfg.rho, torch.arange(horizon, device=self.device)).view(-1, 1)
+        consistency_loss = (rho * torch.mean(h.mse(zs[1:], z_targets), dim=2) * loss_mask).sum(dim=0)
         reward_loss = (rho * h.mse(reward_preds, reward) * loss_mask).sum(dim=0)
         q_value_loss, priority_loss = 0, 0
         for q in range(self.cfg.num_q):
@@ -450,7 +422,9 @@ class TDMPCPolicy(AbstractPolicy):
             priority_loss += (rho * h.l1(qs[q], td_targets) * loss_mask).sum(dim=0)
 
         expectile = h.linear_schedule(self.cfg.expectile, step)
-        v_value_loss = (rho * h.l2_expectile(v_target - v, expectile=expectile) * loss_mask).sum(dim=0)
+        v_value_loss = (rho * h.l2_expectile(v_target - v, expectile=expectile).squeeze(2) * loss_mask).sum(
+            dim=0
+        )
 
         total_loss = (
             self.cfg.consistency_coef * consistency_loss
@@ -459,7 +433,7 @@ class TDMPCPolicy(AbstractPolicy):
             + self.cfg.value_coef * v_value_loss
         )
 
-        weighted_loss = (total_loss.squeeze(1) * weights).mean()
+        weighted_loss = (total_loss * weights).mean()
         weighted_loss.register_hook(lambda grad: grad * (1 / self.cfg.horizon))
         has_nan = torch.isnan(weighted_loss).item()
         if has_nan:
@@ -472,19 +446,20 @@ class TDMPCPolicy(AbstractPolicy):
         )
         self.optim.step()
 
-        if self.cfg.per:
-            # Update priorities
-            priorities = priority_loss.clamp(max=1e4).detach()
-            has_nan = torch.isnan(priorities).any().item()
-            if has_nan:
-                print(f"priorities has nan: {priorities=}")
-            else:
-                replay_buffer.update_priority(
-                    idxs[:num_slices],
-                    priorities[:num_slices],
-                )
-                if demo_batch_size > 0:
-                    demo_buffer.update_priority(demo_idxs, priorities[num_slices:])
+        # TODO(rcadene): implement PrioritizedSampling by modifying sampler.weights with priorities computed by a criterion
+        # if self.cfg.per:
+        #     # Update priorities
+        #     priorities = priority_loss.clamp(max=1e4).detach()
+        #     has_nan = torch.isnan(priorities).any().item()
+        #     if has_nan:
+        #         print(f"priorities has nan: {priorities=}")
+        #     else:
+        #         replay_buffer.update_priority(
+        #             idxs[:num_slices],
+        #             priorities[:num_slices],
+        #         )
+        #         if demo_batch_size > 0:
+        #             demo_buffer.update_priority(demo_idxs, priorities[num_slices:])
 
         # Update policy + target network
         _, pi_update_info = self.update_pi(zs[:-1].detach(), acts=action)
@@ -507,7 +482,7 @@ class TDMPCPolicy(AbstractPolicy):
             "data_s": data_s,
             "update_s": time.time() - start_time,
         }
-        info["demo_batch_size"] = demo_batch_size
+        # info["demo_batch_size"] = demo_batch_size
         info["expectile"] = expectile
         info.update(value_info)
         info.update(pi_update_info)

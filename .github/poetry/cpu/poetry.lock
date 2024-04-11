@@ -518,20 +518,10 @@ files = [
 ]
 
 [[package]]
-name = "dm"
-version = "1.3"
-description = "Dict to Data mapper"
-optional = false
-python-versions = "*"
-files = [
-    {file = "dm-1.3.tar.gz", hash = "sha256:ce77537bf346b5d8c0dc0b5d679cfc4a946faadcd5315e6c80ef6f3af824130d"},
-]
-
-[[package]]
 name = "dm-control"
 version = "1.0.14"
 description = "Continuous control environments and MuJoCo Python bindings."
-optional = false
+optional = true
 python-versions = ">=3.8"
 files = [
     {file = "dm_control-1.0.14-py3-none-any.whl", hash = "sha256:883c63244a7ebf598700a97564ed19fffd3479ca79efd090aed881609cdb9fc6"},
@@ -562,7 +552,7 @@ hdf5 = ["h5py"]
 name = "dm-env"
 version = "1.6"
 description = "A Python interface for Reinforcement Learning environments."
-optional = false
+optional = true
 python-versions = ">=3.7"
 files = [
     {file = "dm-env-1.6.tar.gz", hash = "sha256:a436eb1c654c39e0c986a516cee218bea7140b510fceff63f97eb4fcff3d93de"},
@@ -578,7 +568,7 @@ numpy = "*"
 name = "dm-tree"
 version = "0.1.8"
 description = "Tree is a library for working with nested data structures."
-optional = false
+optional = true
 python-versions = "*"
 files = [
     {file = "dm-tree-0.1.8.tar.gz", hash = "sha256:0fcaabbb14e7980377439e7140bd05552739ca5e515ecb3119f234acee4b9430"},
@@ -806,7 +796,7 @@ test = ["black", "coverage[toml]", "ddt (>=1.1.1,!=1.4.3)", "mock", "mypy", "pre
 name = "glfw"
 version = "2.7.0"
 description = "A ctypes-based wrapper for GLFW3."
-optional = false
+optional = true
 python-versions = "*"
 files = [
     {file = "glfw-2.7.0-py2.py27.py3.py30.py31.py32.py33.py34.py35.py36.py37.py38-none-macosx_10_6_intel.whl", hash = "sha256:bd82849edcceda4e262bd1227afaa74b94f9f0731c1197863cd25c15bfc613fc"},
@@ -890,6 +880,69 @@ files = [
 protobuf = ["grpcio-tools (>=1.62.1)"]
 
 [[package]]
+name = "gym-aloha"
+version = "0.1.0"
+description = "A gym environment for ALOHA"
+optional = true
+python-versions = "^3.10"
+files = []
+develop = false
+
+[package.dependencies]
+dm-control = "1.0.14"
+gymnasium = "^0.29.1"
+mujoco = "^2.3.7"
+
+[package.source]
+type = "git"
+url = "git@github.com:huggingface/gym-aloha.git"
+reference = "HEAD"
+resolved_reference = "c636f05ba0d1760df94537da84c860be1487e17f"
+
+[[package]]
+name = "gym-pusht"
+version = "0.1.0"
+description = "A gymnasium environment for PushT."
+optional = true
+python-versions = "^3.10"
+files = []
+develop = false
+
+[package.dependencies]
+gymnasium = "^0.29.1"
+opencv-python = "^4.9.0.80"
+pygame = "^2.5.2"
+pymunk = "^6.6.0"
+scikit-image = "^0.22.0"
+shapely = "^2.0.3"
+
+[package.source]
+type = "git"
+url = "git@github.com:huggingface/gym-pusht.git"
+reference = "HEAD"
+resolved_reference = "6c9893504f670ff069d0f759a733e971ea1efdbf"
+
+[[package]]
+name = "gym-xarm"
+version = "0.1.0"
+description = "A gym environment for xArm"
+optional = true
+python-versions = "^3.10"
+files = []
+develop = false
+
+[package.dependencies]
+gymnasium = "^0.29.1"
+gymnasium-robotics = "^1.2.4"
+mujoco = "^2.3.7"
+
+[package.source]
+type = "git"
+url = "git@github.com:huggingface/gym-xarm.git"
+reference = "HEAD"
+resolved_reference = "6a88f7d63833705dfbec4b997bf36cac6b4a448c"
+
+[[package]]
 name = "gymnasium"
 version = "0.29.1"
 description = "A standard API for reinforcement learning and a diverse set of reference environments (formerly Gym)."
@@ -923,7 +976,7 @@ toy-text = ["pygame (>=2.1.3)", "pygame (>=2.1.3)"]
 name = "gymnasium-robotics"
 version = "1.2.4"
 description = "Robotics environments for the Gymnasium repo."
-optional = false
+optional = true
 python-versions = ">=3.8"
 files = [
     {file = "gymnasium-robotics-1.2.4.tar.gz", hash = "sha256:d304192b066f8b800599dfbe3d9d90bba9b761ee884472bdc4d05968a8bc61cb"},
@@ -1155,7 +1208,7 @@ i18n = ["Babel (>=2.7)"]
 name = "labmaze"
 version = "1.0.6"
 description = "LabMaze: DeepMind Lab's text maze generator."
-optional = false
+optional = true
 python-versions = "*"
 files = [
     {file = "labmaze-1.0.6-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:b2ddef976dfd8d992b19cfa6c633f2eba7576d759c2082da534e3f727479a84a"},
@@ -1199,7 +1252,7 @@ setuptools = "!=50.0.0"
 name = "lazy-loader"
 version = "0.3"
 description = "lazy_loader"
-optional = false
+optional = true
 python-versions = ">=3.7"
 files = [
     {file = "lazy_loader-0.3-py3-none-any.whl", hash = "sha256:1e9e76ee8631e264c62ce10006718e80b2cfc74340d17d1031e0f84af7478554"},
@@ -1244,7 +1297,7 @@ files = [
 name = "lxml"
 version = "5.1.0"
 description = "Powerful and Pythonic XML processing library combining libxml2/libxslt with the ElementTree API."
-optional = false
+optional = true
 python-versions = ">=3.6"
 files = [
     {file = "lxml-5.1.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:704f5572ff473a5f897745abebc6df40f22d4133c1e0a1f124e4f2bd3330ff7e"},
@@ -1462,7 +1515,7 @@ tests = ["pytest (>=4.6)"]
 name = "mujoco"
 version = "2.3.7"
 description = "MuJoCo Physics Simulator"
-optional = false
+optional = true
 python-versions = ">=3.8"
 files = [
     {file = "mujoco-2.3.7-cp310-cp310-macosx_10_16_x86_64.whl", hash = "sha256:e8714a5ff6a1561b364b7b4648d4c0c8d13e751874cf7401c309b9d23fa9598b"},
@@ -1776,7 +1829,7 @@ xml = ["lxml (>=4.9.2)"]
 name = "pettingzoo"
 version = "1.24.3"
 description = "Gymnasium for multi-agent reinforcement learning."
-optional = false
+optional = true
 python-versions = ">=3.8"
 files = [
     {file = "pettingzoo-1.24.3-py3-none-any.whl", hash = "sha256:23ed90517d2e8a7098bdaf5e31234b3a7f7b73ca578d70d1ca7b9d0cb0e37982"},
@@ -2144,7 +2197,7 @@ dev = ["aafigure", "matplotlib", "pygame", "pyglet (<2.0.0)", "sphinx", "wheel"]
 name = "pyopengl"
 version = "3.1.7"
 description = "Standard OpenGL bindings for Python"
-optional = false
+optional = true
 python-versions = "*"
 files = [
     {file = "PyOpenGL-3.1.7-py3-none-any.whl", hash = "sha256:a6ab19cf290df6101aaf7470843a9c46207789855746399d0af92521a0a92b7a"},
@@ -2155,7 +2208,7 @@ files = [
 name = "pyparsing"
 version = "3.1.2"
 description = "pyparsing module - Classes and methods to define and execute parsing grammars"
-optional = false
+optional = true
 python-versions = ">=3.6.8"
 files = [
     {file = "pyparsing-3.1.2-py3-none-any.whl", hash = "sha256:f9db75911801ed778fe61bb643079ff86601aca99fcae6345aa67292038fb742"},
@@ -2586,7 +2639,7 @@ torch = ["safetensors[numpy]", "torch (>=1.10)"]
 name = "scikit-image"
 version = "0.22.0"
 description = "Image processing in Python"
-optional = false
+optional = true
 python-versions = ">=3.9"
 files = [
     {file = "scikit_image-0.22.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:74ec5c1d4693506842cc7c9487c89d8fc32aed064e9363def7af08b8f8cbb31d"},
@@ -2634,7 +2687,7 @@ test = ["asv", "matplotlib (>=3.5)", "numpydoc (>=1.5)", "pooch (>=1.6.0)", "pyt
 name = "scipy"
 version = "1.12.0"
 description = "Fundamental algorithms for scientific computing in Python"
-optional = false
+optional = true
 python-versions = ">=3.9"
 files = [
     {file = "scipy-1.12.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:78e4402e140879387187f7f25d91cc592b3501a2e51dfb320f48dfb73565f10b"},
@@ -2839,7 +2892,7 @@ testing-integration = ["build[virtualenv] (>=1.0.3)", "filelock (>=3.4.0)", "jar
 name = "shapely"
 version = "2.0.3"
 description = "Manipulation and analysis of geometric objects"
-optional = false
+optional = true
 python-versions = ">=3.7"
 files = [
     {file = "shapely-2.0.3-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:af7e9abe180b189431b0f490638281b43b84a33a960620e6b2e8d3e3458b61a1"},
@@ -2989,31 +3042,6 @@ packaging = "*"
 protobuf = ">=3.20"
 
 [[package]]
-name = "tensordict"
-version = "0.4.0+b4c91e8"
-description = ""
-optional = false
-python-versions = "*"
-files = []
-develop = false
-
-[package.dependencies]
-cloudpickle = "*"
-numpy = "*"
-torch = ">=2.1.0"
-
-[package.extras]
-checkpointing = ["torchsnapshot-nightly"]
-h5 = ["h5py (>=3.8)"]
-tests = ["pytest", "pytest-benchmark", "pytest-instafail", "pytest-rerunfailures", "pyyaml"]
-
-[package.source]
-type = "git"
-url = "https://github.com/pytorch/tensordict"
-reference = "HEAD"
-resolved_reference = "b4c91e8828c538ca0a50d8383fd99311a9afb078"
-
-[[package]]
 name = "termcolor"
 version = "2.4.0"
 description = "ANSI color formatting for output in terminal"
@@ -3031,7 +3059,7 @@ tests = ["pytest", "pytest-cov"]
 name = "tifffile"
 version = "2024.2.12"
 description = "Read and write TIFF files"
-optional = false
+optional = true
 python-versions = ">=3.9"
 files = [
     {file = "tifffile-2024.2.12-py3-none-any.whl", hash = "sha256:870998f82fbc94ff7c3528884c1b0ae54863504ff51dbebea431ac3fa8fb7c21"},
@@ -3090,40 +3118,6 @@ optree = ["optree (>=0.9.1)"]
 type = "legacy"
 url = "https://download.pytorch.org/whl/cpu"
 reference = "torch-cpu"
-
-[[package]]
-name = "torchrl"
-version = "0.4.0+13bef42"
-description = ""
-optional = false
-python-versions = "*"
-files = []
-develop = false
-
-[package.dependencies]
-cloudpickle = "*"
-numpy = "*"
-packaging = "*"
-tensordict = ">=0.4.0"
-torch = ">=2.1.0"
-
-[package.extras]
-all = ["ale-py", "atari-py", "dm_control", "git", "gym", "gym[accept-rom-license]", "gymnasium", "h5py", "huggingface_hub", "hydra-core (>=1.1)", "hydra-submitit-launcher", "minari", "moviepy", "mujoco", "pandas", "pettingzoo (>=1.24.1)", "pillow", "pygame", "pytest", "pytest-instafail", "pyyaml", "requests", "scikit-learn", "scipy", "tensorboard", "torchsnapshot", "torchvision", "tqdm", "vmas (>=1.2.10)", "wandb"]
-atari = ["ale-py", "atari-py", "gym", "gym[accept-rom-license]", "pygame"]
-checkpointing = ["torchsnapshot"]
-dm-control = ["dm_control"]
-gym-continuous = ["gymnasium", "mujoco"]
-marl = ["pettingzoo (>=1.24.1)", "vmas (>=1.2.10)"]
-offline-data = ["h5py", "huggingface_hub", "minari", "pandas", "pillow", "requests", "scikit-learn", "torchvision", "tqdm"]
-rendering = ["moviepy"]
-tests = ["pytest", "pytest-instafail", "pyyaml", "scipy"]
-utils = ["git", "hydra-core (>=1.1)", "hydra-submitit-launcher", "tensorboard", "tqdm", "wandb"]
-
-[package.source]
-type = "git"
-url = "https://github.com/pytorch/rl"
-reference = "13bef426dcfa5887c6e5034a6e9697993fa92c37"
-resolved_reference = "13bef426dcfa5887c6e5034a6e9697993fa92c37"
 
 [[package]]
 name = "torchvision"
@@ -3327,7 +3321,12 @@ files = [
 docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "rst.linker (>=1.9)", "sphinx (>=3.5)", "sphinx-lint"]
 testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-ignore-flaky", "pytest-mypy", "pytest-ruff (>=0.2.1)"]
 
+[extras]
+aloha = ["gym-aloha"]
+pusht = ["gym-pusht"]
+xarm = ["gym-xarm"]
+
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "8800bb8b24312d17b765cd2ce2799f49436171dd5fbf1bec3b07f853cfa9befd"
+content-hash = "8fa6dfc30e605741c24f5de58b89125d5b02153f550e5af7a44356956d6bb167"
