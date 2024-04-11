@@ -941,7 +941,7 @@ mujoco = "^2.3.7"
 type = "git"
 url = "git@github.com:huggingface/gym-xarm.git"
 reference = "HEAD"
-resolved_reference = "ce294c0d30def08414d9237e2bf9f373d448ca07"
+resolved_reference = "6a88f7d63833705dfbec4b997bf36cac6b4a448c"
 
 [[package]]
 name = "gymnasium"
