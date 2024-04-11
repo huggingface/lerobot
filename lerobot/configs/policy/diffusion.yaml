@@ -19,7 +19,6 @@ n_action_steps: 8
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
 keypoint_visible_rate: 1.0
-obs_as_global_cond: True
 
 eval_episodes: 50
 eval_freq: 5000
@@ -40,13 +39,12 @@ policy:
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
   num_inference_steps: 100
-  obs_as_global_cond: ${obs_as_global_cond}
   # crop_shape: null
   diffusion_step_embed_dim: 128
   down_dims: [512, 1024, 2048]
   kernel_size: 5
   n_groups: 8
-  cond_predict_scale: True
+  film_scale_modulation: True
 
   pretrained_model_path:
 
@@ -68,6 +66,16 @@ policy:
     observation.state: [-0.1, 0]
     action: [-0.1, 0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1.0, 1.1, 1.2, 1.3, 1.4]
 
+  rgb_encoder:
+    backbone_name: resnet18
+    pretrained_backbone: false
+    use_group_norm: True
+    num_keypoints: 32
+    relu: true
+    norm_mean_std: [0.5, 0.5]  # for PushT the original impl normalizes to [-1, 1] (maybe not the case for robomimic envs)
+    crop_shape: [84, 84]
+    random_crop: True
+
 noise_scheduler:
   _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
   num_train_timesteps: 100
@@ -77,16 +85,6 @@ noise_scheduler:
   variance_type: fixed_small # Yilun's paper uses fixed_small_log instead, but easy to cause Nan
   clip_sample: True # required when predict_epsilon=False
   prediction_type: epsilon # or sample
-
-obs_encoder:
-  shape_meta: ${shape_meta}
-  # resize_shape: null
-  crop_shape: [84, 84]
-  # constant center crop
-  random_crop: True
-  use_group_norm: True
-  share_rgb_model: False
-  norm_mean_std: [0.5, 0.5]  # for PushT the original impl normalizes to [-1, 1] (maybe not the case for robomimic envs)
 
 rgb_model:
   pretrained: false

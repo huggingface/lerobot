@@ -121,7 +121,7 @@ def eval_policy(
 
         # get the next action for the environment
         with torch.inference_mode():
-            action = policy.select_action(observation, step)
+            action = policy.select_action(observation, step=step)
 
         # apply inverse transform to unnormalize the action
         action = postprocess_action(action, transform)

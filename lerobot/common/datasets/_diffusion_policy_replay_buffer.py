@@ -1,3 +1,8 @@
+"""Helper code for loading PushT dataset from Diffusion Policy (https://diffusion-policy.cs.columbia.edu/)
+
+Copied from the original Diffusion Policy repository.
+"""
+
 from __future__ import annotations
 
 import math
