@@ -86,11 +86,10 @@ def make_dataset(
             ]
         )
 
-    delta_timestamps = cfg.policy.get("delta_timestamps")
-    if delta_timestamps is not None:
-        for key in delta_timestamps:
-            if isinstance(delta_timestamps[key], str):
-                delta_timestamps[key] = eval(delta_timestamps[key])
+    delta_timestamps = cfg.policy.delta_timestamps
+    for key in delta_timestamps:
+        if isinstance(delta_timestamps[key], str):
+            delta_timestamps[key] = eval(delta_timestamps[key])
 
     dataset = clsfunc(
         dataset_id=cfg.dataset_id,
