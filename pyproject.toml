@@ -40,7 +40,7 @@ opencv-python = "^4.9.0.80"
 diffusers = "^0.26.3"
 torchvision = "^0.17.1"
 h5py = "^3.10.0"
-huggingface-hub = {extras = ["hf-transfer"], version = "^0.21.4"}
+huggingface-hub = {extras = ["hf-transfer"], version = "^0.22.2"}
 robomimic = "0.2.0"
 gymnasium = "^0.29.1"
 cmake = "^3.29.0.1"

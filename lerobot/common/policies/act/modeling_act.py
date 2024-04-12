@@ -16,6 +16,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
 import torchvision.transforms as transforms
+from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
@@ -23,7 +24,7 @@ from torchvision.ops.misc import FrozenBatchNorm2d
 from lerobot.common.policies.act.configuration_act import ActConfig
 
 
-class ActPolicy(nn.Module):
+class ActPolicy(nn.Module, PyTorchModelHubMixin):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
     Hardware (paper: https://arxiv.org/abs/2304.13705, code: https://github.com/tonyzhaozh/act)
@@ -63,41 +64,41 @@ class ActPolicy(nn.Module):
     name = "act"
     _multiple_obs_steps_not_handled_msg = "ActPolicy does not handle multiple observation steps."
 
-    def __init__(self, cfg: ActConfig):
+    def __init__(self, config: ActConfig):
         """
         TODO(alexander-soare): Add documentation for all parameters once we have model configs established.
         """
         super().__init__()
-        if getattr(cfg, "n_obs_steps", 1) != 1:
+        if getattr(config, "n_obs_steps", 1) != 1:
             raise ValueError(self._multiple_obs_steps_not_handled_msg)
-        self.cfg = cfg
+        self.config = config
 
         # BERT style VAE encoder with input [cls, *joint_space_configuration, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
-        if self.cfg.use_vae:
-            self.vae_encoder = _TransformerEncoder(cfg)
-            self.vae_encoder_cls_embed = nn.Embedding(1, cfg.d_model)
+        if self.config.use_vae:
+            self.vae_encoder = _TransformerEncoder(config)
+            self.vae_encoder_cls_embed = nn.Embedding(1, config.d_model)
             # Projection layer for joint-space configuration to hidden dimension.
-            self.vae_encoder_robot_state_input_proj = nn.Linear(cfg.state_dim, cfg.d_model)
+            self.vae_encoder_robot_state_input_proj = nn.Linear(config.state_dim, config.d_model)
             # Projection layer for action (joint-space target) to hidden dimension.
-            self.vae_encoder_action_input_proj = nn.Linear(cfg.state_dim, cfg.d_model)
-            self.latent_dim = cfg.latent_dim
+            self.vae_encoder_action_input_proj = nn.Linear(config.state_dim, config.d_model)
+            self.latent_dim = config.latent_dim
             # Projection layer from the VAE encoder's output to the latent distribution's parameter space.
-            self.vae_encoder_latent_output_proj = nn.Linear(cfg.d_model, self.latent_dim * 2)
+            self.vae_encoder_latent_output_proj = nn.Linear(config.d_model, self.latent_dim * 2)
             # Fixed sinusoidal positional embedding the whole input to the VAE encoder. Unsqueeze for batch
             # dimension.
             self.register_buffer(
                 "vae_encoder_pos_enc",
-                _create_sinusoidal_position_embedding(1 + 1 + cfg.chunk_size, cfg.d_model).unsqueeze(0),
+                _create_sinusoidal_position_embedding(1 + 1 + config.chunk_size, config.d_model).unsqueeze(0),
             )
 
         # Backbone for image feature extraction.
         self.image_normalizer = transforms.Normalize(
-            mean=cfg.image_normalization_mean, std=cfg.image_normalization_std
+            mean=config.image_normalization_mean, std=config.image_normalization_std
         )
-        backbone_model = getattr(torchvision.models, cfg.vision_backbone)(
-            replace_stride_with_dilation=[False, False, cfg.replace_final_stride_with_dilation],
-            pretrained=cfg.use_pretrained_backbone,
+        backbone_model = getattr(torchvision.models, config.vision_backbone)(
+            replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
+            pretrained=config.use_pretrained_backbone,
             norm_layer=FrozenBatchNorm2d,
         )
         # Note: The assumption here is that we are using a ResNet model (and hence layer4 is the final feature
@@ -106,26 +107,26 @@ class ActPolicy(nn.Module):
         self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
 
         # Transformer (acts as VAE decoder when training with the variational objective).
-        self.encoder = _TransformerEncoder(cfg)
-        self.decoder = _TransformerDecoder(cfg)
+        self.encoder = _TransformerEncoder(config)
+        self.decoder = _TransformerDecoder(config)
 
         # Transformer encoder input projections. The tokens will be structured like
         # [latent, robot_state, image_feature_map_pixels].
-        self.encoder_robot_state_input_proj = nn.Linear(cfg.state_dim, cfg.d_model)
-        self.encoder_latent_input_proj = nn.Linear(self.latent_dim, cfg.d_model)
+        self.encoder_robot_state_input_proj = nn.Linear(config.state_dim, config.d_model)
+        self.encoder_latent_input_proj = nn.Linear(self.latent_dim, config.d_model)
         self.encoder_img_feat_input_proj = nn.Conv2d(
-            backbone_model.fc.in_features, cfg.d_model, kernel_size=1
+            backbone_model.fc.in_features, config.d_model, kernel_size=1
         )
         # Transformer encoder positional embeddings.
-        self.encoder_robot_and_latent_pos_embed = nn.Embedding(2, cfg.d_model)
-        self.encoder_cam_feat_pos_embed = _SinusoidalPositionEmbedding2D(cfg.d_model // 2)
+        self.encoder_robot_and_latent_pos_embed = nn.Embedding(2, config.d_model)
+        self.encoder_cam_feat_pos_embed = _SinusoidalPositionEmbedding2D(config.d_model // 2)
 
         # Transformer decoder.
         # Learnable positional embedding for the transformer's decoder (in the style of DETR object queries).
-        self.decoder_pos_embed = nn.Embedding(cfg.chunk_size, cfg.d_model)
+        self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.d_model)
 
         # Final action regression head on the output of the transformer's decoder.
-        self.action_head = nn.Linear(cfg.d_model, cfg.action_dim)
+        self.action_head = nn.Linear(config.d_model, config.action_dim)
 
         self._reset_parameters()
         self._create_optimizer()
@@ -141,11 +142,11 @@ class ActPolicy(nn.Module):
                 "params": [
                     p for n, p in self.named_parameters() if n.startswith("backbone") and p.requires_grad
                 ],
-                "lr": self.cfg.lr_backbone,
+                "lr": self.config.lr_backbone,
             },
         ]
         self.optimizer = torch.optim.AdamW(
-            optimizer_params_dicts, lr=self.cfg.lr, weight_decay=self.cfg.weight_decay
+            optimizer_params_dicts, lr=self.config.lr, weight_decay=self.config.weight_decay
         )
 
     def _reset_parameters(self):
@@ -156,8 +157,8 @@ class ActPolicy(nn.Module):
 
     def reset(self):
         """This should be called whenever the environment is reset."""
-        if self.cfg.n_action_steps is not None:
-            self._action_queue = deque([], maxlen=self.cfg.n_action_steps)
+        if self.config.n_action_steps is not None:
+            self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor], **_) -> Tensor:
@@ -180,7 +181,7 @@ class ActPolicy(nn.Module):
 
         action = self.forward(batch, return_loss=False)
 
-        return action[: self.cfg.n_action_steps]
+        return action[: self.config.n_action_steps]
 
     def __call__(self, *args, **kwargs) -> dict:
         # TODO(alexander-soare): Temporary bridge until we know what to do about the `update` method.
@@ -220,10 +221,10 @@ class ActPolicy(nn.Module):
 
         self.train()
 
-        num_slices = self.cfg.batch_size
-        batch_size = self.cfg.chunk_size * num_slices
+        num_slices = self.config.batch_size
+        batch_size = self.config.chunk_size * num_slices
 
-        assert batch_size % self.cfg.chunk_size == 0
+        assert batch_size % self.config.chunk_size == 0
         assert batch_size % num_slices == 0
 
         loss = self.forward(batch, return_loss=True)["loss"]
@@ -231,7 +232,7 @@ class ActPolicy(nn.Module):
 
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.parameters(),
-            self.cfg.grad_clip_norm,
+            self.config.grad_clip_norm,
             error_if_nonfinite=False,
         )
 
@@ -241,7 +242,7 @@ class ActPolicy(nn.Module):
         info = {
             "loss": loss.item(),
             "grad_norm": float(grad_norm),
-            "lr": self.cfg.lr,
+            "lr": self.config.lr,
             "update_s": time.time() - start_time,
         }
 
@@ -263,7 +264,7 @@ class ActPolicy(nn.Module):
 
             loss_dict = {}
             loss_dict["l1"] = l1_loss
-            if self.cfg.use_vae:
+            if self.config.use_vae:
                 # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
                 # each dimension independently, we sum over the latent dimension to get the total
                 # KL-divergence per batch element, then take the mean over the batch.
@@ -272,7 +273,7 @@ class ActPolicy(nn.Module):
                     (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
                 )
                 loss_dict["kl"] = mean_kld
-                loss_dict["loss"] = loss_dict["l1"] + loss_dict["kl"] * self.cfg.kl_weight
+                loss_dict["loss"] = loss_dict["l1"] + loss_dict["kl"] * self.config.kl_weight
             else:
                 loss_dict["loss"] = loss_dict["l1"]
             return loss_dict
@@ -294,7 +295,7 @@ class ActPolicy(nn.Module):
             Tuple containing the latent PDF's parameters (mean, log(σ²)) both as (B, L) tensors where L is the
             latent dimension.
         """
-        if self.cfg.use_vae and self.training:
+        if self.config.use_vae and self.training:
             assert (
                 actions is not None
             ), "actions must be provided when using the variational objective in training mode."
@@ -302,7 +303,7 @@ class ActPolicy(nn.Module):
         batch_size = robot_state.shape[0]
 
         # Prepare the latent for input to the transformer encoder.
-        if self.cfg.use_vae and actions is not None:
+        if self.config.use_vae and actions is not None:
             # Prepare the input to the VAE encoder: [cls, *joint_space_configuration, *action_sequence].
             cls_embed = einops.repeat(
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size
@@ -337,7 +338,7 @@ class ActPolicy(nn.Module):
         # Camera observation features and positional embeddings.
         all_cam_features = []
         all_cam_pos_embeds = []
-        for cam_id, _ in enumerate(self.cfg.camera_names):
+        for cam_id, _ in enumerate(self.config.camera_names):
             cam_features = self.backbone(image[:, cam_id])["feature_map"]
             cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
             cam_features = self.encoder_img_feat_input_proj(cam_features)  # (B, C, h, w)
@@ -369,7 +370,7 @@ class ActPolicy(nn.Module):
         # Forward pass through the transformer modules.
         encoder_out = self.encoder(encoder_in, pos_embed=pos_embed)
         decoder_in = torch.zeros(
-            (self.cfg.chunk_size, batch_size, self.cfg.d_model),
+            (self.config.chunk_size, batch_size, self.config.d_model),
             dtype=pos_embed.dtype,
             device=pos_embed.device,
         )
@@ -398,10 +399,12 @@ class ActPolicy(nn.Module):
 class _TransformerEncoder(nn.Module):
     """Convenience module for running multiple encoder layers, maybe followed by normalization."""
 
-    def __init__(self, cfg: ActConfig):
+    def __init__(self, config: ActConfig):
         super().__init__()
-        self.layers = nn.ModuleList([_TransformerEncoderLayer(cfg) for _ in range(cfg.n_encoder_layers)])
-        self.norm = nn.LayerNorm(cfg.d_model) if cfg.pre_norm else nn.Identity()
+        self.layers = nn.ModuleList(
+            [_TransformerEncoderLayer(config) for _ in range(config.n_encoder_layers)]
+        )
+        self.norm = nn.LayerNorm(config.d_model) if config.pre_norm else nn.Identity()
 
     def forward(self, x: Tensor, pos_embed: Tensor | None = None) -> Tensor:
         for layer in self.layers:
@@ -411,22 +414,22 @@ class _TransformerEncoder(nn.Module):
 
 
 class _TransformerEncoderLayer(nn.Module):
-    def __init__(self, cfg: ActConfig):
+    def __init__(self, config: ActConfig):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(cfg.d_model, cfg.n_heads, dropout=cfg.dropout)
+        self.self_attn = nn.MultiheadAttention(config.d_model, config.n_heads, dropout=config.dropout)
 
         # Feed forward layers.
-        self.linear1 = nn.Linear(cfg.d_model, cfg.dim_feedforward)
-        self.dropout = nn.Dropout(cfg.dropout)
-        self.linear2 = nn.Linear(cfg.dim_feedforward, cfg.d_model)
+        self.linear1 = nn.Linear(config.d_model, config.dim_feedforward)
+        self.dropout = nn.Dropout(config.dropout)
+        self.linear2 = nn.Linear(config.dim_feedforward, config.d_model)
 
-        self.norm1 = nn.LayerNorm(cfg.d_model)
-        self.norm2 = nn.LayerNorm(cfg.d_model)
-        self.dropout1 = nn.Dropout(cfg.dropout)
-        self.dropout2 = nn.Dropout(cfg.dropout)
+        self.norm1 = nn.LayerNorm(config.d_model)
+        self.norm2 = nn.LayerNorm(config.d_model)
+        self.dropout1 = nn.Dropout(config.dropout)
+        self.dropout2 = nn.Dropout(config.dropout)
 
-        self.activation = _get_activation_fn(cfg.feedforward_activation)
-        self.pre_norm = cfg.pre_norm
+        self.activation = _get_activation_fn(config.feedforward_activation)
+        self.pre_norm = config.pre_norm
 
     def forward(self, x, pos_embed: Tensor | None = None) -> Tensor:
         skip = x
@@ -449,11 +452,13 @@ class _TransformerEncoderLayer(nn.Module):
 
 
 class _TransformerDecoder(nn.Module):
-    def __init__(self, cfg: ActConfig):
+    def __init__(self, config: ActConfig):
         """Convenience module for running multiple decoder layers followed by normalization."""
         super().__init__()
-        self.layers = nn.ModuleList([_TransformerDecoderLayer(cfg) for _ in range(cfg.n_decoder_layers)])
-        self.norm = nn.LayerNorm(cfg.d_model)
+        self.layers = nn.ModuleList(
+            [_TransformerDecoderLayer(config) for _ in range(config.n_decoder_layers)]
+        )
+        self.norm = nn.LayerNorm(config.d_model)
 
     def forward(
         self,
@@ -472,25 +477,25 @@ class _TransformerDecoder(nn.Module):
 
 
 class _TransformerDecoderLayer(nn.Module):
-    def __init__(self, cfg: ActConfig):
+    def __init__(self, config: ActConfig):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(cfg.d_model, cfg.n_heads, dropout=cfg.dropout)
-        self.multihead_attn = nn.MultiheadAttention(cfg.d_model, cfg.n_heads, dropout=cfg.dropout)
+        self.self_attn = nn.MultiheadAttention(config.d_model, config.n_heads, dropout=config.dropout)
+        self.multihead_attn = nn.MultiheadAttention(config.d_model, config.n_heads, dropout=config.dropout)
 
         # Feed forward layers.
-        self.linear1 = nn.Linear(cfg.d_model, cfg.dim_feedforward)
-        self.dropout = nn.Dropout(cfg.dropout)
-        self.linear2 = nn.Linear(cfg.dim_feedforward, cfg.d_model)
+        self.linear1 = nn.Linear(config.d_model, config.dim_feedforward)
+        self.dropout = nn.Dropout(config.dropout)
+        self.linear2 = nn.Linear(config.dim_feedforward, config.d_model)
 
-        self.norm1 = nn.LayerNorm(cfg.d_model)
-        self.norm2 = nn.LayerNorm(cfg.d_model)
-        self.norm3 = nn.LayerNorm(cfg.d_model)
-        self.dropout1 = nn.Dropout(cfg.dropout)
-        self.dropout2 = nn.Dropout(cfg.dropout)
-        self.dropout3 = nn.Dropout(cfg.dropout)
+        self.norm1 = nn.LayerNorm(config.d_model)
+        self.norm2 = nn.LayerNorm(config.d_model)
+        self.norm3 = nn.LayerNorm(config.d_model)
+        self.dropout1 = nn.Dropout(config.dropout)
+        self.dropout2 = nn.Dropout(config.dropout)
+        self.dropout3 = nn.Dropout(config.dropout)
 
-        self.activation = _get_activation_fn(cfg.feedforward_activation)
-        self.pre_norm = cfg.pre_norm
+        self.activation = _get_activation_fn(config.feedforward_activation)
+        self.pre_norm = config.pre_norm
 
     def maybe_add_pos_embed(self, tensor: Tensor, pos_embed: Tensor | None) -> Tensor:
         return tensor if pos_embed is None else tensor + pos_embed

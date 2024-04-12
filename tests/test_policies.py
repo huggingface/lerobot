@@ -9,6 +9,14 @@ from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.utils import init_hydra_config
 from .utils import DEVICE, DEFAULT_CONFIG_PATH
 
+
+
+
+def test_policy_interface():
+    """Checks that all policies have expected methods, method signatures, and attributes."""
+    # TODO(now)
+
+
 @pytest.mark.parametrize(
     "env_name,policy_name,extra_overrides",
     [
@@ -29,7 +37,7 @@ def test_policy(env_name, policy_name, extra_overrides):
         - Making the policy object.
         - Updating the policy.
         - Using the policy to select actions at inference time.
-        - Test the action can be applied to the policy
+        - Test the action can be applied to the environment.
     """
     cfg = init_hydra_config(
         DEFAULT_CONFIG_PATH,
