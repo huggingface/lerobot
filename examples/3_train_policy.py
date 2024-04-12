@@ -32,8 +32,6 @@ policy = DiffusionPolicy(
     cfg=cfg.policy,
     cfg_device=cfg.device,
     cfg_noise_scheduler=cfg.noise_scheduler,
-    cfg_rgb_model=cfg.rgb_model,
-    cfg_obs_encoder=cfg.obs_encoder,
     cfg_optimizer=cfg.optimizer,
     cfg_ema=cfg.ema,
     **cfg.policy,

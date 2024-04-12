@@ -251,7 +251,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
         for key in batch:
             batch[key] = batch[key].to(cfg.device, non_blocking=True)
 
-        train_info = policy.update(batch, step=step)
+        train_info = policy(batch, step=step)
 
         # TODO(rcadene): is it ok if step_t=0 = 0 and not 1 as previously done?
         if step % cfg.log_freq == 0:

@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 class _SinusoidalPosEmb(nn.Module):
-    # TODO(now): consolidate?
     def __init__(self, dim):
         super().__init__()
         self.dim = dim

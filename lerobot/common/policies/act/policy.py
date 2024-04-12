@@ -213,7 +213,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
         return action[: self.n_action_steps]
 
     def __call__(self, *args, **kwargs) -> dict:
-        # TODO(now): Temporary bridge until we know what to do about the `update` method.
+        # TODO(alexander-soare): Temporary bridge until we know what to do about the `update` method.
         return self.update(*args, **kwargs)
 
     def _preprocess_batch(
