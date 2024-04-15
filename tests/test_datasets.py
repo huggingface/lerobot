@@ -4,13 +4,12 @@ import einops
 import pytest
 import torch
 
-from lerobot.common.datasets.utils import compute_stats, get_stats_einops_patterns, load_data_with_delta_timestamps
-from lerobot.common.datasets.xarm import XarmDataset
+from lerobot.common.datasets.utils import compute_stats, get_stats_einops_patterns, load_previous_and_future_frames
 from lerobot.common.transforms import Prod
 from lerobot.common.utils import init_hydra_config
 import logging
 from lerobot.common.datasets.factory import make_dataset
-
+from datasets import Dataset
 from .utils import DEVICE, DEFAULT_CONFIG_PATH
 
 
@@ -94,6 +93,8 @@ def test_compute_stats():
     We compare with taking a straight min, mean, max, std of all the data in one pass (which we can do
     because we are working with a small dataset).
     """
+    from lerobot.common.datasets.xarm import XarmDataset
+
     DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
     # get transform to convert images from uint8 [0,255] to float32 [0,1]
@@ -145,47 +146,50 @@ def test_compute_stats():
     #     assert torch.allclose(loaded_stats[k]["max"], expected_stats[k]["max"])
 
 
-def test_load_data_with_delta_timestamps_within_tolerance():
-    data_dict = {
-        "timestamp": torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5]),
-        "index": torch.tensor([0, 1, 2, 3, 4]),
-    }
-    data_ids_per_episode = {0: torch.tensor([0, 1, 2, 3, 4])}
+def test_load_previous_and_future_frames_within_tolerance():
+    data_dict = Dataset.from_dict({
+        "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
+        "index": [0, 1, 2, 3, 4],
+        "episode_data_id_from": [0, 0, 0, 0, 0],
+        "episode_data_id_to": [4, 4, 4, 4, 4],
+    })
+    data_dict = data_dict.with_format("torch")
+    item = data_dict[2]
     delta_timestamps = {"index": [-0.2, 0, 0.139]}
-    key = "index"
-    current_ts = 0.3
-    episode = 0
     tol = 0.04
-    data, is_pad = load_data_with_delta_timestamps(data_dict, data_ids_per_episode, delta_timestamps, key, current_ts, episode, tol)
-    assert not is_pad.any(), "Unexpected padding detected"
+    item = load_previous_and_future_frames(item, data_dict, delta_timestamps, tol)
+    data, is_pad = item["index"], item["index_is_pad"]
     assert torch.equal(data, torch.tensor([0, 2, 3])), "Data does not match expected values"
+    assert not is_pad.any(), "Unexpected padding detected"
 
-def test_load_data_with_delta_timestamps_outside_tolerance_inside_episode_range():
-    data_dict = {
-        "timestamp": torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5]),
-        "index": torch.tensor([0, 1, 2, 3, 4]),
-    }
-    data_ids_per_episode = {0: torch.tensor([0, 1, 2, 3, 4])}
+def test_load_previous_and_future_frames_outside_tolerance_inside_episode_range():
+    data_dict = Dataset.from_dict({
+        "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
+        "index": [0, 1, 2, 3, 4],
+        "episode_data_id_from": [0, 0, 0, 0, 0],
+        "episode_data_id_to": [4, 4, 4, 4, 4],
+    })
+    data_dict = data_dict.with_format("torch")
+    item = data_dict[2]
     delta_timestamps = {"index": [-0.2, 0, 0.141]}
-    key = "index"
-    current_ts = 0.3
-    episode = 0
     tol = 0.04
     with pytest.raises(AssertionError):
-        load_data_with_delta_timestamps(data_dict, data_ids_per_episode, delta_timestamps, key, current_ts, episode, tol)
+        load_previous_and_future_frames(item, data_dict, delta_timestamps, tol)
 
-def test_load_data_with_delta_timestamps_outside_tolerance_outside_episode_range():
-    data_dict = {
-        "timestamp": torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5]),
-        "index": torch.tensor([0, 1, 2, 3, 4]),
-    }
-    data_ids_per_episode = {0: torch.tensor([0, 1, 2, 3, 4])}
+def test_load_previous_and_future_frames_outside_tolerance_outside_episode_range():
+    data_dict = Dataset.from_dict({
+        "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
+        "index": [0, 1, 2, 3, 4],
+        "episode_data_id_from": [0, 0, 0, 0, 0],
+        "episode_data_id_to": [4, 4, 4, 4, 4],
+    })
+    data_dict = data_dict.with_format("torch")
+    item = data_dict[2]
     delta_timestamps = {"index": [-0.3, -0.24, 0, 0.26, 0.3]}
-    key = "index"
-    current_ts = 0.3
-    episode = 0
     tol = 0.04
-    data, is_pad = load_data_with_delta_timestamps(data_dict, data_ids_per_episode, delta_timestamps, key, current_ts, episode, tol)
-    assert torch.equal(is_pad, torch.tensor([True, False, False, True, True])), "Padding does not match expected values"
+    item = load_previous_and_future_frames(item, data_dict, delta_timestamps, tol)
+    data, is_pad = item["index"], item["index_is_pad"]
     assert torch.equal(data, torch.tensor([0, 0, 2, 4, 4])), "Data does not match expected values"
+    assert torch.equal(is_pad, torch.tensor([True, False, False, True, True])), "Padding does not match expected values"
+    
 
