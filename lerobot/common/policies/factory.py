@@ -1,11 +1,11 @@
 import inspect
 
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
 from lerobot.common.utils import get_safe_torch_device
 
 
-def make_policy(cfg):
+def make_policy(cfg: DictConfig):
     if cfg.policy.name == "tdmpc":
         from lerobot.common.policies.tdmpc.policy import TDMPCPolicy
 

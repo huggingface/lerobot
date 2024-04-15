@@ -2,6 +2,7 @@ import logging
 import os
 from pathlib import Path
 
+from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from omegaconf import OmegaConf
 from termcolor import colored
 
@@ -70,20 +71,27 @@ class Logger:
     def save_model(self, policy, identifier):
         if self._save_model:
             self._model_dir.mkdir(parents=True, exist_ok=True)
-            fp = self._model_dir / f"{str(identifier)}.pt"
             # TODO(alexander-soare): This conditional branching is temporary while we add PyTorchModelHubMixin
-            # to all policies.
+            # to all policies. Once we're done, we should only use policy.save_pretrained.
             if hasattr(policy, "save"):
-                policy.save(fp)
+                model_path = self._model_dir / f"{str(identifier)}.pt"
+                policy.save(model_path)
             else:
-                policy.save_pretrained(fp)
+                save_dir = self._model_dir / str(identifier)
+                policy.save_pretrained(save_dir)
+                model_path = save_dir / SAFETENSORS_SINGLE_FILE
             if self._wandb and not self._disable_wandb_artifact:
                 # note wandb artifact does not accept ":" in its name
                 artifact = self._wandb.Artifact(
                     self._group.replace(":", "_") + "-" + str(self._seed) + "-" + str(identifier),
                     type="model",
                 )
-                artifact.add_file(fp)
+                # TODO(alexander-soare). See todo above. This conditional branching is temporary and we should
+                # only have the else path.
+                if hasattr(policy, "save"):
+                    artifact.add_file(model_path)
+                else:
+                    artifact.add_dir(save_dir)
                 self._wandb.log_artifact(artifact)
 
     def save_buffer(self, buffer, identifier):

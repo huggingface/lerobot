@@ -24,7 +24,7 @@ from torchvision.ops.misc import FrozenBatchNorm2d
 from lerobot.common.policies.act.configuration_act import ActionChunkingTransformerConfig
 
 
-class ActPActionChunkingTransformerPolicyolicy(nn.Module, PyTorchModelHubMixin):
+class ActionChunkingTransformerPolicy(nn.Module, PyTorchModelHubMixin):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
     Hardware (paper: https://arxiv.org/abs/2304.13705, code: https://github.com/tonyzhaozh/act)
@@ -389,9 +389,6 @@ class ActPActionChunkingTransformerPolicyolicy(nn.Module, PyTorchModelHubMixin):
         actions = self.action_head(decoder_out)
 
         return actions, (mu, log_sigma_x2)
-
-    def save(self, fp):
-        torch.save(self.state_dict(), fp)
 
     def load(self, fp):
         d = torch.load(fp)

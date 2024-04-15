@@ -42,6 +42,7 @@ import imageio
 import numpy as np
 import torch
 from huggingface_hub import snapshot_download
+from omegaconf import DictConfig
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.envs.factory import make_env
@@ -290,7 +291,7 @@ def eval_policy(
     return info
 
 
-def eval(cfg: dict, out_dir=None, stats_path=None):
+def eval(cfg: DictConfig, out_dir=None, stats_path=None):
     if out_dir is None:
         raise NotImplementedError()
 
