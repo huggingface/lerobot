@@ -54,7 +54,7 @@ policy:
 
   # Training and loss computation.
   dropout: 0.1
-  kl_weight: 10
+  kl_weight: 10.0
 
   # ---
   # TODO(alexander-soare): Remove these from the policy config.
