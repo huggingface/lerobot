@@ -1,5 +1,7 @@
 import inspect
 
+from omegaconf import OmegaConf
+
 from lerobot.common.utils import get_safe_torch_device
 
 
@@ -33,7 +35,13 @@ def make_policy(cfg):
         assert set(cfg.policy).issuperset(
             expected_kwargs
         ), f"Hydra config is missing arguments: {set(cfg.policy).difference(expected_kwargs)}"
-        policy_cfg = ActConfig(**{k: v for k, v in cfg.policy.items() if k in expected_kwargs})
+        policy_cfg = ActConfig(
+            **{
+                k: v
+                for k, v in OmegaConf.to_container(cfg.policy, resolve=True).items()
+                if k in expected_kwargs
+            }
+        )
         policy = ActPolicy(policy_cfg)
         policy.to(get_safe_torch_device(cfg.device))
     else:
