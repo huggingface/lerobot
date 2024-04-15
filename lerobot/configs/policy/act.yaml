@@ -8,61 +8,65 @@ eval_freq: 10000
 save_freq: 100000
 log_freq: 250
 
-horizon: 100
 n_obs_steps: 1
 # when temporal_agg=False, n_action_steps=horizon
-n_action_steps: ${horizon}
 
+# See `configuration_act.py` for more details.
 policy:
   name: act
 
   pretrained_model_path:
 
+  # Environment.
+  # Inherit these from the environment.
+  state_dim: ???
+  action_dim: ???
+
+  # Inputs / output structure.
+  n_obs_steps: ${n_obs_steps}
+  camera_names: [top]  # [top, front_close, left_pillar, right_pillar]
+  chunk_size: 100 # chunk_size
+  n_action_steps: 100
+
+  # Vision preprocessing.
+  image_normalization_mean: [0.485, 0.456, 0.406]
+  image_normalization_std: [0.229, 0.224, 0.225]
+
+  # Architecture.
+  # Vision backbone.
+  vision_backbone: resnet18
+  use_pretrained_backbone: true
+  replace_final_stride_with_dilation: false
+  # Transformer layers.
+  pre_norm: false
+  d_model: 512
+  n_heads: 8
+  dim_feedforward: 3200
+  feedforward_activation: relu
+  n_encoder_layers: 4
+  n_decoder_layers: 1
+  # VAE.
+  use_vae: true
+  latent_dim: 32
+  n_vae_encoder_layers: 4
+
+  # Inference.
+  use_temporal_aggregation: false
+
+  # Training and loss computation.
+  dropout: 0.1
+  kl_weight: 10.0
+
+  # ---
+  # TODO(alexander-soare): Remove these from the policy config.
+  batch_size: 8
   lr: 1e-5
   lr_backbone: 1e-5
-  pretrained_backbone: true
   weight_decay: 1e-4
   grad_clip_norm: 10
-  backbone: resnet18
-  horizon: ${horizon} # chunk_size
-  kl_weight: 10
-  d_model: 512
-  dim_feedforward: 3200
-  vae_enc_layers: 4
-  enc_layers: 4
-  dec_layers: 1
-  num_heads: 8
-  #camera_names: [top, front_close, left_pillar, right_pillar]
-  camera_names: [top]
-  dilation: false
-  dropout: 0.1
-  pre_norm: false
-  activation: relu
-  latent_dim: 32
-
-  use_vae: true
-
-  batch_size: 8
-
-  per_alpha: 0.6
-  per_beta: 0.4
-
-  balanced_sampling: false
   utd: 1
 
-  n_obs_steps: ${n_obs_steps}
-  n_action_steps: ${n_action_steps}
-
-  temporal_agg: false
-
-  state_dim: 14
-  action_dim: 14
-
-  image_normalization:
-    mean: [0.485, 0.456, 0.406]
-    std: [0.229, 0.224, 0.225]
-
   delta_timestamps:
-    observation.images.top: [0.0]
-    observation.state: [0.0]
-    action: "[i / ${fps} for i in range(${horizon})]"
+    observation.images.top: "[i / ${fps} for i in range(1 - ${n_obs_steps}, 1)]"
+    observation.state: "[i / ${fps} for i in range(1 - ${n_obs_steps}, 1)]"
+    action: "[i / ${fps} for i in range(${policy.chunk_size})]"
