@@ -56,7 +56,7 @@ class ActionChunkingTransformerConfig:
 
     # Inputs / output structure.
     n_obs_steps: int = 1
-    camera_names: list[str] = field(default_factory=lambda: ["top"])
+    camera_names: tuple[str] = ("top",)
     chunk_size: int = 100
     n_action_steps: int = 100
 
@@ -101,7 +101,7 @@ class ActionChunkingTransformerConfig:
     utd: int = 1
 
     def __post_init__(self):
-        """Input validation."""
+        """Input validation (not exhaustive)."""
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError("`vision_backbone` must be one of the ResNet variants.")
         if self.use_temporal_aggregation:
