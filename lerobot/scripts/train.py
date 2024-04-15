@@ -152,7 +152,7 @@ def add_episodes_inplace(data_dict, online_dataset, concat_dataset, sampler, pc_
             example["episode_data_id_to"] += start_index
             return example
 
-        disable_progress_bar()  # map has a tqdm progres bar
+        disable_progress_bar()  # map has a tqdm progress bar
         data_dict = data_dict.map(shift_indices)
 
         # extend online dataset
