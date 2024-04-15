@@ -196,7 +196,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     num_total_params = sum(p.numel() for p in policy.parameters())
 
     # log metrics to terminal and wandb
-    logger = Logger(out_dir, job_name, cfg)
+    logger = Logger(out_dir, job_name, cfg, offline_dataset.transform.transforms[1].stats)
 
     log_output_dir(out_dir)
     logging.info(f"{cfg.env.task=}")

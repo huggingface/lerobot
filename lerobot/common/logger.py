@@ -2,9 +2,11 @@ import logging
 import os
 from pathlib import Path
 
+import torch
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 from termcolor import colored
+from torch import Tensor
 
 
 def log_output_dir(out_dir):
@@ -24,7 +26,7 @@ def cfg_to_group(cfg, return_list=False):
 class Logger:
     """Primary logger object. Logs either locally or using wandb."""
 
-    def __init__(self, log_dir, job_name, cfg):
+    def __init__(self, log_dir, job_name, cfg: DictConfig, stats: dict[str, Tensor]):
         self._log_dir = Path(log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._job_name = job_name
@@ -36,6 +38,7 @@ class Logger:
         self._group = cfg_to_group(cfg)
         self._seed = cfg.seed
         self._cfg = cfg
+        self._stats = stats
         self._eval = []
         project = cfg.get("wandb", {}).get("project")
         entity = cfg.get("wandb", {}).get("entity")
@@ -79,6 +82,8 @@ class Logger:
             else:
                 save_dir = self._model_dir / str(identifier)
                 policy.save_pretrained(save_dir)
+                OmegaConf.save(self._cfg, save_dir / "config.yaml")
+                torch.save(self._stats, save_dir / "stats.pth")
                 model_path = save_dir / SAFETENSORS_SINGLE_FILE
             if self._wandb and not self._disable_wandb_artifact:
                 # note wandb artifact does not accept ":" in its name
