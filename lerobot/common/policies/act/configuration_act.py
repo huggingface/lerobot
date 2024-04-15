@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class ActConfig:
+class ActionChunkingTransformerConfig:
     """Configuration class for the Action Chunking Transformers policy.
 
     Defaults are configured for training on bimanual Aloha tasks like "insertion" or "transfer".
