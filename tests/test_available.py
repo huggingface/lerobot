@@ -18,14 +18,14 @@ from lerobot.common.datasets.xarm import XarmDataset
 from lerobot.common.datasets.aloha import AlohaDataset
 from lerobot.common.datasets.pusht import PushtDataset
 
-from lerobot.common.policies.act.modeling_act import ActPolicy
+from lerobot.common.policies.act.modeling_act import ActionChunkingTransformerPolicy
 from lerobot.common.policies.diffusion.policy import DiffusionPolicy
 from lerobot.common.policies.tdmpc.policy import TDMPCPolicy
 
 
 def test_available():
     policy_classes = [
-        ActPolicy,
+        ActionChunkingTransformerPolicy,
         DiffusionPolicy,
         TDMPCPolicy,
     ]

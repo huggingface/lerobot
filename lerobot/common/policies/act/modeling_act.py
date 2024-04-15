@@ -21,10 +21,10 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
-from lerobot.common.policies.act.configuration_act import ActConfig
+from lerobot.common.policies.act.configuration_act import ActionChunkingTransformerConfig
 
 
-class ActPolicy(nn.Module, PyTorchModelHubMixin):
+class ActPActionChunkingTransformerPolicyolicy(nn.Module, PyTorchModelHubMixin):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
     Hardware (paper: https://arxiv.org/abs/2304.13705, code: https://github.com/tonyzhaozh/act)
@@ -62,9 +62,11 @@ class ActPolicy(nn.Module, PyTorchModelHubMixin):
     """
 
     name = "act"
-    _multiple_obs_steps_not_handled_msg = "ActPolicy does not handle multiple observation steps."
+    _multiple_obs_steps_not_handled_msg = (
+        "ActionChunkingTransformerPolicy does not handle multiple observation steps."
+    )
 
-    def __init__(self, config: ActConfig):
+    def __init__(self, config: ActionChunkingTransformerConfig):
         """
         TODO(alexander-soare): Add documentation for all parameters once we have model configs established.
         """
@@ -399,7 +401,7 @@ class ActPolicy(nn.Module, PyTorchModelHubMixin):
 class _TransformerEncoder(nn.Module):
     """Convenience module for running multiple encoder layers, maybe followed by normalization."""
 
-    def __init__(self, config: ActConfig):
+    def __init__(self, config: ActionChunkingTransformerConfig):
         super().__init__()
         self.layers = nn.ModuleList(
             [_TransformerEncoderLayer(config) for _ in range(config.n_encoder_layers)]
@@ -414,7 +416,7 @@ class _TransformerEncoder(nn.Module):
 
 
 class _TransformerEncoderLayer(nn.Module):
-    def __init__(self, config: ActConfig):
+    def __init__(self, config: ActionChunkingTransformerConfig):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.d_model, config.n_heads, dropout=config.dropout)
 
@@ -452,7 +454,7 @@ class _TransformerEncoderLayer(nn.Module):
 
 
 class _TransformerDecoder(nn.Module):
-    def __init__(self, config: ActConfig):
+    def __init__(self, config: ActionChunkingTransformerConfig):
         """Convenience module for running multiple decoder layers followed by normalization."""
         super().__init__()
         self.layers = nn.ModuleList(
@@ -477,7 +479,7 @@ class _TransformerDecoder(nn.Module):
 
 
 class _TransformerDecoderLayer(nn.Module):
-    def __init__(self, config: ActConfig):
+    def __init__(self, config: ActionChunkingTransformerConfig):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.d_model, config.n_heads, dropout=config.dropout)
         self.multihead_attn = nn.MultiheadAttention(config.d_model, config.n_heads, dropout=config.dropout)
