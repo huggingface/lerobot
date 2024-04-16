@@ -1,6 +1,6 @@
 """Helper code for loading PushT dataset from Diffusion Policy (https://diffusion-policy.cs.columbia.edu/)
 
-Copied from the original Diffusion Policy repository.
+Copied from the original Diffusion Policy repository and used in our `download_and_upload_dataset.py` script.
 """
 
 from __future__ import annotations

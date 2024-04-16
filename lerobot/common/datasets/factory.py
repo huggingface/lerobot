@@ -8,9 +8,6 @@ from torchvision.transforms import v2
 from lerobot.common.datasets.utils import compute_stats
 from lerobot.common.transforms import NormalizeTransform, Prod
 
-# DATA_DIR specifies to location where datasets are loaded. By default, DATA_DIR is None and
-# we load from `$HOME/.cache/huggingface/hub/datasets`. For our unit tests, we set `DATA_DIR=tests/data`
-# to load a subset of our datasets for faster continuous integration.
 DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
 
@@ -19,6 +16,7 @@ def make_dataset(
     # set normalize=False to remove all transformations and keep images unnormalized in [0,255]
     normalize=True,
     stats_path=None,
+    split="train",
 ):
     if cfg.env.name == "xarm":
         from lerobot.common.datasets.xarm import XarmDataset
@@ -54,19 +52,23 @@ def make_dataset(
             stats["action"]["min"] = torch.tensor([12.0, 25.0], dtype=torch.float32)
             stats["action"]["max"] = torch.tensor([511.0, 511.0], dtype=torch.float32)
         elif stats_path is None:
-            # instantiate a one frame dataset with light transform
-            stats_dataset = clsfunc(
-                dataset_id=cfg.dataset_id,
-                root=DATA_DIR,
-                transform=Prod(in_keys=clsfunc.image_keys, prod=1 / 255.0),
-            )
-
             # load stats if the file exists already or compute stats and save it
-            precomputed_stats_path = stats_dataset.data_dir / "stats.pth"
+            if DATA_DIR is None:
+                # TODO(rcadene): clean stats
+                precomputed_stats_path = Path("data") / cfg.dataset_id / "stats.pth"
+            else:
+                precomputed_stats_path = DATA_DIR / cfg.dataset_id / "stats.pth"
             if precomputed_stats_path.exists():
                 stats = torch.load(precomputed_stats_path)
             else:
                 logging.info(f"compute_stats and save to {precomputed_stats_path}")
+                # instantiate a one frame dataset with light transform
+                stats_dataset = clsfunc(
+                    dataset_id=cfg.dataset_id,
+                    split="train",
+                    root=DATA_DIR,
+                    transform=Prod(in_keys=clsfunc.image_keys, prod=1 / 255.0),
+                )
                 stats = compute_stats(stats_dataset)
                 torch.save(stats, stats_path)
         else:
@@ -94,6 +96,7 @@ def make_dataset(
 
     dataset = clsfunc(
         dataset_id=cfg.dataset_id,
+        split=split,
         root=DATA_DIR,
         delta_timestamps=delta_timestamps,
         transform=transforms,
