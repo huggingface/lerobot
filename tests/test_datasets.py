@@ -157,7 +157,7 @@ def test_load_previous_and_future_frames_within_tolerance():
         "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
         "index": [0, 1, 2, 3, 4],
         "episode_data_index_from": [0, 0, 0, 0, 0],
-        "episode_data_index_to": [4, 4, 4, 4, 4],
+        "episode_data_index_to": [5, 5, 5, 5, 5],
     })
     data_dict = data_dict.with_format("torch")
     item = data_dict[2]
@@ -173,7 +173,7 @@ def test_load_previous_and_future_frames_outside_tolerance_inside_episode_range(
         "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
         "index": [0, 1, 2, 3, 4],
         "episode_data_index_from": [0, 0, 0, 0, 0],
-        "episode_data_index_to": [4, 4, 4, 4, 4],
+        "episode_data_index_to": [5, 5, 5, 5, 5],
     })
     data_dict = data_dict.with_format("torch")
     item = data_dict[2]
@@ -187,7 +187,7 @@ def test_load_previous_and_future_frames_outside_tolerance_outside_episode_range
         "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
         "index": [0, 1, 2, 3, 4],
         "episode_data_index_from": [0, 0, 0, 0, 0],
-        "episode_data_index_to": [4, 4, 4, 4, 4],
+        "episode_data_index_to": [5, 5, 5, 5, 5],
     })
     data_dict = data_dict.with_format("torch")
     item = data_dict[2]

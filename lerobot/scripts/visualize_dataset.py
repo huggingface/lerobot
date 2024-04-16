@@ -77,7 +77,7 @@ def render_dataset(dataset, out_dir, max_num_episodes):
                 # add current frame to list of frames to render
                 frames[im_key].append(item[im_key])
 
-            end_of_episode = item["index"].item() == item["episode_data_index_to"].item()
+            end_of_episode = item["index"].item() == item["episode_data_index_to"].item() - 1
 
         out_dir.mkdir(parents=True, exist_ok=True)
         for im_key in dataset.image_keys:
