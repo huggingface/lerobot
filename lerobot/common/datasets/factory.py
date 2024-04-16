@@ -53,7 +53,11 @@ def make_dataset(
             stats["action"]["max"] = torch.tensor([511.0, 511.0], dtype=torch.float32)
         elif stats_path is None:
             # load stats if the file exists already or compute stats and save it
-            precomputed_stats_path = Path("data") / cfg.dataset_id / "stats.pth"
+            if DATA_DIR is None:
+                # TODO(rcadene): clean stats
+                precomputed_stats_path = Path("data") / cfg.dataset_id / "stats.pth"
+            else:
+                precomputed_stats_path = DATA_DIR / cfg.dataset_id / "stats.pth"
             if precomputed_stats_path.exists():
                 stats = torch.load(precomputed_stats_path)
             else:
