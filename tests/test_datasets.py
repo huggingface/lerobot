@@ -95,12 +95,14 @@ def test_compute_stats():
     """
     from lerobot.common.datasets.xarm import XarmDataset
 
+    DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
     # get transform to convert images from uint8 [0,255] to float32 [0,1]
     transform = Prod(in_keys=XarmDataset.image_keys, prod=1 / 255.0)
 
     dataset = XarmDataset(
         dataset_id="xarm_lift_medium",
+        root=DATA_DIR,
         transform=transform,
     )
 
@@ -115,11 +117,11 @@ def test_compute_stats():
     # get all frames from the dataset in the same dtype and range as during compute_stats
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=16,
+        num_workers=8,
         batch_size=len(dataset),
         shuffle=False,
     )
-    data_dict = next(iter(dataloader))  # takes 23 seconds
+    data_dict = next(iter(dataloader))
 
     # compute stats based on all frames from the dataset without any batching
     expected_stats = {}
@@ -154,8 +156,8 @@ def test_load_previous_and_future_frames_within_tolerance():
     data_dict = Dataset.from_dict({
         "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
         "index": [0, 1, 2, 3, 4],
-        "episode_data_id_from": [0, 0, 0, 0, 0],
-        "episode_data_id_to": [4, 4, 4, 4, 4],
+        "episode_data_index_from": [0, 0, 0, 0, 0],
+        "episode_data_index_to": [4, 4, 4, 4, 4],
     })
     data_dict = data_dict.with_format("torch")
     item = data_dict[2]
@@ -170,8 +172,8 @@ def test_load_previous_and_future_frames_outside_tolerance_inside_episode_range(
     data_dict = Dataset.from_dict({
         "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
         "index": [0, 1, 2, 3, 4],
-        "episode_data_id_from": [0, 0, 0, 0, 0],
-        "episode_data_id_to": [4, 4, 4, 4, 4],
+        "episode_data_index_from": [0, 0, 0, 0, 0],
+        "episode_data_index_to": [4, 4, 4, 4, 4],
     })
     data_dict = data_dict.with_format("torch")
     item = data_dict[2]
@@ -184,8 +186,8 @@ def test_load_previous_and_future_frames_outside_tolerance_outside_episode_range
     data_dict = Dataset.from_dict({
         "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
         "index": [0, 1, 2, 3, 4],
-        "episode_data_id_from": [0, 0, 0, 0, 0],
-        "episode_data_id_to": [4, 4, 4, 4, 4],
+        "episode_data_index_from": [0, 0, 0, 0, 0],
+        "episode_data_index_to": [4, 4, 4, 4, 4],
     })
     data_dict = data_dict.with_format("torch")
     item = data_dict[2]

@@ -2,6 +2,9 @@
   "citation": "",
   "description": "",
   "features": {
+    "observation.images.top": {
+      "_type": "Image"
+    },
     "observation.state": {
       "feature": {
         "dtype": "float32",
@@ -34,16 +37,13 @@
       "dtype": "bool",
       "_type": "Value"
     },
-    "episode_data_id_from": {
+    "episode_data_index_from": {
       "dtype": "int64",
       "_type": "Value"
     },
-    "episode_data_id_to": {
+    "episode_data_index_to": {
       "dtype": "int64",
       "_type": "Value"
-    },
-    "observation.images.top": {
-      "_type": "Image"
     },
     "index": {
       "dtype": "int64",

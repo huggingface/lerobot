@@ -215,8 +215,8 @@ def eval_policy(
             "timestamp": torch.arange(0, num_frames, 1) / fps,
             "next.done": dones[ep_id, :num_frames],
             "next.reward": rewards[ep_id, :num_frames].type(torch.float32),
-            "episode_data_id_from": torch.tensor([idx_from] * num_frames),
-            "episode_data_id_to": torch.tensor([idx_from + num_frames - 1] * num_frames),
+            "episode_data_index_from": torch.tensor([idx_from] * num_frames),
+            "episode_data_index_to": torch.tensor([idx_from + num_frames] * num_frames),
         }
         for key in observations:
             ep_dict[key] = observations[key][ep_id][:num_frames]

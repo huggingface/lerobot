@@ -7,9 +7,9 @@ import tqdm
 
 
 def load_previous_and_future_frames(
-    item: dict[torch.Tensor],
-    data_dict: dict[torch.Tensor],
-    delta_timestamps: dict[list[float]],
+    item: dict[str, torch.Tensor],
+    data_dict: dict[str, torch.Tensor],
+    delta_timestamps: dict[str, list[float]],
     tol: float = 0.04,
 ) -> dict[torch.Tensor]:
     """
@@ -35,12 +35,12 @@ def load_previous_and_future_frames(
     - AssertionError: If any of the frames unexpectedly violate the tolerance level. This could indicate synchronization issues with timestamps during data collection.
     """
     # get indices of the frames associated to the episode, and their timestamps
-    ep_data_id_from = item["episode_data_id_from"].item()
-    ep_data_id_to = item["episode_data_id_to"].item()
-    ep_data_ids = torch.arange(ep_data_id_from, ep_data_id_to + 1, 1)
+    ep_data_id_from = item["episode_data_index_from"].item()
+    ep_data_id_to = item["episode_data_index_to"].item()
+    ep_data_ids = torch.arange(ep_data_id_from, ep_data_id_to, 1)
 
     # load timestamps
-    ep_timestamps = data_dict.select_columns("timestamp")[ep_data_id_from : ep_data_id_to + 1]["timestamp"]
+    ep_timestamps = data_dict.select_columns("timestamp")[ep_data_id_from:ep_data_id_to]["timestamp"]
 
     # we make the assumption that the timestamps are sorted
     ep_first_ts = ep_timestamps[0]

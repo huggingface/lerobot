@@ -41,11 +41,11 @@
       "dtype": "bool",
       "_type": "Value"
     },
-    "episode_data_id_from": {
+    "episode_data_index_from": {
       "dtype": "int64",
       "_type": "Value"
     },
-    "episode_data_id_to": {
+    "episode_data_index_to": {
       "dtype": "int64",
       "_type": "Value"
     },
