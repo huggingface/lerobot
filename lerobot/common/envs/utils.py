@@ -14,7 +14,7 @@ def preprocess_observation(observation, transform=None):
         imgs = {"observation.image": observation["pixels"]}
 
     for imgkey, img in imgs.items():
-        img = torch.from_numpy(img).float()
+        img = torch.from_numpy(img)
         # convert to (b c h w) torch format
         img = einops.rearrange(img, "b h w c -> b c h w")
         obs[imgkey] = img
