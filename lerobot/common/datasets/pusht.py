@@ -5,8 +5,10 @@ import numpy as np
 import torch
 import tqdm
 
+from lerobot.common.datasets._diffusion_policy_replay_buffer import (
+    ReplayBuffer as DiffusionPolicyReplayBuffer,
+)
 from lerobot.common.datasets.utils import download_and_extract_zip, load_data_with_delta_timestamps
-from lerobot.common.policies.diffusion.replay_buffer import ReplayBuffer as DiffusionPolicyReplayBuffer
 
 # as define in env
 SUCCESS_THRESHOLD = 0.95  # 95% coverage,

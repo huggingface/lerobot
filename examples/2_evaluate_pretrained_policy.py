@@ -11,6 +11,7 @@ from lerobot.common.utils import init_hydra_config
 from lerobot.scripts.eval import eval
 
 # Get a pretrained policy from the hub.
+# TODO(alexander-soare): This no longer works until we upload a new model that uses the current configs.
 hub_id = "lerobot/diffusion_policy_pusht_image"
 folder = Path(snapshot_download(hub_id))
 # OR uncomment the following to evaluate a policy from the local outputs/train folder.

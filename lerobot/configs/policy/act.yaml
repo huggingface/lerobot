@@ -18,7 +18,7 @@ policy:
   pretrained_model_path:
 
   # Environment.
-  # Inherit these from the environment.
+  # Inherit these from the environment config.
   state_dim: ???
   action_dim: ???
 

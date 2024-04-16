@@ -26,8 +26,8 @@ class ActionChunkingTransformerConfig:
         image_normalization_std: Value by which to divide the input image pixels (after the mean has been
             subtracted).
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
-        use_pretrained_backbone: Whether the backbone should be initialized with ImageNet, pretrained weights
-            from torchvision.
+        use_pretrained_backbone: Whether the backbone should be initialized with pretrained weights from
+            torchvision.
         replace_final_stride_with_dilation: Whether to replace the ResNet's final 2x2 stride with a dilated
             convolution.
         pre_norm: Whether to use "pre-norm" in the transformer blocks.
@@ -56,7 +56,7 @@ class ActionChunkingTransformerConfig:
 
     # Inputs / output structure.
     n_obs_steps: int = 1
-    camera_names: list[str] = field(default_factory=lambda: ["top"])
+    camera_names: tuple[str] = ("top",)
     chunk_size: int = 100
     n_action_steps: int = 100
 
@@ -101,7 +101,7 @@ class ActionChunkingTransformerConfig:
     utd: int = 1
 
     def __post_init__(self):
-        """Input validation."""
+        """Input validation (not exhaustive)."""
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError("`vision_backbone` must be one of the ResNet variants.")
         if self.use_temporal_aggregation:

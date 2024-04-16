@@ -11,6 +11,7 @@ from omegaconf import DictConfig
 
 
 def get_safe_torch_device(cfg_device: str, log: bool = False) -> torch.device:
+    """Given a string, return a torch.device with checks on whether the device is available."""
     match cfg_device:
         case "cuda":
             assert torch.cuda.is_available()

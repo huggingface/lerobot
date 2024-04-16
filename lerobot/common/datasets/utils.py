@@ -208,6 +208,10 @@ def compute_stats(dataset, batch_size=32, max_num_samples=None):
 
 
 def cycle(iterable):
+    """The equivalent of itertools.cycle, but safe for Pytorch dataloaders.
+
+    See https://github.com/pytorch/pytorch/issues/23900 for information on why itertools.cycle is not safe.
+    """
     iterator = iter(iterable)
     while True:
         try:
