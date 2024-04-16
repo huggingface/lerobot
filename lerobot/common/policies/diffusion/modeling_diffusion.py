@@ -1,4 +1,5 @@
-"""
+"""Diffusion Policy as per "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion"
+
 TODO(alexander-soare):
   - Remove reliance on Robomimic for SpatialSoftmax.
   - Remove reliance on diffusers for DDPMScheduler and LR scheduler.

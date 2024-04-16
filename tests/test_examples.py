@@ -29,11 +29,12 @@ def test_examples_3_and_2():
     with open(path, "r") as file:
         file_contents = file.read()
 
-    # Do less steps and use CPU.
+    # Do less steps, use CPU, and don't complicate things with dataloader workers.
     file_contents = _find_and_replace(
         file_contents,
         [
-            ("offline_steps = 5000", "offline_steps = 1"),
+            ("training_steps = 5000", "training_steps = 1"),
+            ("num_workers=4", "num_workers=0"),
             ('device = torch.device("cuda")', 'device = torch.device("cpu")'),
         ],
     )
