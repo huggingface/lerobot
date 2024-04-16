@@ -4,7 +4,7 @@ import torch
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.utils import postprocess_action, preprocess_observation
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.policies.protocol import Policy
+from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.envs.factory import make_env
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.utils import init_hydra_config
