@@ -6,7 +6,7 @@ others, reaching out and improving the documentations are immensely valuable to
 the community.
 
 It also helps us if you spread the word: reference the library from blog posts
-on the awesome projects it made possible, shout out on Twitter every time it has
+on the awesome projects it made possible, shout out on Twitter when it has
 helped you, or simply ⭐️ the repo to say "thank you".
 
 Whichever way you choose to contribute, please be mindful to respect our
@@ -16,7 +16,7 @@ Whichever way you choose to contribute, please be mindful to respect our
 
 Some of the ways you can contribute to 🤗 LeRobot:
 * Fixing outstanding issues with the existing code.
-* Implementing new models.
+* Implementing new models, datasets or simulation environments.
 * Contributing to the examples or to the documentation.
 * Submitting issues related to bugs or desired new features.
 
@@ -57,7 +57,7 @@ A good feature request addresses the following points:
   about it!
 * Is it something you worked on and think could benefit the community?
   Awesome! Tell us what problem it solved for you.
-2. Write a *full paragraph* describing the feature.
+2. Write a *paragraph* describing the feature.
 3. Provide a **code snippet** that demonstrates its future use.
 4. In case this is related to a paper, please attach a link.
 5. Attach any additional information (drawings, screenshots, etc.) you think may help.
@@ -211,7 +211,7 @@ Follow these steps to start contributing:
 2. If your pull request addresses an issue, please mention the issue number in
    the pull request description to make sure they are linked (and people
    consulting the issue know you are working on it);
-3. To indicate a work in progress please prefix the title with `[WIP]`, or mark
+3. To indicate a work in progress please prefix the title with `[WIP]`, or preferably mark
    the PR as a draft PR. These are useful to avoid duplicated work, and to differentiate
    it from PRs ready to be merged;
 4. Make sure existing tests pass;
