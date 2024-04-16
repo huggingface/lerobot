@@ -33,8 +33,6 @@ from lerobot.common.policies.utils import (
     populate_queues,
 )
 
-logger = logging.getLogger(__name__)
-
 
 class DiffusionPolicy(nn.Module):
     """
@@ -44,8 +42,17 @@ class DiffusionPolicy(nn.Module):
 
     name = "diffusion"
 
-    def __init__(self, cfg: DiffusionConfig, lr_scheduler_num_training_steps: int):
+    def __init__(self, cfg: DiffusionConfig | None, lr_scheduler_num_training_steps: int = 0):
         super().__init__()
+        """
+        Args:
+            cfg: Policy configuration class instance or None, in which case the default instantiation of the
+                 configuration class is used.
+        """
+        # TODO(alexander-soare): LR scheduler will be removed.
+        assert lr_scheduler_num_training_steps > 0
+        if cfg is None:
+            cfg = DiffusionConfig()
         self.cfg = cfg
 
         # queues are populated during rollout of the policy, they contain the n latest observations and actions

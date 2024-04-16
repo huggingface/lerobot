@@ -40,7 +40,8 @@ def test_examples_3_and_2():
         ],
     )
 
-    exec(file_contents)
+    # Pass empty globals to allow dictionary comprehension https://stackoverflow.com/a/32897127/4391249.
+    exec(file_contents, {})
 
     for file_name in ["model.pt", "stats.pth", "config.yaml"]:
         assert Path(f"outputs/train/example_pusht_diffusion/{file_name}").exists()
