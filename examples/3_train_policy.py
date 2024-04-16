@@ -55,7 +55,7 @@ while not done:
     for batch in dataloader:
         for k in batch:
             batch[k] = batch[k].to(device, non_blocking=True)
-        info = policy(batch)
+        info = policy.update(batch)
         if step % log_freq == 0:
             num_samples = (step + 1) * cfg.batch_size
             loss = info["loss"]
