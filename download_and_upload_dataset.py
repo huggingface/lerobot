@@ -61,7 +61,7 @@ def download_and_upload_pusht(root, root_tests, dataset_id="pusht", fps=10):
         import pymunk
         from gym_pusht.envs.pusht import PushTEnv, pymunk_to_shapely
 
-        from lerobot.common.policies.diffusion.replay_buffer import (
+        from lerobot.common.datasets._diffusion_policy_replay_buffer import (
             ReplayBuffer as DiffusionPolicyReplayBuffer,
         )
     except ModuleNotFoundError as e:
