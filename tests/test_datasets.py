@@ -37,7 +37,7 @@ def test_factory(env_name, dataset_id, policy_name):
 
     keys_ndim_required = [
         ("action", 1, True),
-        ("episode", 0, True),
+        ("episode_id", 0, True),
         ("frame_id", 0, True),
         ("timestamp", 0, True),
         # TODO(rcadene): should we rename it agent_pos?
@@ -95,14 +95,12 @@ def test_compute_stats():
     """
     from lerobot.common.datasets.xarm import XarmDataset
 
-    DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
     # get transform to convert images from uint8 [0,255] to float32 [0,1]
     transform = Prod(in_keys=XarmDataset.image_keys, prod=1 / 255.0)
 
     dataset = XarmDataset(
         dataset_id="xarm_lift_medium",
-        root=DATA_DIR,
         transform=transform,
     )
 
@@ -115,7 +113,13 @@ def test_compute_stats():
     stats_patterns = get_stats_einops_patterns(dataset)
 
     # get all frames from the dataset in the same dtype and range as during compute_stats
-    data_dict = transform(dataset.data_dict)
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        num_workers=16,
+        batch_size=len(dataset),
+        shuffle=False,
+    )
+    data_dict = next(iter(dataloader))  # takes 23 seconds
 
     # compute stats based on all frames from the dataset without any batching
     expected_stats = {}

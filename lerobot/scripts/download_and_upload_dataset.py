@@ -12,7 +12,8 @@ import h5py
 import numpy as np
 import torch
 import tqdm
-from datasets import Dataset
+from datasets import Dataset, Features, Image, Sequence, Value
+from PIL import Image as PILImage
 
 
 def download_and_extract_zip(url: str, destination_folder: Path) -> bool:
@@ -73,10 +74,6 @@ def download_and_upload_pusht(root, dataset_id="pusht", fps=10):
 
     episode_ids = torch.from_numpy(dataset_dict.get_episode_idxs())
     num_episodes = dataset_dict.meta["episode_ends"].shape[0]
-    total_frames = dataset_dict["action"].shape[0]
-    # to create test artifact
-    # num_episodes = 1
-    # total_frames = 50
     assert len(
         {dataset_dict[key].shape[0] for key in dataset_dict.keys()}  # noqa: SIM118
     ), "Some data type dont have the same number of total frames."
@@ -85,28 +82,27 @@ def download_and_upload_pusht(root, dataset_id="pusht", fps=10):
     goal_pos_angle = np.array([256, 256, np.pi / 4])  # x, y, theta (in radians)
     goal_body = PushTEnv.get_goal_pose_body(goal_pos_angle)
 
-    imgs = torch.from_numpy(dataset_dict["img"])
-    imgs = einops.rearrange(imgs, "b h w c -> b c h w")
+    imgs = torch.from_numpy(dataset_dict["img"])  # b h w c
     states = torch.from_numpy(dataset_dict["state"])
     actions = torch.from_numpy(dataset_dict["action"])
 
     data_ids_per_episode = {}
     ep_dicts = []
 
-    idx0 = 0
+    id_from = 0
     for episode_id in tqdm.tqdm(range(num_episodes)):
-        idx1 = dataset_dict.meta["episode_ends"][episode_id]
+        id_to = dataset_dict.meta["episode_ends"][episode_id]
 
-        num_frames = idx1 - idx0
+        num_frames = id_to - id_from
 
-        assert (episode_ids[idx0:idx1] == episode_id).all()
+        assert (episode_ids[id_from:id_to] == episode_id).all()
 
-        image = imgs[idx0:idx1]
+        image = imgs[id_from:id_to]
         assert image.min() >= 0.0
         assert image.max() <= 255.0
         image = image.type(torch.uint8)
 
-        state = states[idx0:idx1]
+        state = states[id_from:id_to]
         agent_pos = state[:, :2]
         block_pos = state[:, 2:4]
         block_angle = state[:, 4]
@@ -141,9 +137,9 @@ def download_and_upload_pusht(root, dataset_id="pusht", fps=10):
         done[-1] = True
 
         ep_dict = {
-            "observation.image": image,
+            "observation.image": [PILImage.fromarray(x.numpy()) for x in image],
             "observation.state": agent_pos,
-            "action": actions[idx0:idx1],
+            "action": actions[id_from:id_to],
             "episode_id": torch.tensor([episode_id] * num_frames, dtype=torch.int),
             "frame_id": torch.arange(0, num_frames, 1),
             "timestamp": torch.arange(0, num_frames, 1) / fps,
@@ -153,33 +149,55 @@ def download_and_upload_pusht(root, dataset_id="pusht", fps=10):
             "next.reward": torch.cat([reward[1:], reward[[-1]]]),
             "next.done": torch.cat([done[1:], done[[-1]]]),
             "next.success": torch.cat([success[1:], success[[-1]]]),
+            "episode_data_id_from": torch.tensor([id_from] * num_frames),
+            "episode_data_id_to": torch.tensor([id_from + num_frames - 1] * num_frames),
         }
         ep_dicts.append(ep_dict)
 
         assert isinstance(episode_id, int)
-        data_ids_per_episode[episode_id] = torch.arange(idx0, idx1, 1)
+        data_ids_per_episode[episode_id] = torch.arange(id_from, id_to, 1)
         assert len(data_ids_per_episode[episode_id]) == num_frames
 
-        idx0 = idx1
+        id_from += num_frames
 
     data_dict = {}
 
     keys = ep_dicts[0].keys()
     for key in keys:
-        data_dict[key] = torch.cat([x[key] for x in ep_dicts])
+        if torch.is_tensor(ep_dicts[0][key][0]):
+            data_dict[key] = torch.cat([ep_dict[key] for ep_dict in ep_dicts])
+        else:
+            if key not in data_dict:
+                data_dict[key] = []
+            for ep_dict in ep_dicts:
+                for x in ep_dict[key]:
+                    data_dict[key].append(x)
 
+    total_frames = id_from
     data_dict["index"] = torch.arange(0, total_frames, 1)
 
-    dataset = Dataset.from_dict(data_dict)
+    features = {
+        "observation.image": Image(),
+        "observation.state": Sequence(
+            length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
+        ),
+        "action": Sequence(length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)),
+        "episode_id": Value(dtype="int64", id=None),
+        "frame_id": Value(dtype="int64", id=None),
+        "timestamp": Value(dtype="float32", id=None),
+        "next.reward": Value(dtype="float32", id=None),
+        "next.done": Value(dtype="bool", id=None),
+        "next.success": Value(dtype="bool", id=None),
+        "index": Value(dtype="int64", id=None),
+        "episode_data_id_from": Value(dtype="int64", id=None),
+        "episode_data_id_to": Value(dtype="int64", id=None),
+    }
+    features = Features(features)
+    dataset = Dataset.from_dict(data_dict, features=features)
     dataset = dataset.with_format("torch")
 
-    def add_episode_data_id_from_to(frame):
-        ep_id = frame["episode_id"].item()
-        frame["episode_data_id_from"] = data_ids_per_episode[ep_id][0]
-        frame["episode_data_id_to"] = data_ids_per_episode[ep_id][-1]
-        return frame
-
-    dataset = dataset.map(add_episode_data_id_from_to, num_proc=4)
+    num_items_first_ep = ep_dicts[0]["frame_id"].shape[0]
+    dataset.select(range(num_items_first_ep)).save_to_disk(f"tests/data/{dataset_id}/train")
     dataset.push_to_hub(f"lerobot/{dataset_id}", token=True)
     dataset.push_to_hub(f"lerobot/{dataset_id}", token=True, revision="v1.0")
 
@@ -211,32 +229,32 @@ def download_and_upload_xarm(root, dataset_id, fps=15):
 
     total_frames = dataset_dict["actions"].shape[0]
 
-    data_ids_per_episode = {}
     ep_dicts = []
 
-    idx0 = 0
-    idx1 = 0
+    id_from = 0
+    id_to = 0
     episode_id = 0
     for i in tqdm.tqdm(range(total_frames)):
-        idx1 += 1
+        id_to += 1
 
         if not dataset_dict["dones"][i]:
             continue
 
-        num_frames = idx1 - idx0
+        num_frames = id_to - id_from
 
-        image = torch.tensor(dataset_dict["observations"]["rgb"][idx0:idx1])
-        state = torch.tensor(dataset_dict["observations"]["state"][idx0:idx1])
-        action = torch.tensor(dataset_dict["actions"][idx0:idx1])
+        image = torch.tensor(dataset_dict["observations"]["rgb"][id_from:id_to])
+        image = einops.rearrange(image, "b c h w -> b h w c")
+        state = torch.tensor(dataset_dict["observations"]["state"][id_from:id_to])
+        action = torch.tensor(dataset_dict["actions"][id_from:id_to])
         # TODO(rcadene): we have a missing last frame which is the observation when the env is done
         # it is critical to have this frame for tdmpc to predict a "done observation/state"
-        # next_image = torch.tensor(dataset_dict["next_observations"]["rgb"][idx0:idx1])
-        # next_state = torch.tensor(dataset_dict["next_observations"]["state"][idx0:idx1])
-        next_reward = torch.tensor(dataset_dict["rewards"][idx0:idx1])
-        next_done = torch.tensor(dataset_dict["dones"][idx0:idx1])
+        # next_image = torch.tensor(dataset_dict["next_observations"]["rgb"][id_from:id_to])
+        # next_state = torch.tensor(dataset_dict["next_observations"]["state"][id_from:id_to])
+        next_reward = torch.tensor(dataset_dict["rewards"][id_from:id_to])
+        next_done = torch.tensor(dataset_dict["dones"][id_from:id_to])
 
         ep_dict = {
-            "observation.image": image,
+            "observation.image": [PILImage.fromarray(x.numpy()) for x in image],
             "observation.state": state,
             "action": action,
             "episode_id": torch.tensor([episode_id] * num_frames, dtype=torch.int),
@@ -246,34 +264,51 @@ def download_and_upload_xarm(root, dataset_id, fps=15):
             # "next.observation.state": next_state,
             "next.reward": next_reward,
             "next.done": next_done,
+            "episode_data_id_from": torch.tensor([id_from] * num_frames),
+            "episode_data_id_to": torch.tensor([id_from + num_frames - 1] * num_frames),
         }
         ep_dicts.append(ep_dict)
 
-        assert isinstance(episode_id, int)
-        data_ids_per_episode[episode_id] = torch.arange(idx0, idx1, 1)
-        assert len(data_ids_per_episode[episode_id]) == num_frames
-
-        idx0 = idx1
+        id_from = id_to
         episode_id += 1
 
     data_dict = {}
-
     keys = ep_dicts[0].keys()
     for key in keys:
-        data_dict[key] = torch.cat([x[key] for x in ep_dicts])
+        if torch.is_tensor(ep_dicts[0][key][0]):
+            data_dict[key] = torch.cat([ep_dict[key] for ep_dict in ep_dicts])
+        else:
+            if key not in data_dict:
+                data_dict[key] = []
+            for ep_dict in ep_dicts:
+                for x in ep_dict[key]:
+                    data_dict[key].append(x)
 
+    total_frames = id_from
     data_dict["index"] = torch.arange(0, total_frames, 1)
 
-    dataset = Dataset.from_dict(data_dict)
+    features = {
+        "observation.image": Image(),
+        "observation.state": Sequence(
+            length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
+        ),
+        "action": Sequence(length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)),
+        "episode_id": Value(dtype="int64", id=None),
+        "frame_id": Value(dtype="int64", id=None),
+        "timestamp": Value(dtype="float32", id=None),
+        "next.reward": Value(dtype="float32", id=None),
+        "next.done": Value(dtype="bool", id=None),
+        #'next.success': Value(dtype='bool', id=None),
+        "index": Value(dtype="int64", id=None),
+        "episode_data_id_from": Value(dtype="int64", id=None),
+        "episode_data_id_to": Value(dtype="int64", id=None),
+    }
+    features = Features(features)
+    dataset = Dataset.from_dict(data_dict, features=features)
     dataset = dataset.with_format("torch")
 
-    def add_episode_data_id_from_to(frame):
-        ep_id = frame["episode_id"].item()
-        frame["episode_data_id_from"] = data_ids_per_episode[ep_id][0]
-        frame["episode_data_id_to"] = data_ids_per_episode[ep_id][-1]
-        return frame
-
-    dataset = dataset.map(add_episode_data_id_from_to, num_proc=4)
+    num_items_first_ep = ep_dicts[0]["frame_id"].shape[0]
+    dataset.select(range(num_items_first_ep)).save_to_disk(f"tests/data/{dataset_id}/train")
     dataset.push_to_hub(f"lerobot/{dataset_id}", token=True)
     dataset.push_to_hub(f"lerobot/{dataset_id}", token=True, revision="v1.0")
 
@@ -338,10 +373,9 @@ def download_and_upload_aloha(root, dataset_id, fps=50):
         gdown.download(ep48_urls[dataset_id], output=str(raw_dir / "episode_48.hdf5"), fuzzy=True)
         gdown.download(ep49_urls[dataset_id], output=str(raw_dir / "episode_49.hdf5"), fuzzy=True)
 
-    data_ids_per_episode = {}
     ep_dicts = []
 
-    frame_idx = 0
+    id_from = 0
     for ep_id in tqdm.tqdm(range(num_episodes[dataset_id])):
         ep_path = raw_dir / f"episode_{ep_id}.hdf5"
         with h5py.File(ep_path, "r") as ep:
@@ -366,49 +400,68 @@ def download_and_upload_aloha(root, dataset_id, fps=50):
                 # "next.reward": reward,
                 "next.done": done,
                 # "next.success": success,
+                "episode_data_id_from": torch.tensor([id_from] * num_frames),
+                "episode_data_id_to": torch.tensor([id_from + num_frames - 1] * num_frames),
             }
 
             for cam in cameras[dataset_id]:
-                image = torch.from_numpy(ep[f"/observations/images/{cam}"][:])
-                image = einops.rearrange(image, "b h w c -> b c h w").contiguous()
-                ep_dict[f"observation.images.{cam}"] = image
+                image = torch.from_numpy(ep[f"/observations/images/{cam}"][:])  # b h w c
+                # image = einops.rearrange(image, "b h w c -> b c h w").contiguous()
+                ep_dict[f"observation.images.{cam}"] = [PILImage.fromarray(x.numpy()) for x in image]
                 # ep_dict[f"next.observation.images.{cam}"] = image
 
             assert isinstance(ep_id, int)
-            data_ids_per_episode[ep_id] = torch.arange(frame_idx, frame_idx + num_frames, 1)
-            assert len(data_ids_per_episode[ep_id]) == num_frames
-
             ep_dicts.append(ep_dict)
 
-        frame_idx += num_frames
+        id_from += num_frames
 
     data_dict = {}
 
+    data_dict = {}
     keys = ep_dicts[0].keys()
     for key in keys:
-        data_dict[key] = torch.cat([x[key] for x in ep_dicts])
+        if torch.is_tensor(ep_dicts[0][key][0]):
+            data_dict[key] = torch.cat([ep_dict[key] for ep_dict in ep_dicts])
+        else:
+            if key not in data_dict:
+                data_dict[key] = []
+            for ep_dict in ep_dicts:
+                for x in ep_dict[key]:
+                    data_dict[key].append(x)
 
-    total_frames = frame_idx
+    total_frames = id_from
     data_dict["index"] = torch.arange(0, total_frames, 1)
 
-    dataset = Dataset.from_dict(data_dict)
+    features = {
+        "observation.images.top": Image(),
+        "observation.state": Sequence(
+            length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
+        ),
+        "action": Sequence(length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)),
+        "episode_id": Value(dtype="int64", id=None),
+        "frame_id": Value(dtype="int64", id=None),
+        "timestamp": Value(dtype="float32", id=None),
+        #'next.reward': Value(dtype='float32', id=None),
+        "next.done": Value(dtype="bool", id=None),
+        #'next.success': Value(dtype='bool', id=None),
+        "index": Value(dtype="int64", id=None),
+        "episode_data_id_from": Value(dtype="int64", id=None),
+        "episode_data_id_to": Value(dtype="int64", id=None),
+    }
+    features = Features(features)
+    dataset = Dataset.from_dict(data_dict, features=features)
     dataset = dataset.with_format("torch")
 
-    def add_episode_data_id_from_to(frame):
-        ep_id = frame["episode_id"].item()
-        frame["episode_data_id_from"] = data_ids_per_episode[ep_id][0]
-        frame["episode_data_id_to"] = data_ids_per_episode[ep_id][-1]
-        return frame
-
-    dataset = dataset.map(add_episode_data_id_from_to)
+    num_items_first_ep = ep_dicts[0]["frame_id"].shape[0]
+    dataset.select(range(num_items_first_ep)).save_to_disk(f"tests/data/{dataset_id}/train")
     dataset.push_to_hub(f"lerobot/{dataset_id}", token=True)
     dataset.push_to_hub(f"lerobot/{dataset_id}", token=True, revision="v1.0")
 
 
 if __name__ == "__main__":
     root = "data"
-    # download_and_upload_pusht(root, dataset_id="pusht")
-    # download_and_upload_xarm(root, dataset_id="xarm_lift_medium")
+    download_and_upload_pusht(root, dataset_id="pusht")
+    download_and_upload_xarm(root, dataset_id="xarm_lift_medium")
     download_and_upload_aloha(root, dataset_id="aloha_sim_insertion_human")
     download_and_upload_aloha(root, dataset_id="aloha_sim_insertion_scripted")
     download_and_upload_aloha(root, dataset_id="aloha_sim_transfer_cube_human")

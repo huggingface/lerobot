@@ -1,0 +1,55 @@
+{
+  "citation": "",
+  "description": "",
+  "features": {
+    "observation.state": {
+      "feature": {
+        "dtype": "float32",
+        "_type": "Value"
+      },
+      "length": 14,
+      "_type": "Sequence"
+    },
+    "action": {
+      "feature": {
+        "dtype": "float32",
+        "_type": "Value"
+      },
+      "length": 14,
+      "_type": "Sequence"
+    },
+    "episode_id": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "frame_id": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "timestamp": {
+      "dtype": "float32",
+      "_type": "Value"
+    },
+    "next.done": {
+      "dtype": "bool",
+      "_type": "Value"
+    },
+    "episode_data_id_from": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "episode_data_id_to": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "observation.images.top": {
+      "_type": "Image"
+    },
+    "index": {
+      "dtype": "int64",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": ""
+}
