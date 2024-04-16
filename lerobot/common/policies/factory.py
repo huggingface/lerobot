@@ -9,7 +9,7 @@ def _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg):
     expected_kwargs = set(inspect.signature(policy_cfg_class).parameters)
     assert set(hydra_cfg.policy).issuperset(
         expected_kwargs
-    ), f"Hydra config is missing arguments: {set(hydra_cfg.policy).difference(expected_kwargs)}"
+    ), f"Hydra config is missing arguments: {set(expected_kwargs).difference(hydra_cfg.policy)}"
     policy_cfg = policy_cfg_class(
         **{
             k: v
@@ -35,7 +35,7 @@ def make_policy(hydra_cfg: DictConfig):
         from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 
         policy_cfg = _policy_cfg_from_hydra_cfg(DiffusionConfig, hydra_cfg)
-        policy = DiffusionPolicy(policy_cfg)
+        policy = DiffusionPolicy(policy_cfg, hydra_cfg.offline_steps)
         policy.to(get_safe_torch_device(hydra_cfg.device))
     elif hydra_cfg.policy.name == "act":
         from lerobot.common.policies.act.configuration_act import ActionChunkingTransformerConfig

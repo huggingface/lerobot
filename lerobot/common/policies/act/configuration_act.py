@@ -26,8 +26,8 @@ class ActionChunkingTransformerConfig:
         image_normalization_std: Value by which to divide the input image pixels (after the mean has been
             subtracted).
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
-        use_pretrained_backbone: Whether the backbone should be initialized with ImageNet, pretrained weights
-            from torchvision.
+        use_pretrained_backbone: Whether the backbone should be initialized with pretrained weights from
+            torchvision.
         replace_final_stride_with_dilation: Whether to replace the ResNet's final 2x2 stride with a dilated
             convolution.
         pre_norm: Whether to use "pre-norm" in the transformer blocks.

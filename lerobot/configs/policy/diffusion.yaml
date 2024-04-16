@@ -44,7 +44,7 @@ policy:
   # Vision backbone.
   vision_backbone: resnet18
   crop_shape: [84, 84]
-  random_crop: True
+  crop_is_random: True
   use_pretrained_backbone: false
   use_group_norm: True
   spatial_softmax_num_keypoints: 32
@@ -53,15 +53,15 @@ policy:
   kernel_size: 5
   n_groups: 8
   diffusion_step_embed_dim: 128
-  film_scale_modulation: True
+  use_film_scale_modulation: True
   # Noise scheduler.
   num_train_timesteps: 100
   beta_schedule: squaredcos_cap_v2
   beta_start: 0.0001
   beta_end: 0.02
-  variance_type: fixed_small
   prediction_type: epsilon # epsilon / sample
   clip_sample: True
+  clip_sample_range: 1.0
 
   # Inference
   num_inference_steps: 100
@@ -79,12 +79,12 @@ policy:
   utd: 1
   use_ema: true
   ema_update_after_step: 0
-  ema_min_rate: 0.0
-  ema_max_rate: 0.9999
+  ema_min_alpha: 0.0
+  ema_max_alpha: 0.9999
   ema_inv_gamma: 1.0
   ema_power: 0.75
 
   delta_timestamps:
-    observation.images: "[i / ${fps} for i in range(1 - ${n_obs_steps}, 1)]"
+    observation.image: "[i / ${fps} for i in range(1 - ${n_obs_steps}, 1)]"
     observation.state: "[i / ${fps} for i in range(1 - ${n_obs_steps}, 1)]"
     action: "[i / ${fps} for i in range(1 - ${n_obs_steps}, 1 - ${n_obs_steps} + ${policy.horizon})]"

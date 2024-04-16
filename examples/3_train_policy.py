@@ -11,54 +11,54 @@ import torch
 from omegaconf import OmegaConf
 
 from lerobot.common.datasets.factory import make_dataset
+from lerobot.common.datasets.utils import cycle
+from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.common.utils import init_hydra_config
 
 output_directory = Path("outputs/train/example_pusht_diffusion")
 os.makedirs(output_directory, exist_ok=True)
 
-overrides = [
-    "env=pusht",
-    "policy=diffusion",
-    # Adjust as you prefer. 5000 steps are needed to get something worth evaluating.
-    "offline_steps=5000",
-    "log_freq=250",
-    "device=cuda",
-]
+# Number of offline training steps (we'll only do offline training for this example.
+# Adjust as you prefer. 5000 steps are needed to get something worth evaluating.
+training_steps = 5000
+device = torch.device("cuda")
+log_freq = 250
 
-cfg = init_hydra_config("lerobot/configs/default.yaml", overrides)
-
-policy = DiffusionPolicy(
-    cfg=cfg.policy,
-    cfg_device=cfg.device,
-    cfg_noise_scheduler=cfg.noise_scheduler,
-    cfg_optimizer=cfg.optimizer,
-    cfg_ema=cfg.ema,
-    **cfg.policy,
-)
-policy.train()
-
+# Set up the dataset.
+cfg = init_hydra_config("lerobot/configs/default.yaml", overrides=["env=pusht"])
 dataset = make_dataset(cfg)
 
-# create dataloader for offline training
+# Set up the the policy.
+# Policies are initialized with a configuration class, in this case `DiffusionConfig`.
+# For this example, no arguments need to be passed because the defaults are set up for PushT.
+# If you're doing something different, you will likely need to change at least some of the defaults.
+cfg = DiffusionConfig()
+# TODO(alexander-soare): Remove LR scheduler from the policy.
+policy = DiffusionPolicy(cfg, lr_scheduler_num_training_steps=training_steps)
+policy.train()
+policy.to(device)
+
+# Create dataloader for offline training.
 dataloader = torch.utils.data.DataLoader(
     dataset,
     num_workers=4,
-    batch_size=cfg.policy.batch_size,
+    batch_size=cfg.batch_size,
     shuffle=True,
-    pin_memory=cfg.device != "cpu",
+    pin_memory=device != torch.device("cpu"),
     drop_last=True,
 )
 
-for step, batch in enumerate(dataloader):
-    info = policy(batch, step)
-
-    if step % cfg.log_freq == 0:
-        num_samples = (step + 1) * cfg.policy.batch_size
+# Run training loop.
+dataloader = cycle(dataloader)
+for step in range(training_steps):
+    batch = {k: v.to(device, non_blocking=True) for k, v in next(dataloader).items()}
+    info = policy(batch)
+    if step % log_freq == 0:
+        num_samples = (step + 1) * cfg.batch_size
         loss = info["loss"]
         update_s = info["update_s"]
-        print(f"step:{step} samples:{num_samples} loss:{loss:.3f} update_time:{update_s:.3f}(seconds)")
-
+        print(f"step: {step} samples: {num_samples} loss: {loss:.3f} update_time: {update_s:.3f} (seconds)")
 
 # Save the policy, configuration, and normalization stats for later use.
 policy.save(output_directory / "model.pt")

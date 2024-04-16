@@ -1,8 +1,8 @@
 from pathlib import Path
 
 
-def _find_and_replace(text: str, finds: list[str], replaces: list[str]) -> str:
-    for f, r in zip(finds, replaces):
+def _find_and_replace(text: str, finds_and_replaces: list[tuple[str, str]]) -> str:
+    for f, r in finds_and_replaces:
         assert f in text
         text = text.replace(f, r)
     return text
@@ -32,8 +32,10 @@ def test_examples_3_and_2():
     # Do less steps and use CPU.
     file_contents = _find_and_replace(
         file_contents,
-        ['"offline_steps=5000"', '"device=cuda"'],
-        ['"offline_steps=1"', '"device=cpu"'],
+        [
+            ("offline_steps = 5000", "offline_steps = 1"),
+            ('device = torch.device("cuda")', 'device = torch.device("cpu")'),
+        ],
     )
 
     exec(file_contents)
@@ -50,20 +52,15 @@ def test_examples_3_and_2():
     file_contents = _find_and_replace(
         file_contents,
         [
-            '"eval_episodes=10"',
-            '"rollout_batch_size=10"',
-            '"device=cuda"',
-            '# folder = Path("outputs/train/example_pusht_diffusion")',
-            'hub_id = "lerobot/diffusion_policy_pusht_image"',
-            "folder = Path(snapshot_download(hub_id)",
-        ],
-        [
-            '"eval_episodes=1"',
-            '"rollout_batch_size=1"',
-            '"device=cpu"',
-            'folder = Path("outputs/train/example_pusht_diffusion")',
-            "",
-            "",
+            ('"eval_episodes=10"', '"eval_episodes=1"'),
+            ('"rollout_batch_size=10"', '"rollout_batch_size=1"'),
+            ('"device=cuda"', '"device=cpu"'),
+            (
+                '# folder = Path("outputs/train/example_pusht_diffusion")',
+                'folder = Path("outputs/train/example_pusht_diffusion")',
+            ),
+            ('hub_id = "lerobot/diffusion_policy_pusht_image"', ""),
+            ("folder = Path(snapshot_download(hub_id)", ""),
         ],
     )
 
