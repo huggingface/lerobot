@@ -3,6 +3,7 @@ from pathlib import Path
 import torch
 from datasets import load_dataset, load_from_disk
 
+import lerobot
 from lerobot.common.datasets.utils import load_previous_and_future_frames
 
 
@@ -17,7 +18,7 @@ class PushtDataset(torch.utils.data.Dataset):
         If `None`, no shift is applied to current timestamp and the data from the current frame is loaded.
     """
 
-    available_datasets = ["pusht"]
+    available_datasets = lerobot.available_datasets["pusht"]
     fps = 10
     image_keys = ["observation.image"]
 
