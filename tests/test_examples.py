@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 
 def _find_and_replace(text: str, finds_and_replaces: list[tuple[str, str]]) -> str:
@@ -8,23 +9,19 @@ def _find_and_replace(text: str, finds_and_replaces: list[tuple[str, str]]) -> s
     return text
 
 
+def _run_script(path):
+    subprocess.run(['python', path], check=True)
+
+
 def test_example_1():
     path = "examples/1_load_hugging_face_dataset.py"
-
-    with open(path, "r") as file:
-        file_contents = file.read()
-    exec(file_contents)
-
+    _run_script(path)
     assert Path("outputs/examples/1_load_hugging_face_dataset/episode_5.mp4").exists()
 
 
 def test_example_2():
     path = "examples/2_load_lerobot_dataset.py"
-
-    with open(path, "r") as file:
-        file_contents = file.read()
-    exec(file_contents)
-
+    _run_script(path)
     assert Path("outputs/examples/2_load_lerobot_dataset/episode_5.mp4").exists()
 
 
