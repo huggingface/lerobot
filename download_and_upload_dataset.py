@@ -182,7 +182,7 @@ def download_and_upload_pusht(root, revision, dataset_id="pusht", fps=10):
     zarr_path = (raw_dir / pusht_zarr).resolve()
     if not zarr_path.is_dir():
         raw_dir.mkdir(parents=True, exist_ok=True)
-        download_and_extract_zip(pusht_url, raw_dir)
+        download_and_extract_zip(pusht_url, zarr_path)
 
     # load
     dataset_dict = DiffusionPolicyReplayBuffer.copy_from_path(zarr_path)  # , keys=['img', 'state', 'action'])
@@ -509,7 +509,7 @@ def download_and_upload_aloha(root, revision, dataset_id, fps=50):
     data_dict = concatenate_episodes(ep_dicts)
 
     features = {
-        "observation.images.top": Image(),
+        "observation.image": Image(),
         "observation.state": Sequence(
             length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
         ),
@@ -776,4 +776,5 @@ if __name__ == "__main__":
         "umi_cup_in_the_wild",
     ]
     for dataset_id in dataset_ids:
-        download_and_upload(root, revision, dataset_id)
+        download_and_upload(root, revisions[dataset_id], dataset_id)
+    # download_and_upload_umi(root, revision, "umi")
