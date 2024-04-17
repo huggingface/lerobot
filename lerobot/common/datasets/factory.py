@@ -70,7 +70,7 @@ def make_dataset(
                     transform=Prod(in_keys=clsfunc.image_keys, prod=1 / 255.0),
                 )
                 stats = compute_stats(stats_dataset)
-                os.makedirs(precomputed_stats_path.parent, exist_ok=True)
+                precomputed_stats_path.parent.mkdir(parents=True, exist_ok=True)
                 torch.save(stats, precomputed_stats_path)
         else:
             stats = torch.load(stats_path)
