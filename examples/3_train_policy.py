@@ -54,7 +54,7 @@ done = False
 while not done:
     for batch in dataloader:
         batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
-        info = policy(batch)
+        info = policy.update(batch)
         if step % log_freq == 0:
             print(f"step: {step} loss: {info['loss']:.3f} update_time: {info['update_s']:.3f} (seconds)")
         step += 1

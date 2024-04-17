@@ -330,6 +330,10 @@ class TDMPCPolicy(nn.Module):
         return td_target
 
     def forward(self, batch, step):
+        # TODO(alexander-soare): Refactor TDMPC and make it comply with the policy interface documentation.
+        raise NotImplementedError()
+
+    def update(self, batch, step):
         """Main update function. Corresponds to one iteration of the model learning."""
         start_time = time.time()
 
