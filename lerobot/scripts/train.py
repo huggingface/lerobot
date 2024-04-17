@@ -5,7 +5,7 @@ from pathlib import Path
 import hydra
 import torch
 from datasets import Dataset, concatenate_datasets
-from datasets.utils.logging import disable_progress_bar, enable_progress_bars
+from datasets.utils import disable_progress_bars, enable_progress_bars
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.utils import cycle
@@ -177,7 +177,7 @@ def add_episodes_inplace(
             example["episode_data_index_to"] += start_index
             return example
 
-        disable_progress_bar()  # map has a tqdm progress bar
+        disable_progress_bars()  # map has a tqdm progress bar
         hf_dataset = hf_dataset.map(shift_indices)
         enable_progress_bars()
 
