@@ -241,7 +241,7 @@ def eval_policy(
 
     data_dict["index"] = torch.arange(0, total_frames, 1)
 
-    data_dict = Dataset.from_dict(data_dict).with_format("torch")
+    hf_dataset = Dataset.from_dict(data_dict).with_format("torch")
 
     if max_episodes_rendered > 0:
         batch_stacked_frames = np.stack(ep_frames, 1)  # (b, t, *)
@@ -292,7 +292,7 @@ def eval_policy(
             "eval_s": time.time() - start,
             "eval_ep_s": (time.time() - start) / num_episodes,
         },
-        "episodes": data_dict,
+        "episodes": hf_dataset,
     }
     if max_episodes_rendered > 0:
         info["videos"] = videos
