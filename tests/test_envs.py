@@ -6,44 +6,34 @@ import gymnasium as gym
 from gymnasium.utils.env_checker import check_env
 
 from lerobot.common.envs.factory import make_env
+from lerobot.common.import_utils import is_package_available
 from lerobot.common.utils import init_hydra_config
 
+import lerobot
 from lerobot.common.envs.utils import preprocess_observation
 
 from .utils import DEVICE, DEFAULT_CONFIG_PATH
 
+OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
 
-@pytest.mark.parametrize(
-    "env_name, task, obs_type",
-    [
-        # ("AlohaInsertion-v0", "state"),
-        ("aloha", "AlohaInsertion-v0", "pixels"),
-        ("aloha", "AlohaInsertion-v0", "pixels_agent_pos"),
-        ("aloha", "AlohaTransferCube-v0", "pixels"),
-        ("aloha", "AlohaTransferCube-v0", "pixels_agent_pos"),
-        ("xarm", "XarmLift-v0", "state"),
-        ("xarm", "XarmLift-v0", "pixels"),
-        ("xarm", "XarmLift-v0", "pixels_agent_pos"),
-        ("pusht", "PushT-v0", "state"),
-        ("pusht", "PushT-v0", "pixels"),
-        ("pusht", "PushT-v0", "pixels_agent_pos"),
-    ],
-)
-def test_env(env_name, task, obs_type):
+
+@pytest.mark.parametrize("obs_type", OBS_TYPES)
+@pytest.mark.parametrize("env_name, env_task", lerobot.env_task_pairs)
+def test_env(env_name, env_task, obs_type):
+    if env_name == "aloha" and obs_type == "state":
+        pytest.skip("`state` observations not available for aloha")
+    
     package_name = f"gym_{env_name}"
+    if not is_package_available(package_name):
+        pytest.skip(f"gym-{env_name} not installed")
+
     importlib.import_module(package_name)
-    env = gym.make(f"{package_name}/{task}", obs_type=obs_type)
+    env = gym.make(f"{package_name}/{env_task}", obs_type=obs_type)
     check_env(env.unwrapped, skip_render_check=True)
     env.close()
 
-@pytest.mark.parametrize(
-    "env_name",
-    [
-        "pusht",
-        "xarm",
-        "aloha",
-    ],
-)
+
+@pytest.mark.parametrize("env_name", lerobot.available_envs)
 def test_factory(env_name):
     cfg = init_hydra_config(
         DEFAULT_CONFIG_PATH,

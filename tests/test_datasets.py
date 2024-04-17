@@ -4,6 +4,7 @@ import einops
 import pytest
 import torch
 
+import lerobot
 from lerobot.common.datasets.utils import compute_stats, get_stats_einops_patterns, load_previous_and_future_frames
 from lerobot.common.transforms import Prod
 from lerobot.common.utils import init_hydra_config
@@ -13,17 +14,7 @@ from datasets import Dataset
 from .utils import DEVICE, DEFAULT_CONFIG_PATH
 
 
-@pytest.mark.parametrize(
-    "env_name,dataset_id,policy_name",
-    [
-        ("xarm", "xarm_lift_medium", "tdmpc"),
-        ("pusht", "pusht", "diffusion"),
-        ("aloha", "aloha_sim_insertion_human", "act"),
-        ("aloha", "aloha_sim_insertion_scripted", "act"),
-        ("aloha", "aloha_sim_transfer_cube_human", "act"),
-        ("aloha", "aloha_sim_transfer_cube_scripted", "act"),
-    ],
-)
+@pytest.mark.parametrize("env_name, dataset_id, policy_name", lerobot.env_dataset_policy_triplets)
 def test_factory(env_name, dataset_id, policy_name):
     cfg = init_hydra_config(
         DEFAULT_CONFIG_PATH,
@@ -87,7 +78,7 @@ def test_factory(env_name, dataset_id, policy_name):
             assert key in item, f"{key}"
 
 
-def test_compute_stats():
+def test_compute_stats_on_xarm():
     """Check that the statistics are computed correctly according to the stats_patterns property.
 
     We compare with taking a straight min, mean, max, std of all the data in one pass (which we can do
@@ -168,6 +159,7 @@ def test_load_previous_and_future_frames_within_tolerance():
     assert torch.equal(data, torch.tensor([0, 2, 3])), "Data does not match expected values"
     assert not is_pad.any(), "Unexpected padding detected"
 
+
 def test_load_previous_and_future_frames_outside_tolerance_inside_episode_range():
     hf_dataset = Dataset.from_dict({
         "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
@@ -181,6 +173,7 @@ def test_load_previous_and_future_frames_outside_tolerance_inside_episode_range(
     tol = 0.04
     with pytest.raises(AssertionError):
         load_previous_and_future_frames(item, hf_dataset, delta_timestamps, tol)
+
 
 def test_load_previous_and_future_frames_outside_tolerance_outside_episode_range():
     hf_dataset = Dataset.from_dict({

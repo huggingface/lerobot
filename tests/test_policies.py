@@ -11,6 +11,7 @@ from lerobot.common.utils import init_hydra_config
 from .utils import DEVICE, DEFAULT_CONFIG_PATH
 
 
+# TODO(aliberts): refactor using lerobot/__init__.py variables
 @pytest.mark.parametrize(
     "env_name,policy_name,extra_overrides",
     [
@@ -21,8 +22,6 @@ from .utils import DEVICE, DEFAULT_CONFIG_PATH
         ("aloha", "act", ["env.task=AlohaInsertion-v0", "dataset_id=aloha_sim_insertion_scripted"]),
         ("aloha", "act", ["env.task=AlohaTransferCube-v0", "dataset_id=aloha_sim_transfer_cube_human"]),
         ("aloha", "act", ["env.task=AlohaTransferCube-v0", "dataset_id=aloha_sim_transfer_cube_scripted"]),
-        # TODO(aliberts): xarm not working with diffusion
-        # ("xarm", "diffusion", []),
     ],
 )
 def test_policy(env_name, policy_name, extra_overrides):
