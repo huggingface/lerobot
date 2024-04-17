@@ -117,8 +117,6 @@ jobs:
       #            run tests & coverage
       #----------------------------------------------
       - name: Run tests
-        env:
-          LEROBOT_TESTS_DEVICE: cpu
         run: |
           source .venv/bin/activate
           pytest --cov=./lerobot --cov-report=xml tests
