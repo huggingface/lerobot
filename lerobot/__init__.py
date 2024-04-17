@@ -25,6 +25,8 @@ When implementing a new policy class (e.g. `DiffusionPolicy`) follow these steps
 - Update variables in `tests/test_available.py` by importing your new Policy class
 """
 
+import itertools
+
 from lerobot.__version__ import __version__  # noqa: F401
 
 available_tasks_per_env = {
@@ -52,7 +54,12 @@ available_datasets_per_env = {
         "lerobot/xarm_push_medium_replay",
     ],
 }
-available_datasets = [dataset for datasets in available_datasets_per_env.values() for dataset in datasets]
+
+available_datasets_without_env = ["lerobot/umi_cup_in_the_wild"]
+
+available_datasets = list(
+    itertools.chain(*available_datasets_per_env.values(), available_datasets_without_env)
+)
 
 available_policies = [
     "act",
