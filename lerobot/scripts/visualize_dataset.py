@@ -62,12 +62,12 @@ def render_dataset(dataset, out_dir, max_num_episodes):
     )
     dl_iter = iter(dataloader)
 
-    num_episodes = len(dataset.data_ids_per_episode)
-    for ep_id in range(min(max_num_episodes, num_episodes)):
+    for ep_id in range(min(max_num_episodes, dataset.num_episodes)):
         logging.info(f"Rendering episode {ep_id}")
 
         frames = {}
-        for _ in dataset.data_ids_per_episode[ep_id]:
+        end_of_episode = False
+        while not end_of_episode:
             item = next(dl_iter)
 
             for im_key in dataset.image_keys:
@@ -76,6 +76,8 @@ def render_dataset(dataset, out_dir, max_num_episodes):
                     frames[im_key] = []
                 # add current frame to list of frames to render
                 frames[im_key].append(item[im_key])
+
+            end_of_episode = item["index"].item() == item["episode_data_index_to"].item() - 1
 
         out_dir.mkdir(parents=True, exist_ok=True)
         for im_key in dataset.image_keys:

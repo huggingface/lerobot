@@ -4,6 +4,8 @@ from pathlib import Path
 
 import hydra
 import torch
+from datasets import concatenate_datasets
+from datasets.utils.logging import disable_progress_bar
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.utils import cycle
@@ -128,29 +130,33 @@ def calculate_online_sample_weight(n_off: int, n_on: int, pc_on: float):
     return -(n_off * pc_on) / (n_on * (pc_on - 1))
 
 
-def add_episodes_inplace(episodes, online_dataset, concat_dataset, sampler, pc_online_samples):
-    data_dict = episodes["data_dict"]
-    data_ids_per_episode = episodes["data_ids_per_episode"]
+def add_episodes_inplace(data_dict, online_dataset, concat_dataset, sampler, pc_online_samples):
+    first_episode_id = data_dict.select_columns("episode_id")[0]["episode_id"].item()
+    first_index = data_dict.select_columns("index")[0]["index"].item()
+    assert first_episode_id == 0, f"We expect the first episode_id to be 0 and not {first_episode_id}"
+    assert first_index == 0, f"We expect the first first_index to be 0 and not {first_index}"
 
     if len(online_dataset) == 0:
         # initialize online dataset
         online_dataset.data_dict = data_dict
-        online_dataset.data_ids_per_episode = data_ids_per_episode
     else:
         # find episode index and data frame indices according to previous episode in online_dataset
-        start_episode = max(online_dataset.data_ids_per_episode.keys()) + 1
-        start_index = online_dataset.data_dict["index"][-1].item() + 1
-        data_dict["episode"] += start_episode
-        data_dict["index"] += start_index
+        start_episode = online_dataset.select_columns("episode_id")[-1]["episode_id"].item() + 1
+        start_index = online_dataset.select_columns("index")[-1]["index"].item() + 1
+
+        def shift_indices(example):
+            # note: we dont shift "frame_id" since it represents the index of the frame in the episode it belongs to
+            example["episode_id"] += start_episode
+            example["index"] += start_index
+            example["episode_data_index_from"] += start_index
+            example["episode_data_index_to"] += start_index
+            return example
+
+        disable_progress_bar()  # map has a tqdm progress bar
+        data_dict = data_dict.map(shift_indices)
 
         # extend online dataset
-        for key in data_dict:
-            # TODO(rcadene): avoid reallocating memory at every step by preallocating memory or changing our data structure
-            online_dataset.data_dict[key] = torch.cat([online_dataset.data_dict[key], data_dict[key]])
-        for ep_id in data_ids_per_episode:
-            online_dataset.data_ids_per_episode[ep_id + start_episode] = (
-                data_ids_per_episode[ep_id] + start_index
-            )
+        online_dataset.data_dict = concatenate_datasets([online_dataset.data_dict, data_dict])
 
     # update the concatenated dataset length used during sampling
     concat_dataset.cumulative_sizes = concat_dataset.cumsum(concat_dataset.datasets)
@@ -269,7 +275,6 @@ def train(cfg: dict, out_dir=None, job_name=None):
     # create an empty online dataset similar to offline dataset
     online_dataset = deepcopy(offline_dataset)
     online_dataset.data_dict = {}
-    online_dataset.data_ids_per_episode = {}
 
     # create dataloader for online training
     concat_dataset = torch.utils.data.ConcatDataset([offline_dataset, online_dataset])
