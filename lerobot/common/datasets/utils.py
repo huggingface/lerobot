@@ -1,6 +1,7 @@
 from copy import deepcopy
 from math import ceil
 
+import datasets
 import einops
 import torch
 import tqdm
@@ -8,7 +9,7 @@ import tqdm
 
 def load_previous_and_future_frames(
     item: dict[str, torch.Tensor],
-    hf_dataset: dict[str, torch.Tensor],
+    hf_dataset: dict[str, datasets.Dataset],
     delta_timestamps: dict[str, list[float]],
     tol: float = 0.04,
 ) -> dict[torch.Tensor]:
