@@ -1,18 +1,17 @@
 import importlib
+
+import gymnasium as gym
 import pytest
 import torch
-from lerobot.common.datasets.factory import make_dataset
-import gymnasium as gym
 from gymnasium.utils.env_checker import check_env
 
+import lerobot
+from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.envs.factory import make_env
-from lerobot.common.utils.import_utils import is_package_available
+from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.utils.utils import init_hydra_config
 
-import lerobot
-from lerobot.common.envs.utils import preprocess_observation
-
-from .utils import DEVICE, DEFAULT_CONFIG_PATH, require_env
+from .utils import DEFAULT_CONFIG_PATH, DEVICE, require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
 
@@ -23,7 +22,7 @@ OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
 def test_env(env_name, env_task, obs_type):
     if env_name == "aloha" and obs_type == "state":
         pytest.skip("`state` observations not available for aloha")
-    
+
     package_name = f"gym_{env_name}"
     importlib.import_module(package_name)
     env = gym.make(f"{package_name}/{env_task}", obs_type=obs_type)

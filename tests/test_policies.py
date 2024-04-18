@@ -1,14 +1,15 @@
 import pytest
 import torch
 
+from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.utils import cycle
+from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.utils import postprocess_action, preprocess_observation
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import Policy
-from lerobot.common.envs.factory import make_env
-from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.utils.utils import init_hydra_config
-from .utils import DEVICE, DEFAULT_CONFIG_PATH, require_env
+
+from .utils import DEFAULT_CONFIG_PATH, DEVICE, require_env
 
 
 # TODO(aliberts): refactor using lerobot/__init__.py variables

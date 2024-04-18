@@ -1,9 +1,9 @@
 import importlib
-import pytest
-import lerobot
-import gymnasium as gym
 
-from lerobot.common.utils.import_utils import is_package_available
+import gymnasium as gym
+import pytest
+
+import lerobot
 from lerobot.common.policies.act.modeling_act import ActionChunkingTransformerPolicy
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.common.policies.tdmpc.policy import TDMPCPolicy
@@ -21,7 +21,7 @@ def test_available_env_task(env_name: str, task_name: list):
     package_name = f"gym_{env_name}"
     importlib.import_module(package_name)
     gym_handle = f"{package_name}/{task_name}"
-    assert gym_handle in gym.envs.registry.keys(), gym_handle
+    assert gym_handle in gym.envs.registry, gym_handle
 
 
 def test_available_policies():
