@@ -34,7 +34,7 @@ def load_previous_and_future_frames(
     - delta_timestamps (dict): A dictionary containing lists of delta timestamps for each possible modality to be
       retrieved. These deltas are added to the item timestamp to form the query timestamps.
     - tol (float, optional): The tolerance level used to determine if a data point is close enough to the query
-      timestamp (check looks like `difference > tol`). It is suggested that this be set to a value smaller than the
+      timestamp by asserting `tol > difference`. It is suggested to set `tol` to a smaller value than the
       smallest expected inter-frame period, but large enough to account for jitter.
 
     Returns:
