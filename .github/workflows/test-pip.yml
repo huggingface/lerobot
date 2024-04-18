@@ -1,0 +1,54 @@
+name: Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    env:
+      DATA_DIR: tests/data
+      MUJOCO_GL: egl
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Checkout gym-aloha
+        uses: actions/checkout@v4
+        with:
+          repository: huggingface/gym-aloha
+          path: envs/gym-aloha
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - name: Checkout gym-xarm
+        uses: actions/checkout@v4
+        with:
+          repository: huggingface/gym-xarm
+          path: envs/gym-xarm
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - name: Checkout gym-pusht
+        uses: actions/checkout@v4
+        with:
+          repository: huggingface/gym-pusht
+          path: envs/gym-pusht
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+          cache-dependency-path: "pyproject.toml"
+      - name: Install libegl1-mesa-dev (to use MUJOCO_GL=egl)
+        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test, aloha, xarm, pusht]"
+      - name: Test with pytest
+        run: pytest -v --cov=./lerobot --cov-report=xml tests
+      - name: Test end-to-end
+        run: make test-ete

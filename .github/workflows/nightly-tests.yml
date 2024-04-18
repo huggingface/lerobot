@@ -1,0 +1,104 @@
+# Inspired by
+# https://github.com/huggingface/peft/blob/main/.github/workflows/nightly.yml
+name: Self-hosted runner with slow tests (scheduled)
+
+on:
+  # pull_request:  # TODO(aliberts): for testing, delete before merge
+  #   branches:
+  #     - main
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+env:
+  RUN_SLOW: "yes"
+  IS_GITHUB_CI: "1"
+  # To be able to run tests on CUDA 12.2
+  NVIDIA_DISABLE_REQUIRE: "1"
+#   SLACK_API_TOKEN: ${{ secrets.SLACK_API_TOKEN }}
+
+
+jobs:
+  run_all_tests_cpu:
+    strategy:
+      fail-fast: false
+    runs-on: ubuntu-latest
+    env:
+      CUDA_VISIBLE_DEVICES: "0"
+      TEST_TYPE: "single_gpu"
+    container:
+      image: huggingface/lerobot-cpu:latest
+      credentials:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: /lerobot
+    steps:
+      # - uses: actions/checkout@v4
+      - name: Check
+        run: |
+          pwd
+          python --version
+          which python
+          ls -glh
+          ls -glh /opt/venv/
+          ls -glh /opt/venv/lib
+          ls -glh /opt/venv/lib/python3.10/site-packages
+      # - name: Pip install
+      #   run: |
+      #     source activate peft
+      #     pip install ".[test, aloha, xarm, pusht]"
+      - name: Tests
+        env:
+          DATA_DIR: tests/data
+          MUJOCO_GL: egl
+        run: |
+          pytest -v --cov=./lerobot --cov-report=xml tests
+      - name: Tests end-to-end
+        env:
+          DATA_DIR: tests/data
+          MUJOCO_GL: egl
+        run: |
+          make test-ete
+
+  run_all_tests_single_gpu:
+    strategy:
+      fail-fast: false
+    runs-on: [single-gpu, nvidia-gpu, t4, ci]
+    env:
+      CUDA_VISIBLE_DEVICES: "0"
+      TEST_TYPE: "single_gpu"
+    container:
+      image: huggingface/lerobot-gpu:latest
+      options: --gpus all --shm-size "16gb" -e NVIDIA_DISABLE_REQUIRE=true
+      credentials:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: /lerobot
+    steps:
+    #   - uses: actions/checkout@v4
+      - name: Nvidia-smi
+        run: nvidia-smi
+      - name: Test
+        env:
+          DATA_DIR: tests/data
+          MUJOCO_GL: egl
+        run: |
+          pytest -v --cov=./lerobot --cov-report=xml tests
+      - name: Tests end-to-end
+        env:
+          DATA_DIR: tests/data
+          MUJOCO_GL: egl
+        run: |
+          make test-ete
+
+    #   - name: Generate Report
+    #     if: always()
+    #     run: |
+    #       pip install slack_sdk tabulate
+    #       python scripts/log_reports.py >> $GITHUB_STEP_SUMMARY

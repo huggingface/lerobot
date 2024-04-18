@@ -1118,10 +1118,8 @@ gymnasium = "^0.29.1"
 mujoco = "^2.3.7"
 
 [package.source]
-type = "git"
-url = "git@github.com:huggingface/gym-aloha.git"
-reference = "HEAD"
-resolved_reference = "c636f05ba0d1760df94537da84c860be1487e17f"
+type = "directory"
+url = "envs/gym-aloha"
 
 [[package]]
 name = "gym-pusht"
@@ -1141,10 +1139,8 @@ scikit-image = "^0.22.0"
 shapely = "^2.0.3"
 
 [package.source]
-type = "git"
-url = "git@github.com:huggingface/gym-pusht.git"
-reference = "HEAD"
-resolved_reference = "080d4ce4d8d3140b2fd204ed628bda14dc58ff06"
+type = "directory"
+url = "envs/gym-pusht"
 
 [[package]]
 name = "gym-xarm"
@@ -1161,10 +1157,8 @@ gymnasium-robotics = "^1.2.4"
 mujoco = "^2.3.7"
 
 [package.source]
-type = "git"
-url = "git@github.com:huggingface/gym-xarm.git"
-reference = "HEAD"
-resolved_reference = "6a88f7d63833705dfbec4b997bf36cac6b4a448c"
+type = "directory"
+url = "envs/gym-xarm"
 
 [[package]]
 name = "gymnasium"
