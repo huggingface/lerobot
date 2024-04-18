@@ -14,6 +14,7 @@ class AlohaDataset(torch.utils.data.Dataset):
     https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_scripted
     """
 
+    # Copied from lerobot/__init__.py
     available_datasets = [
         "aloha_sim_insertion_human",
         "aloha_sim_insertion_scripted",

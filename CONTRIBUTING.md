@@ -75,7 +75,7 @@ and follow the same api design.
 
 When implementing a new dataset class (e.g. `AlohaDataset`) follow these steps:
 - Update `available_datasets` in `lerobot/__init__.py`
-- Set the required `available_datasets` class attribute using the previously updated `lerobot.available_datasets`
+- Copy it in the required `available_datasets` class attribute
 
 When implementing a new environment (e.g. `gym_aloha`), follow these steps:
 - Update `available_envs`, `available_tasks_per_env` and `available_datasets` in `lerobot/__init__.py`

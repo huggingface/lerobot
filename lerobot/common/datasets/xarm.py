@@ -11,6 +11,7 @@ class XarmDataset(torch.utils.data.Dataset):
     https://huggingface.co/datasets/lerobot/xarm_lift_medium
     """
 
+    # Copied from lerobot/__init__.py
     available_datasets = ["xarm_lift_medium"]
     fps = 15
     image_keys = ["observation.image"]
