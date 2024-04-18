@@ -15,7 +15,7 @@ cuda_version = torch._C._cuda_getCompiledVersion() if torch.version.cuda is not 
 
 
 # TODO(aliberts): refactor into an actual command `lerobot env`
-def get_env_info() -> dict:
+def display_sys_info() -> dict:
     """Run this to get basic system info to help for tracking issues & bugs."""
     info = {
         "`lerobot` version": version,
@@ -40,4 +40,4 @@ def format_dict(d: dict) -> str:
 
 
 if __name__ == "__main__":
-    get_env_info()
+    display_sys_info()
