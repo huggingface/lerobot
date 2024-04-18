@@ -50,7 +50,7 @@ from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.utils import postprocess_action, preprocess_observation
 from lerobot.common.logger import log_output_dir
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
+from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 
 
 def write_video(video_path, stacked_frames, fps):

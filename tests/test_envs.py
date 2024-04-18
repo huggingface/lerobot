@@ -6,8 +6,8 @@ import gymnasium as gym
 from gymnasium.utils.env_checker import check_env
 
 from lerobot.common.envs.factory import make_env
-from lerobot.common.import_utils import is_package_available
-from lerobot.common.utils import init_hydra_config
+from lerobot.common.utils.import_utils import is_package_available
+from lerobot.common.utils.utils import init_hydra_config
 
 import lerobot
 from lerobot.common.envs.utils import preprocess_observation

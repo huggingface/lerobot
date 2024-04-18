@@ -7,7 +7,7 @@ import torch
 import lerobot
 from lerobot.common.datasets.utils import compute_stats, get_stats_einops_patterns, load_previous_and_future_frames
 from lerobot.common.transforms import Prod
-from lerobot.common.utils import init_hydra_config
+from lerobot.common.utils.utils import init_hydra_config
 import logging
 from lerobot.common.datasets.factory import make_dataset
 from datasets import Dataset
