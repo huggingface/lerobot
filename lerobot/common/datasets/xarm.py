@@ -3,7 +3,6 @@ from pathlib import Path
 import torch
 from datasets import load_dataset, load_from_disk
 
-import lerobot
 from lerobot.common.datasets.utils import load_previous_and_future_frames
 
 
@@ -12,7 +11,7 @@ class XarmDataset(torch.utils.data.Dataset):
     https://huggingface.co/datasets/lerobot/xarm_lift_medium
     """
 
-    available_datasets = lerobot.available_datasets["xarm"]
+    available_datasets = ["xarm_lift_medium"]
     fps = 15
     image_keys = ["observation.image"]
 

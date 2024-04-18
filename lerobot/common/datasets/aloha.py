@@ -3,7 +3,6 @@ from pathlib import Path
 import torch
 from datasets import load_dataset, load_from_disk
 
-import lerobot
 from lerobot.common.datasets.utils import load_previous_and_future_frames
 
 
@@ -15,7 +14,12 @@ class AlohaDataset(torch.utils.data.Dataset):
     https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_scripted
     """
 
-    available_datasets = lerobot.available_datasets["aloha"]
+    available_datasets = [
+        "aloha_sim_insertion_human",
+        "aloha_sim_insertion_scripted",
+        "aloha_sim_transfer_cube_human",
+        "aloha_sim_transfer_cube_scripted",
+    ]
     fps = 50
     image_keys = ["observation.images.top"]
 
