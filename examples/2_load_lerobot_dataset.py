@@ -83,7 +83,8 @@ print(f"{dataset[0]['observation.image'].shape=}")  # (4,c,h,w)
 print(f"{dataset[0]['observation.state'].shape=}")  # (8,c)
 print(f"{dataset[0]['action'].shape=}")  # (64,c)
 
-# Finally, our datasets are fully compatible with pytorch dataloaders and samplers
+# Finally, our datasets are fully compatible with PyTorch dataloaders and samplers
+# because they are just PyTorch datasets.
 dataloader = torch.utils.data.DataLoader(
     dataset,
     num_workers=4,
