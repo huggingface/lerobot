@@ -17,6 +17,7 @@ class PushtDataset(torch.utils.data.Dataset):
         If `None`, no shift is applied to current timestamp and the data from the current frame is loaded.
     """
 
+    # Copied from lerobot/__init__.py
     available_datasets = ["pusht"]
     fps = 10
     image_keys = ["observation.image"]

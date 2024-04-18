@@ -1,5 +1,5 @@
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 
 def _find_and_replace(text: str, finds_and_replaces: list[tuple[str, str]]) -> str:
@@ -10,7 +10,7 @@ def _find_and_replace(text: str, finds_and_replaces: list[tuple[str, str]]) -> s
 
 
 def _run_script(path):
-    subprocess.run(['python', path], check=True)
+    subprocess.run(["python", path], check=True)
 
 
 def test_example_1():
@@ -33,7 +33,7 @@ def test_examples_4_and_3():
 
     path = "examples/4_train_policy.py"
 
-    with open(path, "r") as file:
+    with open(path) as file:
         file_contents = file.read()
 
     # Do less steps, use smaller batch, use CPU, and don't complicate things with dataloader workers.
@@ -55,7 +55,7 @@ def test_examples_4_and_3():
 
     path = "examples/3_evaluate_pretrained_policy.py"
 
-    with open(path, "r") as file:
+    with open(path) as file:
         file_contents = file.read()
 
     # Do less evals, use CPU, and use the local model.
@@ -74,4 +74,4 @@ def test_examples_4_and_3():
         ],
     )
 
-    assert Path(f"outputs/train/example_pusht_diffusion").exists()
+    assert Path("outputs/train/example_pusht_diffusion").exists()

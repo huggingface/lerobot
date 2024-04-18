@@ -1,33 +1,35 @@
+import logging
 import os
 from pathlib import Path
+
 import einops
 import pytest
 import torch
-
-from lerobot.common.datasets.utils import compute_stats, get_stats_einops_patterns, load_previous_and_future_frames
-from lerobot.common.transforms import Prod
-from lerobot.common.utils import init_hydra_config
-import logging
-from lerobot.common.datasets.factory import make_dataset
 from datasets import Dataset
-from .utils import DEVICE, DEFAULT_CONFIG_PATH
 
-
-@pytest.mark.parametrize(
-    "env_name,dataset_id,policy_name",
-    [
-        ("xarm", "xarm_lift_medium", "tdmpc"),
-        ("pusht", "pusht", "diffusion"),
-        ("aloha", "aloha_sim_insertion_human", "act"),
-        ("aloha", "aloha_sim_insertion_scripted", "act"),
-        ("aloha", "aloha_sim_transfer_cube_human", "act"),
-        ("aloha", "aloha_sim_transfer_cube_scripted", "act"),
-    ],
+import lerobot
+from lerobot.common.datasets.factory import make_dataset
+from lerobot.common.datasets.utils import (
+    compute_stats,
+    get_stats_einops_patterns,
+    load_previous_and_future_frames,
 )
+from lerobot.common.transforms import Prod
+from lerobot.common.utils.utils import init_hydra_config
+
+from .utils import DEFAULT_CONFIG_PATH, DEVICE
+
+
+@pytest.mark.parametrize("env_name, dataset_id, policy_name", lerobot.env_dataset_policy_triplets)
 def test_factory(env_name, dataset_id, policy_name):
     cfg = init_hydra_config(
         DEFAULT_CONFIG_PATH,
-        overrides=[f"env={env_name}", f"dataset_id={dataset_id}", f"policy={policy_name}", f"device={DEVICE}"]
+        overrides=[
+            f"env={env_name}",
+            f"dataset_id={dataset_id}",
+            f"policy={policy_name}",
+            f"device={DEVICE}",
+        ],
     )
     dataset = make_dataset(cfg)
     delta_timestamps = dataset.delta_timestamps
@@ -51,7 +53,7 @@ def test_factory(env_name, dataset_id, policy_name):
             (key, 3, True),
         )
         assert dataset.hf_dataset[key].dtype == torch.uint8, f"{key}"
-    
+
     # test number of dimensions
     for key, ndim, required in keys_ndim_required:
         if key not in item:
@@ -60,13 +62,13 @@ def test_factory(env_name, dataset_id, policy_name):
             else:
                 logging.warning(f'Missing key in dataset: "{key}" not in {dataset}.')
                 continue
-        
+
         if delta_timestamps is not None and key in delta_timestamps:
             assert item[key].ndim == ndim + 1, f"{key}"
             assert item[key].shape[0] == len(delta_timestamps[key]), f"{key}"
         else:
             assert item[key].ndim == ndim, f"{key}"
-        
+
         if key in image_keys:
             assert item[key].dtype == torch.float32, f"{key}"
             # TODO(rcadene): we assume for now that image normalization takes place in the model
@@ -77,9 +79,8 @@ def test_factory(env_name, dataset_id, policy_name):
                 # test t,c,h,w
                 assert item[key].shape[1] == 3, f"{key}"
             else:
-                # test c,h,w 
+                # test c,h,w
                 assert item[key].shape[0] == 3, f"{key}"
-
 
     if delta_timestamps is not None:
         # test missing keys in delta_timestamps
@@ -87,7 +88,7 @@ def test_factory(env_name, dataset_id, policy_name):
             assert key in item, f"{key}"
 
 
-def test_compute_stats():
+def test_compute_stats_on_xarm():
     """Check that the statistics are computed correctly according to the stats_patterns property.
 
     We compare with taking a straight min, mean, max, std of all the data in one pass (which we can do
@@ -95,20 +96,20 @@ def test_compute_stats():
     """
     from lerobot.common.datasets.xarm import XarmDataset
 
-    DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
+    data_dir = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
     # get transform to convert images from uint8 [0,255] to float32 [0,1]
     transform = Prod(in_keys=XarmDataset.image_keys, prod=1 / 255.0)
 
     dataset = XarmDataset(
         dataset_id="xarm_lift_medium",
-        root=DATA_DIR,
+        root=data_dir,
         transform=transform,
     )
 
     # Note: we set the batch size to be smaller than the whole dataset to make sure we are testing batched
     # computation of the statistics. While doing this, we also make sure it works when we don't divide the
-    # dataset into even batches. 
+    # dataset into even batches.
     computed_stats = compute_stats(dataset, batch_size=int(len(dataset) * 0.25))
 
     # get einops patterns to aggregate batches and compute statistics
@@ -128,7 +129,9 @@ def test_compute_stats():
     for k, pattern in stats_patterns.items():
         expected_stats[k] = {}
         expected_stats[k]["mean"] = einops.reduce(hf_dataset[k], pattern, "mean")
-        expected_stats[k]["std"] = torch.sqrt(einops.reduce((hf_dataset[k] - expected_stats[k]["mean"]) ** 2, pattern, "mean"))
+        expected_stats[k]["std"] = torch.sqrt(
+            einops.reduce((hf_dataset[k] - expected_stats[k]["mean"]) ** 2, pattern, "mean")
+        )
         expected_stats[k]["min"] = einops.reduce(hf_dataset[k], pattern, "min")
         expected_stats[k]["max"] = einops.reduce(hf_dataset[k], pattern, "max")
 
@@ -153,12 +156,14 @@ def test_compute_stats():
 
 
 def test_load_previous_and_future_frames_within_tolerance():
-    hf_dataset = Dataset.from_dict({
-        "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
-        "index": [0, 1, 2, 3, 4],
-        "episode_data_index_from": [0, 0, 0, 0, 0],
-        "episode_data_index_to": [5, 5, 5, 5, 5],
-    })
+    hf_dataset = Dataset.from_dict(
+        {
+            "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
+            "index": [0, 1, 2, 3, 4],
+            "episode_data_index_from": [0, 0, 0, 0, 0],
+            "episode_data_index_to": [5, 5, 5, 5, 5],
+        }
+    )
     hf_dataset = hf_dataset.with_format("torch")
     item = hf_dataset[2]
     delta_timestamps = {"index": [-0.2, 0, 0.139]}
@@ -168,13 +173,16 @@ def test_load_previous_and_future_frames_within_tolerance():
     assert torch.equal(data, torch.tensor([0, 2, 3])), "Data does not match expected values"
     assert not is_pad.any(), "Unexpected padding detected"
 
+
 def test_load_previous_and_future_frames_outside_tolerance_inside_episode_range():
-    hf_dataset = Dataset.from_dict({
-        "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
-        "index": [0, 1, 2, 3, 4],
-        "episode_data_index_from": [0, 0, 0, 0, 0],
-        "episode_data_index_to": [5, 5, 5, 5, 5],
-    })
+    hf_dataset = Dataset.from_dict(
+        {
+            "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
+            "index": [0, 1, 2, 3, 4],
+            "episode_data_index_from": [0, 0, 0, 0, 0],
+            "episode_data_index_to": [5, 5, 5, 5, 5],
+        }
+    )
     hf_dataset = hf_dataset.with_format("torch")
     item = hf_dataset[2]
     delta_timestamps = {"index": [-0.2, 0, 0.141]}
@@ -182,13 +190,16 @@ def test_load_previous_and_future_frames_outside_tolerance_inside_episode_range(
     with pytest.raises(AssertionError):
         load_previous_and_future_frames(item, hf_dataset, delta_timestamps, tol)
 
+
 def test_load_previous_and_future_frames_outside_tolerance_outside_episode_range():
-    hf_dataset = Dataset.from_dict({
-        "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
-        "index": [0, 1, 2, 3, 4],
-        "episode_data_index_from": [0, 0, 0, 0, 0],
-        "episode_data_index_to": [5, 5, 5, 5, 5],
-    })
+    hf_dataset = Dataset.from_dict(
+        {
+            "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
+            "index": [0, 1, 2, 3, 4],
+            "episode_data_index_from": [0, 0, 0, 0, 0],
+            "episode_data_index_to": [5, 5, 5, 5, 5],
+        }
+    )
     hf_dataset = hf_dataset.with_format("torch")
     item = hf_dataset[2]
     delta_timestamps = {"index": [-0.3, -0.24, 0, 0.26, 0.3]}
@@ -196,6 +207,6 @@ def test_load_previous_and_future_frames_outside_tolerance_outside_episode_range
     item = load_previous_and_future_frames(item, hf_dataset, delta_timestamps, tol)
     data, is_pad = item["index"], item["index_is_pad"]
     assert torch.equal(data, torch.tensor([0, 0, 2, 4, 4])), "Data does not match expected values"
-    assert torch.equal(is_pad, torch.tensor([True, False, False, True, True])), "Padding does not match expected values"
-    
-
+    assert torch.equal(
+        is_pad, torch.tensor([True, False, False, True, True])
+    ), "Padding does not match expected values"

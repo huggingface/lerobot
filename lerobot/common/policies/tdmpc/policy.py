@@ -11,7 +11,7 @@ import torch.nn as nn
 
 import lerobot.common.policies.tdmpc.helper as h
 from lerobot.common.policies.utils import populate_queues
-from lerobot.common.utils import get_safe_torch_device
+from lerobot.common.utils.utils import get_safe_torch_device
 
 FIRST_FRAME = 0
 
