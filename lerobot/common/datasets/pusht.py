@@ -65,6 +65,7 @@ class PushtDataset(torch.utils.data.Dataset):
                 item,
                 self.hf_dataset,
                 self.delta_timestamps,
+                tol=1 / self.fps - 1e-4,  # 1e-4 to account for possible numerical error
             )
 
         # convert images from channel last (PIL) to channel first (pytorch)
