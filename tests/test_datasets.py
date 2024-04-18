@@ -50,7 +50,7 @@ def test_factory(env_name, dataset_id, policy_name):
         keys_ndim_required.append(
             (key, 3, True),
         )
-        assert dataset.data_dict[key].dtype == torch.uint8, f"{key}"
+        assert dataset.hf_dataset[key].dtype == torch.uint8, f"{key}"
     
     # test number of dimensions
     for key, ndim, required in keys_ndim_required:
@@ -121,16 +121,16 @@ def test_compute_stats():
         batch_size=len(dataset),
         shuffle=False,
     )
-    data_dict = next(iter(dataloader))
+    hf_dataset = next(iter(dataloader))
 
     # compute stats based on all frames from the dataset without any batching
     expected_stats = {}
     for k, pattern in stats_patterns.items():
         expected_stats[k] = {}
-        expected_stats[k]["mean"] = einops.reduce(data_dict[k], pattern, "mean")
-        expected_stats[k]["std"] = torch.sqrt(einops.reduce((data_dict[k] - expected_stats[k]["mean"]) ** 2, pattern, "mean"))
-        expected_stats[k]["min"] = einops.reduce(data_dict[k], pattern, "min")
-        expected_stats[k]["max"] = einops.reduce(data_dict[k], pattern, "max")
+        expected_stats[k]["mean"] = einops.reduce(hf_dataset[k], pattern, "mean")
+        expected_stats[k]["std"] = torch.sqrt(einops.reduce((hf_dataset[k] - expected_stats[k]["mean"]) ** 2, pattern, "mean"))
+        expected_stats[k]["min"] = einops.reduce(hf_dataset[k], pattern, "min")
+        expected_stats[k]["max"] = einops.reduce(hf_dataset[k], pattern, "max")
 
     # test computed stats match expected stats
     for k in stats_patterns:
@@ -153,47 +153,47 @@ def test_compute_stats():
 
 
 def test_load_previous_and_future_frames_within_tolerance():
-    data_dict = Dataset.from_dict({
+    hf_dataset = Dataset.from_dict({
         "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
         "index": [0, 1, 2, 3, 4],
         "episode_data_index_from": [0, 0, 0, 0, 0],
         "episode_data_index_to": [5, 5, 5, 5, 5],
     })
-    data_dict = data_dict.with_format("torch")
-    item = data_dict[2]
+    hf_dataset = hf_dataset.with_format("torch")
+    item = hf_dataset[2]
     delta_timestamps = {"index": [-0.2, 0, 0.139]}
     tol = 0.04
-    item = load_previous_and_future_frames(item, data_dict, delta_timestamps, tol)
+    item = load_previous_and_future_frames(item, hf_dataset, delta_timestamps, tol)
     data, is_pad = item["index"], item["index_is_pad"]
     assert torch.equal(data, torch.tensor([0, 2, 3])), "Data does not match expected values"
     assert not is_pad.any(), "Unexpected padding detected"
 
 def test_load_previous_and_future_frames_outside_tolerance_inside_episode_range():
-    data_dict = Dataset.from_dict({
+    hf_dataset = Dataset.from_dict({
         "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
         "index": [0, 1, 2, 3, 4],
         "episode_data_index_from": [0, 0, 0, 0, 0],
         "episode_data_index_to": [5, 5, 5, 5, 5],
     })
-    data_dict = data_dict.with_format("torch")
-    item = data_dict[2]
+    hf_dataset = hf_dataset.with_format("torch")
+    item = hf_dataset[2]
     delta_timestamps = {"index": [-0.2, 0, 0.141]}
     tol = 0.04
     with pytest.raises(AssertionError):
-        load_previous_and_future_frames(item, data_dict, delta_timestamps, tol)
+        load_previous_and_future_frames(item, hf_dataset, delta_timestamps, tol)
 
 def test_load_previous_and_future_frames_outside_tolerance_outside_episode_range():
-    data_dict = Dataset.from_dict({
+    hf_dataset = Dataset.from_dict({
         "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
         "index": [0, 1, 2, 3, 4],
         "episode_data_index_from": [0, 0, 0, 0, 0],
         "episode_data_index_to": [5, 5, 5, 5, 5],
     })
-    data_dict = data_dict.with_format("torch")
-    item = data_dict[2]
+    hf_dataset = hf_dataset.with_format("torch")
+    item = hf_dataset[2]
     delta_timestamps = {"index": [-0.3, -0.24, 0, 0.26, 0.3]}
     tol = 0.04
-    item = load_previous_and_future_frames(item, data_dict, delta_timestamps, tol)
+    item = load_previous_and_future_frames(item, hf_dataset, delta_timestamps, tol)
     data, is_pad = item["index"], item["index_is_pad"]
     assert torch.equal(data, torch.tensor([0, 0, 2, 4, 4])), "Data does not match expected values"
     assert torch.equal(is_pad, torch.tensor([True, False, False, True, True])), "Padding does not match expected values"

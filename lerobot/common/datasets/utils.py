@@ -1,6 +1,7 @@
 from copy import deepcopy
 from math import ceil
 
+import datasets
 import einops
 import torch
 import tqdm
@@ -8,7 +9,7 @@ import tqdm
 
 def load_previous_and_future_frames(
     item: dict[str, torch.Tensor],
-    data_dict: dict[str, torch.Tensor],
+    hf_dataset: datasets.Dataset,
     delta_timestamps: dict[str, list[float]],
     tol: float = 0.04,
 ) -> dict[torch.Tensor]:
@@ -24,7 +25,7 @@ def load_previous_and_future_frames(
 
     Parameters:
     - item (dict): A dictionary containing all the data related to a frame. It is the result of `dataset[idx]`. Each key corresponds to a different modality (e.g., "timestamp", "observation.image", "action").
-    - data_dict (dict): A dictionary containing the full dataset. Each key corresponds to a different modality (e.g., "timestamp", "observation.image", "action").
+    - hf_dataset (datasets.Dataset): A dictionary containing the full dataset. Each key corresponds to a different modality (e.g., "timestamp", "observation.image", "action").
     - delta_timestamps (dict): A dictionary containing lists of delta timestamps for each possible modality to be retrieved. These deltas are added to the item timestamp to form the query timestamps.
     - tol (float, optional): The tolerance level used to determine if a data point is close enough to the query timestamp. Defaults to 0.04.
 
@@ -40,7 +41,7 @@ def load_previous_and_future_frames(
     ep_data_ids = torch.arange(ep_data_id_from, ep_data_id_to, 1)
 
     # load timestamps
-    ep_timestamps = data_dict.select_columns("timestamp")[ep_data_id_from:ep_data_id_to]["timestamp"]
+    ep_timestamps = hf_dataset.select_columns("timestamp")[ep_data_id_from:ep_data_id_to]["timestamp"]
 
     # we make the assumption that the timestamps are sorted
     ep_first_ts = ep_timestamps[0]
@@ -70,7 +71,7 @@ def load_previous_and_future_frames(
         data_ids = ep_data_ids[argmin_]
 
         # load frames modality
-        item[key] = data_dict.select_columns(key)[data_ids][key]
+        item[key] = hf_dataset.select_columns(key)[data_ids][key]
         item[f"{key}_is_pad"] = is_pad
 
     return item
