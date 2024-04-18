@@ -12,14 +12,11 @@ Example:
         print(lerobot.available_policies)
     ```
 
-Note:
-    When implementing a concrete class (e.g. `AlohaDataset`, `PushtEnv`, `DiffusionPolicy`), you need to:
-        1. set the required class attributes:
-            - for classes inheriting from `AbstractDataset`: `available_datasets`
-            - for classes inheriting from `AbstractEnv`: `name`, `available_tasks`
-            - for classes inheriting from `AbstractPolicy`: `name`
-        2. update variables in `lerobot/__init__.py` (e.g. `available_envs`, `available_datasets_per_envs`, `available_policies`)
-        3. update variables in `tests/test_available.py` by importing your new class
+When implementing a new dataset (e.g. `AlohaDataset`), policy (e.g. `DiffusionPolicy`), or environment, follow these steps:
+- Set the required class attributes: `available_datasets`.
+- Set the required class attributes: `name`.
+- Update variables in `lerobot/__init__.py` (e.g. `available_envs`, `available_datasets_per_envs`, `available_policies`)
+- Update variables in `tests/test_available.py` by importing your new class
 """
 
 from lerobot.__version__ import __version__  # noqa: F401
@@ -32,11 +29,11 @@ available_envs = [
 
 available_tasks_per_env = {
     "aloha": [
-        "sim_insertion",
-        "sim_transfer_cube",
+        "AlohaInsertion-v0",
+        "AlohaTransferCube-v0",
     ],
-    "pusht": ["pusht"],
-    "xarm": ["lift"],
+    "pusht": ["PushT-v0"],
+    "xarm": ["XarmLift-v0"],
 }
 
 available_datasets_per_env = {

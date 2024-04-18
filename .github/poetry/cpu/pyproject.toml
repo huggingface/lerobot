@@ -1,19 +1,25 @@
 [tool.poetry]
 name = "lerobot"
 version = "0.1.0"
-description = "Le robot is learning"
+description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 authors = [
     "Rémi Cadène <re.cadene@gmail.com>",
+    "Alexander Soare <alexander.soare159@gmail.com>",
+    "Quentin Gallouédec <quentin.gallouedec@ec-lyon.fr>",
     "Simon Alibert <alibert.sim@gmail.com>",
+    "Thomas Wolf <thomaswolfcontact@gmail.com>",
 ]
-repository = "https://github.com/Cadene/lerobot"
+repository = "https://github.com/huggingface/lerobot"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 classifiers=[
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
     "Topic :: Software Development :: Build Tools",
-    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.10",
 ]
 packages = [{include = "lerobot"}]
@@ -23,53 +29,39 @@ packages = [{include = "lerobot"}]
 python = "^3.10"
 termcolor = "^2.4.0"
 omegaconf = "^2.3.0"
-pandas = "^2.2.1"
 wandb = "^0.16.3"
-moviepy = "^1.0.3"
-imageio = {extras = ["pyav"], version = "^2.34.0"}
+imageio = {extras = ["ffmpeg"], version = "^2.34.0"}
 gdown = "^5.1.0"
 hydra-core = "^1.3.2"
 einops = "^0.7.0"
-pygame = "^2.5.2"
 pymunk = "^6.6.0"
 zarr = "^2.17.0"
 numba = "^0.59.0"
-mpmath = "^1.3.0"
 torch = {version = "^2.2.1", source = "torch-cpu"}
 opencv-python = "^4.9.0.80"
 diffusers = "^0.26.3"
 torchvision = {version = "^0.17.1", source = "torch-cpu"}
 h5py = "^3.10.0"
-robomimic = "0.2.0"
 huggingface-hub = "^0.21.4"
+robomimic = "0.2.0"
 gymnasium = "^0.29.1"
 cmake = "^3.29.0.1"
 gym-pusht = { git = "git@github.com:huggingface/gym-pusht.git", optional = true}
 gym-xarm = { git = "git@github.com:huggingface/gym-xarm.git", optional = true}
 gym-aloha = { git = "git@github.com:huggingface/gym-aloha.git", optional = true}
-# gym-pusht = { path = "../gym-pusht", develop = true, optional = true}
-# gym-xarm = { path = "../gym-xarm", develop = true, optional = true}
-# gym-aloha = { path = "../gym-aloha", develop = true, optional = true}
+pre-commit = {version = "^3.7.0", optional = true}
+debugpy = {version = "^1.8.1", optional = true}
+pytest = {version = "^8.1.0", optional = true}
+pytest-cov = {version = "^5.0.0", optional = true}
+datasets = "^2.18.0"
 
 
 [tool.poetry.extras]
 pusht = ["gym-pusht"]
 xarm = ["gym-xarm"]
 aloha = ["gym-aloha"]
-
-
-[tool.poetry.group.dev]
-optional = true
-
-
-[tool.poetry.group.dev.dependencies]
-pre-commit = "^3.6.2"
-debugpy = "^1.8.1"
-
-
-[tool.poetry.group.test.dependencies]
-pytest = "^8.1.0"
-pytest-cov = "^5.0.0"
+dev = ["pre-commit", "debugpy"]
+test = ["pytest", "pytest-cov"]
 
 
 [[tool.poetry.source]]
@@ -110,10 +102,6 @@ exclude = [
 select = ["E4", "E7", "E9", "F", "I", "N", "B", "C4", "SIM"]
 
 
-[tool.poetry-dynamic-versioning]
-enable = true
-
-
 [build-system]
-requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
-build-backend = "poetry_dynamic_versioning.backend"
+requires = ["poetry-core>=1.5.0"]
+build-backend = "poetry.core.masonry.api"

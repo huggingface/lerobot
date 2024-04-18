@@ -1,115 +1,93 @@
-import io
-import logging
-import zipfile
 from copy import deepcopy
 from math import ceil
-from pathlib import Path
 
 import einops
-import requests
 import torch
 import tqdm
 
 
-def download_and_extract_zip(url: str, destination_folder: Path) -> bool:
-    print(f"downloading from {url}")
-    response = requests.get(url, stream=True)
-    if response.status_code == 200:
-        total_size = int(response.headers.get("content-length", 0))
-        progress_bar = tqdm.tqdm(total=total_size, unit="B", unit_scale=True)
+def load_previous_and_future_frames(
+    item: dict[str, torch.Tensor],
+    data_dict: dict[str, torch.Tensor],
+    delta_timestamps: dict[str, list[float]],
+    tol: float = 0.04,
+) -> dict[torch.Tensor]:
+    """
+    Given a current item in the dataset containing a timestamp (e.g. 0.6 seconds), and a list of time differences of some modalities (e.g. delta_timestamps={"observation.image": [-0.8, -0.2, 0, 0.2]}),
+    this function computes for each given modality a list of query timestamps (e.g. [-0.2, 0.4, 0.6, 0.8]) and loads the closest frames in the dataset.
 
-        zip_file = io.BytesIO()
-        for chunk in response.iter_content(chunk_size=1024):
-            if chunk:
-                zip_file.write(chunk)
-                progress_bar.update(len(chunk))
+    Importantly, when no frame can be found around a query timestamp within a specified tolerance window (e.g. tol=0.04), this function raises an AssertionError.
+    When a timestamp is queried before the first available timestamp of the episode or after the last available timestamp,
+    the violation of the tolerance doesnt raise an AssertionError, and the function populates a boolean array indicating which frames are outside of the episode range.
+    For instance, this boolean array is useful during batched training to not supervise actions associated to timestamps coming after the end of the episode,
+    or to pad the observations in a specific way. Note that by default the observation frames before the start of the episode are the same as the first frame of the episode.
 
-        progress_bar.close()
+    Parameters:
+    - item (dict): A dictionary containing all the data related to a frame. It is the result of `dataset[idx]`. Each key corresponds to a different modality (e.g., "timestamp", "observation.image", "action").
+    - data_dict (dict): A dictionary containing the full dataset. Each key corresponds to a different modality (e.g., "timestamp", "observation.image", "action").
+    - delta_timestamps (dict): A dictionary containing lists of delta timestamps for each possible modality to be retrieved. These deltas are added to the item timestamp to form the query timestamps.
+    - tol (float, optional): The tolerance level used to determine if a data point is close enough to the query timestamp. Defaults to 0.04.
 
-        zip_file.seek(0)
+    Returns:
+    - The same item with the queried frames for each modality specified in delta_timestamps, with an additional key for each modality (e.g. "observation.image_is_pad").
 
-        with zipfile.ZipFile(zip_file, "r") as zip_ref:
-            zip_ref.extractall(destination_folder)
-        return True
-    else:
-        return False
-
-
-def euclidean_distance_matrix(mat0, mat1):
-    # Compute the square of the distance matrix
-    sq0 = torch.sum(mat0**2, dim=1, keepdim=True)
-    sq1 = torch.sum(mat1**2, dim=1, keepdim=True)
-    distance_sq = sq0 + sq1.transpose(0, 1) - 2 * mat0 @ mat1.transpose(0, 1)
-
-    # Taking the square root to get the euclidean distance
-    distance = torch.sqrt(torch.clamp(distance_sq, min=0))
-    return distance
-
-
-def is_contiguously_true_or_false(bool_vector):
-    assert bool_vector.ndim == 1
-    assert bool_vector.dtype == torch.bool
-
-    # Compare each element with its neighbor to find changes
-    changes = bool_vector[1:] != bool_vector[:-1]
-
-    # Count the number of changes
-    num_changes = changes.sum().item()
-
-    # If there's more than one change, the list is not contiguous
-    return num_changes <= 1
-
-    # examples = [
-    #     ([True, False, True, False, False, False], False),
-    #     ([True, True, True, False, False, False], True),
-    #     ([False, False, False, False, False, False], True)
-    # ]
-    # for bool_list, expected in examples:
-    #     result = is_contiguously_true_or_false(bool_list)
-
-
-def load_data_with_delta_timestamps(
-    data_dict, data_ids_per_episode, delta_timestamps, key, current_ts, episode
-):
+    Raises:
+    - AssertionError: If any of the frames unexpectedly violate the tolerance level. This could indicate synchronization issues with timestamps during data collection.
+    """
     # get indices of the frames associated to the episode, and their timestamps
-    ep_data_ids = data_ids_per_episode[episode]
-    ep_timestamps = data_dict["timestamp"][ep_data_ids]
+    ep_data_id_from = item["episode_data_index_from"].item()
+    ep_data_id_to = item["episode_data_index_to"].item()
+    ep_data_ids = torch.arange(ep_data_id_from, ep_data_id_to, 1)
 
-    # get timestamps used as query to retrieve data of previous/future frames
-    delta_ts = delta_timestamps[key]
-    query_ts = current_ts + torch.tensor(delta_ts)
+    # load timestamps
+    ep_timestamps = data_dict.select_columns("timestamp")[ep_data_id_from:ep_data_id_to]["timestamp"]
 
-    # compute distances between each query timestamp and all timestamps of all the frames belonging to the episode
-    dist = euclidean_distance_matrix(query_ts[:, None], ep_timestamps[:, None])
-    min_, argmin_ = dist.min(1)
+    # we make the assumption that the timestamps are sorted
+    ep_first_ts = ep_timestamps[0]
+    ep_last_ts = ep_timestamps[-1]
+    current_ts = item["timestamp"].item()
 
-    # get the indices of the data that are closest to the query timestamps
-    data_ids = ep_data_ids[argmin_]
-    # closest_ts = ep_timestamps[argmin_]
+    for key in delta_timestamps:
+        # get timestamps used as query to retrieve data of previous/future frames
+        delta_ts = delta_timestamps[key]
+        query_ts = current_ts + torch.tensor(delta_ts)
 
-    # get the data
-    data = data_dict[key][data_ids].clone()
+        # compute distances between each query timestamp and all timestamps of all the frames belonging to the episode
+        dist = torch.cdist(query_ts[:, None], ep_timestamps[:, None], p=1)
+        min_, argmin_ = dist.min(1)
 
-    # TODO(rcadene): synchronize timestamps + interpolation if needed
+        # TODO(rcadene): synchronize timestamps + interpolation if needed
 
-    tol = 0.04
-    is_pad = min_ > tol
+        is_pad = min_ > tol
 
-    assert is_contiguously_true_or_false(is_pad), (
-        f"One or several timestamps unexpectedly violate the tolerance ({min_} > {tol=})."
-        "This might be due to synchronization issues with timestamps during data collection."
-    )
+        # check violated query timestamps are all outside the episode range
+        assert ((query_ts[is_pad] < ep_first_ts) | (ep_last_ts < query_ts[is_pad])).all(), (
+            f"One or several timestamps unexpectedly violate the tolerance ({min_} > {tol=}) inside episode range."
+            "This might be due to synchronization issues with timestamps during data collection."
+        )
 
-    return data, is_pad
+        # get dataset indices corresponding to frames to be loaded
+        data_ids = ep_data_ids[argmin_]
+
+        # load frames modality
+        item[key] = data_dict.select_columns(key)[data_ids][key]
+        item[f"{key}_is_pad"] = is_pad
+
+    return item
 
 
-def compute_or_load_stats(dataset, batch_size=32, max_num_samples=None):
-    stats_path = dataset.data_dir / "stats.pth"
-    if stats_path.exists():
-        return torch.load(stats_path)
+def get_stats_einops_patterns(dataset):
+    """These einops patterns will be used to aggregate batches and compute statistics."""
+    stats_patterns = {
+        "action": "b c -> c",
+        "observation.state": "b c -> c",
+    }
+    for key in dataset.image_keys:
+        stats_patterns[key] = "b c h w -> c 1 1"
+    return stats_patterns
 
-    logging.info(f"compute_stats and save to {stats_path}")
 
+def compute_stats(dataset, batch_size=32, max_num_samples=None):
     if max_num_samples is None:
         max_num_samples = len(dataset)
     else:
@@ -124,13 +102,8 @@ def compute_or_load_stats(dataset, batch_size=32, max_num_samples=None):
         drop_last=False,
     )
 
-    # these einops patterns will be used to aggregate batches and compute statistics
-    stats_patterns = {
-        "action": "b c -> c",
-        "observation.state": "b c -> c",
-    }
-    for key in dataset.image_keys:
-        stats_patterns[key] = "b c h w -> c 1 1"
+    # get einops patterns to aggregate batches and compute statistics
+    stats_patterns = get_stats_einops_patterns(dataset)
 
     # mean and std will be computed incrementally while max and min will track the running value.
     mean, std, max, min = {}, {}, {}, {}
@@ -201,11 +174,14 @@ def compute_or_load_stats(dataset, batch_size=32, max_num_samples=None):
             "min": min[key],
         }
 
-    torch.save(stats, stats_path)
     return stats
 
 
 def cycle(iterable):
+    """The equivalent of itertools.cycle, but safe for Pytorch dataloaders.
+
+    See https://github.com/pytorch/pytorch/issues/23900 for information on why itertools.cycle is not safe.
+    """
     iterator = iter(iterable)
     while True:
         try:
