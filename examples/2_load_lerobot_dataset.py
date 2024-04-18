@@ -68,7 +68,7 @@ frames = [frame.permute((1, 2, 0)).numpy() for frame in frames]
 Path("outputs/examples/2_load_lerobot_dataset").mkdir(parents=True, exist_ok=True)
 imageio.mimsave("outputs/examples/2_load_lerobot_dataset/episode_5.mp4", frames, fps=dataset.fps)
 
-# Importantly, our datasets can load previous and future frames for each key/modality,
+# For many machine learning applications we need to load histories of past observations, or trajectorys of future actions. Our datasets can load previous and future frames for each key/modality,
 # using timestamps differences with the current loaded frame. For instance:
 delta_timestamps = {
     # loads 4 images: 1 second before current frame, 500 ms before, 200 ms before, and current frame
