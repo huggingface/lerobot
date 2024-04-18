@@ -10,7 +10,6 @@ Features included in this script:
 - Using advanced dataset features like timestamp-based frame selection.
 - Demonstrating compatibility with PyTorch DataLoader for batch processing.
 
-Each operation is detailed with print statements to show dataset attributes and transformations.
 The script ends with examples of how to batch process data using PyTorch's DataLoader.
 
 To try a different Hugging Face dataset, you can replace:
