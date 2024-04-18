@@ -8,7 +8,7 @@ from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.envs.factory import make_env
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.utils.utils import init_hydra_config
-from .utils import DEVICE, DEFAULT_CONFIG_PATH
+from .utils import DEVICE, DEFAULT_CONFIG_PATH, require_env
 
 
 # TODO(aliberts): refactor using lerobot/__init__.py variables
@@ -24,6 +24,7 @@ from .utils import DEVICE, DEFAULT_CONFIG_PATH
         ("aloha", "act", ["env.task=AlohaTransferCube-v0", "dataset_id=aloha_sim_transfer_cube_scripted"]),
     ],
 )
+@require_env
 def test_policy(env_name, policy_name, extra_overrides):
     """
     Tests:

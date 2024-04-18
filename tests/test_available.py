@@ -7,9 +7,11 @@ from lerobot.common.utils.import_utils import is_package_available
 from lerobot.common.policies.act.modeling_act import ActionChunkingTransformerPolicy
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.common.policies.tdmpc.policy import TDMPCPolicy
+from tests.utils import require_env
 
 
 @pytest.mark.parametrize("env_name, task_name", lerobot.env_task_pairs)
+@require_env
 def test_available_env_task(env_name: str, task_name: list):
     """
     This test verifies that all environments listed in `lerobot/__init__.py` can
@@ -17,9 +19,6 @@ def test_available_env_task(env_name: str, task_name: list):
     `available_tasks_per_env` are valid.
     """
     package_name = f"gym_{env_name}"
-    if not is_package_available(package_name):
-        pytest.skip(f"gym-{env_name} not installed")
-    
     importlib.import_module(package_name)
     gym_handle = f"{package_name}/{task_name}"
     assert gym_handle in gym.envs.registry.keys(), gym_handle

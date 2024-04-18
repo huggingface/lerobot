@@ -12,21 +12,19 @@ from lerobot.common.utils.utils import init_hydra_config
 import lerobot
 from lerobot.common.envs.utils import preprocess_observation
 
-from .utils import DEVICE, DEFAULT_CONFIG_PATH
+from .utils import DEVICE, DEFAULT_CONFIG_PATH, require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
 
 
 @pytest.mark.parametrize("obs_type", OBS_TYPES)
 @pytest.mark.parametrize("env_name, env_task", lerobot.env_task_pairs)
+@require_env
 def test_env(env_name, env_task, obs_type):
     if env_name == "aloha" and obs_type == "state":
         pytest.skip("`state` observations not available for aloha")
     
     package_name = f"gym_{env_name}"
-    if not is_package_available(package_name):
-        pytest.skip(f"gym-{env_name} not installed")
-
     importlib.import_module(package_name)
     env = gym.make(f"{package_name}/{env_task}", obs_type=obs_type)
     check_env(env.unwrapped, skip_render_check=True)
@@ -34,6 +32,7 @@ def test_env(env_name, env_task, obs_type):
 
 
 @pytest.mark.parametrize("env_name", lerobot.available_envs)
+@require_env
 def test_factory(env_name):
     cfg = init_hydra_config(
         DEFAULT_CONFIG_PATH,
