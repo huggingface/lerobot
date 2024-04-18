@@ -9,7 +9,7 @@ import tqdm
 
 def load_previous_and_future_frames(
     item: dict[str, torch.Tensor],
-    hf_dataset: dict[str, datasets.Dataset],
+    hf_dataset: datasets.Dataset,
     delta_timestamps: dict[str, list[float]],
     tol: float = 0.04,
 ) -> dict[torch.Tensor]:
@@ -25,7 +25,7 @@ def load_previous_and_future_frames(
 
     Parameters:
     - item (dict): A dictionary containing all the data related to a frame. It is the result of `dataset[idx]`. Each key corresponds to a different modality (e.g., "timestamp", "observation.image", "action").
-    - hf_dataset (dict): A dictionary containing the full dataset. Each key corresponds to a different modality (e.g., "timestamp", "observation.image", "action").
+    - hf_dataset (datasets.Dataset): A dictionary containing the full dataset. Each key corresponds to a different modality (e.g., "timestamp", "observation.image", "action").
     - delta_timestamps (dict): A dictionary containing lists of delta timestamps for each possible modality to be retrieved. These deltas are added to the item timestamp to form the query timestamps.
     - tol (float, optional): The tolerance level used to determine if a data point is close enough to the query timestamp. Defaults to 0.04.
 
