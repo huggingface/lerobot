@@ -57,7 +57,7 @@ print(f"keys to access images from cameras: {dataset.image_keys=}")
 # While the LeRobot dataset adds helpers for working within our library, we still expose the underling Hugging Face dataset. It may be freely replaced or modified in place. Here we use the filtering to keep only frames from episode 5.
 dataset.hf_dataset = dataset.hf_dataset.filter(lambda frame: frame["episode_id"] == 5)
 
-# and load all frames from one of the available cameras
+# LeRobot datsets actually subclass PyTorch datasets. So you can do everything you know and love from working with the latter, for example: iterating through the dataset. Here we grap all the image frames.
 frames = [sample["observation.image"] for sample in dataset]
 
 # but frames are now channel first to follow pytorch convention,
