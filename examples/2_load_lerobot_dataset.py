@@ -54,7 +54,7 @@ print(f"average number of frames per episode: {dataset.num_samples / dataset.num
 print(f"frames per second used during data collection: {dataset.fps=}")
 print(f"keys to access images from cameras: {dataset.image_keys=}")
 
-# It's still possible to select the frames belonging to episode number 5 by accessing Hugging Face dataset
+# While the LeRobot dataset adds helpers for working within our library, we still expose the underling Hugging Face dataset. It may be freely replaced or modified in place. Here we use the filtering to keep only frames from episode 5.
 dataset.hf_dataset = dataset.hf_dataset.filter(lambda frame: frame["episode_id"] == 5)
 
 # and load all frames from one of the available cameras
