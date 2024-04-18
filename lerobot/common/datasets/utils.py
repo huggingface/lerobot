@@ -1,15 +1,93 @@
 from copy import deepcopy
 from math import ceil
+from pathlib import Path
 
 import datasets
 import einops
 import torch
 import tqdm
+from datasets import load_dataset, load_from_disk
+from huggingface_hub import hf_hub_download
+from safetensors.torch import load_file
+
+
+def flatten_dict(d, parent_key="", sep="/"):
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
+def unflatten_dict(d, sep="/"):
+    outdict = {}
+    for key, value in d.items():
+        parts = key.split(sep)
+        d = outdict
+        for part in parts[:-1]:
+            if part not in d:
+                d[part] = {}
+            d = d[part]
+        d[parts[-1]] = value
+    return outdict
+
+
+def load_hf_dataset(dataset_id, version, root, split) -> datasets.Dataset:
+    """hf_dataset contains all the observations, states, actions, rewards, etc."""
+    if root is not None:
+        hf_dataset = load_from_disk(Path(root) / dataset_id / split)
+    else:
+        repo_id = f"lerobot/{dataset_id}"
+        hf_dataset = load_dataset(repo_id, revision=version, split=split)
+    return hf_dataset.with_format("torch")
+
+
+def load_episode_data_index(dataset_id, version, root) -> dict[str, torch.Tensor]:
+    """episode_data_index contains the range of indices for each episode
+
+    Example:
+    ```python
+    from_id = episode_data_index["from"][episode_id].item()
+    to_id = episode_data_index["to"][episode_id].item()
+    episode_frames = [dataset[i] for i in range(from_id, to_id)]
+    ```
+    """
+    if root is not None:
+        path = Path(root) / dataset_id / "meta_data" / "episode_data_index.safetensors"
+    else:
+        repo_id = f"lerobot/{dataset_id}"
+        path = hf_hub_download(
+            repo_id, "meta_data/episode_data_index.safetensors", repo_type="dataset", revision=version
+        )
+
+    return load_file(path)
+
+
+def load_stats(dataset_id, version, root) -> dict[str, dict[str, torch.Tensor]]:
+    """stats contains the statistics per modality computed over the full dataset, such as max, min, mean, std
+
+    Example:
+    ```python
+    normalized_action = (action - stats["action"]["mean"]) / stats["action"]["std"]
+    ```
+    """
+    if root is not None:
+        path = Path(root) / dataset_id / "meta_data" / "stats.safetensors"
+    else:
+        repo_id = f"lerobot/{dataset_id}"
+        path = hf_hub_download(repo_id, "meta_data/stats.safetensors", repo_type="dataset", revision=version)
+
+    stats = load_file(path)
+    return unflatten_dict(stats)
 
 
 def load_previous_and_future_frames(
     item: dict[str, torch.Tensor],
     hf_dataset: datasets.Dataset,
+    episode_data_index: dict[str, torch.Tensor],
     delta_timestamps: dict[str, list[float]],
     tol: float,
 ) -> dict[torch.Tensor]:
@@ -31,6 +109,8 @@ def load_previous_and_future_frames(
       corresponds to a different modality (e.g., "timestamp", "observation.image", "action").
     - hf_dataset (datasets.Dataset): A dictionary containing the full dataset. Each key corresponds to a different
       modality (e.g., "timestamp", "observation.image", "action").
+    - episode_data_index (dict): A dictionary containing two keys ("from" and "to") associated to dataset indices.
+      They indicate the start index and end index of each episode in the dataset.
     - delta_timestamps (dict): A dictionary containing lists of delta timestamps for each possible modality to be
       retrieved. These deltas are added to the item timestamp to form the query timestamps.
     - tol (float, optional): The tolerance level used to determine if a data point is close enough to the query
@@ -46,8 +126,9 @@ def load_previous_and_future_frames(
       issues with timestamps during data collection.
     """
     # get indices of the frames associated to the episode, and their timestamps
-    ep_data_id_from = item["episode_data_index_from"].item()
-    ep_data_id_to = item["episode_data_index_to"].item()
+    ep_id = item["episode_id"].item()
+    ep_data_id_from = episode_data_index["from"][ep_id].item()
+    ep_data_id_to = episode_data_index["to"][ep_id].item()
     ep_data_ids = torch.arange(ep_data_id_from, ep_data_id_to, 1)
 
     # load timestamps

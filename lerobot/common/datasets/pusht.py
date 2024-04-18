@@ -1,9 +1,13 @@
 from pathlib import Path
 
 import torch
-from datasets import load_dataset, load_from_disk
 
-from lerobot.common.datasets.utils import load_previous_and_future_frames
+from lerobot.common.datasets.utils import (
+    load_episode_data_index,
+    load_hf_dataset,
+    load_previous_and_future_frames,
+    load_stats,
+)
 
 
 class PushtDataset(torch.utils.data.Dataset):
@@ -38,13 +42,10 @@ class PushtDataset(torch.utils.data.Dataset):
         self.split = split
         self.transform = transform
         self.delta_timestamps = delta_timestamps
-        if self.root is not None:
-            self.hf_dataset = load_from_disk(Path(self.root) / self.dataset_id / self.split)
-        else:
-            self.hf_dataset = load_dataset(
-                f"lerobot/{self.dataset_id}", revision=self.version, split=self.split
-            )
-        self.hf_dataset = self.hf_dataset.with_format("torch")
+        # load data from hub or locally when root is provided
+        self.hf_dataset = load_hf_dataset(dataset_id, version, root, split)
+        self.episode_data_index = load_episode_data_index(dataset_id, version, root)
+        self.stats = load_stats(dataset_id, version, root)
 
     @property
     def num_samples(self) -> int:
@@ -52,7 +53,7 @@ class PushtDataset(torch.utils.data.Dataset):
 
     @property
     def num_episodes(self) -> int:
-        return len(self.hf_dataset.unique("episode_id"))
+        return len(self.episode_data_index["from"])
 
     def __len__(self):
         return self.num_samples
@@ -64,6 +65,7 @@ class PushtDataset(torch.utils.data.Dataset):
             item = load_previous_and_future_frames(
                 item,
                 self.hf_dataset,
+                self.episode_data_index,
                 self.delta_timestamps,
                 tol=1 / self.fps - 1e-4,  # 1e-4 to account for possible numerical error
             )
