@@ -4,7 +4,7 @@ It covers the steps from loading the datasets, filtering specific episodes, and 
 Importantly, the dataset format is agnostic to any deep learning library and doesn't require using `lerobot` functions.
 It is compatible with pytorch, jax, numpy, etc.
 
-As an example, this script saves frames of episode number 5 of PushT dataset to a mp4 video available here:
+As an example, this script saves frames of episode number 5 of the PushT dataset to a mp4 video and saves the result here:
 `outputs/examples/1_visualize_hugging_face_datasets/episode_5.mp4`
 
 This script supports several Hugging Face datasets, among which:
