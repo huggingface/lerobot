@@ -43,7 +43,7 @@ from lerobot.common.datasets.pusht import PushtDataset
 # You can easily load datasets from LeRobot
 dataset = PushtDataset()
 
-# These datasets encapsulate their associated Hugging Face dataset
+# All LeRobot datasets are actually a thin wrapper around an underlying Hugging Face dataset  (see https://huggingface.co/docs/datasets/index for more information).
 print(f"{dataset=}")
 print(f"{dataset.hf_dataset=}")
 
