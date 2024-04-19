@@ -15,6 +15,7 @@ from lerobot.common.datasets.utils import (
     compute_stats,
     flatten_dict,
     get_stats_einops_patterns,
+    hf_transform_to_torch,
     load_previous_and_future_frames,
     unflatten_dict,
 )
@@ -50,12 +51,6 @@ def test_factory(env_name, dataset_id, policy_name):
         ("next.reward", 0, False),
         ("next.done", 0, False),
     ]
-
-    for key in image_keys:
-        keys_ndim_required.append(
-            (key, 3, True),
-        )
-        assert dataset.hf_dataset[key].dtype == torch.uint8, f"{key}"
 
     # test number of dimensions
     for key, ndim, required in keys_ndim_required:
@@ -126,6 +121,7 @@ def test_compute_stats_on_xarm():
     # compute stats based on all frames from the dataset without any batching
     expected_stats = {}
     for k, pattern in stats_patterns.items():
+        full_batch[k] = full_batch[k].float()
         expected_stats[k] = {}
         expected_stats[k]["mean"] = einops.reduce(full_batch[k], pattern, "mean")
         expected_stats[k]["std"] = torch.sqrt(
@@ -142,14 +138,15 @@ def test_compute_stats_on_xarm():
         assert torch.allclose(computed_stats[k]["max"], expected_stats[k]["max"])
 
     # load stats used during training which are expected to match the ones returned by computed_stats
-    loaded_stats = dataset.stats
+    loaded_stats = dataset.stats  # noqa: F841
 
-    # test loaded stats match expected stats
-    for k in stats_patterns:
-        assert torch.allclose(loaded_stats[k]["mean"], expected_stats[k]["mean"])
-        assert torch.allclose(loaded_stats[k]["std"], expected_stats[k]["std"])
-        assert torch.allclose(loaded_stats[k]["min"], expected_stats[k]["min"])
-        assert torch.allclose(loaded_stats[k]["max"], expected_stats[k]["max"])
+    # TODO(rcadene): we can't test this because expected_stats is computed on a subset
+    # # test loaded stats match expected stats
+    # for k in stats_patterns:
+    #     assert torch.allclose(loaded_stats[k]["mean"], expected_stats[k]["mean"])
+    #     assert torch.allclose(loaded_stats[k]["std"], expected_stats[k]["std"])
+    #     assert torch.allclose(loaded_stats[k]["min"], expected_stats[k]["min"])
+    #     assert torch.allclose(loaded_stats[k]["max"], expected_stats[k]["max"])
 
 
 def test_load_previous_and_future_frames_within_tolerance():
@@ -160,7 +157,7 @@ def test_load_previous_and_future_frames_within_tolerance():
             "episode_index": [0, 0, 0, 0, 0],
         }
     )
-    hf_dataset = hf_dataset.with_format("torch")
+    hf_dataset.set_transform(hf_transform_to_torch)
     episode_data_index = {
         "from": torch.tensor([0]),
         "to": torch.tensor([5]),
@@ -182,7 +179,7 @@ def test_load_previous_and_future_frames_outside_tolerance_inside_episode_range(
             "episode_index": [0, 0, 0, 0, 0],
         }
     )
-    hf_dataset = hf_dataset.with_format("torch")
+    hf_dataset.set_transform(hf_transform_to_torch)
     episode_data_index = {
         "from": torch.tensor([0]),
         "to": torch.tensor([5]),
@@ -202,7 +199,7 @@ def test_load_previous_and_future_frames_outside_tolerance_outside_episode_range
             "episode_index": [0, 0, 0, 0, 0],
         }
     )
-    hf_dataset = hf_dataset.with_format("torch")
+    hf_dataset.set_transform(hf_transform_to_torch)
     episode_data_index = {
         "from": torch.tensor([0]),
         "to": torch.tensor([5]),

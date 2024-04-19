@@ -70,15 +70,6 @@ class PushtDataset(torch.utils.data.Dataset):
                 tol=1 / self.fps - 1e-4,  # 1e-4 to account for possible numerical error
             )
 
-        # convert images from channel last (PIL) to channel first (pytorch)
-        for key in self.image_keys:
-            if item[key].ndim == 3:
-                item[key] = item[key].permute((2, 0, 1))  # h w c -> c h w
-            elif item[key].ndim == 4:
-                item[key] = item[key].permute((0, 3, 1, 2))  # t h w c -> t c h w
-            else:
-                raise ValueError(item[key].ndim)
-
         if self.transform is not None:
             item = self.transform(item)
 

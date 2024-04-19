@@ -249,9 +249,23 @@ def eval_policy(
                 if key not in data_dict:
                     data_dict[key] = []
                 for ep_dict in ep_dicts:
-                    for x in ep_dict[key]:
-                        # c h w -> h w c
-                        img = PILImage.fromarray(x.permute(1, 2, 0).numpy())
+                    for img in ep_dict[key]:
+                        # sanity check that images are channel first
+                        c, h, w = img.shape
+                        assert c < h and c < w, f"expect channel first images, but instead {img.shape}"
+
+                        # sanity check that images are float32 in range [0,1]
+                        assert img.dtype == torch.float32, f"expect torch.float32, but instead {img.dtype=}"
+                        assert img.max() <= 1, f"expect pixels lower than 1, but instead {img.max()=}"
+                        assert img.min() >= 0, f"expect pixels greater than 1, but instead {img.min()=}"
+
+                        # from float32 in range [0,1] to uint8 in range [0,255]
+                        img *= 255
+                        img = img.type(torch.uint8)
+
+                        # convert to channel last and numpy as expected by PIL
+                        img = PILImage.fromarray(img.permute(1, 2, 0).numpy())
+
                         data_dict[key].append(img)
 
         data_dict["index"] = torch.arange(0, total_frames, 1)

@@ -51,8 +51,10 @@ print(f"{hf_dataset.features=}")
 
 # display useful statistics about frames and episodes, which are sequences of frames from the same video
 print(f"number of frames: {len(hf_dataset)=}")
-print(f"number of episodes: {len(hf_dataset.unique('episode_id'))=}")
-print(f"average number of frames per episode: {len(hf_dataset) / len(hf_dataset.unique('episode_id')):.3f}")
+print(f"number of episodes: {len(hf_dataset.unique('episode_index'))=}")
+print(
+    f"average number of frames per episode: {len(hf_dataset) / len(hf_dataset.unique('episode_index')):.3f}"
+)
 
 # select the frames belonging to episode number 5
 hf_dataset = hf_dataset.filter(lambda frame: frame["episode_index"] == 5)

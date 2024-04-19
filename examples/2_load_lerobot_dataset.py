@@ -63,8 +63,9 @@ dataset.hf_dataset = dataset.hf_dataset.filter(lambda frame: frame["episode_inde
 # LeRobot datsets actually subclass PyTorch datasets. So you can do everything you know and love from working with the latter, for example: iterating through the dataset. Here we grap all the image frames.
 frames = [sample["observation.image"] for sample in dataset]
 
-# but frames are now channel first to follow pytorch convention,
-# to view them, we convert to channel last
+# but frames are now float32 range [0,1] channel first to follow pytorch convention,
+# to view them, we convert to uint8 range [0,255] channel last
+frames = [(frame * 255).type(torch.uint8) for frame in frames]
 frames = [frame.permute((1, 2, 0)).numpy() for frame in frames]
 
 # and finally save them to a mp4 video

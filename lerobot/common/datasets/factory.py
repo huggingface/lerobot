@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 from torchvision.transforms import v2
 
-from lerobot.common.transforms import NormalizeTransform, Prod
+from lerobot.common.transforms import NormalizeTransform
 
 DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
@@ -55,7 +55,6 @@ def make_dataset(
                 dataset_id=cfg.dataset_id,
                 split="train",
                 root=DATA_DIR,
-                transform=Prod(in_keys=clsfunc.image_keys, prod=1 / 255.0),
             )
             stats = stats_dataset.stats
         else:
@@ -63,7 +62,6 @@ def make_dataset(
 
         transforms = v2.Compose(
             [
-                Prod(in_keys=clsfunc.image_keys, prod=1 / 255.0),
                 NormalizeTransform(
                     stats,
                     in_keys=[

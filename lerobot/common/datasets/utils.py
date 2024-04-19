@@ -63,7 +63,6 @@ def load_hf_dataset(dataset_id, version, root, split) -> datasets.Dataset:
         # TODO(rcadene): remove dataset_id everywhere and use repo_id instead
         repo_id = f"lerobot/{dataset_id}"
         hf_dataset = load_dataset(repo_id, revision=version, split=split)
-    hf_dataset = hf_dataset.with_format("torch")
     hf_dataset.set_transform(hf_transform_to_torch)
     return hf_dataset
 
@@ -156,6 +155,7 @@ def load_previous_and_future_frames(
 
     # load timestamps
     ep_timestamps = hf_dataset.select_columns("timestamp")[ep_data_id_from:ep_data_id_to]["timestamp"]
+    ep_timestamps = torch.stack(ep_timestamps)
 
     # we make the assumption that the timestamps are sorted
     ep_first_ts = ep_timestamps[0]
@@ -186,6 +186,7 @@ def load_previous_and_future_frames(
 
         # load frames modality
         item[key] = hf_dataset.select_columns(key)[data_ids][key]
+        item[key] = torch.stack(item[key])
         item[f"{key}_is_pad"] = is_pad
 
     return item
@@ -251,8 +252,7 @@ def compute_stats(hf_dataset, batch_size=32, max_num_samples=None):
             hf_dataset,
             num_workers=4,
             batch_size=batch_size,
-            shuffle=False,
-            # pin_memory=cfg.device != "cpu",
+            shuffle=True,
             drop_last=False,
         )
         return dataloader

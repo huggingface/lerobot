@@ -103,6 +103,13 @@ def push_to_hub(hf_dataset, episode_data_index, info, stats, root, revision, dat
         repo_id=f"lerobot/{dataset_id}",
         repo_type="dataset",
     )
+    api.upload_file(
+        path_or_fileobj=info_path,
+        path_in_repo=str(info_path).replace(f"{root}/{dataset_id}", ""),
+        repo_id=f"lerobot/{dataset_id}",
+        repo_type="dataset",
+        revision=revision,
+    )
 
     # stats
     stats_path = meta_data_dir / "stats.safetensors"
@@ -112,6 +119,13 @@ def push_to_hub(hf_dataset, episode_data_index, info, stats, root, revision, dat
         path_in_repo=str(stats_path).replace(f"{root}/{dataset_id}", ""),
         repo_id=f"lerobot/{dataset_id}",
         repo_type="dataset",
+    )
+    api.upload_file(
+        path_or_fileobj=stats_path,
+        path_in_repo=str(stats_path).replace(f"{root}/{dataset_id}", ""),
+        repo_id=f"lerobot/{dataset_id}",
+        repo_type="dataset",
+        revision=revision,
     )
 
     # episode_data_index
@@ -123,6 +137,13 @@ def push_to_hub(hf_dataset, episode_data_index, info, stats, root, revision, dat
         path_in_repo=str(ep_data_idx_path).replace(f"{root}/{dataset_id}", ""),
         repo_id=f"lerobot/{dataset_id}",
         repo_type="dataset",
+    )
+    api.upload_file(
+        path_or_fileobj=ep_data_idx_path,
+        path_in_repo=str(ep_data_idx_path).replace(f"{root}/{dataset_id}", ""),
+        repo_id=f"lerobot/{dataset_id}",
+        repo_type="dataset",
+        revision=revision,
     )
 
     # copy in tests folder, the first episode and the meta_data directory

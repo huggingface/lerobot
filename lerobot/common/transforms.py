@@ -1,4 +1,3 @@
-import torch
 from torchvision.transforms.v2 import Compose, Transform
 
 
@@ -10,40 +9,6 @@ def apply_inverse_transform(item, transform):
         else:
             raise ValueError(f"Inverse transform called on a non invertible transform ({tf}).")
     return item
-
-
-class Prod(Transform):
-    invertible = True
-
-    def __init__(self, in_keys: list[str], prod: float):
-        super().__init__()
-        self.in_keys = in_keys
-        self.prod = prod
-        self.original_dtypes = {}
-
-    def forward(self, item):
-        for key in self.in_keys:
-            if key not in item:
-                continue
-            self.original_dtypes[key] = item[key].dtype
-            item[key] = item[key].type(torch.float32) * self.prod
-        return item
-
-    def inverse_transform(self, item):
-        for key in self.in_keys:
-            if key not in item:
-                continue
-            item[key] = (item[key] / self.prod).type(self.original_dtypes[key])
-        return item
-
-    # def transform_observation_spec(self, obs_spec):
-    #     for key in self.in_keys:
-    #         if obs_spec.get(key, None) is None:
-    #             continue
-    #         obs_spec[key].space.high = obs_spec[key].space.high.type(torch.float32) * self.prod
-    #         obs_spec[key].space.low = obs_spec[key].space.low.type(torch.float32) * self.prod
-    #         obs_spec[key].dtype = torch.float32
-    #     return obs_spec
 
 
 class NormalizeTransform(Transform):
