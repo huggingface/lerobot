@@ -87,7 +87,7 @@ print(f"{dataset[0]['action'].shape=}")  # (64,c)
 # because they are just PyTorch datasets.
 dataloader = torch.utils.data.DataLoader(
     dataset,
-    num_workers=4,
+    num_workers=0,
     batch_size=32,
     shuffle=True,
 )
