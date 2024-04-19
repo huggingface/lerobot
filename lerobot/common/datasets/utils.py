@@ -6,9 +6,11 @@ import datasets
 import einops
 import torch
 import tqdm
-from datasets import load_dataset, load_from_disk
+from datasets import Image, load_dataset, load_from_disk
 from huggingface_hub import hf_hub_download
+from PIL import Image as PILImage
 from safetensors.torch import load_file
+from torchvision import transforms
 
 from lerobot.common.utils.utils import set_global_seed
 
@@ -37,15 +39,32 @@ def unflatten_dict(d, sep="/"):
     return outdict
 
 
+def hf_transform_to_torch(items_dict):
+    """Get a transform function that convert items from Hugging Face dataset (pyarrow)
+    to torch tensors. Importantly, images are converted from PIL, which corresponds to
+    a channel last representation (h w c) of uint8 type, to a torch image representation
+    with channel first (c h w) of float32 type in range [0,1].
+    """
+    for key in items_dict:
+        first_item = items_dict[key][0]
+        if isinstance(first_item, PILImage.Image):
+            to_tensor = transforms.ToTensor()
+            items_dict[key] = [to_tensor(img) for img in items_dict[key]]
+        else:
+            items_dict[key] = [torch.tensor(x) for x in items_dict[key]]
+    return items_dict
+
+
 def load_hf_dataset(dataset_id, version, root, split) -> datasets.Dataset:
     """hf_dataset contains all the observations, states, actions, rewards, etc."""
     if root is not None:
         hf_dataset = load_from_disk(Path(root) / dataset_id / split)
     else:
+        # TODO(rcadene): remove dataset_id everywhere and use repo_id instead
         repo_id = f"lerobot/{dataset_id}"
         hf_dataset = load_dataset(repo_id, revision=version, split=split)
     hf_dataset = hf_dataset.with_format("torch")
-    hf_dataset.set_transform(convert_images_to_channel_first_tensors)
+    hf_dataset.set_transform(hf_transform_to_torch)
     return hf_dataset
 
 
@@ -172,16 +191,6 @@ def load_previous_and_future_frames(
     return item
 
 
-def convert_images_to_channel_first_tensors(examples):
-    for key in examples:
-        if examples[key].ndim == 3:  # we assume it's an image
-            # (h w c) -> (c h w)
-            h, w, c = examples[key].shape
-            assert c < h and c < w, f"expect a channel last image, but instead {examples[key].shape}"
-            examples[key] = [img.permute((2, 0, 1)) for img in examples[key]]
-    return examples
-
-
 def get_stats_einops_patterns(hf_dataset):
     """These einops patterns will be used to aggregate batches and compute statistics.
 
@@ -198,11 +207,19 @@ def get_stats_einops_patterns(hf_dataset):
 
     stats_patterns = {}
     for key, feats_type in hf_dataset.features.items():
-        if batch[key].ndim == 4 and isinstance(feats_type, datasets.features.image.Image):
+        # sanity check that tensors are not float64
+        assert batch[key].dtype != torch.float64
+
+        if isinstance(feats_type, Image):
             # sanity check that images are channel first
             _, c, h, w = batch[key].shape
             assert c < h and c < w, f"expect channel first images, but instead {batch[key].shape}"
-            # convert from (h w c) to (c h w) to fit pytorch convention, then apply reduce
+
+            # sanity check that images are float32 in range [0,1]
+            assert batch[key].dtype == torch.float32, f"expect torch.float32, but instead {batch[key].dtype=}"
+            assert batch[key].max() <= 1, f"expect pixels lower than 1, but instead {batch[key].max()=}"
+            assert batch[key].min() >= 0, f"expect pixels greater than 1, but instead {batch[key].min()=}"
+
             stats_patterns[key] = "b c h w -> c 1 1"
         elif batch[key].ndim == 2:
             stats_patterns[key] = "b c -> c "

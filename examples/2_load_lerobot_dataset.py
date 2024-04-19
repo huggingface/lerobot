@@ -18,7 +18,10 @@ dataset = PushtDataset()
 ```
 by one of these:
 ```python
-dataset = XarmDataset()
+dataset = XarmDataset("xarm_lift_medium")
+dataset = XarmDataset("xarm_lift_medium_replay")
+dataset = XarmDataset("xarm_push_medium")
+dataset = XarmDataset("xarm_push_medium_replay")
 dataset = AlohaDataset("aloha_sim_insertion_human")
 dataset = AlohaDataset("aloha_sim_insertion_scripted")
 dataset = AlohaDataset("aloha_sim_transfer_cube_human")

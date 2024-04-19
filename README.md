@@ -208,7 +208,7 @@ HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload $HF_USER/$DATASET data/$DATAS
 
 You will need to set the corresponding version as a default argument in your dataset class:
 ```python
-  version: str | None = "v1.0",
+  version: str | None = "v1.1",
 ```
 See: [`lerobot/common/datasets/pusht.py`](https://github.com/Cadene/lerobot/blob/main/lerobot/common/datasets/pusht.py)
 

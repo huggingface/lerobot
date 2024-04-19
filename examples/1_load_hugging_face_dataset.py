@@ -10,10 +10,13 @@ As an example, this script saves frames of episode number 5 of the PushT dataset
 This script supports several Hugging Face datasets, among which:
 1. [Pusht](https://huggingface.co/datasets/lerobot/pusht)
 2. [Xarm Lift Medium](https://huggingface.co/datasets/lerobot/xarm_lift_medium)
-3. [Aloha Sim Insertion Human](https://huggingface.co/datasets/lerobot/aloha_sim_insertion_human)
-4. [Aloha Sim Insertion Scripted](https://huggingface.co/datasets/lerobot/aloha_sim_insertion_scripted)
-5. [Aloha Sim Transfer Cube Human](https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_human)
-6. [Aloha Sim Transfer Cube Scripted](https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_scripted)
+3. [Xarm Lift Medium](https://huggingface.co/datasets/lerobot/xarm_lift_medium_replay)
+4. [Xarm Lift Medium](https://huggingface.co/datasets/lerobot/xarm_push_medium)
+5. [Xarm Lift Medium](https://huggingface.co/datasets/lerobot/xarm_push_medium_replay)
+6. [Aloha Sim Insertion Human](https://huggingface.co/datasets/lerobot/aloha_sim_insertion_human)
+7. [Aloha Sim Insertion Scripted](https://huggingface.co/datasets/lerobot/aloha_sim_insertion_scripted)
+8. [Aloha Sim Transfer Cube Human](https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_human)
+9. [Aloha Sim Transfer Cube Scripted](https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_scripted)
 
 To try a different Hugging Face dataset, you can replace this line:
 ```python
@@ -22,6 +25,9 @@ hf_dataset, fps = load_dataset("lerobot/pusht", split="train"), 10
 by one of these:
 ```python
 hf_dataset, fps = load_dataset("lerobot/xarm_lift_medium", split="train"), 15
+hf_dataset, fps = load_dataset("lerobot/xarm_lift_medium_replay", split="train"), 15
+hf_dataset, fps = load_dataset("lerobot/xarm_push_medium", split="train"), 15
+hf_dataset, fps = load_dataset("lerobot/xarm_push_medium_replay", split="train"), 15
 hf_dataset, fps = load_dataset("lerobot/aloha_sim_insertion_human", split="train"), 50
 hf_dataset, fps = load_dataset("lerobot/aloha_sim_insertion_scripted", split="train"), 50
 hf_dataset, fps = load_dataset("lerobot/aloha_sim_transfer_cube_human", split="train"), 50

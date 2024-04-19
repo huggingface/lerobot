@@ -136,6 +136,7 @@ def add_episodes_inplace(
     concat_dataset: torch.utils.data.ConcatDataset,
     sampler: torch.utils.data.WeightedRandomSampler,
     hf_dataset: datasets.Dataset,
+    episode_data_index: dict[str, torch.Tensor],
     pc_online_samples: float,
 ):
     """
@@ -151,6 +152,8 @@ def add_episodes_inplace(
     - sampler (torch.utils.data.WeightedRandomSampler): A sampler that will be updated to
       reflect changes in the dataset sizes and specified sampling weights.
     - hf_dataset (datasets.Dataset): A Hugging Face dataset containing the new episodes to be added.
+    - episode_data_index (dict): A dictionary containing two keys ("from" and "to") associated to dataset indices.
+      They indicate the start index and end index of each episode in the dataset.
     - pc_online_samples (float): The target percentage of samples that should come from
       the online dataset during sampling operations.
 
@@ -174,13 +177,14 @@ def add_episodes_inplace(
             # note: we dont shift "frame_index" since it represents the index of the frame in the episode it belongs to
             example["episode_index"] += start_episode
             example["index"] += start_index
-            example["episode_data_index_from"] += start_index
-            example["episode_data_index_to"] += start_index
             return example
 
         disable_progress_bars()  # map has a tqdm progress bar
         hf_dataset = hf_dataset.map(shift_indices)
         enable_progress_bars()
+
+        episode_data_index["from"] += start_index
+        episode_data_index["to"] += start_index
 
         # extend online dataset
         online_dataset.hf_dataset = concatenate_datasets([online_dataset.hf_dataset, hf_dataset])
@@ -334,9 +338,13 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 seed=cfg.seed,
             )
 
-            online_pc_sampling = cfg.get("demo_schedule", 0.5)
             add_episodes_inplace(
-                online_dataset, concat_dataset, sampler, eval_info["episodes"], online_pc_sampling
+                online_dataset,
+                concat_dataset,
+                sampler,
+                hf_dataset=eval_info["episodes"]["hf_dataset"],
+                episode_data_index=eval_info["episodes"]["episode_data_index"],
+                online_pc_sampling=cfg.get("demo_schedule", 0.5),
             )
 
         for _ in range(cfg.policy.utd):

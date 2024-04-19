@@ -29,7 +29,7 @@ class PushtDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         dataset_id: str = "pusht",
-        version: str | None = "v1.0",
+        version: str | None = "v1.1",
         root: Path | None = None,
         split: str = "train",
         transform: callable = None,

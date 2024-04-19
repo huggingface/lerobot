@@ -9,17 +9,25 @@ from lerobot.common.datasets.utils import load_previous_and_future_frames
 class XarmDataset(torch.utils.data.Dataset):
     """
     https://huggingface.co/datasets/lerobot/xarm_lift_medium
+    https://huggingface.co/datasets/lerobot/xarm_lift_medium_replay
+    https://huggingface.co/datasets/lerobot/xarm_push_medium
+    https://huggingface.co/datasets/lerobot/xarm_push_medium_replay
     """
 
     # Copied from lerobot/__init__.py
-    available_datasets = ["xarm_lift_medium"]
+    available_datasets = [
+        "xarm_lift_medium",
+        "xarm_lift_medium_replay",
+        "xarm_push_medium",
+        "xarm_push_medium_replay",
+    ]
     fps = 15
     image_keys = ["observation.image"]
 
     def __init__(
         self,
-        dataset_id: str = "xarm_lift_medium",
-        version: str | None = "v1.0",
+        dataset_id: str,
+        version: str | None = "v1.1",
         root: Path | None = None,
         split: str = "train",
         transform: callable = None,

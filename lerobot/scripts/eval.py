@@ -208,11 +208,12 @@ def eval_policy(
     max_rewards.extend(batch_max_reward.tolist())
     all_successes.extend(batch_success.tolist())
 
-    # similar logic is implemented in dataset preprocessing
+    # similar logic is implemented when datasets are pushed to hub (see: `push_to_hub`)
     ep_dicts = []
+    episode_data_index = {"from": [], "to": []}
     num_episodes = dones.shape[0]
     total_frames = 0
-    idx_from = 0
+    id_from = 0
     for ep_id in range(num_episodes):
         num_frames = done_indices[ep_id].item() + 1
         total_frames += num_frames
@@ -227,14 +228,15 @@ def eval_policy(
                 "timestamp": torch.arange(0, num_frames, 1) / fps,
                 "next.done": dones[ep_id, :num_frames],
                 "next.reward": rewards[ep_id, :num_frames].type(torch.float32),
-                "episode_data_index_from": torch.tensor([idx_from] * num_frames),
-                "episode_data_index_to": torch.tensor([idx_from + num_frames] * num_frames),
             }
             for key in observations:
                 ep_dict[key] = observations[key][ep_id][:num_frames]
             ep_dicts.append(ep_dict)
 
-        idx_from += num_frames
+            episode_data_index["from"].append(id_from)
+            episode_data_index["to"].append(id_from + num_frames)
+
+        id_from += num_frames
 
     # similar logic is implemented in dataset preprocessing
     if return_episode_data:
@@ -307,7 +309,10 @@ def eval_policy(
         },
     }
     if return_episode_data:
-        info["episodes"] = hf_dataset
+        info["episodes"] = {
+            "hf_dataset": hf_dataset,
+            "episode_data_index": episode_data_index,
+        }
     if max_episodes_rendered > 0:
         info["videos"] = videos
     return info

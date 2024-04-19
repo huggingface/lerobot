@@ -18,7 +18,6 @@ from lerobot.common.datasets.utils import (
     load_previous_and_future_frames,
     unflatten_dict,
 )
-from lerobot.common.transforms import Prod
 from lerobot.common.utils.utils import init_hydra_config
 
 from .utils import DEFAULT_CONFIG_PATH, DEVICE
@@ -102,22 +101,18 @@ def test_compute_stats_on_xarm():
 
     data_dir = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
-    # get transform to convert images from uint8 [0,255] to float32 [0,1]
-    transform = Prod(in_keys=XarmDataset.image_keys, prod=1 / 255.0)
-
     dataset = XarmDataset(
         dataset_id="xarm_lift_medium",
         root=data_dir,
-        transform=transform,
     )
 
     # Note: we set the batch size to be smaller than the whole dataset to make sure we are testing batched
     # computation of the statistics. While doing this, we also make sure it works when we don't divide the
     # dataset into even batches.
-    computed_stats = compute_stats(dataset, batch_size=int(len(dataset) * 0.25))
+    computed_stats = compute_stats(dataset.hf_dataset, batch_size=int(len(dataset) * 0.25))
 
     # get einops patterns to aggregate batches and compute statistics
-    stats_patterns = get_stats_einops_patterns(dataset)
+    stats_patterns = get_stats_einops_patterns(dataset.hf_dataset)
 
     # get all frames from the dataset in the same dtype and range as during compute_stats
     dataloader = torch.utils.data.DataLoader(
@@ -126,18 +121,18 @@ def test_compute_stats_on_xarm():
         batch_size=len(dataset),
         shuffle=False,
     )
-    hf_dataset = next(iter(dataloader))
+    full_batch = next(iter(dataloader))
 
     # compute stats based on all frames from the dataset without any batching
     expected_stats = {}
     for k, pattern in stats_patterns.items():
         expected_stats[k] = {}
-        expected_stats[k]["mean"] = einops.reduce(hf_dataset[k], pattern, "mean")
+        expected_stats[k]["mean"] = einops.reduce(full_batch[k], pattern, "mean")
         expected_stats[k]["std"] = torch.sqrt(
-            einops.reduce((hf_dataset[k] - expected_stats[k]["mean"]) ** 2, pattern, "mean")
+            einops.reduce((full_batch[k] - expected_stats[k]["mean"]) ** 2, pattern, "mean")
         )
-        expected_stats[k]["min"] = einops.reduce(hf_dataset[k], pattern, "min")
-        expected_stats[k]["max"] = einops.reduce(hf_dataset[k], pattern, "max")
+        expected_stats[k]["min"] = einops.reduce(full_batch[k], pattern, "min")
+        expected_stats[k]["max"] = einops.reduce(full_batch[k], pattern, "max")
 
     # test computed stats match expected stats
     for k in stats_patterns:
@@ -146,17 +141,15 @@ def test_compute_stats_on_xarm():
         assert torch.allclose(computed_stats[k]["min"], expected_stats[k]["min"])
         assert torch.allclose(computed_stats[k]["max"], expected_stats[k]["max"])
 
-    # TODO(rcadene): check that the stats used for training are correct too
-    # # load stats that are expected to match the ones returned by computed_stats
-    # assert (dataset.data_dir / "stats.pth").exists()
-    # loaded_stats = torch.load(dataset.data_dir / "stats.pth")
+    # load stats used during training which are expected to match the ones returned by computed_stats
+    loaded_stats = dataset.stats
 
-    # # test loaded stats match expected stats
-    # for k in stats_patterns:
-    #     assert torch.allclose(loaded_stats[k]["mean"], expected_stats[k]["mean"])
-    #     assert torch.allclose(loaded_stats[k]["std"], expected_stats[k]["std"])
-    #     assert torch.allclose(loaded_stats[k]["min"], expected_stats[k]["min"])
-    #     assert torch.allclose(loaded_stats[k]["max"], expected_stats[k]["max"])
+    # test loaded stats match expected stats
+    for k in stats_patterns:
+        assert torch.allclose(loaded_stats[k]["mean"], expected_stats[k]["mean"])
+        assert torch.allclose(loaded_stats[k]["std"], expected_stats[k]["std"])
+        assert torch.allclose(loaded_stats[k]["min"], expected_stats[k]["min"])
+        assert torch.allclose(loaded_stats[k]["max"], expected_stats[k]["max"])
 
 
 def test_load_previous_and_future_frames_within_tolerance():
