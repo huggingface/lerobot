@@ -117,11 +117,9 @@ jobs:
       #            run tests & coverage
       #----------------------------------------------
       - name: Run tests
-        env:
-          LEROBOT_TESTS_DEVICE: cpu
         run: |
           source .venv/bin/activate
-          pytest --cov=./lerobot --cov-report=xml tests
+          pytest -v --cov=./lerobot --cov-report=xml tests
 
       #   TODO(aliberts): Link with HF Codecov account
       # - name: Upload coverage reports to Codecov with GitHub Action

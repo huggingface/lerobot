@@ -2,7 +2,7 @@ import inspect
 
 from omegaconf import DictConfig, OmegaConf
 
-from lerobot.common.utils import get_safe_torch_device
+from lerobot.common.utils.utils import get_safe_torch_device
 
 
 def _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg):

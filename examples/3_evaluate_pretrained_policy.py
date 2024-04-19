@@ -7,7 +7,7 @@ from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
-from lerobot.common.utils import init_hydra_config
+from lerobot.common.utils.utils import init_hydra_config
 from lerobot.scripts.eval import eval
 
 # Get a pretrained policy from the hub.

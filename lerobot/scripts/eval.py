@@ -51,7 +51,7 @@ from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.utils import postprocess_action, preprocess_observation
 from lerobot.common.logger import log_output_dir
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
+from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 
 
 def write_video(video_path, stacked_frames, fps):
@@ -254,7 +254,7 @@ def eval_policy(
 
         data_dict["index"] = torch.arange(0, total_frames, 1)
 
-        episodes_as_hf_dataset = Dataset.from_dict(data_dict).with_format("torch")
+        hf_dataset = Dataset.from_dict(data_dict).with_format("torch")
 
     if max_episodes_rendered > 0:
         batch_stacked_frames = np.stack(ep_frames, 1)  # (b, t, *)
@@ -307,7 +307,7 @@ def eval_policy(
         },
     }
     if return_episode_data:
-        info["episodes"] = episodes_as_hf_dataset
+        info["episodes"] = hf_dataset
     if max_episodes_rendered > 0:
         info["videos"] = videos
     return info

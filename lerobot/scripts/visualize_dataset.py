@@ -9,7 +9,7 @@ import torch
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.logger import log_output_dir
-from lerobot.common.utils import init_logging
+from lerobot.common.utils.utils import init_logging
 
 NUM_EPISODES_TO_RENDER = 50
 MAX_NUM_STEPS = 1000

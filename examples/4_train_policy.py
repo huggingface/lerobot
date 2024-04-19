@@ -13,7 +13,7 @@ from omegaconf import OmegaConf
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
-from lerobot.common.utils import init_hydra_config
+from lerobot.common.utils.utils import init_hydra_config
 
 output_directory = Path("outputs/train/example_pusht_diffusion")
 os.makedirs(output_directory, exist_ok=True)
