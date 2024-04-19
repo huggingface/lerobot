@@ -49,7 +49,7 @@ print(f"number of episodes: {len(hf_dataset.unique('episode_id'))=}")
 print(f"average number of frames per episode: {len(hf_dataset) / len(hf_dataset.unique('episode_id')):.3f}")
 
 # select the frames belonging to episode number 5
-hf_dataset = hf_dataset.filter(lambda frame: frame["episode_id"] == 5)
+hf_dataset = hf_dataset.filter(lambda frame: frame["episode_index"] == 5)
 
 # load all frames of episode 5 in RAM in PIL format
 frames = hf_dataset["observation.image"]

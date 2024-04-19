@@ -10,6 +10,8 @@ from datasets import load_dataset, load_from_disk
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 
+from lerobot.common.utils.utils import set_global_seed
+
 
 def flatten_dict(d, parent_key="", sep="/"):
     items = []
@@ -42,7 +44,9 @@ def load_hf_dataset(dataset_id, version, root, split) -> datasets.Dataset:
     else:
         repo_id = f"lerobot/{dataset_id}"
         hf_dataset = load_dataset(repo_id, revision=version, split=split)
-    return hf_dataset.with_format("torch")
+    hf_dataset = hf_dataset.with_format("torch")
+    hf_dataset.set_transform(convert_images_to_channel_first_tensors)
+    return hf_dataset
 
 
 def load_episode_data_index(dataset_id, version, root) -> dict[str, torch.Tensor]:
@@ -126,7 +130,7 @@ def load_previous_and_future_frames(
       issues with timestamps during data collection.
     """
     # get indices of the frames associated to the episode, and their timestamps
-    ep_id = item["episode_id"].item()
+    ep_id = item["episode_index"].item()
     ep_data_id_from = episode_data_index["from"][ep_id].item()
     ep_data_id_to = episode_data_index["to"][ep_id].item()
     ep_data_ids = torch.arange(ep_data_id_from, ep_data_id_to, 1)
@@ -168,34 +172,53 @@ def load_previous_and_future_frames(
     return item
 
 
-def get_stats_einops_patterns(dataset):
-    """These einops patterns will be used to aggregate batches and compute statistics."""
-    stats_patterns = {
-        "action": "b c -> c",
-        "observation.state": "b c -> c",
-    }
-    for key in dataset.image_keys:
-        stats_patterns[key] = "b c h w -> c 1 1"
+def convert_images_to_channel_first_tensors(examples):
+    for key in examples:
+        if examples[key].ndim == 3:  # we assume it's an image
+            # (h w c) -> (c h w)
+            h, w, c = examples[key].shape
+            assert c < h and c < w, f"expect a channel last image, but instead {examples[key].shape}"
+            examples[key] = [img.permute((2, 0, 1)) for img in examples[key]]
+    return examples
+
+
+def get_stats_einops_patterns(hf_dataset):
+    """These einops patterns will be used to aggregate batches and compute statistics.
+
+    Note: We assume the images are returned in channel first format
+    """
+
+    dataloader = torch.utils.data.DataLoader(
+        hf_dataset,
+        num_workers=0,
+        batch_size=2,
+        shuffle=False,
+    )
+    batch = next(iter(dataloader))
+
+    stats_patterns = {}
+    for key, feats_type in hf_dataset.features.items():
+        if batch[key].ndim == 4 and isinstance(feats_type, datasets.features.image.Image):
+            # sanity check that images are channel first
+            _, c, h, w = batch[key].shape
+            assert c < h and c < w, f"expect channel first images, but instead {batch[key].shape}"
+            # convert from (h w c) to (c h w) to fit pytorch convention, then apply reduce
+            stats_patterns[key] = "b c h w -> c 1 1"
+        elif batch[key].ndim == 2:
+            stats_patterns[key] = "b c -> c "
+        elif batch[key].ndim == 1:
+            stats_patterns[key] = "b -> 1"
+        else:
+            raise ValueError(f"{key}, {feats_type}, {batch[key].shape}")
+
     return stats_patterns
 
 
-def compute_stats(dataset, batch_size=32, max_num_samples=None):
+def compute_stats(hf_dataset, batch_size=32, max_num_samples=None):
     if max_num_samples is None:
-        max_num_samples = len(dataset)
-    else:
-        raise NotImplementedError("We need to set shuffle=True, but this violate an assert for now.")
+        max_num_samples = len(hf_dataset)
 
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        num_workers=4,
-        batch_size=batch_size,
-        shuffle=False,
-        # pin_memory=cfg.device != "cpu",
-        drop_last=False,
-    )
-
-    # get einops patterns to aggregate batches and compute statistics
-    stats_patterns = get_stats_einops_patterns(dataset)
+    stats_patterns = get_stats_einops_patterns(hf_dataset)
 
     # mean and std will be computed incrementally while max and min will track the running value.
     mean, std, max, min = {}, {}, {}, {}
@@ -205,10 +228,23 @@ def compute_stats(dataset, batch_size=32, max_num_samples=None):
         max[key] = torch.tensor(-float("inf")).float()
         min[key] = torch.tensor(float("inf")).float()
 
+    def create_seeded_dataloader(hf_dataset, batch_size, seed):
+        set_global_seed(seed)
+        dataloader = torch.utils.data.DataLoader(
+            hf_dataset,
+            num_workers=4,
+            batch_size=batch_size,
+            shuffle=False,
+            # pin_memory=cfg.device != "cpu",
+            drop_last=False,
+        )
+        return dataloader
+
     # Note: Due to be refactored soon. The point of storing `first_batch` is to make sure we don't get
     # surprises when rerunning the sampler.
     first_batch = None
     running_item_count = 0  # for online mean computation
+    dataloader = create_seeded_dataloader(hf_dataset, batch_size, seed=1337)
     for i, batch in enumerate(
         tqdm.tqdm(dataloader, total=ceil(max_num_samples / batch_size), desc="Compute mean, min, max")
     ):
@@ -234,6 +270,7 @@ def compute_stats(dataset, batch_size=32, max_num_samples=None):
 
     first_batch_ = None
     running_item_count = 0  # for online std computation
+    dataloader = create_seeded_dataloader(hf_dataset, batch_size, seed=1337)
     for i, batch in enumerate(
         tqdm.tqdm(dataloader, total=ceil(max_num_samples / batch_size), desc="Compute std")
     ):

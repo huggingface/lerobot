@@ -54,7 +54,7 @@ class AlohaDataset(torch.utils.data.Dataset):
 
     @property
     def num_episodes(self) -> int:
-        return len(self.hf_dataset.unique("episode_id"))
+        return len(self.hf_dataset.unique("episode_index"))
 
     def __len__(self):
         return self.num_samples
