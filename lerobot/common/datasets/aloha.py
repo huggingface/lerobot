@@ -14,6 +14,7 @@ class AlohaDataset(torch.utils.data.Dataset):
     https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_scripted
     """
 
+    # Copied from lerobot/__init__.py
     available_datasets = [
         "aloha_sim_insertion_human",
         "aloha_sim_insertion_scripted",
@@ -40,32 +41,33 @@ class AlohaDataset(torch.utils.data.Dataset):
         self.transform = transform
         self.delta_timestamps = delta_timestamps
         if self.root is not None:
-            self.data_dict = load_from_disk(Path(self.root) / self.dataset_id / self.split)
+            self.hf_dataset = load_from_disk(Path(self.root) / self.dataset_id / self.split)
         else:
-            self.data_dict = load_dataset(
+            self.hf_dataset = load_dataset(
                 f"lerobot/{self.dataset_id}", revision=self.version, split=self.split
             )
-        self.data_dict = self.data_dict.with_format("torch")
+        self.hf_dataset = self.hf_dataset.with_format("torch")
 
     @property
     def num_samples(self) -> int:
-        return len(self.data_dict)
+        return len(self.hf_dataset)
 
     @property
     def num_episodes(self) -> int:
-        return len(self.data_dict.unique("episode_id"))
+        return len(self.hf_dataset.unique("episode_id"))
 
     def __len__(self):
         return self.num_samples
 
     def __getitem__(self, idx):
-        item = self.data_dict[idx]
+        item = self.hf_dataset[idx]
 
         if self.delta_timestamps is not None:
             item = load_previous_and_future_frames(
                 item,
-                self.data_dict,
+                self.hf_dataset,
                 self.delta_timestamps,
+                tol=1 / self.fps - 1e-4,  # 1e-4 to account for possible numerical error
             )
 
         # convert images from channel last (PIL) to channel first (pytorch)
