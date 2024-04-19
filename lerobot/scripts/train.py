@@ -344,7 +344,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 sampler,
                 hf_dataset=eval_info["episodes"]["hf_dataset"],
                 episode_data_index=eval_info["episodes"]["episode_data_index"],
-                online_pc_sampling=cfg.get("demo_schedule", 0.5),
+                pc_online_samples=cfg.get("demo_schedule", 0.5),
             )
 
         for _ in range(cfg.policy.utd):
