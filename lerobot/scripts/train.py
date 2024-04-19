@@ -330,6 +330,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 rollout_env,
                 policy,
                 transform=offline_dataset.transform,
+                return_episode_data=True,
                 seed=cfg.seed,
             )
 
