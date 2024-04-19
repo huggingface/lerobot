@@ -37,7 +37,7 @@ from datasets import load_dataset
 # TODO(rcadene): list available datasets on lerobot page using `datasets`
 
 # download/load hugging face dataset in pyarrow format
-hf_dataset, fps = load_dataset("lerobot/pusht", split="train"), 10
+hf_dataset, fps = load_dataset("lerobot/pusht", revision="v1.0", split="train"), 10
 
 # display name of dataset and its features
 print(f"{hf_dataset=}")
