@@ -69,9 +69,14 @@ class DiffusionConfig:
     horizon: int = 16
     n_action_steps: int = 8
 
-    # Vision preprocessing.
-    image_normalization_mean: tuple[float, float, float] = (0.5, 0.5, 0.5)
-    image_normalization_std: tuple[float, float, float] = (0.5, 0.5, 0.5)
+    # Normalization / Unnormalization
+    normalize_input_modes: dict[str, str] = {
+        "observation.image": "mean_std",
+        "observation.state": "min_max",
+    }
+    unnormalize_output_modes: dict[str, str] = {
+        "action": "min_max",
+    }
 
     # Architecture / modeling.
     # Vision backbone.

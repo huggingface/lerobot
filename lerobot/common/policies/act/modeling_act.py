@@ -15,12 +15,15 @@ import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
-import torchvision.transforms as transforms
 from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
 from lerobot.common.policies.act.configuration_act import ActionChunkingTransformerConfig
+from lerobot.common.policies.utils import (
+    normalize_inputs,
+    unnormalize_outputs,
+)
 
 
 class ActionChunkingTransformerPolicy(nn.Module):
@@ -62,7 +65,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
 
     name = "act"
 
-    def __init__(self, cfg: ActionChunkingTransformerConfig | None = None):
+    def __init__(self, cfg: ActionChunkingTransformerConfig | None = None, dataset_stats=None):
         """
         Args:
             cfg: Policy configuration class instance or None, in which case the default instantiation of the
@@ -72,6 +75,9 @@ class ActionChunkingTransformerPolicy(nn.Module):
         if cfg is None:
             cfg = ActionChunkingTransformerConfig()
         self.cfg = cfg
+        self.register_buffer("dataset_stats", dataset_stats)
+        self.normalize_input_modes = cfg.normalize_input_modes
+        self.unnormalize_output_modes = cfg.unnormalize_output_modes
 
         # BERT style VAE encoder with input [cls, *joint_space_configuration, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
@@ -93,9 +99,6 @@ class ActionChunkingTransformerPolicy(nn.Module):
             )
 
         # Backbone for image feature extraction.
-        self.image_normalizer = transforms.Normalize(
-            mean=cfg.image_normalization_mean, std=cfg.image_normalization_std
-        )
         backbone_model = getattr(torchvision.models, cfg.vision_backbone)(
             replace_stride_with_dilation=[False, False, cfg.replace_final_stride_with_dilation],
             pretrained=cfg.use_pretrained_backbone,
@@ -169,10 +172,15 @@ class ActionChunkingTransformerPolicy(nn.Module):
         queue is empty.
         """
         self.eval()
+
+        batch = normalize_inputs(batch, self.dataset_stats, self.normalize_input_modes)
+
         if len(self._action_queue) == 0:
             # `_forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue effectively
             # has shape (n_action_steps, batch_size, *), hence the transpose.
-            self._action_queue.extend(self._forward(batch)[0][: self.cfg.n_action_steps].transpose(0, 1))
+            actions = self._forward(batch)[0][: self.cfg.n_action_steps]
+            actions = unnormalize_outputs(actions, self.dataset_stats, self.unnormalize_output_modes)
+            self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
     def forward(self, batch, **_) -> dict[str, Tensor]:
@@ -203,7 +211,10 @@ class ActionChunkingTransformerPolicy(nn.Module):
         """Run the model in train mode, compute the loss, and do an optimization step."""
         start_time = time.time()
         self.train()
+
+        batch = normalize_inputs(batch, self.dataset_stats, self.normalize_input_modes)
         loss_dict = self.forward(batch)
+        # TODO(rcadene): unnormalize_outputs(actions, self.dataset_stats, self.unnormalize_output_modes)
         loss = loss_dict["loss"]
         loss.backward()
 
@@ -309,7 +320,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
         # Camera observation features and positional embeddings.
         all_cam_features = []
         all_cam_pos_embeds = []
-        images = self.image_normalizer(batch["observation.images"])
+        images = batch["observation.images"]
         for cam_index in range(len(self.cfg.camera_names)):
             cam_features = self.backbone(images[:, cam_index])["feature_map"]
             cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)

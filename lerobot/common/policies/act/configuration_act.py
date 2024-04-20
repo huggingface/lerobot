@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -60,12 +60,14 @@ class ActionChunkingTransformerConfig:
     chunk_size: int = 100
     n_action_steps: int = 100
 
-    # Vision preprocessing.
-    image_normalization_mean: tuple[float, float, float] = field(
-        default_factory=lambda: [0.485, 0.456, 0.406]
-    )
-    image_normalization_std: tuple[float, float, float] = field(default_factory=lambda: [0.229, 0.224, 0.225])
-
+    # Normalization / Unnormalization
+    normalize_input_modes: dict[str, str] = {
+        "observation.image": "mean_std",
+        "observation.state": "mean_std",
+    }
+    unnormalize_output_modes: dict[str, str] = {
+        "action": "mean_std",
+    }
     # Architecture.
     # Vision backbone.
     vision_backbone: str = "resnet18"

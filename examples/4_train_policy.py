@@ -62,7 +62,6 @@ while not done:
             done = True
             break
 
-# Save the policy, configuration, and normalization stats for later use.
+# Save the policy and configuration for later use.
 policy.save(output_directory / "model.pt")
 OmegaConf.save(hydra_cfg, output_directory / "config.yaml")
-torch.save(dataset.transform.transforms[-1].stats, output_directory / "stats.pth")

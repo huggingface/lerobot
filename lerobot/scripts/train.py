@@ -232,7 +232,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     env = make_env(cfg, num_parallel_envs=cfg.eval_episodes)
 
     logging.info("make_policy")
-    policy = make_policy(cfg)
+    policy = make_policy(cfg, dataset_stats=offline_dataset.stats)
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())

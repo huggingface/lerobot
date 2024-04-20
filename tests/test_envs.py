@@ -42,7 +42,7 @@ def test_factory(env_name):
 
     env = make_env(cfg, num_parallel_envs=1)
     obs, _ = env.reset()
-    obs = preprocess_observation(obs, transform=dataset.transform)
+    obs = preprocess_observation(obs)
     for key in dataset.image_keys:
         img = obs[key]
         assert img.dtype == torch.float32

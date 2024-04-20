@@ -13,7 +13,6 @@ import logging
 import math
 import time
 from collections import deque
-from itertools import chain
 from typing import Callable
 
 import einops
@@ -30,7 +29,9 @@ from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionC
 from lerobot.common.policies.utils import (
     get_device_from_parameters,
     get_dtype_from_parameters,
+    normalize_inputs,
     populate_queues,
+    unnormalize_outputs,
 )
 
 
@@ -42,7 +43,9 @@ class DiffusionPolicy(nn.Module):
 
     name = "diffusion"
 
-    def __init__(self, cfg: DiffusionConfig | None, lr_scheduler_num_training_steps: int = 0):
+    def __init__(
+        self, cfg: DiffusionConfig | None, lr_scheduler_num_training_steps: int = 0, dataset_stats=None
+    ):
         """
         Args:
             cfg: Policy configuration class instance or None, in which case the default instantiation of the
@@ -54,6 +57,9 @@ class DiffusionPolicy(nn.Module):
         if cfg is None:
             cfg = DiffusionConfig()
         self.cfg = cfg
+        self.register_buffer("dataset_stats", dataset_stats)
+        self.normalize_input_modes = cfg.normalize_input_modes
+        self.unnormalize_output_modes = cfg.unnormalize_output_modes
 
         # queues are populated during rollout of the policy, they contain the n latest observations and actions
         self._queues = None
@@ -126,6 +132,8 @@ class DiffusionPolicy(nn.Module):
         assert "observation.state" in batch
         assert len(batch) == 2
 
+        batch = normalize_inputs(batch, self.dataset_stats, self.normalize_input_modes)
+
         self._queues = populate_queues(self._queues, batch)
 
         if len(self._queues["action"]) == 0:
@@ -135,6 +143,8 @@ class DiffusionPolicy(nn.Module):
                 actions = self.ema_diffusion.generate_actions(batch)
             else:
                 actions = self.diffusion.generate_actions(batch)
+
+            actions = unnormalize_outputs(actions, self.dataset_stats, self.unnormalize_output_modes)
             self._queues["action"].extend(actions.transpose(0, 1))
 
         action = self._queues["action"].popleft()
@@ -151,8 +161,12 @@ class DiffusionPolicy(nn.Module):
 
         self.diffusion.train()
 
+        batch = normalize_inputs(batch, self.dataset_stats, self.normalize_input_modes)
+
         loss = self.forward(batch)["loss"]
         loss.backward()
+
+        # TODO(rcadene): unnormalize_outputs(actions, self.dataset_stats, self.unnormalize_output_modes)
 
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.diffusion.parameters(),
@@ -346,12 +360,6 @@ class _RgbEncoder(nn.Module):
     def __init__(self, cfg: DiffusionConfig):
         super().__init__()
         # Set up optional preprocessing.
-        if all(v == 1.0 for v in chain(cfg.image_normalization_mean, cfg.image_normalization_std)):
-            self.normalizer = nn.Identity()
-        else:
-            self.normalizer = torchvision.transforms.Normalize(
-                mean=cfg.image_normalization_mean, std=cfg.image_normalization_std
-            )
         if cfg.crop_shape is not None:
             self.do_crop = True
             # Always use center crop for eval
@@ -397,8 +405,7 @@ class _RgbEncoder(nn.Module):
         Returns:
             (B, D) image feature.
         """
-        # Preprocess: normalize and maybe crop (if it was set up in the __init__).
-        x = self.normalizer(x)
+        # Preprocess: maybe crop (if it was set up in the __init__).
         if self.do_crop:
             if self.training:  # noqa: SIM108
                 x = self.maybe_random_crop(x)

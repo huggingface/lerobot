@@ -28,3 +28,41 @@ def get_dtype_from_parameters(module: nn.Module) -> torch.dtype:
     Note: assumes that all parameters have the same dtype.
     """
     return next(iter(module.parameters())).dtype
+
+
+def normalize_inputs(batch, stats, normalize_input_modes):
+    if normalize_input_modes is None:
+        return batch
+    for key, mode in normalize_input_modes.items():
+        if mode == "mean_std":
+            mean = stats[key]["mean"].unsqueeze(0)
+            std = stats[key]["std"].unsqueeze(0)
+            batch[key] = (batch[key] - mean) / (std + 1e-8)
+        elif mode == "min_max":
+            min = stats[key]["min"].unsqueeze(0)
+            max = stats[key]["max"].unsqueeze(0)
+            # normalize to [0,1]
+            batch[key] = (batch[key] - min) / (max - min)
+            # normalize to [-1, 1]
+            batch[key] = batch[key] * 2 - 1
+        else:
+            raise ValueError(mode)
+    return batch
+
+
+def unnormalize_outputs(batch, stats, unnormalize_output_modes):
+    if unnormalize_output_modes is None:
+        return batch
+    for key, mode in unnormalize_output_modes.items():
+        if mode == "mean_std":
+            mean = stats[key]["mean"].unsqueeze(0)
+            std = stats[key]["std"].unsqueeze(0)
+            batch[key] = batch[key] * std + mean
+        elif mode == "min_max":
+            min = stats[key]["min"].unsqueeze(0)
+            max = stats[key]["max"].unsqueeze(0)
+            batch[key] = (batch[key] + 1) / 2
+            batch[key] = batch[key] * (max - min) + min
+        else:
+            raise ValueError(mode)
+    return batch
