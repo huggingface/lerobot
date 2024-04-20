@@ -58,7 +58,7 @@ def hf_transform_to_torch(items_dict):
 def load_hf_dataset(dataset_id, version, root, split) -> datasets.Dataset:
     """hf_dataset contains all the observations, states, actions, rewards, etc."""
     if root is not None:
-        hf_dataset = load_from_disk(Path(root) / dataset_id / split)
+        hf_dataset = load_from_disk(str(Path(root) / dataset_id / split))
     else:
         # TODO(rcadene): remove dataset_id everywhere and use repo_id instead
         repo_id = f"lerobot/{dataset_id}"
