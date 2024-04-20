@@ -92,6 +92,7 @@ def test_compute_stats_on_xarm():
     We compare with taking a straight min, mean, max, std of all the data in one pass (which we can do
     because we are working with a small dataset).
     """
+    # TODO(rcadene): Reduce size of dataset sample on which stats compute is tested
     from lerobot.common.datasets.xarm import XarmDataset
 
     data_dir = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
