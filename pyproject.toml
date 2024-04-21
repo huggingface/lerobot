@@ -7,6 +7,7 @@ authors = [
     "Alexander Soare <alexander.soare159@gmail.com>",
     "Quentin Gallouédec <quentin.gallouedec@ec-lyon.fr>",
     "Simon Alibert <alibert.sim@gmail.com>",
+    "Adil Zouitine <adilzouitinegm@gmail.com>",
     "Thomas Wolf <thomaswolfcontact@gmail.com>",
 ]
 repository = "https://github.com/huggingface/lerobot"
@@ -65,7 +66,6 @@ aloha = ["gym-aloha"]
 dev = ["pre-commit", "debugpy"]
 test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
-
 
 [tool.ruff]
 line-length = 110
