@@ -23,6 +23,7 @@ from lerobot.common.datasets.utils import compute_stats, flatten_dict, hf_transf
 
 
 def download_and_upload(root, revision, dataset_id):
+    # TODO(rcadene, adilzouitine): add community_id/user_id (e.g. "lerobot", "cadene") or repo_id (e.g. "lerobot/pusht")
     if "pusht" in dataset_id:
         download_and_upload_pusht(root, revision, dataset_id)
     elif "xarm" in dataset_id:
@@ -149,11 +150,11 @@ def push_to_hub(hf_dataset, episode_data_index, info, stats, root, revision, dat
     # copy in tests folder, the first episode and the meta_data directory
     num_items_first_ep = episode_data_index["to"][0] - episode_data_index["from"][0]
     hf_dataset.select(range(num_items_first_ep)).with_format("torch").save_to_disk(
-        f"tests/data/{dataset_id}/train"
+        f"tests/data/lerobot/{dataset_id}/train"
     )
-    if Path(f"tests/data/{dataset_id}/meta_data").exists():
-        shutil.rmtree(f"tests/data/{dataset_id}/meta_data")
-    shutil.copytree(meta_data_dir, f"tests/data/{dataset_id}/meta_data")
+    if Path(f"tests/data/lerobot/{dataset_id}/meta_data").exists():
+        shutil.rmtree(f"tests/data/lerobot/{dataset_id}/meta_data")
+    shutil.copytree(meta_data_dir, f"tests/data/lerobot/{dataset_id}/meta_data")
 
 
 def download_and_upload_pusht(root, revision, dataset_id="pusht", fps=10):

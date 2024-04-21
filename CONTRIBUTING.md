@@ -73,15 +73,14 @@ environments ([aloha](https://github.com/huggingface/gym-aloha),
 [pusht](https://github.com/huggingface/gym-pusht))
 and follow the same api design.
 
-When implementing a new dataset class (e.g. `AlohaDataset`) follow these steps:
-- Update `available_datasets` in `lerobot/__init__.py`
-- Copy it in the required `available_datasets` class attribute
+When implementing a new dataset loadable with LeRobotDataset follow these steps:
+- Update `available_datasets_per_env` in `lerobot/__init__.py`
 
 When implementing a new environment (e.g. `gym_aloha`), follow these steps:
-- Update `available_envs`, `available_tasks_per_env` and `available_datasets` in `lerobot/__init__.py`
+- Update `available_tasks_per_env` and `available_datasets_per_env` in `lerobot/__init__.py`
 
 When implementing a new policy class (e.g. `DiffusionPolicy`) follow these steps:
-- Update `available_policies` in `lerobot/__init__.py`
+- Update `available_policies` and `available_policies_per_env`, in `lerobot/__init__.py`
 - Set the required `name` class attribute.
 - Update variables in `tests/test_available.py` by importing your new Policy class
 
