@@ -9,7 +9,8 @@ online_steps: 25000
 
 fps: 15
 
-dataset_id: xarm_lift_medium
+dataset:
+  repo_id: lerobot/xarm_lift_medium
 
 env:
   name: xarm

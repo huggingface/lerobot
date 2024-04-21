@@ -10,7 +10,8 @@ online_steps: 25000
 
 fps: 10
 
-dataset_id: pusht
+dataset:
+  repo_id: lerobot/pusht
 
 env:
   name: pusht

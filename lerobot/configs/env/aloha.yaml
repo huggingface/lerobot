@@ -10,7 +10,8 @@ online_steps: 25000
 
 fps: 50
 
-dataset_id: aloha_sim_insertion_human
+dataset:
+  repo_id: lerobot/aloha_sim_insertion_human
 
 env:
   name: aloha
