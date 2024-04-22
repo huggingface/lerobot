@@ -16,6 +16,14 @@ from lerobot.common.utils.utils import set_global_seed
 
 
 def flatten_dict(d, parent_key="", sep="/"):
+    """Flatten a nested dictionary structure by collapsing nested keys into one key with a separator.
+    
+    For example:
+    ```
+    >>> dct = {"a": {"b": 1, "c": {"d": 2}}, "e": 3}`
+    >>> print(flatten_dict(dct))
+    {"a/b": 1, "a/c/d": 2, "e": 3}
+    """
     items = []
     for k, v in d.items():
         new_key = f"{parent_key}{sep}{k}" if parent_key else k
