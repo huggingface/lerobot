@@ -195,7 +195,7 @@ def load_previous_and_future_frames(
 def get_stats_einops_patterns(hf_dataset):
     """These einops patterns will be used to aggregate batches and compute statistics.
 
-    Note: We assume the images are returned in channel first format
+    Note: We assume the images of `hf_dataset` are in channel first format
     """
 
     dataloader = torch.utils.data.DataLoader(
