@@ -10,7 +10,7 @@ As an example, this script saves frames of episode number 5 of the PushT dataset
 This script supports several Hugging Face datasets, among which:
 1. [Pusht](https://huggingface.co/datasets/lerobot/pusht)
 2. [Xarm Lift Medium](https://huggingface.co/datasets/lerobot/xarm_lift_medium)
-3. [Xarm Lift Medium](https://huggingface.co/datasets/lerobot/xarm_lift_medium_replay)
+3. [Xarm Lift Medium Replay](https://huggingface.co/datasets/lerobot/xarm_lift_medium_replay)
 4. [Xarm Lift Medium](https://huggingface.co/datasets/lerobot/xarm_push_medium)
 5. [Xarm Lift Medium](https://huggingface.co/datasets/lerobot/xarm_push_medium_replay)
 6. [Aloha Sim Insertion Human](https://huggingface.co/datasets/lerobot/aloha_sim_insertion_human)
