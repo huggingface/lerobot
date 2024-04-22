@@ -47,6 +47,7 @@ from lerobot.common.datasets.pusht import PushtDataset
 dataset = PushtDataset()
 
 # All LeRobot datasets are actually a thin wrapper around an underlying Hugging Face dataset  (see https://huggingface.co/docs/datasets/index for more information).
+# TODO(rcadene): update to make the print pretty
 print(f"{dataset=}")
 print(f"{dataset.hf_dataset=}")
 
@@ -58,14 +59,16 @@ print(f"frames per second used during data collection: {dataset.fps=}")
 print(f"keys to access images from cameras: {dataset.image_keys=}")
 
 # While the LeRobot dataset adds helpers for working within our library, we still expose the underling Hugging Face dataset. It may be freely replaced or modified in place. Here we use the filtering to keep only frames from episode 5.
+# TODO(rcadene): remove this example of accessing hf_dataset
 dataset.hf_dataset = dataset.hf_dataset.filter(lambda frame: frame["episode_index"] == 5)
 
 # LeRobot datsets actually subclass PyTorch datasets. So you can do everything you know and love from working with the latter, for example: iterating through the dataset. Here we grab all the image frames.
 frames = [sample["observation.image"] for sample in dataset]
 
-# but frames are now float32 range [0,1] channel first to follow pytorch convention,
-# to view them, we convert to uint8 range [0,255] channel last
+# but frames are now float32 range [0,1] channel first (c,h,w) to follow pytorch convention,
+# to view them, we convert to uint8 range [0,255]
 frames = [(frame * 255).type(torch.uint8) for frame in frames]
+# and to channel last (h,w,c)
 frames = [frame.permute((1, 2, 0)).numpy() for frame in frames]
 
 # and finally save them to a mp4 video

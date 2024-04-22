@@ -34,6 +34,7 @@ hf_dataset, fps = load_dataset("lerobot/aloha_sim_transfer_cube_human", split="t
 hf_dataset, fps = load_dataset("lerobot/aloha_sim_transfer_cube_scripted", split="train"), 50
 ```
 """
+# TODO(rcadene): remove this example file of using hf_dataset
 
 from pathlib import Path
 
@@ -46,6 +47,7 @@ from datasets import load_dataset
 hf_dataset, fps = load_dataset("lerobot/pusht", split="train"), 10
 
 # display name of dataset and its features
+# TODO(rcadene): update to make the print pretty
 print(f"{hf_dataset=}")
 print(f"{hf_dataset.features=}")
 

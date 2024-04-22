@@ -12,8 +12,6 @@ from PIL import Image as PILImage
 from safetensors.torch import load_file
 from torchvision import transforms
 
-from lerobot.common.utils.utils import set_global_seed
-
 
 def flatten_dict(d, parent_key="", sep="/"):
     """Flatten a nested dictionary structure by collapsing nested keys into one key with a separator.
@@ -255,13 +253,15 @@ def compute_stats(hf_dataset, batch_size=32, max_num_samples=None):
         min[key] = torch.tensor(float("inf")).float()
 
     def create_seeded_dataloader(hf_dataset, batch_size, seed):
-        set_global_seed(seed)
+        generator = torch.Generator()
+        generator.manual_seed(seed)
         dataloader = torch.utils.data.DataLoader(
             hf_dataset,
             num_workers=4,
             batch_size=batch_size,
             shuffle=True,
             drop_last=False,
+            generator=generator,
         )
         return dataloader
 

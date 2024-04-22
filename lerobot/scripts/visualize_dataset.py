@@ -26,7 +26,9 @@ def cat_and_write_video(video_path, frames, fps):
 
     # Expects images in [0, 1].
     frame = frames[0]
-    _, c, h, w = frame.shape
+    if frame.ndim == 4:
+        raise NotImplementedError("We currently dont support multiple timestamps.")
+    c, h, w = frame.shape
     assert c < h and c < w, f"expect channel first images, but instead {frame.shape}"
 
     # sanity check that images are float32 in range [0,1]
@@ -55,9 +57,10 @@ def visualize_dataset(cfg: dict, out_dir=None):
     )
 
     logging.info("Start rendering episodes from offline buffer")
-    video_paths = render_dataset(dataset, out_dir, MAX_NUM_STEPS * NUM_EPISODES_TO_RENDER, cfg.fps)
+    video_paths = render_dataset(dataset, out_dir, MAX_NUM_STEPS * NUM_EPISODES_TO_RENDER)
     for video_path in video_paths:
         logging.info(video_path)
+    return video_paths
 
 
 def render_dataset(dataset, out_dir, max_num_episodes):
@@ -88,7 +91,7 @@ def render_dataset(dataset, out_dir, max_num_episodes):
                 # add current frame to list of frames to render
                 frames[im_key].append(item[im_key])
 
-            end_of_episode = item["index"].item() == item["episode_data_index_to"].item() - 1
+            end_of_episode = item["index"].item() == dataset.episode_data_index["to"][ep_id] - 1
 
         out_dir.mkdir(parents=True, exist_ok=True)
         for im_key in dataset.image_keys:
