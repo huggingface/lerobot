@@ -40,13 +40,4 @@ def make_env(cfg, num_parallel_envs=0) -> gym.Env | gym.vector.SyncVectorEnv:
             ]
         )
 
-    def preprocess_observation(observation):
-        return observation / 255.0
-
-    def preprocess_reward(reward):
-        return reward / 255.0
-
-    env = gym.wrappers.TransformObservation(env, preprocess_observation)
-    env = gym.wrappers.TransformReward(env, preprocess_reward)
-
     return env
