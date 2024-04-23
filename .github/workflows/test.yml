@@ -193,8 +193,9 @@ jobs:
             env=xarm \
             wandb.enable=False \
             offline_steps=1 \
-            online_steps=1 \
+            online_steps=2 \
             eval_episodes=1 \
+            env.episode_length=2 \
             device=cpu \
             save_model=true \
             save_freq=2 \
