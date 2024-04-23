@@ -160,27 +160,32 @@ def add_episodes_inplace(
     Raises:
     - AssertionError: If the first episode_id or index in hf_dataset is not 0
     """
-    first_episode_id = hf_dataset.select_columns("episode_index")[0]["episode_index"].item()
+    first_episode_idx = hf_dataset.select_columns("episode_index")[0]["episode_index"].item()
+    last_episode_idx = hf_dataset.select_columns("episode_index")[-1]["episode_index"].item()
     first_index = hf_dataset.select_columns("index")[0]["index"].item()
-    assert first_episode_id == 0, f"We expect the first episode_id to be 0 and not {first_episode_id}"
-    assert first_index == 0, f"We expect the first first_index to be 0 and not {first_index}"
+    last_index = hf_dataset.select_columns("index")[-1]["index"].item()
+    # sanity check
+    assert first_episode_idx == 0, f"{first_episode_idx=} is not 0"
+    assert first_index == 0, f"{first_index=} is not 0"
+    assert first_index == episode_data_index["from"][first_episode_idx].item()
+    assert last_index == episode_data_index["to"][last_episode_idx].item() - 1
 
     if len(online_dataset) == 0:
         # initialize online dataset
         online_dataset.hf_dataset = hf_dataset
+        online_dataset.episode_data_index = episode_data_index
     else:
-        # find episode index and data frame indices according to previous episode in online_dataset
-        start_episode = online_dataset.select_columns("episode_index")[-1]["episode_index"].item() + 1
-        start_index = online_dataset.select_columns("index")[-1]["index"].item() + 1
+        # get the starting indices of the new episodes and frames to be added
+        start_episode_idx = last_episode_idx + 1
+        start_index = last_index + 1
 
-        def shift_indices(example):
+        def shift_indices(episode_index, index):
             # note: we dont shift "frame_index" since it represents the index of the frame in the episode it belongs to
-            example["episode_index"] += start_episode
-            example["index"] += start_index
+            example = {"episode_index": episode_index + start_episode_idx, "index": index + start_index}
             return example
 
         disable_progress_bars()  # map has a tqdm progress bar
-        hf_dataset = hf_dataset.map(shift_indices)
+        hf_dataset = hf_dataset.map(shift_indices, input_columns=["episode_index", "index"])
         enable_progress_bars()
 
         episode_data_index["from"] += start_index
@@ -306,6 +311,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     # create an empty online dataset similar to offline dataset
     online_dataset = deepcopy(offline_dataset)
     online_dataset.hf_dataset = {}
+    online_dataset.episode_data_index = {}
 
     # create dataloader for online training
     concat_dataset = torch.utils.data.ConcatDataset([offline_dataset, online_dataset])
