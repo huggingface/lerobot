@@ -39,4 +39,5 @@ def make_env(cfg, num_parallel_envs=0) -> gym.Env | gym.vector.SyncVectorEnv:
                 for _ in range(num_parallel_envs)
             ]
         )
+
     return env

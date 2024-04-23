@@ -50,7 +50,12 @@ available_datasets = {
         "aloha_sim_transfer_cube_scripted",
     ],
     "pusht": ["pusht"],
-    "xarm": ["xarm_lift_medium"],
+    "xarm": [
+        "xarm_lift_medium",
+        "xarm_lift_medium_replay",
+        "xarm_push_medium",
+        "xarm_push_medium_replay",
+    ],
 }
 
 available_policies = [

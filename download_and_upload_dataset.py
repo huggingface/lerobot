@@ -4,6 +4,7 @@ useless dependencies when using datasets.
 """
 
 import io
+import json
 import pickle
 import shutil
 from pathlib import Path
@@ -14,16 +15,20 @@ import numpy as np
 import torch
 import tqdm
 from datasets import Dataset, Features, Image, Sequence, Value
+from huggingface_hub import HfApi
 from PIL import Image as PILImage
+from safetensors.torch import save_file
+
+from lerobot.common.datasets.utils import compute_stats, flatten_dict, hf_transform_to_torch
 
 
-def download_and_upload(root, root_tests, dataset_id):
+def download_and_upload(root, revision, dataset_id):
     if "pusht" in dataset_id:
-        download_and_upload_pusht(root, root_tests, dataset_id)
+        download_and_upload_pusht(root, revision, dataset_id)
     elif "xarm" in dataset_id:
-        download_and_upload_xarm(root, root_tests, dataset_id)
+        download_and_upload_xarm(root, revision, dataset_id)
     elif "aloha" in dataset_id:
-        download_and_upload_aloha(root, root_tests, dataset_id)
+        download_and_upload_aloha(root, revision, dataset_id)
     else:
         raise ValueError(dataset_id)
 
@@ -56,7 +61,102 @@ def download_and_extract_zip(url: str, destination_folder: Path) -> bool:
         return False
 
 
-def download_and_upload_pusht(root, root_tests, dataset_id="pusht", fps=10):
+def concatenate_episodes(ep_dicts):
+    data_dict = {}
+
+    keys = ep_dicts[0].keys()
+    for key in keys:
+        if torch.is_tensor(ep_dicts[0][key][0]):
+            data_dict[key] = torch.cat([ep_dict[key] for ep_dict in ep_dicts])
+        else:
+            if key not in data_dict:
+                data_dict[key] = []
+            for ep_dict in ep_dicts:
+                for x in ep_dict[key]:
+                    data_dict[key].append(x)
+
+    total_frames = data_dict["frame_index"].shape[0]
+    data_dict["index"] = torch.arange(0, total_frames, 1)
+    return data_dict
+
+
+def push_to_hub(hf_dataset, episode_data_index, info, stats, root, revision, dataset_id):
+    # push to main to indicate latest version
+    hf_dataset.push_to_hub(f"lerobot/{dataset_id}", token=True)
+
+    # push to version branch
+    hf_dataset.push_to_hub(f"lerobot/{dataset_id}", token=True, revision=revision)
+
+    # create and store meta_data
+    meta_data_dir = root / dataset_id / "meta_data"
+    meta_data_dir.mkdir(parents=True, exist_ok=True)
+
+    api = HfApi()
+
+    # info
+    info_path = meta_data_dir / "info.json"
+    with open(str(info_path), "w") as f:
+        json.dump(info, f, indent=4)
+    api.upload_file(
+        path_or_fileobj=info_path,
+        path_in_repo=str(info_path).replace(f"{root}/{dataset_id}", ""),
+        repo_id=f"lerobot/{dataset_id}",
+        repo_type="dataset",
+    )
+    api.upload_file(
+        path_or_fileobj=info_path,
+        path_in_repo=str(info_path).replace(f"{root}/{dataset_id}", ""),
+        repo_id=f"lerobot/{dataset_id}",
+        repo_type="dataset",
+        revision=revision,
+    )
+
+    # stats
+    stats_path = meta_data_dir / "stats.safetensors"
+    save_file(flatten_dict(stats), stats_path)
+    api.upload_file(
+        path_or_fileobj=stats_path,
+        path_in_repo=str(stats_path).replace(f"{root}/{dataset_id}", ""),
+        repo_id=f"lerobot/{dataset_id}",
+        repo_type="dataset",
+    )
+    api.upload_file(
+        path_or_fileobj=stats_path,
+        path_in_repo=str(stats_path).replace(f"{root}/{dataset_id}", ""),
+        repo_id=f"lerobot/{dataset_id}",
+        repo_type="dataset",
+        revision=revision,
+    )
+
+    # episode_data_index
+    episode_data_index = {key: torch.tensor(episode_data_index[key]) for key in episode_data_index}
+    ep_data_idx_path = meta_data_dir / "episode_data_index.safetensors"
+    save_file(episode_data_index, ep_data_idx_path)
+    api.upload_file(
+        path_or_fileobj=ep_data_idx_path,
+        path_in_repo=str(ep_data_idx_path).replace(f"{root}/{dataset_id}", ""),
+        repo_id=f"lerobot/{dataset_id}",
+        repo_type="dataset",
+    )
+    api.upload_file(
+        path_or_fileobj=ep_data_idx_path,
+        path_in_repo=str(ep_data_idx_path).replace(f"{root}/{dataset_id}", ""),
+        repo_id=f"lerobot/{dataset_id}",
+        repo_type="dataset",
+        revision=revision,
+    )
+
+    # copy in tests folder, the first episode and the meta_data directory
+    num_items_first_ep = episode_data_index["to"][0] - episode_data_index["from"][0]
+    hf_dataset.select(range(num_items_first_ep)).with_format("torch").save_to_disk(
+        f"tests/data/{dataset_id}/train"
+    )
+    if Path(f"tests/data/{dataset_id}/meta_data").exists():
+        shutil.rmtree(f"tests/data/{dataset_id}/meta_data")
+    shutil.copytree(meta_data_dir, f"tests/data/{dataset_id}/meta_data")
+
+
+def download_and_upload_pusht(root, revision, dataset_id="pusht", fps=10):
     try:
         import pymunk
         from gym_pusht.envs.pusht import PushTEnv, pymunk_to_shapely
@@ -99,6 +199,7 @@ def download_and_upload_pusht(root, root_tests, dataset_id="pusht", fps=10):
     actions = torch.from_numpy(dataset_dict["action"])
 
     ep_dicts = []
+    episode_data_index = {"from": [], "to": []}
 
     id_from = 0
     for episode_id in tqdm.tqdm(range(num_episodes)):
@@ -151,8 +252,8 @@ def download_and_upload_pusht(root, root_tests, dataset_id="pusht", fps=10):
             "observation.image": [PILImage.fromarray(x.numpy()) for x in image],
             "observation.state": agent_pos,
             "action": actions[id_from:id_to],
-            "episode_id": torch.tensor([episode_id] * num_frames, dtype=torch.int),
-            "frame_id": torch.arange(0, num_frames, 1),
+            "episode_index": torch.tensor([episode_id] * num_frames, dtype=torch.int),
+            "frame_index": torch.arange(0, num_frames, 1),
             "timestamp": torch.arange(0, num_frames, 1) / fps,
             # "next.observation.image": image[1:],
             # "next.observation.state": agent_pos[1:],
@@ -160,28 +261,15 @@ def download_and_upload_pusht(root, root_tests, dataset_id="pusht", fps=10):
             "next.reward": torch.cat([reward[1:], reward[[-1]]]),
             "next.done": torch.cat([done[1:], done[[-1]]]),
             "next.success": torch.cat([success[1:], success[[-1]]]),
-            "episode_data_index_from": torch.tensor([id_from] * num_frames),
-            "episode_data_index_to": torch.tensor([id_from + num_frames] * num_frames),
         }
         ep_dicts.append(ep_dict)
 
+        episode_data_index["from"].append(id_from)
+        episode_data_index["to"].append(id_from + num_frames)
+
         id_from += num_frames
 
-    data_dict = {}
-
-    keys = ep_dicts[0].keys()
-    for key in keys:
-        if torch.is_tensor(ep_dicts[0][key][0]):
-            data_dict[key] = torch.cat([ep_dict[key] for ep_dict in ep_dicts])
-        else:
-            if key not in data_dict:
-                data_dict[key] = []
-            for ep_dict in ep_dicts:
-                for x in ep_dict[key]:
-                    data_dict[key].append(x)
-
-    total_frames = id_from
-    data_dict["index"] = torch.arange(0, total_frames, 1)
+    data_dict = concatenate_episodes(ep_dicts)
 
     features = {
         "observation.image": Image(),
@@ -189,35 +277,35 @@ def download_and_upload_pusht(root, root_tests, dataset_id="pusht", fps=10):
             length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
         ),
         "action": Sequence(length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)),
-        "episode_id": Value(dtype="int64", id=None),
-        "frame_id": Value(dtype="int64", id=None),
+        "episode_index": Value(dtype="int64", id=None),
+        "frame_index": Value(dtype="int64", id=None),
         "timestamp": Value(dtype="float32", id=None),
         "next.reward": Value(dtype="float32", id=None),
         "next.done": Value(dtype="bool", id=None),
         "next.success": Value(dtype="bool", id=None),
         "index": Value(dtype="int64", id=None),
-        "episode_data_index_from": Value(dtype="int64", id=None),
-        "episode_data_index_to": Value(dtype="int64", id=None),
     }
     features = Features(features)
     hf_dataset = Dataset.from_dict(data_dict, features=features)
-    hf_dataset = hf_dataset.with_format("torch")
+    hf_dataset.set_transform(hf_transform_to_torch)
 
-    num_items_first_ep = ep_dicts[0]["frame_id"].shape[0]
-    hf_dataset.select(range(num_items_first_ep)).save_to_disk(f"{root_tests}/{dataset_id}/train")
-    hf_dataset.push_to_hub(f"lerobot/{dataset_id}", token=True)
-    hf_dataset.push_to_hub(f"lerobot/{dataset_id}", token=True, revision="v1.0")
+    info = {
+        "fps": fps,
+    }
+    stats = compute_stats(hf_dataset)
+    push_to_hub(hf_dataset, episode_data_index, info, stats, root, revision, dataset_id)
 
 
-def download_and_upload_xarm(root, root_tests, dataset_id, fps=15):
+def download_and_upload_xarm(root, revision, dataset_id, fps=15):
     root = Path(root)
-    raw_dir = root / f"{dataset_id}_raw"
+    raw_dir = root / "xarm_datasets_raw"
     if not raw_dir.exists():
         import zipfile
 
         import gdown
 
         raw_dir.mkdir(parents=True, exist_ok=True)
+        # from https://github.com/fyhMer/fowm/blob/main/scripts/download_datasets.py
         url = "https://drive.google.com/uc?id=1nhxpykGtPDhmQKm-_B8zBSywVRdgeVya"
         zip_path = raw_dir / "data.zip"
         gdown.download(url, str(zip_path), quiet=False)
@@ -234,13 +322,13 @@ def download_and_upload_xarm(root, root_tests, dataset_id, fps=15):
     with open(dataset_path, "rb") as f:
         dataset_dict = pickle.load(f)
 
-    total_frames = dataset_dict["actions"].shape[0]
-
     ep_dicts = []
+    episode_data_index = {"from": [], "to": []}
 
     id_from = 0
     id_to = 0
     episode_id = 0
+    total_frames = dataset_dict["actions"].shape[0]
     for i in tqdm.tqdm(range(total_frames)):
         id_to += 1
 
@@ -264,35 +352,23 @@ def download_and_upload_xarm(root, root_tests, dataset_id, fps=15):
             "observation.image": [PILImage.fromarray(x.numpy()) for x in image],
             "observation.state": state,
             "action": action,
-            "episode_id": torch.tensor([episode_id] * num_frames, dtype=torch.int),
-            "frame_id": torch.arange(0, num_frames, 1),
+            "episode_index": torch.tensor([episode_id] * num_frames, dtype=torch.int),
+            "frame_index": torch.arange(0, num_frames, 1),
             "timestamp": torch.arange(0, num_frames, 1) / fps,
             # "next.observation.image": next_image,
             # "next.observation.state": next_state,
             "next.reward": next_reward,
             "next.done": next_done,
-            "episode_data_index_from": torch.tensor([id_from] * num_frames),
-            "episode_data_index_to": torch.tensor([id_from + num_frames] * num_frames),
         }
         ep_dicts.append(ep_dict)
+
+        episode_data_index["from"].append(id_from)
+        episode_data_index["to"].append(id_from + num_frames)
 
         id_from = id_to
         episode_id += 1
 
-    data_dict = {}
-    keys = ep_dicts[0].keys()
-    for key in keys:
-        if torch.is_tensor(ep_dicts[0][key][0]):
-            data_dict[key] = torch.cat([ep_dict[key] for ep_dict in ep_dicts])
-        else:
-            if key not in data_dict:
-                data_dict[key] = []
-            for ep_dict in ep_dicts:
-                for x in ep_dict[key]:
-                    data_dict[key].append(x)
-
-    total_frames = id_from
-    data_dict["index"] = torch.arange(0, total_frames, 1)
+    data_dict = concatenate_episodes(ep_dicts)
 
     features = {
         "observation.image": Image(),
@@ -300,27 +376,26 @@ def download_and_upload_xarm(root, root_tests, dataset_id, fps=15):
             length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
         ),
         "action": Sequence(length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)),
-        "episode_id": Value(dtype="int64", id=None),
-        "frame_id": Value(dtype="int64", id=None),
+        "episode_index": Value(dtype="int64", id=None),
+        "frame_index": Value(dtype="int64", id=None),
         "timestamp": Value(dtype="float32", id=None),
         "next.reward": Value(dtype="float32", id=None),
         "next.done": Value(dtype="bool", id=None),
         #'next.success': Value(dtype='bool', id=None),
         "index": Value(dtype="int64", id=None),
-        "episode_data_index_from": Value(dtype="int64", id=None),
-        "episode_data_index_to": Value(dtype="int64", id=None),
     }
     features = Features(features)
     hf_dataset = Dataset.from_dict(data_dict, features=features)
-    hf_dataset = hf_dataset.with_format("torch")
+    hf_dataset.set_transform(hf_transform_to_torch)
 
-    num_items_first_ep = ep_dicts[0]["frame_id"].shape[0]
-    hf_dataset.select(range(num_items_first_ep)).save_to_disk(f"{root_tests}/{dataset_id}/train")
-    hf_dataset.push_to_hub(f"lerobot/{dataset_id}", token=True)
-    hf_dataset.push_to_hub(f"lerobot/{dataset_id}", token=True, revision="v1.0")
+    info = {
+        "fps": fps,
+    }
+    stats = compute_stats(hf_dataset)
+    push_to_hub(hf_dataset, episode_data_index, info, stats, root, revision, dataset_id)
 
 
-def download_and_upload_aloha(root, root_tests, dataset_id, fps=50):
+def download_and_upload_aloha(root, revision, dataset_id, fps=50):
     folder_urls = {
         "aloha_sim_insertion_human": "https://drive.google.com/drive/folders/1RgyD0JgTX30H4IM5XZn8I3zSV_mr8pyF",
         "aloha_sim_insertion_scripted": "https://drive.google.com/drive/folders/1TsojQQSXtHEoGnqgJ3gmpPQR2DPLtS2N",
@@ -381,6 +456,7 @@ def download_and_upload_aloha(root, root_tests, dataset_id, fps=50):
         gdown.download(ep49_urls[dataset_id], output=str(raw_dir / "episode_49.hdf5"), fuzzy=True)
 
     ep_dicts = []
+    episode_data_index = {"from": [], "to": []}
 
     id_from = 0
     for ep_id in tqdm.tqdm(range(num_episodes[dataset_id])):
@@ -408,40 +484,26 @@ def download_and_upload_aloha(root, root_tests, dataset_id, fps=50):
                 {
                     "observation.state": state,
                     "action": action,
-                    "episode_id": torch.tensor([ep_id] * num_frames),
-                    "frame_id": torch.arange(0, num_frames, 1),
+                    "episode_index": torch.tensor([ep_id] * num_frames),
+                    "frame_index": torch.arange(0, num_frames, 1),
                     "timestamp": torch.arange(0, num_frames, 1) / fps,
                     # "next.observation.state": state,
                     # TODO(rcadene): compute reward and success
                     # "next.reward": reward,
                     "next.done": done,
                     # "next.success": success,
-                    "episode_data_index_from": torch.tensor([id_from] * num_frames),
-                    "episode_data_index_to": torch.tensor([id_from + num_frames] * num_frames),
                 }
             )
 
             assert isinstance(ep_id, int)
             ep_dicts.append(ep_dict)
 
+            episode_data_index["from"].append(id_from)
+            episode_data_index["to"].append(id_from + num_frames)
+
         id_from += num_frames
 
-    data_dict = {}
-
-    data_dict = {}
-    keys = ep_dicts[0].keys()
-    for key in keys:
-        if torch.is_tensor(ep_dicts[0][key][0]):
-            data_dict[key] = torch.cat([ep_dict[key] for ep_dict in ep_dicts])
-        else:
-            if key not in data_dict:
-                data_dict[key] = []
-            for ep_dict in ep_dicts:
-                for x in ep_dict[key]:
-                    data_dict[key].append(x)
-
-    total_frames = id_from
-    data_dict["index"] = torch.arange(0, total_frames, 1)
+    data_dict = concatenate_episodes(ep_dicts)
 
     features = {
         "observation.images.top": Image(),
@@ -449,39 +511,39 @@ def download_and_upload_aloha(root, root_tests, dataset_id, fps=50):
             length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
         ),
         "action": Sequence(length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)),
-        "episode_id": Value(dtype="int64", id=None),
-        "frame_id": Value(dtype="int64", id=None),
+        "episode_index": Value(dtype="int64", id=None),
+        "frame_index": Value(dtype="int64", id=None),
         "timestamp": Value(dtype="float32", id=None),
         #'next.reward': Value(dtype='float32', id=None),
         "next.done": Value(dtype="bool", id=None),
         #'next.success': Value(dtype='bool', id=None),
         "index": Value(dtype="int64", id=None),
-        "episode_data_index_from": Value(dtype="int64", id=None),
-        "episode_data_index_to": Value(dtype="int64", id=None),
     }
     features = Features(features)
     hf_dataset = Dataset.from_dict(data_dict, features=features)
-    hf_dataset = hf_dataset.with_format("torch")
+    hf_dataset.set_transform(hf_transform_to_torch)
 
-    num_items_first_ep = ep_dicts[0]["frame_id"].shape[0]
-    hf_dataset.select(range(num_items_first_ep)).save_to_disk(f"{root_tests}/{dataset_id}/train")
-    hf_dataset.push_to_hub(f"lerobot/{dataset_id}", token=True)
-    hf_dataset.push_to_hub(f"lerobot/{dataset_id}", token=True, revision="v1.0")
+    info = {
+        "fps": fps,
+    }
+    stats = compute_stats(hf_dataset)
+    push_to_hub(hf_dataset, episode_data_index, info, stats, root, revision, dataset_id)
 
 
 if __name__ == "__main__":
     root = "data"
-    root_tests = "tests/data"
+    revision = "v1.1"
 
     dataset_ids = [
-        # "pusht",
-        # "xarm_lift_medium",
-        # "aloha_sim_insertion_human",
-        # "aloha_sim_insertion_scripted",
-        # "aloha_sim_transfer_cube_human",
+        "pusht",
+        "xarm_lift_medium",
+        "xarm_lift_medium_replay",
+        "xarm_push_medium",
+        "xarm_push_medium_replay",
+        "aloha_sim_insertion_human",
+        "aloha_sim_insertion_scripted",
+        "aloha_sim_transfer_cube_human",
         "aloha_sim_transfer_cube_scripted",
     ]
     for dataset_id in dataset_ids:
-        download_and_upload(root, root_tests, dataset_id)
-        # assume stats have been precomputed
-        shutil.copy(f"{root}/{dataset_id}/stats.pth", f"{root_tests}/{dataset_id}/stats.pth")
+        download_and_upload(root, revision, dataset_id)

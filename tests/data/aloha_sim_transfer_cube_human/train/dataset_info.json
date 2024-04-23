@@ -21,11 +21,11 @@
       "length": 14,
       "_type": "Sequence"
     },
-    "episode_id": {
+    "episode_index": {
       "dtype": "int64",
       "_type": "Value"
     },
-    "frame_id": {
+    "frame_index": {
       "dtype": "int64",
       "_type": "Value"
     },
@@ -35,14 +35,6 @@
     },
     "next.done": {
       "dtype": "bool",
-      "_type": "Value"
-    },
-    "episode_data_index_from": {
-      "dtype": "int64",
-      "_type": "Value"
-    },
-    "episode_data_index_to": {
-      "dtype": "int64",
       "_type": "Value"
     },
     "index": {

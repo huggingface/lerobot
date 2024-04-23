@@ -1,25 +1,37 @@
 from pathlib import Path
 
 import torch
-from datasets import load_dataset, load_from_disk
 
-from lerobot.common.datasets.utils import load_previous_and_future_frames
+from lerobot.common.datasets.utils import (
+    load_episode_data_index,
+    load_hf_dataset,
+    load_previous_and_future_frames,
+    load_stats,
+)
 
 
 class XarmDataset(torch.utils.data.Dataset):
     """
     https://huggingface.co/datasets/lerobot/xarm_lift_medium
+    https://huggingface.co/datasets/lerobot/xarm_lift_medium_replay
+    https://huggingface.co/datasets/lerobot/xarm_push_medium
+    https://huggingface.co/datasets/lerobot/xarm_push_medium_replay
     """
 
     # Copied from lerobot/__init__.py
-    available_datasets = ["xarm_lift_medium"]
+    available_datasets = [
+        "xarm_lift_medium",
+        "xarm_lift_medium_replay",
+        "xarm_push_medium",
+        "xarm_push_medium_replay",
+    ]
     fps = 15
     image_keys = ["observation.image"]
 
     def __init__(
         self,
-        dataset_id: str = "xarm_lift_medium",
-        version: str | None = "v1.0",
+        dataset_id: str,
+        version: str | None = "v1.1",
         root: Path | None = None,
         split: str = "train",
         transform: callable = None,
@@ -32,13 +44,10 @@ class XarmDataset(torch.utils.data.Dataset):
         self.split = split
         self.transform = transform
         self.delta_timestamps = delta_timestamps
-        if self.root is not None:
-            self.hf_dataset = load_from_disk(Path(self.root) / self.dataset_id / self.split)
-        else:
-            self.hf_dataset = load_dataset(
-                f"lerobot/{self.dataset_id}", revision=self.version, split=self.split
-            )
-        self.hf_dataset = self.hf_dataset.with_format("torch")
+        # load data from hub or locally when root is provided
+        self.hf_dataset = load_hf_dataset(dataset_id, version, root, split)
+        self.episode_data_index = load_episode_data_index(dataset_id, version, root)
+        self.stats = load_stats(dataset_id, version, root)
 
     @property
     def num_samples(self) -> int:
@@ -46,7 +55,7 @@ class XarmDataset(torch.utils.data.Dataset):
 
     @property
     def num_episodes(self) -> int:
-        return len(self.hf_dataset.unique("episode_id"))
+        return len(self.hf_dataset.unique("episode_index"))
 
     def __len__(self):
         return self.num_samples
@@ -58,18 +67,10 @@ class XarmDataset(torch.utils.data.Dataset):
             item = load_previous_and_future_frames(
                 item,
                 self.hf_dataset,
+                self.episode_data_index,
                 self.delta_timestamps,
                 tol=1 / self.fps - 1e-4,  # 1e-4 to account for possible numerical error
             )
-
-        # convert images from channel last (PIL) to channel first (pytorch)
-        for key in self.image_keys:
-            if item[key].ndim == 3:
-                item[key] = item[key].permute((2, 0, 1))  # h w c -> c h w
-            elif item[key].ndim == 4:
-                item[key] = item[key].permute((0, 3, 1, 2))  # t h w c -> t c h w
-            else:
-                raise ValueError(item[key].ndim)
 
         if self.transform is not None:
             item = self.transform(item)
