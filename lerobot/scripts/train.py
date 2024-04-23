@@ -170,7 +170,6 @@ def add_episodes_inplace(
     assert first_index == episode_data_index["from"][first_episode_idx].item()
     assert last_index == episode_data_index["to"][last_episode_idx].item() - 1
 
-    print(1, hf_dataset.features["observation.image"])
     if len(online_dataset) == 0:
         # initialize online dataset
         online_dataset.hf_dataset = hf_dataset
