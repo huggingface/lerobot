@@ -47,6 +47,7 @@ from PIL import Image as PILImage
 from tqdm import trange
 
 from lerobot.common.datasets.factory import make_dataset
+from lerobot.common.datasets.utils import hf_transform_to_torch
 from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.utils import postprocess_action, preprocess_observation
 from lerobot.common.logger import log_output_dir
@@ -208,11 +209,12 @@ def eval_policy(
     max_rewards.extend(batch_max_reward.tolist())
     all_successes.extend(batch_success.tolist())
 
-    # similar logic is implemented in dataset preprocessing
+    # similar logic is implemented when datasets are pushed to hub (see: `push_to_hub`)
     ep_dicts = []
+    episode_data_index = {"from": [], "to": []}
     num_episodes = dones.shape[0]
     total_frames = 0
-    idx_from = 0
+    id_from = 0
     for ep_id in range(num_episodes):
         num_frames = done_indices[ep_id].item() + 1
         total_frames += num_frames
@@ -222,19 +224,20 @@ def eval_policy(
         if return_episode_data:
             ep_dict = {
                 "action": actions[ep_id, :num_frames],
-                "episode_id": torch.tensor([ep_id] * num_frames),
-                "frame_id": torch.arange(0, num_frames, 1),
+                "episode_index": torch.tensor([ep_id] * num_frames),
+                "frame_index": torch.arange(0, num_frames, 1),
                 "timestamp": torch.arange(0, num_frames, 1) / fps,
                 "next.done": dones[ep_id, :num_frames],
                 "next.reward": rewards[ep_id, :num_frames].type(torch.float32),
-                "episode_data_index_from": torch.tensor([idx_from] * num_frames),
-                "episode_data_index_to": torch.tensor([idx_from + num_frames] * num_frames),
             }
             for key in observations:
                 ep_dict[key] = observations[key][ep_id][:num_frames]
             ep_dicts.append(ep_dict)
 
-        idx_from += num_frames
+            episode_data_index["from"].append(id_from)
+            episode_data_index["to"].append(id_from + num_frames)
+
+        id_from += num_frames
 
     # similar logic is implemented in dataset preprocessing
     if return_episode_data:
@@ -247,14 +250,29 @@ def eval_policy(
                 if key not in data_dict:
                     data_dict[key] = []
                 for ep_dict in ep_dicts:
-                    for x in ep_dict[key]:
-                        # c h w -> h w c
-                        img = PILImage.fromarray(x.permute(1, 2, 0).numpy())
+                    for img in ep_dict[key]:
+                        # sanity check that images are channel first
+                        c, h, w = img.shape
+                        assert c < h and c < w, f"expect channel first images, but instead {img.shape}"
+
+                        # sanity check that images are float32 in range [0,1]
+                        assert img.dtype == torch.float32, f"expect torch.float32, but instead {img.dtype=}"
+                        assert img.max() <= 1, f"expect pixels lower than 1, but instead {img.max()=}"
+                        assert img.min() >= 0, f"expect pixels greater than 1, but instead {img.min()=}"
+
+                        # from float32 in range [0,1] to uint8 in range [0,255]
+                        img *= 255
+                        img = img.type(torch.uint8)
+
+                        # convert to channel last and numpy as expected by PIL
+                        img = PILImage.fromarray(img.permute(1, 2, 0).numpy())
+
                         data_dict[key].append(img)
 
         data_dict["index"] = torch.arange(0, total_frames, 1)
 
-        hf_dataset = Dataset.from_dict(data_dict).with_format("torch")
+        hf_dataset = Dataset.from_dict(data_dict)
+        hf_dataset.set_transform(hf_transform_to_torch)
 
     if max_episodes_rendered > 0:
         batch_stacked_frames = np.stack(ep_frames, 1)  # (b, t, *)
@@ -307,7 +325,10 @@ def eval_policy(
         },
     }
     if return_episode_data:
-        info["episodes"] = hf_dataset
+        info["episodes"] = {
+            "hf_dataset": hf_dataset,
+            "episode_data_index": episode_data_index,
+        }
     if max_episodes_rendered > 0:
         info["videos"] = videos
     return info

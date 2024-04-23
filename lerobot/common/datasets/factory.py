@@ -1,12 +1,10 @@
-import logging
 import os
 from pathlib import Path
 
 import torch
 from torchvision.transforms import v2
 
-from lerobot.common.datasets.utils import compute_stats
-from lerobot.common.transforms import NormalizeTransform, Prod
+from lerobot.common.transforms import NormalizeTransform
 
 DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
@@ -52,32 +50,18 @@ def make_dataset(
             stats["action"]["min"] = torch.tensor([12.0, 25.0], dtype=torch.float32)
             stats["action"]["max"] = torch.tensor([511.0, 511.0], dtype=torch.float32)
         elif stats_path is None:
-            # load stats if the file exists already or compute stats and save it
-            if DATA_DIR is None:
-                # TODO(rcadene): clean stats
-                precomputed_stats_path = Path("data") / cfg.dataset_id / "stats.pth"
-            else:
-                precomputed_stats_path = DATA_DIR / cfg.dataset_id / "stats.pth"
-            if precomputed_stats_path.exists():
-                stats = torch.load(precomputed_stats_path)
-            else:
-                logging.info(f"compute_stats and save to {precomputed_stats_path}")
-                # Create a dataset for stats computation.
-                stats_dataset = clsfunc(
-                    dataset_id=cfg.dataset_id,
-                    split="train",
-                    root=DATA_DIR,
-                    transform=Prod(in_keys=clsfunc.image_keys, prod=1 / 255.0),
-                )
-                stats = compute_stats(stats_dataset)
-                precomputed_stats_path.parent.mkdir(parents=True, exist_ok=True)
-                torch.save(stats, precomputed_stats_path)
+            # load a first dataset to access precomputed stats
+            stats_dataset = clsfunc(
+                dataset_id=cfg.dataset_id,
+                split="train",
+                root=DATA_DIR,
+            )
+            stats = stats_dataset.stats
         else:
             stats = torch.load(stats_path)
 
         transforms = v2.Compose(
             [
-                Prod(in_keys=clsfunc.image_keys, prod=1 / 255.0),
                 NormalizeTransform(
                     stats,
                     in_keys=[
