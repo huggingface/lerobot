@@ -126,6 +126,22 @@ def eval_policy(
     max_steps = env.envs[0]._max_episode_steps
     progbar = trange(max_steps, desc=f"Running eval with {max_steps} steps (maximum) per rollout.")
     while not done.all():
+        # Receive observation:
+        import os
+        from time import sleep
+
+        while True:
+            if not os.path.exists("/tmp/mutex.txt"):
+                sleep(0.01)
+                continue
+            observation = {}
+            observation["rgb"] = np.load("/tmp/rgb.npy")
+            observation["state"] = np.load("/tmp/state.npy")
+            observation["pixels"] = observation["rgb"].transpose(1, 2, 0)[None]
+            observation["agent_pos"] = observation["state"][None]
+            done = np.load("/tmp/done.npy")
+            break
+
         # format from env keys to lerobot keys
         observation = preprocess_observation(observation)
         if return_episode_data:
@@ -142,9 +158,21 @@ def eval_policy(
         with torch.inference_mode():
             action = policy.select_action(observation, step=step)
 
+        # Send action:
+        while True:
+            if not os.path.exists("/tmp/mutex.txt"):
+                sleep(0.01)
+                continue
+            torch.save(action[0], "/tmp/action.pth")
+            os.remove("/tmp/mutex.txt")
+            break
+
+        if done:
+            policy.reset()
+        continue
+
         # apply inverse transform to unnormalize the action
         action = postprocess_action(action, transform)
-        action = np.array([[0, 0, 0, 0]], dtype=np.float32)
 
         # apply the next action
         observation, reward, terminated, truncated, info = env.step(action)
@@ -332,8 +360,6 @@ def eval(cfg: dict, out_dir=None, stats_path=None):
     logging.info("Making transforms.")
     # TODO(alexander-soare): Completely decouple datasets from evaluation.
     transform = make_dataset(cfg, stats_path=stats_path).transform
-    # TODO(now)
-    transform = None
 
     logging.info("Making environment.")
     env = make_env(cfg, num_parallel_envs=cfg.eval_episodes)

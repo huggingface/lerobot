@@ -1,11 +1,13 @@
 import os
 import pickle
 import re
+from typing import Callable
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+from torch import Tensor
 from torch import distributions as pyd
 from torch.distributions.utils import _standard_normal
 
@@ -96,7 +98,9 @@ def set_requires_grad(net, value):
 
 
 class TruncatedNormal(pyd.Normal):
-    """Utility class implementing the truncated normal distribution."""
+    """Utility class implementing the truncated normal distribution while still passing gradients through.
+    TODO(now): consider simplifying the hell out of this but only once you understand what self.eps is for.
+    """
 
     default_sample_shape = torch.Size()
 
@@ -107,6 +111,8 @@ class TruncatedNormal(pyd.Normal):
         self.eps = eps
 
     def _clamp(self, x):
+        # TODO(now): Hm looks like this is designed to pass gradients through!
+        # TODO(now): Understand what this eps is for.
         clamped_x = torch.clamp(x, self.low + self.eps, self.high - self.eps)
         x = x - x.detach() + clamped_x.detach()
         return x
@@ -141,7 +147,12 @@ class Flatten(nn.Module):
         return x.view(x.size(0), -1)
 
 
-def enc(cfg):
+def enc(cfg) -> Callable[[dict[str, Tensor] | Tensor], dict[str, Tensor] | Tensor]:
+    """
+    Creates encoders for pixel and/or state modalities.
+    TODO(now): Consolidate this into just working with a dict even if there is just one modality.
+    """
+
     obs_shape = {
         "rgb": (3, cfg.img_size, cfg.img_size),
         "state": (cfg.state_dim,),
@@ -152,6 +163,7 @@ def enc(cfg):
     if cfg.modality in {"pixels", "all"}:
         C = int(3 * cfg.frame_stack)  # noqa: N806
         pixels_enc_layers = [
+            # TODO(now): Leave this to the env / data loader
             NormalizeImg(),
             nn.Conv2d(C, cfg.num_channels, 7, stride=2),
             nn.ReLU(),
@@ -198,7 +210,7 @@ def enc(cfg):
     return Multiplexer(nn.ModuleDict(encoders))
 
 
-def mlp(in_dim, mlp_dim, out_dim, act_fn=DEFAULT_ACT_FN):
+def mlp(in_dim: int, mlp_dim: int | tuple[int, int], out_dim: int, act_fn=DEFAULT_ACT_FN):
     """Returns an MLP."""
     if isinstance(mlp_dim, int):
         mlp_dim = [mlp_dim, mlp_dim]
@@ -214,7 +226,10 @@ def mlp(in_dim, mlp_dim, out_dim, act_fn=DEFAULT_ACT_FN):
 
 
 def dynamics(in_dim, mlp_dim, out_dim, act_fn=DEFAULT_ACT_FN):
-    """Returns a dynamics network."""
+    """Returns a dynamics network.
+
+    TODO(now): this needs a better name. It's also an MLP...
+    """
     return nn.Sequential(
         mlp(in_dim, mlp_dim, out_dim, act_fn),
         nn.LayerNorm(out_dim),
@@ -271,7 +286,7 @@ def aug(cfg):
 
 
 class ConvExt(nn.Module):
-    """Auxiliary conv net accommodating high-dim input"""
+    """Helper to deal with arbitrary dimensions (B, *, C, H, W) for the input images."""
 
     def __init__(self, conv):
         super().__init__()
@@ -279,10 +294,13 @@ class ConvExt(nn.Module):
 
     def forward(self, x):
         if x.ndim > 4:
+            # x has some has shape (B, * , C, H, W) so we first flatten (B, *) into the first dim, run the
+            # layers, then unflatten to return the result.
             batch_shape = x.shape[:-3]
             out = self.conv(x.view(-1, *x.shape[-3:]))
             out = out.view(*batch_shape, *out.shape[1:])
         else:
+            # x has shape (B, C, H, W).
             out = self.conv(x)
         return out
 
@@ -290,7 +308,7 @@ class ConvExt(nn.Module):
 class Multiplexer(nn.Module):
     """Model multiplexer"""
 
-    def __init__(self, choices):
+    def __init__(self, choices: nn.ModuleDict):
         super().__init__()
         self.choices = choices
 
@@ -542,6 +560,7 @@ def normalize_returns(dataset, scaling=1000):
 def get_reward_normalizer(cfg, dataset):
     """
     Get a reward normalizer for the dataset
+    TODO(now): Leave this to the dataloader/env
     """
     if cfg.task.startswith("xarm"):
         return lambda x: x
@@ -570,6 +589,8 @@ def linear_schedule(schdl, step):
             return (1.0 - mix) * init + mix * final
         match = re.match(r"linear\((.+),(.+),(.+)\)", schdl)
         if match:
+            # TODO(now): Looks like the original tdmpc code uses this with
+            # `horizon_schedule: linear(1, ${horizon}, 25000)`
             init, final, duration = (float(g) for g in match.groups())
             mix = np.clip(step / duration, 0.0, 1.0)
             return (1.0 - mix) * init + mix * final

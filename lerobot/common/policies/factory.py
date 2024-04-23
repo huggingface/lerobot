@@ -22,7 +22,7 @@ def _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg):
 
 def make_policy(hydra_cfg: DictConfig):
     if hydra_cfg.policy.name == "tdmpc":
-        from lerobot.common.policies.tdmpc.policy import TDMPCPolicy
+        from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
 
         policy = TDMPCPolicy(
             hydra_cfg.policy,
