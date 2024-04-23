@@ -56,6 +56,7 @@ jobs:
           MUJOCO_GL: egl
           MUJOCO_EGL_DEVICE_ID: 0
         run: |
+          unset DISPLAY
           pytest -v --cov=./lerobot --cov-report=xml tests
       - name: Tests end-to-end
         env:
