@@ -66,3 +66,20 @@ def unnormalize_outputs(batch, stats, unnormalize_output_modes):
         else:
             raise ValueError(mode)
     return batch
+
+
+def to_buffer_dict(dataset_stats):
+    # TODO(rcadene): replace this function by `torch.BufferDict` when it exists
+    # see: https://github.com/pytorch/pytorch/issues/37386
+    # TODO(rcadene): make `to_buffer_dict` generic and add docstring
+    if dataset_stats is None:
+        return None
+
+    new_ds_stats = {}
+    for key, stats_dict in dataset_stats.items():
+        new_stats_dict = {}
+        for stats_type, value in stats_dict.items():
+            # set requires_grad=False to have the same behavior as a nn.Buffer
+            new_stats_dict[stats_type] = nn.Parameter(value, requires_grad=False)
+        new_ds_stats[key] = nn.ParameterDict(new_stats_dict)
+    return nn.ParameterDict(new_ds_stats)

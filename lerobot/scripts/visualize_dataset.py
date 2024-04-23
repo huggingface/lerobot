@@ -50,11 +50,7 @@ def visualize_dataset(cfg: dict, out_dir=None):
     log_output_dir(out_dir)
 
     logging.info("make_dataset")
-    dataset = make_dataset(
-        cfg,
-        # remove all transformations such as rescale images from [0,255] to [0,1] or normalization
-        normalize=False,
-    )
+    dataset = make_dataset(cfg)
 
     logging.info("Start rendering episodes from offline buffer")
     video_paths = render_dataset(dataset, out_dir, MAX_NUM_STEPS * NUM_EPISODES_TO_RENDER)

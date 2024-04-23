@@ -22,6 +22,7 @@ from torchvision.ops.misc import FrozenBatchNorm2d
 from lerobot.common.policies.act.configuration_act import ActionChunkingTransformerConfig
 from lerobot.common.policies.utils import (
     normalize_inputs,
+    to_buffer_dict,
     unnormalize_outputs,
 )
 
@@ -75,7 +76,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
         if cfg is None:
             cfg = ActionChunkingTransformerConfig()
         self.cfg = cfg
-        self.register_buffer("dataset_stats", dataset_stats)
+        self.dataset_stats = to_buffer_dict(dataset_stats)
         self.normalize_input_modes = cfg.normalize_input_modes
         self.unnormalize_output_modes = cfg.unnormalize_output_modes
 
@@ -179,7 +180,12 @@ class ActionChunkingTransformerPolicy(nn.Module):
             # `_forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue effectively
             # has shape (n_action_steps, batch_size, *), hence the transpose.
             actions = self._forward(batch)[0][: self.cfg.n_action_steps]
-            actions = unnormalize_outputs(actions, self.dataset_stats, self.unnormalize_output_modes)
+
+            # TODO(rcadene): make _forward return output dictionary?
+            out_dict = {"action": actions}
+            out_dict = unnormalize_outputs(out_dict, self.dataset_stats, self.unnormalize_output_modes)
+            actions = out_dict["action"]
+
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
@@ -214,7 +220,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
 
         batch = normalize_inputs(batch, self.dataset_stats, self.normalize_input_modes)
         loss_dict = self.forward(batch)
-        # TODO(rcadene): unnormalize_outputs(actions, self.dataset_stats, self.unnormalize_output_modes)
+        # TODO(rcadene): unnormalize_outputs(out_dict, self.dataset_stats, self.unnormalize_output_modes)
         loss = loss_dict["loss"]
         loss.backward()
 

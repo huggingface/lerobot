@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -70,13 +70,17 @@ class DiffusionConfig:
     n_action_steps: int = 8
 
     # Normalization / Unnormalization
-    normalize_input_modes: dict[str, str] = {
-        "observation.image": "mean_std",
-        "observation.state": "min_max",
-    }
-    unnormalize_output_modes: dict[str, str] = {
-        "action": "min_max",
-    }
+    normalize_input_modes: dict[str, str] = field(
+        default_factory=lambda: {
+            "observation.image": "mean_std",
+            "observation.state": "min_max",
+        }
+    )
+    unnormalize_output_modes: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": "min_max",
+        }
+    )
 
     # Architecture / modeling.
     # Vision backbone.

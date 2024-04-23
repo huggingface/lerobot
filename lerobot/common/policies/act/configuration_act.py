@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -61,13 +61,17 @@ class ActionChunkingTransformerConfig:
     n_action_steps: int = 100
 
     # Normalization / Unnormalization
-    normalize_input_modes: dict[str, str] = {
-        "observation.image": "mean_std",
-        "observation.state": "mean_std",
-    }
-    unnormalize_output_modes: dict[str, str] = {
-        "action": "mean_std",
-    }
+    normalize_input_modes: dict[str, str] = field(
+        default_factory=lambda: {
+            "observation.image": "mean_std",
+            "observation.state": "mean_std",
+        }
+    )
+    unnormalize_output_modes: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": "mean_std",
+        }
+    )
     # Architecture.
     # Vision backbone.
     vision_backbone: str = "resnet18"

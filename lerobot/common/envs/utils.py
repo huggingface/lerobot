@@ -22,7 +22,7 @@ def preprocess_observation(observation):
         assert img.dtype == torch.uint8, f"expect torch.uint8, but instead {img.dtype=}"
 
         # convert to channel first of type float32 in range [0,1]
-        img = einops.rearrange(img, "b h w c -> b c h w")
+        img = einops.rearrange(img, "b h w c -> b c h w").contiguous()
         img = img.type(torch.float32)
         img /= 255
 

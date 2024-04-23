@@ -34,7 +34,7 @@ dataset = make_dataset(hydra_cfg)
 # If you're doing something different, you will likely need to change at least some of the defaults.
 cfg = DiffusionConfig()
 # TODO(alexander-soare): Remove LR scheduler from the policy.
-policy = DiffusionPolicy(cfg, lr_scheduler_num_training_steps=training_steps)
+policy = DiffusionPolicy(cfg, lr_scheduler_num_training_steps=training_steps, dataset_stats=dataset.stats)
 policy.train()
 policy.to(device)
 

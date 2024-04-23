@@ -31,6 +31,7 @@ from lerobot.common.policies.utils import (
     get_dtype_from_parameters,
     normalize_inputs,
     populate_queues,
+    to_buffer_dict,
     unnormalize_outputs,
 )
 
@@ -57,7 +58,7 @@ class DiffusionPolicy(nn.Module):
         if cfg is None:
             cfg = DiffusionConfig()
         self.cfg = cfg
-        self.register_buffer("dataset_stats", dataset_stats)
+        self.dataset_stats = to_buffer_dict(dataset_stats)
         self.normalize_input_modes = cfg.normalize_input_modes
         self.unnormalize_output_modes = cfg.unnormalize_output_modes
 
@@ -144,7 +145,11 @@ class DiffusionPolicy(nn.Module):
             else:
                 actions = self.diffusion.generate_actions(batch)
 
-            actions = unnormalize_outputs(actions, self.dataset_stats, self.unnormalize_output_modes)
+            # TODO(rcadene): make above methods return output dictionary?
+            out_dict = {"action": actions}
+            out_dict = unnormalize_outputs(out_dict, self.dataset_stats, self.unnormalize_output_modes)
+            actions = out_dict["action"]
+
             self._queues["action"].extend(actions.transpose(0, 1))
 
         action = self._queues["action"].popleft()
@@ -166,7 +171,7 @@ class DiffusionPolicy(nn.Module):
         loss = self.forward(batch)["loss"]
         loss.backward()
 
-        # TODO(rcadene): unnormalize_outputs(actions, self.dataset_stats, self.unnormalize_output_modes)
+        # TODO(rcadene): unnormalize_outputs(out_dict, self.dataset_stats, self.unnormalize_output_modes)
 
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.diffusion.parameters(),
