@@ -54,8 +54,7 @@ jobs:
         env:
           DATA_DIR: tests/data
           MUJOCO_GL: egl
-          DISPLAY: :0
-          PYOPENGL_PLATFORM: osmesa
+          MUJOCO_EGL_DEVICE_ID: 0
         run: |
           pytest -v --cov=./lerobot --cov-report=xml tests
       - name: Tests end-to-end
