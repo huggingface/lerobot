@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libhdf5-dev \
     libegl1-mesa-dev \
-    libglu1-mesa-dev libosmesa6-dev xvfb patchelf ffmpeg cmake swig \
+    libglu1-mesa-dev libosmesa6-dev xvfb patchelf ffmpeg swig \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 
