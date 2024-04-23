@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libhdf5-dev \
     libegl1-mesa-dev \
+    libglu1-mesa-dev libosmesa6-dev xvfb patchelf ffmpeg cmake swig \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 
@@ -35,4 +36,4 @@ RUN pip install --no-cache-dir ".[test, aloha, xarm, pusht]"
 # Make sure we use the virtualenv
 RUN echo ". /etc/profile.d/conda.sh" >> ~/.profile
 RUN echo "source activate lerobot" >> ~/.profile
-CMD ["/bin/bash"]
+CMD ["/lerobot/docker/bin/docker_entrypoint"]
