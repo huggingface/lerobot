@@ -157,7 +157,11 @@ def eval_policy(
 
         # get the next action for the environment
         with torch.inference_mode():
-            action = policy.select_action(observation, step=step)
+            # TODO(now): restore
+            observation["observation.image"] *= 255
+            # TODO(now): train_step
+            action = policy.select_action(observation)
+            observation["observation.image"] /= 255
 
         # Send action:
         while True:

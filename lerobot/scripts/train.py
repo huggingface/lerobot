@@ -270,7 +270,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     # create dataloader for offline training
     dataloader = torch.utils.data.DataLoader(
         offline_dataset,
-        num_workers=4,
+        num_workers=32,
         batch_size=cfg.policy.batch_size,
         shuffle=True,
         pin_memory=cfg.device != "cpu",
@@ -316,7 +316,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     )
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
-        num_workers=4,
+        num_workers=32,
         batch_size=cfg.policy.batch_size,
         sampler=sampler,
         pin_memory=cfg.device != "cpu",
@@ -339,14 +339,14 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 seed=cfg.seed,
             )
 
-            add_episodes_inplace(
-                online_dataset,
-                concat_dataset,
-                sampler,
-                hf_dataset=eval_info["episodes"]["hf_dataset"],
-                episode_data_index=eval_info["episodes"]["episode_data_index"],
-                pc_online_samples=cfg.get("demo_schedule", 0.5),
-            )
+        add_episodes_inplace(
+            online_dataset,
+            concat_dataset,
+            sampler,
+            hf_dataset=eval_info["episodes"]["hf_dataset"],
+            episode_data_index=eval_info["episodes"]["episode_data_index"],
+            pc_online_samples=cfg.get("demo_schedule", 0.5),
+        )
 
         for _ in range(cfg.policy.utd):
             policy.train()

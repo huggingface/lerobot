@@ -63,3 +63,13 @@ class NormalizeTransform(Transform):
                 item[outkey] = (item[inkey] + 1) / 2
                 item[outkey] = item[outkey] * (max - min) + min
         return item
+
+
+class IdentityTransform(Transform):
+    invertible = True
+
+    def forward(self, item):
+        return item
+
+    def inverse_transform(self, item):
+        return item

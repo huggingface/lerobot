@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 from torchvision.transforms import v2
 
-from lerobot.common.transforms import NormalizeTransform
+from lerobot.common.transforms import IdentityTransform
 
 DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
@@ -38,7 +38,7 @@ def make_dataset(
         # TODO(rcadene): make normalization strategy configurable between mean_std, min_max, manual_min_max,
         # min_max_from_spec
         # TODO(rcadene): remove this and put it in config. Ideally we want to reproduce SOTA results just with mean_std
-        normalization_mode = "mean_std" if cfg.env.name == "aloha" else "min_max"
+        # normalization_mode = "mean_std" if cfg.env.name == "aloha" else "min_max"
 
         if cfg.policy.name == "diffusion" and cfg.env.name == "pusht":
             stats = {}
@@ -62,14 +62,15 @@ def make_dataset(
 
         transforms = v2.Compose(
             [
-                NormalizeTransform(
-                    stats,
-                    in_keys=[
-                        "observation.state",
-                        "action",
-                    ],
-                    mode=normalization_mode,
-                ),
+                # TODO(now): Use the transform
+                # NormalizeTransform(
+                #     in_keys=[
+                #         "observation.state",
+                #         "action",
+                #     ],
+                #     mode=normalization_mode,
+                # ),
+                IdentityTransform()
             ]
         )
 

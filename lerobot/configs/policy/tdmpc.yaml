@@ -46,7 +46,6 @@ policy:
   kappa: 0.1
   lr: 3e-4
   std_schedule: ${policy.min_std}
-  horizon_schedule: ${policy.horizon}
   per: true
   per_alpha: 0.6
   per_beta: 0.4
@@ -79,7 +78,7 @@ policy:
   latent_dim: 50
 
   delta_timestamps:
-    observation.image: "[i / ${fps} for i in range(6)]"
-    observation.state: "[i / ${fps} for i in range(6)]"
-    action: "[i / ${fps} for i in range(5)]"
-    next.reward: "[i / ${fps} for i in range(5)]"
+    observation.image: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+    observation.state: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+    action: "[i / ${fps} for i in range(${policy.horizon})]"
+    next.reward: "[i / ${fps} for i in range(${policy.horizon})]"
