@@ -282,17 +282,17 @@ def test_backward_compatibility():
     # TODO(rcadene): Enable testing on second and last episode
     # We currently cant because our test dataset only contains the first episode
 
-    # test 2 first frames of second episode
+    # # test 2 first frames of second episode
     # i = dataset.episode_data_index["from"][1].item()
     # load_and_compare(i)
     # load_and_compare(i+1)
 
-    # test 2 last frames of second episode
+    # #test 2 last frames of second episode
     # i = dataset.episode_data_index["to"][1].item()
     # load_and_compare(i-2)
     # load_and_compare(i-1)
 
-    # test 2 last frames of last episode
+    # # test 2 last frames of last episode
     # i = dataset.episode_data_index["to"][-1].item()
     # load_and_compare(i-2)
     # load_and_compare(i-1)

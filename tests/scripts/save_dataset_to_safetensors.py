@@ -51,17 +51,17 @@ def save_dataset_to_safetensors(output_dir, dataset_id="pusht"):
     # TODO(rcadene): Enable testing on second and last episode
     # We currently cant because our test dataset only contains the first episode
 
-    # save 2 first frames of second episode
+    # # save 2 first frames of second episode
     # i = dataset.episode_data_index["from"][1].item()
     # save_file(dataset[i], data_dir / f"frame_{i}.safetensors")
     # save_file(dataset[i+1], data_dir / f"frame_{i+1}.safetensors")
 
-    # save 2 last frames of second episode
+    # # save 2 last frames of second episode
     # i = dataset.episode_data_index["to"][1].item()
     # save_file(dataset[i-2], data_dir / f"frame_{i-2}.safetensors")
     # save_file(dataset[i-1], data_dir / f"frame_{i-1}.safetensors")
 
-    # save 2 last frames of last episode
+    # # save 2 last frames of last episode
     # i = dataset.episode_data_index["to"][-1].item()
     # save_file(dataset[i-2], data_dir / f"frame_{i-2}.safetensors")
     # save_file(dataset[i-1], data_dir / f"frame_{i-1}.safetensors")
