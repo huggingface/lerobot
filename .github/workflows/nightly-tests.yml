@@ -3,9 +3,9 @@
 name: Self-hosted runner with slow tests (scheduled)
 
 on:
-  # pull_request:  # TODO(aliberts): for testing, delete before merge
-  #   branches:
-  #     - main
+  pull_request:  # TODO(aliberts): for testing, delete before merge
+    branches:
+      - main
   workflow_dispatch:
   schedule:
     - cron: "0 2 * * *"
@@ -84,6 +84,8 @@ jobs:
     #   - uses: actions/checkout@v4
       - name: Nvidia-smi
         run: nvidia-smi
+      - name: Install EGL
+        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
       - name: Test
         env:
           DATA_DIR: tests/data

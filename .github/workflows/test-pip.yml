@@ -1,4 +1,4 @@
-name: Tests
+name: Tests-pip
 
 on:
   pull_request:
