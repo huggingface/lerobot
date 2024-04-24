@@ -31,18 +31,24 @@ def create_stats_buffers(shapes, modes, stats=None):
     for key, mode in modes.items():
         assert mode in ["mean_std", "min_max"]
 
-        shape = shapes[key]
+        shape = tuple(shapes[key])
 
-        # override shape to be invariant to height and width
         if "image" in key:
-            # assume shape is channel first (b, c, h, w) or (b, t, c, h, w)
-            shape[-1] = 1
-            shape[-2] = 1
+            # sanity checks
+            assert len(shape) == 3, f"number of dimensions of {key} != 3 ({shape=}"
+            c, h, w = shape
+            assert c < h and c < w, f"{key} is not channel first ({shape=})"
+            # override image shape to be invariant to height and width
+            shape = (c, 1, 1)
+
+        # Note: we initialize mean, std, min, max to infinity. They should be overwritten
+        # downstream by `stats` or `policy.load_state_dict`, as expected. During forward,
+        # we assert they are not infinity anymore.
 
         buffer = {}
         if mode == "mean_std":
-            mean = torch.zeros(shape, dtype=torch.float32)
-            std = torch.ones(shape, dtype=torch.float32)
+            mean = torch.ones(shape, dtype=torch.float32) * torch.inf
+            std = torch.ones(shape, dtype=torch.float32) * torch.inf
             buffer = nn.ParameterDict(
                 {
                     "mean": nn.Parameter(mean, requires_grad=False),
@@ -50,9 +56,8 @@ def create_stats_buffers(shapes, modes, stats=None):
                 }
             )
         elif mode == "min_max":
-            # TODO(rcadene): should we assume input is in [-1, 1] range?
-            min = torch.ones(shape, dtype=torch.float32) * -1
-            max = torch.ones(shape, dtype=torch.float32)
+            min = torch.ones(shape, dtype=torch.float32) * torch.inf
+            max = torch.ones(shape, dtype=torch.float32) * torch.inf
             buffer = nn.ParameterDict(
                 {
                     "min": nn.Parameter(min, requires_grad=False),
@@ -109,12 +114,24 @@ class Normalize(nn.Module):
             buffer = getattr(self, "buffer_" + key.replace(".", "_"))
 
             if mode == "mean_std":
-                mean = buffer["mean"].unsqueeze(0)
-                std = buffer["std"].unsqueeze(0)
+                mean = buffer["mean"]
+                std = buffer["std"]
+                assert not torch.isinf(
+                    mean
+                ).any(), "`mean` is infinity. You forgot to initialize with `stats` as argument, or called `policy.load_state_dict`."
+                assert not torch.isinf(
+                    std
+                ).any(), "`std` is infinity. You forgot to initialize with `stats` as argument, or called `policy.load_state_dict`."
                 batch[key] = (batch[key] - mean) / (std + 1e-8)
             elif mode == "min_max":
-                min = buffer["min"].unsqueeze(0)
-                max = buffer["max"].unsqueeze(0)
+                min = buffer["min"]
+                max = buffer["max"]
+                assert not torch.isinf(
+                    min
+                ).any(), "`min` is infinity. You forgot to initialize with `stats` as argument, or called `policy.load_state_dict`."
+                assert not torch.isinf(
+                    max
+                ).any(), "`max` is infinity. You forgot to initialize with `stats` as argument, or called `policy.load_state_dict`."
                 # normalize to [0,1]
                 batch[key] = (batch[key] - min) / (max - min)
                 # normalize to [-1, 1]
@@ -131,8 +148,8 @@ class Unnormalize(nn.Module):
     The class is initialized with a set of shapes, modes, and optional pre-defined statistics. It creates buffers for unnormalization based
     on these inputs, which are then used to adjust data during the forward pass. The unnormalization process operates on a batch of data,
     with different keys in the batch being normalized according to the specified modes. The following unnormalization modes are supported:
-    - "mean_std": Unnormalizes data using the mean and standard deviation.
-    - "min_max": Unnormalizes data to a [0, 1] range and then to a [-1, 1] range.
+    - "mean_std": Subtracts the mean and divides by the standard deviation.
+    - "min_max": Scales and offsets the data such that the minimum is -1 and the maximum is +1.
 
     Parameters:
         shapes (dict): A dictionary where keys represent tensor identifiers and values represent the shapes of those tensors.
@@ -161,12 +178,24 @@ class Unnormalize(nn.Module):
             buffer = getattr(self, "buffer_" + key.replace(".", "_"))
 
             if mode == "mean_std":
-                mean = buffer["mean"].unsqueeze(0)
-                std = buffer["std"].unsqueeze(0)
+                mean = buffer["mean"]
+                std = buffer["std"]
+                assert not torch.isinf(
+                    mean
+                ).any(), "`mean` is infinity. You forgot to initialize with `stats` as argument, or called `policy.load_state_dict`."
+                assert not torch.isinf(
+                    std
+                ).any(), "`std` is infinity. You forgot to initialize with `stats` as argument, or called `policy.load_state_dict`."
                 batch[key] = batch[key] * std + mean
             elif mode == "min_max":
-                min = buffer["min"].unsqueeze(0)
-                max = buffer["max"].unsqueeze(0)
+                min = buffer["min"]
+                max = buffer["max"]
+                assert not torch.isinf(
+                    min
+                ).any(), "`min` is infinity. You forgot to initialize with `stats` as argument, or called `policy.load_state_dict`."
+                assert not torch.isinf(
+                    max
+                ).any(), "`max` is infinity. You forgot to initialize with `stats` as argument, or called `policy.load_state_dict`."
                 batch[key] = (batch[key] + 1) / 2
                 batch[key] = batch[key] * (max - min) + min
             else:

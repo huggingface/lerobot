@@ -30,15 +30,11 @@ class ActionChunkingTransformerConfig:
             The key represents the output data name, and the value is a list indicating the dimensions
             of the corresponding data. For example, "action" refers to an output shape of [14], indicating
             14-dimensional actions. Importantly, shapes doesnt include batch dimension or temporal dimension.
-        normalize_input_modes: A dictionary specifying the normalization mode to be applied to various inputs.
-            The key represents the input data name, and the value specifies the type of normalization to apply.
-            Common normalization methods include "mean_std" (mean and standard deviation) or "min_max" (to normalize
-            between -1 and 1).
-        unnormalize_output_modes: A dictionary specifying the method to unnormalize outputs.
-            This parameter maps output data types to their unnormalization modes, allowing the results to be
-            transformed back from a normalized state to a standard state. It is typically used when output
-            data needs to be interpreted in its original scale or units. For example, for "action", the
-            unnormalization mode might be "mean_std" or "min_max".
+        normalize_input_modes: A dictionary with key represents the modality (e.g. "observation.state"),
+            and the value specifies the normalization mode to apply. The two availables
+            modes are "mean_std" which substracts the mean and divide by the standard
+            deviation and "min_max" which rescale in a [-1, 1] range.
+        unnormalize_output_modes: Similar dictionary as `normalize_input_modes`, but to unormalize in original scale.
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
         use_pretrained_backbone: Whether the backbone should be initialized with pretrained weights from
             torchvision.
@@ -65,7 +61,7 @@ class ActionChunkingTransformerConfig:
     """
 
     # Environment.
-    # TODO(rcadene, alexander-soar): remove these as they are defined in input_shapes, output_shapes
+    # TODO(rcadene, alexander-soare): remove these as they are defined in input_shapes, output_shapes
     state_dim: int = 14
     action_dim: int = 14
 
@@ -75,13 +71,13 @@ class ActionChunkingTransformerConfig:
     chunk_size: int = 100
     n_action_steps: int = 100
 
-    input_shapes: dict[str, str] = field(
+    input_shapes: dict[str, list[str]] = field(
         default_factory=lambda: {
             "observation.images.top": [3, 480, 640],
             "observation.state": [14],
         }
     )
-    output_shapes: dict[str, str] = field(
+    output_shapes: dict[str, list[str]] = field(
         default_factory=lambda: {
             "action": [14],
         }

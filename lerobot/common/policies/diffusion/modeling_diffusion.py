@@ -56,8 +56,6 @@ class DiffusionPolicy(nn.Module):
         if cfg is None:
             cfg = DiffusionConfig()
         self.cfg = cfg
-        self.normalize_input_modes = cfg.normalize_input_modes
-        self.unnormalize_output_modes = cfg.unnormalize_output_modes
         self.normalize_inputs = Normalize(cfg.input_shapes, cfg.normalize_input_modes, dataset_stats)
         self.unnormalize_outputs = Unnormalize(cfg.output_shapes, cfg.unnormalize_output_modes, dataset_stats)
 
