@@ -3,9 +3,9 @@
 name: Build Docker images (scheduled)
 
 on:
-  # pull_request:  # TODO(aliberts): for testing, delete before merge
-  #   branches:
-  #     - main
+  pull_request:  # TODO(aliberts): for testing, delete before merge
+    branches:
+      - main
   workflow_dispatch:
   workflow_call:
   schedule:
