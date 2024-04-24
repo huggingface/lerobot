@@ -82,7 +82,7 @@ jobs:
       - name: Nvidia-smi
         run: nvidia-smi
       - name: Install EGL
-        run: apt-get update && apt-get install -y libegl1-mesa-dev curl
+        run: apt-get update && apt-get install -y libegl1-mesa-dev curl ca-certificates
       - name: Test
         env:
           DATA_DIR: tests/data
