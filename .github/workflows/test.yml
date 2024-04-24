@@ -11,9 +11,6 @@ on:
 
 jobs:
   tests:
-    if: |
-      ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'CI') }} ||
-      ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     env:
       POETRY_VERSION: 1.8.2
@@ -86,13 +83,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.restore-dependencies-cache.outputs.cache-hit != 'true'
-        env:
-          TMPDIR: ~/tmp
-          TEMP: ~/tmp
-          TMP: ~/tmp
-        run: |
-          mkdir ~/tmp
-          poetry install --no-interaction --no-root --all-extras
+        run: poetry install --no-interaction --no-root --all-extras
 
       - name: Save cached venv
         if: |
@@ -104,7 +95,7 @@ jobs:
           path: .venv
           key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
 
-      - name: Install libegl1-mesa-dev (to use MUJOCO_GL=egl)
+      - name: Install EGL
         run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
 
       #----------------------------------------------
