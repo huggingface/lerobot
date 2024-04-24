@@ -3,9 +3,9 @@
 name: Build Docker images (scheduled)
 
 on:
-  # pull_request:  # TODO(aliberts): for testing, delete before merge
-  #   branches:
-  #     - main
+  pull_request:  # TODO(aliberts): for testing, delete before merge
+    branches:
+      - main
   workflow_dispatch:
   workflow_call:
   schedule:
@@ -19,57 +19,57 @@ concurrency:
 #   CI_SLACK_CHANNEL: ${{ secrets.CI_DOCKER_CHANNEL }}
 
 jobs:
-  latest-cpu:
-    name: "Latest LeRobot CPU [dev]"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Cleanup disk
-        run: |
-          sudo df -h
-          # sudo ls -l /usr/local/lib/
-          # sudo ls -l /usr/share/
-          sudo du -sh /usr/local/lib/
-          sudo du -sh /usr/share/
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo du -sh /usr/local/lib/
-          sudo du -sh /usr/share/
-          sudo df -h
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Check out code
-        uses: actions/checkout@v4
-      - name: Checkout gym-aloha
-        uses: actions/checkout@v4
-        with:
-          repository: huggingface/gym-aloha
-          path: envs/gym-aloha
-          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
-      - name: Checkout gym-xarm
-        uses: actions/checkout@v4
-        with:
-          repository: huggingface/gym-xarm
-          path: envs/gym-xarm
-          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
-      - name: Checkout gym-pusht
-        uses: actions/checkout@v4
-        with:
-          repository: huggingface/gym-pusht
-          path: envs/gym-pusht
-          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+  # latest-cpu:
+  #   name: "Latest LeRobot CPU [dev]"
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Cleanup disk
+  #       run: |
+  #         sudo df -h
+  #         # sudo ls -l /usr/local/lib/
+  #         # sudo ls -l /usr/share/
+  #         sudo du -sh /usr/local/lib/
+  #         sudo du -sh /usr/share/
+  #         sudo rm -rf /usr/local/lib/android
+  #         sudo rm -rf /usr/share/dotnet
+  #         sudo du -sh /usr/local/lib/
+  #         sudo du -sh /usr/share/
+  #         sudo df -h
+  #     - name: Set up Docker Buildx
+  #       uses: docker/setup-buildx-action@v3
+  #     - name: Check out code
+  #       uses: actions/checkout@v4
+  #     - name: Checkout gym-aloha
+  #       uses: actions/checkout@v4
+  #       with:
+  #         repository: huggingface/gym-aloha
+  #         path: envs/gym-aloha
+  #         ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+  #     - name: Checkout gym-xarm
+  #       uses: actions/checkout@v4
+  #       with:
+  #         repository: huggingface/gym-xarm
+  #         path: envs/gym-xarm
+  #         ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+  #     - name: Checkout gym-pusht
+  #       uses: actions/checkout@v4
+  #       with:
+  #         repository: huggingface/gym-pusht
+  #         path: envs/gym-pusht
+  #         ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+  #     - name: Login to DockerHub
+  #       uses: docker/login-action@v3
+  #       with:
+  #         username: ${{ secrets.DOCKERHUB_USERNAME }}
+  #         password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      - name: Build and Push CPU
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./docker/lerobot-cpu/Dockerfile
-          push: true
-          tags: huggingface/lerobot-cpu
+  #     - name: Build and Push CPU
+  #       uses: docker/build-push-action@v5
+  #       with:
+  #         context: .
+  #         file: ./docker/lerobot-cpu/Dockerfile
+  #         push: true
+  #         tags: huggingface/lerobot-cpu
 
     #   - name: Post to a Slack channel
     #     id: slack
@@ -144,7 +144,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./docker/lerobot-gpu/Dockerfile
+          file: ./docker/lerobot-gpu2/Dockerfile
           push: true
           tags: huggingface/lerobot-gpu
 
