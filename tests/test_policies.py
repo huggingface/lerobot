@@ -194,10 +194,3 @@ def test_normalize(insert_temporal_dim):
     new_unnormalize = Unnormalize(output_shapes, unnormalize_output_modes, stats=None)
     new_unnormalize.load_state_dict(unnormalize.state_dict())
     unnormalize(output_batch)
-
-
-if __name__ == "__main__":
-    test_policy(
-        *("aloha", "act", ["env.task=AlohaTransferCube-v0", "dataset_id=aloha_sim_transfer_cube_scripted"])
-    )
-    # test_policy(insert_temporal_dim=True)
