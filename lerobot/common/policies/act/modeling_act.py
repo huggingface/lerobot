@@ -20,11 +20,7 @@ from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
 from lerobot.common.policies.act.configuration_act import ActionChunkingTransformerConfig
-from lerobot.common.policies.utils import (
-    normalize_inputs,
-    to_buffer_dict,
-    unnormalize_outputs,
-)
+from lerobot.common.policies.normalize import Normalize, Unnormalize
 
 
 class ActionChunkingTransformerPolicy(nn.Module):
@@ -76,9 +72,10 @@ class ActionChunkingTransformerPolicy(nn.Module):
         if cfg is None:
             cfg = ActionChunkingTransformerConfig()
         self.cfg = cfg
-        self.dataset_stats = to_buffer_dict(dataset_stats)
         self.normalize_input_modes = cfg.normalize_input_modes
         self.unnormalize_output_modes = cfg.unnormalize_output_modes
+        self.normalize_inputs = Normalize(cfg.input_shapes, cfg.normalize_input_modes, dataset_stats)
+        self.unnormalize_outputs = Unnormalize(cfg.output_shapes, cfg.unnormalize_output_modes, dataset_stats)
 
         # BERT style VAE encoder with input [cls, *joint_space_configuration, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
@@ -174,7 +171,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
         """
         self.eval()
 
-        batch = normalize_inputs(batch, self.dataset_stats, self.normalize_input_modes)
+        batch = self.normalize_inputs(batch)
 
         if len(self._action_queue) == 0:
             # `_forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue effectively
@@ -182,9 +179,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
             actions = self._forward(batch)[0][: self.cfg.n_action_steps]
 
             # TODO(rcadene): make _forward return output dictionary?
-            out_dict = {"action": actions}
-            out_dict = unnormalize_outputs(out_dict, self.dataset_stats, self.unnormalize_output_modes)
-            actions = out_dict["action"]
+            actions = self.unnormalize_outputs({"action": actions})["action"]
 
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
@@ -218,9 +213,10 @@ class ActionChunkingTransformerPolicy(nn.Module):
         start_time = time.time()
         self.train()
 
-        batch = normalize_inputs(batch, self.dataset_stats, self.normalize_input_modes)
+        batch = self.normalize_inputs(batch)
+
         loss_dict = self.forward(batch)
-        # TODO(rcadene): unnormalize_outputs(out_dict, self.dataset_stats, self.unnormalize_output_modes)
+        # TODO(rcadene): self.unnormalize_outputs(out_dict)
         loss = loss_dict["loss"]
         loss.backward()
 

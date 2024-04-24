@@ -21,10 +21,24 @@ class ActionChunkingTransformerConfig:
             This should be no greater than the chunk size. For example, if the chunk size size 100, you may
             set this to 50. This would mean that the model predicts 100 steps worth of actions, runs 50 in the
             environment, and throws the other 50 out.
-        image_normalization_mean: Value to subtract from the input image pixels (inputs are assumed to be in
-            [0, 1]) for normalization.
-        image_normalization_std: Value by which to divide the input image pixels (after the mean has been
-            subtracted).
+        input_shapes: A dictionary defining the shapes of the input data for the policy.
+            The key represents the input data name, and the value is a list indicating the dimensions
+            of the corresponding data. For example, "observation.images.top" refers to an input from the
+            "top" camera with dimensions [3, 96, 96], indicating it has three color channels and 96x96 resolution.
+            Importantly, shapes doesnt include batch dimension or temporal dimension.
+        output_shapes: A dictionary defining the shapes of the output data for the policy.
+            The key represents the output data name, and the value is a list indicating the dimensions
+            of the corresponding data. For example, "action" refers to an output shape of [14], indicating
+            14-dimensional actions. Importantly, shapes doesnt include batch dimension or temporal dimension.
+        normalize_input_modes: A dictionary specifying the normalization mode to be applied to various inputs.
+            The key represents the input data name, and the value specifies the type of normalization to apply.
+            Common normalization methods include "mean_std" (mean and standard deviation) or "min_max" (to normalize
+            between -1 and 1).
+        unnormalize_output_modes: A dictionary specifying the method to unnormalize outputs.
+            This parameter maps output data types to their unnormalization modes, allowing the results to be
+            transformed back from a normalized state to a standard state. It is typically used when output
+            data needs to be interpreted in its original scale or units. For example, for "action", the
+            unnormalization mode might be "mean_std" or "min_max".
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
         use_pretrained_backbone: Whether the backbone should be initialized with pretrained weights from
             torchvision.
@@ -51,6 +65,7 @@ class ActionChunkingTransformerConfig:
     """
 
     # Environment.
+    # TODO(rcadene, alexander-soar): remove these as they are defined in input_shapes, output_shapes
     state_dim: int = 14
     action_dim: int = 14
 
@@ -59,6 +74,18 @@ class ActionChunkingTransformerConfig:
     camera_names: tuple[str] = ("top",)
     chunk_size: int = 100
     n_action_steps: int = 100
+
+    input_shapes: dict[str, str] = field(
+        default_factory=lambda: {
+            "observation.images.top": [3, 480, 640],
+            "observation.state": [14],
+        }
+    )
+    output_shapes: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": [14],
+        }
+    )
 
     # Normalization / Unnormalization
     normalize_input_modes: dict[str, str] = field(
@@ -72,6 +99,7 @@ class ActionChunkingTransformerConfig:
             "action": "mean_std",
         }
     )
+
     # Architecture.
     # Vision backbone.
     vision_backbone: str = "resnet18"

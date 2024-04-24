@@ -26,13 +26,11 @@ from torch import Tensor, nn
 from torch.nn.modules.batchnorm import _BatchNorm
 
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.utils import (
     get_device_from_parameters,
     get_dtype_from_parameters,
-    normalize_inputs,
     populate_queues,
-    to_buffer_dict,
-    unnormalize_outputs,
 )
 
 
@@ -58,9 +56,10 @@ class DiffusionPolicy(nn.Module):
         if cfg is None:
             cfg = DiffusionConfig()
         self.cfg = cfg
-        self.dataset_stats = to_buffer_dict(dataset_stats)
         self.normalize_input_modes = cfg.normalize_input_modes
         self.unnormalize_output_modes = cfg.unnormalize_output_modes
+        self.normalize_inputs = Normalize(cfg.input_shapes, cfg.normalize_input_modes, dataset_stats)
+        self.unnormalize_outputs = Unnormalize(cfg.output_shapes, cfg.unnormalize_output_modes, dataset_stats)
 
         # queues are populated during rollout of the policy, they contain the n latest observations and actions
         self._queues = None
@@ -133,7 +132,7 @@ class DiffusionPolicy(nn.Module):
         assert "observation.state" in batch
         assert len(batch) == 2
 
-        batch = normalize_inputs(batch, self.dataset_stats, self.normalize_input_modes)
+        batch = self.normalize_inputs(batch)
 
         self._queues = populate_queues(self._queues, batch)
 
@@ -146,9 +145,7 @@ class DiffusionPolicy(nn.Module):
                 actions = self.diffusion.generate_actions(batch)
 
             # TODO(rcadene): make above methods return output dictionary?
-            out_dict = {"action": actions}
-            out_dict = unnormalize_outputs(out_dict, self.dataset_stats, self.unnormalize_output_modes)
-            actions = out_dict["action"]
+            actions = self.unnormalize_outputs({"action": actions})["action"]
 
             self._queues["action"].extend(actions.transpose(0, 1))
 
@@ -166,12 +163,12 @@ class DiffusionPolicy(nn.Module):
 
         self.diffusion.train()
 
-        batch = normalize_inputs(batch, self.dataset_stats, self.normalize_input_modes)
+        batch = self.normalize_inputs(batch)
 
         loss = self.forward(batch)["loss"]
         loss.backward()
 
-        # TODO(rcadene): unnormalize_outputs(out_dict, self.dataset_stats, self.unnormalize_output_modes)
+        # TODO(rcadene): self.unnormalize_outputs(out_dict)
 
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.diffusion.parameters(),

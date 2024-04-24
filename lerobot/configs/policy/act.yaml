@@ -34,6 +34,13 @@ policy:
   chunk_size: 100 # chunk_size
   n_action_steps: 100
 
+  input_shapes:
+    # TODO(rcadene, alexander-soar): add variables for height and width from the dataset/env?
+    observation.images.top: [3, 480, 640]
+    observation.state: ["${policy.state_dim}"]
+  output_shapes:
+    action: ["${policy.action_dim}"]
+
   # Normalization / Unnormalization
   normalize_input_modes:
     observation.images.top: mean_std

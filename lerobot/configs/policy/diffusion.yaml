@@ -50,6 +50,13 @@ policy:
   horizon: ${horizon}
   n_action_steps: ${n_action_steps}
 
+  input_shapes:
+    # TODO(rcadene, alexander-soar): add variables for height and width from the dataset/env?
+    observation.image: [3, 96, 96]
+    observation.state: ["${policy.state_dim}"]
+  output_shapes:
+    action: ["${policy.action_dim}"]
+
   # Normalization / Unnormalization
   normalize_input_modes:
     observation.image: mean_std
