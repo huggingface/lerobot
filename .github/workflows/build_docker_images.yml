@@ -11,9 +11,9 @@ on:
   schedule:
     - cron: "0 1 * * *"
 
-concurrency:
-  group: docker-image-builds
-  cancel-in-progress: false
+# concurrency:
+#   group: docker-image-builds
+#   cancel-in-progress: true
 
 # env:
 #   CI_SLACK_CHANNEL: ${{ secrets.CI_DOCKER_CHANNEL }}
