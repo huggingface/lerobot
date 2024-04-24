@@ -1,40 +1,27 @@
-# Builds GPU Docker image of PyTorch
-# Stage 1
-FROM continuumio/miniconda3:latest AS venv-image
-ENV PYTHON_VERSION=3.10
+FROM nvidia/cuda:12.4.1-base-ubuntu22.04
 
-# Setup virtual environment
-RUN conda create -y -n lerobot python=${PYTHON_VERSION}
-ENV PATH=/opt/conda/envs/lerobot/bin:$PATH
-
-# Stage 2
-# FROM nvidia/cudagl:11.3.0-devel-ubuntu20.04 AS build-image
-# FROM nvidia/opengl:1.0-glvnd-devel-ubuntu22.04 AS build-image
-FROM nvidia/cuda:12.4.1-base-ubuntu22.04 AS build-image
+# RUN DEBIAN_FRONTEND=noninteractive apt-get install -y tzdata
 ARG DEBIAN_FRONTEND=noninteractive
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
-    pkg-config \
-    libhdf5-dev \
-    libegl1-mesa-dev \
-    libglu1-mesa-dev libosmesa6-dev xvfb patchelf ffmpeg swig \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    build-essential cmake swig \
+    # git nano rsync vim tree curl \
+    # wget unzip htop tmux xvfb patchelf ca-certificates bash-completion libjpeg-dev libpng-dev \
+    # libssl-dev libcurl4-openssl-dev libopenmpi-dev  zlib1g-dev \
+    # qtbase5-dev qtdeclarative5-dev \
+    ffmpeg \
+    libglib2.0-0 libglu1-mesa-dev libgl1-mesa-dev libvulkan1 \
+    libgl1-mesa-glx libosmesa6 libosmesa6-dev libglew-dev mesa-utils libegl-dev \
+    libegl1-mesa libegl1-mesa-dev \
+    python3-dev python3-pip
+    # && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-
-COPY --from=venv-image /opt/conda/envs/lerobot /opt/conda/envs/lerobot
-COPY --from=venv-image /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh
-
-RUN chsh -s /bin/bash
-SHELL ["/bin/bash", "-c"]
-ENV PATH=/opt/conda/envs/lerobot/bin:$PATH
+RUN ln -s /usr/bin/python3 /usr/bin/python
 
 COPY . /lerobot
 WORKDIR /lerobot
 RUN pip install --upgrade --no-cache-dir pip
 RUN pip install --no-cache-dir ".[test, aloha, xarm, pusht]"
 
-# Make sure we use the virtualenv
-RUN echo ". /etc/profile.d/conda.sh" >> ~/.profile
-RUN echo "source activate lerobot" >> ~/.profile
-CMD ["/lerobot/docker/bin/docker_entrypoint"]
+ENV PYOPENGL_PLATFORM="egl"
+ENV MUJOCO_GL="egl"
