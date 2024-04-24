@@ -19,51 +19,46 @@ env:
 
 
 jobs:
-  run_all_tests_cpu:
-    strategy:
-      fail-fast: false
-    runs-on: ubuntu-latest
-    env:
-      CUDA_VISIBLE_DEVICES: "0"
-      TEST_TYPE: "single_gpu"
-    container:
-      image: huggingface/lerobot-cpu:latest
-      credentials:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_PASSWORD }}
-    defaults:
-      run:
-        shell: bash
-        working-directory: /lerobot
-    steps:
-      # - uses: actions/checkout@v4
-      - name: Check
-        run: |
-          pwd
-          python --version
-          which python
-          ls -glh
-          ls -glh /opt/venv/
-          ls -glh /opt/venv/lib
-          ls -glh /opt/venv/lib/python3.10/site-packages
-      # - name: Pip install
-      #   run: |
-      #     source activate peft
-      #     pip install ".[test, aloha, xarm, pusht]"
-      - name: Tests
-        env:
-          DATA_DIR: tests/data
-          MUJOCO_GL: egl
-          MUJOCO_EGL_DEVICE_ID: 0
-        run: |
-          unset DISPLAY
-          pytest -v --cov=./lerobot --cov-report=xml tests
-      - name: Tests end-to-end
-        env:
-          DATA_DIR: tests/data
-          MUJOCO_GL: egl
-        run: |
-          make test-ete
+  # run_all_tests_cpu:
+  #   strategy:
+  #     fail-fast: false
+  #   runs-on: ubuntu-latest
+  #   env:
+  #     CUDA_VISIBLE_DEVICES: "0"
+  #     TEST_TYPE: "single_gpu"
+  #   container:
+  #     image: huggingface/lerobot-cpu:latest
+  #     credentials:
+  #       username: ${{ secrets.DOCKERHUB_USERNAME }}
+  #       password: ${{ secrets.DOCKERHUB_PASSWORD }}
+  #   defaults:
+  #     run:
+  #       shell: bash
+  #       working-directory: /lerobot
+  #   steps:
+  #     - name: Check
+  #       run: |
+  #         pwd
+  #         python --version
+  #         which python
+  #         ls -glh
+  #         ls -glh /opt/venv/
+  #         ls -glh /opt/venv/lib
+  #         ls -glh /opt/venv/lib/python3.10/site-packages
+  #     - name: Tests
+  #       env:
+  #         DATA_DIR: tests/data
+  #         MUJOCO_GL: egl
+  #         MUJOCO_EGL_DEVICE_ID: 0
+  #       run: |
+  #         unset DISPLAY
+  #         pytest -v --cov=./lerobot --cov-report=xml tests
+  #     - name: Tests end-to-end
+  #       env:
+  #         DATA_DIR: tests/data
+  #         MUJOCO_GL: egl
+  #       run: |
+  #         make test-ete
 
   run_all_tests_single_gpu:
     strategy:
@@ -74,7 +69,7 @@ jobs:
       TEST_TYPE: "single_gpu"
     container:
       image: huggingface/lerobot-gpu:latest
-      options: --gpus all --shm-size "16gb" -e NVIDIA_DISABLE_REQUIRE=true
+      options: --gpus all --shm-size "16gb" -e NVIDIA_DISABLE_REQUIRE=true -e DATA_DIR=tests/data/ -e MUJOCO_GL=egl
       credentials:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_PASSWORD }}
