@@ -69,7 +69,7 @@ jobs:
       TEST_TYPE: "single_gpu"
     container:
       image: huggingface/lerobot-gpu:latest
-      options: --gpus all --shm-size "16gb" -e NVIDIA_DISABLE_REQUIRE=true -e DATA_DIR=tests/data/ -e MUJOCO_GL=egl
+      options: --privileged --gpus all --shm-size "16gb" -e NVIDIA_DISABLE_REQUIRE=true -e DATA_DIR=tests/data/ -e MUJOCO_GL=egl
       credentials:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -82,7 +82,7 @@ jobs:
       - name: Nvidia-smi
         run: nvidia-smi
       - name: Install EGL
-        run: apt-get update && apt-get install -y libegl1-mesa-dev
+        run: apt-get update && apt-get install -y libegl1-mesa-dev curl
       - name: Test
         env:
           DATA_DIR: tests/data
