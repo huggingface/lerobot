@@ -144,7 +144,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./docker/lerobot-gpu2/Dockerfile
+          file: ./docker/lerobot-gpu/Dockerfile
           push: true
           tags: huggingface/lerobot-gpu
 

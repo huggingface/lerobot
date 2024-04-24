@@ -1,4 +1,4 @@
-FROM registry.hpc-cluster-hopper.hpc.internal.huggingface.tech/library/cuda:12.2.2-base-ubuntu20.04-libegl1
+FROM nvidia/cuda:12.4.1-base-ubuntu22.04
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -y tzdata
 

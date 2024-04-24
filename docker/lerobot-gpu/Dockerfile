@@ -9,7 +9,8 @@ ENV PATH=/opt/conda/envs/lerobot/bin:$PATH
 
 # Stage 2
 # FROM nvidia/cudagl:11.3.0-devel-ubuntu20.04 AS build-image
-FROM nvidia/opengl:1.0-glvnd-devel-ubuntu22.04 AS build-image
+# FROM nvidia/opengl:1.0-glvnd-devel-ubuntu22.04 AS build-image
+FROM nvidia/cuda:12.4.1-base-ubuntu22.04 AS build-image
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
