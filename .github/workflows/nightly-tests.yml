@@ -95,6 +95,14 @@ jobs:
           MUJOCO_GL: egl
         run: |
           make test-ete
+      - name: Tailscale Wait
+        if: ${{ failure() || runner.debug == '1' }}
+        uses: huggingface/tailscale-action@main
+        with:
+           waitForSSH: true
+           authkey: ${{ secrets.TAILSCALE_SSH_AUTHKEY }}
+           slackChannel: ${{ secrets.SLACK_CIFEEDBACK_CHANNEL }}
+           slackToken: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
 
     #   - name: Generate Report
     #     if: always()
