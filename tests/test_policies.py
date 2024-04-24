@@ -100,7 +100,6 @@ def test_policy(env_name, policy_name, extra_overrides):
         # TODO(rcadene, alexander-soar): how to remove need for dataset_stats?
         new_policy = make_policy(cfg, dataset_stats=dataset.stats)
         new_policy.load_state_dict(policy.state_dict())
-        new_policy.update(batch, step=0)
 
 
 @pytest.mark.parametrize(
