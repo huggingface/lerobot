@@ -8,9 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake \
     # swig \
     # ffmpeg \
-    # libgl1-mesa-glx libosmesa6 libosmesa6-dev libglew-dev mesa-utils libegl-dev \
-    # libgl1-mesa-glx \
+    # libosmesa6 libosmesa6-dev libglew-dev mesa-utils libegl-dev \
     libglib2.0-0 \
+    libgl1-mesa-glx \
     libegl1-mesa \
     # libegl1-mesa-dev \
     python3-dev python3-pip

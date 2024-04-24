@@ -3,9 +3,9 @@
 name: Self-hosted runner with slow tests (scheduled)
 
 on:
-  pull_request:  # TODO(aliberts): for testing, delete before merge
-    branches:
-      - main
+  # pull_request:  # TODO(aliberts): for testing, delete before merge
+  #   branches:
+  #     - main
   workflow_dispatch:
   schedule:
     - cron: "0 2 * * *"
@@ -88,7 +88,7 @@ jobs:
           DATA_DIR: tests/data
           MUJOCO_GL: egl
         run: |
-          pytest -v --cov=./lerobot --cov-report=xml tests
+          pytest -v --cov=./lerobot --cov-report=xml --disable-warnings tests
       - name: Tests end-to-end
         env:
           DATA_DIR: tests/data
