@@ -6,13 +6,8 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake swig \
-    # git nano rsync vim tree curl \
-    # wget unzip htop tmux xvfb patchelf ca-certificates bash-completion libjpeg-dev libpng-dev \
-    # libssl-dev libcurl4-openssl-dev libopenmpi-dev  zlib1g-dev \
-    # qtbase5-dev qtdeclarative5-dev \
-    ffmpeg \
-    # libglib2.0-0 libglu1-mesa-dev libgl1-mesa-dev libvulkan1 \
-    libgl1-mesa-glx libosmesa6 libosmesa6-dev libglew-dev mesa-utils libegl-dev \
+    # ffmpeg \
+    # libgl1-mesa-glx libosmesa6 libosmesa6-dev libglew-dev mesa-utils libegl-dev \
     libegl1-mesa libegl1-mesa-dev \
     python3-dev python3-pip
     # && apt-get clean && rm -rf /var/lib/apt/lists/*
