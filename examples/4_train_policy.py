@@ -64,8 +64,6 @@ while not done:
         optimizer.step()
         optimizer.zero_grad()
 
-        if policy.ema is not None:
-            policy.ema.step(policy.diffusion)
 
         if step % log_freq == 0:
             print(f"step: {step} loss: {loss.item():.3f}")
