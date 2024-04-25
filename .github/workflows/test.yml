@@ -1,4 +1,4 @@
-name: Tests
+name: Tests poetry
 
 on:
   pull_request:
@@ -110,14 +110,7 @@ jobs:
       - name: Run tests
         run: |
           source .venv/bin/activate
-          pytest -v --cov=./lerobot --cov-report=xml tests
-
-      #   TODO(aliberts): Link with HF Codecov account
-      # - name: Upload coverage reports to Codecov with GitHub Action
-      #   uses: codecov/codecov-action@v4
-      #   with:
-      #     files: ./coverage.xml
-      #     verbose: true
+          pytest -v --cov=./lerobot tests
 
       #----------------------------------------------
       #            run end-to-end tests
