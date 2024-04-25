@@ -3,9 +3,9 @@
 name: Self-hosted runner with slow tests (scheduled)
 
 on:
-  pull_request:  # TODO(aliberts): for testing, delete before merge
-    branches:
-      - main
+  # pull_request:  # TODO(aliberts): for testing, delete before merge
+  #   branches:
+  #     - main
   workflow_dispatch:
   schedule:
     - cron: "0 2 * * *"
@@ -19,57 +19,15 @@ env:
 
 
 jobs:
-  # run_all_tests_cpu:
-  #   strategy:
-  #     fail-fast: false
-  #   runs-on: ubuntu-latest
-  #   env:
-  #     CUDA_VISIBLE_DEVICES: "0"
-  #     TEST_TYPE: "single_gpu"
-  #   container:
-  #     image: huggingface/lerobot-cpu:latest
-  #     credentials:
-  #       username: ${{ secrets.DOCKERHUB_USERNAME }}
-  #       password: ${{ secrets.DOCKERHUB_PASSWORD }}
-  #   defaults:
-  #     run:
-  #       shell: bash
-  #       working-directory: /lerobot
-  #   steps:
-  #     - name: Check
-  #       run: |
-  #         pwd
-  #         python --version
-  #         which python
-  #         ls -glh
-  #         ls -glh /opt/venv/
-  #         ls -glh /opt/venv/lib
-  #         ls -glh /opt/venv/lib/python3.10/site-packages
-  #     - name: Tests
-  #       env:
-  #         DATA_DIR: tests/data
-  #         MUJOCO_GL: egl
-  #         MUJOCO_EGL_DEVICE_ID: 0
-  #       run: |
-  #         unset DISPLAY
-  #         pytest -v --cov=./lerobot --cov-report=xml tests
-  #     - name: Tests end-to-end
-  #       env:
-  #         DATA_DIR: tests/data
-  #         MUJOCO_GL: egl
-  #       run: |
-  #         make test-ete
-
-  run_all_tests_single_gpu:
+  run_all_tests_cpu:
     strategy:
       fail-fast: false
-    runs-on: [single-gpu, nvidia-gpu, t4, ci]
+    runs-on: ubuntu-latest
     env:
       CUDA_VISIBLE_DEVICES: "0"
       TEST_TYPE: "single_gpu"
     container:
-      image: huggingface/lerobot-gpu:latest
-      options: --privileged --gpus all --shm-size "16gb" -e NVIDIA_DISABLE_REQUIRE=true -e DATA_DIR=tests/data/ -e MUJOCO_GL=egl
+      image: huggingface/lerobot-cpu:latest
       credentials:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -78,21 +36,39 @@ jobs:
         shell: bash
         working-directory: /lerobot
     steps:
-    #   - uses: actions/checkout@v4
-      - name: Nvidia-smi
-        run: nvidia-smi
-      # - name: Install EGL
-      #   run: apt-get update && apt-get install -y libegl1-mesa-dev ca-certificates
-      - name: Test
+      - name: Tests
         env:
           DATA_DIR: tests/data
-          MUJOCO_GL: egl
-        run: |
-          pytest -v --cov=./lerobot --cov-report=xml --disable-warnings tests
+        run: pytest -v --cov=./lerobot --cov-report=xml --disable-warnings tests
       - name: Tests end-to-end
         env:
           DATA_DIR: tests/data
-          MUJOCO_GL: egl
+        run: make test-ete
+
+  run_all_tests_single_gpu:
+    strategy:
+      fail-fast: false
+    runs-on: [single-gpu, nvidia-gpu, t4, ci]
+    env:
+      CUDA_VISIBLE_DEVICES: "0"
+      TEST_TYPE: "single_gpu"
+      DATA_DIR: tests/data
+    container:
+      image: huggingface/lerobot-gpu:latest
+      options: --gpus all --shm-size "16gb" -e NVIDIA_DISABLE_REQUIRE=true -e DATA_DIR=tests/data/
+      credentials:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: /lerobot
+    steps:
+      - name: Nvidia-smi
+        run: nvidia-smi
+      - name: Test
+        run: pytest -v --cov=./lerobot --cov-report=xml --disable-warnings tests
+      - name: Tests end-to-end
         run: |
           make test-ete
       - name: Tailscale Wait

@@ -1,5 +1,5 @@
-# Logging
-logs
+# Misc
+.git
 tmp
 wandb
 data
@@ -7,6 +7,10 @@ outputs
 .vscode
 rl
 media
+
+
+# Logging
+logs
 
 # HPC
 nautilus/*.yaml
