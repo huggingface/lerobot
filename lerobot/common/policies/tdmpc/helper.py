@@ -151,11 +151,12 @@ def enc(cfg) -> Callable[[dict[str, Tensor] | Tensor], dict[str, Tensor] | Tenso
     """
     Creates encoders for pixel and/or state modalities.
     TODO(now): Consolidate this into just working with a dict even if there is just one modality.
+    TODO(now): Use the observation. keys instead of these ones.
     """
 
     obs_shape = {
-        "rgb": (3, cfg.img_size, cfg.img_size),
-        "state": (cfg.state_dim,),
+        "observation.image": (3, cfg.img_size, cfg.img_size),
+        "observation.state": (cfg.state_dim,),
     }
 
     """Returns a TOLD encoder."""
@@ -186,7 +187,7 @@ def enc(cfg) -> Callable[[dict[str, Tensor] | Tensor], dict[str, Tensor] | Tenso
         if cfg.modality == "pixels":
             return ConvExt(nn.Sequential(*pixels_enc_layers))
     if cfg.modality in {"state", "all"}:
-        state_dim = obs_shape[0] if cfg.modality == "state" else obs_shape["state"][0]
+        state_dim = obs_shape[0] if cfg.modality == "state" else obs_shape["observation.state"][0]
         state_enc_layers = [
             nn.Linear(state_dim, cfg.enc_dim),
             nn.ELU(),
@@ -201,16 +202,16 @@ def enc(cfg) -> Callable[[dict[str, Tensor] | Tensor], dict[str, Tensor] | Tenso
 
     encoders = {}
     for k in obs_shape:
-        if k == "state":
+        if k == "observation.state":
             encoders[k] = nn.Sequential(*state_enc_layers)
-        elif k.endswith("rgb"):
+        elif k == "observation.image":
             encoders[k] = ConvExt(nn.Sequential(*pixels_enc_layers))
         else:
             raise NotImplementedError
     return Multiplexer(nn.ModuleDict(encoders))
 
 
-def mlp(in_dim: int, mlp_dim: int | tuple[int, int], out_dim: int, act_fn=DEFAULT_ACT_FN):
+def mlp(in_dim: int, mlp_dim: int | tuple[int, int], out_dim: int, act_fn=DEFAULT_ACT_FN) -> nn.Sequential:
     """Returns an MLP."""
     if isinstance(mlp_dim, int):
         mlp_dim = [mlp_dim, mlp_dim]
@@ -225,7 +226,7 @@ def mlp(in_dim: int, mlp_dim: int | tuple[int, int], out_dim: int, act_fn=DEFAUL
     )
 
 
-def dynamics(in_dim, mlp_dim, out_dim, act_fn=DEFAULT_ACT_FN):
+def dynamics(in_dim, mlp_dim, out_dim, act_fn=DEFAULT_ACT_FN) -> nn.Sequential:
     """Returns a dynamics network.
 
     TODO(now): this needs a better name. It's also an MLP...
@@ -237,9 +238,9 @@ def dynamics(in_dim, mlp_dim, out_dim, act_fn=DEFAULT_ACT_FN):
     )
 
 
-def q(cfg):
-    action_dim = cfg.action_dim
+def q(cfg) -> nn.Sequential:
     """Returns a Q-function that uses Layer Normalization."""
+    action_dim = cfg.action_dim
     return nn.Sequential(
         nn.Linear(cfg.latent_dim + action_dim, cfg.mlp_dim),
         nn.LayerNorm(cfg.mlp_dim),
@@ -264,8 +265,8 @@ def v(cfg):
 
 def aug(cfg):
     obs_shape = {
-        "rgb": (3, cfg.img_size, cfg.img_size),
-        "state": (4,),
+        "observation.image": (3, cfg.img_size, cfg.img_size),
+        "observation.state": (4,),
     }
 
     """Multiplex augmentation"""
@@ -276,9 +277,9 @@ def aug(cfg):
     else:
         augs = {}
         for k in obs_shape:
-            if k == "state":
+            if k == "observation.state":
                 augs[k] = nn.Identity()
-            elif k.endswith("rgb"):
+            elif k == "observation.image":
                 augs[k] = RandomShiftsAug(cfg)
             else:
                 raise NotImplementedError
@@ -357,105 +358,6 @@ class RandomShiftsAug(nn.Module):
         shift *= 2.0 / (h + 2 * self.pad)
         grid = base_grid + shift
         return F.grid_sample(x, grid, padding_mode="zeros", align_corners=False)
-
-
-# TODO(aliberts): remove class
-# class Episode:
-#     """Storage object for a single episode."""
-
-#     def __init__(self, cfg, init_obs):
-#         action_dim = cfg.action_dim
-
-#         self.cfg = cfg
-#         self.device = torch.device(cfg.buffer_device)
-#         if cfg.modality in {"pixels", "state"}:
-#             dtype = torch.float32 if cfg.modality == "state" else torch.uint8
-#             self.obses = torch.empty(
-#                 (cfg.episode_length + 1, *init_obs.shape),
-#                 dtype=dtype,
-#                 device=self.device,
-#             )
-#             self.obses[0] = torch.tensor(init_obs, dtype=dtype, device=self.device)
-#         elif cfg.modality == "all":
-#             self.obses = {}
-#             for k, v in init_obs.items():
-#                 assert k in {"rgb", "state"}
-#                 dtype = torch.float32 if k == "state" else torch.uint8
-#                 self.obses[k] = torch.empty(
-#                     (cfg.episode_length + 1, *v.shape), dtype=dtype, device=self.device
-#                 )
-#                 self.obses[k][0] = torch.tensor(v, dtype=dtype, device=self.device)
-#         else:
-#             raise ValueError
-#         self.actions = torch.empty((cfg.episode_length, action_dim), dtype=torch.float32, device=self.device)
-#         self.rewards = torch.empty((cfg.episode_length,), dtype=torch.float32, device=self.device)
-#         self.dones = torch.empty((cfg.episode_length,), dtype=torch.bool, device=self.device)
-#         self.masks = torch.empty((cfg.episode_length,), dtype=torch.float32, device=self.device)
-#         self.cumulative_reward = 0
-#         self.done = False
-#         self.success = False
-#         self._idx = 0
-
-#     def __len__(self):
-#         return self._idx
-
-#     @classmethod
-#     def from_trajectory(cls, cfg, obses, actions, rewards, dones=None, masks=None):
-#         """Constructs an episode from a trajectory."""
-
-#         if cfg.modality in {"pixels", "state"}:
-#             episode = cls(cfg, obses[0])
-#             episode.obses[1:] = torch.tensor(obses[1:], dtype=episode.obses.dtype, device=episode.device)
-#         elif cfg.modality == "all":
-#             episode = cls(cfg, {k: v[0] for k, v in obses.items()})
-#             for k in obses:
-#                 episode.obses[k][1:] = torch.tensor(
-#                     obses[k][1:], dtype=episode.obses[k].dtype, device=episode.device
-#                 )
-#         else:
-#             raise NotImplementedError
-#         episode.actions = torch.tensor(actions, dtype=episode.actions.dtype, device=episode.device)
-#         episode.rewards = torch.tensor(rewards, dtype=episode.rewards.dtype, device=episode.device)
-#         episode.dones = (
-#             torch.tensor(dones, dtype=episode.dones.dtype, device=episode.device)
-#             if dones is not None
-#             else torch.zeros_like(episode.dones)
-#         )
-#         episode.masks = (
-#             torch.tensor(masks, dtype=episode.masks.dtype, device=episode.device)
-#             if masks is not None
-#             else torch.ones_like(episode.masks)
-#         )
-#         episode.cumulative_reward = torch.sum(episode.rewards)
-#         episode.done = True
-#         episode._idx = cfg.episode_length
-#         return episode
-
-#     @property
-#     def first(self):
-#         return len(self) == 0
-
-#     def __add__(self, transition):
-#         self.add(*transition)
-#         return self
-
-#     def add(self, obs, action, reward, done, mask=1.0, success=False):
-#         """Add a transition into the episode."""
-#         if isinstance(obs, dict):
-#             for k, v in obs.items():
-#                 self.obses[k][self._idx + 1] = torch.tensor(
-#                     v, dtype=self.obses[k].dtype, device=self.obses[k].device
-#                 )
-#         else:
-#             self.obses[self._idx + 1] = torch.tensor(obs, dtype=self.obses.dtype, device=self.obses.device)
-#         self.actions[self._idx] = action
-#         self.rewards[self._idx] = reward
-#         self.dones[self._idx] = done
-#         self.masks[self._idx] = mask
-#         self.cumulative_reward += reward
-#         self.done = done
-#         self.success = self.success or success
-#         self._idx += 1
 
 
 def get_dataset_dict(cfg, env, return_reward_normalizer=False):
