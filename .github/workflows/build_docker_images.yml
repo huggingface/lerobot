@@ -16,7 +16,7 @@ on:
 #   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: 3.10
+  PYTHON_VERSION: "3.10"
 #   CI_SLACK_CHANNEL: ${{ secrets.CI_DOCKER_CHANNEL }}
 
 jobs:
