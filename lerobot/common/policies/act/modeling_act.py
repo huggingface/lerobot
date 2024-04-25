@@ -5,7 +5,6 @@ The majority of changes here involve removing unused code, unifying naming, and 
 """
 
 import math
-import time
 from collections import deque
 from itertools import chain
 from typing import Callable
@@ -206,33 +205,6 @@ class ActionChunkingTransformerPolicy(nn.Module):
 
         return loss_dict
 
-    def update(self, batch, **_) -> dict:
-        """Run the model in train mode, compute the loss, and do an optimization step."""
-        start_time = time.time()
-        self.train()
-
-        batch = self.normalize_inputs(batch)
-
-        loss_dict = self.forward(batch)
-        # TODO(rcadene): self.unnormalize_outputs(out_dict)
-        loss = loss_dict["loss"]
-        loss.backward()
-
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            self.parameters(), self.cfg.grad_clip_norm, error_if_nonfinite=False
-        )
-
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-
-        info = {
-            "loss": loss.item(),
-            "grad_norm": float(grad_norm),
-            "lr": self.cfg.lr,
-            "update_s": time.time() - start_time,
-        }
-
-        return info
 
     def _stack_images(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Stacks all the images in a batch and puts them in a new key: "observation.images".

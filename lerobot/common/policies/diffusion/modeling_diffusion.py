@@ -11,7 +11,6 @@ TODO(alexander-soare):
 import copy
 import logging
 import math
-import time
 from collections import deque
 from typing import Callable
 
@@ -154,41 +153,6 @@ class DiffusionPolicy(nn.Module):
         """Run the batch through the model and compute the loss for training or validation."""
         loss = self.diffusion.compute_loss(batch)
         return {"loss": loss}
-
-    def update(self, batch: dict[str, Tensor], **_) -> dict:
-        """Run the model in train mode, compute the loss, and do an optimization step."""
-        start_time = time.time()
-
-        self.diffusion.train()
-
-        batch = self.normalize_inputs(batch)
-
-        loss = self.forward(batch)["loss"]
-        loss.backward()
-
-        # TODO(rcadene): self.unnormalize_outputs(out_dict)
-
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            self.diffusion.parameters(),
-            self.cfg.grad_clip_norm,
-            error_if_nonfinite=False,
-        )
-
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-        self.lr_scheduler.step()
-
-        if self.ema is not None:
-            self.ema.step(self.diffusion)
-
-        info = {
-            "loss": loss.item(),
-            "grad_norm": float(grad_norm),
-            "lr": self.lr_scheduler.get_last_lr()[0],
-            "update_s": time.time() - start_time,
-        }
-
-        return info
 
     def save(self, fp):
         torch.save(self.state_dict(), fp)
