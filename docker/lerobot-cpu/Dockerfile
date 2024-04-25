@@ -1,41 +1,31 @@
-# Builds CPU-only Docker image of PyTorch
-# Uses multi-staged approach to reduce size
-# Stage 1
-FROM python:3.10-slim AS compile-image
+# Configure image
+ARG PYTHON_VERSION=3.10
 
+FROM python:${PYTHON_VERSION}-slim
+ARG PYTHON_VERSION
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Install apt dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
-    pkg-config \
-    libhdf5-dev \
+    build-essential cmake \
+    libglib2.0-0 libgl1-mesa-glx libegl1-mesa \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Setup virtual environment for Docker
-ENV VIRTUAL_ENV=/opt/venv
-RUN python3 -m venv ${VIRTUAL_ENV}
+# Create virtual environment
+RUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN echo "source /opt/venv/bin/activate" >> /root/.bashrc
 
-# Make sure we use the virtualenv
-ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
-
-# Install lerobot & specific CPU torch wheel to save on space
-COPY . /opt/lerobot
-WORKDIR /opt/lerobot
+# Install LeRobot
+COPY . /lerobot
+WORKDIR /lerobot
 RUN pip install --upgrade --no-cache-dir pip
 RUN pip install --no-cache-dir ".[test, aloha, xarm, pusht]" \
     --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Stage 2
-FROM python:3.10-slim AS build-image
+# Set EGL as the rendering backend for MuJoCo
+ENV MUJOCO_GL="egl"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libhdf5-dev \
-    libegl1-mesa-dev \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-COPY --from=compile-image /opt/venv /opt/venv
-COPY --from=compile-image /opt/lerobot /lerobot
-WORKDIR /lerobot
-
-# Make sure we use the virtualenv
-ENV PATH="/opt/venv/bin:$PATH"
+# Execute in bash shell rather than python
 CMD ["/bin/bash"]
