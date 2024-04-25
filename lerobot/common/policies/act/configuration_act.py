@@ -8,14 +8,11 @@ class ActionChunkingTransformerConfig:
     Defaults are configured for training on bimanual Aloha tasks like "insertion" or "transfer".
 
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
-    Those are: `state_dim`, `action_dim` and `camera_names`.
+    Those are: `input_shapes` and 'output_shapes`.
 
     Args:
-        state_dim: Dimensionality of the observation state space (excluding images).
-        action_dim: Dimensionality of the action space.
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
-        camera_names: The (unique) set of names for the cameras.
         chunk_size: The size of the action prediction "chunks" in units of environment steps.
         n_action_steps: The number of action steps to run in the environment for one invocation of the policy.
             This should be no greater than the chunk size. For example, if the chunk size size 100, you may
@@ -60,14 +57,8 @@ class ActionChunkingTransformerConfig:
             is enabled. Loss is then calculated as: `reconstruction_loss + kl_weight * kld_loss`.
     """
 
-    # Environment.
-    # TODO(rcadene, alexander-soare): remove these as they are defined in input_shapes, output_shapes
-    state_dim: int = 14
-    action_dim: int = 14
-
-    # Inputs / output structure.
+    # Input / output structure.
     n_obs_steps: int = 1
-    camera_names: tuple[str] = ("top",)
     chunk_size: int = 100
     n_action_steps: int = 100
 
@@ -147,7 +138,10 @@ class ActionChunkingTransformerConfig:
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
             )
-        if self.camera_names != ["top"]:
-            raise ValueError(f"For now, `camera_names` can only be ['top']. Got {self.camera_names}.")
-        if len(set(self.camera_names)) != len(self.camera_names):
-            raise ValueError(f"`camera_names` should not have any repeated entries. Got {self.camera_names}.")
+        # Check that there is only one image.
+        # TODO(alexander-soare): generalize this to multiple images.
+        if (
+            sum(k.startswith("observation.images.") for k in self.input_shapes) != 1
+            or "observation.images.top" not in self.input_shapes
+        ):
+            raise ValueError('For now, only "observation.images.top" is accepted for an image input.')

@@ -23,23 +23,17 @@ policy:
 
   pretrained_model_path:
 
-  # Environment.
-  # Inherit these from the environment config.
-  state_dim: ???
-  action_dim: ???
-
-  # Inputs / output structure.
+  # Input / output structure.
   n_obs_steps: ${n_obs_steps}
-  camera_names: [top]  # [top, front_close, left_pillar, right_pillar]
   chunk_size: 100 # chunk_size
   n_action_steps: 100
 
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
     observation.images.top: [3, 480, 640]
-    observation.state: ["${policy.state_dim}"]
+    observation.state: ["${env.state_dim}"]
   output_shapes:
-    action: ["${policy.action_dim}"]
+    action: ["${env.action_dim}"]
 
   # Normalization / Unnormalization
   normalize_input_modes:

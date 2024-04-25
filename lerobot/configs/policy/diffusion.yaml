@@ -37,15 +37,7 @@ policy:
 
   pretrained_model_path:
 
-  # Environment.
-  # Inherit these from the environment config.
-  state_dim: ???
-  action_dim: ???
-  image_size:
-    - ${env.image_size}  # height
-    - ${env.image_size}  # width
-
-  # Inputs / output structure.
+  # Input / output structure.
   n_obs_steps: ${n_obs_steps}
   horizon: ${horizon}
   n_action_steps: ${n_action_steps}
@@ -53,9 +45,9 @@ policy:
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
     observation.image: [3, 96, 96]
-    observation.state: ["${policy.state_dim}"]
+    observation.state: ["${env.state_dim}"]
   output_shapes:
-    action: ["${policy.action_dim}"]
+    action: ["${env.action_dim}"]
 
   # Normalization / Unnormalization
   normalize_input_modes:

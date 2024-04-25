@@ -211,7 +211,8 @@ class _DiffusionUnetImagePolicy(nn.Module):
 
         self.rgb_encoder = _RgbEncoder(cfg)
         self.unet = _ConditionalUnet1D(
-            cfg, global_cond_dim=(cfg.action_dim + self.rgb_encoder.feature_dim) * cfg.n_obs_steps
+            cfg,
+            global_cond_dim=(cfg.output_shapes["action"][0] + self.rgb_encoder.feature_dim) * cfg.n_obs_steps,
         )
 
         self.noise_scheduler = DDPMScheduler(
@@ -239,7 +240,7 @@ class _DiffusionUnetImagePolicy(nn.Module):
 
         # Sample prior.
         sample = torch.randn(
-            size=(batch_size, self.cfg.horizon, self.cfg.action_dim),
+            size=(batch_size, self.cfg.horizon, self.cfg.output_shapes["action"][0]),
             dtype=dtype,
             device=device,
             generator=generator,
@@ -282,7 +283,7 @@ class _DiffusionUnetImagePolicy(nn.Module):
         sample = self.conditional_sample(batch_size, global_cond=global_cond)
 
         # `horizon` steps worth of actions (from the first observation).
-        actions = sample[..., : self.cfg.action_dim]
+        actions = sample[..., : self.cfg.output_shapes["action"][0]]
         # Extract `n_action_steps` steps worth of actions (from the current observation).
         start = n_obs_steps - 1
         end = start + self.cfg.n_action_steps
@@ -392,7 +393,9 @@ class _RgbEncoder(nn.Module):
         # Set up pooling and final layers.
         # Use a dry run to get the feature map shape.
         with torch.inference_mode():
-            feat_map_shape = tuple(self.backbone(torch.zeros(size=(1, 3, *cfg.image_size))).shape[1:])
+            feat_map_shape = tuple(
+                self.backbone(torch.zeros(size=(1, *cfg.input_shapes["observation.image"]))).shape[1:]
+            )
         self.pool = SpatialSoftmax(feat_map_shape, num_kp=cfg.spatial_softmax_num_keypoints)
         self.feature_dim = cfg.spatial_softmax_num_keypoints * 2
         self.out = nn.Linear(cfg.spatial_softmax_num_keypoints * 2, self.feature_dim)
@@ -509,7 +512,7 @@ class _ConditionalUnet1D(nn.Module):
 
         # In channels / out channels for each downsampling block in the Unet's encoder. For the decoder, we
         # just reverse these.
-        in_out = [(cfg.action_dim, cfg.down_dims[0])] + list(
+        in_out = [(cfg.output_shapes["action"][0], cfg.down_dims[0])] + list(
             zip(cfg.down_dims[:-1], cfg.down_dims[1:], strict=True)
         )
 
@@ -560,7 +563,7 @@ class _ConditionalUnet1D(nn.Module):
 
         self.final_conv = nn.Sequential(
             _Conv1dBlock(cfg.down_dims[0], cfg.down_dims[0], kernel_size=cfg.kernel_size),
-            nn.Conv1d(cfg.down_dims[0], cfg.action_dim, 1),
+            nn.Conv1d(cfg.down_dims[0], cfg.output_shapes["action"][0], 1),
         )
 
     def forward(self, x: Tensor, timestep: Tensor | int, global_cond=None) -> Tensor:
