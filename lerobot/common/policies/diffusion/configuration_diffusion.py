@@ -8,12 +8,9 @@ class DiffusionConfig:
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.
 
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
-    Those are: `state_dim`, `action_dim` and `image_size`.
+    Those are: `input_shapes` and `output_shapes`.
 
     Args:
-        state_dim: Dimensionality of the observation state space (excluding images).
-        action_dim: Dimensionality of the action space.
-        image_size: (H, W) size of the input images.
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
         horizon: Diffusion model action prediction size as detailed in `DiffusionPolicy.select_action`.
@@ -67,13 +64,6 @@ class DiffusionConfig:
         num_inference_steps: Number of reverse diffusion steps to use at inference time (steps are evenly
             spaced). If not provided, this defaults to be the same as `num_train_timesteps`.
     """
-
-    # Environment.
-    # Inherit these from the environment config.
-    # TODO(rcadene, alexander-soare): remove these as they are defined in input_shapes, output_shapes
-    state_dim: int = 2
-    action_dim: int = 2
-    image_size: tuple[int, int] = (96, 96)
 
     # Inputs / output structure.
     n_obs_steps: int = 2
@@ -155,10 +145,14 @@ class DiffusionConfig:
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
-        if self.crop_shape[0] > self.image_size[0] or self.crop_shape[1] > self.image_size[1]:
+        if (
+            self.crop_shape[0] > self.input_shapes["observation.image"][1]
+            or self.crop_shape[1] > self.input_shapes["observation.image"][2]
+        ):
             raise ValueError(
-                f"`crop_shape` should fit within `image_size`. Got {self.crop_shape} for `crop_shape` and "
-                f"{self.image_size} for `image_size`."
+                f'`crop_shape` should fit within `input_shapes["observation.image"]`. Got {self.crop_shape} '
+                f'for `crop_shape` and {self.input_shapes["observation.image"]} for '
+                '`input_shapes["observation.image"]`.'
             )
         supported_prediction_types = ["epsilon", "sample"]
         if self.prediction_type not in supported_prediction_types:

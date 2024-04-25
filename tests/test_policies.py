@@ -109,7 +109,13 @@ def test_policy(env_name, policy_name, extra_overrides):
     ],
 )
 def test_normalize(insert_temporal_dim):
-    # TODO(rcadene, alexander-soare): test with real data and assert results of normalization/unnormalization
+    """
+    Test that normalize/unnormalize can run without exceptions when properly set up, and that they raise
+    an exception when the forward pass is called without the stats having been provided.
+
+    TODO(rcadene, alexander-soare): This should also test that the normalization / unnormalization works as
+    expected.
+    """
 
     input_shapes = {
         "observation.image": [3, 96, 96],
@@ -181,7 +187,7 @@ def test_normalize(insert_temporal_dim):
     new_normalize.load_state_dict(normalize.state_dict())
     new_normalize(input_batch)
 
-    # test wihtout stats
+    # test without stats
     unnormalize = Unnormalize(output_shapes, unnormalize_output_modes, stats=None)
     with pytest.raises(AssertionError):
         unnormalize(output_batch)

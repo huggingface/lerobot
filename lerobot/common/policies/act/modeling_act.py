@@ -81,9 +81,13 @@ class ActionChunkingTransformerPolicy(nn.Module):
             self.vae_encoder = _TransformerEncoder(cfg)
             self.vae_encoder_cls_embed = nn.Embedding(1, cfg.d_model)
             # Projection layer for joint-space configuration to hidden dimension.
-            self.vae_encoder_robot_state_input_proj = nn.Linear(cfg.state_dim, cfg.d_model)
+            self.vae_encoder_robot_state_input_proj = nn.Linear(
+                cfg.input_shapes["observation.state"][0], cfg.d_model
+            )
             # Projection layer for action (joint-space target) to hidden dimension.
-            self.vae_encoder_action_input_proj = nn.Linear(cfg.state_dim, cfg.d_model)
+            self.vae_encoder_action_input_proj = nn.Linear(
+                cfg.input_shapes["observation.state"][0], cfg.d_model
+            )
             self.latent_dim = cfg.latent_dim
             # Projection layer from the VAE encoder's output to the latent distribution's parameter space.
             self.vae_encoder_latent_output_proj = nn.Linear(cfg.d_model, self.latent_dim * 2)
@@ -111,7 +115,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
 
         # Transformer encoder input projections. The tokens will be structured like
         # [latent, robot_state, image_feature_map_pixels].
-        self.encoder_robot_state_input_proj = nn.Linear(cfg.state_dim, cfg.d_model)
+        self.encoder_robot_state_input_proj = nn.Linear(cfg.input_shapes["observation.state"][0], cfg.d_model)
         self.encoder_latent_input_proj = nn.Linear(self.latent_dim, cfg.d_model)
         self.encoder_img_feat_input_proj = nn.Conv2d(
             backbone_model.fc.in_features, cfg.d_model, kernel_size=1
@@ -125,7 +129,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
         self.decoder_pos_embed = nn.Embedding(cfg.chunk_size, cfg.d_model)
 
         # Final action regression head on the output of the transformer's decoder.
-        self.action_head = nn.Linear(cfg.d_model, cfg.action_dim)
+        self.action_head = nn.Linear(cfg.d_model, cfg.output_shapes["action"][0])
 
         self._reset_parameters()
         self._create_optimizer()
@@ -243,17 +247,9 @@ class ActionChunkingTransformerPolicy(nn.Module):
             "observation.images.{name}": (B, C, H, W) tensor of images.
         }
         """
-        # Check that there is only one image.
-        # TODO(alexander-soare): generalize this to multiple images.
-        provided_cameras = {k.rsplit(".", 1)[-1] for k in batch if k.startswith("observation.images.")}
-        if len(missing := set(self.cfg.camera_names).difference(provided_cameras)) > 0:
-            raise ValueError(
-                f"The following camera images are missing from the provided batch: {missing}. Check the "
-                "configuration parameter: `camera_names`."
-            )
-        # Stack images in the order dictated by the camera names.
+        # Stack images in the order dictated by input_shapes.
         batch["observation.images"] = torch.stack(
-            [batch[f"observation.images.{name}"] for name in self.cfg.camera_names],
+            [batch[k] for k in self.cfg.input_shapes if k.startswith("observation.images.")],
             dim=-4,
         )
 
@@ -321,7 +317,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
         all_cam_features = []
         all_cam_pos_embeds = []
         images = batch["observation.images"]
-        for cam_index in range(len(self.cfg.camera_names)):
+        for cam_index in range(images.shape[-4]):
             cam_features = self.backbone(images[:, cam_index])["feature_map"]
             cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
             cam_features = self.encoder_img_feat_input_proj(cam_features)  # (B, C, h, w)
