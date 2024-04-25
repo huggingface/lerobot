@@ -153,7 +153,7 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ### Train your own policy
 
-Checkout [examples](./examples) to see how tou can start training a model on a dataset, which will be automatically downloaded if needed.
+Check out [examples](./examples) to see how you can start training a model on a dataset, which will be automatically downloaded if needed.
 
 In general, you can use our training script to easily train any policy on any environment:
 ```bash
@@ -165,7 +165,7 @@ policy=act \
 hydra.run.dir=outputs/train/aloha_act
 ```
 
-After training, you may want to revisit model evaluation to change the evaluation settings. In fact, during training every checkpoints are already evaluated but on a low number of episodes for efficiency. Checkout [example](./examples) to evaluate any model checkpoint on more episodes to increase statistical significance.
+After training, you may want to revisit model evaluation to change the evaluation settings. In fact, during training every checkpoint is already evaluated but on a low number of episodes for efficiency. Check out [example](./examples) to evaluate any model checkpoint on more episodes to increase statistical significance.
 
 ## Contribute
 
