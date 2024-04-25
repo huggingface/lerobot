@@ -20,7 +20,5 @@ env:
   image_size: [3, 480, 640]
   episode_length: 400
   fps: ${fps}
-
-policy:
   state_dim: 14
   action_dim: 14

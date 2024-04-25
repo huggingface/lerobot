@@ -16,8 +16,8 @@ policy:
   frame_stack: 1
   num_channels: 32
   img_size: ${env.image_size}
-  state_dim: ???
-  action_dim: ???
+  state_dim: ${env.action_dim}
+  action_dim: ${env.action_dim}
 
   # planning
   mpc: true

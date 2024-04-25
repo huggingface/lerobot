@@ -18,27 +18,43 @@ online_steps: 0
 
 offline_prioritized_sampler: true
 
+override_dataset_stats:
+  # TODO(rcadene, alexander-soare): should we remove image stats as well? do we use a pretrained vision model?
+  observation.image:
+    mean: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
+    std: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
+  # TODO(rcadene, alexander-soare): we override state and action stats to use the same as the pretrained model
+  # from the original codebase, but we should remove these and train our own pretrained model
+  observation.state:
+    min: [13.456424, 32.938293]
+    max: [496.14618, 510.9579]
+  action:
+    min: [12.0, 25.0]
+    max: [511.0, 511.0]
+
 policy:
   name: diffusion
 
   pretrained_model_path:
 
-  # Environment.
-  # Inherit these from the environment config.
-  state_dim: ???
-  action_dim: ???
-  image_size:
-    - ${env.image_size}  # height
-    - ${env.image_size}  # width
-
-  # Inputs / output structure.
+  # Input / output structure.
   n_obs_steps: ${n_obs_steps}
   horizon: ${horizon}
   n_action_steps: ${n_action_steps}
 
-  # Vision preprocessing.
-  image_normalization_mean: [0.5, 0.5, 0.5]
-  image_normalization_std: [0.5, 0.5, 0.5]
+  input_shapes:
+    # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
+    observation.image: [3, 96, 96]
+    observation.state: ["${env.state_dim}"]
+  output_shapes:
+    action: ["${env.action_dim}"]
+
+  # Normalization / Unnormalization
+  normalize_input_modes:
+    observation.image: mean_std
+    observation.state: min_max
+  unnormalize_output_modes:
+    action: min_max
 
   # Architecture / modeling.
   # Vision backbone.

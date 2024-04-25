@@ -1,10 +1,8 @@
 import einops
 import torch
 
-from lerobot.common.transforms import apply_inverse_transform
 
-
-def preprocess_observation(observation, transform=None):
+def preprocess_observation(observation):
     # map to expected inputs for the policy
     obs = {}
 
@@ -33,21 +31,11 @@ def preprocess_observation(observation, transform=None):
     # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing requirement for "agent_pos"
     obs["observation.state"] = torch.from_numpy(observation["agent_pos"]).float()
 
-    # apply same transforms as in training
-    if transform is not None:
-        for key in obs:
-            obs[key] = torch.stack([transform({key: item})[key] for item in obs[key]])
-
     return obs
 
 
-def postprocess_action(action, transform=None):
-    action = action.to("cpu")
-    # action is a batch (num_env,action_dim) instead of an item (action_dim),
-    # we assume applying inverse transform on a batch works the same
-    if transform is not None:
-        action = apply_inverse_transform({"action": action}, transform)["action"]
-    action = action.numpy()
+def postprocess_action(action):
+    action = action.to("cpu").numpy()
     assert (
         action.ndim == 2
     ), "we assume dimensions are respectively the number of parallel envs, action dimensions"

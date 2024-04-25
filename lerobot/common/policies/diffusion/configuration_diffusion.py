@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -8,21 +8,28 @@ class DiffusionConfig:
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.
 
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
-    Those are: `state_dim`, `action_dim` and `image_size`.
+    Those are: `input_shapes` and `output_shapes`.
 
     Args:
-        state_dim: Dimensionality of the observation state space (excluding images).
-        action_dim: Dimensionality of the action space.
-        image_size: (H, W) size of the input images.
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
         horizon: Diffusion model action prediction size as detailed in `DiffusionPolicy.select_action`.
         n_action_steps: The number of action steps to run in the environment for one invocation of the policy.
             See `DiffusionPolicy.select_action` for more details.
-        image_normalization_mean: Value to subtract from the input image pixels (inputs are assumed to be in
-            [0, 1]) for normalization.
-        image_normalization_std: Value by which to divide the input image pixels (after the mean has been
-            subtracted).
+        input_shapes: A dictionary defining the shapes of the input data for the policy.
+            The key represents the input data name, and the value is a list indicating the dimensions
+            of the corresponding data. For example, "observation.image" refers to an input from
+            a camera with dimensions [3, 96, 96], indicating it has three color channels and 96x96 resolution.
+            Importantly, shapes doesnt include batch dimension or temporal dimension.
+        output_shapes: A dictionary defining the shapes of the output data for the policy.
+            The key represents the output data name, and the value is a list indicating the dimensions
+            of the corresponding data. For example, "action" refers to an output shape of [14], indicating
+            14-dimensional actions. Importantly, shapes doesnt include batch dimension or temporal dimension.
+        normalize_input_modes: A dictionary with key represents the modality (e.g. "observation.state"),
+            and the value specifies the normalization mode to apply. The two availables
+            modes are "mean_std" which substracts the mean and divide by the standard
+            deviation and "min_max" which rescale in a [-1, 1] range.
+        unnormalize_output_modes: Similar dictionary as `normalize_input_modes`, but to unormalize in original scale.
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
         crop_shape: (H, W) shape to crop images to as a preprocessing step for the vision backbone. Must fit
             within the image size. If None, no cropping is done.
@@ -58,20 +65,35 @@ class DiffusionConfig:
             spaced). If not provided, this defaults to be the same as `num_train_timesteps`.
     """
 
-    # Environment.
-    # Inherit these from the environment config.
-    state_dim: int = 2
-    action_dim: int = 2
-    image_size: tuple[int, int] = (96, 96)
-
     # Inputs / output structure.
     n_obs_steps: int = 2
     horizon: int = 16
     n_action_steps: int = 8
 
-    # Vision preprocessing.
-    image_normalization_mean: tuple[float, float, float] = (0.5, 0.5, 0.5)
-    image_normalization_std: tuple[float, float, float] = (0.5, 0.5, 0.5)
+    input_shapes: dict[str, list[str]] = field(
+        default_factory=lambda: {
+            "observation.image": [3, 96, 96],
+            "observation.state": [2],
+        }
+    )
+    output_shapes: dict[str, list[str]] = field(
+        default_factory=lambda: {
+            "action": [2],
+        }
+    )
+
+    # Normalization / Unnormalization
+    normalize_input_modes: dict[str, str] = field(
+        default_factory=lambda: {
+            "observation.image": "mean_std",
+            "observation.state": "min_max",
+        }
+    )
+    unnormalize_output_modes: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": "min_max",
+        }
+    )
 
     # Architecture / modeling.
     # Vision backbone.
@@ -123,10 +145,14 @@ class DiffusionConfig:
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
-        if self.crop_shape[0] > self.image_size[0] or self.crop_shape[1] > self.image_size[1]:
+        if (
+            self.crop_shape[0] > self.input_shapes["observation.image"][1]
+            or self.crop_shape[1] > self.input_shapes["observation.image"][2]
+        ):
             raise ValueError(
-                f"`crop_shape` should fit within `image_size`. Got {self.crop_shape} for `crop_shape` and "
-                f"{self.image_size} for `image_size`."
+                f'`crop_shape` should fit within `input_shapes["observation.image"]`. Got {self.crop_shape} '
+                f'for `crop_shape` and {self.input_shapes["observation.image"]} for '
+                '`input_shapes["observation.image"]`.'
             )
         supported_prediction_types = ["epsilon", "sample"]
         if self.prediction_type not in supported_prediction_types:

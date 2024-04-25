@@ -11,26 +11,36 @@ log_freq: 250
 n_obs_steps: 1
 # when temporal_agg=False, n_action_steps=horizon
 
+override_dataset_stats:
+  observation.images.top:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+
 # See `configuration_act.py` for more details.
 policy:
   name: act
 
   pretrained_model_path:
 
-  # Environment.
-  # Inherit these from the environment config.
-  state_dim: ???
-  action_dim: ???
-
-  # Inputs / output structure.
+  # Input / output structure.
   n_obs_steps: ${n_obs_steps}
-  camera_names: [top]  # [top, front_close, left_pillar, right_pillar]
   chunk_size: 100 # chunk_size
   n_action_steps: 100
 
-  # Vision preprocessing.
-  image_normalization_mean: [0.485, 0.456, 0.406]
-  image_normalization_std: [0.229, 0.224, 0.225]
+  input_shapes:
+    # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
+    observation.images.top: [3, 480, 640]
+    observation.state: ["${env.state_dim}"]
+  output_shapes:
+    action: ["${env.action_dim}"]
+
+  # Normalization / Unnormalization
+  normalize_input_modes:
+    observation.images.top: mean_std
+    observation.state: mean_std
+  unnormalize_output_modes:
+    action: mean_std
 
   # Architecture.
   # Vision backbone.
