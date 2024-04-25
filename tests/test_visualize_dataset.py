@@ -7,12 +7,12 @@ from .utils import DEFAULT_CONFIG_PATH
 
 
 @pytest.mark.parametrize(
-    "dataset_id",
+    "repo_id",
     [
-        "aloha_sim_insertion_human",
+        "lerobot/aloha_sim_insertion_human",
     ],
 )
-def test_visualize_dataset(tmpdir, dataset_id):
+def test_visualize_dataset(tmpdir, repo_id):
     # TODO(rcadene): this test might fail with other datasets/policies/envs, since visualization_dataset
     # doesnt support multiple timesteps which requires delta_timestamps to None for images.
     cfg = init_hydra_config(
@@ -20,7 +20,7 @@ def test_visualize_dataset(tmpdir, dataset_id):
         overrides=[
             "policy=act",
             "env=aloha",
-            f"dataset_id={dataset_id}",
+            f"dataset.repo_id={repo_id}",
         ],
     )
     video_paths = visualize_dataset(cfg, out_dir=tmpdir)
