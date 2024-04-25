@@ -287,7 +287,6 @@ def train(cfg: dict, out_dir=None, job_name=None):
             policy.diffusion.parameters(), cfg.lr, cfg.adam_betas, cfg.adam_eps, cfg.adam_weight_decay
         )
         # TODO(rcadene): modify lr scheduler so that it doesn't depend on epochs but steps
-        global_step = 0
         # configure lr scheduler
         lr_scheduler = get_scheduler(
             cfg.lr_scheduler,
@@ -296,7 +295,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
             num_training_steps=cfg.offline_steps,
             # pytorch assumes stepping LRScheduler every epoch
             # however huggingface diffusers steps it every batch
-            last_epoch=global_step - 1,
+            last_epoch=-1,
         )
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
