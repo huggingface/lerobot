@@ -38,6 +38,8 @@ policy = DiffusionPolicy(cfg, lr_scheduler_num_training_steps=training_steps, da
 policy.train()
 policy.to(device)
 
+optimizer = torch.optim.Adam(policy.diffusion.parameters(), cfg.lr, cfg.adam_betas, cfg.adam_eps, cfg.adam_weight_decay)
+
 # Create dataloader for offline training.
 dataloader = torch.utils.data.DataLoader(
     dataset,
@@ -54,9 +56,19 @@ done = False
 while not done:
     for batch in dataloader:
         batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
-        info = policy.update(batch)
+        batch = policy.normalize_inputs(batch)
+        output_dict = policy.forward(batch)
+        loss = output_dict["loss"]
+        loss.backward()
+        grad_norm = torch.nn.utils.clip_grad_norm_(policy.diffusion.parameters(), max_norm=10, error_if_nonfinite=False)
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if policy.ema is not None:
+            policy.ema.step(policy.diffusion)
+
         if step % log_freq == 0:
-            print(f"step: {step} loss: {info['loss']:.3f} update_time: {info['update_s']:.3f} (seconds)")
+            print(f"step: {step} loss: {loss.item():.3f}")
         step += 1
         if step >= training_steps:
             done = True
