@@ -43,4 +43,4 @@ jobs:
         run: pytest -v --cov=./lerobot tests
 
       - name: Test end-to-end
-        run: make test-ete
+        run: make test-end-to-end

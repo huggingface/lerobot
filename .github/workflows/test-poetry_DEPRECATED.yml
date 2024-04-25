@@ -117,4 +117,4 @@
 #       - name: Tests end-to-end
 #         run: |
 #           source .venv/bin/activate
-#           make test-ete
+#           make test-end-to-end

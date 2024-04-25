@@ -6,7 +6,7 @@ build-cpu:
 build-gpu:
 	docker build -t lerobot:latest -f docker/lerobot-gpu/Dockerfile .
 
-test-ete:
+test-end-to-end:
 	${MAKE} test-act-ete-train
 	${MAKE} test-act-ete-eval
 	${MAKE} test-diffusion-ete-train

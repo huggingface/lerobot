@@ -36,7 +36,7 @@ jobs:
       - name: Tests end-to-end
         env:
           DATA_DIR: tests/data
-        run: make test-ete
+        run: make test-end-to-end
 
   run_all_tests_single_gpu:
     name: "Test GPU"
@@ -68,7 +68,7 @@ jobs:
       #     files: ./coverage.xml
       #     verbose: true
       - name: Tests end-to-end
-        run: make test-ete
+        run: make test-end-to-end
       - name: Tailscale Wait
         if: ${{ failure() || runner.debug == '1' }}
         uses: huggingface/tailscale-action@v1
