@@ -3,19 +3,16 @@
 name: Self-hosted runner with slow tests (scheduled)
 
 on:
-  # pull_request:  # TODO(aliberts): for testing, delete before merge
-  #   branches:
-  #     - main
+  pull_request:  # TODO(aliberts): for testing, delete before merge
+    branches:
+      - main
   workflow_dispatch:
   schedule:
     - cron: "0 2 * * *"
 
 env:
-  RUN_SLOW: "yes"
-  IS_GITHUB_CI: "1"
-  # To be able to run tests on CUDA 12.2
-  NVIDIA_DISABLE_REQUIRE: "1"
-#   SLACK_API_TOKEN: ${{ secrets.SLACK_API_TOKEN }}
+  DATA_DIR: tests/data
+  # SLACK_API_TOKEN: ${{ secrets.SLACK_API_TOKEN }}
 
 
 jobs:
@@ -23,11 +20,9 @@ jobs:
     strategy:
       fail-fast: false
     runs-on: ubuntu-latest
-    env:
-      CUDA_VISIBLE_DEVICES: "0"
-      TEST_TYPE: "single_gpu"
     container:
       image: huggingface/lerobot-cpu:latest
+      options: --shm-size "16gb"
       credentials:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -52,10 +47,9 @@ jobs:
     env:
       CUDA_VISIBLE_DEVICES: "0"
       TEST_TYPE: "single_gpu"
-      DATA_DIR: tests/data
     container:
       image: huggingface/lerobot-gpu:latest
-      options: --gpus all --shm-size "16gb" -e NVIDIA_DISABLE_REQUIRE=true -e DATA_DIR=tests/data/
+      options: --gpus all --shm-size "16gb"
       credentials:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -69,8 +63,7 @@ jobs:
       - name: Test
         run: pytest -v --cov=./lerobot --cov-report=xml --disable-warnings tests
       - name: Tests end-to-end
-        run: |
-          make test-ete
+        run: make test-ete
       - name: Tailscale Wait
         if: ${{ failure() || runner.debug == '1' }}
         uses: huggingface/tailscale-action@v1
