@@ -43,9 +43,6 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
-      - name: Select local envs dependencies  # HACK(aliberts): to be removed for release
-        run: cp -t . .github/poetry/builds/pyproject.toml .github/poetry/builds/poetry.lock
-
       - name: Checkout gym-aloha
         uses: actions/checkout@v4
         with:
@@ -66,6 +63,18 @@ jobs:
           repository: huggingface/gym-pusht
           path: envs/gym-pusht
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      # HACK(aliberts): to be removed for release
+      # -----------------------------------------
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Change envs dependencies as local path
+        run: python .github/scripts/dep_build.py
+      # -----------------------------------------
+
       - name: Login to DockerHub
         uses: docker/login-action@v3
         with:
@@ -128,9 +137,6 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
-      - name: Select local envs dependencies  # HACK(aliberts): to be removed for release
-        run: cp -t . .github/poetry/builds/pyproject.toml .github/poetry/builds/poetry.lock
-
       - name: Checkout gym-aloha
         uses: actions/checkout@v4
         with:
@@ -151,6 +157,17 @@ jobs:
           repository: huggingface/gym-pusht
           path: envs/gym-pusht
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      # HACK(aliberts): to be removed for release
+      # -----------------------------------------
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Change envs dependencies as local path
+        run: python .github/scripts/dep_build.py
+      # -----------------------------------------
 
       - name: Login to DockerHub
         uses: docker/login-action@v3
