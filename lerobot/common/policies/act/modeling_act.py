@@ -127,25 +127,6 @@ class ActionChunkingTransformerPolicy(nn.Module):
         self.action_head = nn.Linear(cfg.d_model, cfg.action_dim)
 
         self._reset_parameters()
-        self._create_optimizer()
-
-    def _create_optimizer(self):
-        optimizer_params_dicts = [
-            {
-                "params": [
-                    p for n, p in self.named_parameters() if not n.startswith("backbone") and p.requires_grad
-                ]
-            },
-            {
-                "params": [
-                    p for n, p in self.named_parameters() if n.startswith("backbone") and p.requires_grad
-                ],
-                "lr": self.cfg.lr_backbone,
-            },
-        ]
-        self.optimizer = torch.optim.AdamW(
-            optimizer_params_dicts, lr=self.cfg.lr, weight_decay=self.cfg.weight_decay
-        )
 
     def _reset_parameters(self):
         """Xavier-uniform initialization of the transformer parameters as in the original code."""

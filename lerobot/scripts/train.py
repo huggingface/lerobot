@@ -8,6 +8,7 @@ import hydra
 import torch
 from datasets import concatenate_datasets
 from datasets.utils import disable_progress_bars, enable_progress_bars
+from diffusers.optimization import get_scheduler
 from torch import Tensor
 
 from lerobot.common.datasets.factory import make_dataset
@@ -24,41 +25,41 @@ from lerobot.common.utils.utils import (
 from lerobot.scripts.eval import eval_policy
 
 
-def update_diffusion(self, policy, batch: dict[str, Tensor], **_) -> dict:
-        """Run the model in train mode, compute the loss, and do an optimization step."""
-        start_time = time.time()
-        policy.diffusion.train()
-        batch = policy.normalize_inputs(batch)
-        loss = policy.forward(batch)["loss"]
-        loss.backward()
+def update_diffusion(policy, batch: dict[str, Tensor], optimizer, lr_scheduler) -> dict:
+    """Run the model in train mode, compute the loss, and do an optimization step."""
+    start_time = time.time()
+    policy.diffusion.train()
+    batch = policy.normalize_inputs(batch)
+    loss = policy.forward(batch)["loss"]
+    loss.backward()
 
-        # TODO(rcadene): self.unnormalize_outputs(out_dict)
+    # TODO(rcadene): self.unnormalize_outputs(out_dict)
 
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            policy.diffusion.parameters(),
-            policy.cfg.grad_clip_norm,
-            error_if_nonfinite=False,
-        )
+    grad_norm = torch.nn.utils.clip_grad_norm_(
+        policy.diffusion.parameters(),
+        policy.cfg.grad_clip_norm,
+        error_if_nonfinite=False,
+    )
 
-        policy.optimizer.step()
-        policy.optimizer.zero_grad()
-        policy.lr_scheduler.step()
+    optimizer.step()
+    optimizer.zero_grad()
+    lr_scheduler.step()
 
-        if policy.ema is not None:
-            policy.ema.step(policy.diffusion)
+    if policy.ema is not None:
+        policy.ema.step(policy.diffusion)
 
-        info = {
-            "loss": loss.item(),
-            "grad_norm": float(grad_norm),
-            "lr": policy.lr_scheduler.get_last_lr()[0],
-            "update_s": time.time() - start_time,
-        }
+    info = {
+        "loss": loss.item(),
+        "grad_norm": float(grad_norm),
+        "lr": lr_scheduler.get_last_lr()[0],
+        "update_s": time.time() - start_time,
+    }
 
-        return info
+    return info
 
 
 
-def update_act(self, policy, batch: dict[str, Tensor], **_) -> dict:
+def update_act(policy, batch: dict[str, Tensor], optimizer) -> dict:
     start_time = time.time()
     policy.train()
     batch = policy.normalize_inputs(batch)
@@ -71,8 +72,8 @@ def update_act(self, policy, batch: dict[str, Tensor], **_) -> dict:
         policy.parameters(), policy.cfg.grad_clip_norm, error_if_nonfinite=False
     )
 
-    policy.optimizer.step()
-    policy.optimizer.zero_grad()
+    optimizer.step()
+    optimizer.zero_grad()
 
     train_info = {
         "loss": loss.item(),
@@ -82,6 +83,8 @@ def update_act(self, policy, batch: dict[str, Tensor], **_) -> dict:
     }
 
     return train_info
+
+
 
 @hydra.main(version_base=None, config_name="default", config_path="../configs")
 def train_cli(cfg: dict):
@@ -295,6 +298,43 @@ def train(cfg: dict, out_dir=None, job_name=None):
     logging.info("make_policy")
     policy = make_policy(cfg, dataset_stats=offline_dataset.stats)
 
+    # Temporary hack to move optimizer out of policy
+    if isinstance(policy, ActPolicy):
+        optimizer_params_dicts = [
+            {
+                "params": [
+                    p for n, p in policy.named_parameters() if not n.startswith("backbone") and p.requires_grad
+                ]
+            },
+            {
+                "params": [
+                    p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad
+                ],
+                "lr": policy.cfg.lr_backbone,
+            },
+        ]
+        optimizer = torch.optim.AdamW(
+            optimizer_params_dicts, lr=policy.cfg.lr, weight_decay=policy.cfg.weight_decay
+        )
+    elif isinstance(policy, DiffusionPolicy):
+        optimizer = torch.optim.Adam(
+            policy.diffusion.parameters(), cfg.lr, cfg.adam_betas, cfg.adam_eps, cfg.adam_weight_decay
+        )
+        # TODO(rcadene): modify lr scheduler so that it doesn't depend on epochs but steps
+        global_step = 0
+        # configure lr scheduler
+        lr_scheduler = get_scheduler(
+            cfg.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=cfg.lr_warmup_steps,
+            num_training_steps=cfg.offline_steps,
+            # pytorch assumes stepping LRScheduler every epoch
+            # however huggingface diffusers steps it every batch
+            last_epoch=global_step - 1,
+        )
+
+
+
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
 
@@ -355,11 +395,10 @@ def train(cfg: dict, out_dir=None, job_name=None):
             batch[key] = batch[key].to(cfg.device, non_blocking=True)
 
         # Temporary hack to move update outside of policy
-        if isinstance(policy, DiffusionPolicy):
-            train_info = update_diffusion(policy, batch)
-        elif isinstance(policy, ActPolicy):
-            train_info = update_act(policy, batch)
-
+        if isinstance(policy, ActPolicy):
+            train_info = update_act(policy, batch, optimizer)
+        elif isinstance(policy, DiffusionPolicy):
+            train_info = update_diffusion(policy, batch, optimizer, lr_scheduler)
 
         # TODO(rcadene): is it ok if step_t=0 = 0 and not 1 as previously done?
         if step % cfg.log_freq == 0:
