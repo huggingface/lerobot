@@ -118,30 +118,7 @@ wandb login
 
 ### Visualize datasets
 
-You can import our dataset class, download the data from the HuggingFace hub and use our rendering utilities:
-```python
-""" Copy pasted from `examples/1_visualize_dataset.py` """
-import os
-from pathlib import Path
-
-import lerobot
-from lerobot.common.datasets.aloha import AlohaDataset
-from lerobot.scripts.visualize_dataset import render_dataset
-
-print(lerobot.available_datasets)
-# >>> ['aloha_sim_insertion_human', 'aloha_sim_insertion_scripted', 'aloha_sim_transfer_cube_human', 'aloha_sim_transfer_cube_scripted', 'pusht', 'xarm_lift_medium']
-
-# TODO(rcadene): remove DATA_DIR
-dataset = AlohaDataset("pusht", root=Path(os.environ.get("DATA_DIR")))
-
-video_paths = render_dataset(
-    dataset,
-    out_dir="outputs/visualize_dataset/example",
-    max_num_episodes=1,
-)
-print(video_paths)
-# ['outputs/visualize_dataset/example/episode_0.mp4']
-```
+Check out [examples](./examples) to see how you can import our dataset class, download the data from the HuggingFace hub and use our rendering utilities.
 
 Or you can achieve the same result by executing our script from the command line:
 ```bash
@@ -153,7 +130,7 @@ hydra.run.dir=outputs/visualize_dataset/example
 
 ### Evaluate a pretrained policy
 
-Check out [example 2](./examples/2_evaluate_pretrained_policy.py) to see how you can load a pretrained policy from HuggingFace hub, load up the corresponding environment and model, and run an evaluation.
+Check out [examples](./examples) to see how you can load a pretrained policy from HuggingFace hub, load up the corresponding environment and model, and run an evaluation.
 
 Or you can achieve the same result by executing our script from the command line:
 ```bash
@@ -176,23 +153,29 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ### Train your own policy
 
-You can import our dataset, environment, policy classes, and use our training utilities (if some data is missing, it will be automatically downloaded from HuggingFace hub): check out [example 3](./examples/3_train_policy.py). After you run this, you may want to revisit [example 2](./examples/2_evaluate_pretrained_policy.py) to evaluate your training output!
+Check out [examples](./examples) to see how you can start training a model on a dataset, which will be automatically downloaded if needed.
 
 In general, you can use our training script to easily train any policy on any environment:
 ```bash
 python lerobot/scripts/train.py \
 env=aloha \
 task=sim_insertion \
-dataset_id=aloha_sim_insertion_scripted \
+repo_id=lerobot/aloha_sim_insertion_scripted \
 policy=act \
 hydra.run.dir=outputs/train/aloha_act
 ```
+
+After training, you may want to revisit model evaluation to change the evaluation settings. In fact, during training every checkpoint is already evaluated but on a low number of episodes for efficiency. Check out [example](./examples) to evaluate any model checkpoint on more episodes to increase statistical significance.
 
 ## Contribute
 
 If you would like to contribute to 🤗 LeRobot, please check out our [contribution guide](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md).
 
 ### Add a new dataset
+
+```python
+# TODO(rcadene, AdilZouitine): rewrite this section
+```
 
 To add a dataset to the hub, first login and use a token generated from [huggingface settings](https://huggingface.co/settings/tokens) with write access:
 ```bash
@@ -254,6 +237,10 @@ python tests/scripts/mock_dataset.py --in-data-dir data/$DATASET --out-data-dir 
 ```
 
 ### Add a pretrained policy
+
+```python
+# TODO(rcadene, alexander-soare): rewrite this section
+```
 
 Once you have trained a policy you may upload it to the HuggingFace hub.
 

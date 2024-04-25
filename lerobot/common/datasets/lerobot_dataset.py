@@ -1,36 +1,21 @@
 from pathlib import Path
 
+import datasets
 import torch
 
 from lerobot.common.datasets.utils import (
     load_episode_data_index,
     load_hf_dataset,
+    load_info,
     load_previous_and_future_frames,
     load_stats,
 )
 
 
-class XarmDataset(torch.utils.data.Dataset):
-    """
-    https://huggingface.co/datasets/lerobot/xarm_lift_medium
-    https://huggingface.co/datasets/lerobot/xarm_lift_medium_replay
-    https://huggingface.co/datasets/lerobot/xarm_push_medium
-    https://huggingface.co/datasets/lerobot/xarm_push_medium_replay
-    """
-
-    # Copied from lerobot/__init__.py
-    available_datasets = [
-        "xarm_lift_medium",
-        "xarm_lift_medium_replay",
-        "xarm_push_medium",
-        "xarm_push_medium_replay",
-    ]
-    fps = 15
-    image_keys = ["observation.image"]
-
+class LeRobotDataset(torch.utils.data.Dataset):
     def __init__(
         self,
-        dataset_id: str,
+        repo_id: str,
         version: str | None = "v1.1",
         root: Path | None = None,
         split: str = "train",
@@ -38,16 +23,25 @@ class XarmDataset(torch.utils.data.Dataset):
         delta_timestamps: dict[list[float]] | None = None,
     ):
         super().__init__()
-        self.dataset_id = dataset_id
+        self.repo_id = repo_id
         self.version = version
         self.root = root
         self.split = split
         self.transform = transform
         self.delta_timestamps = delta_timestamps
         # load data from hub or locally when root is provided
-        self.hf_dataset = load_hf_dataset(dataset_id, version, root, split)
-        self.episode_data_index = load_episode_data_index(dataset_id, version, root)
-        self.stats = load_stats(dataset_id, version, root)
+        self.hf_dataset = load_hf_dataset(repo_id, version, root, split)
+        self.episode_data_index = load_episode_data_index(repo_id, version, root)
+        self.stats = load_stats(repo_id, version, root)
+        self.info = load_info(repo_id, version, root)
+
+    @property
+    def fps(self) -> int:
+        return self.info["fps"]
+
+    @property
+    def image_keys(self) -> list[str]:
+        return [key for key, feats in self.hf_dataset.features.items() if isinstance(feats, datasets.Image)]
 
     @property
     def num_samples(self) -> int:

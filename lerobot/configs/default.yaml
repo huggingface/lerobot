@@ -26,7 +26,8 @@ fps: ???
 
 offline_prioritized_sampler: true
 
-dataset_id: ???
+dataset:
+  repo_id: ???
 
 n_action_steps: ???
 n_obs_steps: ???

@@ -4,9 +4,6 @@ import gymnasium as gym
 import pytest
 
 import lerobot
-from lerobot.common.datasets.aloha import AlohaDataset
-from lerobot.common.datasets.pusht import PushtDataset
-from lerobot.common.datasets.xarm import XarmDataset
 from lerobot.common.policies.act.modeling_act import ActionChunkingTransformerPolicy
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.common.policies.tdmpc.policy import TDMPCPolicy
@@ -27,25 +24,6 @@ def test_available_env_task(env_name: str, task_name: list):
     assert gym_handle in gym.envs.registry, gym_handle
 
 
-@pytest.mark.parametrize(
-    "env_name, dataset_class",
-    [
-        ("aloha", AlohaDataset),
-        ("pusht", PushtDataset),
-        ("xarm", XarmDataset),
-    ],
-)
-def test_available_datasets(env_name, dataset_class):
-    """
-    This test verifies that the class attribute `available_datasets` for all
-    dataset classes is consistent with those listed in `lerobot/__init__.py`.
-    """
-    available_env_datasets = lerobot.available_datasets[env_name]
-    assert set(available_env_datasets) == set(
-        dataset_class.available_datasets
-    ), f"{env_name=} {available_env_datasets=}"
-
-
 def test_available_policies():
     """
     This test verifies that the class attribute `name` for all policies is
@@ -58,3 +36,12 @@ def test_available_policies():
     ]
     policies = [pol_cls.name for pol_cls in policy_classes]
     assert set(policies) == set(lerobot.available_policies), policies
+
+
+def test_print():
+    print(lerobot.available_envs)
+    print(lerobot.available_tasks_per_env)
+    print(lerobot.available_datasets)
+    print(lerobot.available_datasets_per_env)
+    print(lerobot.available_policies)
+    print(lerobot.available_policies_per_env)
