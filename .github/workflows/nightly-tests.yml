@@ -1,11 +1,8 @@
 # Inspired by
 # https://github.com/huggingface/peft/blob/main/.github/workflows/nightly.yml
-name: Self-hosted runner with slow tests (scheduled)
+name: Nightly Tests
 
 on:
-  pull_request:  # TODO(aliberts): for testing, delete before merge
-    branches:
-      - main
   workflow_dispatch:
   schedule:
     - cron: "0 2 * * *"
@@ -35,7 +32,7 @@ jobs:
       - name: Tests
         env:
           DATA_DIR: tests/data
-        run: pytest -v --cov=./lerobot --cov-report=xml --disable-warnings tests
+        run: pytest -v --cov=./lerobot --disable-warnings tests
       - name: Tests end-to-end
         env:
           DATA_DIR: tests/data
