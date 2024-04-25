@@ -429,7 +429,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
             for key in batch:
                 batch[key] = batch[key].to(cfg.device, non_blocking=True)
 
-            train_info = policy.update(batch, step)
+            train_info = update_policy(policy, batch, optimizer, cfg.grad_clip_norm, lr_scheduler)
 
             if step % cfg.log_freq == 0:
                 log_train_info(logger, train_info, step, cfg, online_dataset, is_offline)
