@@ -19,7 +19,6 @@ folder = Path(snapshot_download(hub_id))
 
 config_path = folder / "config.yaml"
 weights_path = folder / "model.pt"
-stats_path = folder / "stats.pth"  # normalization stats
 
 # Override some config parameters to do with evaluation.
 overrides = [
@@ -36,5 +35,4 @@ cfg = init_hydra_config(config_path, overrides)
 eval(
     cfg,
     out_dir=f"outputs/eval/example_{cfg.env.name}_{cfg.policy.name}",
-    stats_path=stats_path,
 )

@@ -263,15 +263,13 @@ Secondly, assuming you have trained a policy, you need:
 
 - `config.yaml` which you can get from the `.hydra` directory of your training output folder.
 - `model.pt` which should be one of the saved models in the `models` directory of your training output folder (they won't be named `model.pt` but you will need to choose one).
-- `stats.pth` which should point to the same file in the dataset directory (found in `data/{dataset_name}`).
 
 To upload these to the hub, prepare a folder with the following structure (you can use symlinks rather than copying):
 
 ```
 to_upload
     ├── config.yaml
-    ├── model.pt
-    └── stats.pth
+    └── model.pt
 ```
 
 With the folder prepared, run the following with a desired revision ID.
