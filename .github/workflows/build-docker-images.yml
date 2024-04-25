@@ -3,9 +3,9 @@
 name: Build Docker images (scheduled)
 
 on:
-  # pull_request:  # TODO(aliberts): for testing, delete before merge
-  #   branches:
-  #     - main
+  pull_request:  # TODO(aliberts): for testing, delete before merge
+    branches:
+      - main
   workflow_dispatch:
   workflow_call:
   schedule:
@@ -13,7 +13,7 @@ on:
 
 # concurrency:
 #   group: docker-image-builds
-#   cancel-in-progress: true
+#   cancel-in-progress: false
 
 env:
   PYTHON_VERSION: "3.10"
@@ -36,22 +36,30 @@ jobs:
           sudo du -sh /usr/local/lib/
           sudo du -sh /usr/share/
           sudo df -h
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Check out code
         uses: actions/checkout@v4
+
+      - name: Select local envs dependencies  # HACK(aliberts): to be removed for release
+        run: cp -t . .github/poetry/ci/pyproject.toml .github/poetry/ci/poetry.lock
+
       - name: Checkout gym-aloha
         uses: actions/checkout@v4
         with:
           repository: huggingface/gym-aloha
           path: envs/gym-aloha
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
       - name: Checkout gym-xarm
         uses: actions/checkout@v4
         with:
           repository: huggingface/gym-xarm
           path: envs/gym-xarm
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
       - name: Checkout gym-pusht
         uses: actions/checkout@v4
         with:
@@ -116,26 +124,34 @@ jobs:
           sudo df -h
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Check out code
         uses: actions/checkout@v4
+
+      - name: Select local envs dependencies  # HACK(aliberts): to be removed for release
+        run: cp -t . .github/poetry/ci/pyproject.toml .github/poetry/ci/poetry.lock
+
       - name: Checkout gym-aloha
         uses: actions/checkout@v4
         with:
           repository: huggingface/gym-aloha
           path: envs/gym-aloha
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
       - name: Checkout gym-xarm
         uses: actions/checkout@v4
         with:
           repository: huggingface/gym-xarm
           path: envs/gym-xarm
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
       - name: Checkout gym-pusht
         uses: actions/checkout@v4
         with:
           repository: huggingface/gym-pusht
           path: envs/gym-pusht
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
       - name: Login to DockerHub
         uses: docker/login-action@v3
         with:
