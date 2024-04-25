@@ -44,7 +44,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Select local envs dependencies  # HACK(aliberts): to be removed for release
-        run: cp -t . .github/poetry/ci/pyproject.toml .github/poetry/ci/poetry.lock
+        run: cp -t . .github/poetry/builds/pyproject.toml .github/poetry/builds/poetry.lock
 
       - name: Checkout gym-aloha
         uses: actions/checkout@v4
