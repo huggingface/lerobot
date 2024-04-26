@@ -2,7 +2,7 @@ import torch
 from torch import Tensor, nn
 
 
-def _create_stats_buffers(
+def create_stats_buffers(
     shapes: dict[str, list[int]],
     modes: dict[str, str],
     stats: dict[str, dict[str, Tensor]] | None = None,
@@ -100,7 +100,7 @@ class Normalize(nn.Module):
         self.modes = modes
         self.stats = stats
         # `self.buffer_observation_state["mean"]` contains `torch.tensor(state_dim)`
-        stats_buffers = _create_stats_buffers(shapes, modes, stats)
+        stats_buffers = create_stats_buffers(shapes, modes, stats)
         for key, buffer in stats_buffers.items():
             setattr(self, "buffer_" + key.replace(".", "_"), buffer)
 
@@ -177,7 +177,7 @@ class Unnormalize(nn.Module):
         self.modes = modes
         self.stats = stats
         # `self.buffer_observation_state["mean"]` contains `torch.tensor(state_dim)`
-        stats_buffers = _create_stats_buffers(shapes, modes, stats)
+        stats_buffers = create_stats_buffers(shapes, modes, stats)
         for key, buffer in stats_buffers.items():
             setattr(self, "buffer_" + key.replace(".", "_"), buffer)
 
