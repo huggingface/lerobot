@@ -41,7 +41,6 @@ class TDMPCPolicy(nn.Module):
         self.model.to(self.device)
         self.model_target = deepcopy(self.model)
         self.optim = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
-        self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr)
         self.model.eval()
         self.model_target.eval()
 
@@ -59,7 +58,8 @@ class TDMPCPolicy(nn.Module):
 
     def reset(self):
         """
-        Clear observation and action queues. Should be called on `env.reset()`
+        Clear observation and action queues. Clear previous means for warm starting of MPPI/CEM. Should be
+        called on `env.reset()`
         """
         self._queues = {
             "observation.image": deque(maxlen=self.n_obs_steps),
@@ -119,50 +119,6 @@ class TDMPCPolicy(nn.Module):
 
         action = self._queues["action"].popleft()
         return action
-
-    @torch.no_grad()
-    def estimate_value(self, z: Tensor, actions: Tensor):
-        """Estimates the value of a trajectory as per eqn 4 of the FOWM paper.
-
-        Args:
-            z: (batch, latent_dim) tensor of initial latent states.
-            actions: (horizon, batch, action_dim) tensor of action trajectories.
-        Returns:
-            (batch,) tensor of values.
-        """
-        # Initialize return and running discount factor.
-        G, running_discount = 0, 1
-        # Iterate over the actions in the trajectory to simulate the trajectory using the latent dynamics
-        # model. Keep track of return.
-        for t in range(actions.shape[0]):
-            # We will compute the reward in a moment. First compute the uncertainty regularizer from eqn 4
-            # of the FOWM paper.
-
-            # TODO(now): The uncertainty cost is the lambda used in eq 4 of the FOWM paper. Give it a better
-            # name.
-            if self.cfg.uncertainty_cost > 0:
-                regularization = -(self.cfg.uncertainty_cost * self.model.Qs(z, actions[t]).std(0))
-            else:
-                regularization = 0
-            # Estimate the next state (latent) and reward.
-            z, reward = self.model.latent_dynamics_and_reward(z, actions[t])
-            # Update the return and running discount.
-            G += running_discount * (reward + regularization)
-            running_discount *= self.cfg.discount
-        # Add the estimated value of the final state (using the minimum for a conservative estimate).
-        # Do so by predicting the next action (with added noise), then computing the
-        # TODO(now): Should there be added noise here at inference time?
-        next_action = self.model.pi(z, self.cfg.min_std)  # (batch, action_dim)
-        terminal_values = self.model.Qs(z, next_action)
-        # Randomly choose 2 of the Qs for terminal value estimation (as in App C. of the FOWM paper).
-        if self.cfg.num_q > 2:
-            G += running_discount * torch.min(terminal_values[torch.randint(0, self.cfg.num_q, size=(2,))])
-        else:
-            G += running_discount * torch.min(terminal_values)
-        # Finally, also regularize the terminal value.
-        if self.cfg.uncertainty_cost > 0:
-            G -= running_discount * self.cfg.uncertainty_cost * terminal_values.std(0)
-        return G
 
     @torch.no_grad()
     def plan(self, z: Tensor) -> Tensor:
@@ -258,18 +214,55 @@ class TDMPCPolicy(nn.Module):
         # TODO(now): This clamping makes an assumption about the action space.
         return torch.clamp(action, -1, 1)
 
-    def forward(self, batch):
-        # TODO(alexander-soare): Refactor TDMPC and make it comply with the policy interface documentation.
-        raise NotImplementedError()
+    @torch.no_grad()
+    def estimate_value(self, z: Tensor, actions: Tensor):
+        """Estimates the value of a trajectory as per eqn 4 of the FOWM paper.
 
-    def update(self, batch: dict[str, Tensor]):
-        """Main update function. Corresponds to one iteration of the model learning."""
-        start_time = time.time()
+        Args:
+            z: (batch, latent_dim) tensor of initial latent states.
+            actions: (horizon, batch, action_dim) tensor of action trajectories.
+        Returns:
+            (batch,) tensor of values.
+        """
+        # Initialize return and running discount factor.
+        G, running_discount = 0, 1
+        # Iterate over the actions in the trajectory to simulate the trajectory using the latent dynamics
+        # model. Keep track of return.
+        for t in range(actions.shape[0]):
+            # We will compute the reward in a moment. First compute the uncertainty regularizer from eqn 4
+            # of the FOWM paper.
+
+            # TODO(now): The uncertainty cost is the lambda used in eq 4 of the FOWM paper. Give it a better
+            # name.
+            if self.cfg.uncertainty_cost > 0:
+                regularization = -(self.cfg.uncertainty_cost * self.model.Qs(z, actions[t]).std(0))
+            else:
+                regularization = 0
+            # Estimate the next state (latent) and reward.
+            z, reward = self.model.latent_dynamics_and_reward(z, actions[t])
+            # Update the return and running discount.
+            G += running_discount * (reward + regularization)
+            running_discount *= self.cfg.discount
+        # Add the estimated value of the final state (using the minimum for a conservative estimate).
+        # Do so by predicting the next action (with added noise), then computing the
+        # TODO(now): Should there be added noise here at inference time?
+        next_action = self.model.pi(z, self.cfg.min_std)  # (batch, action_dim)
+        terminal_values = self.model.Qs(z, next_action)
+        # Randomly choose 2 of the Qs for terminal value estimation (as in App C. of the FOWM paper).
+        if self.cfg.num_q > 2:
+            G += running_discount * torch.min(terminal_values[torch.randint(0, self.cfg.num_q, size=(2,))])
+        else:
+            G += running_discount * torch.min(terminal_values)
+        # Finally, also regularize the terminal value.
+        if self.cfg.uncertainty_cost > 0:
+            G -= running_discount * self.cfg.uncertainty_cost * terminal_values.std(0)
+        return G
+
+    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Run the batch through the model and compute the loss."""
         info = {}
 
-        self.optim.zero_grad(set_to_none=True)
-        self.model.train()
-
+        # TODO(alexander-soare): Refactor TDMPC and make it comply with the policy interface documentation.
         batch_size = batch["index"].shape[0]
 
         # TODO(now): batch first
@@ -390,6 +383,30 @@ class TDMPCPolicy(nn.Module):
             + self.cfg.pi_coef * pi_loss
         )
 
+        info.update(
+            {
+                "consistency_loss": consistency_loss,
+                "reward_loss": reward_loss,
+                "Q_value_loss": q_value_loss,
+                "V_value_loss": v_value_loss,
+                "pi_loss": pi_loss,
+                "loss": loss,
+                "sum_loss": loss * self.cfg.horizon,
+            }
+        )
+
+        return info
+
+    def update(self, batch: dict[str, Tensor]) -> dict[str, float]:
+        """Run the model in train mode, compute the loss, and do an optimization step."""
+        start_time = time.time()
+
+        self.optim.zero_grad(set_to_none=True)
+        self.model.train()
+
+        fwd_info = self.forward(batch)
+        loss = fwd_info["loss"]
+
         if torch.isnan(loss).item():
             raise RuntimeError("loss has nan")
 
@@ -400,20 +417,18 @@ class TDMPCPolicy(nn.Module):
         )
         self.optim.step()
 
-        info.update(
-            {
-                "consistency_loss": float(consistency_loss.item()),
-                "reward_loss": float(reward_loss.item()),
-                "Q_value_loss": float(q_value_loss.item()),
-                "V_value_loss": float(v_value_loss.item()),
-                "pi_loss": float(pi_loss.item()),
-                "loss": float(loss.item()),
-                "grad_norm": float(grad_norm),
-                "lr": self.cfg.lr,
-                "update_s": time.time() - start_time,
-            }
-        )
-        info["sum_loss"] = info["loss"] * self.cfg.horizon
+        info = {
+            "consistency_loss": float(fwd_info["consistency_loss"].item()),
+            "reward_loss": float(fwd_info["reward_loss"].item()),
+            "Q_value_loss": float(fwd_info["Q_value_loss"].item()),
+            "V_value_loss": float(fwd_info["V_value_loss"].item()),
+            "pi_loss": float(fwd_info["pi_loss"].item()),
+            "loss": float(loss.item()),
+            "sum_loss": float(fwd_info["sum_loss"].item()),
+            "grad_norm": float(grad_norm.item()),
+            "lr": self.cfg.lr,
+            "update_s": time.time() - start_time,
+        }
 
         # Finalize update step by incrementing the step buffer and updating the ema model weights.
         # TODO(now): remove
@@ -427,31 +442,8 @@ class TDMPCPolicy(nn.Module):
         return info
 
 
-def _flatten_forward_unflatten(fn: Callable[[Tensor], Tensor], image_tensor: Tensor) -> Tensor:
-    """Helper to temporarily flatten extra dims at the start of the image tensor.
-
-    Args:
-        fn: Callable that the image tensor will be passed to. It should accept (B, C, H, W) and return
-            (B, *), where * is any number of dimensions.
-        image_tensor: An image tensor of shape (**, C, H, W), where ** is any number of dimensions, generally
-            different from *.
-    Returns:
-        A return value from the callable reshaped to (**, *).
-    """
-    if image_tensor.ndim == 4:
-        return fn(image_tensor)
-    start_dims = image_tensor.shape[:-3]
-    inp = torch.flatten(image_tensor, end_dim=-4)
-    flat_out = fn(inp)
-    return torch.reshape(flat_out, (*start_dims, *flat_out.shape[1:]))
-
-
 class TOLD(nn.Module):
-    """Task-Oriented Latent Dynamics (TOLD) model used in TD-MPC.
-
-    TODO(now): Maybe we need a note about the action space being assumed to be relative.
-
-    """
+    """Task-Oriented Latent Dynamics (TOLD) model used in TD-MPC."""
 
     def __init__(self, cfg):
         super().__init__()
@@ -693,7 +685,7 @@ class _RandomShiftsAug(nn.Module):
         self.pad = int(cfg.img_size / 21)
 
     def forward(self, x):
-        n, c, h, w = x.size()
+        n, _, h, w = x.size()
         assert h == w
         padding = tuple([self.pad] * 4)
         x = F.pad(x, padding, "replicate")
@@ -735,3 +727,22 @@ def _update_ema_parameters(ema_net: nn.Module, net: nn.Module, alpha: float):
             with torch.no_grad():
                 p_ema.mul_(alpha)
                 p_ema.add_(p.to(dtype=p_ema.dtype).data, alpha=1 - alpha)
+
+
+def _flatten_forward_unflatten(fn: Callable[[Tensor], Tensor], image_tensor: Tensor) -> Tensor:
+    """Helper to temporarily flatten extra dims at the start of the image tensor.
+
+    Args:
+        fn: Callable that the image tensor will be passed to. It should accept (B, C, H, W) and return
+            (B, *), where * is any number of dimensions.
+        image_tensor: An image tensor of shape (**, C, H, W), where ** is any number of dimensions, generally
+            different from *.
+    Returns:
+        A return value from the callable reshaped to (**, *).
+    """
+    if image_tensor.ndim == 4:
+        return fn(image_tensor)
+    start_dims = image_tensor.shape[:-3]
+    inp = torch.flatten(image_tensor, end_dim=-4)
+    flat_out = fn(inp)
+    return torch.reshape(flat_out, (*start_dims, *flat_out.shape[1:]))
