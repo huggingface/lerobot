@@ -8,6 +8,12 @@ on:
     branches:
       - main
 
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+
 jobs:
   tests:
     runs-on: ubuntu-latest
