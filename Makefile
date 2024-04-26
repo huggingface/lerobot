@@ -2,7 +2,7 @@
 
 # Use python from poetry env if available
 POETRY_PATH := $(shell command -v poetry && poetry run which python | xargs dirname || echo "")
-export PATH := $(if $(POETRY_PATH),$(POETRY_PATH):$(PATH),$(PATH))
+export PATH := $(shell if $(POETRY_PATH),$(POETRY_PATH):$(PATH),$(PATH))
 
 build-cpu:
 	docker build -t lerobot:latest -f docker/lerobot-cpu/Dockerfile .
