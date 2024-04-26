@@ -26,13 +26,12 @@ from lerobot.scripts.eval import eval_policy
 
 def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
     start_time = time.time()
+    model = policy.diffusion if hasattr(policy, "diffusion") else policy  # TODO: hacky, remove this line
     model.train()
     output_dict = policy.forward(batch)
     # TODO(rcadene): policy.unnormalize_outputs(out_dict)
     loss = output_dict["loss"]
     loss.backward()
-
-    model = policy.diffusion if hasattr(policy, "diffusion") else policy  # TODO: hacky, remove this line
     grad_norm = torch.nn.utils.clip_grad_norm_(
         model.parameters(),
         grad_clip_norm,
