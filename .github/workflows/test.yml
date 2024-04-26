@@ -45,6 +45,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test, aloha, xarm, pusht]"
 
+      - name: Tailscale Wait
+        if: always()
+        uses: huggingface/tailscale-action@v1
+        with:
+          waitForSSH: true
+          authkey: ${{ secrets.TAILSCALE_SSH_AUTHKEY }}
+          slackChannel: ${{ secrets.SLACK_CIFEEDBACK_CHANNEL }}
+          slackToken: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
+
       - name: Test with pytest
         run: pytest -v --cov=./lerobot tests
 
