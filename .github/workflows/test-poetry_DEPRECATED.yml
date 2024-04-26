@@ -1,0 +1,120 @@
+# name: Tests poetry
+
+# on:
+#   pull_request:
+#     branches:
+#       - main
+#   push:
+#     branches:
+#       - main
+
+# jobs:
+#   tests:
+#     runs-on: ubuntu-latest
+#     env:
+#       POETRY_VERSION: 1.8.2
+#       DATA_DIR: tests/data
+#       MUJOCO_GL: egl
+#     steps:
+#       #----------------------------------------------
+#       #       check-out repo and set-up python
+#       #----------------------------------------------
+#       - name: Check out repository
+#         uses: actions/checkout@v4
+#         with:
+#           lfs: true
+
+#       - name: Set up python
+#         id: setup-python
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: '3.10'
+
+#       - name: Add SSH key for installing envs
+#         uses: webfactory/ssh-agent@v0.9.0
+#         with:
+#           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+#       #----------------------------------------------
+#       #         install & configure poetry
+#       #----------------------------------------------
+#       - name: Load cached Poetry installation
+#         id: restore-poetry-cache
+#         uses: actions/cache/restore@v3
+#         with:
+#           path: ~/.local
+#           key: poetry-${{ env.POETRY_VERSION }}
+
+#       - name: Install Poetry
+#         if: steps.restore-poetry-cache.outputs.cache-hit != 'true'
+#         uses: snok/install-poetry@v1
+#         with:
+#           version: ${{ env.POETRY_VERSION }}
+#           virtualenvs-create: true
+#           installer-parallel: true
+
+#       - name: Save cached Poetry installation
+#         if: |
+#           steps.restore-poetry-cache.outputs.cache-hit != 'true' &&
+#           github.ref_name == 'main'
+#         id: save-poetry-cache
+#         uses: actions/cache/save@v3
+#         with:
+#           path: ~/.local
+#           key: poetry-${{ env.POETRY_VERSION }}
+
+#       - name: Configure Poetry
+#         run: poetry config virtualenvs.in-project true
+
+#       #----------------------------------------------
+#       #           install dependencies
+#       #----------------------------------------------
+#       # TODO(aliberts): move to gpu runners
+#       - name: Select cpu dependencies  # HACK
+#         run: cp -t . .github/poetry/cpu/pyproject.toml .github/poetry/cpu/poetry.lock
+
+#       - name: Load cached venv
+#         id: restore-dependencies-cache
+#         uses: actions/cache/restore@v3
+#         with:
+#           path: .venv
+#           key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
+
+#       - name: Install dependencies
+#         if: steps.restore-dependencies-cache.outputs.cache-hit != 'true'
+#         run: poetry install --no-interaction --no-root --all-extras
+
+#       - name: Save cached venv
+#         if: |
+#             steps.restore-dependencies-cache.outputs.cache-hit != 'true' &&
+#             github.ref_name == 'main'
+#         id: save-dependencies-cache
+#         uses: actions/cache/save@v3
+#         with:
+#           path: .venv
+#           key: venv-${{ steps.setup-python.outputs.python-version }}-${{ env.POETRY_VERSION }}-${{ hashFiles('**/poetry.lock') }}
+
+#       - name: Install EGL
+#         run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
+
+#       #----------------------------------------------
+#       #             install project
+#       #----------------------------------------------
+#       - name: Install project
+#         run: poetry install --no-interaction --all-extras
+
+#       #----------------------------------------------
+#       #            run tests & coverage
+#       #----------------------------------------------
+#       - name: Run tests
+#         run: |
+#           source .venv/bin/activate
+#           pytest -v --cov=./lerobot tests
+
+#       #----------------------------------------------
+#       #            run end-to-end tests
+#       #----------------------------------------------
+#       - name: Tests end-to-end
+#         run: |
+#           source .venv/bin/activate
+#           make test-end-to-end
