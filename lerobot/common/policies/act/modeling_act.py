@@ -72,8 +72,11 @@ class ActionChunkingTransformerPolicy(nn.Module):
         if cfg is None:
             cfg = ActionChunkingTransformerConfig()
         self.cfg = cfg
-        self.normalize_inputs = Normalize(cfg.input_shapes, cfg.normalize_input_modes, dataset_stats)
-        self.unnormalize_outputs = Unnormalize(cfg.output_shapes, cfg.unnormalize_output_modes, dataset_stats)
+        self.normalize_inputs = Normalize(cfg.input_shapes, cfg.input_normalization_modes, dataset_stats)
+        self.normalize_targets = Normalize(cfg.output_shapes, cfg.output_normalization_modes, dataset_stats)
+        self.unnormalize_outputs = Unnormalize(
+            cfg.output_shapes, cfg.output_normalization_modes, dataset_stats
+        )
 
         # BERT style VAE encoder with input [cls, *joint_space_configuration, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
@@ -216,6 +219,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
         self.train()
 
         batch = self.normalize_inputs(batch)
+        batch = self.normalize_targets(batch)
 
         loss_dict = self.forward(batch)
         # TODO(rcadene): self.unnormalize_outputs(out_dict)
