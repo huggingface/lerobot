@@ -53,14 +53,13 @@ policy:
   rho: 0.5
   kappa: 0.1
   lr: 3e-4
-  std_schedule: ${policy.min_std}
   per: true
   per_alpha: 0.6
   per_beta: 0.4
   grad_clip_norm: 10
   seed_steps: 0
   update_freq: 2
-  tau: 0.01
+  ema_alpha: 0.995
   utd: 1
 
   # offline rl

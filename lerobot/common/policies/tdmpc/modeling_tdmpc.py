@@ -23,124 +23,6 @@ import lerobot.common.policies.tdmpc.helper as h
 from lerobot.common.policies.utils import populate_queues
 from lerobot.common.utils.utils import get_safe_torch_device
 
-FIRST_FRAME = 0
-
-
-class TOLD(nn.Module):
-    """Task-Oriented Latent Dynamics (TOLD) model used in TD-MPC.
-
-    TODO(now): Maybe we need a note about the action space being assumed to be relative.
-
-    """
-
-    def __init__(self, cfg):
-        super().__init__()
-        action_dim = cfg.action_dim
-
-        self.cfg = cfg
-        self.encoder = _ObservationEncoder(cfg)
-        self._dynamics = h.dynamics(cfg.latent_dim + action_dim, cfg.mlp_dim, cfg.latent_dim)
-        self._reward = h.mlp(cfg.latent_dim + action_dim, cfg.mlp_dim, 1)
-        self._pi = h.mlp(cfg.latent_dim, cfg.mlp_dim, action_dim)
-        self._Qs = nn.ModuleList([h.q(cfg) for _ in range(cfg.num_q)])
-        self._V = h.v(cfg)
-        self.apply(h.orthogonal_init)
-        for m in [self._reward, *self._Qs]:
-            m[-1].weight.data.fill_(0)
-            m[-1].bias.data.fill_(0)
-
-    def track_q_grad(self, enable=True):
-        """Utility function. Enables/disables gradient tracking of Q-networks."""
-        for m in self._Qs:
-            h.set_requires_grad(m, enable)
-
-    def track_v_grad(self, enable=True):
-        """Utility function. Enables/disables gradient tracking of Q-networks."""
-        if hasattr(self, "_V"):
-            h.set_requires_grad(self._V, enable)
-
-    def encode(self, obs: dict[str, Tensor]) -> Tensor:
-        """Encodes an observation into its latent representation."""
-        return self.encoder(obs)
-
-    def latent_dynamics_and_reward(self, z: Tensor, a: Tensor) -> tuple[Tensor, Tensor]:
-        """Predict the next state's latent representation and the reward given a current latent and action.
-
-        Args:
-            z: (*, latent_dim) tensor for the current state's latent representation.
-            a: (*, action_dim) tensor for the action to be applied.
-        Returns:
-            A tuple containing:
-                - (*, latent_dim) tensor for the next state's latent representation.
-                - (*,) tensor for the estimated reward.
-        """
-        x = torch.cat([z, a], dim=-1)
-        return self._dynamics(x), self._reward(x).squeeze(-1)
-
-    def latent_dynamics(self, z: Tensor, a: Tensor) -> Tensor:
-        """Predict the next state's latent representation given a current latent and action.
-
-        Args:
-            z: (*, latent_dim) tensor for the current state's latent representation.
-            a: (*, action_dim) tensor for the action to be applied.
-        Returns:
-            (*, latent_dim) tensor for the next state's latent representation.
-        """
-        x = torch.cat([z, a], dim=-1)
-        return self._dynamics(x)
-
-    def pi(self, z: Tensor, std: float = 0.0) -> Tensor:
-        """Samples an action from the learned policy.
-
-        The policy can also have added (truncated) Gaussian noise injected for encouraging exploration when
-        generating rollouts for online training.
-
-        Args:
-            z: (*, latent_dim) tensor for the current state's latent representation.
-            std: The standard deviation of the injected noise.
-        Returns:
-            (*, action_dim) tensor for the sampled action.
-        """
-        action = torch.tanh(self._pi(z))
-        if std > 0:
-            std = torch.ones_like(action) * std
-            # TODO(now): Understand why this has gradient pass-through internally but not for the clip
-            # parameter.
-            return h.TruncatedNormal(action, std).sample(clip=0.3)
-        return action
-
-    def V(self, z: Tensor) -> Tensor:  # noqa: N802
-        """Predict state value (V).
-
-        Args:
-            z: (*, latent_dim) tensor for the current state's latent representation.
-        Returns:
-            (*,) tensor of estimated state values.
-        """
-        return self._V(z).squeeze(-1)
-
-    def Qs(self, z: Tensor, a: Tensor, return_min: bool = False) -> Tensor:  # noqa: N802
-        """Predict state-action value for all of the learned Q functions.
-
-        Args:
-            z: (*, latent_dim) tensor for the current state's latent representation.
-            a: (*, action_dim) tensor for the action to be applied.
-            return_min: Set to true for implementing the detail in App. C of the FOWM paper: randomly select
-                2 of the Qs and return the minimum
-        Returns:
-            (q_ensemble, *) tensor for the value predictions of each learned Q function in the ensemble OR
-            (*,) tensor if return_min=True.
-        """
-        x = torch.cat([z, a], dim=-1)
-        if not return_min:
-            return torch.stack([q(x).squeeze(-1) for q in self._Qs], dim=0)
-        else:
-            if len(self._Qs) > 2:  # noqa: SIM108
-                Qs = [self._Qs[i] for i in np.random.choice(len(self._Qs), size=2)]
-            else:
-                Qs = self._Qs
-            return torch.stack([q(x).squeeze(-1) for q in Qs], dim=0).min(dim=0)[0]
-
 
 class TDMPCPolicy(nn.Module):
     """Implementation of TD-MPC learning + inference."""
@@ -356,11 +238,9 @@ class TDMPCPolicy(nn.Module):
                     dim=1,
                 )
             )
-            # TODO(now): self.std? See eqn 5 of the TD-MPC paper.
-            _std = _std.clamp_(h.linear_schedule(self.cfg.std_schedule, self.step.item()), self.cfg.max_std)
             # Update mean with an exponential moving average, and std with a direct replacement.
             mean = self.cfg.momentum * mean + (1 - self.cfg.momentum) * _mean
-            std = _std
+            std = _std.clamp_(self.cfg.min_std, self.cfg.max_std)
 
         # Keep track of the mean for warm-starting subsequent steps.
         self._prev_mean = mean
@@ -377,39 +257,6 @@ class TDMPCPolicy(nn.Module):
             action += std[0] * torch.randn_like(std[0])
         # TODO(now): This clamping makes an assumption about the action space.
         return torch.clamp(action, -1, 1)
-
-    def update_pi(self, zs: Tensor, actions: Tensor):
-        """ """
-        self.pi_optim.zero_grad(set_to_none=True)
-        self.model.track_q_grad(False)
-        self.model.track_v_grad(False)
-
-        info = {}
-        # Advantage Weighted Regression
-        advantage = self.model_target.Qs(zs, actions, return_min=True) - self.model.V(zs)
-        exp_advantage = torch.clamp(torch.exp(advantage * self.cfg.A_scaling), max=100.0)
-        action_preds = self.model.pi(zs)
-        # Calculate the MSE between the actions and the action predictions.
-        # Note: FOWM's original code calculates log probabilities (wrt to a unit standard deviation gaussian)
-        # and sums over the action dimension. This amounts to multiplying the MSE by 0.5 and adding a constant
-        # offset. Here we drop the constant offset, and keep the 0.5.
-        mse = F.mse_loss(action_preds, actions) * actions.shape[0] * 0.5
-        rho = torch.pow(self.cfg.rho, torch.arange(len(actions), device=self.device))
-        pi_loss = ((exp_advantage * mse).mean(dim=-1) * rho).mean()
-        info["advantage"] = advantage[0]
-
-        pi_loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            self.model._pi.parameters(),
-            self.cfg.grad_clip_norm,
-            error_if_nonfinite=False,
-        )
-        self.pi_optim.step()
-        self.model.track_q_grad(True)
-        self.model.track_v_grad(True)
-
-        info["pi_loss"] = pi_loss.item()
-        return pi_loss.item(), info
 
     def forward(self, batch):
         # TODO(alexander-soare): Refactor TDMPC and make it comply with the policy interface documentation.
@@ -569,11 +416,13 @@ class TDMPCPolicy(nn.Module):
         info["sum_loss"] = info["loss"] * self.cfg.horizon
 
         # Finalize update step by incrementing the step buffer and updating the ema model weights.
+        # TODO(now): remove
         self.step += 1
 
-        if self.step.item() % self.cfg.update_freq == 0:
-            h.ema(self.model.encoder, self.model_target.encoder, self.cfg.tau)
-            h.ema(self.model._Qs, self.model_target._Qs, self.cfg.tau)
+        # Note a minor variation with respect to the original FOWM code. Here they do this based on an EMA
+        # update frequency parameter which is set to 2 (every 2 steps an update is done). To simplify the code
+        # we update every step and adjust the decay parameter `alpha` accordingly (0.99 -> 0.995)
+        _update_ema_parameters(self.model_target, self.model, self.cfg.ema_alpha)
 
         return info
 
@@ -595,6 +444,179 @@ def _flatten_forward_unflatten(fn: Callable[[Tensor], Tensor], image_tensor: Ten
     inp = torch.flatten(image_tensor, end_dim=-4)
     flat_out = fn(inp)
     return torch.reshape(flat_out, (*start_dims, *flat_out.shape[1:]))
+
+
+class TOLD(nn.Module):
+    """Task-Oriented Latent Dynamics (TOLD) model used in TD-MPC.
+
+    TODO(now): Maybe we need a note about the action space being assumed to be relative.
+
+    """
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.cfg = cfg
+        self._encoder = _ObservationEncoder(cfg)
+        self._dynamics = nn.Sequential(
+            nn.Linear(cfg.latent_dim + cfg.action_dim, cfg.mlp_dim),
+            nn.LayerNorm(cfg.mlp_dim),
+            nn.Mish(),
+            nn.Linear(cfg.mlp_dim, cfg.mlp_dim),
+            nn.LayerNorm(cfg.mlp_dim),
+            nn.Mish(),
+            nn.Linear(cfg.mlp_dim, cfg.latent_dim),
+            nn.LayerNorm(cfg.latent_dim),
+            nn.Sigmoid(),
+        )
+        self._reward = nn.Sequential(
+            nn.Linear(cfg.latent_dim + cfg.action_dim, cfg.mlp_dim),
+            nn.LayerNorm(cfg.mlp_dim),
+            nn.Mish(),
+            nn.Linear(cfg.mlp_dim, cfg.mlp_dim),
+            nn.LayerNorm(cfg.mlp_dim),
+            nn.Mish(),
+            nn.Linear(cfg.mlp_dim, 1),
+        )
+        self._pi = nn.Sequential(
+            nn.Linear(cfg.latent_dim, cfg.mlp_dim),
+            nn.LayerNorm(cfg.mlp_dim),
+            nn.Mish(),
+            nn.Linear(cfg.mlp_dim, cfg.mlp_dim),
+            nn.LayerNorm(cfg.mlp_dim),
+            nn.Mish(),
+            nn.Linear(cfg.mlp_dim, cfg.action_dim),
+        )
+        self._Qs = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(cfg.latent_dim + cfg.action_dim, cfg.mlp_dim),
+                    nn.LayerNorm(cfg.mlp_dim),
+                    nn.Tanh(),
+                    nn.Linear(cfg.mlp_dim, cfg.mlp_dim),
+                    nn.ELU(),
+                    nn.Linear(cfg.mlp_dim, 1),
+                )
+                for _ in range(cfg.num_q)
+            ]
+        )
+        self._V = nn.Sequential(
+            nn.Linear(cfg.latent_dim, cfg.mlp_dim),
+            nn.LayerNorm(cfg.mlp_dim),
+            nn.Tanh(),
+            nn.Linear(cfg.mlp_dim, cfg.mlp_dim),
+            nn.ELU(),
+            nn.Linear(cfg.mlp_dim, 1),
+        )
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize model weights.
+
+        Orthogonal initialization for all linear and convolutional layers' weights (apart from final layers
+        of reward network and Q networks which get zero initialization).
+        Zero initialization for all linear and convolutional layers' biases.
+        """
+
+        def _apply_fn(m):
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight.data)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Conv2d):
+                gain = nn.init.calculate_gain("relu")
+                nn.init.orthogonal_(m.weight.data, gain)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+        self.apply(_apply_fn)
+        for m in [self._reward, *self._Qs]:
+            assert isinstance(
+                m[-1], nn.Linear
+            ), "Sanity check. The last linear layer needs 0 initialization on weights."
+            nn.init.zeros_(m[-1].weight)
+            nn.init.zeros_(m[-1].bias)  # this has already been done, but keep this line here for good measure
+
+    def encode(self, obs: dict[str, Tensor]) -> Tensor:
+        """Encodes an observation into its latent representation."""
+        return self._encoder(obs)
+
+    def latent_dynamics_and_reward(self, z: Tensor, a: Tensor) -> tuple[Tensor, Tensor]:
+        """Predict the next state's latent representation and the reward given a current latent and action.
+
+        Args:
+            z: (*, latent_dim) tensor for the current state's latent representation.
+            a: (*, action_dim) tensor for the action to be applied.
+        Returns:
+            A tuple containing:
+                - (*, latent_dim) tensor for the next state's latent representation.
+                - (*,) tensor for the estimated reward.
+        """
+        x = torch.cat([z, a], dim=-1)
+        return self._dynamics(x), self._reward(x).squeeze(-1)
+
+    def latent_dynamics(self, z: Tensor, a: Tensor) -> Tensor:
+        """Predict the next state's latent representation given a current latent and action.
+
+        Args:
+            z: (*, latent_dim) tensor for the current state's latent representation.
+            a: (*, action_dim) tensor for the action to be applied.
+        Returns:
+            (*, latent_dim) tensor for the next state's latent representation.
+        """
+        x = torch.cat([z, a], dim=-1)
+        return self._dynamics(x)
+
+    def pi(self, z: Tensor, std: float = 0.0) -> Tensor:
+        """Samples an action from the learned policy.
+
+        The policy can also have added (truncated) Gaussian noise injected for encouraging exploration when
+        generating rollouts for online training.
+
+        Args:
+            z: (*, latent_dim) tensor for the current state's latent representation.
+            std: The standard deviation of the injected noise.
+        Returns:
+            (*, action_dim) tensor for the sampled action.
+        """
+        action = torch.tanh(self._pi(z))
+        if std > 0:
+            std = torch.ones_like(action) * std
+            # TODO(now): Understand why this has gradient pass-through internally but not for the clip
+            # parameter.
+            return h.TruncatedNormal(action, std).sample(clip=0.3)
+        return action
+
+    def V(self, z: Tensor) -> Tensor:  # noqa: N802
+        """Predict state value (V).
+
+        Args:
+            z: (*, latent_dim) tensor for the current state's latent representation.
+        Returns:
+            (*,) tensor of estimated state values.
+        """
+        return self._V(z).squeeze(-1)
+
+    def Qs(self, z: Tensor, a: Tensor, return_min: bool = False) -> Tensor:  # noqa: N802
+        """Predict state-action value for all of the learned Q functions.
+
+        Args:
+            z: (*, latent_dim) tensor for the current state's latent representation.
+            a: (*, action_dim) tensor for the action to be applied.
+            return_min: Set to true for implementing the detail in App. C of the FOWM paper: randomly select
+                2 of the Qs and return the minimum
+        Returns:
+            (q_ensemble, *) tensor for the value predictions of each learned Q function in the ensemble OR
+            (*,) tensor if return_min=True.
+        """
+        x = torch.cat([z, a], dim=-1)
+        if not return_min:
+            return torch.stack([q(x).squeeze(-1) for q in self._Qs], dim=0)
+        else:
+            if len(self._Qs) > 2:  # noqa: SIM108
+                Qs = [self._Qs[i] for i in np.random.choice(len(self._Qs), size=2)]
+            else:
+                Qs = self._Qs
+            return torch.stack([q(x).squeeze(-1) for q in Qs], dim=0).min(dim=0)[0]
 
 
 class _ObservationEncoder(nn.Module):
@@ -696,3 +718,20 @@ class _RandomShiftsAug(nn.Module):
         shift *= 2.0 / (h + 2 * self.pad)
         grid = base_grid + shift
         return F.grid_sample(x, grid, padding_mode="zeros", align_corners=False)
+
+
+def _update_ema_parameters(ema_net: nn.Module, net: nn.Module, alpha: float):
+    """Update EMA parameters in place with ema_param <- alpha * ema_param + (1 - alpha) * param."""
+    for ema_module, module in zip(ema_net.modules(), net.modules(), strict=True):
+        for (n_p_ema, p_ema), (n_p, p) in zip(
+            ema_module.named_parameters(recurse=False), module.named_parameters(recurse=False), strict=True
+        ):
+            assert n_p_ema == n_p, "Parameter names don't match for EMA model update"
+            if isinstance(p, dict):
+                raise RuntimeError("Dict parameter not supported")
+            if isinstance(module, nn.modules.batchnorm._BatchNorm) or not p.requires_grad:
+                # Copy BatchNorm parameters, and non-trainable parameters directly.
+                p_ema.copy_(p.to(dtype=p_ema.dtype).data)
+            with torch.no_grad():
+                p_ema.mul_(alpha)
+                p_ema.add_(p.to(dtype=p_ema.dtype).data, alpha=1 - alpha)
