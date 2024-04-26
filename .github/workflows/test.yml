@@ -21,11 +21,6 @@ jobs:
       DATA_DIR: tests/data
       MUJOCO_GL: egl
     steps:
-      - name: github.event_name
-        run: |
-          echo ${{ github.event_name }}
-          echo ${{ github.event_name == 'pull_request' }}
-
       - name: Add SSH key for installing envs
         uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -51,8 +46,8 @@ jobs:
         run: |
           poetry install --all-extras
 
-      # - name: Test with pytest
-      #   run: pytest -v --cov=./lerobot tests
+      - name: Test with pytest
+        run: pytest -v --cov=./lerobot tests
 
       - name: Test end-to-end
         run: make test-end-to-end

@@ -1,8 +1,15 @@
 .PHONY: tests
 
-# Use python from poetry env if available
-POETRY_PATH := $(shell command -v poetry && poetry run which python | xargs dirname || echo "")
-export PATH := $(shell if $(POETRY_PATH),$(POETRY_PATH):$(PATH),$(PATH))
+PYTHON_PATH := $(shell which python)
+
+# If Poetry is installed, redefine PYTHON_PATH to use the Poetry-managed Python
+POETRY_CHECK := $(shell command -v poetry)
+ifneq ($(POETRY_CHECK),)
+    PYTHON_PATH := $(shell poetry run which python)
+endif
+
+export PATH := $(dir $(PYTHON_PATH)):$(PATH)
+
 
 build-cpu:
 	docker build -t lerobot:latest -f docker/lerobot-cpu/Dockerfile .
