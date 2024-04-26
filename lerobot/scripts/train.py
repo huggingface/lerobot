@@ -258,7 +258,6 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 policy,
                 video_dir=Path(out_dir) / "eval",
                 max_episodes_rendered=4,
-                transform=offline_dataset.transform,
                 seed=cfg.seed,
             )
             log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline)

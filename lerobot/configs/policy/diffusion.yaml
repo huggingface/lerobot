@@ -50,10 +50,10 @@ policy:
     action: ["${env.action_dim}"]
 
   # Normalization / Unnormalization
-  normalize_input_modes:
+  input_normalization_modes:
     observation.image: mean_std
     observation.state: min_max
-  unnormalize_output_modes:
+  output_normalization_modes:
     action: min_max
 
   # Architecture / modeling.
