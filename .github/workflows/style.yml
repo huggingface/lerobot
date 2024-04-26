@@ -20,7 +20,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ env.PYTHON_VERSION }}"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Get Ruff Version from pre-commit-config.yaml
         id: get-ruff-version
