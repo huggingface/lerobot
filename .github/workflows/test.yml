@@ -46,31 +46,8 @@ jobs:
         run: |
           poetry install --all-extras
 
-
-      - name: debug info
-        run: |
-          pwd
-          whoami
-          which python
-          python --version
-          python -c "import site; print(site.getsitepackages())"
-          which poetry
-          poetry env list
-          poetry env info
-          poetry run which python
-
-
-      # - name: Tailscale Wait
-      #   if: always()
-      #   uses: huggingface/tailscale-action@v1
-      #   with:
-      #     waitForSSH: true
-      #     authkey: ${{ secrets.TAILSCALE_SSH_AUTHKEY }}
-      #     slackChannel: ${{ secrets.SLACK_CIFEEDBACK_CHANNEL }}
-      #     slackToken: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
-
-      # - name: Test with pytest
-      #   run: pytest -v --cov=./lerobot tests
+      - name: Test with pytest
+        run: pytest -v --cov=./lerobot tests
 
       - name: Test end-to-end
         run: make test-end-to-end
