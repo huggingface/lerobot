@@ -58,8 +58,8 @@ frames = [(frame * 255).type(torch.uint8) for frame in frames]
 frames = [frame.permute((1, 2, 0)).numpy() for frame in frames]
 
 # and finally save them to a mp4 video
-Path("outputs/examples/2_load_lerobot_dataset").mkdir(parents=True, exist_ok=True)
-imageio.mimsave("outputs/examples/2_load_lerobot_dataset/episode_5.mp4", frames, fps=dataset.fps)
+Path("outputs/examples/1_load_lerobot_dataset").mkdir(parents=True, exist_ok=True)
+imageio.mimsave("outputs/examples/1_load_lerobot_dataset/episode_5.mp4", frames, fps=dataset.fps)
 
 # For many machine learning applications we need to load histories of past observations, or trajectorys of future actions. Our datasets can load previous and future frames for each key/modality,
 # using timestamps differences with the current loaded frame. For instance:
