@@ -1,6 +1,7 @@
 .PHONY: tests
 
-export PATH := $(shell poetry run which python | xargs dirname):$(PATH)
+POETRY_PATH := $(shell command -v poetry && poetry run which python | xargs dirname || echo "")
+export PATH := $(if $(POETRY_PATH),$(POETRY_PATH):$(PATH),$(PATH))
 
 build-cpu:
 	docker build -t lerobot:latest -f docker/lerobot-cpu/Dockerfile .
