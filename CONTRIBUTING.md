@@ -134,13 +134,13 @@ Follow these steps to start contributing:
    Set up a development environment by running the following command in a conda or a virtual environment you've created for working on this library:
    Install the project with dev dependencies and all environments:
    ```bash
-   poetry install --sync --with dev --all-extras
+   poetry install --sync --all-extras
    ```
    This command should be run when pulling code with and updated version of `pyproject.toml` and `poetry.lock` in order to synchronize your virtual environment with the dependencies.
 
    To selectively install environments (for example aloha and pusht) use:
    ```bash
-   poetry install --sync --with dev --extras "aloha pusht"
+   poetry install --sync --extras "aloha pusht"
    ```
 
    The equivalent of `pip install some-package`, would just be:
