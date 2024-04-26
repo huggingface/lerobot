@@ -50,6 +50,8 @@ jobs:
           which python
           python --version
           python -c "import site; print(site.getsitepackages())"
+          python -c "import torch; print(torch.cuda.is_available)"
+
 
       - name: Tailscale Wait
         if: always()

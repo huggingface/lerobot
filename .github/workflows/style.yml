@@ -32,4 +32,4 @@ jobs:
         run: python -m pip install "ruff==${{ env.RUFF_VERSION }}"
 
       - name: Run Ruff
-        run: ruff --fix .
+        run: ruff check .
