@@ -60,10 +60,8 @@ while not done:
         output_dict = policy.forward(batch)
         loss = output_dict["loss"]
         loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(policy.diffusion.parameters(), max_norm=10, error_if_nonfinite=False)
         optimizer.step()
         optimizer.zero_grad()
-
 
         if step % log_freq == 0:
             print(f"step: {step} loss: {loss.item():.3f}")
