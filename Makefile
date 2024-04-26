@@ -1,5 +1,7 @@
 .PHONY: tests
 
+export PATH := $(shell poetry run which python | xargs dirname):$(PATH)
+
 build-cpu:
 	docker build -t lerobot:latest -f docker/lerobot-cpu/Dockerfile .
 

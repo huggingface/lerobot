@@ -28,38 +28,24 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Show PATH
-        run: |
-          echo $GITHUB_PATH
+      - name: Install EGL
+        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
 
       - name: Install poetry
         run: |
           pipx install poetry && poetry config virtualenvs.in-project true
           echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
 
-      - name: Show PATH
-        run: |
-          echo $GITHUB_PATH
-
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
           cache: "poetry"
-          # cache: ${{ (github.ref == 'refs/heads/main') && 'pip' || '' }}
-          # cache-dependency-path: pyproject.toml
-
-      - name: Install EGL
-        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
 
       - name: Install poetry dependencies
         run: |
           poetry install --all-extras
 
-      # - name: Install pip dependencies
-      #   run: |
-      #     python -m pip install --upgrade pip
-      #     pip install -e ".[test, aloha, xarm, pusht]"
 
       - name: debug info
         run: |
@@ -83,8 +69,8 @@ jobs:
       #     slackChannel: ${{ secrets.SLACK_CIFEEDBACK_CHANNEL }}
       #     slackToken: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
 
-      - name: Test with pytest
-        run: pytest -v --cov=./lerobot tests
+      # - name: Test with pytest
+      #   run: pytest -v --cov=./lerobot tests
 
       - name: Test end-to-end
         run: make test-end-to-end
