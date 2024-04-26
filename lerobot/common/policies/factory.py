@@ -24,12 +24,7 @@ def make_policy(hydra_cfg: DictConfig, dataset_stats=None):
     if hydra_cfg.policy.name == "tdmpc":
         from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
 
-        policy = TDMPCPolicy(
-            hydra_cfg.policy,
-            n_obs_steps=hydra_cfg.n_obs_steps,
-            n_action_steps=hydra_cfg.n_action_steps,
-            device=hydra_cfg.device,
-        )
+        policy = TDMPCPolicy(hydra_cfg.policy, device=hydra_cfg.device)
     elif hydra_cfg.policy.name == "diffusion":
         from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
         from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy

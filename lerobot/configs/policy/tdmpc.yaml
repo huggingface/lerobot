@@ -1,9 +1,13 @@
 # @package _global_
 
-n_action_steps: 2
-n_obs_steps: 1
 
 policy:
+  name: tdmpc
+
+  # Input / output structure.
+  n_action_repeats: 2
+  horizon: 5
+
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
     observation.image: [3, 84, 84]
@@ -11,24 +15,20 @@ policy:
   output_shapes:
     action: ["${env.action_dim}"]
 
-  name: tdmpc
-
-  reward_scale: 1.0
-
-  episode_length: ${env.episode_length}
+  # Architecture / modeling.
+  # Neural networks.
+  image_encoder_hidden_dim: 32
+  state_encoder_hidden_dim: 256
+  latent_dim: 50
+  q_ensemble_size: 5
+  mlp_dim: 512
+  # Reinforcement learning.
   discount: 0.9
-  modality: 'all'
 
-  # pixels
-  frame_stack: 1
-  num_channels: 32
-  img_size: ${env.image_size}
-  state_dim: ${env.action_dim}
-  action_dim: ${env.action_dim}
+  # Inference.
+  use_mpc: true
+  cem_iterations: 6
 
-  # planning
-  mpc: true
-  iterations: 6
   num_samples: 512
   num_elites: 50
   mixture_coef: 0.1
@@ -43,24 +43,14 @@ policy:
   log_std_max: 2
 
   # learning
-  batch_size: 256
-  max_buffer_size: 10000
-  horizon: 5
   reward_coef: 0.5
   value_coef: 0.1
   consistency_coef: 20
   pi_coef: 0.5
   rho: 0.5
-  kappa: 0.1
-  lr: 3e-4
-  per: true
-  per_alpha: 0.6
-  per_beta: 0.4
-  grad_clip_norm: 10
-  seed_steps: 0
-  update_freq: 2
+
   ema_alpha: 0.995
-  utd: 1
+
 
   # offline rl
   # dataset_dir: ???
@@ -78,11 +68,13 @@ policy:
   balanced_sampling: true
   demo_schedule: 0.5
 
-  # architecture
-  enc_dim: 256
-  num_q: 5
-  mlp_dim: 512
-  latent_dim: 50
+  # ---
+  # TODO(alexander-soare): Remove these from the policy config.
+  batch_size: 256
+  grad_clip_norm: 10.0
+  lr: 3e-4
+  utd: 1
+
 
   delta_timestamps:
     observation.image: "[i / ${fps} for i in range(${policy.horizon} + 1)]"

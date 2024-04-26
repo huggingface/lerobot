@@ -25,17 +25,16 @@ from lerobot.common.utils.utils import get_safe_torch_device
 
 
 class TDMPCPolicy(nn.Module):
-    """Implementation of TD-MPC learning + inference."""
+    """Implementation of TD-MPC learning + inference.
+
+    TODO(alexander-soare) Use batch-first tensors instead of switching to sequence first.
+    """
 
     name = "tdmpc"
 
-    def __init__(self, cfg, n_obs_steps, n_action_steps, device):
+    def __init__(self, cfg, device):
         super().__init__()
-        self.action_dim = cfg.action_dim
-
         self.cfg = cfg
-        self.n_obs_steps = n_obs_steps
-        self.n_action_steps = n_action_steps
         self.device = get_safe_torch_device(device)
         self.model = TOLD(cfg)
         self.model.to(self.device)
@@ -62,9 +61,9 @@ class TDMPCPolicy(nn.Module):
         called on `env.reset()`
         """
         self._queues = {
-            "observation.image": deque(maxlen=self.n_obs_steps),
-            "observation.state": deque(maxlen=self.n_obs_steps),
-            "action": deque(maxlen=self.n_action_steps),
+            "observation.image": deque(maxlen=1),
+            "observation.state": deque(maxlen=1),
+            "action": deque(maxlen=self.cfg.n_action_repeats),
         }
         # Previous mean obtained from the cross-entropy method (CEM) used during MPC. It is used to warm start
         # CEM for the next step.
@@ -85,13 +84,10 @@ class TDMPCPolicy(nn.Module):
         if len(self._queues["action"]) == 0:
             batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch}
 
-            # TODO(now): this shouldn't be necessary. downstream code should handle this the same as
-            # n_obs_step > 1
-            if self.n_obs_steps == 1:
-                # hack to remove the time dimension
-                for key in batch:
-                    assert batch[key].shape[1] == 1
-                    batch[key] = batch[key][:, 0]
+            # Remove the time dimensions as it is not handled yet.
+            for key in batch:
+                assert batch[key].shape[1] == 1
+                batch[key] = batch[key][:, 0]
 
             # Batch processing is not handled internally, so process the batch in a loop.
             # TODO(now): Test that this loop works for batch size > 1.
@@ -102,7 +98,7 @@ class TDMPCPolicy(nn.Module):
                 z = self.model.encode(
                     {k: batch[k][i : i + 1] for k in ["observation.image", "observation.state"]}
                 )
-                if self.cfg.mpc:  # noqa: SIM108
+                if self.cfg.use_mpc:  # noqa: SIM108
                     # Note: self.plan does not handle batches, hence the squeeze.
                     a = self.plan(z.squeeze(0))
                 else:
@@ -112,9 +108,7 @@ class TDMPCPolicy(nn.Module):
                 action.append(a)
             action = torch.stack(action)
 
-            # TODO(now): change this param to action_repeat and constrain n_action_steps to be 1. Add a TODO
-            # to be able to do n_action_steps > 1 with action repeat = 0.
-            if i in range(self.n_action_steps):
+            if i in range(self.cfg.n_action_repeats):
                 self._queues["action"].append(action)
 
         action = self._queues["action"].popleft()
@@ -124,18 +118,20 @@ class TDMPCPolicy(nn.Module):
     def plan(self, z: Tensor) -> Tensor:
         """Plan next action using TD-MPC inference.
 
-        TODO(now) Extend this to be able to work with batches.
-        TODO(now) Go batch first?
         Args:
             z: (latent_dim,) tensor for the initial state.
         Returns:
             (action_dim,) tensor for the next action.
+
+        TODO(alexander-soare) Extend this to be able to work with batches.
         """
         # Sample Nπ trajectories from the policy.
         # TODO(now): Be more explicit with these params: num_pi_samples, num_gaussian_samples
         num_pi_trajs = int(self.cfg.mixture_coef * self.cfg.num_samples)
         # Note: if num_pi_trajs is 0 this is fine.
-        pi_actions = torch.empty(self.cfg.horizon, num_pi_trajs, self.action_dim, device=self.device)
+        pi_actions = torch.empty(
+            self.cfg.horizon, num_pi_trajs, self.cfg.output_shapes["action"][0], device=self.device
+        )
         if num_pi_trajs > 0:
             _z = einops.repeat(z, "d -> n d", n=num_pi_trajs)
             for t in range(self.cfg.horizon):
@@ -151,19 +147,24 @@ class TDMPCPolicy(nn.Module):
         # The initial mean and standard deviation for the cross-entropy method (CEM).
         # TODO(now): Document somewhere that CEM starts with the prior assumption that the actions centered
         # around 0.
-        mean = torch.zeros(self.cfg.horizon, self.action_dim, device=self.device)
+        mean = torch.zeros(self.cfg.horizon, self.cfg.output_shapes["action"][0], device=self.device)
         # Maybe warm start CEM with the mean from the previous step.
         if self._prev_mean is not None:
             mean[:-1] = self._prev_mean[1:]
         std = self.cfg.max_std * torch.ones_like(mean)
 
-        for _ in range(self.cfg.iterations):
+        for _ in range(self.cfg.cem_iterations):
             # Randomly sample action trajectories for the gaussian distribution.
             # TODO(now): I think this clamping makes assumptions about the input normalization.
             actions = torch.clamp(
                 mean.unsqueeze(1)
                 + std.unsqueeze(1)
-                * torch.randn(self.cfg.horizon, self.cfg.num_samples, self.action_dim, device=std.device),
+                * torch.randn(
+                    self.cfg.horizon,
+                    self.cfg.num_samples,
+                    self.cfg.output_shapes["action"][0],
+                    device=std.device,
+                ),
                 -1,
                 1,
             )
@@ -173,8 +174,8 @@ class TDMPCPolicy(nn.Module):
             # Compute elite actions.
             # TODO(now): It looks like pi_actions never changes in this loop so really we should only estimate
             # its values once.
-            # TODO(now): Why would there be a nan? I'm assuming because of the recursive nature of the computation
-            # and that at the start of training we have garbage weights?
+            # Note: zero NaNs which could possibly arise early in training due to the auto-regressive nature
+            # of policy rollouts with the world model.
             value = self.estimate_value(z, actions).nan_to_num_(0)  # shape (N+Nπ,)
             elite_idxs = torch.topk(value, self.cfg.num_elites, dim=0).indices
             elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
@@ -244,13 +245,16 @@ class TDMPCPolicy(nn.Module):
             G += running_discount * (reward + regularization)
             running_discount *= self.cfg.discount
         # Add the estimated value of the final state (using the minimum for a conservative estimate).
-        # Do so by predicting the next action (with added noise), then computing the
+        # Do so by predicting the next action (with added noise), then a minimum over the ensemble of
+        # state-action value estimators.
         # TODO(now): Should there be added noise here at inference time?
         next_action = self.model.pi(z, self.cfg.min_std)  # (batch, action_dim)
         terminal_values = self.model.Qs(z, next_action)
         # Randomly choose 2 of the Qs for terminal value estimation (as in App C. of the FOWM paper).
-        if self.cfg.num_q > 2:
-            G += running_discount * torch.min(terminal_values[torch.randint(0, self.cfg.num_q, size=(2,))])
+        if self.cfg.q_ensemble_size > 2:
+            G += running_discount * torch.min(
+                terminal_values[torch.randint(0, self.cfg.q_ensemble_size, size=(2,))]
+            )
         else:
             G += running_discount * torch.min(terminal_values)
         # Finally, also regularize the terminal value.
@@ -450,7 +454,7 @@ class TOLD(nn.Module):
         self.cfg = cfg
         self._encoder = _ObservationEncoder(cfg)
         self._dynamics = nn.Sequential(
-            nn.Linear(cfg.latent_dim + cfg.action_dim, cfg.mlp_dim),
+            nn.Linear(cfg.latent_dim + cfg.output_shapes["action"][0], cfg.mlp_dim),
             nn.LayerNorm(cfg.mlp_dim),
             nn.Mish(),
             nn.Linear(cfg.mlp_dim, cfg.mlp_dim),
@@ -461,7 +465,7 @@ class TOLD(nn.Module):
             nn.Sigmoid(),
         )
         self._reward = nn.Sequential(
-            nn.Linear(cfg.latent_dim + cfg.action_dim, cfg.mlp_dim),
+            nn.Linear(cfg.latent_dim + cfg.output_shapes["action"][0], cfg.mlp_dim),
             nn.LayerNorm(cfg.mlp_dim),
             nn.Mish(),
             nn.Linear(cfg.mlp_dim, cfg.mlp_dim),
@@ -476,19 +480,19 @@ class TOLD(nn.Module):
             nn.Linear(cfg.mlp_dim, cfg.mlp_dim),
             nn.LayerNorm(cfg.mlp_dim),
             nn.Mish(),
-            nn.Linear(cfg.mlp_dim, cfg.action_dim),
+            nn.Linear(cfg.mlp_dim, cfg.output_shapes["action"][0]),
         )
         self._Qs = nn.ModuleList(
             [
                 nn.Sequential(
-                    nn.Linear(cfg.latent_dim + cfg.action_dim, cfg.mlp_dim),
+                    nn.Linear(cfg.latent_dim + cfg.output_shapes["action"][0], cfg.mlp_dim),
                     nn.LayerNorm(cfg.mlp_dim),
                     nn.Tanh(),
                     nn.Linear(cfg.mlp_dim, cfg.mlp_dim),
                     nn.ELU(),
                     nn.Linear(cfg.mlp_dim, 1),
                 )
-                for _ in range(cfg.num_q)
+                for _ in range(cfg.q_ensemble_size)
             ]
         )
         self._V = nn.Sequential(
@@ -627,18 +631,18 @@ class _ObservationEncoder(nn.Module):
         # TODO(now): Should this handle single channel images?
         n_img_channels = 3
 
-        if cfg.modality in ["pixels", "all"]:
+        if "observation.image" in cfg.input_shapes:
             self.image_enc_layers = nn.Sequential(
-                nn.Conv2d(n_img_channels, cfg.num_channels, 7, stride=2),
+                nn.Conv2d(n_img_channels, cfg.image_encoder_hidden_dim, 7, stride=2),
                 nn.ReLU(),
-                nn.Conv2d(cfg.num_channels, cfg.num_channels, 5, stride=2),
+                nn.Conv2d(cfg.image_encoder_hidden_dim, cfg.image_encoder_hidden_dim, 5, stride=2),
                 nn.ReLU(),
-                nn.Conv2d(cfg.num_channels, cfg.num_channels, 3, stride=2),
+                nn.Conv2d(cfg.image_encoder_hidden_dim, cfg.image_encoder_hidden_dim, 3, stride=2),
                 nn.ReLU(),
-                nn.Conv2d(cfg.num_channels, cfg.num_channels, 3, stride=2),
+                nn.Conv2d(cfg.image_encoder_hidden_dim, cfg.image_encoder_hidden_dim, 3, stride=2),
                 nn.ReLU(),
             )
-            dummy_batch = torch.zeros(1, n_img_channels, cfg.img_size, cfg.img_size)
+            dummy_batch = torch.zeros(1, *cfg.input_shapes["observation.image"])
             with torch.inference_mode():
                 out_shape = self.image_enc_layers(dummy_batch).shape[1:]
             self.image_enc_layers.extend(
@@ -649,11 +653,11 @@ class _ObservationEncoder(nn.Module):
                     nn.Sigmoid(),
                 )
             )
-        if cfg.modality in {"state", "all"}:
+        if "observation.state" in cfg.input_shapes:
             self.state_enc_layers = nn.Sequential(
-                nn.Linear(cfg.state_dim, cfg.enc_dim),
+                nn.Linear(cfg.input_shapes["observation.state"][0], cfg.state_encoder_hidden_dim),
                 nn.ELU(),
-                nn.Linear(cfg.enc_dim, cfg.latent_dim),
+                nn.Linear(cfg.state_encoder_hidden_dim, cfg.latent_dim),
                 nn.LayerNorm(cfg.latent_dim),
                 nn.Sigmoid(),
             )
@@ -665,9 +669,9 @@ class _ObservationEncoder(nn.Module):
         over all features.
         """
         feat = []
-        if self.cfg.modality in {"pixels", "all"}:
+        if "observation.image" in self.cfg.input_shapes:
             feat.append(_flatten_forward_unflatten(self.image_enc_layers, obs_dict["observation.image"]))
-        if self.cfg.modality in {"state", "all"}:
+        if "observation.state" in self.cfg.input_shapes:
             feat.append(self.state_enc_layers(obs_dict["observation.state"]))
         return torch.stack(feat, dim=0).mean(0)
 
@@ -681,8 +685,8 @@ class _RandomShiftsAug(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
-        assert cfg.modality in {"pixels", "all"}
-        self.pad = int(cfg.img_size / 21)
+        # TODO(alexander-soare): Generalize to non-square images.
+        self.pad = int(cfg.input_shapes["observation.image"][-1] / 21)
 
     def forward(self, x):
         n, _, h, w = x.size()

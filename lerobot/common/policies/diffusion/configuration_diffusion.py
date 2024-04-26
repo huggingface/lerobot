@@ -70,13 +70,13 @@ class DiffusionConfig:
     horizon: int = 16
     n_action_steps: int = 8
 
-    input_shapes: dict[str, list[str]] = field(
+    input_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {
             "observation.image": [3, 96, 96],
             "observation.state": [2],
         }
     )
-    output_shapes: dict[str, list[str]] = field(
+    output_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {
             "action": [2],
         }
