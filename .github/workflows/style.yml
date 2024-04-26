@@ -11,7 +11,7 @@ env:
   PYTHON_VERSION: "3.10"
 
 jobs:
-  ruff_fix:
+  ruff_check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
