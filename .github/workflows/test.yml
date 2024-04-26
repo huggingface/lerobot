@@ -34,8 +34,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-          cache: ${{ (github.ref == 'refs/heads/main') && 'pip' || '' }}
-          cache-dependency-path: pyproject.toml
+          # cache: ${{ (github.ref == 'refs/heads/main') && 'pip' || '' }}
+          # cache-dependency-path: pyproject.toml
 
       - name: Install EGL
         run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
@@ -44,6 +44,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[test, aloha, xarm, pusht]"
+
+      - name: debug info
+        run: |
+          which python
+          python --version
+          python -c "import site; print(site.getsitepackages())"
 
       - name: Tailscale Wait
         if: always()
