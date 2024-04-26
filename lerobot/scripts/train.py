@@ -27,7 +27,6 @@ from lerobot.scripts.eval import eval_policy
 def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
     start_time = time.time()
     model.train()
-    batch = policy.normalize_inputs(batch)
     output_dict = policy.forward(batch)
     # TODO(rcadene): policy.unnormalize_outputs(out_dict)
     loss = output_dict["loss"]

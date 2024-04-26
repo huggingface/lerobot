@@ -56,7 +56,6 @@ done = False
 while not done:
     for batch in dataloader:
         batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
-        batch = policy.normalize_inputs(batch)
         output_dict = policy.forward(batch)
         loss = output_dict["loss"]
         loss.backward()
