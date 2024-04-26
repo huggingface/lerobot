@@ -1,6 +1,6 @@
 # Inspired by
 # https://github.com/huggingface/peft/blob/main/.github/workflows/nightly.yml
-name: Nightly Tests
+name: Nightly
 
 on:
   workflow_dispatch:
@@ -73,10 +73,10 @@ jobs:
         if: ${{ failure() || runner.debug == '1' }}
         uses: huggingface/tailscale-action@v1
         with:
-           waitForSSH: true
-           authkey: ${{ secrets.TAILSCALE_SSH_AUTHKEY }}
-           slackChannel: ${{ secrets.SLACK_CIFEEDBACK_CHANNEL }}
-           slackToken: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
+          waitForSSH: true
+          authkey: ${{ secrets.TAILSCALE_SSH_AUTHKEY }}
+          slackChannel: ${{ secrets.SLACK_CIFEEDBACK_CHANNEL }}
+          slackToken: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
 
     #   - name: Generate Report
     #     if: always()

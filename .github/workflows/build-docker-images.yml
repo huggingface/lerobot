@@ -1,6 +1,6 @@
 # Inspired by
 # https://github.com/huggingface/peft/blob/main/.github/workflows/build_docker_images.yml
-name: Nightly Builds
+name: Builds
 
 on:
   workflow_dispatch:
