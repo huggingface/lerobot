@@ -30,16 +30,16 @@ jobs:
 
       - name: Show PATH
         run: |
-          echo $GITHUB_ENV
+          echo $GITHUB_PATH
 
       - name: Install poetry
         run: |
           pipx install poetry && poetry config virtualenvs.in-project true
-          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_ENV
+          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
 
       - name: Show PATH
         run: |
-          echo $GITHUB_ENV
+          echo $GITHUB_PATH
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
