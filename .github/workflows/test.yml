@@ -51,7 +51,7 @@ jobs:
           poetry install --all-extras
 
       - name: Test with pytest
-        run: pytest -v --cov=./lerobot tests
+        run: pytest -v --cov=./lerobot --durations=0 tests
 
       - name: Test end-to-end
         run: make test-end-to-end
