@@ -40,6 +40,8 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
+      # HACK(aliberts): to be removed for release
+      # -----------------------------------------
       - name: Checkout gym-aloha
         uses: actions/checkout@v4
         with:
@@ -61,8 +63,6 @@ jobs:
           path: envs/gym-pusht
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      # HACK(aliberts): to be removed for release
-      # -----------------------------------------
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
@@ -134,6 +134,8 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
+      # HACK(aliberts): to be removed for release
+      # -----------------------------------------
       - name: Checkout gym-aloha
         uses: actions/checkout@v4
         with:
@@ -155,8 +157,6 @@ jobs:
           path: envs/gym-pusht
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      # HACK(aliberts): to be removed for release
-      # -----------------------------------------
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
