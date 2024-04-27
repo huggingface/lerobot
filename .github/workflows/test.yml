@@ -9,6 +9,7 @@ on:
       - "tests/**"
       - "examples/**"
       - ".github/**"
+      - "poetry.lock"
   push:
     branches:
       - main
@@ -17,6 +18,7 @@ on:
       - "tests/**"
       - "examples/**"
       - ".github/**"
+      - "poetry.lock"
 
 jobs:
   tests:
