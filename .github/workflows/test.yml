@@ -4,9 +4,19 @@ on:
   pull_request:
     branches:
       - main
+    paths:
+      - "lerobot/**"
+      - "tests/**"
+      - "examples/**"
+      - ".github/**"
   push:
     branches:
       - main
+    paths:
+      - "lerobot/**"
+      - "tests/**"
+      - "examples/**"
+      - ".github/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
