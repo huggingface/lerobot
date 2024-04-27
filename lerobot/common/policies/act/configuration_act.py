@@ -33,8 +33,8 @@ class ActionChunkingTransformerConfig:
             deviation and "min_max" which rescale in a [-1, 1] range.
         unnormalize_output_modes: Similar dictionary as `normalize_input_modes`, but to unormalize in original scale.
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
-        use_pretrained_backbone: Whether the backbone should be initialized with pretrained weights from
-            torchvision.
+        pretrained_backbone_weights: Pretrained weights from torchvision to initalize the backbone.
+            `None` means no pretrained weights.
         replace_final_stride_with_dilation: Whether to replace the ResNet's final 2x2 stride with a dilated
             convolution.
         pre_norm: Whether to use "pre-norm" in the transformer blocks.
@@ -90,7 +90,7 @@ class ActionChunkingTransformerConfig:
     # Architecture.
     # Vision backbone.
     vision_backbone: str = "resnet18"
-    use_pretrained_backbone: bool = True
+    pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
     replace_final_stride_with_dilation: int = False
     # Transformer layers.
     pre_norm: bool = False

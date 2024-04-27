@@ -61,7 +61,7 @@ policy:
   vision_backbone: resnet18
   crop_shape: [84, 84]
   crop_is_random: True
-  use_pretrained_backbone: false
+  pretrained_backbone_weights: null
   use_group_norm: True
   spatial_softmax_num_keypoints: 32
   # Unet.
