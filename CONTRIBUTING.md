@@ -153,17 +153,6 @@ Follow these steps to start contributing:
    poetry lock --no-update
    ```
 
-   **NOTE:** Currently, to ensure the CI works properly, any new package must also be added in the    CPU-only environment dedicated to the CI. To do this, you should create a separate environment and    add the new package there as well. For example:
-   ```bash
-   # Add the new package to your main poetry env
-   poetry add some-package
-   # Add the same package to the CPU-only env dedicated to CI
-   conda create -y -n lerobot-ci python=3.10
-   conda activate lerobot-ci
-   cd .github/poetry/cpu
-   poetry add some-package
-   ```
-
 5. Develop the features on your branch.
 
    As you work on the features, you should make sure that the test suite
