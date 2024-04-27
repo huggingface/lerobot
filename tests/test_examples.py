@@ -1,5 +1,6 @@
 # TODO(aliberts): Mute logging for these tests
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -11,7 +12,7 @@ def _find_and_replace(text: str, finds_and_replaces: list[tuple[str, str]]) -> s
 
 
 def _run_script(path):
-    subprocess.run(["python", path], check=True)
+    subprocess.run([sys.executable, path], check=True)
 
 
 def test_example_1():
