@@ -10,7 +10,7 @@
 
 <div align="center">
 
-[![Tests](https://github.com/huggingface/lerobot/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/test.yml?query=branch%3Amain)
+[![Tests](https://github.com/huggingface/lerobot/actions/workflows/nightly-tests.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/nightly-tests.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/huggingface/lerobot/branch/main/graph/badge.svg?token=TODO)](https://codecov.io/gh/huggingface/lerobot)
 [![Python versions](https://img.shields.io/pypi/pyversions/lerobot)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/huggingface/lerobot/blob/main/LICENSE)
@@ -73,7 +73,7 @@ conda create -y -n lerobot python=3.10 && conda activate lerobot
 
 Install 🤗 LeRobot:
 ```bash
-python -m pip install .
+pip install .
 ```
 
 For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
@@ -83,7 +83,7 @@ For simulations, 🤗 LeRobot comes with gymnasium environments that can be inst
 
 For instance, to install 🤗 LeRobot with aloha and pusht, use:
 ```bash
-python -m pip install ".[aloha, pusht]"
+pip install ".[aloha, pusht]"
 ```
 
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiments tracking, log in with

@@ -129,26 +129,34 @@ Follow these steps to start contributing:
 
    🚨 **Do not** work on the `main` branch.
 
-4. Instead of using `pip` directly, we use `poetry` for development purposes to easily track our dependencies.
+4. for development, we use `poetry` instead of just `pip` to easily track our dependencies.
    If you don't have it already, follow the [instructions](https://python-poetry.org/docs/#installation) to install it.
-   Set up a development environment by running the following command in a conda or a virtual environment you've created for working on this library:
-   Install the project with dev dependencies and all environments:
-   ```bash
-   poetry install --sync --with dev --all-extras
-   ```
-   This command should be run when pulling code with and updated version of `pyproject.toml` and `poetry.lock` in order to synchronize your virtual environment with the dependencies.
 
-   To selectively install environments (for example aloha and pusht) use:
+   Set up a development environment with conda or miniconda:
    ```bash
-   poetry install --sync --with dev --extras "aloha pusht"
+   conda create -y -n lerobot-dev python=3.10 && conda activate lerobot-dev
    ```
+
+   To develop on 🤗 LeRobot, you will at least need to install the `dev` and `test` extras dependencies along with the core library:
+   ```bash
+   poetry install --sync --extras "dev test"
+   ```
+
+   You can also install the project with all its dependencies (including environments):
+   ```bash
+   poetry install --sync --all-extras
+   ```
+
+   > **Note:** If you don't install simulation environments with `--all-extras`, the tests that require them will be skipped when running the pytest suite locally. However, they *will* be tested in the CI. In general, we advise you to install everything and test locally before pushing.
+
+   Whichever command you chose to install the project (e.g. `poetry install --sync --all-extras`), you should run it again when pulling code with an updated version of `pyproject.toml` and `poetry.lock` in order to synchronize your virtual environment with the new dependencies.
 
    The equivalent of `pip install some-package`, would just be:
    ```bash
    poetry add some-package
    ```
 
-   When changes are made to the poetry sections of the `pyproject.toml`, you should run the following command to lock dependencies.
+   When making changes to the poetry sections of the `pyproject.toml`, you should run the following command to lock dependencies.
    ```bash
    poetry lock --no-update
    ```
