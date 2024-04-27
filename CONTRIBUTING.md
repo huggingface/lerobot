@@ -147,9 +147,9 @@ Follow these steps to start contributing:
    poetry install --sync --all-extras
    ```
 
-   > **Note:** Although tests which require the simulation environments will be skipped when running the pytest suite if those are not installed, they *will* be tested in the CI. In general, we advise you to install everything and test locally before pushing.
+   > **Note:** If you don't install simulation environments with `--all-extras`, the tests that require them will be skipped when running the pytest suite locally. However, they *will* be tested in the CI. In general, we advise you to install everything and test locally before pushing.
 
-   Whichever command you chose to install the project, you should run it again when pulling code with an updated version of `pyproject.toml` and `poetry.lock` in order to synchronize your virtual environment with the new dependencies.
+   Whichever command you chose to install the project (e.g. `poetry install --sync --all-extras`), you should run it again when pulling code with an updated version of `pyproject.toml` and `poetry.lock` in order to synchronize your virtual environment with the new dependencies.
 
    The equivalent of `pip install some-package`, would just be:
    ```bash
