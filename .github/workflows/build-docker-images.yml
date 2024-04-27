@@ -8,10 +8,6 @@ on:
   schedule:
     - cron: "0 1 * * *"
 
-# concurrency:
-#   group: docker-image-builds
-#   cancel-in-progress: false
-
 env:
   PYTHON_VERSION: "3.10"
 #   CI_SLACK_CHANNEL: ${{ secrets.CI_DOCKER_CHANNEL }}
