@@ -189,7 +189,7 @@ def download_umi(root: str, dataset_id: str) -> Path:
     return zarr_path
 
 
-def push_to_hub(
+def push_lerobot_dataset_to_hub(
     hf_dataset: Dataset,
     episode_data_index: dict[str, list[int]],
     info: dict[str, Any],
@@ -337,7 +337,7 @@ def push_dataset_to_hub(
         }
         stats: dict[str, dict[str, torch.Tensor]] = compute_stats(hf_dataset)
 
-        push_to_hub(
+        push_lerobot_dataset_to_hub(
             hf_dataset=hf_dataset,
             episode_data_index=episode_data_index,
             info=info,
