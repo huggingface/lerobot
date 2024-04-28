@@ -243,9 +243,10 @@ def test_backward_compatibility():
 
     all_repo_id = [
         "lerobot/pusht",
-        "lerobot/aloha_sim_insertion_human",
-        "lerobot/xarm_push_medium",
-        "lerobot/umi_cup_in_the_wild",
+        # TODO (azouitine): Add artifacts for the following datasets
+        # "lerobot/aloha_sim_insertion_human",
+        # "lerobot/xarm_push_medium",
+        # "lerobot/umi_cup_in_the_wild",
     ]
     for repo_id in all_repo_id:
         dataset = LeRobotDataset(
