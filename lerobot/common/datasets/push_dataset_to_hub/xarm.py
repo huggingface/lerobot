@@ -20,11 +20,11 @@ class XarmProcessor:
         self.nested_keys = {"observations": {"rgb", "state"}, "next_observations": {"rgb", "state"}}
         if fps is None:
             fps = 15
-        self.fps = fps
+        self._fps = fps
 
     @property
     def fps(self) -> int:
-        return self.fps
+        return self._fps
 
     def is_valid(self) -> bool:
         # get all .pkl files

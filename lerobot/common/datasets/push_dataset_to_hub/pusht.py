@@ -18,11 +18,11 @@ class PushTProcessor:
         self.zarr_path = folder_path
         if fps is None:
             fps = 10
-        self.fps = fps
+        self._fps = fps
 
     @property
     def fps(self) -> int:
-        return self.fps
+        return self._fps
 
     def is_valid(self):
         try:
@@ -154,7 +154,7 @@ class PushTProcessor:
         data_dict = concatenate_episodes(ep_dicts)
         return data_dict, episode_data_index
 
-    def to_hf_dataset(self, data_dict, episode_data_index):
+    def to_hf_dataset(self, data_dict):
         features = {
             "observation.image": Image(),
             "observation.state": Sequence(

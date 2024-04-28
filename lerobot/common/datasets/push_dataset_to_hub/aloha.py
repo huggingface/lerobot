@@ -56,11 +56,11 @@ class AlohaProcessor:
         self.cameras = cameras
         if fps is None:
             fps = 50
-        self.fps = fps
+        self._fps = fps
 
     @property
     def fps(self) -> int:
-        return self.fps
+        return self._fps
 
     def is_valid(self) -> bool:
         """
@@ -205,5 +205,5 @@ class AlohaProcessor:
 
         return hf_dataset
 
-    def clenup(self):
+    def cleanup(self):
         pass

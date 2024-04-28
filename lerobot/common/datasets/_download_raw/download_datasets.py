@@ -59,7 +59,7 @@ def download_pusht(root: str, dataset_id: str = "pusht", fps: int = 10) -> Path:
     zarr_path: Path = (raw_dir / pusht_zarr).resolve()
     if not zarr_path.is_dir():
         raw_dir.mkdir(parents=True, exist_ok=True)
-        download_and_extract_zip(pusht_url, zarr_path)
+        download_and_extract_zip(pusht_url, raw_dir)
     return zarr_path
 
 

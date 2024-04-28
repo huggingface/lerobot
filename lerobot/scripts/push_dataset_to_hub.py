@@ -47,7 +47,6 @@ def push_to_hub(
             dataset will be stored. Defaults to "lerobot".
         dry_run (bool, optional): If True, performs a dry run without actually pushing the dataset. Defaults to False.
     """
-
     if dry_run:
         # push to main to indicate latest version
         hf_dataset.push_to_hub(f"{community_id}/{dataset_id}", token=True)
@@ -160,7 +159,7 @@ def push_dataset_to_hub(
 
     """
     if dataset_folder is None:
-        dataset_folder = download_raw(dataset_id, root)
+        dataset_folder = download_raw(root=root, dataset_id=dataset_id)
 
     if preprocess:
         processor = guess_dataset_type(dataset_folder=dataset_folder, fps=fps, **kwargs)
@@ -186,12 +185,13 @@ def push_dataset_to_hub(
             dry_run=dry_run,
         )
         if path_save_to_disk:
-            hf_dataset.save_to_disk(path_save_to_disk)
+            hf_dataset.with_format("torch").save_to_disk(dataset_path=str(path_save_to_disk))
 
         processor.cleanup()
 
 
 class DatasetProcessor(Protocol):
+    def __init__(self, folder_path: str, fps: int | None, *args, **kwargs) -> None: ...
     def is_valid(self) -> bool: ...
     def preprocess(self) -> tuple[dict, dict]: ...
     def to_hf_dataset(self, data_dict: dict) -> Dataset: ...
@@ -200,14 +200,14 @@ class DatasetProcessor(Protocol):
     def cleanup(self): ...
 
 
-def guess_dataset_type(dataset_folder: Path) -> DatasetProcessor:
-    if processor := AlohaProcessor(folder_path=dataset_folder).is_valid():
+def guess_dataset_type(dataset_folder: Path, **processor_kwargs) -> DatasetProcessor:
+    if (processor := AlohaProcessor(folder_path=dataset_folder, **processor_kwargs)).is_valid():
         return processor
-    if processor := XarmProcessor(folder_path=dataset_folder).is_valid():
+    if (processor := XarmProcessor(folder_path=dataset_folder, **processor_kwargs)).is_valid():
         return processor
-    if processor := PushTProcessor(folder_path=dataset_folder).is_valid():
+    if (processor := PushTProcessor(folder_path=dataset_folder, **processor_kwargs)).is_valid():
         return processor
-    if processor := UmiProcessor(folder_path=dataset_folder).is_valid():
+    if (processor := UmiProcessor(folder_path=dataset_folder, **processor_kwargs)).is_valid():
         return processor
     # TODO: Propose a registration mechanism for new dataset types
     raise ValueError(f"Could not guess dataset type for folder {dataset_folder}")

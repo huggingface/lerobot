@@ -33,14 +33,15 @@ class UmiProcessor:
 
     def __init__(self, folder_path: str, fps: int | None = None):
         self.zarr_path = folder_path
-        if self.fps is None:
+        if fps is None:
+            # TODO (azouitine): Add reference to the paper
             fps = 15
-        self.fps = fps
+        self._fps = fps
         register_codecs()
 
     @property
     def fps(self) -> int:
-        return self.fps
+        return self._fps
 
     def is_valid(self) -> bool:
         """
