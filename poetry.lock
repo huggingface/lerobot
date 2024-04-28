@@ -1144,7 +1144,7 @@ shapely = "^2.0.3"
 type = "git"
 url = "git@github.com:huggingface/gym-pusht.git"
 reference = "HEAD"
-resolved_reference = "080d4ce4d8d3140b2fd204ed628bda14dc58ff06"
+resolved_reference = "e0684ff988d223808c0a9dcfaba9dc4991791370"
 
 [[package]]
 name = "gym-xarm"
