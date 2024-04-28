@@ -84,7 +84,7 @@ def test_policy(env_name, policy_name, extra_overrides):
         batch[key] = batch[key].to(DEVICE, non_blocking=True)
 
     # Test updating the policy
-    policy.update(batch, step=0)
+    policy.forward(batch, step=0)
 
     # reset the policy and environment
     policy.reset()
