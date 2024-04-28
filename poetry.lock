@@ -597,13 +597,13 @@ files = [
 
 [[package]]
 name = "diffusers"
-version = "0.26.3"
+version = "0.27.2"
 description = "State-of-the-art diffusion in PyTorch and JAX."
 optional = false
 python-versions = ">=3.8.0"
 files = [
-    {file = "diffusers-0.26.3-py3-none-any.whl", hash = "sha256:f8f5710c8f9170e9749f0b104f50fc4a1259f8aff3effed99598409a5ea9b1cd"},
-    {file = "diffusers-0.26.3.tar.gz", hash = "sha256:e217ea39e85b0bd34fee11f8b39fd00116680b05ff7a70c0b4fdab5351ae4f96"},
+    {file = "diffusers-0.27.2-py3-none-any.whl", hash = "sha256:85da5cd1098ab428535d592136973ec0c3f12f78148c94b379cb9f02d2414e75"},
+    {file = "diffusers-0.27.2.tar.gz", hash = "sha256:6cefd7770d7fc1d139614233aa17cdcd639c138d0c3517b8d8bbc8cf573050a0"},
 ]
 
 [package.dependencies]
@@ -617,12 +617,12 @@ requests = "*"
 safetensors = ">=0.3.1"
 
 [package.extras]
-dev = ["GitPython (<3.1.19)", "Jinja2", "accelerate (>=0.11.0)", "compel (==0.1.8)", "datasets", "flax (>=0.4.1)", "hf-doc-builder (>=0.3.0)", "invisible-watermark (>=0.2.0)", "isort (>=5.5.4)", "jax (>=0.4.1)", "jaxlib (>=0.4.1)", "k-diffusion (>=0.0.12)", "librosa", "parameterized", "peft (>=0.6.0)", "protobuf (>=3.20.3,<4)", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "ruff (==0.1.5)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "tensorboard", "torch (>=1.4,<2.2.0)", "torchvision (<0.17)", "transformers (>=4.25.1)", "urllib3 (<=2.0.0)"]
+dev = ["GitPython (<3.1.19)", "Jinja2", "accelerate (>=0.11.0)", "compel (==0.1.8)", "datasets", "flax (>=0.4.1)", "hf-doc-builder (>=0.3.0)", "invisible-watermark (>=0.2.0)", "isort (>=5.5.4)", "jax (>=0.4.1)", "jaxlib (>=0.4.1)", "k-diffusion (>=0.0.12)", "librosa", "parameterized", "peft (>=0.6.0)", "protobuf (>=3.20.3,<4)", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "ruff (==0.1.5)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "tensorboard", "torch (>=1.4)", "torchvision", "transformers (>=4.25.1)", "urllib3 (<=2.0.0)"]
 docs = ["hf-doc-builder (>=0.3.0)"]
 flax = ["flax (>=0.4.1)", "jax (>=0.4.1)", "jaxlib (>=0.4.1)"]
 quality = ["hf-doc-builder (>=0.3.0)", "isort (>=5.5.4)", "ruff (==0.1.5)", "urllib3 (<=2.0.0)"]
-test = ["GitPython (<3.1.19)", "Jinja2", "compel (==0.1.8)", "datasets", "invisible-watermark (>=0.2.0)", "k-diffusion (>=0.0.12)", "librosa", "parameterized", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "torchvision (<0.17)", "transformers (>=4.25.1)"]
-torch = ["accelerate (>=0.11.0)", "torch (>=1.4,<2.2.0)"]
+test = ["GitPython (<3.1.19)", "Jinja2", "compel (==0.1.8)", "datasets", "invisible-watermark (>=0.2.0)", "k-diffusion (>=0.0.12)", "librosa", "parameterized", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "torchvision", "transformers (>=4.25.1)"]
+torch = ["accelerate (>=0.11.0)", "torch (>=1.4)"]
 training = ["Jinja2", "accelerate (>=0.11.0)", "datasets", "peft (>=0.6.0)", "protobuf (>=3.20.3,<4)", "tensorboard"]
 
 [[package]]
@@ -779,13 +779,13 @@ files = [
 
 [[package]]
 name = "einops"
-version = "0.7.0"
+version = "0.8.0"
 description = "A new flavour of deep learning operations"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "einops-0.7.0-py3-none-any.whl", hash = "sha256:0f3096f26b914f465f6ff3c66f5478f9a5e380bb367ffc6493a68143fbbf1fd1"},
-    {file = "einops-0.7.0.tar.gz", hash = "sha256:b2b04ad6081a3b227080c9bf5e3ace7160357ff03043cd66cc5b2319eb7031d1"},
+    {file = "einops-0.8.0-py3-none-any.whl", hash = "sha256:9572fb63046264a862693b0a87088af3bdc8c068fde03de63453cbbde245465f"},
+    {file = "einops-0.8.0.tar.gz", hash = "sha256:63486517fed345712a8385c100cb279108d9d47e6ae59099b07657e983deae85"},
 ]
 
 [[package]]
@@ -1121,7 +1121,7 @@ mujoco = "^2.3.7"
 type = "git"
 url = "git@github.com:huggingface/gym-aloha.git"
 reference = "HEAD"
-resolved_reference = "c636f05ba0d1760df94537da84c860be1487e17f"
+resolved_reference = "12c8171d6708ec6d8547c310fe736d8d494195c5"
 
 [[package]]
 name = "gym-pusht"
@@ -1144,7 +1144,7 @@ shapely = "^2.0.3"
 type = "git"
 url = "git@github.com:huggingface/gym-pusht.git"
 reference = "HEAD"
-resolved_reference = "080d4ce4d8d3140b2fd204ed628bda14dc58ff06"
+resolved_reference = "e0684ff988d223808c0a9dcfaba9dc4991791370"
 
 [[package]]
 name = "gym-xarm"
@@ -1164,7 +1164,7 @@ mujoco = "^2.3.7"
 type = "git"
 url = "git@github.com:huggingface/gym-xarm.git"
 reference = "HEAD"
-resolved_reference = "27e65c981f9a8d252eca8f157f83508ba6149db7"
+resolved_reference = "415811fc34863d349ed113eab77e756726c03525"
 
 [[package]]
 name = "gymnasium"
@@ -4299,4 +4299,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "8bd1352973c6104e52f50b68f7387d26ced9b07a52e889540b73d132865cda38"
+content-hash = "0f72eb92ac8817a46f0659b4d72647a6b76f6e4ba762d11b280f8a88e6cd4371"

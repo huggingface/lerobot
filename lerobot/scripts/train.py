@@ -55,7 +55,7 @@ def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
     return info
 
 
-@hydra.main(version_base=None, config_name="default", config_path="../configs")
+@hydra.main(version_base="1.2", config_name="default", config_path="../configs")
 def train_cli(cfg: dict):
     train(
         cfg,
