@@ -89,6 +89,7 @@ def download_xarm(root: str, dataset_id: str, fps: int = 15) -> Path:
 
 
 def download_aloha(root: str, dataset_id: str) -> Path:
+    TODO(rcadene): use hugging face utils to download from google drive
     folder_urls = {
         "aloha_sim_insertion_human": "https://drive.google.com/drive/folders/1RgyD0JgTX30H4IM5XZn8I3zSV_mr8pyF",
         "aloha_sim_insertion_scripted": "https://drive.google.com/drive/folders/1TsojQQSXtHEoGnqgJ3gmpPQR2DPLtS2N",
@@ -161,19 +162,3 @@ def download_umi(root: str, dataset_id: str) -> Path:
     return zarr_path
 
 
-if __name__ == "__main__":
-    root = "data"
-    dataset_ids = [
-        "pusht",
-        "xarm_lift_medium",
-        "xarm_lift_medium_replay",
-        "xarm_push_medium",
-        "xarm_push_medium_replay",
-        "aloha_sim_insertion_human",
-        "aloha_sim_insertion_scripted",
-        "aloha_sim_transfer_cube_human",
-        "aloha_sim_transfer_cube_scripted",
-        "umi_cup_in_the_wild",
-    ]
-    for dataset_id in dataset_ids:
-        download_raw(root=root, dataset_id=dataset_id)
