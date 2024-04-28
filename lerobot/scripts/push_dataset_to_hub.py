@@ -152,7 +152,7 @@ def push_dataset_to_hub(
         community_id (str, optional): The ID of the community. Defaults to "lerobot".
         preprocess (bool, optional): If True, preprocesses the dataset. Defaults to True.
         path_save_to_disk (str | None, optional): The path to save the dataset to disk. Works when `dry_run` is True, which allows to only save on disk without uploading. By default, the dataset is not saved on disk.
-        **kwargs: Additional keyword arguments.
+        **kwargs: Additional keyword arguments for the preprocessor init method.
 
     Returns:
         None: This function does not return anything.
