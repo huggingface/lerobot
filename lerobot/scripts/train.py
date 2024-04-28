@@ -274,22 +274,22 @@ def train(cfg: dict, out_dir=None, job_name=None):
             {"params": [p for n, p in policy.named_parameters() if not n.startswith("backbone") and p.requires_grad]},
             {
                 "params": [p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad],
-                "lr": cfg.lr_backbone,
+                "lr": cfg.policy.lr_backbone,
             },
         ]
-        optimizer = torch.optim.AdamW(optimizer_params_dicts, lr=cfg.lr, weight_decay=cfg.weight_decay)
+        optimizer = torch.optim.AdamW(optimizer_params_dicts, lr=cfg.policy.lr, weight_decay=cfg.policy.weight_decay)
         lr_scheduler = None
     elif cfg.policy.name == "diffusion":
         optimizer = torch.optim.Adam(
-            policy.diffusion.parameters(), cfg.lr, cfg.adam_betas, cfg.adam_eps, cfg.adam_weight_decay
+            policy.diffusion.parameters(), cfg.policy.lr, cfg.policy.adam_betas, cfg.policy.adam_eps, cfg.policy.adam_weight_decay
         )
         # TODO(rcadene): modify lr scheduler so that it doesn't depend on epochs but steps
         # configure lr scheduler
         lr_scheduler = get_scheduler(
-            cfg.lr_scheduler,
+            cfg.policy.lr_scheduler,
             optimizer=optimizer,
-            num_warmup_steps=cfg.lr_warmup_steps,
-            num_training_steps=cfg.offline_steps,
+            num_warmup_steps=cfg.policy.lr_warmup_steps,
+            num_training_steps=cfg.policy.offline_steps,
             # pytorch assumes stepping LRScheduler every epoch
             # however huggingface diffusers steps it every batch
             last_epoch=-1,
