@@ -66,7 +66,7 @@ def render_dataset(dataset, out_dir, max_num_episodes):
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=2,
+        num_workers=4,
         batch_size=1,
         shuffle=False,
     )
