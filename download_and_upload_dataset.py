@@ -509,7 +509,7 @@ def download_and_upload_aloha(root, revision, dataset_id, fps=50):
     data_dict = concatenate_episodes(ep_dicts)
 
     features = {
-        "observation.image.top": Image(),
+        "observation.images.top": Image(),
         "observation.state": Sequence(
             length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
         ),
