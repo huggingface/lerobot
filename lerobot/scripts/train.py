@@ -289,7 +289,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
             cfg.policy.lr_scheduler,
             optimizer=optimizer,
             num_warmup_steps=cfg.policy.lr_warmup_steps,
-            num_training_steps=cfg.policy.offline_steps,
+            num_training_steps=cfg.offline_steps,
             # pytorch assumes stepping LRScheduler every epoch
             # however huggingface diffusers steps it every batch
             last_epoch=-1,
