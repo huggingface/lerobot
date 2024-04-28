@@ -47,7 +47,7 @@ def push_lerobot_dataset_to_hub(
             dataset will be stored. Defaults to "lerobot".
         dry_run (bool, optional): If True, performs a dry run without actually pushing the dataset. Defaults to False.
     """
-    if dry_run:
+    if not dry_run:
         # push to main to indicate latest version
         hf_dataset.push_to_hub(f"{community_id}/{dataset_id}", token=True)
 
@@ -71,7 +71,7 @@ def push_lerobot_dataset_to_hub(
     ep_data_idx_path = meta_data_dir / "episode_data_index.safetensors"
     save_file(episode_data_index, ep_data_idx_path)
 
-    if dry_run:
+    if not dry_run:
         api = HfApi()
 
         api.upload_file(
