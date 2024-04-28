@@ -126,12 +126,9 @@ class AlohaProcessor:
         id_from = 0
 
         for ep_path in tqdm.tqdm(hdf5_files):
-            # for ep_id in tqdm.tqdm(range(num_episodes)):
-            # ep_path = raw_dir / f"episode_{ep_id}.hdf5"
             with h5py.File(ep_path, "r") as ep:
                 ep_id = int(re.search(r"episode_(\d+)", ep_path.name).group(1))
                 num_frames = ep["/action"].shape[0]
-                # assert episode_len[dataset_id] == num_frames
 
                 # last step of demonstration is considered done
                 done = torch.zeros(num_frames, dtype=torch.bool)
@@ -144,9 +141,7 @@ class AlohaProcessor:
 
                 for cam in self.cameras:
                     image = torch.from_numpy(ep[f"/observations/images/{cam}"][:])  # b h w c
-                    # image = einops.rearrange(image, "b h w c -> b c h w").contiguous()
                     ep_dict[f"observation.images.{cam}"] = [PILImage.fromarray(x.numpy()) for x in image]
-                    # ep_dict[f"next.observation.images.{cam}"] = image
 
                 ep_dict.update(
                     {
@@ -155,7 +150,6 @@ class AlohaProcessor:
                         "episode_index": torch.tensor([ep_id] * num_frames),
                         "frame_index": torch.arange(0, num_frames, 1),
                         "timestamp": torch.arange(0, num_frames, 1) / self.fps,
-                        # "next.observation.state": state,
                         # TODO(rcadene): compute reward and success
                         # "next.reward": reward,
                         "next.done": done,
