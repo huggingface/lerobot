@@ -120,11 +120,11 @@ def push_to_hub(
     # copy in tests folder, the first episode and the meta_data directory
     num_items_first_ep = episode_data_index["to"][0] - episode_data_index["from"][0]
     hf_dataset.select(range(num_items_first_ep)).with_format("torch").save_to_disk(
-        f"tests/data/{dataset_id}/train"
+        f"tests/data/{community_id}/{dataset_id}/train"
     )
-    if Path(f"tests/data/{dataset_id}/meta_data").exists():
-        shutil.rmtree(f"tests/data/{dataset_id}/meta_data")
-    shutil.copytree(meta_data_dir, f"tests/data/{dataset_id}/meta_data")
+    if Path(f"tests/data/{community_id}/{dataset_id}/meta_data").exists():
+        shutil.rmtree(f"tests/data/{community_id}/{dataset_id}/meta_data")
+    shutil.copytree(meta_data_dir, f"tests/data/{community_id}/{dataset_id}/meta_data")
 
 
 def push_dataset_to_hub(
