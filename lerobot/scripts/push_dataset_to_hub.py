@@ -148,7 +148,7 @@ def push_dataset_to_hub(
         fps (int | None): The desired frames per second for the dataset.
         dataset_folder (Path | None, optional): The path to the dataset folder. If not provided, the dataset will be downloaded using the dataset ID. Defaults to None.
         dry_run (bool, optional): If True, performs a dry run without actually pushing the dataset. Defaults to False.
-        revision (str, optional): The revision of the dataset. Defaults to "v1.0".
+        revision (str, optional): Version of the `push_dataset_to_hub.py` codebase used to preprocess the dataset. Defaults to "v1.1".
         community_id (str, optional): The ID of the community. Defaults to "lerobot".
         preprocess (bool, optional): If True, preprocesses the dataset. Defaults to True.
         path_save_to_disk (str | None, optional): The path to save the dataset to disk. Defaults to None.
