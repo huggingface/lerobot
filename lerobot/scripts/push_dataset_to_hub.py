@@ -189,13 +189,58 @@ def push_dataset_to_hub(
 
 
 class DatasetProcessor(Protocol):
+    """A class for processing datasets.
+
+    This class provides methods for validating, preprocessing, and converting datasets.
+
+    Args:
+        folder_path (str): The path to the folder containing the dataset.
+        fps (int | None): The frames per second of the dataset. If None, the default value is used.
+        *args: Additional positional arguments.
+        **kwargs: Additional keyword arguments.
+    """
+
     def __init__(self, folder_path: str, fps: int | None, *args, **kwargs) -> None: ...
-    def is_valid(self) -> bool: ...
-    def preprocess(self) -> tuple[dict, dict]: ...
-    def to_hf_dataset(self, data_dict: dict) -> Dataset: ...
+
+    def is_valid(self) -> bool:
+        """Check if the dataset is valid.
+
+        Returns:
+            bool: True if the dataset is valid, False otherwise.
+        """
+        ...
+
+    def preprocess(self) -> tuple[dict, dict]:
+        """Preprocess the dataset.
+
+        Returns:
+            tuple[dict, dict]: A tuple containing two dictionaries representing the preprocessed data.
+        """
+        ...
+
+    def to_hf_dataset(self, data_dict: dict) -> Dataset:
+        """Convert the preprocessed data to a Hugging Face dataset.
+
+        Args:
+            data_dict (dict): The preprocessed data.
+
+        Returns:
+            Dataset: The converted Hugging Face dataset.
+        """
+        ...
+
     @property
-    def fps(self) -> int: ...
-    def cleanup(self): ...
+    def fps(self) -> int:
+        """Get the frames per second of the dataset.
+
+        Returns:
+            int: The frames per second.
+        """
+        ...
+
+    def cleanup(self):
+        """Clean up any resources used by the dataset processor."""
+        ...
 
 
 def guess_dataset_type(dataset_folder: Path, **processor_kwargs) -> DatasetProcessor:
