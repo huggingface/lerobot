@@ -76,13 +76,13 @@ def push_to_hub(
 
         api.upload_file(
             path_or_fileobj=info_path,
-            path_in_repo=str(info_path).replace(f"{root}/{dataset_id}", ""),
+            path_in_repo=str(info_path).replace(f"{root}/{community_id}/{dataset_id}", ""),
             repo_id=f"{community_id}/{dataset_id}",
             repo_type="dataset",
         )
         api.upload_file(
             path_or_fileobj=info_path,
-            path_in_repo=str(info_path).replace(f"{root}/{dataset_id}", ""),
+            path_in_repo=str(info_path).replace(f"{root}/{community_id}/{dataset_id}", ""),
             repo_id=f"{community_id}/{dataset_id}",
             repo_type="dataset",
             revision=revision,
@@ -91,13 +91,13 @@ def push_to_hub(
         # stats
         api.upload_file(
             path_or_fileobj=stats_path,
-            path_in_repo=str(stats_path).replace(f"{root}/{dataset_id}", ""),
+            path_in_repo=str(stats_path).replace(f"{root}/{community_id}/{dataset_id}", ""),
             repo_id=f"{community_id}/{dataset_id}",
             repo_type="dataset",
         )
         api.upload_file(
             path_or_fileobj=stats_path,
-            path_in_repo=str(stats_path).replace(f"{root}/{dataset_id}", ""),
+            path_in_repo=str(stats_path).replace(f"{root}/{community_id}/{dataset_id}", ""),
             repo_id=f"{community_id}/{dataset_id}",
             repo_type="dataset",
             revision=revision,
@@ -105,13 +105,13 @@ def push_to_hub(
 
         api.upload_file(
             path_or_fileobj=ep_data_idx_path,
-            path_in_repo=str(ep_data_idx_path).replace(f"{root}/{dataset_id}", ""),
+            path_in_repo=str(ep_data_idx_path).replace(f"{root}/{community_id}/{dataset_id}", ""),
             repo_id=f"{community_id}/{dataset_id}",
             repo_type="dataset",
         )
         api.upload_file(
             path_or_fileobj=ep_data_idx_path,
-            path_in_repo=str(ep_data_idx_path).replace(f"{root}/{dataset_id}", ""),
+            path_in_repo=str(ep_data_idx_path).replace(f"{root}/{community_id}/{dataset_id}", ""),
             repo_id=f"{community_id}/{dataset_id}",
             repo_type="dataset",
             revision=revision,
