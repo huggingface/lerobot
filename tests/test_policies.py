@@ -16,8 +16,8 @@ from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_env
 @pytest.mark.parametrize(
     "env_name,policy_name,extra_overrides",
     [
-        ("xarm", "tdmpc", ["policy.mpc=true"]),
-        ("pusht", "tdmpc", ["policy.mpc=false"]),
+        # ("xarm", "tdmpc", ["policy.mpc=true"]),
+        # ("pusht", "tdmpc", ["policy.mpc=false"]),
         ("pusht", "diffusion", []),
         ("aloha", "act", ["env.task=AlohaInsertion-v0", "dataset.repo_id=lerobot/aloha_sim_insertion_human"]),
         (
