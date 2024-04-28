@@ -509,7 +509,7 @@ def download_and_upload_aloha(root, revision, dataset_id, fps=50):
     data_dict = concatenate_episodes(ep_dicts)
 
     features = {
-        "observation.image": Image(),
+        "observation.image.top": Image(),
         "observation.state": Sequence(
             length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
         ),
@@ -518,7 +518,7 @@ def download_and_upload_aloha(root, revision, dataset_id, fps=50):
         "frame_index": Value(dtype="int64", id=None),
         "timestamp": Value(dtype="float32", id=None),
         # "next.reward": Value(dtype="float32", id=None),
-        # "next.done": Value(dtype="bool", id=None),
+        "next.done": Value(dtype="bool", id=None),
         # "next.success": Value(dtype="bool", id=None),
         "index": Value(dtype="int64", id=None),
     }
@@ -758,7 +758,7 @@ def _umi_save_images_concurrently(zarr_data: dict, folder_path: str, max_workers
 if __name__ == "__main__":
     root = "data"
     revisions = {
-        "pusht": "v1.0",
+        "pusht": "v1.1",
         "xarm_lift_medium": "v1.1",
         "xarm_lift_medium_replay": "v1.1",
         "xarm_push_medium": "v1.1",
@@ -767,7 +767,7 @@ if __name__ == "__main__":
         "aloha_sim_insertion_scripted": "v1.1",
         "aloha_sim_transfer_cube_human": "v1.1",
         "aloha_sim_transfer_cube_scripted": "v1.1",
-        "umi_cup_in_the_wild": "v1.0",
+        "umi_cup_in_the_wild": "v1.1",
     }
     dataset_ids = [
         "pusht",
