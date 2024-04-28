@@ -757,18 +757,7 @@ def _umi_save_images_concurrently(zarr_data: dict, folder_path: str, max_workers
 
 if __name__ == "__main__":
     root = "data"
-    revisions = {
-        "pusht": "v1.1",
-        "xarm_lift_medium": "v1.1",
-        "xarm_lift_medium_replay": "v1.1",
-        "xarm_push_medium": "v1.1",
-        "xarm_push_medium_replay": "v1.1",
-        "aloha_sim_insertion_human": "v1.1",
-        "aloha_sim_insertion_scripted": "v1.1",
-        "aloha_sim_transfer_cube_human": "v1.1",
-        "aloha_sim_transfer_cube_scripted": "v1.1",
-        "umi_cup_in_the_wild": "v1.1",
-    }
+    revision = "v1.1"
     dataset_ids = [
         "pusht",
         "xarm_lift_medium",
