@@ -303,7 +303,7 @@ def push_dataset_to_hub(
     dry_run: bool = False,
     revision: str = "v1.1",
     community_id: str = "lerobot",
-    preprocess: bool = True,
+    no_preprocess: bool = False,
     path_save_to_disk: str | None = None,
     **kwargs,
 ) -> None:
@@ -318,7 +318,7 @@ def push_dataset_to_hub(
         dry_run (bool, optional): If True, performs a dry run without actually pushing the dataset. Defaults to False.
         revision (str, optional): Version of the `push_dataset_to_hub.py` codebase used to preprocess the dataset. Defaults to "v1.1".
         community_id (str, optional): The ID of the community. Defaults to "lerobot".
-        preprocess (bool, optional): If True, preprocesses the dataset. Defaults to True.
+        no_preprocess (bool, optional): If True, does not preprocesses the dataset. Defaults to False.
         path_save_to_disk (str | None, optional): The path to save the dataset to disk. Works when `dry_run` is True, which allows to only save on disk without uploading. By default, the dataset is not saved on disk.
         **kwargs: Additional keyword arguments for the preprocessor init method.
 
@@ -327,7 +327,7 @@ def push_dataset_to_hub(
     if dataset_folder is None:
         dataset_folder = download_raw(root=root, dataset_id=dataset_id)
 
-    if preprocess:
+    if not no_preprocess:
         processor = guess_dataset_type(dataset_folder=dataset_folder, fps=fps, **kwargs)
         data_dict, episode_data_index = processor.preprocess()
         hf_dataset = processor.to_hf_dataset(data_dict)
@@ -478,9 +478,9 @@ def main():
         help="Dataset version identifier to manage different iterations of the dataset.",
     )
     parser.add_argument(
-        "--preprocess",
+        "--no-preprocess",
         action="store_true",
-        help="Preprocess the dataset, set to false if you want dowload the dataset raw.",
+        help="Does not preprocess the dataset, set this flag if you only want dowload the dataset raw.",
     )
     parser.add_argument(
         "--path-save-to-disk",
@@ -498,7 +498,7 @@ def main():
         dry_run=args.dry_run,
         community_id=args.community_id,
         revision=args.revision,
-        preprocess=args.preprocess,
+        no_preprocess=args.no_preprocess,
         path_save_to_disk=args.path_save_to_disk,
     )
 
