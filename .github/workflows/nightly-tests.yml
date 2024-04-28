@@ -1,6 +1,6 @@
 # Inspired by
 # https://github.com/huggingface/peft/blob/main/.github/workflows/nightly.yml
-name: Nightly Tests
+name: Nightly
 
 on:
   workflow_dispatch:
@@ -10,7 +10,6 @@ on:
 env:
   DATA_DIR: tests/data
   # SLACK_API_TOKEN: ${{ secrets.SLACK_API_TOKEN }}
-
 
 jobs:
   run_all_tests_cpu:
@@ -33,10 +32,12 @@ jobs:
         env:
           DATA_DIR: tests/data
         run: pytest -v --cov=./lerobot --disable-warnings tests
+
       - name: Tests end-to-end
         env:
           DATA_DIR: tests/data
         run: make test-end-to-end
+
 
   run_all_tests_single_gpu:
     name: "Test GPU"
@@ -59,6 +60,7 @@ jobs:
     steps:
       - name: Nvidia-smi
         run: nvidia-smi
+
       - name: Test
         run: pytest -v --cov=./lerobot --cov-report=xml --disable-warnings tests
       #   TODO(aliberts): Link with HF Codecov account
@@ -69,14 +71,6 @@ jobs:
       #     verbose: true
       - name: Tests end-to-end
         run: make test-end-to-end
-      - name: Tailscale Wait
-        if: ${{ failure() || runner.debug == '1' }}
-        uses: huggingface/tailscale-action@v1
-        with:
-           waitForSSH: true
-           authkey: ${{ secrets.TAILSCALE_SSH_AUTHKEY }}
-           slackChannel: ${{ secrets.SLACK_CIFEEDBACK_CHANNEL }}
-           slackToken: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
 
     #   - name: Generate Report
     #     if: always()
