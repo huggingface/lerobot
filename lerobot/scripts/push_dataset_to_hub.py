@@ -166,10 +166,8 @@ def push_dataset_to_hub(
         data_dict, episode_data_index = processor.preprocess()
         hf_dataset = processor.to_hf_dataset(data_dict)
 
-        meta_data_fps = processor.fps
-
         info = {
-            "fps": meta_data_fps,
+            "fps": processor.fps,
         }
         stats: dict[str, dict[str, torch.Tensor]] = compute_stats(hf_dataset)
 
