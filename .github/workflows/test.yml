@@ -53,7 +53,10 @@ jobs:
           poetry install --all-extras
 
       - name: Test with pytest
-        run: pytest tests -v --cov=./lerobot --durations=0 -W ignore::UserWarning:torch.utils.data.dataloader
+        run: |
+          pytest tests -v --cov=./lerobot --durations=0 \
+            -W ignore::UserWarning:torch.utils.data.dataloader:558 \
+            -W ignore::UserWarning:gymnasium.utils.env_checker:247
 
       - name: Test end-to-end
         run: make test-end-to-end
