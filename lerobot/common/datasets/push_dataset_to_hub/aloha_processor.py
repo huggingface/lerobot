@@ -15,16 +15,12 @@ from lerobot.common.datasets.utils import (
 
 class AlohaProcessor:
     """
-    A class to process and validate HDF5 files containing episodic data related to specific camera datasets.
-
-    This processor handles the management and validation of data stored in HDF5 file format,
-    specifically designed for episodic content from different camera sources. The validation
-    involves checking the integrity and presence of required datasets within the files.
+    Process HDF5 files formatted like in: https://github.com/tonyzhaozh/act
 
     Attributes:
         folder_path (Path): Path to the directory containing HDF5 files.
         cameras (list[str]): List of camera identifiers to check in the files.
-        fps (int): Frames per second for time-series data, used in timestamp calculations.
+        fps (int): Frames per second used in timestamp calculations.
 
     Methods:
         is_valid() -> bool:

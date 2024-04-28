@@ -19,16 +19,12 @@ from lerobot.common.datasets.utils import (
 
 class UmiProcessor:
     """
-    A processor class for handling and validating UMI (Universal Manipulation Interface) data stored in Zarr format.
+     Process UMI (Universal Manipulation Interface) data stored in Zarr format like in: https://github.com/real-stanford/universal_manipulation_interface
 
     Attributes:
         folder_path (str): The path to the folder containing Zarr datasets.
         fps (int): Frames per second, used to calculate timestamps for frames.
 
-    Methods:
-        is_valid() -> bool: Check the validity of the Zarr datasets.
-        preprocess() -> Tuple[Dict, Dict]: Collect and process data from the Zarr datasets.
-        to_hf_dataset(data_dict: Dict) -> Dataset: Convert processed data into a Hugging Face dataset format.
     """
 
     def __init__(self, folder_path: str, fps: int | None = None):

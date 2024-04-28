@@ -14,6 +14,8 @@ from lerobot.common.datasets.utils import (
 
 
 class XarmProcessor:
+    """ Process pickle files formatted like in: https://github.com/fyhMer/fowm
+    """
     def __init__(self, folder_path: str, fps: int | None = None):
         self.folder_path = Path(folder_path)
         self.keys = {"actions", "rewards", "dones", "masks"}
