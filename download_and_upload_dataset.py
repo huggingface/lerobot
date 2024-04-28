@@ -182,7 +182,7 @@ def download_and_upload_pusht(root, revision, dataset_id="pusht", fps=10):
     zarr_path = (raw_dir / pusht_zarr).resolve()
     if not zarr_path.is_dir():
         raw_dir.mkdir(parents=True, exist_ok=True)
-        download_and_extract_zip(pusht_url, zarr_path)
+        download_and_extract_zip(pusht_url, raw_dir)
 
     # load
     dataset_dict = DiffusionPolicyReplayBuffer.copy_from_path(zarr_path)  # , keys=['img', 'state', 'action'])
