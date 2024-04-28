@@ -771,5 +771,4 @@ if __name__ == "__main__":
         "umi_cup_in_the_wild",
     ]
     for dataset_id in dataset_ids:
-        download_and_upload(root, revisions[dataset_id], dataset_id)
-    # download_and_upload_umi(root, revision, "umi")
+        download_and_upload(root, revision, dataset_id)
