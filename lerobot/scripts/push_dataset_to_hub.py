@@ -16,9 +16,7 @@ from lerobot.common.datasets.push_dataset_to_hub.aloha_processor import (
 from lerobot.common.datasets.push_dataset_to_hub.pusht_processor import PushTProcessor
 from lerobot.common.datasets.push_dataset_to_hub.umi_processor import UmiProcessor
 from lerobot.common.datasets.push_dataset_to_hub.xarm_processor import XarmProcessor
-from lerobot.common.datasets.utils import (
-    compute_stats,
-)
+from lerobot.common.datasets.utils import compute_stats, flatten_dict
 
 
 def push_lerobot_dataset_to_hub(
@@ -65,6 +63,7 @@ def push_lerobot_dataset_to_hub(
         json.dump(info, f, indent=4)
     # stats
     stats_path = meta_data_dir / "stats.safetensors"
+    save_file(flatten_dict(stats), stats_path)
 
     # episode_data_index
     episode_data_index = {key: torch.tensor(episode_data_index[key]) for key in episode_data_index}
