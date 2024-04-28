@@ -177,6 +177,11 @@ class UmiProcessor:
             "index": Value(dtype="int64", id=None),
             "episode_data_index_from": Value(dtype="int64", id=None),
             "episode_data_index_to": Value(dtype="int64", id=None),
+            # `start_pos` and `end_pos` respectively represent the positions of the end-effector
+            # at the beginning and the end of the episode.
+            # `gripper_width` indicates the distance between the grippers, and this value is included
+            # in the state vector, which comprises the concatenation of the end-effector position
+            # and gripper width.
             "end_pose": Sequence(
                 length=data_dict["end_pose"].shape[1], feature=Value(dtype="float32", id=None)
             ),

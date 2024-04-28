@@ -133,7 +133,7 @@ def push_dataset_to_hub(
     fps: int | None,
     dataset_folder: Path | None = None,
     dry_run: bool = False,
-    revision: str = "v1.0",
+    revision: str = "v1.1",
     community_id: str = "lerobot",
     preprocess: bool = True,
     path_save_to_disk: str | None = None,
