@@ -55,7 +55,7 @@ def push_to_hub(
         hf_dataset.push_to_hub(f"{community_id}/{dataset_id}", token=True, revision=revision)
 
     # create and store meta_data
-    meta_data_dir = root / dataset_id / "meta_data"
+    meta_data_dir = root / community_id / dataset_id / "meta_data"
     meta_data_dir.mkdir(parents=True, exist_ok=True)
 
     # info
