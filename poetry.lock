@@ -1121,7 +1121,7 @@ mujoco = "^2.3.7"
 type = "git"
 url = "git@github.com:huggingface/gym-aloha.git"
 reference = "HEAD"
-resolved_reference = "c636f05ba0d1760df94537da84c860be1487e17f"
+resolved_reference = "12c8171d6708ec6d8547c310fe736d8d494195c5"
 
 [[package]]
 name = "gym-pusht"
