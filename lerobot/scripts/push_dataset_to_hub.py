@@ -433,7 +433,7 @@ def main():
         description="Push a dataset to the Hugging Face Hub with optional parameters for customization.",
         epilog="""
         Example usage:
-            python -m lerobot.scripts.push_dataset_to_hub --dataset-folder /path/to/dataset --dataset-id example_dataset --root /path/to/root --dry-run --revision v2.0 --community-id example_community --fps 30 --path-save-to-disk /path/to/save --preprocess
+            python -m lerobot.scripts.push_dataset_to_hub --dataset-folder /path/to/dataset --dataset-id example_dataset --root /path/to/root --dry-run --revision v2.0 --community-id example_community --fps 30 --path-save-to-disk /path/to/save --no-preprocess
 
         This processes and optionally pushes 'example_dataset' located in '/path/to/dataset' to Hugging Face Hub,
         with various parameters to control the processing and uploading behavior.
