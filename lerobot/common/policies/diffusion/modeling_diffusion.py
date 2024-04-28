@@ -378,13 +378,13 @@ class _RgbEncoder(nn.Module):
 
         # Set up backbone.
         backbone_model = getattr(torchvision.models, cfg.vision_backbone)(
-            pretrained=cfg.use_pretrained_backbone
+            weights=cfg.pretrained_backbone_weights
         )
         # Note: This assumes that the layer4 feature map is children()[-3]
         # TODO(alexander-soare): Use a safer alternative.
         self.backbone = nn.Sequential(*(list(backbone_model.children())[:-2]))
         if cfg.use_group_norm:
-            if cfg.use_pretrained_backbone:
+            if cfg.pretrained_backbone_weights:
                 raise ValueError(
                     "You can't replace BatchNorm in a pretrained model without ruining the weights!"
                 )

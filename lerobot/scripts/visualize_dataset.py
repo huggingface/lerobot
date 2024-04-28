@@ -16,7 +16,7 @@ MAX_NUM_STEPS = 1000
 FIRST_FRAME = 0
 
 
-@hydra.main(version_base=None, config_name="default", config_path="../configs")
+@hydra.main(version_base="1.2", config_name="default", config_path="../configs")
 def visualize_dataset_cli(cfg: dict):
     visualize_dataset(cfg, out_dir=hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
 
