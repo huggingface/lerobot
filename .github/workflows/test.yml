@@ -60,3 +60,6 @@ jobs:
 
       - name: Test end-to-end
         run: make test-end-to-end
+
+      - name: Cleanup
+        run: rm -rf tests/outputs
