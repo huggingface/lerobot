@@ -4,11 +4,11 @@ from pathlib import Path
 
 import einops
 import hydra
+import imageio
 import torch
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.logger import log_output_dir
-from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.utils import init_logging
 
 NUM_EPISODES_TO_RENDER = 50
@@ -39,7 +39,7 @@ def cat_and_write_video(video_path, frames, fps):
     # convert to channel last uint8 [0, 255]
     frames = einops.rearrange(frames, "b c h w -> b h w c")
     frames = (frames * 255).type(torch.uint8)
-    write_video(video_path, frames.numpy(), fps=fps)
+    imageio.mimsave(video_path, frames.numpy(), fps=fps)
 
 
 def visualize_dataset(cfg: dict, out_dir=None):

@@ -15,11 +15,11 @@ The script ends with examples of how to batch process data using PyTorch's DataL
 
 from pathlib import Path
 
+import imageio
 import torch
 
 import lerobot
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.utils.io_utils import write_video
 
 print("List of available datasets", lerobot.available_datasets)
 # # >>> ['lerobot/aloha_sim_insertion_human', 'lerobot/aloha_sim_insertion_scripted',
@@ -59,7 +59,7 @@ frames = [frame.permute((1, 2, 0)).numpy() for frame in frames]
 
 # and finally save them to a mp4 video
 Path("outputs/examples/1_load_lerobot_dataset").mkdir(parents=True, exist_ok=True)
-write_video("outputs/examples/1_load_lerobot_dataset/episode_5.mp4", frames, fps=dataset.fps)
+imageio.mimsave("outputs/examples/1_load_lerobot_dataset/episode_5.mp4", frames, fps=dataset.fps)
 
 # For many machine learning applications we need to load histories of past observations, or trajectorys of future actions. Our datasets can load previous and future frames for each key/modality,
 # using timestamps differences with the current loaded frame. For instance:
