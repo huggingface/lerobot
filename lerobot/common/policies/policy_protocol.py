@@ -37,9 +37,12 @@ class Policy(Protocol):
         with caching.
         """
 
-    def update(self, batch):
-        """Does compute_loss then an optimization step.
 
-        TODO(alexander-soare): We will move the optimization step back into the training loop, so this will
-        disappear.
+@runtime_checkable
+class PolicyWithUpdate(Policy, Protocol):
+    def update(self):
+        """An update method that is to be called after a training optimization step.
+
+        Implements an additional updates the model parameters may need (for example, doing an EMA step for a
+        target model, or incrementing an internal buffer).
         """

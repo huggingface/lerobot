@@ -10,7 +10,6 @@ TODO(alexander-soare): Use batch-first throughout.
 
 # ruff: noqa: N806
 
-import time
 from collections import deque
 from copy import deepcopy
 from typing import Callable
@@ -43,9 +42,6 @@ class TDMPCPolicy(nn.Module):
         self.model_target = deepcopy(self.model)
         self.model_target.eval()
 
-        # TODO(now): move optimization out.
-        self.optim = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
-
         if cfg.input_normalization_modes is not None:
             self.normalize_inputs = Normalize(cfg.input_shapes, cfg.input_normalization_modes, dataset_stats)
         else:
@@ -54,8 +50,6 @@ class TDMPCPolicy(nn.Module):
         self.unnormalize_outputs = Unnormalize(
             cfg.output_shapes, cfg.output_normalization_modes, dataset_stats
         )
-
-        self.register_buffer("step", torch.tensor(0))
 
     def save(self, fp):
         """Save state dict of TOLD model to filepath."""
@@ -444,13 +438,13 @@ class TDMPCPolicy(nn.Module):
 
         info.update(
             {
-                "consistency_loss": consistency_loss,
-                "reward_loss": reward_loss,
-                "Q_value_loss": q_value_loss,
-                "V_value_loss": v_value_loss,
-                "pi_loss": pi_loss,
+                "consistency_loss": consistency_loss.item(),
+                "reward_loss": reward_loss.item(),
+                "Q_value_loss": q_value_loss.item(),
+                "V_value_loss": v_value_loss.item(),
+                "pi_loss": pi_loss.item(),
                 "loss": loss,
-                "sum_loss": loss * self.cfg.horizon,
+                "sum_loss": loss.item() * self.cfg.horizon,
             }
         )
 
@@ -461,49 +455,12 @@ class TDMPCPolicy(nn.Module):
 
         return info
 
-    def update(self, batch: dict[str, Tensor]) -> dict[str, float]:
-        """Run the model in train mode, compute the loss, and do an optimization step."""
-        start_time = time.time()
-
-        self.optim.zero_grad(set_to_none=True)
-        self.model.train()
-
-        fwd_info = self.forward(batch)
-        loss = fwd_info["loss"]
-
-        if torch.isnan(loss).item():
-            raise RuntimeError("loss has nan")
-
-        loss.backward()
-
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            self.model.parameters(), self.cfg.grad_clip_norm, error_if_nonfinite=False
-        )
-        self.optim.step()
-
-        info = {
-            "consistency_loss": float(fwd_info["consistency_loss"].item()),
-            "reward_loss": float(fwd_info["reward_loss"].item()),
-            "Q_value_loss": float(fwd_info["Q_value_loss"].item()),
-            "V_value_loss": float(fwd_info["V_value_loss"].item()),
-            "pi_loss": float(fwd_info["pi_loss"].item()),
-            "loss": float(loss.item()),
-            "sum_loss": float(fwd_info["sum_loss"].item()),
-            "grad_norm": float(grad_norm.item()),
-            "lr": self.cfg.lr,
-            "update_s": time.time() - start_time,
-        }
-
-        # Finalize update step by incrementing the step buffer and updating the ema model weights.
-        # TODO(now-noise): remove
-        self.step += 1
-
+    def update(self):
+        """Update the target model's parameters with an EMA step."""
         # Note a minor variation with respect to the original FOWM code. Here they do this based on an EMA
         # update frequency parameter which is set to 2 (every 2 steps an update is done). To simplify the code
         # we update every step and adjust the decay parameter `alpha` accordingly (0.99 -> 0.995)
         _update_ema_parameters(self.model_target, self.model, self.cfg.target_model_momentum)
-
-        return info
 
 
 class TOLD(nn.Module):

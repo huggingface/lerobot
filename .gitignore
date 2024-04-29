@@ -6,6 +6,7 @@ data
 outputs
 .vscode
 rl
+.DS_Store
 
 # HPC
 nautilus/*.yaml
