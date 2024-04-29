@@ -77,7 +77,7 @@ class ActionChunkingTransformerConfig:
     # Normalization / Unnormalization
     input_normalization_modes: dict[str, str] = field(
         default_factory=lambda: {
-            "observation.image": "mean_std",
+            "observation.images.top": "mean_std",
             "observation.state": "mean_std",
         }
     )
