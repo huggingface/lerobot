@@ -126,21 +126,18 @@ class TDMPCPolicy(nn.Module):
         TODO(alexander-soare) Extend this to be able to work with batches.
         """
         # Sample Nπ trajectories from the policy.
-        # TODO(now): Be more explicit with these params: num_pi_samples, num_gaussian_samples
-        num_pi_trajs = int(self.cfg.mixture_coef * self.cfg.num_samples)
-        # Note: if num_pi_trajs is 0 this is fine.
         pi_actions = torch.empty(
-            self.cfg.horizon, num_pi_trajs, self.cfg.output_shapes["action"][0], device=self.device
+            self.cfg.horizon, self.cfg.n_pi_samples, self.cfg.output_shapes["action"][0], device=self.device
         )
-        if num_pi_trajs > 0:
-            _z = einops.repeat(z, "d -> n d", n=num_pi_trajs)
+        if self.cfg.n_pi_samples > 0:
+            _z = einops.repeat(z, "d -> n d", n=self.cfg.n_pi_samples)
             for t in range(self.cfg.horizon):
                 # TODO(now): in the official implementation self.model.training should evaluate to True during
                 # rollouts generated while training. Note that in the original impl they don't even use self.model.training here.
                 pi_actions[t] = self.model.pi(_z, self.cfg.min_std * self.model.training)
                 _z = self.model.latent_dynamics(_z, pi_actions[t])
 
-        z = einops.repeat(z, "d -> n d", n=self.cfg.num_samples + num_pi_trajs)
+        z = einops.repeat(z, "d -> n d", n=self.cfg.n_gaussian_samples + self.cfg.n_pi_samples)
 
         # Model Predictive Path Integral (MPPI) with the cross-entropy method (CEM) as the optimization
         # algorithm.
@@ -161,7 +158,7 @@ class TDMPCPolicy(nn.Module):
                 + std.unsqueeze(1)
                 * torch.randn(
                     self.cfg.horizon,
-                    self.cfg.num_samples,
+                    self.cfg.n_gaussian_samples,
                     self.cfg.output_shapes["action"][0],
                     device=std.device,
                 ),
@@ -177,7 +174,7 @@ class TDMPCPolicy(nn.Module):
             # Note: zero NaNs which could possibly arise early in training due to the auto-regressive nature
             # of policy rollouts with the world model.
             value = self.estimate_value(z, actions).nan_to_num_(0)  # shape (N+Nπ,)
-            elite_idxs = torch.topk(value, self.cfg.num_elites, dim=0).indices
+            elite_idxs = torch.topk(value, self.cfg.n_elites, dim=0).indices
             elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
 
             # Update guassian PDF parameters to be the (weighted) mean and standard deviation of the elites.
@@ -185,7 +182,7 @@ class TDMPCPolicy(nn.Module):
             # The weighting is a softmax over trajectory values. Note that this is not the same as the usage
             # of Ω in eqn 4 of the TD-MPC paper. Instead it is the normalized version of it: s = Ω/ΣΩ. This
             # makes the equations: μ = Σ(s⋅Γ), σ = Σ(s⋅(Γ-μ)²).
-            score = torch.exp(self.cfg.temperature * (elite_value - max_value))
+            score = torch.exp(self.cfg.elite_weighting_temperature * (elite_value - max_value))
             score /= score.sum()
             _mean = torch.sum(einops.rearrange(score, "n -> n 1") * elite_actions, dim=1)
             _std = torch.sqrt(
@@ -196,7 +193,7 @@ class TDMPCPolicy(nn.Module):
                 )
             )
             # Update mean with an exponential moving average, and std with a direct replacement.
-            mean = self.cfg.momentum * mean + (1 - self.cfg.momentum) * _mean
+            mean = self.cfg.gaussian_mean_momentum * mean + (1 - self.cfg.gaussian_mean_momentum) * _mean
             std = _std.clamp_(self.cfg.min_std, self.cfg.max_std)
 
         # Keep track of the mean for warm-starting subsequent steps.
@@ -233,10 +230,10 @@ class TDMPCPolicy(nn.Module):
             # We will compute the reward in a moment. First compute the uncertainty regularizer from eqn 4
             # of the FOWM paper.
 
-            # TODO(now): The uncertainty cost is the lambda used in eq 4 of the FOWM paper. Give it a better
-            # name.
-            if self.cfg.uncertainty_cost > 0:
-                regularization = -(self.cfg.uncertainty_cost * self.model.Qs(z, actions[t]).std(0))
+            if self.cfg.uncertainty_regularizer_coeff > 0:
+                regularization = -(
+                    self.cfg.uncertainty_regularizer_coeff * self.model.Qs(z, actions[t]).std(0)
+                )
             else:
                 regularization = 0
             # Estimate the next state (latent) and reward.
@@ -258,8 +255,8 @@ class TDMPCPolicy(nn.Module):
         else:
             G += running_discount * torch.min(terminal_values)
         # Finally, also regularize the terminal value.
-        if self.cfg.uncertainty_cost > 0:
-            G -= running_discount * self.cfg.uncertainty_cost * terminal_values.std(0)
+        if self.cfg.uncertainty_regularizer_coeff > 0:
+            G -= running_discount * self.cfg.uncertainty_regularizer_coeff * terminal_values.std(0)
         return G
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -278,8 +275,7 @@ class TDMPCPolicy(nn.Module):
         reward = batch["next.reward"]
         observations = {k: v for k, v in batch.items() if k.startswith("observation.")}
 
-        # TODO(now): What are these?
-        done = torch.zeros_like(reward, dtype=torch.bool, device=reward.device)
+        # TODO(now): Use is_pad
         mask = torch.ones_like(reward, dtype=torch.bool, device=reward.device)
 
         # Apply random image augmentations.
@@ -326,20 +322,27 @@ class TDMPCPolicy(nn.Module):
 
         # Compute losses.
         # TODO(now): use is_pad
+        done = torch.zeros_like(reward, dtype=torch.bool, device=reward.device)
         loss_mask = torch.ones_like(mask, device=self.device)
         for t in range(1, horizon):
             loss_mask[t] = loss_mask[t - 1] * (~done[t - 1])
         # Exponentially decay the loss weight with respect to the timestep. Steps that are more distant in the
         # future have less impact on the loss. Note: unsqueeze will let us broadcast to (seq, batch).
-        rho = torch.pow(self.cfg.rho, torch.arange(horizon, device=self.device)).unsqueeze(-1)
+        temporal_loss_coeffs = torch.pow(
+            self.cfg.temporal_decay_coeff, torch.arange(horizon, device=self.device)
+        ).unsqueeze(-1)
         # Compute consistency loss as MSE loss between latents predicted from the rollout and latents
         # predicted from the (target model's) observation encoder.
         consistency_loss = (
-            rho * F.mse_loss(z_preds[1:], z_targets, reduction="none").mean(dim=-1) * loss_mask
+            temporal_loss_coeffs
+            * F.mse_loss(z_preds[1:], z_targets, reduction="none").mean(dim=-1)
+            * loss_mask
         ).mean()
         # Compute the reward loss as MSE loss between rewards predicted from the rollout and the dataset
         # rewards.
-        reward_loss = (rho * F.mse_loss(reward_preds, reward, reduction="none") * loss_mask).mean()
+        reward_loss = (
+            temporal_loss_coeffs * F.mse_loss(reward_preds, reward, reduction="none") * loss_mask
+        ).mean()
         # Compute state-action value loss (TD loss) for all of the Q functions in the ensemble.
         q_value_loss = (
             F.mse_loss(
@@ -353,10 +356,12 @@ class TDMPCPolicy(nn.Module):
         # Compute state value loss as in eqn 3 of FOWM.
         diff = v_targets - v_preds
         # Expectile loss penalizes:
-        #   - `v_preds <  v_targets` with weighting `expectile`
-        #   - `v_preds >= v_targets` with weighting `1 - expectile`
-        raw_v_value_loss = torch.where(diff > 0, self.cfg.expectile, (1 - self.cfg.expectile)) * (diff**2)
-        v_value_loss = (rho * raw_v_value_loss * loss_mask).mean()
+        #   - `v_preds <  v_targets` with weighting `expectile_weight`
+        #   - `v_preds >= v_targets` with weighting `1 - expectile_weight`
+        raw_v_value_loss = torch.where(
+            diff > 0, self.cfg.expectile_weight, (1 - self.cfg.expectile_weight)
+        ) * (diff**2)
+        v_value_loss = (temporal_loss_coeffs * raw_v_value_loss * loss_mask).mean()
 
         # Calculate the advantage weighted regression loss for π as detailed in FOWM 3.1.
         # We won't need these gradients again so detach.
@@ -366,25 +371,25 @@ class TDMPCPolicy(nn.Module):
             advantage = self.model_target.Qs(z_preds[:-1], action, return_min=True) - self.model.V(
                 z_preds[:-1]
             )
-            exp_advantage = torch.clamp(torch.exp(advantage * self.cfg.A_scaling), max=100.0)
-        action_preds = self.model.pi(z_preds[:-1])
+            # (t, b)
+            exp_advantage = torch.clamp(torch.exp(advantage * self.cfg.advantage_scaling), max=100.0)
+        action_preds = self.model.pi(z_preds[:-1])  # (t, b, a)
         # Calculate the MSE between the actions and the action predictions.
         # Note: FOWM's original code calculates the log probability (wrt to a unit standard deviation
         # gaussian) and sums over the action dimension. Computing the log probability amounts to multiplying
         # the MSE by 0.5 and adding a constant offset (the log(2*pi) term) . Here we drop the constant offset
         # as it doesn't change the optimization step, and we drop the 0.5 as we instead make a configuration
         # parameter for it (see below where we compute the total loss).
-        mse = F.mse_loss(action_preds, action, reduction="none").sum(-1).mean()
-        rho = torch.pow(self.cfg.rho, torch.arange(len(action), device=self.device))
-        pi_loss = ((exp_advantage * mse).mean(dim=-1) * rho).mean()
+        mse = F.mse_loss(action_preds, action, reduction="none").sum(-1)  # (t, b)
+        pi_loss = (exp_advantage * mse * temporal_loss_coeffs).mean()
         info["advantage"] = advantage[0]
 
         loss = (
-            self.cfg.consistency_coef * consistency_loss
-            + self.cfg.reward_coef * reward_loss
-            + self.cfg.value_coef * q_value_loss
-            + self.cfg.value_coef * v_value_loss
-            + self.cfg.pi_coef * pi_loss
+            self.cfg.consistency_coeff * consistency_loss
+            + self.cfg.reward_coeff * reward_loss
+            + self.cfg.value_coeff * q_value_loss
+            + self.cfg.value_coeff * v_value_loss
+            + self.cfg.pi_coeff * pi_loss
         )
 
         info.update(
@@ -441,7 +446,7 @@ class TDMPCPolicy(nn.Module):
         # Note a minor variation with respect to the original FOWM code. Here they do this based on an EMA
         # update frequency parameter which is set to 2 (every 2 steps an update is done). To simplify the code
         # we update every step and adjust the decay parameter `alpha` accordingly (0.99 -> 0.995)
-        _update_ema_parameters(self.model_target, self.model, self.cfg.ema_alpha)
+        _update_ema_parameters(self.model_target, self.model, self.cfg.target_model_momentum)
 
         return info
 

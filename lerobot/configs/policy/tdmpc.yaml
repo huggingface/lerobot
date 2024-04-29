@@ -1,8 +1,13 @@
 # @package _global_
 
+offline_steps: 25000
+online_steps: 25000
+online_sampling_ratio: 0.5
 
 policy:
   name: tdmpc
+
+  pretrained_model_path:
 
   # Input / output structure.
   n_action_repeats: 2
@@ -28,45 +33,27 @@ policy:
   # Inference.
   use_mpc: true
   cem_iterations: 6
+  n_gaussian_samples: 512
+  n_pi_samples: 51
+  uncertainty_regularizer_coeff: 1.0
+  n_elites: 50
+  elite_weighting_temperature: 0.5
+  gaussian_mean_momentum: 0.1
 
-  num_samples: 512
-  num_elites: 50
-  mixture_coef: 0.1
+  # Training and loss computation.
+  # Loss coefficients.
+  reward_coeff: 0.5
+  expectile_weight: 0.9
+  value_coeff: 0.1
+  consistency_coeff: 20.0
+  advantage_scaling: 3.0
+  pi_coeff: 0.5
+  temporal_decay_coeff: 0.5
+  # Target model.
+  target_model_momentum: 0.995
+
   min_std: 0.05
   max_std: 2.0
-  temperature: 0.5
-  momentum: 0.1
-  uncertainty_cost: 1
-
-  # actor
-  log_std_min: -10
-  log_std_max: 2
-
-  # learning
-  reward_coef: 0.5
-  value_coef: 0.1
-  consistency_coef: 20
-  pi_coef: 0.5
-  rho: 0.5
-
-  ema_alpha: 0.995
-
-
-  # offline rl
-  # dataset_dir: ???
-  data_first_percent: 1.0
-  is_data_clip: true
-  data_clip_eps: 1e-5
-  expectile: 0.9
-  A_scaling: 3.0
-
-  # offline->online
-  offline_steps: ${offline_steps}
-  pretrained_model_path: ""
-  # pretrained_model_path: "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/offline.pt"
-  # pretrained_model_path: "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/final.pt"
-  balanced_sampling: true
-  demo_schedule: 0.5
 
   # ---
   # TODO(alexander-soare): Remove these from the policy config.
@@ -74,7 +61,6 @@ policy:
   grad_clip_norm: 10.0
   lr: 3e-4
   utd: 1
-
 
   delta_timestamps:
     observation.image: "[i / ${fps} for i in range(${policy.horizon} + 1)]"

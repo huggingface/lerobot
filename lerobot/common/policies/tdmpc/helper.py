@@ -4,9 +4,7 @@ from torch.distributions.utils import _standard_normal
 
 
 class TruncatedNormal(pyd.Normal):
-    """Utility class implementing the truncated normal distribution while still passing gradients through.
-    TODO(now): consider simplifying the hell out of this but only once you understand what self.eps is for.
-    """
+    """Utility class implementing the truncated normal distribution while still passing gradients through."""
 
     default_sample_shape = torch.Size()
 
