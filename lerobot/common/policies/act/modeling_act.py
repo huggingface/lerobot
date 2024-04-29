@@ -172,6 +172,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
     def forward(self, batch, **_) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
+        batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self._forward(batch)
 
         l1_loss = (
