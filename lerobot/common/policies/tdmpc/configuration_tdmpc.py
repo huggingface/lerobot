@@ -9,7 +9,7 @@ class TDMPCConfig:
     camera observations.
 
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
-    Those are: `input_shapes` and `output_shapes`.
+    Those are: `input_shapes`, `output_shapes`, and perhaps `max_random_shift`.
 
     Args:
         n_action_repeats: The number of times to repeat the action returned by the planning. (hint: Google
@@ -48,6 +48,9 @@ class TDMPCConfig:
             elites, when updating the gaussian parameters for CEM.
         gaussian_mean_momentum: Momentum (α) used for EMA updates of the mean parameter μ of the gaussian
             paramters optimized in CEM. Updates are calculated as μ⁻ ← αμ⁻ + (1-α)μ.
+        max_random_shift_ratio: Maximum random shift (as a proportion of the image size) to apply to the
+            image(s) (in units of pixels) for training-time augmentation. If set to 0, no such augmentation
+            is applied. Note that the input images are assumed to be square for this augmentation.
         reward_coeff: Loss weighting coefficient for the reward regression loss.
         expectile_weight: Weighting (τ) used in expectile regression for the state value function (V).
             v_pred < v_target is weighted by τ and v_pred >= v_target is weighted by (1-τ). τ is expected to
@@ -114,6 +117,7 @@ class TDMPCConfig:
     gaussian_mean_momentum: float = 0.1
 
     # Training and loss computation.
+    max_random_shift_ratio: float = 0.0476
     # Loss coefficients.
     reward_coeff: float = 0.5
     expectile_weight: float = 0.9

@@ -48,6 +48,7 @@ policy:
   gaussian_mean_momentum: 0.1
 
   # Training and loss computation.
+  max_random_shift_ratio: 0.0476
   # Loss coefficients.
   reward_coeff: 0.5
   expectile_weight: 0.9

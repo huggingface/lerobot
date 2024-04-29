@@ -12,6 +12,7 @@ TODO(alexander-soare): Use batch-first throughout.
 
 from collections import deque
 from copy import deepcopy
+from functools import partial
 from typing import Callable
 
 import einops
@@ -21,7 +22,6 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-import lerobot.common.policies.tdmpc.helper as h
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.utils import get_device_from_parameters, populate_queues
@@ -49,7 +49,6 @@ class TDMPCPolicy(nn.Module):
         if cfg is None:
             cfg = TDMPCConfig()
         self.cfg = cfg
-        self.image_aug = _RandomShiftsAug(cfg)
         self.model = TOLD(cfg)
         self.model_target = deepcopy(self.model)
         self.model_target.eval()
@@ -258,7 +257,7 @@ class TDMPCPolicy(nn.Module):
         # Add the estimated value of the final state (using the minimum for a conservative estimate).
         # Do so by predicting the next action (with added noise), then a minimum over the ensemble of
         # state-action value estimators.
-        # TODO(now-noise): Should there be added noise here at inference time?
+        # TODO(now-noise): Should there really be noise here?
         next_action = self.model.pi(z, self.cfg.min_std)  # (batch, action_dim)
         terminal_values = self.model.Qs(z, next_action)
         # Randomly choose 2 of the Qs for terminal value estimation (as in App C. of the FOWM paper).
@@ -295,9 +294,11 @@ class TDMPCPolicy(nn.Module):
         observations = {k: v for k, v in batch.items() if k.startswith("observation.")}
 
         # Apply random image augmentations.
-        observations["observation.image"] = _flatten_forward_unflatten(
-            self.image_aug, observations["observation.image"]
-        )
+        if self.cfg.max_random_shift_ratio > 0:
+            observations["observation.image"] = _flatten_forward_unflatten(
+                partial(_random_shifts_aug, max_random_shift_ratio=self.cfg.max_random_shift_ratio),
+                observations["observation.image"],
+            )
 
         # Get the current observation for predicting trajectories, and all future observations for use in
         # the latent consistency loss and TD loss.
@@ -606,9 +607,7 @@ class TOLD(nn.Module):
         action = torch.tanh(self._pi(z))
         if std > 0:
             std = torch.ones_like(action) * std
-            # TODO(now-noise): Understand why this has gradient pass-through internally but not for the clip
-            # parameter.
-            return h.TruncatedNormal(action, std).sample(clip=0.3)
+            action += torch.randn_like(action) * std
         return action
 
     def V(self, z: Tensor) -> Tensor:  # noqa: N802
@@ -703,44 +702,39 @@ class _ObservationEncoder(nn.Module):
         return torch.stack(feat, dim=0).mean(0)
 
 
-class _RandomShiftsAug(nn.Module):
-    """
-    # TODO(now)
-    Random shift image augmentation.
+def _random_shifts_aug(x: Tensor, max_random_shift_ratio: float) -> Tensor:
+    """Randomly shifts images horizontally and vertically.
+
     Adapted from https://github.com/facebookresearch/drqv2
+
+    TODO(now)
     """
-
-    def __init__(self, cfg: TDMPCConfig):
-        super().__init__()
-        # TODO(alexander-soare): Generalize to non-square images.
-        self.pad = int(cfg.input_shapes["observation.image"][-1] / 21)
-
-    def forward(self, x):
-        n, _, h, w = x.size()
-        assert h == w
-        padding = tuple([self.pad] * 4)
-        x = F.pad(x, padding, "replicate")
-        eps = 1.0 / (h + 2 * self.pad)
-        arange = torch.linspace(
-            -1.0 + eps,
-            1.0 - eps,
-            h + 2 * self.pad,
-            device=x.device,
-            dtype=torch.float32,
-        )[:h]
-        arange = arange.unsqueeze(0).repeat(h, 1).unsqueeze(2)
-        base_grid = torch.cat([arange, arange.transpose(1, 0)], dim=2)
-        base_grid = base_grid.unsqueeze(0).repeat(n, 1, 1, 1)
-        shift = torch.randint(
-            0,
-            2 * self.pad + 1,
-            size=(n, 1, 1, 2),
-            device=x.device,
-            dtype=torch.float32,
-        )
-        shift *= 2.0 / (h + 2 * self.pad)
-        grid = base_grid + shift
-        return F.grid_sample(x, grid, padding_mode="zeros", align_corners=False)
+    b, _, h, w = x.size()
+    assert h == w, "non-square images not handled yet"
+    pad = int(round(max_random_shift_ratio * h))
+    x = F.pad(x, tuple([pad] * 4), "replicate")
+    eps = 1.0 / (h + 2 * pad)
+    arange = torch.linspace(
+        -1.0 + eps,
+        1.0 - eps,
+        h + 2 * pad,
+        device=x.device,
+        dtype=torch.float32,
+    )[:h]
+    arange = einops.repeat(arange, "w -> h w 1", h=h)
+    base_grid = torch.cat([arange, arange.transpose(1, 0)], dim=2)
+    base_grid = einops.repeat(base_grid, "h w c -> b h w c", b=b)
+    # A random shift in units of pixels and within the boundaries of the padding.
+    shift = torch.randint(
+        0,
+        2 * pad + 1,
+        size=(b, 1, 1, 2),
+        device=x.device,
+        dtype=torch.float32,
+    )
+    shift *= 2.0 / (h + 2 * pad)
+    grid = base_grid + shift
+    return F.grid_sample(x, grid, padding_mode="zeros", align_corners=False)
 
 
 def _update_ema_parameters(ema_net: nn.Module, net: nn.Module, alpha: float):
