@@ -43,7 +43,7 @@ class DiffusionPolicy(nn.Module):
     name = "diffusion"
 
     def __init__(
-        self, cfg: DiffusionConfig | None, lr_scheduler_num_training_steps: int = 0, dataset_stats=None
+        self, cfg: DiffusionConfig | None = None, lr_scheduler_num_training_steps: int = 0, dataset_stats=None
     ):
         """
         Args:
