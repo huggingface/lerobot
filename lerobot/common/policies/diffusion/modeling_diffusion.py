@@ -134,6 +134,7 @@ class DiffusionPolicy(nn.Module):
     def forward(self, batch: dict[str, Tensor], **_) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
+        batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
         return {"loss": loss}
 
