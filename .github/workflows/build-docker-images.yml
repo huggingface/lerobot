@@ -14,7 +14,7 @@ env:
 
 jobs:
   latest-cpu:
-    name: "Build CPU"
+    name: CPU
     runs-on: ubuntu-latest
     steps:
       - name: Cleanup disk
@@ -109,7 +109,7 @@ jobs:
     #       SLACK_BOT_TOKEN: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
 
   latest-cuda:
-    name: "Build GPU"
+    name: GPU
     runs-on: ubuntu-latest
     steps:
       - name: Cleanup disk

@@ -15,6 +15,7 @@ env:
 
 jobs:
   style:
+    name: Style
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -42,6 +43,7 @@ jobs:
 
 
   poetry_check:
+    name: Poetry check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository

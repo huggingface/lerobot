@@ -22,6 +22,7 @@ on:
 
 jobs:
   pytest:
+    name: Pytest
     runs-on: ubuntu-latest
     env:
       DATA_DIR: tests/data
@@ -61,7 +62,8 @@ jobs:
             && rm -rf tests/outputs outputs
 
 
-  tests-end-to-end:
+  end-to-end:
+    name: End-to-end
     runs-on: ubuntu-latest
     env:
       DATA_DIR: tests/data
