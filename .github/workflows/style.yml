@@ -37,7 +37,7 @@ jobs:
       - name: Run Ruff
         run: ruff check .
 
-  poetry_checks:
+  poetry_check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
