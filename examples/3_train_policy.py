@@ -38,7 +38,9 @@ policy = DiffusionPolicy(cfg, lr_scheduler_num_training_steps=training_steps, da
 policy.train()
 policy.to(device)
 
-optimizer = torch.optim.Adam(policy.diffusion.parameters(), cfg.lr, cfg.adam_betas, cfg.adam_eps, cfg.adam_weight_decay)
+optimizer = torch.optim.Adam(
+    policy.diffusion.parameters(), cfg.lr, cfg.adam_betas, cfg.adam_eps, cfg.adam_weight_decay
+)
 
 # Create dataloader for offline training.
 dataloader = torch.utils.data.DataLoader(
