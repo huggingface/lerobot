@@ -30,8 +30,8 @@ class UmiProcessor:
     def __init__(self, folder_path: str, fps: int | None = None):
         self.zarr_path = folder_path
         if fps is None:
-            # TODO (azouitine): Add reference to the paper
-            fps = 15
+            # https://arxiv.org/pdf/2402.10329#table.caption.16
+            fps = 10  # For umi cup in the wild
         self._fps = fps
         register_codecs()
 
