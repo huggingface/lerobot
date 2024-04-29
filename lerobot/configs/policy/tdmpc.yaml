@@ -38,6 +38,8 @@ policy:
   # Inference.
   use_mpc: true
   cem_iterations: 6
+  max_std: 2.0
+  min_std: 0.05
   n_gaussian_samples: 512
   n_pi_samples: 51
   uncertainty_regularizer_coeff: 1.0
@@ -57,8 +59,6 @@ policy:
   # Target model.
   target_model_momentum: 0.995
 
-  min_std: 0.05
-  max_std: 2.0
 
   # ---
   # TODO(alexander-soare): Remove these from the policy config.

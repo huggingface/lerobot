@@ -10,6 +10,7 @@ from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.policy_protocol import Policy
+from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
 from lerobot.common.utils.utils import init_hydra_config
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_env
 
@@ -18,8 +19,7 @@ from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_env
 @pytest.mark.parametrize(
     "env_name,policy_name,extra_overrides",
     [
-        # ("xarm", "tdmpc", ["policy.mpc=true"]),
-        # ("pusht", "tdmpc", ["policy.mpc=false"]),
+        ("xarm", "tdmpc", ["policy.use_mpc=true"]),
         ("pusht", "diffusion", []),
         ("aloha", "act", ["env.task=AlohaInsertion-v0", "dataset.repo_id=lerobot/aloha_sim_insertion_human"]),
         (
@@ -86,7 +86,7 @@ def test_policy(env_name, policy_name, extra_overrides):
         batch[key] = batch[key].to(DEVICE, non_blocking=True)
 
     # Test updating the policy
-    policy.forward(batch, step=0)
+    policy.forward(batch)
 
     # reset the policy and environment
     policy.reset()
@@ -100,7 +100,7 @@ def test_policy(env_name, policy_name, extra_overrides):
 
     # get the next action for the environment
     with torch.inference_mode():
-        action = policy.select_action(observation, step=0)
+        action = policy.select_action(observation)
 
     # convert action to cpu numpy array
     action = postprocess_action(action)
@@ -115,12 +115,9 @@ def test_policy(env_name, policy_name, extra_overrides):
         new_policy.load_state_dict(policy.state_dict())
 
 
-@pytest.mark.parametrize("policy_cls", [DiffusionPolicy, ActionChunkingTransformerPolicy])
+@pytest.mark.parametrize("policy_cls", [DiffusionPolicy, ActionChunkingTransformerPolicy, TDMPCPolicy])
 def test_policy_defaults(policy_cls):
     kwargs = {}
-    # TODO(alexander-soare): Remove this kwargs hack when we move the scheduler out of DP.
-    if policy_cls is DiffusionPolicy:
-        kwargs = {"lr_scheduler_num_training_steps": 1}
     policy_cls(**kwargs)
 
 

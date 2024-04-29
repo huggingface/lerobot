@@ -23,6 +23,7 @@ from torch import Tensor
 
 import lerobot.common.policies.tdmpc.helper as h
 from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.utils import get_device_from_parameters, populate_queues
 
 
@@ -34,8 +35,19 @@ class TDMPCPolicy(nn.Module):
 
     name = "tdmpc"
 
-    def __init__(self, cfg, device, dataset_stats: dict[str, dict[str, Tensor]] | None = None):
+    def __init__(
+        self, cfg: TDMPCConfig | None = None, dataset_stats: dict[str, dict[str, Tensor]] | None = None
+    ):
+        """
+        Args:
+            cfg: Policy configuration class instance or None, in which case the default instantiation of the
+                 configuration class is used.
+            dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
+                that they will be passed with a call to `load_state_dict` before the policy is used.
+        """
         super().__init__()
+        if cfg is None:
+            cfg = TDMPCConfig()
         self.cfg = cfg
         self.image_aug = _RandomShiftsAug(cfg)
         self.model = TOLD(cfg)
@@ -116,7 +128,7 @@ class TDMPCPolicy(nn.Module):
                 self._queues["action"].append(action)
 
         action = self._queues["action"].popleft()
-        return action
+        return torch.clamp(action, -1, 1)
 
     @torch.no_grad()
     def plan(self, z: Tensor) -> Tensor:
@@ -466,7 +478,7 @@ class TDMPCPolicy(nn.Module):
 class TOLD(nn.Module):
     """Task-Oriented Latent Dynamics (TOLD) model used in TD-MPC."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: TDMPCConfig):
         super().__init__()
         self.cfg = cfg
         self._encoder = _ObservationEncoder(cfg)
@@ -635,7 +647,7 @@ class TOLD(nn.Module):
 class _ObservationEncoder(nn.Module):
     """Encode image and/or state vector observations."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: TDMPCConfig):
         """
         Creates encoders for pixel and/or state modalities.
         TODO(alexander-soare): The original work allows for multiple images by concatenating them along the
@@ -698,7 +710,7 @@ class _RandomShiftsAug(nn.Module):
     Adapted from https://github.com/facebookresearch/drqv2
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: TDMPCConfig):
         super().__init__()
         # TODO(alexander-soare): Generalize to non-square images.
         self.pad = int(cfg.input_shapes["observation.image"][-1] / 21)

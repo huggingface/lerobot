@@ -18,6 +18,14 @@ class Policy(Protocol):
 
     name: str
 
+    def __init__(self, cfg, dataset_stats: dict[str, dict[str, Tensor]] | None = None):
+        """
+        Args:
+            cfg: Policy configuration class instance or None, in which case the default instantiation of the
+                 configuration class is used.
+            dataset_stats: Dataset statistics to be used for normalization.
+        """
+
     def reset(self):
         """To be called whenever the environment is reset.
 

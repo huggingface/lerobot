@@ -43,17 +43,16 @@ class DiffusionPolicy(nn.Module):
     def __init__(
         self,
         cfg: DiffusionConfig | None = None,
-        lr_scheduler_num_training_steps: int = 0,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
         Args:
             cfg: Policy configuration class instance or None, in which case the default instantiation of the
                  configuration class is used.
+            dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
+                that they will be passed with a call to `load_state_dict` before the policy is used.
         """
         super().__init__()
-        # TODO(alexander-soare): LR scheduler will be removed.
-        assert lr_scheduler_num_training_steps > 0
         if cfg is None:
             cfg = DiffusionConfig()
         self.cfg = cfg

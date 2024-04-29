@@ -2,6 +2,7 @@ import inspect
 
 from omegaconf import DictConfig, OmegaConf
 
+from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_safe_torch_device
 
 
@@ -22,36 +23,31 @@ def _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg):
 
 def make_policy(hydra_cfg: DictConfig, dataset_stats=None):
     if hydra_cfg.policy.name == "tdmpc":
+        from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
         from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
 
-        policy = TDMPCPolicy(hydra_cfg.policy, device=hydra_cfg.device, dataset_stats=dataset_stats)
-        policy.to(get_safe_torch_device(hydra_cfg.device))
+        cfg_cls = TDMPCConfig
+        policy_cls = TDMPCPolicy
     elif hydra_cfg.policy.name == "diffusion":
         from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
         from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 
-        policy_cfg = _policy_cfg_from_hydra_cfg(DiffusionConfig, hydra_cfg)
-        policy = DiffusionPolicy(policy_cfg, hydra_cfg.offline_steps, dataset_stats)
-        policy.to(get_safe_torch_device(hydra_cfg.device))
+        cfg_cls = DiffusionConfig
+        policy_cls = DiffusionPolicy
     elif hydra_cfg.policy.name == "act":
         from lerobot.common.policies.act.configuration_act import ActionChunkingTransformerConfig
         from lerobot.common.policies.act.modeling_act import ActionChunkingTransformerPolicy
 
-        policy_cfg = _policy_cfg_from_hydra_cfg(ActionChunkingTransformerConfig, hydra_cfg)
-        policy = ActionChunkingTransformerPolicy(policy_cfg, dataset_stats)
-        policy.to(get_safe_torch_device(hydra_cfg.device))
+        cfg_cls = ActionChunkingTransformerConfig
+        policy_cls = ActionChunkingTransformerPolicy
     else:
         raise ValueError(hydra_cfg.policy.name)
 
+    policy_cfg = _policy_cfg_from_hydra_cfg(cfg_cls, hydra_cfg)
+    policy: Policy = policy_cls(policy_cfg, dataset_stats)
+    policy.to(get_safe_torch_device(hydra_cfg.device))
+
     if hydra_cfg.policy.pretrained_model_path:
-        # TODO(rcadene): hack for old pretrained models from fowm
-        if hydra_cfg.policy.name == "tdmpc" and "fowm" in hydra_cfg.policy.pretrained_model_path:
-            if "offline" in hydra_cfg.policy.pretrained_model_path:
-                policy.step[0] = 25000
-            elif "final" in hydra_cfg.policy.pretrained_model_path:
-                policy.step[0] = 100000
-            else:
-                raise NotImplementedError()
         policy.load(hydra_cfg.policy.pretrained_model_path)
 
     return policy
