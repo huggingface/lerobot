@@ -35,8 +35,8 @@ class DiffusionConfig:
             within the image size. If None, no cropping is done.
         crop_is_random: Whether the crop should be random at training time (it's always a center crop in eval
             mode).
-        use_pretrained_backbone: Whether the backbone should be initialized with pretrained weights from
-            torchvision.
+        pretrained_backbone_weights: Pretrained weights from torchvision to initalize the backbone.
+            `None` means no pretrained weights.
         use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
             The group sizes are set to be about 16 (to be precise, feature_dim // 16).
         spatial_softmax_num_keypoints: Number of keypoints for SpatialSoftmax.
@@ -96,7 +96,7 @@ class DiffusionConfig:
     vision_backbone: str = "resnet18"
     crop_shape: tuple[int, int] | None = (84, 84)
     crop_is_random: bool = True
-    use_pretrained_backbone: bool = False
+    pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True
     spatial_softmax_num_keypoints: int = 32
     # Unet.
