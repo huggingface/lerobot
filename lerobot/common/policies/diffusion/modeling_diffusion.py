@@ -11,7 +11,6 @@ TODO(alexander-soare):
 import copy
 import logging
 import math
-import time
 from collections import deque
 from typing import Callable
 
@@ -19,7 +18,6 @@ import einops
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
-from diffusers.optimization import get_scheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from robomimic.models.base_nets import SpatialSoftmax
 from torch import Tensor, nn
@@ -73,26 +71,6 @@ class DiffusionPolicy(nn.Module):
         if self.cfg.use_ema:
             self.ema_diffusion = copy.deepcopy(self.diffusion)
             self.ema = _EMA(cfg, model=self.ema_diffusion)
-
-        # TODO(alexander-soare): Move optimizer out of policy.
-        self.optimizer = torch.optim.Adam(
-            self.diffusion.parameters(), cfg.lr, cfg.adam_betas, cfg.adam_eps, cfg.adam_weight_decay
-        )
-
-        # TODO(alexander-soare): Move LR scheduler out of policy.
-        # TODO(rcadene): modify lr scheduler so that it doesn't depend on epochs but steps
-        self.global_step = 0
-
-        # configure lr scheduler
-        self.lr_scheduler = get_scheduler(
-            cfg.lr_scheduler,
-            optimizer=self.optimizer,
-            num_warmup_steps=cfg.lr_warmup_steps,
-            num_training_steps=lr_scheduler_num_training_steps,
-            # pytorch assumes stepping LRScheduler every epoch
-            # however huggingface diffusers steps it every batch
-            last_epoch=self.global_step - 1,
-        )
 
     def reset(self):
         """
@@ -155,44 +133,10 @@ class DiffusionPolicy(nn.Module):
 
     def forward(self, batch: dict[str, Tensor], **_) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
-        loss = self.diffusion.compute_loss(batch)
-        return {"loss": loss}
-
-    def update(self, batch: dict[str, Tensor], **_) -> dict:
-        """Run the model in train mode, compute the loss, and do an optimization step."""
-        start_time = time.time()
-
-        self.diffusion.train()
-
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
-
-        loss = self.forward(batch)["loss"]
-        loss.backward()
-
-        # TODO(rcadene): self.unnormalize_outputs(out_dict)
-
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            self.diffusion.parameters(),
-            self.cfg.grad_clip_norm,
-            error_if_nonfinite=False,
-        )
-
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-        self.lr_scheduler.step()
-
-        if self.ema is not None:
-            self.ema.step(self.diffusion)
-
-        info = {
-            "loss": loss.item(),
-            "grad_norm": float(grad_norm),
-            "lr": self.lr_scheduler.get_last_lr()[0],
-            "update_s": time.time() - start_time,
-        }
-
-        return info
+        loss = self.diffusion.compute_loss(batch)
+        return {"loss": loss}
 
     def save(self, fp):
         torch.save(self.state_dict(), fp)

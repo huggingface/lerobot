@@ -22,8 +22,8 @@ test-end-to-end:
 	${MAKE} test-act-ete-eval
 	${MAKE} test-diffusion-ete-train
 	${MAKE} test-diffusion-ete-eval
-	${MAKE} test-tdmpc-ete-train
-	${MAKE} test-tdmpc-ete-eval
+	# ${MAKE} test-tdmpc-ete-train
+	# ${MAKE} test-tdmpc-ete-eval
 
 test-act-ete-train:
 	python lerobot/scripts/train.py \

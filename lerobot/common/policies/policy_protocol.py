@@ -36,10 +36,3 @@ class Policy(Protocol):
         When the model uses a history of observations, or outputs a sequence of actions, this method deals
         with caching.
         """
-
-    def update(self, batch):
-        """Does compute_loss then an optimization step.
-
-        TODO(alexander-soare): We will move the optimization step back into the training loop, so this will
-        disappear.
-        """
