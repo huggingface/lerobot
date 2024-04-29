@@ -5,7 +5,7 @@ The comments in this code may sometimes refer to these references:
     FOWM paper: Finetuning Offline World Models in the Real World (https://arxiv.org/abs/2310.16029)
 
 TODO(alexander-soare): Make rollout work for batch sizes larger than 1.
-
+TODO(alexander-soare): Use batch-first throughout.
 """
 
 # ruff: noqa: N806
@@ -40,7 +40,6 @@ class TDMPCPolicy(nn.Module):
         self.cfg = cfg
         self.image_aug = _RandomShiftsAug(cfg)
         self.model = TOLD(cfg)
-        # TODO(now): Only copy the parts that need to have a target?
         self.model_target = deepcopy(self.model)
         self.model_target.eval()
 
@@ -179,8 +178,8 @@ class TDMPCPolicy(nn.Module):
             actions = torch.cat([actions, pi_actions], dim=1)
 
             # Compute elite actions.
-            # TODO(now): It looks like pi_actions never changes in this loop so really we should only estimate
-            # its values once.
+            # TODO(now-noise): It looks like pi_actions never changes in this loop so really we should only estimate
+            # its values once. But this should only be the case if we remove the noise from `estimate_value`.
             # Note: zero NaNs which could possibly arise early in training due to the auto-regressive nature
             # of policy rollouts with the world model.
             value = self.estimate_value(z, actions).nan_to_num_(0)  # shape (N+Nπ,)
@@ -280,17 +279,14 @@ class TDMPCPolicy(nn.Module):
         # TODO(alexander-soare): Refactor TDMPC and make it comply with the policy interface documentation.
         batch_size = batch["index"].shape[0]
 
-        # TODO(now): batch first
+        # (b, t) -> (t, b)
         for key in batch:
             if batch[key].ndim > 1:
                 batch[key] = batch[key].transpose(1, 0)
 
-        action = batch["action"]
-        reward = batch["next.reward"]
+        action = batch["action"]  # (t, b)
+        reward = batch["next.reward"]  # (t,)
         observations = {k: v for k, v in batch.items() if k.startswith("observation.")}
-
-        # TODO(now): Use is_pad
-        mask = torch.ones_like(reward, dtype=torch.bool, device=reward.device)
 
         # Apply random image augmentations.
         observations["observation.image"] = _flatten_forward_unflatten(
@@ -329,17 +325,12 @@ class TDMPCPolicy(nn.Module):
             # actions (not actions estimated by π).
             # Note: Here we do not use self.model_target, but self.model. This is to follow the original code
             # and the FOWM paper.
-            q_targets = reward + self.cfg.discount * mask * self.model.V(self.model.encode(next_observations))
+            q_targets = reward + self.cfg.discount * self.model.V(self.model.encode(next_observations))
             # From eqn 3 of FOWM. These appear as Q(z, a). Here we call them v_targets to emphasize that we
             # are using them to compute loss for V.
             v_targets = self.model_target.Qs(z_preds[:-1].detach(), action, return_min=True)
 
         # Compute losses.
-        # TODO(now): use is_pad
-        done = torch.zeros_like(reward, dtype=torch.bool, device=reward.device)
-        loss_mask = torch.ones_like(mask, device=device)
-        for t in range(1, horizon):
-            loss_mask[t] = loss_mask[t - 1] * (~done[t - 1])
         # Exponentially decay the loss weight with respect to the timestep. Steps that are more distant in the
         # future have less impact on the loss. Note: unsqueeze will let us broadcast to (seq, batch).
         temporal_loss_coeffs = torch.pow(
@@ -348,23 +339,48 @@ class TDMPCPolicy(nn.Module):
         # Compute consistency loss as MSE loss between latents predicted from the rollout and latents
         # predicted from the (target model's) observation encoder.
         consistency_loss = (
-            temporal_loss_coeffs
-            * F.mse_loss(z_preds[1:], z_targets, reduction="none").mean(dim=-1)
-            * loss_mask
-        ).mean()
+            (
+                temporal_loss_coeffs
+                * F.mse_loss(z_preds[1:], z_targets, reduction="none").mean(dim=-1)
+                # `z_preds` depends on the current observation and the actions.
+                * ~batch["observation.state_is_pad"][0]
+                * ~batch["action_is_pad"]
+                # `z_targets` depends on the next observation.
+                * ~batch["observation.state_is_pad"][1:]
+            )
+            .sum(0)
+            .mean()
+        )
         # Compute the reward loss as MSE loss between rewards predicted from the rollout and the dataset
         # rewards.
         reward_loss = (
-            temporal_loss_coeffs * F.mse_loss(reward_preds, reward, reduction="none") * loss_mask
-        ).mean()
+            (
+                temporal_loss_coeffs
+                * F.mse_loss(reward_preds, reward, reduction="none")
+                * ~batch["next.reward_is_pad"]
+                # `reward_preds` depends on the current observation and the actions.
+                * ~batch["observation.state_is_pad"][0]
+                * ~batch["action_is_pad"]
+            )
+            .sum(0)
+            .mean()
+        )
         # Compute state-action value loss (TD loss) for all of the Q functions in the ensemble.
         q_value_loss = (
-            F.mse_loss(
-                q_preds_ensemble,
-                einops.repeat(q_targets, "t b -> e t b", e=q_preds_ensemble.shape[0]),
-                reduction="none",
+            (
+                F.mse_loss(
+                    q_preds_ensemble,
+                    einops.repeat(q_targets, "t b -> e t b", e=q_preds_ensemble.shape[0]),
+                    reduction="none",
+                ).sum(0)  # sum over ensemble
+                # `q_preds_ensemble` depends on the first observation and the actions.
+                * ~batch["observation.state_is_pad"][0]
+                * ~batch["action_is_pad"]
+                # q_targets depends on the reward and the next observations.
+                * ~batch["next.reward_is_pad"]
+                * ~batch["observation.state_is_pad"][1:]
             )
-            .sum(0)  # sum over ensemble
+            .sum(0)
             .mean()
         )
         # Compute state value loss as in eqn 3 of FOWM.
@@ -375,7 +391,17 @@ class TDMPCPolicy(nn.Module):
         raw_v_value_loss = torch.where(
             diff > 0, self.cfg.expectile_weight, (1 - self.cfg.expectile_weight)
         ) * (diff**2)
-        v_value_loss = (temporal_loss_coeffs * raw_v_value_loss * loss_mask).mean()
+        v_value_loss = (
+            (
+                temporal_loss_coeffs
+                * raw_v_value_loss
+                # `v_targets` depends on the first observation and the actions, as does `v_preds`.
+                * ~batch["observation.state_is_pad"][0]
+                * ~batch["action_is_pad"]
+            )
+            .sum(0)
+            .mean()
+        )
 
         # Calculate the advantage weighted regression loss for π as detailed in FOWM 3.1.
         # We won't need these gradients again so detach.
@@ -385,6 +411,7 @@ class TDMPCPolicy(nn.Module):
             advantage = self.model_target.Qs(z_preds[:-1], action, return_min=True) - self.model.V(
                 z_preds[:-1]
             )
+            info["advantage"] = advantage[0]
             # (t, b)
             exp_advantage = torch.clamp(torch.exp(advantage * self.cfg.advantage_scaling), max=100.0)
         action_preds = self.model.pi(z_preds[:-1])  # (t, b, a)
@@ -395,8 +422,17 @@ class TDMPCPolicy(nn.Module):
         # as it doesn't change the optimization step, and we drop the 0.5 as we instead make a configuration
         # parameter for it (see below where we compute the total loss).
         mse = F.mse_loss(action_preds, action, reduction="none").sum(-1)  # (t, b)
-        pi_loss = (exp_advantage * mse * temporal_loss_coeffs).mean()
-        info["advantage"] = advantage[0]
+        # NOTE: The original implementation does not take the sum over the temporal dimension like with the
+        # other losses.
+        # TODO(now): Take the sum over the temporal dimension and match with the training.
+        pi_loss = (
+            exp_advantage
+            * mse
+            * temporal_loss_coeffs
+            # `action_preds` depends on the first observation and the actions.
+            * ~batch["observation.state_is_pad"][0]
+            * ~batch["action_is_pad"]
+        ).mean()
 
         loss = (
             self.cfg.consistency_coeff * consistency_loss
@@ -417,6 +453,11 @@ class TDMPCPolicy(nn.Module):
                 "sum_loss": loss * self.cfg.horizon,
             }
         )
+
+        # Undo (b, t) -> (t, b).
+        for key in batch:
+            if batch[key].ndim > 1:
+                batch[key] = batch[key].transpose(1, 0)
 
         return info
 
@@ -640,19 +681,17 @@ class _ObservationEncoder(nn.Module):
     def __init__(self, cfg):
         """
         Creates encoders for pixel and/or state modalities.
-        TODO(now): Consolidate this into just working with a dict even if there is just one modality.
         TODO(alexander-soare): The original work allows for multiple images by concatenating them along the
             channel dimension. Re-implement this capability.
         """
         super().__init__()
         self.cfg = cfg
 
-        # TODO(now): Should this handle single channel images?
-        n_img_channels = 3
-
         if "observation.image" in cfg.input_shapes:
             self.image_enc_layers = nn.Sequential(
-                nn.Conv2d(n_img_channels, cfg.image_encoder_hidden_dim, 7, stride=2),
+                nn.Conv2d(
+                    cfg.input_shapes["observation.image"][0], cfg.image_encoder_hidden_dim, 7, stride=2
+                ),
                 nn.ReLU(),
                 nn.Conv2d(cfg.image_encoder_hidden_dim, cfg.image_encoder_hidden_dim, 5, stride=2),
                 nn.ReLU(),
