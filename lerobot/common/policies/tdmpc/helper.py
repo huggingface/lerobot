@@ -15,8 +15,8 @@ class TruncatedNormal(pyd.Normal):
         self.eps = eps
 
     def _clamp(self, x):
-        # TODO(now): Hm looks like this is designed to pass gradients through!
-        # TODO(now): Understand what this eps is for.
+        # TODO(now-noise): Hm looks like this is designed to pass gradients through!
+        # TODO(now-noise): Understand what this eps is for.
         clamped_x = torch.clamp(x, self.low + self.eps, self.high - self.eps)
         x = x - x.detach() + clamped_x.detach()
         return x

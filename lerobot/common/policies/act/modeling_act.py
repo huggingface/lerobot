@@ -62,7 +62,11 @@ class ActionChunkingTransformerPolicy(nn.Module):
 
     name = "act"
 
-    def __init__(self, cfg: ActionChunkingTransformerConfig | None = None, dataset_stats=None):
+    def __init__(
+        self,
+        cfg: ActionChunkingTransformerConfig | None = None,
+        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+    ):
         """
         Args:
             cfg: Policy configuration class instance or None, in which case the default instantiation of the

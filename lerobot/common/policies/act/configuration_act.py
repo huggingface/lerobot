@@ -27,11 +27,12 @@ class ActionChunkingTransformerConfig:
             The key represents the output data name, and the value is a list indicating the dimensions
             of the corresponding data. For example, "action" refers to an output shape of [14], indicating
             14-dimensional actions. Importantly, shapes doesn't include batch dimension or temporal dimension.
-        normalize_input_modes: A dictionary with key represents the modality (e.g. "observation.state"),
-            and the value specifies the normalization mode to apply. The two availables
-            modes are "mean_std" which subtracts the mean and divide by the standard
-            deviation and "min_max" which rescale in a [-1, 1] range.
-        unnormalize_output_modes: Similar dictionary as `normalize_input_modes`, but to unormalize in original scale.
+        input_normalization_modes: A dictionary with key representing the modality (e.g. "observation.state"),
+            and the value specifies the normalization mode to apply. The two available modes are "mean_std"
+            which subtracts the mean and divides by the standard deviation and "min_max" which rescale in a
+            [-1, 1] range.
+        output_normalization_modes: Similar dictionary as `normalize_input_modes`, but to unnormalize to the
+            original scale. Note that this is also used for normalizing the training targets.
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
         pretrained_backbone_weights: Pretrained weights from torchvision to initalize the backbone.
             `None` means no pretrained weights.

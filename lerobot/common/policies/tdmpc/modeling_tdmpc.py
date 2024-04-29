@@ -3,6 +3,9 @@
 The comments in this code may sometimes refer to these references:
     TD-MPC paper: Temporal Difference Learning for Model Predictive Control (https://arxiv.org/abs/2203.04955)
     FOWM paper: Finetuning Offline World Models in the Real World (https://arxiv.org/abs/2310.16029)
+
+TODO(alexander-soare): Make rollout work for batch sizes larger than 1.
+
 """
 
 # ruff: noqa: N806
@@ -20,8 +23,8 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
 import lerobot.common.policies.tdmpc.helper as h
-from lerobot.common.policies.utils import populate_queues
-from lerobot.common.utils.utils import get_safe_torch_device
+from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.utils import get_device_from_parameters, populate_queues
 
 
 class TDMPCPolicy(nn.Module):
@@ -32,18 +35,26 @@ class TDMPCPolicy(nn.Module):
 
     name = "tdmpc"
 
-    def __init__(self, cfg, device):
+    def __init__(self, cfg, device, dataset_stats: dict[str, dict[str, Tensor]] | None = None):
         super().__init__()
         self.cfg = cfg
-        self.device = get_safe_torch_device(device)
+        self.image_aug = _RandomShiftsAug(cfg)
         self.model = TOLD(cfg)
-        self.model.to(self.device)
+        # TODO(now): Only copy the parts that need to have a target?
         self.model_target = deepcopy(self.model)
-        self.optim = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
-        self.model.eval()
         self.model_target.eval()
 
-        self.image_aug = _RandomShiftsAug(cfg)
+        # TODO(now): move optimization out.
+        self.optim = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
+
+        if cfg.input_normalization_modes is not None:
+            self.normalize_inputs = Normalize(cfg.input_shapes, cfg.input_normalization_modes, dataset_stats)
+        else:
+            self.normalize_inputs = nn.Identity()
+        self.normalize_targets = Normalize(cfg.output_shapes, cfg.output_normalization_modes, dataset_stats)
+        self.unnormalize_outputs = Unnormalize(
+            cfg.output_shapes, cfg.output_normalization_modes, dataset_stats
+        )
 
         self.register_buffer("step", torch.tensor(0))
 
@@ -76,7 +87,7 @@ class TDMPCPolicy(nn.Module):
         assert "observation.state" in batch
         assert len(batch) == 2
 
-        self.eval()
+        batch = self.normalize_inputs(batch)
 
         self._queues = populate_queues(self._queues, batch)
 
@@ -90,7 +101,6 @@ class TDMPCPolicy(nn.Module):
                 batch[key] = batch[key][:, 0]
 
             # Batch processing is not handled internally, so process the batch in a loop.
-            # TODO(now): Test that this loop works for batch size > 1.
             action = []  # will be a batch of actions for one step
             batch_size = batch["observation.image"].shape[0]
             for i in range(batch_size):
@@ -102,11 +112,12 @@ class TDMPCPolicy(nn.Module):
                     # Note: self.plan does not handle batches, hence the squeeze.
                     a = self.plan(z.squeeze(0))
                 else:
-                    # TODO(now): in the official implementation self.model.training should evaluate to True during
+                    # TODO(now-noise): in the official implementation self.model.training should evaluate to True during
                     # rollouts generated while training.
                     a = self.model.pi(z, self.cfg.min_std * self.model.training).squeeze(0)
                 action.append(a)
             action = torch.stack(action)
+            self.unnormalize_outputs({"action": action})["action"]
 
             if i in range(self.cfg.n_action_repeats):
                 self._queues["action"].append(action)
@@ -125,14 +136,16 @@ class TDMPCPolicy(nn.Module):
 
         TODO(alexander-soare) Extend this to be able to work with batches.
         """
+        device = get_device_from_parameters(self)
+
         # Sample Nπ trajectories from the policy.
         pi_actions = torch.empty(
-            self.cfg.horizon, self.cfg.n_pi_samples, self.cfg.output_shapes["action"][0], device=self.device
+            self.cfg.horizon, self.cfg.n_pi_samples, self.cfg.output_shapes["action"][0], device=device
         )
         if self.cfg.n_pi_samples > 0:
             _z = einops.repeat(z, "d -> n d", n=self.cfg.n_pi_samples)
             for t in range(self.cfg.horizon):
-                # TODO(now): in the official implementation self.model.training should evaluate to True during
+                # TODO(now-noise): in the official implementation self.model.training should evaluate to True during
                 # rollouts generated while training. Note that in the original impl they don't even use self.model.training here.
                 pi_actions[t] = self.model.pi(_z, self.cfg.min_std * self.model.training)
                 _z = self.model.latent_dynamics(_z, pi_actions[t])
@@ -142,9 +155,7 @@ class TDMPCPolicy(nn.Module):
         # Model Predictive Path Integral (MPPI) with the cross-entropy method (CEM) as the optimization
         # algorithm.
         # The initial mean and standard deviation for the cross-entropy method (CEM).
-        # TODO(now): Document somewhere that CEM starts with the prior assumption that the actions centered
-        # around 0.
-        mean = torch.zeros(self.cfg.horizon, self.cfg.output_shapes["action"][0], device=self.device)
+        mean = torch.zeros(self.cfg.horizon, self.cfg.output_shapes["action"][0], device=device)
         # Maybe warm start CEM with the mean from the previous step.
         if self._prev_mean is not None:
             mean[:-1] = self._prev_mean[1:]
@@ -152,7 +163,6 @@ class TDMPCPolicy(nn.Module):
 
         for _ in range(self.cfg.cem_iterations):
             # Randomly sample action trajectories for the gaussian distribution.
-            # TODO(now): I think this clamping makes assumptions about the input normalization.
             actions = torch.clamp(
                 mean.unsqueeze(1)
                 + std.unsqueeze(1)
@@ -205,12 +215,11 @@ class TDMPCPolicy(nn.Module):
 
         # Select only the first action
         action = actions[0]
-        # TODO(now): in the official implementation this should evaluate to True during rollouts generated
+        # TODO(now-noise): in the official implementation this should evaluate to True during rollouts generated
         # while training. But should it really? Why add more noise yet again?
         if self.model.training:
             action += std[0] * torch.randn_like(std[0])
-        # TODO(now): This clamping makes an assumption about the action space.
-        return torch.clamp(action, -1, 1)
+        return action
 
     @torch.no_grad()
     def estimate_value(self, z: Tensor, actions: Tensor):
@@ -244,7 +253,7 @@ class TDMPCPolicy(nn.Module):
         # Add the estimated value of the final state (using the minimum for a conservative estimate).
         # Do so by predicting the next action (with added noise), then a minimum over the ensemble of
         # state-action value estimators.
-        # TODO(now): Should there be added noise here at inference time?
+        # TODO(now-noise): Should there be added noise here at inference time?
         next_action = self.model.pi(z, self.cfg.min_std)  # (batch, action_dim)
         terminal_values = self.model.Qs(z, next_action)
         # Randomly choose 2 of the Qs for terminal value estimation (as in App C. of the FOWM paper).
@@ -261,6 +270,11 @@ class TDMPCPolicy(nn.Module):
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss."""
+        device = get_device_from_parameters(self)
+
+        batch = self.normalize_inputs(batch)
+        batch = self.normalize_targets(batch)
+
         info = {}
 
         # TODO(alexander-soare): Refactor TDMPC and make it comply with the policy interface documentation.
@@ -294,9 +308,9 @@ class TDMPCPolicy(nn.Module):
         # Run latent rollout using the latent dynamics model and policy model.
         # Note this has shape `horizon+1` because there are `horizon` actions and a current `z`. Each action
         # gives us a next `z`.
-        z_preds = torch.empty(horizon + 1, batch_size, self.cfg.latent_dim, device=self.device)
+        z_preds = torch.empty(horizon + 1, batch_size, self.cfg.latent_dim, device=device)
         z_preds[0] = self.model.encode(current_observation)
-        reward_preds = torch.empty_like(reward, device=self.device)
+        reward_preds = torch.empty_like(reward, device=device)
         for t in range(horizon):
             z_preds[t + 1], reward_preds[t] = self.model.latent_dynamics_and_reward(z_preds[t], action[t])
 
@@ -323,13 +337,13 @@ class TDMPCPolicy(nn.Module):
         # Compute losses.
         # TODO(now): use is_pad
         done = torch.zeros_like(reward, dtype=torch.bool, device=reward.device)
-        loss_mask = torch.ones_like(mask, device=self.device)
+        loss_mask = torch.ones_like(mask, device=device)
         for t in range(1, horizon):
             loss_mask[t] = loss_mask[t - 1] * (~done[t - 1])
         # Exponentially decay the loss weight with respect to the timestep. Steps that are more distant in the
         # future have less impact on the loss. Note: unsqueeze will let us broadcast to (seq, batch).
         temporal_loss_coeffs = torch.pow(
-            self.cfg.temporal_decay_coeff, torch.arange(horizon, device=self.device)
+            self.cfg.temporal_decay_coeff, torch.arange(horizon, device=device)
         ).unsqueeze(-1)
         # Compute consistency loss as MSE loss between latents predicted from the rollout and latents
         # predicted from the (target model's) observation encoder.
@@ -440,7 +454,7 @@ class TDMPCPolicy(nn.Module):
         }
 
         # Finalize update step by incrementing the step buffer and updating the ema model weights.
-        # TODO(now): remove
+        # TODO(now-noise): remove
         self.step += 1
 
         # Note a minor variation with respect to the original FOWM code. Here they do this based on an EMA
@@ -582,7 +596,7 @@ class TOLD(nn.Module):
         action = torch.tanh(self._pi(z))
         if std > 0:
             std = torch.ones_like(action) * std
-            # TODO(now): Understand why this has gradient pass-through internally but not for the clip
+            # TODO(now-noise): Understand why this has gradient pass-through internally but not for the clip
             # parameter.
             return h.TruncatedNormal(action, std).sample(clip=0.3)
         return action

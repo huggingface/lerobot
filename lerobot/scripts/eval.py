@@ -146,7 +146,10 @@ def eval_policy(
 
         # get the next action for the environment
         with torch.inference_mode():
-            action = policy.select_action(observation)
+            # TODO(now): Remove this test snippet
+            for k in observation:
+                observation[k] = einops.repeat(observation[k], "1 ... -> 2 ...")
+            action = policy.select_action(observation)[1:]
 
         # Send action:
         while True:

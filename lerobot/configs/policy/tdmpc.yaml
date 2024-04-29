@@ -20,6 +20,11 @@ policy:
   output_shapes:
     action: ["${env.action_dim}"]
 
+  # Normalization / Unnormalization
+  input_normalization_modes: null
+  output_normalization_modes:
+    action: min_max
+
   # Architecture / modeling.
   # Neural networks.
   image_encoder_hidden_dim: 32
