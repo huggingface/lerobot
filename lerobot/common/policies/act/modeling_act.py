@@ -195,7 +195,6 @@ class ActionChunkingTransformerPolicy(nn.Module):
 
         return loss_dict
 
-
     def _stack_images(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Stacks all the images in a batch and puts them in a new key: "observation.images".
 

@@ -1,4 +1,4 @@
-name: Style
+name: Quality
 
 on:
   workflow_dispatch:
@@ -14,7 +14,8 @@ env:
   PYTHON_VERSION: "3.10"
 
 jobs:
-  ruff_check:
+  style:
+    name: Style
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -34,5 +35,22 @@ jobs:
       - name: Install Ruff
         run: python -m pip install "ruff==${{ env.RUFF_VERSION }}"
 
-      - name: Run Ruff
-        run: ruff check .
+      - name: Ruff check
+        run: ruff check
+
+      - name: Ruff format
+        run: ruff format --diff
+
+
+  poetry_check:
+    name: Poetry check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Install poetry
+        run: pipx install poetry
+
+      - name: Poetry check
+        run: poetry check

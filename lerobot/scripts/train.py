@@ -48,7 +48,7 @@ def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
     info = {
         "loss": loss.item(),
         "grad_norm": float(grad_norm),
-        "lr": optimizer.param_groups[0]['lr'],
+        "lr": optimizer.param_groups[0]["lr"],
         "update_s": time.time() - start_time,
     }
 
@@ -271,17 +271,31 @@ def train(cfg: dict, out_dir=None, job_name=None):
     # Temporary hack to move optimizer out of policy
     if cfg.policy.name == "act":
         optimizer_params_dicts = [
-            {"params": [p for n, p in policy.named_parameters() if not n.startswith("backbone") and p.requires_grad]},
             {
-                "params": [p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad],
+                "params": [
+                    p
+                    for n, p in policy.named_parameters()
+                    if not n.startswith("backbone") and p.requires_grad
+                ]
+            },
+            {
+                "params": [
+                    p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad
+                ],
                 "lr": cfg.policy.lr_backbone,
             },
         ]
-        optimizer = torch.optim.AdamW(optimizer_params_dicts, lr=cfg.policy.lr, weight_decay=cfg.policy.weight_decay)
+        optimizer = torch.optim.AdamW(
+            optimizer_params_dicts, lr=cfg.policy.lr, weight_decay=cfg.policy.weight_decay
+        )
         lr_scheduler = None
     elif cfg.policy.name == "diffusion":
         optimizer = torch.optim.Adam(
-            policy.diffusion.parameters(), cfg.policy.lr, cfg.policy.adam_betas, cfg.policy.adam_eps, cfg.policy.adam_weight_decay
+            policy.diffusion.parameters(),
+            cfg.policy.lr,
+            cfg.policy.adam_betas,
+            cfg.policy.adam_eps,
+            cfg.policy.adam_weight_decay,
         )
         # TODO(rcadene): modify lr scheduler so that it doesn't depend on epochs but steps
         # configure lr scheduler

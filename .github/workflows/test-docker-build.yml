@@ -1,6 +1,6 @@
 # Inspired by
 # https://github.com/huggingface/peft/blob/main/.github/workflows/test-docker-build.yml
-name: Test Docker builds (PR)
+name: Test Dockerfiles
 
 on:
   pull_request:
@@ -15,7 +15,7 @@ env:
 
 jobs:
   get_changed_files:
-    name: "Get all modified Dockerfiles"
+    name: Detect modified Dockerfiles
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -40,7 +40,7 @@ jobs:
 
 
   build_modified_dockerfiles:
-    name: "Build all modified Docker images"
+    name: Build modified Docker images
     needs: get_changed_files
     runs-on: ubuntu-latest
     if: ${{ needs.get_changed_files.outputs.matrix }} != ''
