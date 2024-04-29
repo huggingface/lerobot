@@ -45,7 +45,7 @@ policy:
   # Architecture.
   # Vision backbone.
   vision_backbone: resnet18
-  use_pretrained_backbone: true
+  pretrained_backbone_weights: ResNet18_Weights.IMAGENET1K_V1
   replace_final_stride_with_dilation: false
   # Transformer layers.
   pre_norm: false

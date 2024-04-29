@@ -1,16 +1,12 @@
 # Inspired by
 # https://github.com/huggingface/peft/blob/main/.github/workflows/build_docker_images.yml
-name: Nightly Builds
+name: Builds
 
 on:
   workflow_dispatch:
   workflow_call:
   schedule:
     - cron: "0 1 * * *"
-
-# concurrency:
-#   group: docker-image-builds
-#   cancel-in-progress: false
 
 env:
   PYTHON_VERSION: "3.10"
@@ -40,6 +36,8 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
+      # HACK(aliberts): to be removed for release
+      # -----------------------------------------
       - name: Checkout gym-aloha
         uses: actions/checkout@v4
         with:
@@ -61,8 +59,6 @@ jobs:
           path: envs/gym-pusht
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      # HACK(aliberts): to be removed for release
-      # -----------------------------------------
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
@@ -134,6 +130,8 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
+      # HACK(aliberts): to be removed for release
+      # -----------------------------------------
       - name: Checkout gym-aloha
         uses: actions/checkout@v4
         with:
@@ -155,8 +153,6 @@ jobs:
           path: envs/gym-pusht
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      # HACK(aliberts): to be removed for release
-      # -----------------------------------------
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:

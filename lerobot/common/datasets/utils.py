@@ -342,7 +342,6 @@ def compute_stats(hf_dataset, batch_size=32, max_num_samples=None):
             "max": max[key],
             "min": min[key],
         }
-
     return stats
 
 

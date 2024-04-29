@@ -22,7 +22,7 @@ from lerobot.common.utils.utils import (
 from lerobot.scripts.eval import eval_policy
 
 
-@hydra.main(version_base=None, config_name="default", config_path="../configs")
+@hydra.main(version_base="1.2", config_name="default", config_path="../configs")
 def train_cli(cfg: dict):
     train(
         cfg,
