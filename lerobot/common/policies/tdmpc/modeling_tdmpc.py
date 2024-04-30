@@ -122,7 +122,6 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         """Select a single action given environment observations."""
         assert "observation.image" in batch
         assert "observation.state" in batch
-        assert len(batch) == 2
 
         batch = self.normalize_inputs(batch)
 
