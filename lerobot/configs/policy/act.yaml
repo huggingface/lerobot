@@ -1,21 +1,34 @@
 # @package _global_
 
-offline_steps: 80000
-online_steps: 0
+seed: 1000
+dataset_repo_id: lerobot/aloha_sim_insertion_human
 
-eval_episodes: 1
-eval_freq: 10000
-save_freq: 100000
-log_freq: 250
+training:
+  offline_steps: 80000
+  online_steps: 0
+  eval_freq: 10000
+  save_freq: 100000
+  log_freq: 250
+  save_model: true
 
-n_obs_steps: 1
-# when temporal_agg=False, n_action_steps=horizon
+  batch_size: 8
+  lr: 1e-5
+  lr_backbone: 1e-5
+  weight_decay: 1e-4
+  grad_clip_norm: 10
+  online_steps_between_rollouts: 1
 
-override_dataset_stats:
-  observation.images.top:
-    # stats from imagenet, since we use a pretrained vision model
-    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
-    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  override_dataset_stats:
+    observation.images.top:
+      # stats from imagenet, since we use a pretrained vision model
+      mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+      std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+
+  delta_timestamps:
+    action: "[i / ${fps} for i in range(${policy.chunk_size})]"
+
+eval:
+  n_episodes:: 50
 
 # See `configuration_act.py` for more details.
 policy:
@@ -24,7 +37,7 @@ policy:
   pretrained_model_path:
 
   # Input / output structure.
-  n_obs_steps: ${n_obs_steps}
+  n_obs_steps: 1
   chunk_size: 100 # chunk_size
   n_action_steps: 100
 
@@ -66,15 +79,3 @@ policy:
   # Training and loss computation.
   dropout: 0.1
   kl_weight: 10.0
-
-  # ---
-  # TODO(alexander-soare): Remove these from the policy config.
-  batch_size: 8
-  lr: 1e-5
-  lr_backbone: 1e-5
-  weight_decay: 1e-4
-  grad_clip_norm: 10
-  utd: 1
-
-  delta_timestamps:
-    action: "[i / ${fps} for i in range(${policy.chunk_size})]"

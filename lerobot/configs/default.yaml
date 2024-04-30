@@ -9,31 +9,23 @@ hydra:
   job:
     name: default
 
-seed: 1337
-# batch size for TorchRL SerialEnv. Each underlying env will get the seed = seed + env_index
-# NOTE: only diffusion policy supports rollout_batch_size > 1
-rollout_batch_size: 1
 device: cuda  # cpu
-prefetch: 4
-eval_freq: ???
-save_freq: ???
-eval_episodes: ???
-save_video: false
-save_model: false
-save_buffer: false
-train_steps: ???
-fps: ???
+seed: ???
+dataset_repo_id: lerobot/pusht
 
-offline_prioritized_sampler: true
+training:
+  offline_steps: ???
+  online_steps: ???
+  online_steps_between_rollouts: ???
+  eval_freq: ???
+  save_freq: ???
+  log_freq: 250
+  save_model: false
 
-dataset:
-  repo_id: ???
-
-n_action_steps: ???
-n_obs_steps: ???
-env: ???
-
-policy: ???
+eval:
+  n_episodes: 1
+  # TODO(alexander-soare): Right now this does not work. Reinstate this.
+  batch_size: 1
 
 wandb:
   enable: true

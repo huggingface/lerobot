@@ -23,8 +23,8 @@ weights_path = folder / "model.pt"
 # Override some config parameters to do with evaluation.
 overrides = [
     f"policy.pretrained_model_path={weights_path}",
-    "eval_episodes=10",
-    "rollout_batch_size=10",
+    "eval.n_episodes=10",
+    "eval.batch_size=10",
     "device=cuda",
 ]
 

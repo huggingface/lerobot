@@ -35,7 +35,7 @@ def make_policy(hydra_cfg: DictConfig, dataset_stats=None):
         from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 
         policy_cfg = _policy_cfg_from_hydra_cfg(DiffusionConfig, hydra_cfg)
-        policy = DiffusionPolicy(policy_cfg, hydra_cfg.offline_steps, dataset_stats)
+        policy = DiffusionPolicy(policy_cfg, hydra_cfg.training.offline_steps, dataset_stats)
         policy.to(get_safe_torch_device(hydra_cfg.device))
     elif hydra_cfg.policy.name == "act":
         from lerobot.common.policies.act.configuration_act import ActionChunkingTransformerConfig

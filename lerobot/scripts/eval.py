@@ -16,14 +16,14 @@ You have a specific config file to go with trained model weights, and want to ru
 python lerobot/scripts/eval.py \
 --config PATH/TO/FOLDER/config.yaml \
 policy.pretrained_model_path=PATH/TO/FOLDER/weights.pth \
-eval_episodes=10
+eval.n_episodes=10
 ```
 
 You have a HuggingFace Hub ID, you know which revision you want, and want to run 10 episodes (note that in this case,
 you don't need to specify which weights to use):
 
 ```
-python lerobot/scripts/eval.py --hub-id HUB/ID --revision v1.0 eval_episodes=10
+python lerobot/scripts/eval.py --hub-id HUB/ID --revision v1.0 eval.n_episodes=10
 ```
 """
 
@@ -365,7 +365,7 @@ def eval(cfg: dict, out_dir=None):
     log_output_dir(out_dir)
 
     logging.info("Making environment.")
-    env = make_env(cfg, num_parallel_envs=cfg.eval_episodes)
+    env = make_env(cfg, num_parallel_envs=cfg.eval.n_episodes)
 
     logging.info("Making policy.")
     policy = make_policy(cfg)

@@ -33,7 +33,7 @@ def test_factory(env_name, repo_id, policy_name):
         DEFAULT_CONFIG_PATH,
         overrides=[
             f"env={env_name}",
-            f"dataset.repo_id={repo_id}",
+            f"dataset_repo_id={repo_id}",
             f"policy={policy_name}",
             f"device={DEVICE}",
         ],

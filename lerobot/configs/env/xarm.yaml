@@ -1,16 +1,6 @@
 # @package _global_
 
-eval_episodes: 20
-eval_freq: 1000
-save_freq: 10000
-log_freq: 50
-offline_steps: 25000
-online_steps: 25000
-
 fps: 15
-
-dataset:
-  repo_id: lerobot/xarm_lift_medium
 
 env:
   name: xarm
