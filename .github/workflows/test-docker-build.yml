@@ -68,38 +68,6 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
-      # HACK(aliberts): to be removed for release
-      # -----------------------------------------
-      - name: Checkout gym-aloha
-        uses: actions/checkout@v4
-        with:
-          repository: huggingface/gym-aloha
-          path: envs/gym-aloha
-          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: Checkout gym-xarm
-        uses: actions/checkout@v4
-        with:
-          repository: huggingface/gym-xarm
-          path: envs/gym-xarm
-          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: Checkout gym-pusht
-        uses: actions/checkout@v4
-        with:
-          repository: huggingface/gym-pusht
-          path: envs/gym-pusht
-          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Change envs dependencies as local path
-        run: python .github/scripts/dep_build.py
-      # -----------------------------------------
-
       - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
