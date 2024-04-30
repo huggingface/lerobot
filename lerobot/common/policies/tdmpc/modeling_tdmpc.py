@@ -727,8 +727,6 @@ def _random_shifts_aug(x: Tensor, max_random_shift_ratio: float) -> Tensor:
     """Randomly shifts images horizontally and vertically.
 
     Adapted from https://github.com/facebookresearch/drqv2
-
-    TODO(now)
     """
     b, _, h, w = x.size()
     assert h == w, "non-square images not handled yet"
