@@ -1,6 +1,6 @@
 """
-Use this script to convert your dataset into our dataset format and upload it to the Hugging Face hub,
-or store it locally. Our dataset format is lightweight, fast to load from, and does not require any
+Use this script to convert your dataset into LeRobot dataset format  and upload it to the Hugging Face hub,
+or store it locally. LeRobot dataset format is lightweight, fast to load from, and does not require any
 installation of neural net specific packages like pytorch, tensorflow, jax.
 
 Example:
@@ -127,7 +127,7 @@ def push_dataset_to_hub(
     save_to_disk: bool,
     tests_data_dir: Path,
     save_tests_to_disk: bool,
-    fps: int,
+    fps: int | None,
     video: bool,
     debug: bool,
 ):

@@ -4,6 +4,7 @@ useless dependencies when using datasets.
 """
 
 import io
+import logging
 import shutil
 from pathlib import Path
 
@@ -51,21 +52,22 @@ def download_and_extract_zip(url: str, destination_folder: Path) -> bool:
 def download_pusht(raw_dir: str):
     pusht_url = "https://diffusion-policy.cs.columbia.edu/data/training/pusht.zip"
 
-    if not raw_dir.exists():
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        download_and_extract_zip(pusht_url, raw_dir)
-        # file is created inside a useful "pusht" directory, so we move it out and delete the dir
-        zarr_path = raw_dir / "pusht_cchi_v7_replay.zarr"
-        shutil.move(raw_dir / "pusht" / "pusht_cchi_v7_replay.zarr", zarr_path)
-        shutil.rmtree(raw_dir / "pusht")
+    raw_dir = Path(raw_dir)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    download_and_extract_zip(pusht_url, raw_dir)
+    # file is created inside a useful "pusht" directory, so we move it out and delete the dir
+    zarr_path = raw_dir / "pusht_cchi_v7_replay.zarr"
+    shutil.move(raw_dir / "pusht" / "pusht_cchi_v7_replay.zarr", zarr_path)
+    shutil.rmtree(raw_dir / "pusht")
 
 
-def download_xarm(raw_dir: str):
+def download_xarm(raw_dir: Path):
     """Download all xarm datasets at once"""
     import zipfile
 
     import gdown
 
+    raw_dir = Path(raw_dir)
     raw_dir.mkdir(parents=True, exist_ok=True)
     # from https://github.com/fyhMer/fowm/blob/main/scripts/download_datasets.py
     url = "https://drive.google.com/uc?id=1nhxpykGtPDhmQKm-_B8zBSywVRdgeVya"
@@ -84,7 +86,14 @@ def download_xarm(raw_dir: str):
     zip_path.unlink()
 
 
-def download_aloha(root: str, dataset_id: str):
+def download_aloha(raw_dir: Path, dataset_id: str):
+    # TODO(rcadene): remove gdown and use hugging face download instead
+    import gdown
+
+    logging.warning(
+        "Aloha download is broken and requires a custom version of gdown which is not limited on number of files"
+    )
+
     folder_urls = {
         "aloha_sim_insertion_human": "https://drive.google.com/drive/folders/1RgyD0JgTX30H4IM5XZn8I3zSV_mr8pyF",
         "aloha_sim_insertion_scripted": "https://drive.google.com/drive/folders/1TsojQQSXtHEoGnqgJ3gmpPQR2DPLtS2N",
@@ -125,30 +134,28 @@ def download_aloha(root: str, dataset_id: str):
         "aloha_sim_transfer_cube_human": ["top"],
         "aloha_sim_transfer_cube_scripted": ["top"],
     }
-    root = Path(root)
-    raw_dir: Path = root / f"{dataset_id}_raw"
-    if not raw_dir.is_dir():
-        import gdown
 
-        assert dataset_id in folder_urls
-        assert dataset_id in ep48_urls
-        assert dataset_id in ep49_urls
+    assert dataset_id in folder_urls
+    assert dataset_id in ep48_urls
+    assert dataset_id in ep49_urls
 
-        raw_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir = Path(raw_dir)
+    raw_dir.mkdir(parents=True, exist_ok=True)
 
-        gdown.download_folder(folder_urls[dataset_id], output=str(raw_dir))
+    gdown.download_folder(folder_urls[dataset_id], output=str(raw_dir))
 
-        # because of the 50 files limit per directory, two files episode 48 and 49 were missing
-        gdown.download(ep48_urls[dataset_id], output=str(raw_dir / "episode_48.hdf5"), fuzzy=True)
-        gdown.download(ep49_urls[dataset_id], output=str(raw_dir / "episode_49.hdf5"), fuzzy=True)
+    # because of the 50 files limit per directory, two files episode 48 and 49 were missing
+    gdown.download(ep48_urls[dataset_id], output=str(raw_dir / "episode_48.hdf5"), fuzzy=True)
+    gdown.download(ep49_urls[dataset_id], output=str(raw_dir / "episode_49.hdf5"), fuzzy=True)
 
 
 def download_umi(raw_dir: Path):
     url_cup_in_the_wild = "https://real.stanford.edu/umi/data/zarr_datasets/cup_in_the_wild.zarr.zip"
     zarr_path = raw_dir / "cup_in_the_wild.zarr"
-    if not zarr_path.is_dir():
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        download_and_extract_zip(url_cup_in_the_wild, zarr_path)
+
+    raw_dir = Path(raw_dir)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    download_and_extract_zip(url_cup_in_the_wild, zarr_path)
 
 
 if __name__ == "__main__":

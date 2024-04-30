@@ -188,12 +188,12 @@ def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=Tru
     # sanity check
     check_format(raw_dir)
 
-    if not video:
-        logging.warning("Generating UMI dataset without `video=True` might create 150GB of images on disk.")
-
     if fps is None:
         # For umi cup in the wild: https://arxiv.org/pdf/2402.10329#table.caption.16
         fps = 10
+
+    if not video:
+        logging.warning("Generating UMI dataset without `video=True` might create 150GB of images on disk.")
 
     data_dict, episode_data_index = load_from_raw(raw_dir, out_dir, fps, video, debug)
     hf_dataset = to_hf_dataset(data_dict, video)
