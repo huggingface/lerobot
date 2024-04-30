@@ -121,22 +121,6 @@ def eval_policy(
     max_steps = env.envs[0]._max_episode_steps
     progbar = trange(max_steps, desc=f"Running eval with {max_steps} steps (maximum) per rollout.")
     while not done.all():
-        # Receive observation:
-        import os
-        from time import sleep
-
-        while True:
-            if not os.path.exists("/tmp/mutex.txt"):
-                sleep(0.01)
-                continue
-            observation = {}
-            observation["rgb"] = np.load("/tmp/rgb.npy")
-            observation["state"] = np.load("/tmp/state.npy")
-            observation["pixels"] = observation["rgb"].transpose(1, 2, 0)[None]
-            observation["agent_pos"] = observation["state"][None]
-            done = np.load("/tmp/done.npy")
-            break
-
         # format from env keys to lerobot keys
         observation = preprocess_observation(observation)
         if return_episode_data:
@@ -148,19 +132,6 @@ def eval_policy(
         # get the next action for the environment
         with torch.inference_mode():
             action = policy.select_action(observation)
-
-        # Send action:
-        while True:
-            if not os.path.exists("/tmp/mutex.txt"):
-                sleep(0.01)
-                continue
-            torch.save(action[0], "/tmp/action.pth")
-            os.remove("/tmp/mutex.txt")
-            break
-
-        if done:
-            policy.reset()
-        continue
 
         # convert to cpu numpy
         action = postprocess_action(action)

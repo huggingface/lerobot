@@ -10,6 +10,7 @@ TODO(alexander-soare): Use batch-first throughout.
 
 # ruff: noqa: N806
 
+import logging
 from collections import deque
 from copy import deepcopy
 from functools import partial
@@ -30,7 +31,17 @@ from lerobot.common.policies.utils import get_device_from_parameters, populate_q
 class TDMPCPolicy(nn.Module):
     """Implementation of TD-MPC learning + inference.
 
-    TODO(alexander-soare) Use batch-first tensors instead of switching to sequence first.
+    Please note several warnings for this policy.
+        - Evaluation of pretrained weights created with the original FOWM code
+            (https://github.com/fyhMer/fowm) works as expected. To be precise: we trained and evaluated a
+            model with the FOWM code for the xarm_lift_medium_replay dataset. We ported the weights across
+            to LeRobot, and were able to evaluate with the same success metric. BUT, we had to use inter-
+            process communication to use the xarm environment from FOWM. This is because our xarm
+            environment uses newer dependencies and does not match the environment in FOWM. See
+            https://github.com/huggingface/lerobot/pull/103 for implementation details.
+        - We have NOT checked that training on LeRobot reproduces SOTA results. This is a TODO.
+        - Our current xarm datasets were generated using the environment from FOWM. Therefore they do not
+            match our xarm environment.
     """
 
     name = "tdmpc"
@@ -46,6 +57,23 @@ class TDMPCPolicy(nn.Module):
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
         super().__init__()
+        logging.warning(
+            """
+            Please note several warnings for this policy.
+
+            - Evaluation of pretrained weights created with the original FOWM code
+              (https://github.com/fyhMer/fowm) works as expected. To be precise: we trained and evaluated a
+              model with the FOWM code for the xarm_lift_medium_replay dataset. We ported the weights across
+              to LeRobot, and were able to evaluate with the same success metric. BUT, we had to use inter-
+              process communication to use the xarm environment from FOWM. This is because our xarm
+              environment uses newer dependencies and does not match the environment in FOWM. See
+              https://github.com/huggingface/lerobot/pull/103 for implementation details.
+            - We have NOT checked that training on LeRobot reproduces SOTA results. This is a TODO.
+            - Our current xarm datasets were generated using the environment from FOWM. Therefore they do not
+              match our xarm environment.
+            """
+        )
+
         if cfg is None:
             cfg = TDMPCConfig()
         self.cfg = cfg
