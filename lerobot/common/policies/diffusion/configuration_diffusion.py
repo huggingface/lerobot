@@ -119,15 +119,6 @@ class DiffusionConfig:
 
     # ---
     # TODO(alexander-soare): Remove these from the policy config.
-    batch_size: int = 64
-    grad_clip_norm: int = 10
-    lr: float = 1.0e-4
-    lr_scheduler: str = "cosine"
-    lr_warmup_steps: int = 500
-    adam_betas: tuple[float, float] = (0.95, 0.999)
-    adam_eps: float = 1.0e-8
-    adam_weight_decay: float = 1.0e-6
-    utd: int = 1
     use_ema: bool = True
     ema_update_after_step: int = 0
     ema_min_alpha: float = 0.0

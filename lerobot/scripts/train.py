@@ -81,7 +81,7 @@ def log_train_info(logger, info, step, cfg, dataset, is_offline):
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
-    num_samples = (step + 1) * cfg.policy.batch_size
+    num_samples = (step + 1) * cfg.training.batch_size
     avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
@@ -117,7 +117,7 @@ def log_eval_info(logger, info, step, cfg, dataset, is_offline):
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
-    num_samples = (step + 1) * cfg.policy.batch_size
+    num_samples = (step + 1) * cfg.training.batch_size
     avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
@@ -282,26 +282,26 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 "params": [
                     p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad
                 ],
-                "lr": cfg.policy.lr_backbone,
+                "lr": cfg.training.lr_backbone,
             },
         ]
         optimizer = torch.optim.AdamW(
-            optimizer_params_dicts, lr=cfg.policy.lr, weight_decay=cfg.policy.weight_decay
+            optimizer_params_dicts, lr=cfg.training.lr, weight_decay=cfg.training.weight_decay
         )
         lr_scheduler = None
     elif cfg.policy.name == "diffusion":
         optimizer = torch.optim.Adam(
             policy.diffusion.parameters(),
-            cfg.policy.lr,
-            cfg.policy.adam_betas,
-            cfg.policy.adam_eps,
-            cfg.policy.adam_weight_decay,
+            cfg.training.lr,
+            cfg.training.adam_betas,
+            cfg.training.adam_eps,
+            cfg.training.adam_weight_decay,
         )
         assert cfg.training.online_steps == 0, "Diffusion Policy does not handle online training."
         lr_scheduler = get_scheduler(
-            cfg.policy.lr_scheduler,
+            cfg.training.lr_scheduler,
             optimizer=optimizer,
-            num_warmup_steps=cfg.policy.lr_warmup_steps,
+            num_warmup_steps=cfg.training.lr_warmup_steps,
             num_training_steps=cfg.training.offline_steps,
         )
     elif policy.name == "tdmpc":
@@ -347,7 +347,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     dataloader = torch.utils.data.DataLoader(
         offline_dataset,
         num_workers=4,
-        batch_size=cfg.policy.batch_size,
+        batch_size=cfg.training.batch_size,
         shuffle=True,
         pin_memory=cfg.device != "cpu",
         drop_last=False,
@@ -365,7 +365,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
         for key in batch:
             batch[key] = batch[key].to(cfg.device, non_blocking=True)
 
-        train_info = update_policy(policy, batch, optimizer, cfg.policy.grad_clip_norm, lr_scheduler)
+        train_info = update_policy(policy, batch, optimizer, cfg.training.grad_clip_norm, lr_scheduler)
 
         # TODO(rcadene): is it ok if step_t=0 = 0 and not 1 as previously done?
         if step % cfg.training.log_freq == 0:
@@ -394,7 +394,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
         num_workers=4,
-        batch_size=cfg.policy.batch_size,
+        batch_size=cfg.training.batch_size,
         sampler=sampler,
         pin_memory=cfg.device != "cpu",
         drop_last=False,
@@ -431,7 +431,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
             for key in batch:
                 batch[key] = batch[key].to(cfg.device, non_blocking=True)
 
-            train_info = update_policy(policy, batch, optimizer, cfg.policy.grad_clip_norm, lr_scheduler)
+            train_info = update_policy(policy, batch, optimizer, cfg.training.grad_clip_norm, lr_scheduler)
 
             if step % cfg.training.log_freq == 0:
                 log_train_info(logger, train_info, step, cfg, online_dataset, is_offline)

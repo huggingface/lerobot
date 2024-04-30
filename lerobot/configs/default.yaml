@@ -2,7 +2,6 @@ defaults:
   - _self_
   - env: pusht
   - policy: diffusion
-  - dataset_repo_id: lerobot/pusht
 
 hydra:
   run:
@@ -12,6 +11,7 @@ hydra:
 
 device: cuda  # cpu
 seed: ???
+dataset_repo_id: lerobot/pusht
 
 training:
   offline_steps: ???

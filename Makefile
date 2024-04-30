@@ -30,21 +30,21 @@ test-act-ete-train:
 		policy=act \
 		env=aloha \
 		wandb.enable=False \
-		offline_steps=2 \
-		online_steps=0 \
-		eval_episodes=1 \
+		training.offline_steps=2 \
+		training.online_steps=0 \
+		eval.n_episodes=1 \
 		device=cpu \
-		save_model=true \
-		save_freq=2 \
+		training.save_model=true \
+		training.save_freq=2 \
 		policy.n_action_steps=20 \
 		policy.chunk_size=20 \
-		policy.batch_size=2 \
+		training.batch_size=2 \
 		hydra.run.dir=tests/outputs/act/
 
 test-act-ete-eval:
 	python lerobot/scripts/eval.py \
 		--config tests/outputs/act/.hydra/config.yaml \
-		eval_episodes=1 \
+		eval.n_episodes=1 \
 		env.episode_length=8 \
 		device=cpu \
 		policy.pretrained_model_path=tests/outputs/act/models/2.pt
@@ -54,19 +54,19 @@ test-diffusion-ete-train:
 		policy=diffusion \
 		env=pusht \
 		wandb.enable=False \
-		offline_steps=2 \
-		online_steps=0 \
-		eval_episodes=1 \
+		training.offline_steps=2 \
+		training.online_steps=0 \
+		eval.n_episodes=1 \
 		device=cpu \
-		save_model=true \
-		save_freq=2 \
-		policy.batch_size=2 \
+		training.save_model=true \
+		training.save_freq=2 \
+		training.batch_size=2 \
 		hydra.run.dir=tests/outputs/diffusion/
 
 test-diffusion-ete-eval:
 	python lerobot/scripts/eval.py \
 		--config tests/outputs/diffusion/.hydra/config.yaml \
-		eval_episodes=1 \
+		eval.n_episodes=1 \
 		env.episode_length=8 \
 		device=cpu \
 		policy.pretrained_model_path=tests/outputs/diffusion/models/2.pt
@@ -76,20 +76,20 @@ test-tdmpc-ete-train:
 		policy=tdmpc \
 		env=xarm \
 		wandb.enable=False \
-		offline_steps=1 \
-		online_steps=2 \
-		eval_episodes=1 \
+		training.offline_steps=1 \
+		training.online_steps=2 \
+		eval.n_episodes=1 \
 		env.episode_length=2 \
 		device=cpu \
-		save_model=true \
-		save_freq=2 \
-		policy.batch_size=2 \
+		training.save_model=true \
+		training.save_freq=2 \
+		training.batch_size=2 \
 		hydra.run.dir=tests/outputs/tdmpc/
 
 test-tdmpc-ete-eval:
 	python lerobot/scripts/eval.py \
 		--config tests/outputs/tdmpc/.hydra/config.yaml \
-		eval_episodes=1 \
+		eval.n_episodes=1 \
 		env.episode_length=8 \
 		device=cpu \
 		policy.pretrained_model_path=tests/outputs/tdmpc/models/2.pt

@@ -1,6 +1,7 @@
 # @package _global_
 
 seed: 100000
+dataset_repo_id: lerobot/pusht
 
 training:
   offline_steps: 200000
@@ -9,6 +10,21 @@ training:
   save_freq: 5000
   log_freq: 250
   save_model: true
+
+  batch_size: 64
+  grad_clip_norm: 10
+  lr: 1.0e-4
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  adam_betas: [0.95, 0.999]
+  adam_eps: 1.0e-8
+  adam_weight_decay: 1.0e-6
+  utd: 1
+
+  delta_timestamps:
+    observation.image: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.horizon})]"
 
 eval:
   n_episodes: 50
@@ -79,23 +95,9 @@ policy:
 
   # ---
   # TODO(alexander-soare): Remove these from the policy config.
-  batch_size: 64
-  grad_clip_norm: 10
-  lr: 1.0e-4
-  lr_scheduler: cosine
-  lr_warmup_steps: 500
-  adam_betas: [0.95, 0.999]
-  adam_eps: 1.0e-8
-  adam_weight_decay: 1.0e-6
-  utd: 1
   use_ema: true
   ema_update_after_step: 0
   ema_min_alpha: 0.0
   ema_max_alpha: 0.9999
   ema_inv_gamma: 1.0
   ema_power: 0.75
-
-  delta_timestamps:
-    observation.image: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
-    observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
-    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.horizon})]"

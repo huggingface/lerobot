@@ -112,15 +112,6 @@ class ActionChunkingTransformerConfig:
     dropout: float = 0.1
     kl_weight: float = 10.0
 
-    # ---
-    # TODO(alexander-soare): Remove these from the policy config.
-    batch_size: int = 8
-    lr: float = 1e-5
-    lr_backbone: float = 1e-5
-    weight_decay: float = 1e-4
-    grad_clip_norm: float = 10
-    utd: int = 1
-
     def __post_init__(self):
         """Input validation (not exhaustive)."""
         if not self.vision_backbone.startswith("resnet"):

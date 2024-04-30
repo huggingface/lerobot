@@ -20,7 +20,7 @@ def test_visualize_dataset(tmpdir, repo_id):
         overrides=[
             "policy=act",
             "env=aloha",
-            f"dataset.repo_id={repo_id}",
+            f"dataset_repo_id={repo_id}",
         ],
     )
     video_paths = visualize_dataset(cfg, out_dir=tmpdir)
