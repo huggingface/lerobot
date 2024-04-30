@@ -194,18 +194,13 @@ class TDMPCPolicy(nn.Module):
 
         for _ in range(self.cfg.cem_iterations):
             # Randomly sample action trajectories for the gaussian distribution.
-            gaussian_actions = torch.clamp(
-                mean.unsqueeze(1)
-                + std.unsqueeze(1)
-                * torch.randn(
-                    self.cfg.horizon,
-                    self.cfg.n_gaussian_samples,
-                    self.cfg.output_shapes["action"][0],
-                    device=std.device,
-                ),
-                -1,
-                1,
+            std_normal_noise = torch.randn(
+                self.cfg.horizon,
+                self.cfg.n_gaussian_samples,
+                self.cfg.output_shapes["action"][0],
+                device=std.device,
             )
+            gaussian_actions = torch.clamp(mean.unsqueeze(1) + std.unsqueeze(1) * std_normal_noise, -1, 1)
 
             # Compute elite actions.
             actions = torch.cat([gaussian_actions, pi_actions], dim=1)

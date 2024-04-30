@@ -17,6 +17,7 @@ training:
   offline_steps: ???
   online_steps: ???
   online_steps_between_rollouts: ???
+  online_sampling_ratio: 0.5
   eval_freq: ???
   save_freq: ???
   log_freq: 250

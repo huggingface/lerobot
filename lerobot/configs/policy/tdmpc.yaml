@@ -1,8 +1,22 @@
 # @package _global_
 
-offline_steps: 25000
-online_steps: 25000
-online_sampling_ratio: 0.5
+seed: 1
+
+training:
+  offline_steps: 25000
+  online_steps: 25000
+  online_steps_between_rollouts: 1
+  online_sampling_ratio: 0.5
+
+  batch_size: 256
+  grad_clip_norm: 10.0
+  lr: 3e-4
+
+  delta_timestamps:
+    observation.image: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+    observation.state: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+    action: "[i / ${fps} for i in range(${policy.horizon})]"
+    next.reward: "[i / ${fps} for i in range(${policy.horizon})]"
 
 policy:
   name: tdmpc
@@ -59,25 +73,3 @@ policy:
   temporal_decay_coeff: 0.5
   # Target model.
   target_model_momentum: 0.995
-
-
-  # ---
-  # TODO(alexander-soare): Remove these from the policy config.
-  batch_size: 256
-  grad_clip_norm: 10.0
-  lr: 3e-4
-  std_schedule: ${policy.min_std}
-  horizon_schedule: ${policy.horizon}
-  per: true
-  per_alpha: 0.6
-  per_beta: 0.4
-  seed_steps: 0
-  update_freq: 2
-  tau: 0.01
-  online_steps_between_rollouts: 1
-
-  delta_timestamps:
-    observation.image: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
-    observation.state: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
-    action: "[i / ${fps} for i in range(${policy.horizon})]"
-    next.reward: "[i / ${fps} for i in range(${policy.horizon})]"

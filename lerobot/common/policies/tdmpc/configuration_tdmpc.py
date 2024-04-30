@@ -129,13 +129,6 @@ class TDMPCConfig:
     # Target model.
     target_model_momentum: float = 0.995
 
-    # ---
-    # TODO(alexander-soare): Remove these from the policy config.
-    batch_size: int = 256
-    grad_clip_norm: float = 10.0
-    lr: float = 3e-4
-    utd: int = 1
-
     def __post_init__(self):
         """Input validation (not exhaustive)."""
         if self.input_shapes["observation.image"][-2] != self.input_shapes["observation.image"][-1]:

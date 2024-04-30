@@ -55,7 +55,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
             self._action_queue = deque([], maxlen=self.cfg.n_action_steps)
 
     @torch.no_grad
-    def select_action(self, batch: dict[str, Tensor], **_) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -78,7 +78,7 @@ class ActionChunkingTransformerPolicy(nn.Module):
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
-    def forward(self, batch, **_) -> dict[str, Tensor]:
+    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)

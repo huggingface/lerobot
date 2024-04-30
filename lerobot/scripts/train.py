@@ -48,6 +48,7 @@ def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
         policy.ema.step(policy.diffusion)
 
     if isinstance(policy, PolicyWithUpdate):
+        # To possibly update an internal buffer (for instance an Exponential Moving Average like in TDMPC).
         policy.update()
 
     info = {
@@ -208,7 +209,6 @@ def add_episodes_inplace(
     assert first_index == episode_data_index["from"][first_episode_idx].item()
     assert last_index == episode_data_index["to"][last_episode_idx].item() - 1
 
-    print(1, hf_dataset.features["observation.image"])
     if len(online_dataset) == 0:
         # initialize online dataset
         online_dataset.hf_dataset = hf_dataset
@@ -312,7 +312,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
             num_training_steps=cfg.training.offline_steps,
         )
     elif policy.name == "tdmpc":
-        optimizer = torch.optim.Adam(policy.parameters(), cfg.policy.lr)
+        optimizer = torch.optim.Adam(policy.parameters(), cfg.training.lr)
         lr_scheduler = None
     else:
         raise NotImplementedError()
@@ -435,7 +435,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
             sampler,
             hf_dataset=eval_info["episodes"]["hf_dataset"],
             episode_data_index=eval_info["episodes"]["episode_data_index"],
-            pc_online_samples=cfg.get("online_sampling_ratio", 0.5),
+            pc_online_samples=cfg.training.online_sampling_ratio,
         )
 
         policy.train()
