@@ -255,8 +255,7 @@ def main():
     parser.add_argument(
         "--video",
         type=int,
-        # TODO(rcadene): enable when video PR merges
-        default=0,
+        default=1,
         help="Convert each episode of the raw dataset to an mp4 video. This option allows 60 times lower disk space consumption and 25 faster loading time during training.",
     )
     parser.add_argument(

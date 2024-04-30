@@ -8,7 +8,7 @@ import einops
 import torch
 import tqdm
 from datasets import Image, load_dataset, load_from_disk
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from PIL import Image as PILImage
 from safetensors.torch import load_file
 from torchvision import transforms
@@ -127,6 +127,15 @@ def load_info(repo_id, version, root) -> dict:
     return info
 
 
+def load_videos(repo_id, version, root) -> Path:
+    if root is not None:
+        path = Path(root) / repo_id / "videos"
+    else:
+        path = snapshot_download(repo_id, allow_patterns="*.mp4", repo_type="dataset", revision=version)
+
+    return path
+
+
 def load_previous_and_future_frames(
     item: dict[str, torch.Tensor],
     hf_dataset: datasets.Dataset,
@@ -209,6 +218,7 @@ def load_previous_and_future_frames(
         item[key] = hf_dataset.select_columns(key)[data_ids][key]
         item[key] = torch.stack(item[key])
         item[f"{key}_is_pad"] = is_pad
+        item[f"{key}_timestamp"] = query_ts
 
     return item
 
