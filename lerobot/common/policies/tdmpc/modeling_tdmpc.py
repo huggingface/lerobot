@@ -146,15 +146,24 @@ class TDMPCPolicy(nn.Module):
         pi_actions = torch.empty(
             self.cfg.horizon, self.cfg.n_pi_samples, self.cfg.output_shapes["action"][0], device=device
         )
+        pi_value = torch.empty(self.cfg.n_pi_samples, device=device)
         if self.cfg.n_pi_samples > 0:
             _z = einops.repeat(z, "d -> n d", n=self.cfg.n_pi_samples)
             for t in range(self.cfg.horizon):
                 # TODO(now-noise): in the official implementation self.model.training should evaluate to True during
-                # rollouts generated while training. Note that in the original impl they don't even use self.model.training here.
+                # rollouts generated while training.
                 pi_actions[t] = self.model.pi(_z, self.cfg.min_std * self.model.training)
                 _z = self.model.latent_dynamics(_z, pi_actions[t])
 
-        z = einops.repeat(z, "d -> n d", n=self.cfg.n_gaussian_samples + self.cfg.n_pi_samples)
+        # We will need the values of the π trajectories for the CEM loop.
+        if self.cfg.n_pi_samples > 0:
+            pi_value = self.estimate_value(
+                einops.repeat(z, "d -> n d", n=self.cfg.n_pi_samples), pi_actions
+            ).nan_to_num_(0)
+
+        # In the CEM loop we will need this for a call to estimate_value with the gaussian sampled
+        # trajectories.
+        z = einops.repeat(z, "d -> n d", n=self.cfg.n_gaussian_samples)
 
         # Model Predictive Path Integral (MPPI) with the cross-entropy method (CEM) as the optimization
         # algorithm.
@@ -167,7 +176,7 @@ class TDMPCPolicy(nn.Module):
 
         for _ in range(self.cfg.cem_iterations):
             # Randomly sample action trajectories for the gaussian distribution.
-            actions = torch.clamp(
+            gaussian_actions = torch.clamp(
                 mean.unsqueeze(1)
                 + std.unsqueeze(1)
                 * torch.randn(
@@ -179,15 +188,11 @@ class TDMPCPolicy(nn.Module):
                 -1,
                 1,
             )
-            # Also include those action trajectories produced by π.
-            actions = torch.cat([actions, pi_actions], dim=1)
 
             # Compute elite actions.
-            # TODO(now-noise): It looks like pi_actions never changes in this loop so really we should only estimate
-            # its values once. But this should only be the case if we remove the noise from `estimate_value`.
-            # Note: zero NaNs which could possibly arise early in training due to the auto-regressive nature
-            # of policy rollouts with the world model.
-            value = self.estimate_value(z, actions).nan_to_num_(0)  # shape (N+Nπ,)
+            gaussian_value = self.estimate_value(z, gaussian_actions).nan_to_num_(0)
+            actions = torch.cat([gaussian_actions, pi_actions], dim=1)
+            value = torch.cat([gaussian_value, pi_value])
             elite_idxs = torch.topk(value, self.cfg.n_elites, dim=0).indices
             elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
 
@@ -219,10 +224,6 @@ class TDMPCPolicy(nn.Module):
 
         # Select only the first action
         action = actions[0]
-        # TODO(now-noise): in the official implementation this should evaluate to True during rollouts generated
-        # while training. But should it really? Why add more noise yet again?
-        if self.model.training:
-            action += std[0] * torch.randn_like(std[0])
         return action
 
     @torch.no_grad()
@@ -255,10 +256,9 @@ class TDMPCPolicy(nn.Module):
             G += running_discount * (reward + regularization)
             running_discount *= self.cfg.discount
         # Add the estimated value of the final state (using the minimum for a conservative estimate).
-        # Do so by predicting the next action (with added noise), then a minimum over the ensemble of
-        # state-action value estimators.
-        # TODO(now-noise): Should there really be noise here?
-        next_action = self.model.pi(z, self.cfg.min_std)  # (batch, action_dim)
+        # Do so by predicting the next action, then taking a minimum over the ensemble of state-action value
+        # estimators.
+        next_action = self.model.pi(z)  # (batch, action_dim)
         terminal_values = self.model.Qs(z, next_action)
         # Randomly choose 2 of the Qs for terminal value estimation (as in App C. of the FOWM paper).
         if self.cfg.q_ensemble_size > 2:

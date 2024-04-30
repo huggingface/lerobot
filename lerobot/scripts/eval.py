@@ -68,6 +68,7 @@ def eval_policy(
     fps = env.unwrapped.metadata["render_fps"]
 
     if policy is not None:
+        # TODO(now)
         policy.eval()
     device = "cpu" if policy is None else next(policy.parameters()).device
 
@@ -146,7 +147,7 @@ def eval_policy(
 
         # get the next action for the environment
         with torch.inference_mode():
-            action = policy.select_action(observation)[1:]
+            action = policy.select_action(observation)
 
         # Send action:
         while True:
