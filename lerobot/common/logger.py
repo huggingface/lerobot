@@ -29,9 +29,9 @@ class Logger:
         self._job_name = job_name
         self._model_dir = self._log_dir / "models"
         self._buffer_dir = self._log_dir / "buffers"
-        self._save_model = cfg.save_model
+        self._save_model = cfg.training.save_model
         self._disable_wandb_artifact = cfg.wandb.disable_artifact
-        self._save_buffer = cfg.save_buffer
+        self._save_buffer = cfg.training.get("save_buffer", False)
         self._group = cfg_to_group(cfg)
         self._seed = cfg.seed
         self._cfg = cfg

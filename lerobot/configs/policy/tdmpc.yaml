@@ -66,7 +66,15 @@ policy:
   batch_size: 256
   grad_clip_norm: 10.0
   lr: 3e-4
-  utd: 1
+  std_schedule: ${policy.min_std}
+  horizon_schedule: ${policy.horizon}
+  per: true
+  per_alpha: 0.6
+  per_beta: 0.4
+  seed_steps: 0
+  update_freq: 2
+  tau: 0.01
+  online_steps_between_rollouts: 1
 
   delta_timestamps:
     observation.image: "[i / ${fps} for i in range(${policy.horizon} + 1)]"

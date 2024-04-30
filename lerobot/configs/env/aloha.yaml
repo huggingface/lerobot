@@ -1,17 +1,6 @@
 # @package _global_
 
-eval_episodes: 50
-eval_freq: 7500
-save_freq: 75000
-log_freq: 250
-# TODO: same as xarm, need to adjust
-offline_steps: 25000
-online_steps: 25000
-
 fps: 50
-
-dataset:
-  repo_id: lerobot/aloha_sim_insertion_human
 
 env:
   name: aloha

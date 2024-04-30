@@ -14,12 +14,13 @@ def make_dataset(
     cfg,
     split="train",
 ):
-    if cfg.env.name not in cfg.dataset.repo_id:
+    if cfg.env.name not in cfg.dataset_repo_id:
         logging.warning(
-            f"There might be a mismatch between your training dataset ({cfg.dataset.repo_id=}) and your environment ({cfg.env.name=})."
+            f"There might be a mismatch between your training dataset ({cfg.dataset_repo_id=}) and your "
+            f"environment ({cfg.env.name=})."
         )
 
-    delta_timestamps = cfg.policy.get("delta_timestamps")
+    delta_timestamps = cfg.training.get("delta_timestamps")
     if delta_timestamps is not None:
         for key in delta_timestamps:
             if isinstance(delta_timestamps[key], str):
@@ -28,7 +29,7 @@ def make_dataset(
     # TODO(rcadene): add data augmentations
 
     dataset = LeRobotDataset(
-        cfg.dataset.repo_id,
+        cfg.dataset_repo_id,
         split=split,
         root=DATA_DIR,
         delta_timestamps=delta_timestamps,
