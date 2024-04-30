@@ -13,7 +13,7 @@ env:
 
 jobs:
   run_all_tests_cpu:
-    name: "Test CPU"
+    name: CPU
     strategy:
       fail-fast: false
     runs-on: ubuntu-latest
@@ -40,7 +40,7 @@ jobs:
 
 
   run_all_tests_single_gpu:
-    name: "Test GPU"
+    name: GPU
     strategy:
       fail-fast: false
     runs-on: [single-gpu, nvidia-gpu, t4, ci]

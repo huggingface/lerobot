@@ -21,7 +21,8 @@ on:
       - "poetry.lock"
 
 jobs:
-  tests:
+  pytest:
+    name: Pytest
     runs-on: ubuntu-latest
     env:
       DATA_DIR: tests/data
@@ -59,6 +60,39 @@ jobs:
             -W ignore::UserWarning:torch.utils.data.dataloader:558 \
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
             && rm -rf tests/outputs outputs
+
+
+  end-to-end:
+    name: End-to-end
+    runs-on: ubuntu-latest
+    env:
+      DATA_DIR: tests/data
+      MUJOCO_GL: egl
+    steps:
+      - name: Add SSH key for installing envs
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+
+      - name: Install EGL
+        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
+
+      - name: Install poetry
+        run: |
+          pipx install poetry && poetry config virtualenvs.in-project true
+          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "poetry"
+
+      - name: Install poetry dependencies
+        run: |
+          poetry install --all-extras
 
       - name: Test end-to-end
         run: |

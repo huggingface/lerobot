@@ -14,8 +14,8 @@ from lerobot.common.datasets.utils import (
 
 
 class PushTProcessor:
-    """ Process zarr files formatted like in: https://github.com/real-stanford/diffusion_policy
-    """
+    """Process zarr files formatted like in: https://github.com/real-stanford/diffusion_policy"""
+
     def __init__(self, folder_path: Path, fps: int | None = None):
         self.zarr_path = folder_path
         if fps is None:
