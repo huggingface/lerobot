@@ -1,4 +1,4 @@
-"""
+"""Implementation of Finetuning Offline World Models in the Real World.
 
 The comments in this code may sometimes refer to these references:
     TD-MPC paper: Temporal Difference Learning for Model Predictive Control (https://arxiv.org/abs/2203.04955)
