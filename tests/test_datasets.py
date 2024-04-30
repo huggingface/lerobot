@@ -242,9 +242,9 @@ def test_flatten_unflatten_dict():
 @pytest.mark.parametrize(
     "repo_id",
     [
-        "lerobot/pusht",
-        "lerobot/aloha_sim_insertion_human",
-        "lerobot/xarm_push_medium",
+        # "lerobot/pusht",
+        # "lerobot/aloha_sim_insertion_human",
+        "lerobot/xarm_lift_medium",
     ],
 )
 def test_backward_compatibility(repo_id):

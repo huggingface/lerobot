@@ -42,35 +42,36 @@ def check_format(raw_dir):
 
 
 def load_from_raw(raw_dir, out_dir, fps, video, debug):
-    xarm_files = list(raw_dir.glob("*.pkl"))
+    pkl_path = raw_dir / "buffer.pkl"
 
-    with open(xarm_files[0], "rb") as f:
-        dataset_dict = pickle.load(f)
+    with open(pkl_path, "rb") as f:
+        pkl_data = pickle.load(f)
+
     ep_dicts = []
     episode_data_index = {"from": [], "to": []}
 
     id_from = 0
     id_to = 0
     ep_idx = 0
-    total_frames = dataset_dict["actions"].shape[0]
+    total_frames = pkl_data["actions"].shape[0]
     for i in tqdm.tqdm(range(total_frames)):
         id_to += 1
 
-        if not dataset_dict["dones"][i]:
+        if not pkl_data["dones"][i]:
             continue
 
         num_frames = id_to - id_from
 
-        image = torch.tensor(dataset_dict["observations"]["rgb"][id_from:id_to])
+        image = torch.tensor(pkl_data["observations"]["rgb"][id_from:id_to])
         image = einops.rearrange(image, "b c h w -> b h w c")
-        state = torch.tensor(dataset_dict["observations"]["state"][id_from:id_to])
-        action = torch.tensor(dataset_dict["actions"][id_from:id_to])
+        state = torch.tensor(pkl_data["observations"]["state"][id_from:id_to])
+        action = torch.tensor(pkl_data["actions"][id_from:id_to])
         # TODO(rcadene): we have a missing last frame which is the observation when the env is done
         # it is critical to have this frame for tdmpc to predict a "done observation/state"
-        # next_image = torch.tensor(dataset_dict["next_observations"]["rgb"][id_from:id_to])
-        # next_state = torch.tensor(dataset_dict["next_observations"]["state"][id_from:id_to])
-        next_reward = torch.tensor(dataset_dict["rewards"][id_from:id_to])
-        next_done = torch.tensor(dataset_dict["dones"][id_from:id_to])
+        # next_image = torch.tensor(pkl_data["next_observations"]["rgb"][id_from:id_to])
+        # next_state = torch.tensor(pkl_data["next_observations"]["state"][id_from:id_to])
+        next_reward = torch.tensor(pkl_data["rewards"][id_from:id_to])
+        next_done = torch.tensor(pkl_data["dones"][id_from:id_to])
 
         ep_dict = {}
 
