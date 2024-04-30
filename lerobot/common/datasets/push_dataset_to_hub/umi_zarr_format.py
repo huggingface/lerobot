@@ -1,5 +1,6 @@
 """Process UMI (Universal Manipulation Interface) data stored in Zarr format like in: https://github.com/real-stanford/universal_manipulation_interface"""
 
+import logging
 import shutil
 from pathlib import Path
 
@@ -43,6 +44,22 @@ def check_format(raw_dir) -> bool:
 
     required_datasets.remove("meta/episode_ends")
     assert all(nb_frames == zarr_data[dataset].shape[0] for dataset in required_datasets)
+
+
+def get_episode_idxs(episode_ends: np.ndarray) -> np.ndarray:
+    # Optimized and simplified version of this function: https://github.com/real-stanford/universal_manipulation_interface/blob/298776ce251f33b6b3185a98d6e7d1f9ad49168b/diffusion_policy/common/replay_buffer.py#L374
+    from numba import jit
+
+    @jit(nopython=True)
+    def _get_episode_idxs(episode_ends):
+        result = np.zeros((episode_ends[-1],), dtype=np.int64)
+        start_idx = 0
+        for episode_number, end_idx in enumerate(episode_ends):
+            result[start_idx:end_idx] = episode_number
+            start_idx = end_idx
+        return result
+
+    return _get_episode_idxs(episode_ends)
 
 
 def load_from_raw(raw_dir, out_dir, fps, video, debug):
@@ -171,6 +188,9 @@ def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=Tru
     # sanity check
     check_format(raw_dir)
 
+    if not video:
+        logging.warning("Generating UMI dataset without `video=True` might create 150GB of images on disk.")
+
     if fps is None:
         # For umi cup in the wild: https://arxiv.org/pdf/2402.10329#table.caption.16
         fps = 10
@@ -183,19 +203,3 @@ def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=Tru
         "video": video,
     }
     return hf_dataset, episode_data_index, info
-
-
-def get_episode_idxs(episode_ends: np.ndarray) -> np.ndarray:
-    # Optimized and simplified version of this function: https://github.com/real-stanford/universal_manipulation_interface/blob/298776ce251f33b6b3185a98d6e7d1f9ad49168b/diffusion_policy/common/replay_buffer.py#L374
-    from numba import jit
-
-    @jit(nopython=True)
-    def _get_episode_idxs(episode_ends):
-        result = np.zeros((episode_ends[-1],), dtype=np.int64)
-        start_idx = 0
-        for episode_number, end_idx in enumerate(episode_ends):
-            result[start_idx:end_idx] = episode_number
-            start_idx = end_idx
-        return result
-
-    return _get_episode_idxs(episode_ends)
