@@ -14,9 +14,7 @@ from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episod
 from lerobot.common.datasets.utils import (
     hf_transform_to_torch,
 )
-
-# TODO(rcadene): enable for PR video dataset
-# from lerobot.common.datasets.video_utils import encode_video_frames
+from lerobot.common.datasets.video_utils import encode_video_frames
 
 
 def check_format(raw_dir):
@@ -83,7 +81,7 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
 
             # encode images to a mp4 video
             video_path = out_dir / "videos" / f"observation.image_episode_{ep_idx:06d}.mp4"
-            encode_video_frames(tmp_imgs_dir, video_path, fps)  # noqa: F821
+            encode_video_frames(tmp_imgs_dir, video_path, fps)
 
             # clean temporary images directory
             shutil.rmtree(tmp_imgs_dir)
