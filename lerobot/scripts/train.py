@@ -417,10 +417,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
         if env_step == 0:
             logging.info("Start online training by interacting with environment")
 
-        # Note: We set the policy to training mode when gather eval trajectories. This is because we may want
-        # to benefit from stochasticity implemented behind `if policy.training` guards. For example TD-MPC
-        # adds noise to generated trajectories for exploration.
-        policy.train()
+        policy.eval()
         with torch.no_grad():
             eval_info = eval_policy(
                 rollout_env,

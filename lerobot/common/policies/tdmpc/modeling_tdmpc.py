@@ -143,8 +143,8 @@ class TDMPCPolicy(nn.Module):
                     action.append(self.plan(z[i]))
                 action = torch.stack(action)
             else:
-                # Plan with the policy (π) alone. Note that at training time we add noise in order to explore.
-                action = self.model.pi(z, self.cfg.min_std * self.model.training)
+                # Plan with the policy (π) alone.
+                action = self.model.pi(z)
 
             self.unnormalize_outputs({"action": action})["action"]
 
