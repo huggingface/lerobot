@@ -73,14 +73,14 @@ def download_xarm(raw_dir: str):
     gdown.download(url, str(zip_path), quiet=False)
     print("Extracting...")
     with zipfile.ZipFile(str(zip_path), "r") as zip_f:
-        for path in zip_f.namelist():
-            if path.startswith("data/xarm") and path.endswith(".pkl"):
-                zip_f.extract(member=path)
+        for pkl_path in zip_f.namelist():
+            if pkl_path.startswith("data/xarm") and pkl_path.endswith(".pkl"):
+                zip_f.extract(member=pkl_path)
                 # move to corresponding raw directory
-                member_dir = path.replace("/buffer.pkl", "")
-                member_raw_dir = path.replace("/buffer.pkl", "_raw")
-                shutil.move(path, member_raw_dir)
-                shutil.rmtree(member_dir)
+                extract_dir = pkl_path.replace("/buffer.pkl", "")
+                raw_pkl_path = raw_dir / "buffer.pkl"
+                shutil.move(pkl_path, raw_pkl_path)
+                shutil.rmtree(extract_dir)
     zip_path.unlink()
 
 

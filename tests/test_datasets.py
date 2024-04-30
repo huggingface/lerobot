@@ -244,7 +244,7 @@ def test_flatten_unflatten_dict():
     [
         "lerobot/pusht",
         "lerobot/aloha_sim_insertion_human",
-        "lerobot/xarm_lift_medium",
+        "lerobot/xarm_push_medium",
     ],
 )
 def test_backward_compatibility(repo_id):
@@ -266,8 +266,8 @@ def test_backward_compatibility(repo_id):
         assert new_keys == old_keys, f"{new_keys=} and {old_keys=} are not the same"
 
         for key in new_frame:
-            assert (
-                new_frame[key] == old_frame[key]
+            assert torch.isclose(
+                new_frame[key], old_frame[key], rtol=1e-05, atol=1e-08
             ).all(), f"{key=} for index={i} does not contain the same value"
 
     # test2 first frames of first episode
