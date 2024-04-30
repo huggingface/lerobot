@@ -16,7 +16,7 @@ training:
   lr_backbone: 1e-5
   weight_decay: 1e-4
   grad_clip_norm: 10
-  utd: 1
+  online_steps_between_rollouts: 1
 
   override_dataset_stats:
     observation.images.top:

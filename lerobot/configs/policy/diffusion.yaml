@@ -19,7 +19,7 @@ training:
   adam_betas: [0.95, 0.999]
   adam_eps: 1.0e-8
   adam_weight_decay: 1.0e-6
-  utd: 1
+  online_steps_between_rollouts: 1
 
   delta_timestamps:
     observation.image: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"

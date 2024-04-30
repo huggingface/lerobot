@@ -424,7 +424,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 pc_online_samples=cfg.get("demo_schedule", 0.5),
             )
 
-        for _ in range(cfg.policy.utd):
+        for _ in range(cfg.training.online_steps_between_rollouts):
             policy.train()
             batch = next(dl_iter)
 

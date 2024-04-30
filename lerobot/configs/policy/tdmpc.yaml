@@ -54,7 +54,7 @@ policy:
   seed_steps: 0
   update_freq: 2
   tau: 0.01
-  utd: 1
+  online_steps_between_rollouts: 1
 
   # offline rl
   # dataset_dir: ???
