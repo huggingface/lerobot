@@ -104,26 +104,23 @@ class TDMPCPolicy(nn.Module):
                 assert batch[key].shape[1] == 1
                 batch[key] = batch[key][:, 0]
 
-            # Batch processing is not handled internally, so process the batch in a loop.
-            action = []  # will be a batch of actions for one step
-            batch_size = batch["observation.image"].shape[0]
-            for i in range(batch_size):
-                # NOTE: Order of observations matters here.
-                z = self.model.encode(
-                    {k: batch[k][i : i + 1] for k in ["observation.image", "observation.state"]}
-                )
-                if self.cfg.use_mpc:  # noqa: SIM108
+            # NOTE: Order of observations matters here.
+            z = self.model.encode({k: batch[k] for k in ["observation.image", "observation.state"]})
+            if self.cfg.use_mpc:
+                batch_size = batch["observation.image"].shape[0]
+                # Batch processing is not handled in MPC mode, so process the batch in a loop.
+                action = []  # will be a batch of actions for one step
+                for i in range(batch_size):
                     # Note: self.plan does not handle batches, hence the squeeze.
-                    a = self.plan(z.squeeze(0))
-                else:
-                    # TODO(now-noise): in the official implementation self.model.training should evaluate to True during
-                    # rollouts generated while training.
-                    a = self.model.pi(z, self.cfg.min_std * self.model.training).squeeze(0)
-                action.append(a)
-            action = torch.stack(action)
+                    action.append(self.plan(z[i]))
+                action = torch.stack(action)
+            else:
+                # Plan with the policy (π) alone. Note that at training time we add noise in order to explore.
+                action = self.model.pi(z, self.cfg.min_std * self.model.training)
+
             self.unnormalize_outputs({"action": action})["action"]
 
-            if i in range(self.cfg.n_action_repeats):
+            for _ in range(self.cfg.n_action_repeats):
                 self._queues["action"].append(action)
 
         action = self._queues["action"].popleft()
@@ -146,24 +143,17 @@ class TDMPCPolicy(nn.Module):
         pi_actions = torch.empty(
             self.cfg.horizon, self.cfg.n_pi_samples, self.cfg.output_shapes["action"][0], device=device
         )
-        pi_value = torch.empty(self.cfg.n_pi_samples, device=device)
         if self.cfg.n_pi_samples > 0:
             _z = einops.repeat(z, "d -> n d", n=self.cfg.n_pi_samples)
             for t in range(self.cfg.horizon):
-                # TODO(now-noise): in the official implementation self.model.training should evaluate to True during
-                # rollouts generated while training.
-                pi_actions[t] = self.model.pi(_z, self.cfg.min_std * self.model.training)
+                # Note: Adding a small amount of noise here doesn't hurt during inference and may even be
+                # helpful for CEM.
+                pi_actions[t] = self.model.pi(_z, self.cfg.min_std)
                 _z = self.model.latent_dynamics(_z, pi_actions[t])
-
-        # We will need the values of the π trajectories for the CEM loop.
-        if self.cfg.n_pi_samples > 0:
-            pi_value = self.estimate_value(
-                einops.repeat(z, "d -> n d", n=self.cfg.n_pi_samples), pi_actions
-            ).nan_to_num_(0)
 
         # In the CEM loop we will need this for a call to estimate_value with the gaussian sampled
         # trajectories.
-        z = einops.repeat(z, "d -> n d", n=self.cfg.n_gaussian_samples)
+        z = einops.repeat(z, "d -> n d", n=self.cfg.n_gaussian_samples + self.cfg.n_pi_samples)
 
         # Model Predictive Path Integral (MPPI) with the cross-entropy method (CEM) as the optimization
         # algorithm.
@@ -190,9 +180,8 @@ class TDMPCPolicy(nn.Module):
             )
 
             # Compute elite actions.
-            gaussian_value = self.estimate_value(z, gaussian_actions).nan_to_num_(0)
             actions = torch.cat([gaussian_actions, pi_actions], dim=1)
-            value = torch.cat([gaussian_value, pi_value])
+            value = self.estimate_value(z, actions).nan_to_num_(0)
             elite_idxs = torch.topk(value, self.cfg.n_elites, dim=0).indices
             elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
 
@@ -258,15 +247,18 @@ class TDMPCPolicy(nn.Module):
         # Add the estimated value of the final state (using the minimum for a conservative estimate).
         # Do so by predicting the next action, then taking a minimum over the ensemble of state-action value
         # estimators.
-        next_action = self.model.pi(z)  # (batch, action_dim)
-        terminal_values = self.model.Qs(z, next_action)
+        # Note: This small amount of added noise seems to help a bit at inference time as observed by success
+        # metrics over 50 episodes of xarm_lift_medium_replay.
+        next_action = self.model.pi(z, self.cfg.min_std)  # (batch, action_dim)
+        terminal_values = self.model.Qs(z, next_action)  # (ensemble, batch)
         # Randomly choose 2 of the Qs for terminal value estimation (as in App C. of the FOWM paper).
         if self.cfg.q_ensemble_size > 2:
-            G += running_discount * torch.min(
-                terminal_values[torch.randint(0, self.cfg.q_ensemble_size, size=(2,))]
+            G += (
+                running_discount
+                * torch.min(terminal_values[torch.randint(0, self.cfg.q_ensemble_size, size=(2,))], dim=0)[0]
             )
         else:
-            G += running_discount * torch.min(terminal_values)
+            G += running_discount * torch.min(terminal_values, dim=0)[0]
         # Finally, also regularize the terminal value.
         if self.cfg.uncertainty_regularizer_coeff > 0:
             G -= running_discount * self.cfg.uncertainty_regularizer_coeff * terminal_values.std(0)
@@ -431,7 +423,8 @@ class TDMPCPolicy(nn.Module):
         mse = F.mse_loss(action_preds, action, reduction="none").sum(-1)  # (t, b)
         # NOTE: The original implementation does not take the sum over the temporal dimension like with the
         # other losses.
-        # TODO(now): Take the sum over the temporal dimension and match with the training.
+        # TODO(alexander-soare): Take the sum over the temporal dimension and check that training still works
+        # as well as expected.
         pi_loss = (
             exp_advantage
             * mse

@@ -64,12 +64,12 @@ def eval_policy(
 ):
     """
     set `return_episode_data` to return a Hugging Face dataset object in an "episodes" key of the return dict.
+
+    Note: This function does not set the policy to eval mode. The caller should set the policy to their
+    preferred mode in advance.
     """
     fps = env.unwrapped.metadata["render_fps"]
 
-    if policy is not None:
-        # TODO(now)
-        policy.eval()
     device = "cpu" if policy is None else next(policy.parameters()).device
 
     start = time.time()
@@ -399,6 +399,7 @@ def eval(cfg: dict, out_dir=None):
 
     logging.info("Making policy.")
     policy = make_policy(cfg)
+    policy.eval()
 
     info = eval_policy(
         env,

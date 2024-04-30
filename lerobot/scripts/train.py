@@ -27,7 +27,6 @@ from lerobot.scripts.eval import eval_policy
 
 def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
     start_time = time.time()
-    policy.train()
     output_dict = policy.forward(batch)
     # TODO(rcadene): policy.unnormalize_outputs(out_dict)
     loss = output_dict["loss"]
@@ -368,12 +367,12 @@ def train(cfg: dict, out_dir=None, job_name=None):
     )
     dl_iter = cycle(dataloader)
 
+    policy.train()
     step = 0  # number of policy update (forward + backward + optim)
     is_offline = True
     for offline_step in range(cfg.offline_steps):
         if offline_step == 0:
             logging.info("Start offline training on a fixed dataset")
-        policy.train()
         batch = next(dl_iter)
 
         for key in batch:
@@ -421,6 +420,10 @@ def train(cfg: dict, out_dir=None, job_name=None):
         if env_step == 0:
             logging.info("Start online training by interacting with environment")
 
+        # Note: We set the policy to training mode when gather eval trajectories. This is because we may want
+        # to benefit from stochasticity implemented behind `if policy.training` guards. For example TD-MPC
+        # adds noise to generated trajectories for exploration.
+        policy.train()
         with torch.no_grad():
             eval_info = eval_policy(
                 rollout_env,
@@ -438,8 +441,8 @@ def train(cfg: dict, out_dir=None, job_name=None):
             pc_online_samples=cfg.get("online_sampling_ratio", 0.5),
         )
 
+        policy.train()
         for _ in range(cfg.policy.utd):
-            policy.train()
             batch = next(dl_iter)
 
             for key in batch:

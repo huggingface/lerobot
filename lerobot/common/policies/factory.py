@@ -1,6 +1,7 @@
 import inspect
 
 from omegaconf import DictConfig, OmegaConf
+from torch import Tensor
 
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_safe_torch_device
@@ -21,7 +22,10 @@ def _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg):
     return policy_cfg
 
 
-def make_policy(hydra_cfg: DictConfig, dataset_stats=None):
+def make_policy(
+    hydra_cfg: DictConfig,
+    dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+) -> Policy:
     if hydra_cfg.policy.name == "tdmpc":
         from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
         from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy

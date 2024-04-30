@@ -36,7 +36,7 @@ policy:
   discount: 0.9
 
   # Inference.
-  use_mpc: true
+  use_mpc: false
   cem_iterations: 6
   max_std: 2.0
   min_std: 0.05
