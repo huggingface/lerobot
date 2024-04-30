@@ -255,7 +255,6 @@ class TDMPCPolicy(nn.Module):
         for t in range(actions.shape[0]):
             # We will compute the reward in a moment. First compute the uncertainty regularizer from eqn 4
             # of the FOWM paper.
-
             if self.cfg.uncertainty_regularizer_coeff > 0:
                 regularization = -(
                     self.cfg.uncertainty_regularizer_coeff * self.model.Qs(z, actions[t]).std(0)
