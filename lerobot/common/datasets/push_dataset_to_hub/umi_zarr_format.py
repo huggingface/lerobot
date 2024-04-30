@@ -16,7 +16,7 @@ from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episod
 from lerobot.common.datasets.utils import (
     hf_transform_to_torch,
 )
-from lerobot.common.datasets.video_utils import encode_video_frames
+from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
 
 def check_format(raw_dir) -> bool:
@@ -149,7 +149,7 @@ def to_hf_dataset(data_dict, video):
     features = {}
 
     if video:
-        features["observation.image"] = Value(dtype="int64", id="video")
+        features["observation.image"] = VideoFrame()
     else:
         features["observation.image"] = Image()
 

@@ -11,14 +11,16 @@ from lerobot.common.datasets.utils import (
     load_stats,
     load_videos,
 )
-from lerobot.common.datasets.video_utils import load_from_videos
+from lerobot.common.datasets.video_utils import VideoFrame, load_from_videos
+
+CODEBASE_VERSION = "v1.2"
 
 
 class LeRobotDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         repo_id: str,
-        version: str | None = "v1.1",
+        version: str | None = CODEBASE_VERSION,
         root: Path | None = None,
         split: str = "train",
         transform: callable = None,
@@ -50,6 +52,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.info.get("video", False)
 
     @property
+    def features(self) -> datasets.Features:
+        return self.hf_dataset.features
+
+    @property
     def image_keys(self) -> list[str]:
         image_keys = []
         for key, feats in self.hf_dataset.features.items():
@@ -61,7 +67,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def video_frame_keys(self):
         video_frame_keys = []
         for key, feats in self.hf_dataset.features.items():
-            if isinstance(feats, datasets.Value) and feats.id == "video_frame":
+            if isinstance(feats, VideoFrame):
                 video_frame_keys.append(key)
         return video_frame_keys
 
@@ -95,3 +101,34 @@ class LeRobotDataset(torch.utils.data.Dataset):
             item = self.transform(item)
 
         return item
+
+    @classmethod
+    def from_preloaded(
+        cls,
+        repo_id: str,
+        version: str | None = CODEBASE_VERSION,
+        root: Path | None = None,
+        split: str = "train",
+        transform: callable = None,
+        delta_timestamps: dict[list[float]] | None = None,
+        # additional preloaded attributes
+        hf_dataset=None,
+        episode_data_index=None,
+        stats=None,
+        info=None,
+        videos_dir=None,
+    ):
+        # create an empty object of type LeRobotDataset
+        obj = cls.__new__(cls)
+        obj.repo_id = repo_id
+        obj.version = version
+        obj.root = root
+        obj.split = split
+        obj.transform = transform
+        obj.delta_timestamps = delta_timestamps
+        obj.hf_dataset = hf_dataset
+        obj.episode_data_index = episode_data_index
+        obj.stats = stats
+        obj.info = info
+        obj.videos_dir = videos_dir
+        return obj

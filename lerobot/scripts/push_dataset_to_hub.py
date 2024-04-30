@@ -60,8 +60,10 @@ import torch
 from huggingface_hub import HfApi
 from safetensors.torch import save_file
 
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.push_dataset_to_hub._download_raw import download_raw
-from lerobot.common.datasets.utils import compute_stats, flatten_dict
+from lerobot.common.datasets.push_dataset_to_hub.compute_stats import compute_stats
+from lerobot.common.datasets.utils import flatten_dict
 
 
 def get_from_raw_to_lerobot_format_fn(raw_format):
@@ -131,13 +133,15 @@ def push_dataset_to_hub(
     video: bool,
     debug: bool,
 ):
+    repo_id = f"{community_id}/{dataset_id}"
+
     raw_dir = data_dir / f"{dataset_id}_raw"
 
-    out_dir = data_dir / community_id / dataset_id
+    out_dir = data_dir / repo_id
     meta_data_dir = out_dir / "meta_data"
     videos_dir = out_dir / "videos"
 
-    tests_out_dir = tests_data_dir / community_id / dataset_id
+    tests_out_dir = tests_data_dir / repo_id
     tests_meta_data_dir = tests_out_dir / "meta_data"
 
     if out_dir.exists():
@@ -159,7 +163,15 @@ def push_dataset_to_hub(
     # convert dataset from original raw format to LeRobot format
     hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(raw_dir, out_dir, fps, video, debug)
 
-    stats = compute_stats(hf_dataset)
+    lerobot_dataset = LeRobotDataset.from_preloaded(
+        repo_id=repo_id,
+        version=revision,
+        hf_dataset=hf_dataset,
+        episode_data_index=episode_data_index,
+        info=info,
+        videos_dir=videos_dir,
+    )
+    stats = compute_stats(lerobot_dataset)
 
     if save_to_disk:
         hf_dataset = hf_dataset.with_format(None)  # to remove transforms that cant be saved
