@@ -28,10 +28,8 @@ class Logger:
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._job_name = job_name
         self._model_dir = self._log_dir / "models"
-        self._buffer_dir = self._log_dir / "buffers"
-        self._save_model = cfg.save_model
+        self._save_model = cfg.training.save_model
         self._disable_wandb_artifact = cfg.wandb.disable_artifact
-        self._save_buffer = cfg.save_buffer
         self._group = cfg_to_group(cfg)
         self._seed = cfg.seed
         self._cfg = cfg
@@ -81,23 +79,9 @@ class Logger:
                 artifact.add_file(fp)
                 self._wandb.log_artifact(artifact)
 
-    def save_buffer(self, buffer, identifier):
-        self._buffer_dir.mkdir(parents=True, exist_ok=True)
-        fp = self._buffer_dir / f"{str(identifier)}.pkl"
-        buffer.save(fp)
-        if self._wandb:
-            artifact = self._wandb.Artifact(
-                self._group + "-" + str(self._seed) + "-" + str(identifier),
-                type="buffer",
-            )
-            artifact.add_file(fp)
-            self._wandb.log_artifact(artifact)
-
     def finish(self, agent, buffer):
         if self._save_model:
             self.save_model(agent, identifier="final")
-        if self._save_buffer:
-            self.save_buffer(buffer, identifier="buffer")
         if self._wandb:
             self._wandb.finish()
 

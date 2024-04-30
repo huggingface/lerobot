@@ -1,21 +1,22 @@
 # @package _global_
 
-offline_steps: 80000
-online_steps: 0
+seed: 1000
 
-eval_episodes: 1
-eval_freq: 10000
-save_freq: 100000
-log_freq: 250
+training:
+  offline_steps: 80000
+  online_steps: 0
+  eval_freq: 10000
+  save_freq: 100000
+  log_freq: 250
+  save_model: true
+  override_dataset_stats:
+    observation.images.top:
+      # stats from imagenet, since we use a pretrained vision model
+      mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+      std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
 
-n_obs_steps: 1
-# when temporal_agg=False, n_action_steps=horizon
-
-override_dataset_stats:
-  observation.images.top:
-    # stats from imagenet, since we use a pretrained vision model
-    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
-    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+eval:
+  n_episodes:: 50
 
 # See `configuration_act.py` for more details.
 policy:
