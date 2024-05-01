@@ -438,7 +438,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.pretrained_policy_name_or_path is None:
-        eval(config_path=args.config, config_overrides=args.overrides)
+        eval(hydra_cfg_path=args.config, config_overrides=args.overrides)
     else:
         try:
             pretrained_policy_path = Path(
