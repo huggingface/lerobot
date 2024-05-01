@@ -39,11 +39,11 @@ def make_policy(
         cfg_cls = DiffusionConfig
         policy_cls = DiffusionPolicy
     elif hydra_cfg.policy.name == "act":
-        from lerobot.common.policies.act.configuration_act import ActionChunkingTransformerConfig
-        from lerobot.common.policies.act.modeling_act import ActionChunkingTransformerPolicy
+        from lerobot.common.policies.act.configuration_act import ACTConfig
+        from lerobot.common.policies.act.modeling_act import ACTPolicy
 
-        cfg_cls = ActionChunkingTransformerConfig
-        policy_cls = ActionChunkingTransformerPolicy
+        cfg_cls = ACTConfig
+        policy_cls = ACTPolicy
     else:
         raise ValueError(hydra_cfg.policy.name)
 

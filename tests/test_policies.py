@@ -5,7 +5,7 @@ from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.utils import postprocess_action, preprocess_observation
-from lerobot.common.policies.act.modeling_act import ActionChunkingTransformerPolicy
+from lerobot.common.policies.act.modeling_act import ACTPolicy
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.normalize import Normalize, Unnormalize
@@ -113,10 +113,9 @@ def test_policy(env_name, policy_name, extra_overrides):
     new_policy.load_state_dict(policy.state_dict())
 
 
-@pytest.mark.parametrize("policy_cls", [DiffusionPolicy, ActionChunkingTransformerPolicy, TDMPCPolicy])
+@pytest.mark.parametrize("policy_cls", [DiffusionPolicy, ACTPolicy, TDMPCPolicy])
 def test_policy_defaults(policy_cls):
-    kwargs = {}
-    policy_cls(**kwargs)
+    policy_cls()
 
 
 @pytest.mark.parametrize(
