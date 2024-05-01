@@ -182,9 +182,7 @@ class ACT(nn.Module):
             # dimension.
             self.register_buffer(
                 "vae_encoder_pos_enc",
-                create_sinusoidal_position_embedding(1 + 1 + config.chunk_size, config.dim_model).unsqueeze(
-                    0
-                ),
+                create_sinusoidal_pos_embedding(1 + 1 + config.chunk_size, config.dim_model).unsqueeze(0),
             )
 
         # Backbone for image feature extraction.
@@ -491,7 +489,7 @@ class ACTDecoderLayer(nn.Module):
         return x
 
 
-def create_sinusoidal_position_embedding(num_positions: int, dimension: int) -> Tensor:
+def create_sinusoidal_pos_embedding(num_positions: int, dimension: int) -> Tensor:
     """1D sinusoidal positional embeddings as in Attention is All You Need.
 
     Args:
