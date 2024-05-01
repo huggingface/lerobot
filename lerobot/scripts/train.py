@@ -345,7 +345,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
             logger.save_model(
                 policy,
                 identifier=str(step).zfill(
-                    min(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
+                    max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
                 ),
             )
             logging.info("Resume training")
