@@ -167,7 +167,7 @@ class ACT(nn.Module):
         # BERT style VAE encoder with input [cls, *joint_space_configuration, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
         if self.cfg.use_vae:
-            self.vae_encoder = ACTTransformerEncoder(cfg)
+            self.vae_encoder = ACTEncoder(cfg)
             self.vae_encoder_cls_embed = nn.Embedding(1, cfg.d_model)
             # Projection layer for joint-space configuration to hidden dimension.
             self.vae_encoder_robot_state_input_proj = nn.Linear(
@@ -199,8 +199,8 @@ class ACT(nn.Module):
         self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
 
         # Transformer (acts as VAE decoder when training with the variational objective).
-        self.encoder = ACTTransformerEncoder(cfg)
-        self.decoder = ACTTransformerDecoder(cfg)
+        self.encoder = ACTEncoder(cfg)
+        self.decoder = ACTDecoder(cfg)
 
         # Transformer encoder input projections. The tokens will be structured like
         # [latent, robot_state, image_feature_map_pixels].
@@ -341,12 +341,12 @@ class ACT(nn.Module):
         return actions, (mu, log_sigma_x2)
 
 
-class ACTTransformerEncoder(nn.Module):
+class ACTEncoder(nn.Module):
     """Convenience module for running multiple encoder layers, maybe followed by normalization."""
 
     def __init__(self, cfg: ACTConfig):
         super().__init__()
-        self.layers = nn.ModuleList([ACTTransformerEncoderLayer(cfg) for _ in range(cfg.n_encoder_layers)])
+        self.layers = nn.ModuleList([ACTEncoderLayer(cfg) for _ in range(cfg.n_encoder_layers)])
         self.norm = nn.LayerNorm(cfg.d_model) if cfg.pre_norm else nn.Identity()
 
     def forward(self, x: Tensor, pos_embed: Tensor | None = None) -> Tensor:
@@ -356,7 +356,7 @@ class ACTTransformerEncoder(nn.Module):
         return x
 
 
-class ACTTransformerEncoderLayer(nn.Module):
+class ACTEncoderLayer(nn.Module):
     def __init__(self, cfg: ACTConfig):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(cfg.d_model, cfg.n_heads, dropout=cfg.dropout)
@@ -394,11 +394,11 @@ class ACTTransformerEncoderLayer(nn.Module):
         return x
 
 
-class ACTTransformerDecoder(nn.Module):
+class ACTDecoder(nn.Module):
     def __init__(self, cfg: ACTConfig):
         """Convenience module for running multiple decoder layers followed by normalization."""
         super().__init__()
-        self.layers = nn.ModuleList([ACTTransformerDecoderLayer(cfg) for _ in range(cfg.n_decoder_layers)])
+        self.layers = nn.ModuleList([ACTDecoderLayer(cfg) for _ in range(cfg.n_decoder_layers)])
         self.norm = nn.LayerNorm(cfg.d_model)
 
     def forward(
@@ -417,7 +417,7 @@ class ACTTransformerDecoder(nn.Module):
         return x
 
 
-class ACTTransformerDecoderLayer(nn.Module):
+class ACTDecoderLayer(nn.Module):
     def __init__(self, cfg: ACTConfig):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(cfg.d_model, cfg.n_heads, dropout=cfg.dropout)
