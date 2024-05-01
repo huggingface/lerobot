@@ -82,9 +82,9 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name):
 
 if __name__ == "__main__":
     env_policies = [
-        # ("xarm", "tdmpc"),
-        ("pusht", "diffusion"),
-        ("aloha", "act"),
+        ("xarm", "tdmpc"),
+        # ("pusht", "diffusion"),
+        # ("aloha", "act"),
     ]
     for env, policy in env_policies:
         save_policy_to_safetensors("tests/data/save_policy_to_safetensors", env, policy)

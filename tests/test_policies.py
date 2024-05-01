@@ -239,7 +239,7 @@ def test_normalize(insert_temporal_dim):
 @pytest.mark.parametrize(
     "env_name,policy_name",
     [
-        # ("xarm", "tdmpc"),
+        ("xarm", "tdmpc"),
         ("pusht", "diffusion"),
         ("aloha", "act"),
     ],

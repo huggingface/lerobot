@@ -1,6 +1,7 @@
 # @package _global_
 
 seed: 1
+dataset_repo_id: lerobot/xarm_lift_medium_replay
 
 training:
   offline_steps: 25000
