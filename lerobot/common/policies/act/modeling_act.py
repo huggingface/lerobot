@@ -166,7 +166,7 @@ class ACT(nn.Module):
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
         if self.config.use_vae:
             self.vae_encoder = ACTEncoder(config)
-            self.vae_encoder_cls_embed = nn.Embedding(1, config.d_model)
+            self.vae_encoder_cls_embed = nn.Embedding(1, config.dim_model)
             # Projection layer for joint-space configuration to hidden dimension.
             self.vae_encoder_robot_state_input_proj = nn.Linear(
                 config.input_shapes["observation.state"][0], config.dim_model
@@ -182,7 +182,9 @@ class ACT(nn.Module):
             # dimension.
             self.register_buffer(
                 "vae_encoder_pos_enc",
-                create_sinusoidal_position_embedding(1 + 1 + config.chunk_size, config.d_model).unsqueeze(0),
+                create_sinusoidal_position_embedding(1 + 1 + config.chunk_size, config.dim_model).unsqueeze(
+                    0
+                ),
             )
 
         # Backbone for image feature extraction.
@@ -210,8 +212,8 @@ class ACT(nn.Module):
             backbone_model.fc.in_features, config.dim_model, kernel_size=1
         )
         # Transformer encoder positional embeddings.
-        self.encoder_robot_and_latent_pos_embed = nn.Embedding(2, config.d_model)
-        self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.d_model // 2)
+        self.encoder_robot_and_latent_pos_embed = nn.Embedding(2, config.dim_model)
+        self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
 
         # Transformer decoder.
         # Learnable positional embedding for the transformer's decoder (in the style of DETR object queries).
@@ -347,7 +349,7 @@ class ACTEncoder(nn.Module):
     def __init__(self, config: ACTConfig):
         super().__init__()
         self.layers = nn.ModuleList([ACTEncoderLayer(config) for _ in range(config.n_encoder_layers)])
-        self.norm = nn.LayerNorm(config.d_model) if config.pre_norm else nn.Identity()
+        self.norm = nn.LayerNorm(config.dim_model) if config.pre_norm else nn.Identity()
 
     def forward(self, x: Tensor, pos_embed: Tensor | None = None) -> Tensor:
         for layer in self.layers:
@@ -399,7 +401,7 @@ class ACTDecoder(nn.Module):
         """Convenience module for running multiple decoder layers followed by normalization."""
         super().__init__()
         self.layers = nn.ModuleList([ACTDecoderLayer(config) for _ in range(config.n_decoder_layers)])
-        self.norm = nn.LayerNorm(config.d_model)
+        self.norm = nn.LayerNorm(config.dim_model)
 
     def forward(
         self,
