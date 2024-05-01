@@ -21,6 +21,14 @@ class Policy(Protocol):
 
     name: str
 
+    def __init__(self, cfg, dataset_stats: dict[str, dict[str, Tensor]] | None = None):
+        """
+        Args:
+            cfg: Policy configuration class instance or None, in which case the default instantiation of the
+                 configuration class is used.
+            dataset_stats: Dataset statistics to be used for normalization.
+        """
+
     def reset(self):
         """To be called whenever the environment is reset.
 
@@ -38,4 +46,14 @@ class Policy(Protocol):
 
         When the model uses a history of observations, or outputs a sequence of actions, this method deals
         with caching.
+        """
+
+
+@runtime_checkable
+class PolicyWithUpdate(Policy, Protocol):
+    def update(self):
+        """An update method that is to be called after a training optimization step.
+
+        Implements an additional updates the model parameters may need (for example, doing an EMA step for a
+        target model, or incrementing an internal buffer).
         """

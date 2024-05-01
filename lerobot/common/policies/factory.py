@@ -24,7 +24,10 @@ def _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg):
 def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
     """Get the policy's class and config class given a name (matching the policy class' `name` attribute)."""
     if name == "tdmpc":
-        raise NotImplementedError("Coming soon!")
+        from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
+        from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
+
+        return TDMPCPolicy, TDMPCConfig
     elif name == "diffusion":
         from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
         from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy

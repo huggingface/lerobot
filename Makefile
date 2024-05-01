@@ -22,8 +22,8 @@ test-end-to-end:
 	${MAKE} test-act-ete-eval
 	${MAKE} test-diffusion-ete-train
 	${MAKE} test-diffusion-ete-eval
-	# ${MAKE} test-tdmpc-ete-train
-	# ${MAKE} test-tdmpc-ete-eval
+	${MAKE} test-tdmpc-ete-train
+	${MAKE} test-tdmpc-ete-eval
 	${MAKE} test-default-ete-eval
 
 test-act-ete-train:
@@ -74,8 +74,10 @@ test-tdmpc-ete-train:
 	python lerobot/scripts/train.py \
 		policy=tdmpc \
 		env=xarm \
+		env.task=XarmLift-v0 \
+		dataset_repo_id=lerobot/xarm_lift_medium_replay \
 		wandb.enable=False \
-		training.offline_steps=1 \
+		training.offline_steps=2 \
 		training.online_steps=2 \
 		eval.n_episodes=1 \
 		env.episode_length=2 \

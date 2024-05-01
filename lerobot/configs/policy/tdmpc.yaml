@@ -1,85 +1,76 @@
 # @package _global_
 
-n_action_steps: 2
-n_obs_steps: 1
+seed: 1
+
+training:
+  offline_steps: 25000
+  online_steps: 25000
+  eval_freq: 5000
+  online_steps_between_rollouts: 1
+  online_sampling_ratio: 0.5
+
+  batch_size: 256
+  grad_clip_norm: 10.0
+  lr: 3e-4
+
+  delta_timestamps:
+    observation.image: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+    observation.state: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+    action: "[i / ${fps} for i in range(${policy.horizon})]"
+    next.reward: "[i / ${fps} for i in range(${policy.horizon})]"
 
 policy:
   name: tdmpc
 
-  reward_scale: 1.0
+  pretrained_model_path:
 
-  episode_length: ${env.episode_length}
-  discount: 0.9
-  modality: 'all'
-
-  # pixels
-  frame_stack: 1
-  num_channels: 32
-  img_size: ${env.image_size}
-  state_dim: ${env.action_dim}
-  action_dim: ${env.action_dim}
-
-  # planning
-  mpc: true
-  iterations: 6
-  num_samples: 512
-  num_elites: 50
-  mixture_coef: 0.1
-  min_std: 0.05
-  max_std: 2.0
-  temperature: 0.5
-  momentum: 0.1
-  uncertainty_cost: 1
-
-  # actor
-  log_std_min: -10
-  log_std_max: 2
-
-  # learning
-  batch_size: 256
-  max_buffer_size: 10000
+  # Input / output structure.
+  n_action_repeats: 2
   horizon: 5
-  reward_coef: 0.5
-  value_coef: 0.1
-  consistency_coef: 20
-  rho: 0.5
-  kappa: 0.1
-  lr: 3e-4
-  std_schedule: ${policy.min_std}
-  horizon_schedule: ${policy.horizon}
-  per: true
-  per_alpha: 0.6
-  per_beta: 0.4
-  grad_clip_norm: 10
-  seed_steps: 0
-  update_freq: 2
-  tau: 0.01
-  online_steps_between_rollouts: 1
 
-  # offline rl
-  # dataset_dir: ???
-  data_first_percent: 1.0
-  is_data_clip: true
-  data_clip_eps: 1e-5
-  expectile: 0.9
-  A_scaling: 3.0
+  input_shapes:
+    # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
+    observation.image: [3, 84, 84]
+    observation.state: ["${env.state_dim}"]
+  output_shapes:
+    action: ["${env.action_dim}"]
 
-  # offline->online
-  offline_steps: ${offline_steps}
-  pretrained_model_path: ""
-  # pretrained_model_path: "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/offline.pt"
-  # pretrained_model_path: "/home/rcadene/code/fowm/logs/xarm_lift/all/default/2/models/final.pt"
-  balanced_sampling: true
-  demo_schedule: 0.5
+  # Normalization / Unnormalization
+  input_normalization_modes: null
+  output_normalization_modes:
+    action: min_max
 
-  # architecture
-  enc_dim: 256
-  num_q: 5
-  mlp_dim: 512
+  # Architecture / modeling.
+  # Neural networks.
+  image_encoder_hidden_dim: 32
+  state_encoder_hidden_dim: 256
   latent_dim: 50
+  q_ensemble_size: 5
+  mlp_dim: 512
+  # Reinforcement learning.
+  discount: 0.9
 
-  delta_timestamps:
-    observation.image: "[i / ${fps} for i in range(6)]"
-    observation.state: "[i / ${fps} for i in range(6)]"
-    action: "[i / ${fps} for i in range(5)]"
-    next.reward: "[i / ${fps} for i in range(5)]"
+  # Inference.
+  use_mpc: false
+  cem_iterations: 6
+  max_std: 2.0
+  min_std: 0.05
+  n_gaussian_samples: 512
+  n_pi_samples: 51
+  uncertainty_regularizer_coeff: 1.0
+  n_elites: 50
+  elite_weighting_temperature: 0.5
+  gaussian_mean_momentum: 0.1
+
+  # Training and loss computation.
+  max_random_shift_ratio: 0.0476
+  # Loss coefficients.
+  reward_coeff: 0.5
+  expectile_weight: 0.9
+  value_coeff: 0.1
+  consistency_coeff: 20.0
+  advantage_scaling: 3.0
+  pi_coeff: 0.5
+  temporal_decay_coeff: 0.5
+  # Target model.
+  target_model_momentum: 0.995
