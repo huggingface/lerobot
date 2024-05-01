@@ -30,7 +30,7 @@ class Logger:
         self._log_dir = Path(log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._job_name = job_name
-        self._model_dir = self._log_dir / "models"
+        self._model_dir = self._log_dir / "checkpoints"
         self._buffer_dir = self._log_dir / "buffers"
         self._save_model = cfg.training.save_model
         self._disable_wandb_artifact = cfg.wandb.disable_artifact
