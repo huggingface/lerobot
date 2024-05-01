@@ -93,7 +93,7 @@ test-tdmpc-ete-eval:
 		device=cpu \
 
 
-test_default-ete-eval:
+test-default-ete-eval:
 	python lerobot/scripts/eval.py \
 		--config default.yaml
 		eval.n_episodes=1 \
