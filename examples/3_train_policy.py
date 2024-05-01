@@ -69,6 +69,7 @@ while not done:
             done = True
             break
 
-# Save the policy and configuration for later use.
-policy.save(output_directory / "model.pt")
+# Save the policy.
+policy.save_pretrained(output_directory)
+# Save the Hydra configuration so we have the environment configuration for eval.
 OmegaConf.save(hydra_cfg, output_directory / "config.yaml")

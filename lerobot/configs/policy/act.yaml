@@ -34,8 +34,6 @@ eval:
 policy:
   name: act
 
-  pretrained_model_path:
-
   # Input / output structure.
   n_obs_steps: 1
   chunk_size: 100 # chunk_size
@@ -62,7 +60,7 @@ policy:
   replace_final_stride_with_dilation: false
   # Transformer layers.
   pre_norm: false
-  d_model: 512
+  dim_model: 512
   n_heads: 8
   dim_feedforward: 3200
   feedforward_activation: relu

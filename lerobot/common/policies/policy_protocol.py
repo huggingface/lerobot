@@ -14,7 +14,10 @@ from torch import Tensor
 
 @runtime_checkable
 class Policy(Protocol):
-    """The required interface for implementing a policy."""
+    """The required interface for implementing a policy.
+
+    We also expect all policies to subclass torch.nn.Module and PyTorchModelHubMixin.
+    """
 
     name: str
 
