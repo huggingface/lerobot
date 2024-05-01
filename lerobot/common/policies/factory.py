@@ -31,10 +31,10 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
 
         return DiffusionPolicy, DiffusionConfig
     elif name == "act":
-        from lerobot.common.policies.act.configuration_act import ActionChunkingTransformerConfig
-        from lerobot.common.policies.act.modeling_act import ActionChunkingTransformerPolicy
+        from lerobot.common.policies.act.configuration_act import ACTConfig
+        from lerobot.common.policies.act.modeling_act import ACTPolicy
 
-        return ActionChunkingTransformerPolicy, ActionChunkingTransformerConfig
+        return ACTPolicy, ACTConfig
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 

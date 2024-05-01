@@ -68,14 +68,14 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         # queues are populated during rollout of the policy, they contain the n latest observations and actions
         self._queues = None
 
-        self.diffusion = _DiffusionUnetImagePolicy(config)
+        self.diffusion = DiffusionModel(config)
 
         # TODO(alexander-soare): This should probably be managed outside of the policy class.
         self.ema_diffusion = None
         self.ema = None
         if self.config.use_ema:
             self.ema_diffusion = copy.deepcopy(self.diffusion)
-            self.ema = _EMA(config, model=self.ema_diffusion)
+            self.ema = DiffusionEMA(config, model=self.ema_diffusion)
 
     def reset(self):
         """
@@ -144,13 +144,13 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         return {"loss": loss}
 
 
-class _DiffusionUnetImagePolicy(nn.Module):
+class DiffusionModel(nn.Module):
     def __init__(self, config: DiffusionConfig):
         super().__init__()
         self.config = config
 
-        self.rgb_encoder = _RgbEncoder(config)
-        self.unet = _ConditionalUnet1D(
+        self.rgb_encoder = DiffusionRgbEncoder(config)
+        self.unet = DiffusionConditionalUnet1d(
             config,
             global_cond_dim=(config.output_shapes["action"][0] + self.rgb_encoder.feature_dim)
             * config.n_obs_steps,
@@ -293,7 +293,7 @@ class _DiffusionUnetImagePolicy(nn.Module):
         return loss.mean()
 
 
-class _RgbEncoder(nn.Module):
+class DiffusionRgbEncoder(nn.Module):
     """Encoder an RGB image into a 1D feature vector.
 
     Includes the ability to normalize and crop the image first.
@@ -396,7 +396,7 @@ def _replace_submodules(
     return root_module
 
 
-class _SinusoidalPosEmb(nn.Module):
+class DiffusionSinusoidalPosEmb(nn.Module):
     """1D sinusoidal positional embeddings as in Attention is All You Need."""
 
     def __init__(self, dim: int):
@@ -413,7 +413,7 @@ class _SinusoidalPosEmb(nn.Module):
         return emb
 
 
-class _Conv1dBlock(nn.Module):
+class DiffusionConv1dBlock(nn.Module):
     """Conv1d --> GroupNorm --> Mish"""
 
     def __init__(self, inp_channels, out_channels, kernel_size, n_groups=8):
@@ -429,7 +429,7 @@ class _Conv1dBlock(nn.Module):
         return self.block(x)
 
 
-class _ConditionalUnet1D(nn.Module):
+class DiffusionConditionalUnet1d(nn.Module):
     """A 1D convolutional UNet with FiLM modulation for conditioning.
 
     Note: this removes local conditioning as compared to the original diffusion policy code.
@@ -442,7 +442,7 @@ class _ConditionalUnet1D(nn.Module):
 
         # Encoder for the diffusion timestep.
         self.diffusion_step_encoder = nn.Sequential(
-            _SinusoidalPosEmb(config.diffusion_step_embed_dim),
+            DiffusionSinusoidalPosEmb(config.diffusion_step_embed_dim),
             nn.Linear(config.diffusion_step_embed_dim, config.diffusion_step_embed_dim * 4),
             nn.Mish(),
             nn.Linear(config.diffusion_step_embed_dim * 4, config.diffusion_step_embed_dim),
@@ -470,8 +470,8 @@ class _ConditionalUnet1D(nn.Module):
             self.down_modules.append(
                 nn.ModuleList(
                     [
-                        _ConditionalResidualBlock1D(dim_in, dim_out, **common_res_block_kwargs),
-                        _ConditionalResidualBlock1D(dim_out, dim_out, **common_res_block_kwargs),
+                        DiffusionConditionalResidualBlock1d(dim_in, dim_out, **common_res_block_kwargs),
+                        DiffusionConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),
                         # Downsample as long as it is not the last block.
                         nn.Conv1d(dim_out, dim_out, 3, 2, 1) if not is_last else nn.Identity(),
                     ]
@@ -481,10 +481,10 @@ class _ConditionalUnet1D(nn.Module):
         # Processing in the middle of the auto-encoder.
         self.mid_modules = nn.ModuleList(
             [
-                _ConditionalResidualBlock1D(
+                DiffusionConditionalResidualBlock1d(
                     config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs
                 ),
-                _ConditionalResidualBlock1D(
+                DiffusionConditionalResidualBlock1d(
                     config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs
                 ),
             ]
@@ -498,8 +498,8 @@ class _ConditionalUnet1D(nn.Module):
                 nn.ModuleList(
                     [
                         # dim_in * 2, because it takes the encoder's skip connection as well
-                        _ConditionalResidualBlock1D(dim_in * 2, dim_out, **common_res_block_kwargs),
-                        _ConditionalResidualBlock1D(dim_out, dim_out, **common_res_block_kwargs),
+                        DiffusionConditionalResidualBlock1d(dim_in * 2, dim_out, **common_res_block_kwargs),
+                        DiffusionConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),
                         # Upsample as long as it is not the last block.
                         nn.ConvTranspose1d(dim_out, dim_out, 4, 2, 1) if not is_last else nn.Identity(),
                     ]
@@ -507,7 +507,7 @@ class _ConditionalUnet1D(nn.Module):
             )
 
         self.final_conv = nn.Sequential(
-            _Conv1dBlock(config.down_dims[0], config.down_dims[0], kernel_size=config.kernel_size),
+            DiffusionConv1dBlock(config.down_dims[0], config.down_dims[0], kernel_size=config.kernel_size),
             nn.Conv1d(config.down_dims[0], config.output_shapes["action"][0], 1),
         )
 
@@ -556,7 +556,7 @@ class _ConditionalUnet1D(nn.Module):
         return x
 
 
-class _ConditionalResidualBlock1D(nn.Module):
+class DiffusionConditionalResidualBlock1d(nn.Module):
     """ResNet style 1D convolutional block with FiLM modulation for conditioning."""
 
     def __init__(
@@ -575,13 +575,13 @@ class _ConditionalResidualBlock1D(nn.Module):
         self.use_film_scale_modulation = use_film_scale_modulation
         self.out_channels = out_channels
 
-        self.conv1 = _Conv1dBlock(in_channels, out_channels, kernel_size, n_groups=n_groups)
+        self.conv1 = DiffusionConv1dBlock(in_channels, out_channels, kernel_size, n_groups=n_groups)
 
         # FiLM modulation (https://arxiv.org/abs/1709.07871) outputs per-channel bias and (maybe) scale.
         cond_channels = out_channels * 2 if use_film_scale_modulation else out_channels
         self.cond_encoder = nn.Sequential(nn.Mish(), nn.Linear(cond_dim, cond_channels))
 
-        self.conv2 = _Conv1dBlock(out_channels, out_channels, kernel_size, n_groups=n_groups)
+        self.conv2 = DiffusionConv1dBlock(out_channels, out_channels, kernel_size, n_groups=n_groups)
 
         # A final convolution for dimension matching the residual (if needed).
         self.residual_conv = (
@@ -614,7 +614,7 @@ class _ConditionalResidualBlock1D(nn.Module):
         return out
 
 
-class _EMA:
+class DiffusionEMA:
     """
     Exponential Moving Average of models weights
     """

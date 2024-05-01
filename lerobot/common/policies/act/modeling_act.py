@@ -19,11 +19,11 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
-from lerobot.common.policies.act.configuration_act import ActionChunkingTransformerConfig
+from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 
 
-class ActionChunkingTransformerPolicy(nn.Module, PyTorchModelHubMixin):
+class ACTPolicy(nn.Module, PyTorchModelHubMixin):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
     Hardware (paper: https://arxiv.org/abs/2304.13705, code: https://github.com/tonyzhaozh/act)
@@ -31,7 +31,7 @@ class ActionChunkingTransformerPolicy(nn.Module, PyTorchModelHubMixin):
 
     name = "act"
 
-    def __init__(self, config: ActionChunkingTransformerConfig | None = None, dataset_stats=None):
+    def __init__(self, config: ACTConfig | None = None, dataset_stats=None):
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
@@ -39,7 +39,7 @@ class ActionChunkingTransformerPolicy(nn.Module, PyTorchModelHubMixin):
         """
         super().__init__()
         if config is None:
-            config = ActionChunkingTransformerConfig()
+            config = ACTConfig()
         self.config = config
         self.normalize_inputs = Normalize(
             config.input_shapes, config.input_normalization_modes, dataset_stats
@@ -50,7 +50,7 @@ class ActionChunkingTransformerPolicy(nn.Module, PyTorchModelHubMixin):
         self.unnormalize_outputs = Unnormalize(
             config.output_shapes, config.output_normalization_modes, dataset_stats
         )
-        self.model = _ActionChunkingTransformer(config)
+        self.model = ACT(config)
 
     def reset(self):
         """This should be called whenever the environment is reset."""
@@ -124,8 +124,8 @@ class ActionChunkingTransformerPolicy(nn.Module, PyTorchModelHubMixin):
         )
 
 
-class _ActionChunkingTransformer(nn.Module):
-    """Action Chunking Transformer: The underlying neural network for ActionChunkingTransformerPolicy.
+class ACT(nn.Module):
+    """Action Chunking Transformer: The underlying neural network for ACTPolicy.
 
     Note: In this code we use the terms `vae_encoder`, 'encoder', `decoder`. The meanings are as follows.
         - The `vae_encoder` is, as per the literature around variational auto-encoders (VAE), the part of the
@@ -159,14 +159,14 @@ class _ActionChunkingTransformer(nn.Module):
                                 └───────────────────────┘
     """
 
-    def __init__(self, config: ActionChunkingTransformerConfig):
+    def __init__(self, config: ACTConfig):
         super().__init__()
         self.config = config
         # BERT style VAE encoder with input [cls, *joint_space_configuration, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
         if self.config.use_vae:
-            self.vae_encoder = _TransformerEncoder(config)
-            self.vae_encoder_cls_embed = nn.Embedding(1, config.dim_model)
+            self.vae_encoder = ACTEncoder(config)
+            self.vae_encoder_cls_embed = nn.Embedding(1, config.d_model)
             # Projection layer for joint-space configuration to hidden dimension.
             self.vae_encoder_robot_state_input_proj = nn.Linear(
                 config.input_shapes["observation.state"][0], config.dim_model
@@ -182,9 +182,7 @@ class _ActionChunkingTransformer(nn.Module):
             # dimension.
             self.register_buffer(
                 "vae_encoder_pos_enc",
-                _create_sinusoidal_position_embedding(1 + 1 + config.chunk_size, config.dim_model).unsqueeze(
-                    0
-                ),
+                create_sinusoidal_position_embedding(1 + 1 + config.chunk_size, config.d_model).unsqueeze(0),
             )
 
         # Backbone for image feature extraction.
@@ -199,8 +197,8 @@ class _ActionChunkingTransformer(nn.Module):
         self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
 
         # Transformer (acts as VAE decoder when training with the variational objective).
-        self.encoder = _TransformerEncoder(config)
-        self.decoder = _TransformerDecoder(config)
+        self.encoder = ACTEncoder(config)
+        self.decoder = ACTDecoder(config)
 
         # Transformer encoder input projections. The tokens will be structured like
         # [latent, robot_state, image_feature_map_pixels].
@@ -212,8 +210,8 @@ class _ActionChunkingTransformer(nn.Module):
             backbone_model.fc.in_features, config.dim_model, kernel_size=1
         )
         # Transformer encoder positional embeddings.
-        self.encoder_robot_and_latent_pos_embed = nn.Embedding(2, config.dim_model)
-        self.encoder_cam_feat_pos_embed = _SinusoidalPositionEmbedding2D(config.dim_model // 2)
+        self.encoder_robot_and_latent_pos_embed = nn.Embedding(2, config.d_model)
+        self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.d_model // 2)
 
         # Transformer decoder.
         # Learnable positional embedding for the transformer's decoder (in the style of DETR object queries).
@@ -343,15 +341,13 @@ class _ActionChunkingTransformer(nn.Module):
         return actions, (mu, log_sigma_x2)
 
 
-class _TransformerEncoder(nn.Module):
+class ACTEncoder(nn.Module):
     """Convenience module for running multiple encoder layers, maybe followed by normalization."""
 
-    def __init__(self, config: ActionChunkingTransformerConfig):
+    def __init__(self, config: ACTConfig):
         super().__init__()
-        self.layers = nn.ModuleList(
-            [_TransformerEncoderLayer(config) for _ in range(config.n_encoder_layers)]
-        )
-        self.norm = nn.LayerNorm(config.dim_model) if config.pre_norm else nn.Identity()
+        self.layers = nn.ModuleList([ACTEncoderLayer(config) for _ in range(config.n_encoder_layers)])
+        self.norm = nn.LayerNorm(config.d_model) if config.pre_norm else nn.Identity()
 
     def forward(self, x: Tensor, pos_embed: Tensor | None = None) -> Tensor:
         for layer in self.layers:
@@ -360,8 +356,8 @@ class _TransformerEncoder(nn.Module):
         return x
 
 
-class _TransformerEncoderLayer(nn.Module):
-    def __init__(self, config: ActionChunkingTransformerConfig):
+class ACTEncoderLayer(nn.Module):
+    def __init__(self, config: ACTConfig):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
 
@@ -375,7 +371,7 @@ class _TransformerEncoderLayer(nn.Module):
         self.dropout1 = nn.Dropout(config.dropout)
         self.dropout2 = nn.Dropout(config.dropout)
 
-        self.activation = _get_activation_fn(config.feedforward_activation)
+        self.activation = get_activation_fn(config.feedforward_activation)
         self.pre_norm = config.pre_norm
 
     def forward(self, x, pos_embed: Tensor | None = None) -> Tensor:
@@ -398,14 +394,12 @@ class _TransformerEncoderLayer(nn.Module):
         return x
 
 
-class _TransformerDecoder(nn.Module):
-    def __init__(self, config: ActionChunkingTransformerConfig):
+class ACTDecoder(nn.Module):
+    def __init__(self, config: ACTConfig):
         """Convenience module for running multiple decoder layers followed by normalization."""
         super().__init__()
-        self.layers = nn.ModuleList(
-            [_TransformerDecoderLayer(config) for _ in range(config.n_decoder_layers)]
-        )
-        self.norm = nn.LayerNorm(config.dim_model)
+        self.layers = nn.ModuleList([ACTDecoderLayer(config) for _ in range(config.n_decoder_layers)])
+        self.norm = nn.LayerNorm(config.d_model)
 
     def forward(
         self,
@@ -423,8 +417,8 @@ class _TransformerDecoder(nn.Module):
         return x
 
 
-class _TransformerDecoderLayer(nn.Module):
-    def __init__(self, config: ActionChunkingTransformerConfig):
+class ACTDecoderLayer(nn.Module):
+    def __init__(self, config: ACTConfig):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
         self.multihead_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
@@ -441,7 +435,7 @@ class _TransformerDecoderLayer(nn.Module):
         self.dropout2 = nn.Dropout(config.dropout)
         self.dropout3 = nn.Dropout(config.dropout)
 
-        self.activation = _get_activation_fn(config.feedforward_activation)
+        self.activation = get_activation_fn(config.feedforward_activation)
         self.pre_norm = config.pre_norm
 
     def maybe_add_pos_embed(self, tensor: Tensor, pos_embed: Tensor | None) -> Tensor:
@@ -495,7 +489,7 @@ class _TransformerDecoderLayer(nn.Module):
         return x
 
 
-def _create_sinusoidal_position_embedding(num_positions: int, dimension: int) -> Tensor:
+def create_sinusoidal_position_embedding(num_positions: int, dimension: int) -> Tensor:
     """1D sinusoidal positional embeddings as in Attention is All You Need.
 
     Args:
@@ -513,7 +507,7 @@ def _create_sinusoidal_position_embedding(num_positions: int, dimension: int) ->
     return torch.from_numpy(sinusoid_table).float()
 
 
-class _SinusoidalPositionEmbedding2D(nn.Module):
+class ACTSinusoidalPositionEmbedding2d(nn.Module):
     """2D sinusoidal positional embeddings similar to what's presented in Attention Is All You Need.
 
     The variation is that the position indices are normalized in [0, 2π] (not quite: the lower bound is 1/H
@@ -567,7 +561,7 @@ class _SinusoidalPositionEmbedding2D(nn.Module):
         return pos_embed
 
 
-def _get_activation_fn(activation: str) -> Callable:
+def get_activation_fn(activation: str) -> Callable:
     """Return an activation function given a string."""
     if activation == "relu":
         return F.relu
