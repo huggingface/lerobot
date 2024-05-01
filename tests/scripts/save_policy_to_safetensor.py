@@ -37,7 +37,6 @@ def get_policy_stats(env_name, policy_name):
     batch = next(iter(dataloader))
     output_dict = policy.forward(batch)
     loss = output_dict["loss"]
-    # TODO Check output dict values
 
     loss.backward()
     grad_stats = {}
@@ -63,12 +62,8 @@ def get_policy_stats(env_name, policy_name):
         if k in ["observation.image", "observation.images.top", "observation.state"]
     }
 
-    # TODO(aliberts): refacor `select_action` methods so that it expects `obs` instead of `batch`
-    # if policy_name == "diffusion":
-    #     obs = {k: batch[k] for k in ["observation.image", "observation.state"]}
-
     actions = {str(i): policy.select_action(obs).contiguous() for i in range(cfg.policy.n_action_steps)}
-    return grad_stats, param_stats, actions
+    return output_dict, grad_stats, param_stats, actions
 
 
 def save_policy_to_safetensors(output_dir, env_name, policy_name):
@@ -78,21 +73,18 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name):
         shutil.rmtree(env_policy_dir)
 
     env_policy_dir.mkdir(parents=True, exist_ok=True)
-    grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name)
-    save_file(grad_stats, env_policy_dir / "grad_stats")
-    save_file(param_stats, env_policy_dir / "param_stats")
-    save_file(actions, env_policy_dir / "actions")
+    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name)
+    save_file(output_dict, env_policy_dir / "output_dict.safetensors")
+    save_file(grad_stats, env_policy_dir / "grad_stats.safetensors")
+    save_file(param_stats, env_policy_dir / "param_stats.safetensors")
+    save_file(actions, env_policy_dir / "actions.safetensors")
 
 
 if __name__ == "__main__":
     env_policies = [
-        # ("xarm", "tdmpc", ["policy.mpc=true"]),
-        # ("pusht", "tdmpc", ["policy.mpc=false"]),
-        (
-            "pusht",
-            "diffusion",
-        ),
-        # ("aloha", "act"),
+        # ("xarm", "tdmpc"),
+        ("pusht", "diffusion"),
+        ("aloha", "act"),
     ]
     for env, policy in env_policies:
         save_policy_to_safetensors("tests/data/save_policy_to_safetensors", env, policy)
