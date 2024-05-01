@@ -30,7 +30,7 @@ def get_stats_einops_patterns(dataset: LeRobotDataset | datasets.Dataset):
         # sanity check that tensors are not float64
         assert batch[key].dtype != torch.float64
 
-        if isinstance(feats_type, VideoFrame, Image):
+        if isinstance(feats_type, (VideoFrame, Image)):
             # sanity check that images are channel first
             _, c, h, w = batch[key].shape
             assert c < h and c < w, f"expect channel first images, but instead {batch[key].shape}"
@@ -70,7 +70,7 @@ def compute_stats(dataset: LeRobotDataset | datasets.Dataset, batch_size=32, max
         generator.manual_seed(seed)
         dataloader = torch.utils.data.DataLoader(
             dataset,
-            num_workers=0,
+            num_workers=8,
             batch_size=batch_size,
             shuffle=True,
             drop_last=False,

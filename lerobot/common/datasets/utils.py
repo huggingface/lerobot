@@ -140,12 +140,13 @@ def load_previous_and_future_frames(
     hf_dataset: datasets.Dataset,
     episode_data_index: dict[str, torch.Tensor],
     delta_timestamps: dict[str, list[float]],
-    tol: float,
+    tolerance_s: float,
 ) -> dict[torch.Tensor]:
     """
     Given a current item in the dataset containing a timestamp (e.g. 0.6 seconds), and a list of time differences of
     some modalities (e.g. delta_timestamps={"observation.image": [-0.8, -0.2, 0, 0.2]}), this function computes for each
-    given modality a list of query timestamps (e.g. [-0.2, 0.4, 0.6, 0.8]) and loads the closest frames in the dataset.
+    given modality (e.g. "observation.image") a list of query timestamps (e.g. [-0.2, 0.4, 0.6, 0.8]) and loads the closest
+    frames in the dataset.
 
     Importantly, when no frame can be found around a query timestamp within a specified tolerance window, this function
     raises an AssertionError. When a timestamp is queried before the first available timestamp of the episode or after
@@ -164,7 +165,7 @@ def load_previous_and_future_frames(
       They indicate the start index and end index of each episode in the dataset.
     - delta_timestamps (dict): A dictionary containing lists of delta timestamps for each possible modality to be
       retrieved. These deltas are added to the item timestamp to form the query timestamps.
-    - tol (float, optional): The tolerance level used to determine if a data point is close enough to the query
+    - tolerance_s (float, optional): The tolerance level (in seconds) used to determine if a data point is close enough to the query
       timestamp by asserting `tol > difference`. It is suggested to set `tol` to a smaller value than the
       smallest expected inter-frame period, but large enough to account for jitter.
 
@@ -202,11 +203,11 @@ def load_previous_and_future_frames(
 
         # TODO(rcadene): synchronize timestamps + interpolation if needed
 
-        is_pad = min_ > tol
+        is_pad = min_ > tolerance_s
 
         # check violated query timestamps are all outside the episode range
         assert ((query_ts[is_pad] < ep_first_ts) | (ep_last_ts < query_ts[is_pad])).all(), (
-            f"One or several timestamps unexpectedly violate the tolerance ({min_} > {tol=}) inside episode range."
+            f"One or several timestamps unexpectedly violate the tolerance ({min_} > {tolerance_s=}) inside episode range."
             "This might be due to synchronization issues with timestamps during data collection."
         )
 

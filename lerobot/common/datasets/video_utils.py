@@ -10,41 +10,40 @@ import torchvision
 from datasets.features.features import register_feature
 
 
-def load_from_videos(item, video_frame_keys, videos_dir):
+def load_from_videos(
+    item: dict[str, torch.Tensor], video_frame_keys: list[str], videos_dir: Path, tolerance_s: float
+):
     # since video path already contains "videos" (e.g. videos_dir="data/videos", path="videos/episode_0.mp4")
     data_dir = videos_dir.parent
 
     for key in video_frame_keys:
-        ep_idx = item["episode_index"]
-        video_path = data_dir / key / f"episode_{ep_idx:06d}.mp4"
-
         if isinstance(item[key], list):
-            # load multiple frames at once
+            # load multiple frames at once (expected when delta_timestamps is not None)
             timestamps = [frame["timestamp"] for frame in item[key]]
             paths = [frame["path"] for frame in item[key]]
             if len(set(paths)) == 1:
                 raise NotImplementedError("All video paths are expected to be the same for now.")
             video_path = data_dir / paths[0]
 
-            frames = decode_video_frames_torchvision(video_path, timestamps)
-            assert len(frames) == len(timestamps)
-
+            frames = decode_video_frames_torchvision(video_path, timestamps, tolerance_s)
             item[key] = frames
         else:
             # load one frame
             timestamps = [item[key]["timestamp"]]
             video_path = data_dir / item[key]["path"]
 
-            frames = decode_video_frames_torchvision(video_path, timestamps)
-            assert len(frames) == 1
-
+            frames = decode_video_frames_torchvision(video_path, timestamps, tolerance_s)
             item[key] = frames[0]
 
     return item
 
 
 def decode_video_frames_torchvision(
-    video_path: str, timestamps: list[float], device: str = "cpu", log_loaded_timestamps: bool = False
+    video_path: str,
+    timestamps: list[float],
+    tolerance_s: float,
+    device: str = "cpu",
+    log_loaded_timestamps: bool = False,
 ):
     """Loads frames associated to the requested timestamps of a video
 
@@ -85,40 +84,50 @@ def decode_video_frames_torchvision(
     first_ts = timestamps[0]
     last_ts = timestamps[-1]
 
-    # access key frame of first requested frame, and load all frames until last requested frame
+    # access closest key frame of the first requested frame
+    # Note: closest key frame timestamp is usally smaller than `first_ts` (e.g. key frame can be the first frame of the video)
     # for details on what `seek` is doing see: https://pyav.basswood-io.com/docs/stable/api/container.html?highlight=inputcontainer#av.container.InputContainer.seek
     reader.seek(first_ts)
-    frames = []
+
+    # load all frames until last requested frame
+    loaded_frames = []
+    loaded_ts = []
     for frame in reader:
-        # get timestamp of the loaded frame
-        ts = round_timestamp(frame["pts"])
-
-        # if the loaded frame is not among the requested frames, we dont add it to the list of output frames
-        is_frame_requested = ts in timestamps
-        if is_frame_requested:
-            frames.append(frame["data"])
-
+        current_ts = frame["pts"]
         if log_loaded_timestamps:
-            log = f"frame loaded at timestamp={ts:.4f}"
-            if is_frame_requested:
-                log += " requested"
-            logging.info(log)
-
-        if len(timestamps) == len(frames):
+            logging.info(f"frame loaded at timestamp={current_ts:.4f}")
+        loaded_frames.append(frame["data"])
+        loaded_ts.append(current_ts)
+        if current_ts >= last_ts:
             break
 
-        # hard stop
-        assert (
-            frame["pts"] >= last_ts
-        ), f"Not enough frames have been loaded in [{first_ts}, {last_ts}]. {len(timestamps)} expected, but only {len(frames)} loaded."
+    query_ts = torch.tensor(timestamps)
+    loaded_ts = torch.tensor(loaded_ts)
 
-    frames = torch.stack(frames)
+    # compute distances between each query timestamp and timestamps of all loaded frames
+    dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
+    min_, argmin_ = dist.min(1)
+
+    is_within_tol = min_ < tolerance_s
+    assert is_within_tol.all(), (
+        f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
+        "It means that the closest frame that can be loaded from the video is too far away in time."
+        "This might be due to synchronization issues with timestamps during data collection."
+        "To be safe, we advise to ignore this item during training."
+    )
+
+    # get closest frames to the query timestamps
+    closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
+    closest_ts = loaded_ts[argmin_]
+
+    if log_loaded_timestamps:
+        logging.info(f"{closest_ts=}")
 
     # convert to the pytorch format which is float32 in [0,1] range (and channel first)
-    frames = frames.type(torch.float32) / 255
+    closest_frames = closest_frames.type(torch.float32) / 255
 
-    assert len(timestamps) == frames.shape[0]
-    return frames
+    assert len(timestamps) == len(closest_frames)
+    return closest_frames
 
 
 def encode_video_frames(imgs_dir: Path, video_path: Path, fps: int):

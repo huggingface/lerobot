@@ -79,6 +79,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def num_episodes(self) -> int:
         return len(self.hf_dataset.unique("episode_index"))
 
+    @property
+    def tolerance_s(self) -> float:
+        # to account for possible numerical error
+        return 1e-4
+
     def __len__(self):
         return self.num_samples
 
@@ -91,11 +96,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self.hf_dataset,
                 self.episode_data_index,
                 self.delta_timestamps,
-                tol=1 / self.fps - 1e-4,  # 1e-4 to account for possible numerical error
+                self.tolerance_s,
             )
 
         if self.video:
-            item = load_from_videos(item, self.video_frame_keys, self.videos_dir)
+            item = load_from_videos(
+                item,
+                self.video_frame_keys,
+                self.videos_dir,
+                self.tolerance_s,
+            )
 
         if self.transform is not None:
             item = self.transform(item)
