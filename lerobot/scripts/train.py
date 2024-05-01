@@ -265,7 +265,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     env = make_env(cfg, num_parallel_envs=cfg.eval.n_episodes)
 
     logging.info("make_policy")
-    policy = make_policy(cfg, dataset_stats=offline_dataset.stats)
+    policy = make_policy(hydra_cfg=cfg, dataset_stats=offline_dataset.stats)
 
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
