@@ -24,6 +24,7 @@ test-end-to-end:
 	${MAKE} test-diffusion-ete-eval
 	# ${MAKE} test-tdmpc-ete-train
 	# ${MAKE} test-tdmpc-ete-eval
+	${MAKE} test-default-ete-eval
 
 test-act-ete-train:
 	python lerobot/scripts/train.py \
@@ -64,7 +65,7 @@ test-diffusion-ete-train:
 
 test-diffusion-ete-eval:
 	python lerobot/scripts/eval.py \
-		--config tests/outputs/diffusion/checkpoints/000002 \
+		-p tests/outputs/diffusion/checkpoints/000002 \
 		eval.n_episodes=1 \
 		env.episode_length=8 \
 		device=cpu \
@@ -86,7 +87,15 @@ test-tdmpc-ete-train:
 
 test-tdmpc-ete-eval:
 	python lerobot/scripts/eval.py \
-		--config tests/outputs/tdmpc/checkpoints/000002 \
+		-p tests/outputs/tdmpc/checkpoints/000002 \
+		eval.n_episodes=1 \
+		env.episode_length=8 \
+		device=cpu \
+
+
+test_default-ete-eval:
+	python lerobot/scripts/eval.py \
+		--config default.yaml
 		eval.n_episodes=1 \
 		env.episode_length=8 \
 		device=cpu \

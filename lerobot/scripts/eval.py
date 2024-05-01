@@ -353,36 +353,39 @@ def eval_policy(
 
 def eval(
     pretrained_policy_path: str | None = None,
-    config_path: str | None = None,
+    hydra_cfg_path: str | None = None,
     config_overrides: list[str] | None = None,
 ):
-    assert (pretrained_policy_path is None) ^ (config_path is None)
-    if config_path is None:
-        cfg = init_hydra_config(pretrained_policy_path / "config.yaml", config_overrides)
+    assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
+    if hydra_cfg_path is None:
+        hydra_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", config_overrides)
     else:
-        cfg = init_hydra_config(config_path, config_overrides)
-    out_dir = f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{cfg.env.name}_{cfg.policy.name}"
+        hydra_cfg = init_hydra_config(hydra_cfg_path, config_overrides)
+    out_dir = (
+        f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
+    )
 
     if out_dir is None:
         raise NotImplementedError()
 
     # Check device is available
-    get_safe_torch_device(cfg.device, log=True)
+    get_safe_torch_device(hydra_cfg.device, log=True)
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    set_global_seed(cfg.seed)
+    set_global_seed(hydra_cfg.seed)
 
     log_output_dir(out_dir)
 
     logging.info("Making environment.")
-    env = make_env(cfg, num_parallel_envs=cfg.eval.n_episodes)
+    env = make_env(hydra_cfg, num_parallel_envs=hydra_cfg.eval.n_episodes)
 
     logging.info("Making policy.")
-    if config_path is None:
-        policy = make_policy(pretrained_policy_name_or_path=pretrained_policy_path)
+    if hydra_cfg_path is None:
+        policy = make_policy(hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
     else:
-        policy = make_policy(hydra_cfg=cfg, dataset_stats=make_dataset(cfg).stats)
+        # Note: We need the dataset stats to pass to the policy's normalization modules.
+        policy = make_policy(hydra_cfg=hydra_cfg, dataset_stats=make_dataset(hydra_cfg).stats)
 
     info = eval_policy(
         env,
@@ -390,7 +393,7 @@ def eval(
         max_episodes_rendered=10,
         video_dir=Path(out_dir) / "eval",
         return_episode_data=False,
-        seed=cfg.seed,
+        seed=hydra_cfg.seed,
     )
     print(info["aggregated"])
 

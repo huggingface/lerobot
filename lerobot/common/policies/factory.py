@@ -40,32 +40,30 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
 
 
 def make_policy(
-    hydra_cfg: DictConfig | None = None, pretrained_policy_name_or_path: str | None = None, dataset_stats=None
+    hydra_cfg: DictConfig, pretrained_policy_name_or_path: str | None = None, dataset_stats=None
 ) -> Policy:
     """Make an instance of a policy class.
 
     Args:
-        hydra_cfg: A parsed Hydra configuration (see scripts). Note that this argument is mutually exclusive
-            with `pretrained_policy_name_or_path`.
+        hydra_cfg: A parsed Hydra configuration (see scripts). If `pretrained_policy_name_or_path` is
+            provided, only `hydra_cfg.policy.name` is used while everything else is ignored.
         pretrained_policy_name_or_path: Either the repo ID of a model hosted on the Hub or a path to a
-            directory containing weights saved using `Policy.save_pretrained`. Note that this argument is
-            mutually exclusive with `hydra_cfg`.
+            directory containing weights saved using `Policy.save_pretrained`. Note that providing this
+            argument overrides everything in `hydra_cfg.policy` apart from `hydra_cfg.policy.name`.
         dataset_stats: Dataset statistics to use for (un)normalization of inputs/outputs in the policy. Must
-            be provided when initializing a new policy (therefore it must be provided with `hydra_cfg`).
+            be provided when initializing a new policy, and must not be provided when loading a pretrained
+            policy. Therefore, this argument is mutually exclusive with `pretrained_policy_name_or_path`.
     """
-    if not ((hydra_cfg is None) ^ (pretrained_policy_name_or_path is None)):
-        raise ValueError(
-            "Either `hydra_cfg` or `pretrained_policy_name_or_path` should be provided. Not both."
-        )
-    if (hydra_cfg is None) ^ (dataset_stats is None):
-        raise ValueError("If `hydra_cfg` is/isn't provided, `dataset_stats` should/shouldn't be provided.")
+    if not (pretrained_policy_name_or_path is None) ^ (dataset_stats is None):
+        raise ValueError("Only one of `pretrained_policy_name_or_path` and `dataset_stats` may be provided.")
+
     policy_cls, policy_cfg_class = get_policy_and_config_classes(hydra_cfg.policy.name)
 
-    if hydra_cfg is not None:
+    if pretrained_policy_name_or_path is None:
         policy_cfg = _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg)
         policy = policy_cls(policy_cfg, dataset_stats)
         policy.to(get_safe_torch_device(hydra_cfg.device))
-    elif pretrained_policy_name_or_path is not None:
+    else:
         policy = policy_cls.from_pretrained(pretrained_policy_name_or_path)
 
     return policy
