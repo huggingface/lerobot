@@ -19,7 +19,7 @@ def get_stats_einops_patterns(dataset: LeRobotDataset | datasets.Dataset):
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=0,
+        num_workers=1,  # do not set to 0 when using `load_from_videos`
         batch_size=2,
         shuffle=False,
     )

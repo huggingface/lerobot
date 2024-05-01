@@ -13,6 +13,11 @@ from datasets.features.features import register_feature
 def load_from_videos(
     item: dict[str, torch.Tensor], video_frame_keys: list[str], videos_dir: Path, tolerance_s: float
 ):
+    """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
+    in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a Segmentation Fault.
+    This probably happens because a memory reference to the video loader is created in the main process and a
+    subprocess fails to access it.
+    """
     # since video path already contains "videos" (e.g. videos_dir="data/videos", path="videos/episode_0.mp4")
     data_dir = videos_dir.parent
 
