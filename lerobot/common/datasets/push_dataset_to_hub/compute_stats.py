@@ -70,7 +70,7 @@ def compute_stats(dataset: LeRobotDataset | datasets.Dataset, batch_size=32, max
         generator.manual_seed(seed)
         dataloader = torch.utils.data.DataLoader(
             dataset,
-            num_workers=4,
+            num_workers=16,
             batch_size=batch_size,
             shuffle=True,
             drop_last=False,

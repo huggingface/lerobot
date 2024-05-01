@@ -216,9 +216,14 @@ def load_previous_and_future_frames(
 
         # load frames modality
         item[key] = hf_dataset.select_columns(key)[data_ids][key]
-        item[key] = torch.stack(item[key])
+
+        if isinstance(item[key][0], dict) and "path" in item[key][0]:
+            # video mode where frame are expressed as dict of path and timestamp
+            item[key] = item[key]
+        else:
+            item[key] = torch.stack(item[key])
+
         item[f"{key}_is_pad"] = is_pad
-        item[f"{key}_timestamp"] = query_ts
 
     return item
 

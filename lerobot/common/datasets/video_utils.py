@@ -1,5 +1,6 @@
 import logging
 import subprocess
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
@@ -26,7 +27,7 @@ def load_from_videos(
             # load multiple frames at once (expected when delta_timestamps is not None)
             timestamps = [frame["timestamp"] for frame in item[key]]
             paths = [frame["path"] for frame in item[key]]
-            if len(set(paths)) == 1:
+            if len(set(paths)) > 1:
                 raise NotImplementedError("All video paths are expected to be the same for now.")
             video_path = data_dir / paths[0]
 
@@ -61,9 +62,11 @@ def decode_video_frames_torchvision(
     video_path = str(video_path)
 
     # set backend
+    keyframes_only = False
     if device == "cpu":
         # explicitely use pyav
         torchvision.set_video_backend("pyav")
+        keyframes_only = True  # pyav doesnt support accuracte seek
     elif device == "cuda":
         # TODO(rcadene, aliberts): implement video decoding with GPU
         # torchvision.set_video_backend("cuda")
@@ -86,7 +89,7 @@ def decode_video_frames_torchvision(
     # access closest key frame of the first requested frame
     # Note: closest key frame timestamp is usally smaller than `first_ts` (e.g. key frame can be the first frame of the video)
     # for details on what `seek` is doing see: https://pyav.basswood-io.com/docs/stable/api/container.html?highlight=inputcontainer#av.container.InputContainer.seek
-    reader.seek(first_ts)
+    reader.seek(first_ts, keyframes_only=keyframes_only)
 
     # load all frames until last requested frame
     loaded_frames = []
@@ -130,7 +133,7 @@ def decode_video_frames_torchvision(
 
 
 def encode_video_frames(imgs_dir: Path, video_path: Path, fps: int):
-    # For more info this setting, see: `lerobot/common/datasets/_video_benchmark/README.md`
+    """More info on ffmpeg arguments tuning on `lerobot/common/datasets/_video_benchmark/README.md`"""
     video_path = Path(video_path)
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -140,6 +143,7 @@ def encode_video_frames(imgs_dir: Path, video_path: Path, fps: int):
         "-loglevel error "
         f"-i {str(imgs_dir / 'frame_%06d.png')} "
         "-vcodec libx264 "
+        "-g 2 "
         "-pix_fmt yuv444p "
         f"{str(video_path)}"
     )
@@ -168,5 +172,11 @@ class VideoFrame:
         return self.pa_type
 
 
-# to make it available in HuggingFace `datasets`
-register_feature(VideoFrame, "VideoFrame")
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        "'register_feature' is experimental and might be subject to breaking changes in the future.",
+        category=UserWarning,
+    )
+    # to make VideoFrame available in HuggingFace `datasets`
+    register_feature(VideoFrame, "VideoFrame")
