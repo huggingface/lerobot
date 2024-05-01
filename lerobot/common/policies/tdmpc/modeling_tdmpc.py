@@ -77,7 +77,7 @@ class TDMPCPolicy(nn.Module):
         if cfg is None:
             cfg = TDMPCConfig()
         self.cfg = cfg
-        self.model = TOLD(cfg)
+        self.model = TDMPCTOLD(cfg)
         self.model_target = deepcopy(self.model)
         self.model_target.eval()
 
@@ -309,8 +309,8 @@ class TDMPCPolicy(nn.Module):
 
         # Apply random image augmentations.
         if self.cfg.max_random_shift_ratio > 0:
-            observations["observation.image"] = _flatten_forward_unflatten(
-                partial(_random_shifts_aug, max_random_shift_ratio=self.cfg.max_random_shift_ratio),
+            observations["observation.image"] = flatten_forward_unflatten(
+                partial(random_shifts_aug, max_random_shift_ratio=self.cfg.max_random_shift_ratio),
                 observations["observation.image"],
             )
 
@@ -488,16 +488,16 @@ class TDMPCPolicy(nn.Module):
         # Note a minor variation with respect to the original FOWM code. Here they do this based on an EMA
         # update frequency parameter which is set to 2 (every 2 steps an update is done). To simplify the code
         # we update every step and adjust the decay parameter `alpha` accordingly (0.99 -> 0.995)
-        _update_ema_parameters(self.model_target, self.model, self.cfg.target_model_momentum)
+        update_ema_parameters(self.model_target, self.model, self.cfg.target_model_momentum)
 
 
-class TOLD(nn.Module):
+class TDMPCTOLD(nn.Module):
     """Task-Oriented Latent Dynamics (TOLD) model used in TD-MPC."""
 
     def __init__(self, cfg: TDMPCConfig):
         super().__init__()
         self.cfg = cfg
-        self._encoder = _ObservationEncoder(cfg)
+        self._encoder = TDMPCObservationEncoder(cfg)
         self._dynamics = nn.Sequential(
             nn.Linear(cfg.latent_dim + cfg.output_shapes["action"][0], cfg.mlp_dim),
             nn.LayerNorm(cfg.mlp_dim),
@@ -658,7 +658,7 @@ class TOLD(nn.Module):
             return torch.stack([q(x).squeeze(-1) for q in Qs], dim=0).min(dim=0)[0]
 
 
-class _ObservationEncoder(nn.Module):
+class TDMPCObservationEncoder(nn.Module):
     """Encode image and/or state vector observations."""
 
     def __init__(self, cfg: TDMPCConfig):
@@ -711,13 +711,13 @@ class _ObservationEncoder(nn.Module):
         """
         feat = []
         if "observation.image" in self.cfg.input_shapes:
-            feat.append(_flatten_forward_unflatten(self.image_enc_layers, obs_dict["observation.image"]))
+            feat.append(flatten_forward_unflatten(self.image_enc_layers, obs_dict["observation.image"]))
         if "observation.state" in self.cfg.input_shapes:
             feat.append(self.state_enc_layers(obs_dict["observation.state"]))
         return torch.stack(feat, dim=0).mean(0)
 
 
-def _random_shifts_aug(x: Tensor, max_random_shift_ratio: float) -> Tensor:
+def random_shifts_aug(x: Tensor, max_random_shift_ratio: float) -> Tensor:
     """Randomly shifts images horizontally and vertically.
 
     Adapted from https://github.com/facebookresearch/drqv2
@@ -750,7 +750,7 @@ def _random_shifts_aug(x: Tensor, max_random_shift_ratio: float) -> Tensor:
     return F.grid_sample(x, grid, padding_mode="zeros", align_corners=False)
 
 
-def _update_ema_parameters(ema_net: nn.Module, net: nn.Module, alpha: float):
+def update_ema_parameters(ema_net: nn.Module, net: nn.Module, alpha: float):
     """Update EMA parameters in place with ema_param <- alpha * ema_param + (1 - alpha) * param."""
     for ema_module, module in zip(ema_net.modules(), net.modules(), strict=True):
         for (n_p_ema, p_ema), (n_p, p) in zip(
@@ -767,7 +767,7 @@ def _update_ema_parameters(ema_net: nn.Module, net: nn.Module, alpha: float):
                 p_ema.add_(p.to(dtype=p_ema.dtype).data, alpha=1 - alpha)
 
 
-def _flatten_forward_unflatten(fn: Callable[[Tensor], Tensor], image_tensor: Tensor) -> Tensor:
+def flatten_forward_unflatten(fn: Callable[[Tensor], Tensor], image_tensor: Tensor) -> Tensor:
     """Helper to temporarily flatten extra dims at the start of the image tensor.
 
     Args:
