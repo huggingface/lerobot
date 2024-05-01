@@ -109,10 +109,8 @@ def test_policy(env_name, policy_name, extra_overrides):
     env.step(action)
 
     # Test load state_dict
-    if policy_name != "tdmpc":
-        # TODO(rcadene, alexander-soare): make it work for tdmpc
-        new_policy = make_policy(cfg)
-        new_policy.load_state_dict(policy.state_dict())
+    new_policy = make_policy(cfg)
+    new_policy.load_state_dict(policy.state_dict())
 
 
 @pytest.mark.parametrize("policy_cls", [DiffusionPolicy, ActionChunkingTransformerPolicy, TDMPCPolicy])
