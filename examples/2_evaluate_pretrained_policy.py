@@ -23,5 +23,5 @@ overrides = [
 ]
 
 # Evaluate the policy and save the outputs including metrics and videos.
-# TODO(rcadene, alexander-soare): dont call eval, but add the minimal code snippet to rollout 
+# TODO(rcadene, alexander-soare): dont call eval, but add the minimal code snippet to rollout
 eval(pretrained_policy_path=pretrained_policy_path)
