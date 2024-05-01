@@ -55,7 +55,7 @@ def decode_video_frames_torchvision(
 
     Note: Video benefits from inter-frame compression. Instead of storing every frame individually,
     the encoder stores a reference frame (or a key frame) and subsequent frames as differences relative to
-    that key frame. As a consequence, to access a requested frame, we need to load the preceeding key frame,
+    that key frame. As a consequence, to access a requested frame, we need to load the preceding key frame,
     and all subsequent frames until reaching the requested frame. The number of key frames in a video
     can be adjusted during encoding to take into account decoding time and video size in bytes.
     """
@@ -73,7 +73,9 @@ def decode_video_frames_torchvision(
         # torchvision.set_video_backend("video_reader")
         # requires installing torchvision from source, see: https://github.com/pytorch/vision/blob/main/torchvision/csrc/io/decoder/gpu/README.rst
         # check possible bug: https://github.com/pytorch/vision/issues/7745
-        raise NotImplementedError()
+        raise NotImplementedError(
+            "Video decoding on gpu with cuda is currently not supported. Use `device='cpu'`."
+        )
     else:
         raise ValueError(device)
 

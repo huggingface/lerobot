@@ -49,6 +49,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     @property
     def video(self) -> int:
+        """Returns True if this dataset loads video frames from mp4 files.
+        Returns False if it only loads images from png files.
+        """
         return self.info.get("video", False)
 
     @property

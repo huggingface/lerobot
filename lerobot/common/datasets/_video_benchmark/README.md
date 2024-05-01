@@ -45,8 +45,6 @@ In this benchmark, we focus on the loading time of random access, so we are not 
 - `2_frames`: 2 consecutive frames (e.g. `[t, t + 1 / fps]`),
 - `2_frames_4_space`: 2 consecutive frames with 4 frames of spacing (e.g `[t, t + 4 / fps]`),
 
-
-
 **Data augmentations**
 We might revisit this benchmark and find better settings if we train our policies with various data augmentations to make them more robusts (e.g. robust to color changes, compression, etc.).
 

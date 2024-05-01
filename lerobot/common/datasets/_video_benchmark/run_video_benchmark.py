@@ -11,10 +11,6 @@ import numpy
 import PIL
 import torch
 
-from lerobot.common.datasets._video_benchmark._video_utils import (
-    decode_video_frames_ffmpegio,
-    decode_video_frames_torchaudio,
-)
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.video_utils import (
     decode_video_frames_torchvision,
@@ -101,11 +97,7 @@ def run_video_benchmark(
     decoder_kwgs = cfg["decoder_kwgs"]
     device = cfg["device"]
 
-    if decoder == "torchaudio":
-        decode_frames_fn = decode_video_frames_torchaudio
-    elif decoder == "ffmpegio":
-        decode_frames_fn = decode_video_frames_ffmpegio
-    elif decoder == "torchvision":
+    if decoder == "torchvision":
         decode_frames_fn = decode_video_frames_torchvision
     else:
         raise ValueError(decoder)
@@ -231,6 +223,7 @@ def load_info(out_dir):
 
 
 def main():
+    out_dir = Path("tmp/run_video_benchmark")
     dry_run = False
     repo_ids = ["lerobot/pusht", "lerobot/umi_cup_in_the_wild"]
     timestamps_modes = [
@@ -240,31 +233,10 @@ def main():
         "6_frames",
     ]
     for timestamps_mode in timestamps_modes:
-        bench_dir = Path(f"tmp/2024_05_01_{timestamps_mode}")
+        bench_dir = out_dir / timestamps_mode
 
         print(f"### `{timestamps_mode}`")
         print()
-
-        # print("**`decoder`**")
-        # headers = ["repo_id", "decoder", "load_time_factor", "avg_per_pixel_l2_error"]
-        # rows = []
-        # for repo_id in repo_ids:
-        #     for decoder in ["torchvision", "ffmpegio", "torchaudio"]:
-        #         cfg = {
-        #             "repo_id": repo_id,
-        #             # video encoding
-        #             "pix_fmt": "yuv444p",
-        #             # video decoding
-        #             "device": "cpu",
-        #             "decoder": decoder,
-        #             "decoder_kwgs": {},
-        #         }
-
-        #         if not dry_run:
-        #             run_video_benchmark(bench_dir / repo_id / decoder, cfg, timestamps_mode)
-        #         info = load_info(bench_dir / repo_id / decoder)
-        #         rows.append([repo_id, decoder, info["load_time_factor"], info["avg_per_pixel_l2_error"]])
-        # display_markdown_table(headers, rows)
 
         print("**`pix_fmt`**")
         headers = ["repo_id", "pix_fmt", "compression_factor", "load_time_factor", "avg_per_pixel_l2_error"]
