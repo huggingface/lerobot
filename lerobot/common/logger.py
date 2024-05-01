@@ -2,8 +2,11 @@ import logging
 import os
 from pathlib import Path
 
+from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from omegaconf import OmegaConf
 from termcolor import colored
+
+from lerobot.common.policies.policy_protocol import Policy
 
 
 def log_output_dir(out_dir):
@@ -27,7 +30,7 @@ class Logger:
         self._log_dir = Path(log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._job_name = job_name
-        self._model_dir = self._log_dir / "models"
+        self._model_dir = self._log_dir / "checkpoints"
         self._buffer_dir = self._log_dir / "buffers"
         self._save_model = cfg.training.save_model
         self._disable_wandb_artifact = cfg.wandb.disable_artifact
@@ -67,18 +70,20 @@ class Logger:
             logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
             self._wandb = wandb
 
-    def save_model(self, policy, identifier):
+    def save_model(self, policy: Policy, identifier):
         if self._save_model:
             self._model_dir.mkdir(parents=True, exist_ok=True)
-            fp = self._model_dir / f"{str(identifier)}.pt"
-            policy.save(fp)
+            save_dir = self._model_dir / str(identifier)
+            policy.save_pretrained(save_dir)
+            # Also save the full Hydra config for the env configuration.
+            OmegaConf.save(self._cfg, save_dir / "config.yaml")
             if self._wandb and not self._disable_wandb_artifact:
                 # note wandb artifact does not accept ":" in its name
                 artifact = self._wandb.Artifact(
                     self._group.replace(":", "_") + "-" + str(self._seed) + "-" + str(identifier),
                     type="model",
                 )
-                artifact.add_file(fp)
+                artifact.add_file(save_dir / SAFETENSORS_SINGLE_FILE)
                 self._wandb.log_artifact(artifact)
 
     def save_buffer(self, buffer, identifier):

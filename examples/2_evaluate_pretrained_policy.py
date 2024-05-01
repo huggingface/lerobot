@@ -7,32 +7,21 @@ from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
-from lerobot.common.utils.utils import init_hydra_config
 from lerobot.scripts.eval import eval
 
 # Get a pretrained policy from the hub.
-# TODO(alexander-soare): This no longer works until we upload a new model that uses the current configs.
-hub_id = "lerobot/diffusion_policy_pusht_image"
-folder = Path(snapshot_download(hub_id))
+pretrained_policy_name = "lerobot/diffusion_policy_pusht_image"
+pretrained_policy_path = Path(snapshot_download(pretrained_policy_name))
 # OR uncomment the following to evaluate a policy from the local outputs/train folder.
-# folder = Path("outputs/train/example_pusht_diffusion")
-
-config_path = folder / "config.yaml"
-weights_path = folder / "model.pt"
+# pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")
 
 # Override some config parameters to do with evaluation.
 overrides = [
-    f"policy.pretrained_model_path={weights_path}",
     "eval.n_episodes=10",
     "eval.batch_size=10",
     "device=cuda",
 ]
 
-# Create a Hydra config.
-cfg = init_hydra_config(config_path, overrides)
-
 # Evaluate the policy and save the outputs including metrics and videos.
-eval(
-    cfg,
-    out_dir=f"outputs/eval/example_{cfg.env.name}_{cfg.policy.name}",
-)
+# TODO(rcadene, alexander-soare): dont call eval, but add the minimal code snippet to rollout
+eval(pretrained_policy_path=pretrained_policy_path)

@@ -38,7 +38,7 @@ class ACTConfig:
         replace_final_stride_with_dilation: Whether to replace the ResNet's final 2x2 stride with a dilated
             convolution.
         pre_norm: Whether to use "pre-norm" in the transformer blocks.
-        d_model: The transformer blocks' main hidden dimension.
+        dim_model: The transformer blocks' main hidden dimension.
         n_heads: The number of heads to use in the transformer blocks' multi-head attention.
         dim_feedforward: The dimension to expand the transformer's hidden dimension to in the feed-forward
             layers.
@@ -94,7 +94,7 @@ class ACTConfig:
     replace_final_stride_with_dilation: int = False
     # Transformer layers.
     pre_norm: bool = False
-    d_model: int = 512
+    dim_model: int = 512
     n_heads: int = 8
     dim_feedforward: int = 3200
     feedforward_activation: str = "relu"

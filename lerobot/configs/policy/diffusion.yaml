@@ -46,8 +46,6 @@ override_dataset_stats:
 policy:
   name: diffusion
 
-  pretrained_model_path:
-
   # Input / output structure.
   n_obs_steps: 2
   horizon: 16

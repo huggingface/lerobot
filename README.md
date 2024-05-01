@@ -135,16 +135,16 @@ Check out [examples](./examples) to see how you can load a pretrained policy fro
 Or you can achieve the same result by executing our script from the command line:
 ```bash
 python lerobot/scripts/eval.py \
---hub-id lerobot/diffusion_policy_pusht_image \
+-p lerobot/diffusion_policy_pusht_image \
 eval_episodes=10 \
 hydra.run.dir=outputs/eval/example_hub
 ```
 
 After training your own policy, you can also re-evaluate the checkpoints with:
+
 ```bash
 python lerobot/scripts/eval.py \
---config PATH/TO/FOLDER/config.yaml \
-policy.pretrained_model_path=PATH/TO/FOLDER/weights.pth \
+-p PATH/TO/TRAIN/OUTPUT/FOLDER \
 eval_episodes=10 \
 hydra.run.dir=outputs/eval/example_dir
 ```
@@ -246,29 +246,22 @@ Once you have trained a policy you may upload it to the HuggingFace hub.
 
 Firstly, make sure you have a model repository set up on the hub. The hub ID looks like HF_USER/REPO_NAME.
 
-Secondly, assuming you have trained a policy, you need:
+Secondly, assuming you have trained a policy, you need the following (which should all be in any of the subdirectories of `checkpoints` in your training output folder, if you've used the LeRobot training script):
 
-- `config.yaml` which you can get from the `.hydra` directory of your training output folder.
-- `model.pt` which should be one of the saved models in the `models` directory of your training output folder (they won't be named `model.pt` but you will need to choose one).
+- `config.json`: A serialized version of the policy configuration (following the policy's dataclass config).
+- `model.safetensors`: The `torch.nn.Module` parameters saved in [Hugging Face Safetensors](https://huggingface.co/docs/safetensors/index) format.
+- `config.yaml`: This is the consolidated Hydra training configuration containing the policy, environment, and dataset configs. The policy configuration should match `config.json` exactly. The environment config is useful for anyone who wants to evaluate your policy. The dataset config just serves as a paper trail for reproducibility.
 
-To upload these to the hub, prepare a folder with the following structure (you can use symlinks rather than copying):
-
-```
-to_upload
-    ├── config.yaml
-    └── model.pt
-```
-
-With the folder prepared, run the following with a desired revision ID.
+To upload these to the hub, run the following with a desired revision ID.
 
 ```bash
-huggingface-cli upload $HUB_ID to_upload --revision $REVISION_ID
+huggingface-cli upload $HUB_ID PATH/TO/OUTPUT/DIR --revision $REVISION_ID
 ```
 
 If you want this to be the default revision also run the following (don't worry, it won't upload the files again; it will just adjust the file pointers):
 
 ```bash
-huggingface-cli upload $HUB_ID to_upload
+huggingface-cli upload $HUB_ID PATH/TO/OUTPUT/DIR
 ```
 
 See `eval.py` for an example of how a user may use your policy.

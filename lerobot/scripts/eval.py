@@ -1,30 +1,29 @@
 """Evaluate a policy on an environment by running rollouts and computing metrics.
 
-The script may be run in one of two ways:
+Usage examples:
 
-1. By providing the path to a config file with the --config argument.
-2. By providing a HuggingFace Hub ID with the --hub-id argument. You may also provide a revision number with the
-    --revision argument.
+You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/diffusion_policy_pusht_image)
+for 10 episodes.
 
-In either case, it is possible to override config arguments by adding a list of config.key=value arguments.
+```
+python lerobot/scripts/eval.py -p lerobot/diffusion_policy_pusht_image eval.n_episodes=10
+```
 
-Examples:
-
-You have a specific config file to go with trained model weights, and want to run 10 episodes.
+OR, you want to evaluate a model checkpoint from the LeRobot training script for 10 episodes.
 
 ```
 python lerobot/scripts/eval.py \
---config PATH/TO/FOLDER/config.yaml \
-policy.pretrained_model_path=PATH/TO/FOLDER/weights.pth \
-eval.n_episodes=10
+    -p outputs/train/diffusion_policy_pusht_image/checkpoints/005000 \
+    eval.n_episodes=10
 ```
 
-You have a HuggingFace Hub ID, you know which revision you want, and want to run 10 episodes (note that in this case,
-you don't need to specify which weights to use):
+Note that in both examples, the repo/folder should contain at least `config.json`, `config.yaml` and
+`model.safetensors`.
 
-```
-python lerobot/scripts/eval.py --hub-id HUB/ID --revision v1.0 eval.n_episodes=10
-```
+Note the formatting for providing the number of episodes. Generally, you may provide any number of arguments
+with `qualified.parameter.name=value`. In this case, the parameter eval.n_episodes appears as `n_episodes`
+nested under `eval` in the `config.yaml` found at
+https://huggingface.co/lerobot/diffusion_policy_pusht_image/tree/main.
 """
 
 import argparse
@@ -42,9 +41,12 @@ import numpy as np
 import torch
 from datasets import Dataset, Features, Image, Sequence, Value
 from huggingface_hub import snapshot_download
+from huggingface_hub.utils._errors import RepositoryNotFoundError
+from huggingface_hub.utils._validators import HFValidationError
 from PIL import Image as PILImage
 from tqdm import trange
 
+from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.utils import hf_transform_to_torch
 from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.utils import postprocess_action, preprocess_observation
@@ -349,26 +351,41 @@ def eval_policy(
     return info
 
 
-def eval(cfg: dict, out_dir=None):
+def eval(
+    pretrained_policy_path: str | None = None,
+    hydra_cfg_path: str | None = None,
+    config_overrides: list[str] | None = None,
+):
+    assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
+    if hydra_cfg_path is None:
+        hydra_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", config_overrides)
+    else:
+        hydra_cfg = init_hydra_config(hydra_cfg_path, config_overrides)
+    out_dir = (
+        f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
+    )
+
     if out_dir is None:
         raise NotImplementedError()
 
-    init_logging()
-
     # Check device is available
-    get_safe_torch_device(cfg.device, log=True)
+    get_safe_torch_device(hydra_cfg.device, log=True)
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    set_global_seed(cfg.seed)
+    set_global_seed(hydra_cfg.seed)
 
     log_output_dir(out_dir)
 
     logging.info("Making environment.")
-    env = make_env(cfg, num_parallel_envs=cfg.eval.n_episodes)
+    env = make_env(hydra_cfg, num_parallel_envs=hydra_cfg.eval.n_episodes)
 
     logging.info("Making policy.")
-    policy = make_policy(cfg)
+    if hydra_cfg_path is None:
+        policy = make_policy(hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
+    else:
+        # Note: We need the dataset stats to pass to the policy's normalization modules.
+        policy = make_policy(hydra_cfg=hydra_cfg, dataset_stats=make_dataset(hydra_cfg).stats)
 
     info = eval_policy(
         env,
@@ -376,7 +393,7 @@ def eval(cfg: dict, out_dir=None):
         max_episodes_rendered=10,
         video_dir=Path(out_dir) / "eval",
         return_episode_data=False,
-        seed=cfg.seed,
+        seed=hydra_cfg.seed,
     )
     print(info["aggregated"])
 
@@ -390,13 +407,29 @@ def eval(cfg: dict, out_dir=None):
 
 
 if __name__ == "__main__":
+    init_logging()
+
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--config", help="Path to a specific yaml config you want to use.")
-    group.add_argument("--hub-id", help="HuggingFace Hub ID for a pretrained model.")
-    parser.add_argument("--revision", help="Optionally provide the HuggingFace Hub revision ID.")
+    group.add_argument(
+        "-p",
+        "--pretrained-policy-name-or-path",
+        help=(
+            "Either the repo ID of a model hosted on the Hub or a path to a directory containing weights "
+            "saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch "
+            "(useful for debugging). This argument is mutually exclusive with `--config`."
+        ),
+    )
+    group.add_argument(
+        "--config",
+        help=(
+            "Path to a yaml config you want to use for initializing a policy from scratch (useful for "
+            "debugging). This argument is mutually exclusive with `--pretrained-policy-name-or-path` (`-p`)."
+        ),
+    )
+    parser.add_argument("--revision", help="Optionally provide the Hugging Face Hub revision ID.")
     parser.add_argument(
         "overrides",
         nargs="*",
@@ -404,16 +437,28 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    if args.config is not None:
-        # Note: For the config_path, Hydra wants a path relative to this script file.
-        cfg = init_hydra_config(args.config, args.overrides)
-    elif args.hub_id is not None:
-        folder = Path(snapshot_download(args.hub_id, revision=args.revision))
-        cfg = init_hydra_config(
-            folder / "config.yaml", [f"policy.pretrained_model_path={folder / 'model.pt'}", *args.overrides]
-        )
+    if args.pretrained_policy_name_or_path is None:
+        eval(hydra_cfg_path=args.config, config_overrides=args.overrides)
+    else:
+        try:
+            pretrained_policy_path = Path(
+                snapshot_download(args.pretrained_policy_name_or_path, revision=args.revision)
+            )
+        except HFValidationError:
+            logging.warning(
+                "The provided pretrained_policy_name_or_path is not a valid Hugging Face Hub repo ID. "
+                "Treating it as a local directory."
+            )
+        except RepositoryNotFoundError:
+            logging.warning(
+                "The provided pretrained_policy_name_or_path was not found on the Hugging Face Hub. Treating "
+                "it as a local directory."
+            )
+        pretrained_policy_path = Path(args.pretrained_policy_name_or_path)
+        if not pretrained_policy_path.is_dir() or not pretrained_policy_path.exists():
+            raise ValueError(
+                "The provided pretrained_policy_name_or_path is not a valid/existing Hugging Face Hub "
+                "repo ID, nor is it an existing local directory."
+            )
 
-    eval(
-        cfg,
-        out_dir=f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{cfg.env.name}_{cfg.policy.name}",
-    )
+        eval(pretrained_policy_path=pretrained_policy_path, config_overrides=args.overrides)
