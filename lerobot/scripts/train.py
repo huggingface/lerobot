@@ -340,7 +340,14 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
         if cfg.training.save_model and step % cfg.training.save_freq == 0:
             logging.info(f"Checkpoint policy after step {step}")
-            logger.save_model(policy, identifier=step)
+            # Note: Save with step as the identifier, and format it to have at least 6 digits but more if
+            # needed (choose 6 as a minimum for consistency without being overkill).
+            logger.save_model(
+                policy,
+                identifier=str(step).zfill(
+                    min(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
+                ),
+            )
             logging.info("Resume training")
 
     # create dataloader for offline training

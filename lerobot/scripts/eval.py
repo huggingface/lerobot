@@ -13,7 +13,7 @@ OR, you want to evaluate a model checkpoint from the LeRobot training script for
 
 ```
 python lerobot/scripts/eval.py \
-    -p outputs/train/diffusion_policy_pusht_image/checkpoints/5000 \
+    -p outputs/train/diffusion_policy_pusht_image/checkpoints/005000 \
     eval.n_episodes=10
 ```
 

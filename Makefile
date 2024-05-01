@@ -43,11 +43,10 @@ test-act-ete-train:
 
 test-act-ete-eval:
 	python lerobot/scripts/eval.py \
-		--config tests/outputs/act/.hydra/config.yaml \
+		-p tests/outputs/act/checkpoints/000002 \
 		eval.n_episodes=1 \
 		env.episode_length=8 \
 		device=cpu \
-		policy.pretrained_model_path=tests/outputs/act/models/2.pt
 
 test-diffusion-ete-train:
 	python lerobot/scripts/train.py \
@@ -65,11 +64,10 @@ test-diffusion-ete-train:
 
 test-diffusion-ete-eval:
 	python lerobot/scripts/eval.py \
-		--config tests/outputs/diffusion/.hydra/config.yaml \
+		--config tests/outputs/diffusion/checkpoints/000002 \
 		eval.n_episodes=1 \
 		env.episode_length=8 \
 		device=cpu \
-		policy.pretrained_model_path=tests/outputs/diffusion/models/2.pt
 
 test-tdmpc-ete-train:
 	python lerobot/scripts/train.py \
@@ -88,8 +86,7 @@ test-tdmpc-ete-train:
 
 test-tdmpc-ete-eval:
 	python lerobot/scripts/eval.py \
-		--config tests/outputs/tdmpc/.hydra/config.yaml \
+		--config tests/outputs/tdmpc/checkpoints/000002 \
 		eval.n_episodes=1 \
 		env.episode_length=8 \
 		device=cpu \
-		policy.pretrained_model_path=tests/outputs/tdmpc/models/2.pt
