@@ -77,15 +77,15 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
                     save_images_concurrently(imgs_array, tmp_imgs_dir)
 
                     # encode images to a mp4 video
-                    fname = f"observation.image_episode_{ep_idx:06d}.mp4"
+                    fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
                     video_path = out_dir / "videos" / fname
                     encode_video_frames(tmp_imgs_dir, video_path, fps)
 
                     # clean temporary images directory
                     shutil.rmtree(tmp_imgs_dir)
 
-                    # store the episode idx
-                    ep_dict["observation.image"] = [
+                    # store the reference to the video frame
+                    ep_dict[img_key] = [
                         {"path": f"videos/{fname}", "timestamp": i / fps} for i in range(num_frames)
                     ]
                 else:

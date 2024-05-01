@@ -73,12 +73,6 @@ def decode_video_frames_torchvision(
     # TODO(rcadene): also load audio stream at the same time
     reader = torchvision.io.VideoReader(video_path, "video")
 
-    def round_timestamp(ts):
-        # sanity preprocessing (e.g. 3.60000003 -> 3.6000, 0.0666666667 -> 0.0667)
-        return round(ts, 4)
-
-    timestamps = [round_timestamp(ts) for ts in timestamps]
-
     # set the first and last requested timestamps
     # Note: previous timestamps are usually loaded, since we need to access the previous key frame
     first_ts = timestamps[0]
