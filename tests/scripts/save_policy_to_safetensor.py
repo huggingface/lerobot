@@ -11,14 +11,15 @@ from lerobot.scripts.train import make_optimizer
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE
 
 
-def get_policy_stats(env_name, policy_name):
+def get_policy_stats(env_name, policy_name, extra_overrides=None):
     cfg = init_hydra_config(
         DEFAULT_CONFIG_PATH,
         overrides=[
             f"env={env_name}",
             f"policy={policy_name}",
             f"device={DEVICE}",
-        ],
+        ]
+        + extra_overrides,
     )
     set_global_seed(1337)
     dataset = make_dataset(cfg)
@@ -36,6 +37,7 @@ def get_policy_stats(env_name, policy_name):
 
     batch = next(iter(dataloader))
     output_dict = policy.forward(batch)
+    output_dict = {k: v for k, v in output_dict.items() if isinstance(v, torch.Tensor)}
     loss = output_dict["loss"]
 
     loss.backward()
@@ -43,13 +45,15 @@ def get_policy_stats(env_name, policy_name):
     for key, param in policy.named_parameters():
         if param.requires_grad:
             grad_stats[f"{key}_mean"] = param.grad.mean()
-            grad_stats[f"{key}_std"] = param.grad.std()
+            grad_stats[f"{key}_std"] = (
+                param.grad.std() if param.grad.numel() > 1 else torch.tensor(float(0.0))
+            )
 
     optimizer.step()
     param_stats = {}
     for key, param in policy.named_parameters():
         param_stats[f"{key}_mean"] = param.mean()
-        param_stats[f"{key}_std"] = param.std()
+        param_stats[f"{key}_std"] = param.std() if param.numel() > 1 else torch.tensor(float(0.0))
 
     optimizer.zero_grad()
     policy.reset()
@@ -62,18 +66,21 @@ def get_policy_stats(env_name, policy_name):
         if k in ["observation.image", "observation.images.top", "observation.state"]
     }
 
-    actions = {str(i): policy.select_action(obs).contiguous() for i in range(cfg.policy.n_action_steps)}
+    actions_queue = (
+        cfg.policy.n_action_steps if "n_action_steps" in cfg.policy else cfg.policy.n_action_repeats
+    )
+    actions = {str(i): policy.select_action(obs).contiguous() for i in range(actions_queue)}
     return output_dict, grad_stats, param_stats, actions
 
 
-def save_policy_to_safetensors(output_dir, env_name, policy_name):
+def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_overrides):
     env_policy_dir = Path(output_dir) / f"{env_name}_{policy_name}"
 
     if env_policy_dir.exists():
         shutil.rmtree(env_policy_dir)
 
     env_policy_dir.mkdir(parents=True, exist_ok=True)
-    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name)
+    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name, extra_overrides)
     save_file(output_dict, env_policy_dir / "output_dict.safetensors")
     save_file(grad_stats, env_policy_dir / "grad_stats.safetensors")
     save_file(param_stats, env_policy_dir / "param_stats.safetensors")
@@ -82,9 +89,9 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name):
 
 if __name__ == "__main__":
     env_policies = [
-        ("xarm", "tdmpc"),
-        # ("pusht", "diffusion"),
-        # ("aloha", "act"),
+        ("xarm", "tdmpc", []),
+        ("pusht", "diffusion", ["policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"]),
+        ("aloha", "act", []),
     ]
-    for env, policy in env_policies:
-        save_policy_to_safetensors("tests/data/save_policy_to_safetensors", env, policy)
+    for env, policy, extra_overrides in env_policies:
+        save_policy_to_safetensors("tests/data/save_policy_to_safetensors", env, policy, extra_overrides)

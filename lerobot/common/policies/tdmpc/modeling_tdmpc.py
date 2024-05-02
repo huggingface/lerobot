@@ -80,7 +80,8 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         self.config = config
         self.model = TDMPCTOLD(config)
         self.model_target = deepcopy(self.model)
-        self.model_target.eval()
+        for param in self.model_target.parameters():
+            param.requires_grad = False
 
         if config.input_normalization_modes is not None:
             self.normalize_inputs = Normalize(
