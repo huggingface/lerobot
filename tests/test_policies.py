@@ -244,6 +244,8 @@ def test_normalize(insert_temporal_dim):
         ("aloha", "act", []),
     ],
 )
+# As artifacts have been generated on an x86_64 kernel, this test won't
+# pass if it's run on another platform due to floating point errors
 @require_x86_64_kernel
 def test_backward_compatibility(env_name, policy_name, extra_overrides):
     env_policy_dir = Path("tests/data/save_policy_to_safetensors") / f"{env_name}_{policy_name}"
