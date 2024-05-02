@@ -61,6 +61,7 @@ def get_policy_stats(env_name, policy_name, extra_overrides=None):
     optimizer.zero_grad()
     policy.reset()
 
+    # HACK: We reload a batch with no delta_timestamps as `select_action` won't expect a timestamps dimension
     dataset.delta_timestamps = None
     batch = next(iter(dataloader))
     for key in batch:

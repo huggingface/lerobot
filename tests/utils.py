@@ -9,6 +9,21 @@ DEFAULT_CONFIG_PATH = "lerobot/configs/default.yaml"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def require_cpu(func):
+    """
+    Decorator that skips the test if device is not cpu.
+    """
+    from functools import wraps
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if DEVICE != "cpu":
+            pytest.skip("requires cpu")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
 def require_cuda(func):
     """
     Decorator that skips the test if cuda is not available.
