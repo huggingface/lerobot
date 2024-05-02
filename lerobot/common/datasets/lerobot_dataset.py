@@ -48,7 +48,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.info["fps"]
 
     @property
-    def video(self) -> int:
+    def video(self) -> bool:
         """Returns True if this dataset loads video frames from mp4 files.
         Returns False if it only loads images from png files.
         """
@@ -84,8 +84,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     @property
     def tolerance_s(self) -> float:
-        # to account for possible numerical error
-        return 1e-4
+        """Tolerance in seconds used to discard loaded frames when their timestamps
+        are not close enough from the requested frames. It is only used when `delta_timestamps`
+        is provided or when loading video frames from mp4 files.
+        """
+        # 1e-4 to account for possible numerical error
+        return 1 / self.fps - 1e-4
 
     def __len__(self):
         return self.num_samples
