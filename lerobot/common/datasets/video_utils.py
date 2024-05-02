@@ -105,6 +105,9 @@ def decode_video_frames_torchvision(
         if current_ts >= last_ts:
             break
 
+    reader.container.close()
+    reader = None
+
     query_ts = torch.tensor(timestamps)
     loaded_ts = torch.tensor(loaded_ts)
 

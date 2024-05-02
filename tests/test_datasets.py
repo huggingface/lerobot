@@ -91,7 +91,6 @@ def test_factory(env_name, repo_id, policy_name):
             assert key in item, f"{key}"
 
 
-@pytest.mark.skip(reason="TODO(rcadene): Test is super slow during CI, but locally it runs fast")
 def test_compute_stats_on_xarm():
     """Check that the statistics are computed correctly according to the stats_patterns property.
 
