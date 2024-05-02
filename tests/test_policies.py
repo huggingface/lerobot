@@ -16,7 +16,7 @@ from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import init_hydra_config
 from tests.scripts.save_policy_to_safetensor import get_policy_stats
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_cuda, require_env
+from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_env
 
 
 @pytest.mark.parametrize("policy_name", available_policies)
@@ -237,22 +237,21 @@ def test_normalize(insert_temporal_dim):
 
 
 @pytest.mark.parametrize(
-    "env_name,policy_name",
+    "env_name, policy_name, extra_overrides",
     [
-        ("xarm", "tdmpc"),
-        ("pusht", "diffusion"),
-        ("aloha", "act"),
+        ("xarm", "tdmpc", []),
+        ("pusht", "diffusion", ["policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"]),
+        ("aloha", "act", []),
     ],
 )
-@require_cuda
-def test_backward_compatibility(env_name, policy_name):
+def test_backward_compatibility(env_name, policy_name, extra_overrides):
     env_policy_dir = Path("tests/data/save_policy_to_safetensors") / f"{env_name}_{policy_name}"
     saved_output_dict = load_file(env_policy_dir / "output_dict.safetensors")
     saved_grad_stats = load_file(env_policy_dir / "grad_stats.safetensors")
     saved_param_stats = load_file(env_policy_dir / "param_stats.safetensors")
     saved_actions = load_file(env_policy_dir / "actions.safetensors")
 
-    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name)
+    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name, extra_overrides)
 
     for key in saved_output_dict:
         assert torch.isclose(output_dict[key], saved_output_dict[key]).all()
