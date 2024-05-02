@@ -8,7 +8,7 @@ from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils.utils import init_hydra_config, set_global_seed
 from lerobot.scripts.train import make_optimizer
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE
+from tests.utils import DEFAULT_CONFIG_PATH
 
 
 def get_policy_stats(env_name, policy_name, extra_overrides=None):
@@ -17,7 +17,7 @@ def get_policy_stats(env_name, policy_name, extra_overrides=None):
         overrides=[
             f"env={env_name}",
             f"policy={policy_name}",
-            f"device={DEVICE}",
+            "device=cpu",
         ]
         + extra_overrides,
     )
@@ -25,7 +25,7 @@ def get_policy_stats(env_name, policy_name, extra_overrides=None):
     dataset = make_dataset(cfg)
     policy = make_policy(cfg, dataset_stats=dataset.stats)
     policy.train()
-    policy.to(DEVICE)
+    # policy.to(DEVICE)
     optimizer, _ = make_optimizer(cfg, policy)
 
     dataloader = torch.utils.data.DataLoader(
@@ -36,8 +36,8 @@ def get_policy_stats(env_name, policy_name, extra_overrides=None):
     )
 
     batch = next(iter(dataloader))
-    for key in batch:
-        batch[key] = batch[key].to(DEVICE)
+    # for key in batch:
+    #     batch[key] = batch[key].to(DEVICE)
 
     output_dict = policy.forward(batch)
     output_dict = {k: v for k, v in output_dict.items() if isinstance(v, torch.Tensor)}
@@ -64,8 +64,8 @@ def get_policy_stats(env_name, policy_name, extra_overrides=None):
     # HACK: We reload a batch with no delta_timestamps as `select_action` won't expect a timestamps dimension
     dataset.delta_timestamps = None
     batch = next(iter(dataloader))
-    for key in batch:
-        batch[key] = batch[key].to(DEVICE)
+    # for key in batch:
+    #     batch[key] = batch[key].to(DEVICE)
     obs = {
         k: batch[k]
         for k in batch
