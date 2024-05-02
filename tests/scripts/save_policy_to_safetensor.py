@@ -36,6 +36,9 @@ def get_policy_stats(env_name, policy_name, extra_overrides=None):
     )
 
     batch = next(iter(dataloader))
+    for key in batch:
+        batch[key] = batch[key].to(DEVICE)
+
     output_dict = policy.forward(batch)
     output_dict = {k: v for k, v in output_dict.items() if isinstance(v, torch.Tensor)}
     loss = output_dict["loss"]
@@ -60,6 +63,8 @@ def get_policy_stats(env_name, policy_name, extra_overrides=None):
 
     dataset.delta_timestamps = None
     batch = next(iter(dataloader))
+    for key in batch:
+        batch[key] = batch[key].to(DEVICE)
     obs = {
         k: batch[k]
         for k in batch
