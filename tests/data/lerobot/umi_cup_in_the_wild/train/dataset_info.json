@@ -2,6 +2,9 @@
   "citation": "",
   "description": "",
   "features": {
+    "observation.image": {
+      "_type": "VideoFrame"
+    },
     "observation.state": {
       "feature": {
         "dtype": "float32",
@@ -57,9 +60,6 @@
     "index": {
       "dtype": "int64",
       "_type": "Value"
-    },
-    "observation.image": {
-      "_type": "Image"
     }
   },
   "homepage": "",
