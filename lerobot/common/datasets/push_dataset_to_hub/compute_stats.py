@@ -51,7 +51,9 @@ def get_stats_einops_patterns(dataset: LeRobotDataset | datasets.Dataset):
     return stats_patterns
 
 
-def compute_stats(dataset: LeRobotDataset | datasets.Dataset, batch_size=32, max_num_samples=None):
+def compute_stats(
+    dataset: LeRobotDataset | datasets.Dataset, batch_size=32, num_workers=16, max_num_samples=None
+):
     if max_num_samples is None:
         max_num_samples = len(dataset)
 
@@ -70,7 +72,7 @@ def compute_stats(dataset: LeRobotDataset | datasets.Dataset, batch_size=32, max
         generator.manual_seed(seed)
         dataloader = torch.utils.data.DataLoader(
             dataset,
-            num_workers=16,
+            num_workers=num_workers,
             batch_size=batch_size,
             shuffle=True,
             drop_last=False,

@@ -1,5 +1,5 @@
 """
-Use this script to convert your dataset into LeRobot dataset format  and upload it to the Hugging Face hub,
+Use this script to convert your dataset into LeRobot dataset format and upload it to the Hugging Face hub,
 or store it locally. LeRobot dataset format is lightweight, fast to load from, and does not require any
 installation of neural net specific packages like pytorch, tensorflow, jax.
 
@@ -53,6 +53,7 @@ python lerobot/scripts/push_dataset_to_hub.py \
 
 import argparse
 import json
+import logging
 import shutil
 from pathlib import Path
 
@@ -99,10 +100,13 @@ def save_meta_data(info, stats, episode_data_index, meta_data_dir):
     save_file(episode_data_index, ep_data_idx_path)
 
 
-def push_meta_data_to_hub(meta_data_dir, repo_id, revision):
+def push_meta_data_to_hub(repo_id, meta_data_dir, revision):
+    """Expect all meta data files to be all stored in a single "meta_data" directory.
+    On the hugging face repositery, they will be uploaded in a "meta_data" directory at the root.
+    """
     api = HfApi()
 
-    def upload(filename, revision):
+    def upload_meta_data(filename, revision):
         api.upload_file(
             path_or_fileobj=meta_data_dir / filename,
             path_in_repo=f"meta_data/{filename}",
@@ -111,12 +115,34 @@ def push_meta_data_to_hub(meta_data_dir, repo_id, revision):
             repo_type="dataset",
         )
 
-    upload("info.json", "main")
-    upload("info.json", revision)
-    upload("stats.safetensors", "main")
-    upload("stats.safetensors", revision)
-    upload("episode_data_index.safetensors", "main")
-    upload("episode_data_index.safetensors", revision)
+    upload_meta_data("info.json", revision)
+    upload_meta_data("stats.safetensors", revision)
+    upload_meta_data("episode_data_index.safetensors", revision)
+
+
+def push_videos_to_hub(repo_id, videos_dir, revision):
+    """Expect mp4 files to be all stored in a single "videos" directory.
+    On the hugging face repositery, they will be uploaded in a "videos" directory at the root.
+    """
+    api = HfApi()
+
+    def upload_video(filename, revision):
+        api.upload_file(
+            path_or_fileobj=videos_dir / filename,
+            path_in_repo=f"videos/{filename}",
+            repo_id=repo_id,
+            revision=revision,
+            repo_type="dataset",
+        )
+
+    for i, path in enumerate(videos_dir.glob("*.mp4")):
+        upload_video(path.name, revision)
+
+        if i == 10000:
+            # TODO(rcadene): implement sharding
+            logging.warning(
+                "You are updating more than 10000 video files that will be stored inside a single directory. You might experience slower loading time during training. Consider sharding: dividing files across multiple smaller directories."
+            )
 
 
 def push_dataset_to_hub(
@@ -131,6 +157,8 @@ def push_dataset_to_hub(
     save_tests_to_disk: bool,
     fps: int | None,
     video: bool,
+    batch_size: int,
+    num_workers: int,
     debug: bool,
 ):
     repo_id = f"{community_id}/{dataset_id}"
@@ -171,7 +199,7 @@ def push_dataset_to_hub(
         info=info,
         videos_dir=videos_dir,
     )
-    stats = compute_stats(lerobot_dataset)
+    stats = compute_stats(lerobot_dataset, batch_size, num_workers)
 
     if save_to_disk:
         hf_dataset = hf_dataset.with_format(None)  # to remove transforms that cant be saved
@@ -182,12 +210,15 @@ def push_dataset_to_hub(
         save_meta_data(info, stats, episode_data_index, meta_data_dir)
 
     if not dry_run:
-        repo_id = f"{community_id}/{dataset_id}"
         hf_dataset.push_to_hub(repo_id, token=True, revision="main")
         hf_dataset.push_to_hub(repo_id, token=True, revision=revision)
-        push_meta_data_to_hub(repo_id, meta_data_dir)
+
+        push_meta_data_to_hub(repo_id, meta_data_dir, revision="main")
+        push_meta_data_to_hub(repo_id, meta_data_dir, revision=revision)
+
         if video:
-            push_meta_data_to_hub(repo_id, videos_dir)
+            push_videos_to_hub(repo_id, videos_dir, revision="main")
+            push_videos_to_hub(repo_id, videos_dir, revision=revision)
 
     if save_tests_to_disk:
         # get the first episode
@@ -269,6 +300,18 @@ def main():
         type=int,
         default=1,
         help="Convert each episode of the raw dataset to an mp4 video. This option allows 60 times lower disk space consumption and 25 faster loading time during training.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Batch size loaded by DataLoader for computing the dataset statistics.",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=16,
+        help="Number of processes of Dataloader for computing the dataset statistics.",
     )
     parser.add_argument(
         "--debug",
