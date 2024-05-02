@@ -8,7 +8,7 @@ If you know that your change will break backward compatibility, you should write
 doesnt need to be merged into the `main` branch. Then you need to run this script and update the tests artifacts.
 
 Example usage:
-    `python tests/script/save_dataset_to_safetensors.py`
+    `python tests/scripts/save_dataset_to_safetensors.py`
 """
 
 import os

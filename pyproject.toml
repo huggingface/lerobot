@@ -56,7 +56,8 @@ pytest = {version = "^8.1.0", optional = true}
 pytest-cov = {version = "^5.0.0", optional = true}
 datasets = "^2.19.0"
 imagecodecs = { version = "^2024.1.1", optional = true }
-torchaudio = "^2.3.0"
+pyav = "^12.0.5"
+moviepy = "^1.0.3"
 
 
 [tool.poetry.extras]

@@ -1,5 +1,5 @@
 """
-Use this script to convert your dataset into LeRobot dataset format  and upload it to the Hugging Face hub,
+Use this script to convert your dataset into LeRobot dataset format and upload it to the Hugging Face hub,
 or store it locally. LeRobot dataset format is lightweight, fast to load from, and does not require any
 installation of neural net specific packages like pytorch, tensorflow, jax.
 
@@ -60,8 +60,10 @@ import torch
 from huggingface_hub import HfApi
 from safetensors.torch import save_file
 
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.push_dataset_to_hub._download_raw import download_raw
-from lerobot.common.datasets.utils import compute_stats, flatten_dict
+from lerobot.common.datasets.push_dataset_to_hub.compute_stats import compute_stats
+from lerobot.common.datasets.utils import flatten_dict
 
 
 def get_from_raw_to_lerobot_format_fn(raw_format):
@@ -97,24 +99,34 @@ def save_meta_data(info, stats, episode_data_index, meta_data_dir):
     save_file(episode_data_index, ep_data_idx_path)
 
 
-def push_meta_data_to_hub(meta_data_dir, repo_id, revision):
+def push_meta_data_to_hub(repo_id, meta_data_dir, revision):
+    """Expect all meta data files to be all stored in a single "meta_data" directory.
+    On the hugging face repositery, they will be uploaded in a "meta_data" directory at the root.
+    """
     api = HfApi()
+    api.upload_folder(
+        folder_path=meta_data_dir,
+        path_in_repo="meta_data",
+        repo_id=repo_id,
+        revision=revision,
+        repo_type="dataset",
+        allow_patterns=["*.json, *.safetensors"],
+    )
 
-    def upload(filename, revision):
-        api.upload_file(
-            path_or_fileobj=meta_data_dir / filename,
-            path_in_repo=f"meta_data/{filename}",
-            repo_id=repo_id,
-            revision=revision,
-            repo_type="dataset",
-        )
 
-    upload("info.json", "main")
-    upload("info.json", revision)
-    upload("stats.safetensors", "main")
-    upload("stats.safetensors", revision)
-    upload("episode_data_index.safetensors", "main")
-    upload("episode_data_index.safetensors", revision)
+def push_videos_to_hub(repo_id, videos_dir, revision):
+    """Expect mp4 files to be all stored in a single "videos" directory.
+    On the hugging face repositery, they will be uploaded in a "videos" directory at the root.
+    """
+    api = HfApi()
+    api.upload_folder(
+        folder_path=videos_dir,
+        path_in_repo="videos",
+        repo_id=repo_id,
+        revision=revision,
+        repo_type="dataset",
+        allow_patterns="*.mp4",
+    )
 
 
 def push_dataset_to_hub(
@@ -129,16 +141,21 @@ def push_dataset_to_hub(
     save_tests_to_disk: bool,
     fps: int | None,
     video: bool,
+    batch_size: int,
+    num_workers: int,
     debug: bool,
 ):
+    repo_id = f"{community_id}/{dataset_id}"
+
     raw_dir = data_dir / f"{dataset_id}_raw"
 
-    out_dir = data_dir / community_id / dataset_id
+    out_dir = data_dir / repo_id
     meta_data_dir = out_dir / "meta_data"
     videos_dir = out_dir / "videos"
 
-    tests_out_dir = tests_data_dir / community_id / dataset_id
+    tests_out_dir = tests_data_dir / repo_id
     tests_meta_data_dir = tests_out_dir / "meta_data"
+    tests_videos_dir = tests_out_dir / "videos"
 
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -159,7 +176,15 @@ def push_dataset_to_hub(
     # convert dataset from original raw format to LeRobot format
     hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(raw_dir, out_dir, fps, video, debug)
 
-    stats = compute_stats(hf_dataset)
+    lerobot_dataset = LeRobotDataset.from_preloaded(
+        repo_id=repo_id,
+        version=revision,
+        hf_dataset=hf_dataset,
+        episode_data_index=episode_data_index,
+        info=info,
+        videos_dir=videos_dir,
+    )
+    stats = compute_stats(lerobot_dataset, batch_size, num_workers)
 
     if save_to_disk:
         hf_dataset = hf_dataset.with_format(None)  # to remove transforms that cant be saved
@@ -170,12 +195,15 @@ def push_dataset_to_hub(
         save_meta_data(info, stats, episode_data_index, meta_data_dir)
 
     if not dry_run:
-        repo_id = f"{community_id}/{dataset_id}"
         hf_dataset.push_to_hub(repo_id, token=True, revision="main")
         hf_dataset.push_to_hub(repo_id, token=True, revision=revision)
-        push_meta_data_to_hub(repo_id, meta_data_dir)
+
+        push_meta_data_to_hub(repo_id, meta_data_dir, revision="main")
+        push_meta_data_to_hub(repo_id, meta_data_dir, revision=revision)
+
         if video:
-            push_meta_data_to_hub(repo_id, videos_dir)
+            push_videos_to_hub(repo_id, videos_dir, revision="main")
+            push_videos_to_hub(repo_id, videos_dir, revision=revision)
 
     if save_tests_to_disk:
         # get the first episode
@@ -186,9 +214,14 @@ def push_dataset_to_hub(
         test_hf_dataset.save_to_disk(str(tests_out_dir / "train"))
 
         # copy meta data to tests directory
-        if Path(tests_meta_data_dir).exists():
-            shutil.rmtree(tests_meta_data_dir)
         shutil.copytree(meta_data_dir, tests_meta_data_dir)
+
+        # copy videos of first episode to tests directory
+        episode_index = 0
+        tests_videos_dir.mkdir(parents=True, exist_ok=True)
+        for key in lerobot_dataset.video_frame_keys:
+            fname = f"{key}_episode_{episode_index:06d}.mp4"
+            shutil.copy(videos_dir / fname, tests_videos_dir / fname)
 
 
 def main():
@@ -255,9 +288,20 @@ def main():
     parser.add_argument(
         "--video",
         type=int,
-        # TODO(rcadene): enable when video PR merges
-        default=0,
+        default=1,
         help="Convert each episode of the raw dataset to an mp4 video. This option allows 60 times lower disk space consumption and 25 faster loading time during training.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Batch size loaded by DataLoader for computing the dataset statistics.",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=16,
+        help="Number of processes of Dataloader for computing the dataset statistics.",
     )
     parser.add_argument(
         "--debug",

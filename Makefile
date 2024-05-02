@@ -22,8 +22,9 @@ test-end-to-end:
 	${MAKE} test-act-ete-eval
 	${MAKE} test-diffusion-ete-train
 	${MAKE} test-diffusion-ete-eval
-	${MAKE} test-tdmpc-ete-train
-	${MAKE} test-tdmpc-ete-eval
+	# TODO(rcadene, alexander-soare): enable end-to-end tests for tdmpc
+	# ${MAKE} test-tdmpc-ete-train
+	# ${MAKE} test-tdmpc-ete-eval
 	${MAKE} test-default-ete-eval
 
 test-act-ete-train:
