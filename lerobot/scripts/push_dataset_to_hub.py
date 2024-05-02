@@ -53,7 +53,6 @@ python lerobot/scripts/push_dataset_to_hub.py \
 
 import argparse
 import json
-import logging
 import shutil
 from pathlib import Path
 
@@ -105,19 +104,14 @@ def push_meta_data_to_hub(repo_id, meta_data_dir, revision):
     On the hugging face repositery, they will be uploaded in a "meta_data" directory at the root.
     """
     api = HfApi()
-
-    def upload_meta_data(filename, revision):
-        api.upload_file(
-            path_or_fileobj=meta_data_dir / filename,
-            path_in_repo=f"meta_data/{filename}",
-            repo_id=repo_id,
-            revision=revision,
-            repo_type="dataset",
-        )
-
-    upload_meta_data("info.json", revision)
-    upload_meta_data("stats.safetensors", revision)
-    upload_meta_data("episode_data_index.safetensors", revision)
+    api.upload_folder(
+        folder_path=meta_data_dir,
+        path_in_repo="meta_data",
+        repo_id=repo_id,
+        revision=revision,
+        repo_type="dataset",
+        allow_patterns=["*.json, *.safetensors"],
+    )
 
 
 def push_videos_to_hub(repo_id, videos_dir, revision):
@@ -125,24 +119,14 @@ def push_videos_to_hub(repo_id, videos_dir, revision):
     On the hugging face repositery, they will be uploaded in a "videos" directory at the root.
     """
     api = HfApi()
-
-    def upload_video(filename, revision):
-        api.upload_file(
-            path_or_fileobj=videos_dir / filename,
-            path_in_repo=f"videos/{filename}",
-            repo_id=repo_id,
-            revision=revision,
-            repo_type="dataset",
-        )
-
-    for i, path in enumerate(videos_dir.glob("*.mp4")):
-        upload_video(path.name, revision)
-
-        if i == 10000:
-            # TODO(rcadene): implement sharding
-            logging.warning(
-                "You are updating more than 10000 video files that will be stored inside a single directory. You might experience slower loading time during training. Consider sharding: dividing files across multiple smaller directories."
-            )
+    api.upload_folder(
+        folder_path=videos_dir,
+        path_in_repo="videos",
+        repo_id=repo_id,
+        revision=revision,
+        repo_type="dataset",
+        allow_patterns="*.mp4",
+    )
 
 
 def push_dataset_to_hub(
