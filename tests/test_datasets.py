@@ -115,7 +115,7 @@ def test_compute_stats_on_xarm():
     # get all frames from the dataset in the same dtype and range as during compute_stats
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=8,
+        num_workers=1,
         batch_size=len(dataset),
         shuffle=False,
     )
