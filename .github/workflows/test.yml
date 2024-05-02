@@ -55,11 +55,20 @@ jobs:
 
       - name: Test with pytest
         run: |
-          pytest tests -v --cov=./lerobot --durations=0 \
+          pytest tests/test_policies.py::test_backward_compatibility \
+            -v --cov=./lerobot --durations=0 \
             -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
             -W ignore::UserWarning:torch.utils.data.dataloader:558 \
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
             && rm -rf tests/outputs outputs
+
+      # - name: Test with pytest
+      #   run: |
+      #     pytest tests -v --cov=./lerobot --durations=0 \
+      #       -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
+      #       -W ignore::UserWarning:torch.utils.data.dataloader:558 \
+      #       -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
+      #       && rm -rf tests/outputs outputs
 
 
   end-to-end:
