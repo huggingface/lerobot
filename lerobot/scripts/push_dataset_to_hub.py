@@ -155,6 +155,7 @@ def push_dataset_to_hub(
 
     tests_out_dir = tests_data_dir / repo_id
     tests_meta_data_dir = tests_out_dir / "meta_data"
+    tests_videos_dir = tests_out_dir / "videos"
 
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -213,9 +214,14 @@ def push_dataset_to_hub(
         test_hf_dataset.save_to_disk(str(tests_out_dir / "train"))
 
         # copy meta data to tests directory
-        if Path(tests_meta_data_dir).exists():
-            shutil.rmtree(tests_meta_data_dir)
         shutil.copytree(meta_data_dir, tests_meta_data_dir)
+
+        # copy videos of first episode to tests directory
+        episode_index = 0
+        tests_videos_dir.mkdir(parents=True, exist_ok=True)
+        for key in lerobot_dataset.video_frame_keys:
+            fname = f"{key}_episode_{episode_index:06d}.mp4"
+            shutil.copytree(videos_dir, tests_videos_dir / fname)
 
 
 def main():
