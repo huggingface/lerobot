@@ -91,7 +91,6 @@ def test_factory(env_name, repo_id, policy_name):
             assert key in item, f"{key}"
 
 
-@pytest.mark.skip(reason="TODO(rcadene): Test is super slow during CI, but locally it runs fast")
 def test_compute_stats_on_xarm():
     """Check that the statistics are computed correctly according to the stats_patterns property.
 
@@ -108,7 +107,7 @@ def test_compute_stats_on_xarm():
     # Note: we set the batch size to be smaller than the whole dataset to make sure we are testing batched
     # computation of the statistics. While doing this, we also make sure it works when we don't divide the
     # dataset into even batches.
-    computed_stats = compute_stats(dataset, batch_size=int(len(dataset) * 0.25))
+    computed_stats = compute_stats(dataset, batch_size=int(len(dataset) * 0.25), num_workers=0)
 
     # get einops patterns to aggregate batches and compute statistics
     stats_patterns = get_stats_einops_patterns(dataset)
@@ -116,7 +115,7 @@ def test_compute_stats_on_xarm():
     # get all frames from the dataset in the same dtype and range as during compute_stats
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=1,
+        num_workers=0,
         batch_size=len(dataset),
         shuffle=False,
     )

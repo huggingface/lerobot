@@ -11,7 +11,7 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.video_utils import VideoFrame
 
 
-def get_stats_einops_patterns(dataset: LeRobotDataset | datasets.Dataset):
+def get_stats_einops_patterns(dataset: LeRobotDataset | datasets.Dataset, num_workers=0):
     """These einops patterns will be used to aggregate batches and compute statistics.
 
     Note: We assume the images are in channel first format
@@ -19,7 +19,7 @@ def get_stats_einops_patterns(dataset: LeRobotDataset | datasets.Dataset):
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=1,  # do not set to 0 when using `load_from_videos`
+        num_workers=num_workers,
         batch_size=2,
         shuffle=False,
     )
@@ -57,7 +57,8 @@ def compute_stats(
     if max_num_samples is None:
         max_num_samples = len(dataset)
 
-    stats_patterns = get_stats_einops_patterns(dataset)
+    # for more info on why we need to set the same number of workers, see `load_from_videos`
+    stats_patterns = get_stats_einops_patterns(dataset, num_workers)
 
     # mean and std will be computed incrementally while max and min will track the running value.
     mean, std, max, min = {}, {}, {}, {}
