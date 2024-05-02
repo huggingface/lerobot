@@ -221,7 +221,7 @@ def push_dataset_to_hub(
         tests_videos_dir.mkdir(parents=True, exist_ok=True)
         for key in lerobot_dataset.video_frame_keys:
             fname = f"{key}_episode_{episode_index:06d}.mp4"
-            shutil.copytree(videos_dir, tests_videos_dir / fname)
+            shutil.copy(videos_dir / fname, tests_videos_dir / fname)
 
 
 def main():
