@@ -25,7 +25,7 @@ from lerobot.common.utils.utils import (
 from lerobot.scripts.eval import eval_policy
 
 
-def make_optimizer(cfg, policy):
+def make_optimizer_and_scheduler(cfg, policy):
     if cfg.policy.name == "act":
         optimizer_params_dicts = [
             {
@@ -321,7 +321,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
-    optimizer, lr_scheduler = make_optimizer(cfg, policy)
+    optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
