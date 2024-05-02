@@ -130,7 +130,9 @@ def load_videos(repo_id, version, root) -> Path:
     if root is not None:
         path = Path(root) / repo_id / "videos"
     else:
-        path = snapshot_download(repo_id, allow_patterns="*.mp4", repo_type="dataset", revision=version)
+        # TODO(rcadene): we download the whole repo here. see if we can avoid this
+        repo_dir = snapshot_download(repo_id, repo_type="dataset", revision=version)
+        path = Path(repo_dir) / "videos"
 
     return path
 

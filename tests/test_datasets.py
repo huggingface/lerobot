@@ -15,10 +15,12 @@ from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.lerobot_dataset import (
     LeRobotDataset,
 )
-from lerobot.common.datasets.utils import (
+from lerobot.common.datasets.push_dataset_to_hub.compute_stats import (
     compute_stats,
-    flatten_dict,
     get_stats_einops_patterns,
+)
+from lerobot.common.datasets.utils import (
+    flatten_dict,
     hf_transform_to_torch,
     load_previous_and_future_frames,
     unflatten_dict,
