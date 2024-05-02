@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class ActionChunkingTransformerConfig:
+class ACTConfig:
     """Configuration class for the Action Chunking Transformers policy.
 
     Defaults are configured for training on bimanual Aloha tasks like "insertion" or "transfer".
@@ -22,23 +22,24 @@ class ActionChunkingTransformerConfig:
             The key represents the input data name, and the value is a list indicating the dimensions
             of the corresponding data. For example, "observation.images.top" refers to an input from the
             "top" camera with dimensions [3, 96, 96], indicating it has three color channels and 96x96 resolution.
-            Importantly, shapes doesnt include batch dimension or temporal dimension.
+            Importantly, shapes doesn't include batch dimension or temporal dimension.
         output_shapes: A dictionary defining the shapes of the output data for the policy.
             The key represents the output data name, and the value is a list indicating the dimensions
             of the corresponding data. For example, "action" refers to an output shape of [14], indicating
-            14-dimensional actions. Importantly, shapes doesnt include batch dimension or temporal dimension.
-        normalize_input_modes: A dictionary with key represents the modality (e.g. "observation.state"),
-            and the value specifies the normalization mode to apply. The two availables
-            modes are "mean_std" which substracts the mean and divide by the standard
-            deviation and "min_max" which rescale in a [-1, 1] range.
-        unnormalize_output_modes: Similar dictionary as `normalize_input_modes`, but to unormalize in original scale.
+            14-dimensional actions. Importantly, shapes doesn't include batch dimension or temporal dimension.
+        input_normalization_modes: A dictionary with key representing the modality (e.g. "observation.state"),
+            and the value specifies the normalization mode to apply. The two available modes are "mean_std"
+            which subtracts the mean and divides by the standard deviation and "min_max" which rescale in a
+            [-1, 1] range.
+        output_normalization_modes: Similar dictionary as `normalize_input_modes`, but to unnormalize to the
+            original scale. Note that this is also used for normalizing the training targets.
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
         pretrained_backbone_weights: Pretrained weights from torchvision to initalize the backbone.
             `None` means no pretrained weights.
         replace_final_stride_with_dilation: Whether to replace the ResNet's final 2x2 stride with a dilated
             convolution.
         pre_norm: Whether to use "pre-norm" in the transformer blocks.
-        d_model: The transformer blocks' main hidden dimension.
+        dim_model: The transformer blocks' main hidden dimension.
         n_heads: The number of heads to use in the transformer blocks' multi-head attention.
         dim_feedforward: The dimension to expand the transformer's hidden dimension to in the feed-forward
             layers.
@@ -62,13 +63,13 @@ class ActionChunkingTransformerConfig:
     chunk_size: int = 100
     n_action_steps: int = 100
 
-    input_shapes: dict[str, list[str]] = field(
+    input_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {
             "observation.images.top": [3, 480, 640],
             "observation.state": [14],
         }
     )
-    output_shapes: dict[str, list[str]] = field(
+    output_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {
             "action": [14],
         }
@@ -94,7 +95,7 @@ class ActionChunkingTransformerConfig:
     replace_final_stride_with_dilation: int = False
     # Transformer layers.
     pre_norm: bool = False
-    d_model: int = 512
+    dim_model: int = 512
     n_heads: int = 8
     dim_feedforward: int = 3200
     feedforward_activation: str = "relu"
@@ -111,15 +112,6 @@ class ActionChunkingTransformerConfig:
     # Training and loss computation.
     dropout: float = 0.1
     kl_weight: float = 10.0
-
-    # ---
-    # TODO(alexander-soare): Remove these from the policy config.
-    batch_size: int = 8
-    lr: float = 1e-5
-    lr_backbone: float = 1e-5
-    weight_decay: float = 1e-4
-    grad_clip_norm: float = 10
-    utd: int = 1
 
     def __post_init__(self):
         """Input validation (not exhaustive)."""

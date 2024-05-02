@@ -39,14 +39,14 @@ def test_examples_3_and_2():
             ("training_steps = 5000", "training_steps = 1"),
             ("num_workers=4", "num_workers=0"),
             ('device = torch.device("cuda")', 'device = torch.device("cpu")'),
-            ("batch_size=cfg.batch_size", "batch_size=1"),
+            ("batch_size=64", "batch_size=1"),
         ],
     )
 
     # Pass empty globals to allow dictionary comprehension https://stackoverflow.com/a/32897127/4391249.
     exec(file_contents, {})
 
-    for file_name in ["model.pt", "config.yaml"]:
+    for file_name in ["model.safetensors", "config.json", "config.yaml"]:
         assert Path(f"outputs/train/example_pusht_diffusion/{file_name}").exists()
 
     path = "examples/2_evaluate_pretrained_policy.py"
@@ -58,15 +58,15 @@ def test_examples_3_and_2():
     file_contents = _find_and_replace(
         file_contents,
         [
-            ('"eval_episodes=10"', '"eval_episodes=1"'),
-            ('"rollout_batch_size=10"', '"rollout_batch_size=1"'),
-            ('"device=cuda"', '"device=cpu"'),
+            ('pretrained_policy_name = "lerobot/diffusion_policy_pusht_image"', ""),
+            ("pretrained_policy_path = Path(snapshot_download(pretrained_policy_name))", ""),
             (
-                '# folder = Path("outputs/train/example_pusht_diffusion")',
-                'folder = Path("outputs/train/example_pusht_diffusion")',
+                '# pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")',
+                'pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")',
             ),
-            ('hub_id = "lerobot/diffusion_policy_pusht_image"', ""),
-            ("folder = Path(snapshot_download(hub_id)", ""),
+            ('"eval.n_episodes=10"', '"eval.n_episodes=1"'),
+            ('"eval.batch_size=10"', '"eval.batch_size=1"'),
+            ('"device=cuda"', '"device=cpu"'),
         ],
     )
 

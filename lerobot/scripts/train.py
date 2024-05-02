@@ -15,6 +15,7 @@ from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
+from lerobot.common.policies.policy_protocol import PolicyWithUpdate
 from lerobot.common.utils.utils import (
     format_big_number,
     get_safe_torch_device,
@@ -39,11 +40,16 @@ def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
 
     optimizer.step()
     optimizer.zero_grad()
+
     if lr_scheduler is not None:
         lr_scheduler.step()
 
     if hasattr(policy, "ema") and policy.ema is not None:
         policy.ema.step(policy.diffusion)
+
+    if isinstance(policy, PolicyWithUpdate):
+        # To possibly update an internal buffer (for instance an Exponential Moving Average like in TDMPC).
+        policy.update()
 
     info = {
         "loss": loss.item(),
@@ -81,7 +87,7 @@ def log_train_info(logger, info, step, cfg, dataset, is_offline):
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
-    num_samples = (step + 1) * cfg.policy.batch_size
+    num_samples = (step + 1) * cfg.training.batch_size
     avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
@@ -117,7 +123,7 @@ def log_eval_info(logger, info, step, cfg, dataset, is_offline):
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
-    num_samples = (step + 1) * cfg.policy.batch_size
+    num_samples = (step + 1) * cfg.training.batch_size
     avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
@@ -246,10 +252,11 @@ def train(cfg: dict, out_dir=None, job_name=None):
         raise NotImplementedError()
     if job_name is None:
         raise NotImplementedError()
-    if cfg.online_steps > 0:
-        assert cfg.rollout_batch_size == 1, "rollout_batch_size > 1 not supported for online training steps"
 
     init_logging()
+
+    if cfg.training.online_steps > 0 and cfg.eval.batch_size > 1:
+        logging.warning("eval.batch_size > 1 not supported for online training steps")
 
     # Check device is available
     get_safe_torch_device(cfg.device, log=True)
@@ -262,10 +269,10 @@ def train(cfg: dict, out_dir=None, job_name=None):
     offline_dataset = make_dataset(cfg)
 
     logging.info("make_env")
-    env = make_env(cfg, num_parallel_envs=cfg.eval_episodes)
+    env = make_env(cfg, num_parallel_envs=cfg.eval.n_episodes)
 
     logging.info("make_policy")
-    policy = make_policy(cfg, dataset_stats=offline_dataset.stats)
+    policy = make_policy(hydra_cfg=cfg, dataset_stats=offline_dataset.stats)
 
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
@@ -282,34 +289,33 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 "params": [
                     p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad
                 ],
-                "lr": cfg.policy.lr_backbone,
+                "lr": cfg.training.lr_backbone,
             },
         ]
         optimizer = torch.optim.AdamW(
-            optimizer_params_dicts, lr=cfg.policy.lr, weight_decay=cfg.policy.weight_decay
+            optimizer_params_dicts, lr=cfg.training.lr, weight_decay=cfg.training.weight_decay
         )
         lr_scheduler = None
     elif cfg.policy.name == "diffusion":
         optimizer = torch.optim.Adam(
             policy.diffusion.parameters(),
-            cfg.policy.lr,
-            cfg.policy.adam_betas,
-            cfg.policy.adam_eps,
-            cfg.policy.adam_weight_decay,
+            cfg.training.lr,
+            cfg.training.adam_betas,
+            cfg.training.adam_eps,
+            cfg.training.adam_weight_decay,
         )
-        # TODO(rcadene): modify lr scheduler so that it doesn't depend on epochs but steps
-        # configure lr scheduler
+        assert cfg.training.online_steps == 0, "Diffusion Policy does not handle online training."
         lr_scheduler = get_scheduler(
-            cfg.policy.lr_scheduler,
+            cfg.training.lr_scheduler,
             optimizer=optimizer,
-            num_warmup_steps=cfg.policy.lr_warmup_steps,
-            num_training_steps=cfg.offline_steps,
-            # pytorch assumes stepping LRScheduler every epoch
-            # however huggingface diffusers steps it every batch
-            last_epoch=-1,
+            num_warmup_steps=cfg.training.lr_warmup_steps,
+            num_training_steps=cfg.training.offline_steps,
         )
     elif policy.name == "tdmpc":
-        raise NotImplementedError("TD-MPC not implemented yet.")
+        optimizer = torch.optim.Adam(policy.parameters(), cfg.training.lr)
+        lr_scheduler = None
+    else:
+        raise NotImplementedError()
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
@@ -319,8 +325,8 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     log_output_dir(out_dir)
     logging.info(f"{cfg.env.task=}")
-    logging.info(f"{cfg.offline_steps=} ({format_big_number(cfg.offline_steps)})")
-    logging.info(f"{cfg.online_steps=}")
+    logging.info(f"{cfg.training.offline_steps=} ({format_big_number(cfg.training.offline_steps)})")
+    logging.info(f"{cfg.training.online_steps=}")
     logging.info(f"{offline_dataset.num_samples=} ({format_big_number(offline_dataset.num_samples)})")
     logging.info(f"{offline_dataset.num_episodes=}")
     logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
@@ -328,7 +334,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     # Note: this helper will be used in offline and online training loops.
     def _maybe_eval_and_maybe_save(step):
-        if step % cfg.eval_freq == 0:
+        if step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             eval_info = eval_policy(
                 env,
@@ -342,37 +348,44 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 logger.log_video(eval_info["videos"][0], step, mode="eval")
             logging.info("Resume training")
 
-        if cfg.save_model and step % cfg.save_freq == 0:
+        if cfg.training.save_model and step % cfg.training.save_freq == 0:
             logging.info(f"Checkpoint policy after step {step}")
-            logger.save_model(policy, identifier=step)
+            # Note: Save with step as the identifier, and format it to have at least 6 digits but more if
+            # needed (choose 6 as a minimum for consistency without being overkill).
+            logger.save_model(
+                policy,
+                identifier=str(step).zfill(
+                    max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
+                ),
+            )
             logging.info("Resume training")
 
     # create dataloader for offline training
     dataloader = torch.utils.data.DataLoader(
         offline_dataset,
-        num_workers=8,
-        batch_size=cfg.policy.batch_size,
+        num_workers=4,
+        batch_size=cfg.training.batch_size,
         shuffle=True,
         pin_memory=cfg.device != "cpu",
         drop_last=False,
     )
     dl_iter = cycle(dataloader)
 
+    policy.train()
     step = 0  # number of policy update (forward + backward + optim)
     is_offline = True
-    for offline_step in range(cfg.offline_steps):
+    for offline_step in range(cfg.training.offline_steps):
         if offline_step == 0:
             logging.info("Start offline training on a fixed dataset")
-        policy.train()
         batch = next(dl_iter)
 
         for key in batch:
             batch[key] = batch[key].to(cfg.device, non_blocking=True)
 
-        train_info = update_policy(policy, batch, optimizer, cfg.policy.grad_clip_norm, lr_scheduler)
+        train_info = update_policy(policy, batch, optimizer, cfg.training.grad_clip_norm, lr_scheduler)
 
         # TODO(rcadene): is it ok if step_t=0 = 0 and not 1 as previously done?
-        if step % cfg.log_freq == 0:
+        if step % cfg.training.log_freq == 0:
             log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline)
 
         # Note: _maybe_eval_and_maybe_save happens **after** the `step`th training update has completed, so we pass in
@@ -398,7 +411,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
         num_workers=4,
-        batch_size=cfg.policy.batch_size,
+        batch_size=cfg.training.batch_size,
         sampler=sampler,
         pin_memory=cfg.device != "cpu",
         drop_last=False,
@@ -407,10 +420,11 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     online_step = 0
     is_offline = False
-    for env_step in range(cfg.online_steps):
+    for env_step in range(cfg.training.online_steps):
         if env_step == 0:
             logging.info("Start online training by interacting with environment")
 
+        policy.eval()
         with torch.no_grad():
             eval_info = eval_policy(
                 rollout_env,
@@ -419,25 +433,25 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 seed=cfg.seed,
             )
 
-            add_episodes_inplace(
-                online_dataset,
-                concat_dataset,
-                sampler,
-                hf_dataset=eval_info["episodes"]["hf_dataset"],
-                episode_data_index=eval_info["episodes"]["episode_data_index"],
-                pc_online_samples=cfg.get("demo_schedule", 0.5),
-            )
+        add_episodes_inplace(
+            online_dataset,
+            concat_dataset,
+            sampler,
+            hf_dataset=eval_info["episodes"]["hf_dataset"],
+            episode_data_index=eval_info["episodes"]["episode_data_index"],
+            pc_online_samples=cfg.training.online_sampling_ratio,
+        )
 
-        for _ in range(cfg.policy.utd):
-            policy.train()
+        policy.train()
+        for _ in range(cfg.training.online_steps_between_rollouts):
             batch = next(dl_iter)
 
             for key in batch:
                 batch[key] = batch[key].to(cfg.device, non_blocking=True)
 
-            train_info = update_policy(policy, batch, optimizer, cfg.policy.grad_clip_norm, lr_scheduler)
+            train_info = update_policy(policy, batch, optimizer, cfg.training.grad_clip_norm, lr_scheduler)
 
-            if step % cfg.log_freq == 0:
+            if step % cfg.training.log_freq == 0:
                 log_train_info(logger, train_info, step, cfg, online_dataset, is_offline)
 
             # Note: _maybe_eval_and_maybe_save happens **after** the `step`th training update has completed, so we pass
