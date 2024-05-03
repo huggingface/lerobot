@@ -239,13 +239,9 @@ def test_normalize(insert_temporal_dim):
 @pytest.mark.parametrize(
     "env_name, policy_name, extra_overrides",
     [
-        ("xarm", "tdmpc", ["policy.n_action_repeats=2"]),
-        (
-            "pusht",
-            "diffusion",
-            ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
-        ),
-        ("aloha", "act", ["policy.n_action_steps=10"]),
+        ("xarm", "tdmpc", []),
+        ("pusht", "diffusion", ["policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"]),
+        ("aloha", "act", []),
     ],
 )
 # As artifacts have been generated on an x86_64 kernel, this test won't
