@@ -89,9 +89,13 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_override
 
 if __name__ == "__main__":
     env_policies = [
-        ("xarm", "tdmpc", []),
-        ("pusht", "diffusion", ["policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"]),
-        ("aloha", "act", []),
+        ("xarm", "tdmpc", ["policy.n_action_repeats=2"]),
+        (
+            "pusht",
+            "diffusion",
+            ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
+        ),
+        ("aloha", "act", ["policy.n_action_steps=10"]),
     ]
     for env, policy, extra_overrides in env_policies:
         save_policy_to_safetensors("tests/data/save_policy_to_safetensors", env, policy, extra_overrides)
