@@ -1,13 +1,17 @@
 import importlib
 
 import gymnasium as gym
+from omegaconf import DictConfig
 
 
-def make_env(cfg, num_parallel_envs=0) -> gym.Env | gym.vector.SyncVectorEnv:
+def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv:
+    """Makes a gym vector environment according to the evaluation config.
+
+    n_envs can be used to override eval.batch_size in the configuration. Must be at least 1.
     """
-    Note: When `num_parallel_envs > 0`, this function returns a `SyncVectorEnv` which takes batched action as input and
-    returns batched observation, reward, terminated, truncated of `num_parallel_envs` items.
-    """
+    if n_envs is not None and n_envs < 1:
+        raise ValueError("`n_envs must be at least 1")
+
     kwargs = {
         "obs_type": "pixels_agent_pos",
         "render_mode": "rgb_array",
@@ -28,16 +32,13 @@ def make_env(cfg, num_parallel_envs=0) -> gym.Env | gym.vector.SyncVectorEnv:
 
     gym_handle = f"{package_name}/{cfg.env.task}"
 
-    if num_parallel_envs == 0:
-        # non-batched version of the env that returns an observation of shape (c)
-        env = gym.make(gym_handle, disable_env_checker=True, **kwargs)
-    else:
-        # batched version of the env that returns an observation of shape (b, c)
-        env = gym.vector.SyncVectorEnv(
-            [
-                lambda: gym.make(gym_handle, disable_env_checker=True, **kwargs)
-                for _ in range(num_parallel_envs)
-            ]
-        )
+    # batched version of the env that returns an observation of shape (b, c)
+    env_cls = gym.vector.AsyncVectorEnv if cfg.eval.use_async_envs else gym.vector.SyncVectorEnv
+    env = env_cls(
+        [
+            lambda: gym.make(gym_handle, disable_env_checker=True, **kwargs)
+            for _ in range(n_envs if n_envs is not None else cfg.eval.batch_size)
+        ]
+    )
 
     return env

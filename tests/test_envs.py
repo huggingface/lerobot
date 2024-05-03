@@ -37,7 +37,7 @@ def test_factory(env_name):
         overrides=[f"env={env_name}", f"device={DEVICE}"],
     )
 
-    env = make_env(cfg, num_parallel_envs=1)
+    env = make_env(cfg, n_envs=1)
     obs, _ = env.reset()
     obs = preprocess_observation(obs)
 

@@ -8,6 +8,7 @@ training:
   eval_freq: 5000
   online_steps_between_rollouts: 1
   online_sampling_ratio: 0.5
+  online_env_seed: 10000
 
   batch_size: 256
   grad_clip_norm: 10.0

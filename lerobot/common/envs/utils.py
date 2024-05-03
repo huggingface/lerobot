@@ -1,15 +1,23 @@
 import einops
+import numpy as np
 import torch
+from torch import Tensor
 
 
-def preprocess_observation(observation):
+def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
+    """Convert environment observation to LeRobot format observation.
+    Args:
+        observation: Dictionary of observation batches from a Gym vector environment.
+    Returns:
+        Dictionary of observation batches with keys renamed to LeRobot format and values as tensors.
+    """
     # map to expected inputs for the policy
-    obs = {}
+    return_observations = {}
 
-    if isinstance(observation["pixels"], dict):
-        imgs = {f"observation.images.{key}": img for key, img in observation["pixels"].items()}
+    if isinstance(observations["pixels"], dict):
+        imgs = {f"observation.images.{key}": img for key, img in observations["pixels"].items()}
     else:
-        imgs = {"observation.image": observation["pixels"]}
+        imgs = {"observation.image": observations["pixels"]}
 
     for imgkey, img in imgs.items():
         img = torch.from_numpy(img)
@@ -26,17 +34,10 @@ def preprocess_observation(observation):
         img = img.type(torch.float32)
         img /= 255
 
-        obs[imgkey] = img
+        return_observations[imgkey] = img
 
-    # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing requirement for "agent_pos"
-    obs["observation.state"] = torch.from_numpy(observation["agent_pos"]).float()
+    # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
+    # requirement for "agent_pos"
+    return_observations["observation.state"] = torch.from_numpy(observations["agent_pos"]).float()
 
-    return obs
-
-
-def postprocess_action(action):
-    action = action.to("cpu").numpy()
-    assert (
-        action.ndim == 2
-    ), "we assume dimensions are respectively the number of parallel envs, action dimensions"
-    return action
+    return return_observations

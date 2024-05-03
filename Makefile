@@ -35,6 +35,7 @@ test-act-ete-train:
 		training.offline_steps=2 \
 		training.online_steps=0 \
 		eval.n_episodes=1 \
+		eval.batch_size=1 \
 		device=cpu \
 		training.save_model=true \
 		training.save_freq=2 \
@@ -47,6 +48,7 @@ test-act-ete-eval:
 	python lerobot/scripts/eval.py \
 		-p tests/outputs/act/checkpoints/000002 \
 		eval.n_episodes=1 \
+		eval.batch_size=1 \
 		env.episode_length=8 \
 		device=cpu \
 
@@ -58,6 +60,7 @@ test-diffusion-ete-train:
 		training.offline_steps=2 \
 		training.online_steps=0 \
 		eval.n_episodes=1 \
+		eval.batch_size=1 \
 		device=cpu \
 		training.save_model=true \
 		training.save_freq=2 \
@@ -68,6 +71,7 @@ test-diffusion-ete-eval:
 	python lerobot/scripts/eval.py \
 		-p tests/outputs/diffusion/checkpoints/000002 \
 		eval.n_episodes=1 \
+		eval.batch_size=1 \
 		env.episode_length=8 \
 		device=cpu \
 
@@ -81,6 +85,7 @@ test-tdmpc-ete-train:
 		training.offline_steps=2 \
 		training.online_steps=2 \
 		eval.n_episodes=1 \
+		eval.batch_size=1 \
 		env.episode_length=2 \
 		device=cpu \
 		training.save_model=true \
@@ -92,6 +97,7 @@ test-tdmpc-ete-eval:
 	python lerobot/scripts/eval.py \
 		-p tests/outputs/tdmpc/checkpoints/000002 \
 		eval.n_episodes=1 \
+		eval.batch_size=1 \
 		env.episode_length=8 \
 		device=cpu \
 
@@ -100,5 +106,6 @@ test-default-ete-eval:
 	python lerobot/scripts/eval.py \
 		--config lerobot/configs/default.yaml \
 		eval.n_episodes=1 \
+		eval.batch_size=1 \
 		env.episode_length=8 \
 		device=cpu \

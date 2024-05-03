@@ -28,6 +28,7 @@ training:
 
 eval:
   n_episodes: 50
+  batch_size: 50
 
 override_dataset_stats:
   # TODO(rcadene, alexander-soare): should we remove image stats as well? do we use a pretrained vision model?

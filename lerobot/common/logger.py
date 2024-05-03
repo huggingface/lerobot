@@ -115,7 +115,7 @@ class Logger:
             for k, v in d.items():
                 self._wandb.log({f"{mode}/{k}": v}, step=step)
 
-    def log_video(self, video, step, mode="train"):
+    def log_video(self, video_path: str, step: int, mode: str = "train"):
         assert mode in {"train", "eval"}
-        wandb_video = self._wandb.Video(video, fps=self._cfg.fps, format="mp4")
+        wandb_video = self._wandb.Video(video_path, fps=self._cfg.fps, format="mp4")
         self._wandb.log({f"{mode}/video": wandb_video}, step=step)
