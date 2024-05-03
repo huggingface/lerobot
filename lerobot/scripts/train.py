@@ -12,7 +12,7 @@ from diffusers.optimization import get_scheduler
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.utils import cycle
-from lerobot.common.envs.factory import make_envs
+from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import PolicyWithUpdate
@@ -269,7 +269,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     offline_dataset = make_dataset(cfg)
 
     logging.info("make_env")
-    eval_envs = make_envs(cfg)
+    eval_env = make_env(cfg)
 
     logging.info("make_policy")
     policy = make_policy(hydra_cfg=cfg, dataset_stats=offline_dataset.stats)
@@ -337,7 +337,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
         if step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             eval_info = eval_policy(
-                eval_envs,
+                eval_env,
                 policy,
                 cfg.eval.n_episodes,
                 video_dir=Path(out_dir) / "eval",
@@ -396,7 +396,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
         step += 1
 
     # create an env dedicated to online episodes collection from policy rollout
-    online_training_envs = make_envs(cfg, n_envs=1)
+    online_training_env = make_env(cfg, n_envs=1)
 
     # create an empty online dataset similar to offline dataset
     online_dataset = deepcopy(offline_dataset)
@@ -428,7 +428,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
         policy.eval()
         with torch.no_grad():
             eval_info = eval_policy(
-                online_training_envs,
+                online_training_env,
                 policy,
                 n_episodes=1,
                 return_episode_data=True,
@@ -464,8 +464,8 @@ def train(cfg: dict, out_dir=None, job_name=None):
             step += 1
             online_step += 1
 
-    eval_envs.close()
-    online_training_envs.close()
+    eval_env.close()
+    online_training_env.close()
     logging.info("End of training")
 
 

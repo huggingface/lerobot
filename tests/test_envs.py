@@ -6,8 +6,8 @@ import torch
 from gymnasium.utils.env_checker import check_env
 
 import lerobot
-from lerobot.common.envs.factory import make_envs
-from lerobot.common.envs.utils import preprocess_observations
+from lerobot.common.envs.factory import make_env
+from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.utils.utils import init_hydra_config
 
 from .utils import DEFAULT_CONFIG_PATH, DEVICE, require_env
@@ -37,9 +37,9 @@ def test_factory(env_name):
         overrides=[f"env={env_name}", f"device={DEVICE}"],
     )
 
-    env = make_envs(cfg, n_envs=1)
+    env = make_env(cfg, n_envs=1)
     obs, _ = env.reset()
-    obs = preprocess_observations(obs)
+    obs = preprocess_observation(obs)
 
     # test image keys are float32 in range [0,1]
     for key in obs:

@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 
 
-def preprocess_observations(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
+def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
     """Convert environment observation to LeRobot format observation.
     Args:
         observation: Dictionary of observation batches from a Gym vector environment.

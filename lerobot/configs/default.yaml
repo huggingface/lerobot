@@ -10,7 +10,7 @@ hydra:
     name: default
 
 device: cuda  # cpu
-# Seed used for training (eg: model initialization, dataset shuffling)
+# `seed` is used for training (eg: model initialization, dataset shuffling)
 # AND for the evaluation environments.
 seed: ???
 dataset_repo_id: lerobot/pusht
@@ -20,7 +20,7 @@ training:
   online_steps: ???
   online_steps_between_rollouts: ???
   online_sampling_ratio: 0.5
-  # Seed used for environments for online training data rollouts.
+  # `online_env_seed` is used for environments for online training data rollouts.
   online_env_seed: ???
   eval_freq: ???
   save_freq: ???
@@ -29,9 +29,9 @@ training:
 
 eval:
   n_episodes: 1
-  # Number of environments to use in a gym.vector.VectorEnv.
+  # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
   batch_size: 1
-  # Whether to use asynchronous environments (multiprocessing).
+  # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
   use_async_envs: false
 
 wandb:
