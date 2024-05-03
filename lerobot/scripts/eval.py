@@ -349,7 +349,6 @@ def eval_policy(
         progbar.set_postfix(
             {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
         )
-        progbar.update()
 
     # Wait till all video rendering threads are done.
     for thread in threads:
