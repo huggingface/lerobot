@@ -16,9 +16,7 @@ from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episod
 from lerobot.common.datasets.utils import (
     hf_transform_to_torch,
 )
-
-# TODO(rcadene): enable for PR video dataset
-# from lerobot.common.datasets.video_utils import encode_video_frames
+from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
 
 def check_format(raw_dir) -> bool:
@@ -79,14 +77,17 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
                     save_images_concurrently(imgs_array, tmp_imgs_dir)
 
                     # encode images to a mp4 video
-                    video_path = out_dir / "videos" / f"{img_key}_episode_{ep_idx:06d}.mp4"
-                    encode_video_frames(tmp_imgs_dir, video_path, fps)  # noqa: F821
+                    fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
+                    video_path = out_dir / "videos" / fname
+                    encode_video_frames(tmp_imgs_dir, video_path, fps)
 
                     # clean temporary images directory
                     shutil.rmtree(tmp_imgs_dir)
 
-                    # store the episode idx
-                    ep_dict[img_key] = torch.tensor([ep_idx] * num_frames, dtype=torch.int)
+                    # store the reference to the video frame
+                    ep_dict[img_key] = [
+                        {"path": f"videos/{fname}", "timestamp": i / fps} for i in range(num_frames)
+                    ]
                 else:
                     ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
 
@@ -122,7 +123,7 @@ def to_hf_dataset(data_dict, video) -> Dataset:
     image_keys = [key for key in data_dict if "observation.images." in key]
     for image_key in image_keys:
         if video:
-            features[image_key] = Value(dtype="int64", id="video")
+            features[image_key] = VideoFrame()
         else:
             features[image_key] = Image()
 

@@ -1,3 +1,6 @@
+# TODO(rcadene, alexander-soare): clean this file
+"""Borrowed from https://github.com/fyhMer/fowm/blob/main/src/logger.py"""
+
 import logging
 import os
 from pathlib import Path

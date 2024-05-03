@@ -14,9 +14,7 @@ from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episod
 from lerobot.common.datasets.utils import (
     hf_transform_to_torch,
 )
-
-# TODO(rcadene): enable for PR video dataset
-# from lerobot.common.datasets.video_utils import encode_video_frames
+from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
 
 def check_format(raw_dir):
@@ -76,26 +74,28 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
         ep_dict = {}
 
         imgs_array = [x.numpy() for x in image]
+        img_key = "observation.image"
         if video:
             # save png images in temporary directory
             tmp_imgs_dir = out_dir / "tmp_images"
             save_images_concurrently(imgs_array, tmp_imgs_dir)
 
             # encode images to a mp4 video
-            video_path = out_dir / "videos" / f"observation.image_episode_{ep_idx:06d}.mp4"
-            encode_video_frames(tmp_imgs_dir, video_path, fps)  # noqa: F821
+            fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
+            video_path = out_dir / "videos" / fname
+            encode_video_frames(tmp_imgs_dir, video_path, fps)
 
             # clean temporary images directory
             shutil.rmtree(tmp_imgs_dir)
 
-            # store the episode index
-            ep_dict["observation.image"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int)
+            # store the reference to the video frame
+            ep_dict[img_key] = [{"path": f"videos/{fname}", "timestamp": i / fps} for i in range(num_frames)]
         else:
-            ep_dict["observation.image"] = [PILImage.fromarray(x) for x in imgs_array]
+            ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
 
         ep_dict["observation.state"] = state
         ep_dict["action"] = action
-        ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int)
+        ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int64)
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
         ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
         # ep_dict["next.observation.image"] = next_image
@@ -122,7 +122,7 @@ def to_hf_dataset(data_dict, video):
     features = {}
 
     if video:
-        features["observation.image"] = Value(dtype="int64", id="video")
+        features["observation.image"] = VideoFrame()
     else:
         features["observation.image"] = Image()
 

@@ -3,7 +3,7 @@
   "description": "",
   "features": {
     "observation.images.top": {
-      "_type": "Image"
+      "_type": "VideoFrame"
     },
     "observation.state": {
       "feature": {

@@ -3,7 +3,7 @@
   "description": "",
   "features": {
     "observation.image": {
-      "_type": "Image"
+      "_type": "VideoFrame"
     },
     "observation.state": {
       "feature": {
@@ -18,7 +18,7 @@
         "dtype": "float32",
         "_type": "Value"
       },
-      "length": 4,
+      "length": 3,
       "_type": "Sequence"
     },
     "episode_index": {
