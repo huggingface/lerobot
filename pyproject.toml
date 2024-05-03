@@ -47,9 +47,9 @@ huggingface-hub = "^0.21.4"
 robomimic = "0.2.0"
 gymnasium = "^0.29.1"
 cmake = "^3.29.0.1"
-gym-pusht = { git = "git@github.com:huggingface/gym-pusht.git", optional = true}
-gym-xarm = { git = "git@github.com:huggingface/gym-xarm.git", optional = true}
-gym-aloha = { git = "git@github.com:huggingface/gym-aloha.git", optional = true}
+gym-pusht = { version = "^0.1.0", optional = true}
+gym-xarm = { version = "^0.1.0", optional = true}
+gym-aloha = { version = "^0.1.0", optional = true}
 pre-commit = {version = "^3.7.0", optional = true}
 debugpy = {version = "^1.8.1", optional = true}
 pytest = {version = "^8.1.0", optional = true}

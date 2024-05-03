@@ -28,11 +28,6 @@ jobs:
       DATA_DIR: tests/data
       MUJOCO_GL: egl
     steps:
-      - name: Add SSH key for installing envs
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
       - uses: actions/checkout@v4
 
       - name: Install EGL
@@ -69,11 +64,6 @@ jobs:
       DATA_DIR: tests/data
       MUJOCO_GL: egl
     steps:
-      - name: Add SSH key for installing envs
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
       - uses: actions/checkout@v4
 
       - name: Install EGL
