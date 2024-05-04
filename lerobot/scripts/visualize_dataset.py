@@ -32,15 +32,16 @@ local$ rerun lerobot_pusht_episode_0.rrd
 ```
 
 - Visualize data stored on a distant machine through streaming:
+(You need to forward the websocket port to the distant machine, with 
+`ssh -L 9087:localhost:9087 username@remote-host`)
 ```
 distant$ python lerobot/scripts/visualize_dataset.py \
     --repo-id lerobot/pusht \
     --episode-index 0 \
     --mode distant \
-    --web-port 9090 \
     --ws-port 9087
 
-local$ rerun ws://localhost:9090
+local$ rerun ws://localhost:9087
 ```
 
 """
@@ -109,13 +110,13 @@ def visualize_dataset(
 
     logging.info("Starting Rerun")
 
-    if mode == "local":
-        spawn_local_viewer = not save
-        rr.init(f"{repo_id}/episode_{episode_index}", spawn=spawn_local_viewer)
-    elif mode == "distant":
-        rr.serve(open_browser=False, web_port=web_port, ws_port=ws_port)
-    else:
+    if mode not in ["local", "distant"]:
         raise ValueError(mode)
+
+    spawn_local_viewer = mode == "local" and not save
+    rr.init(f"{repo_id}/episode_{episode_index}", spawn=spawn_local_viewer)
+    if mode == "distant":
+        rr.serve(open_browser=False, web_port=web_port, ws_port=ws_port)
 
     logging.info("Logging to Rerun")
 
