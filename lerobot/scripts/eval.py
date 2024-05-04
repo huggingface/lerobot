@@ -324,7 +324,7 @@ def eval_policy(
                 }
 
         # Maybe render video for visualization.
-        if max_episodes_rendered > 0:
+        if max_episodes_rendered > 0 and len(ep_frames) > 0:
             batch_stacked_frames = np.stack(ep_frames, axis=1)  # (b, t, *)
             for stacked_frames, done_index in zip(
                 batch_stacked_frames, done_indices.flatten().tolist(), strict=False
@@ -349,7 +349,6 @@ def eval_policy(
         progbar.set_postfix(
             {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
         )
-        progbar.update()
 
     # Wait till all video rendering threads are done.
     for thread in threads:
