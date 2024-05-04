@@ -118,19 +118,19 @@ wandb login
 
 ### Visualize datasets
 
-Check out [examples](./examples) to see how you can import our dataset class, download the data from the Hugging Face hub and use our rendering utilities.
-
-Or you can achieve the same result by executing our script from the command line:
+You can easily visualize episode from a dataset by executing our script from the command line:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
-env=pusht \
-hydra.run.dir=outputs/visualize_dataset/example
-# >>> ['outputs/visualize_dataset/example/episode_0.mp4']
+    --repo-id lerobot/pusht \
+    --episode-index 0
 ```
+
+Check out [example 1](./examples/1_load_lerobot_dataset.py) to learn how you can import and use our dataset class and download the data from the Hugging Face hub.
+
 
 ### Evaluate a pretrained policy
 
-Check out [examples](./examples) to see how you can load a pretrained policy from the Hugging Face hub, load up the corresponding environment and model, and run an evaluation.
+Check out [example 2](./examples/2_evaluate_pretrained_policy.py) to see how you can load a pretrained policy from Hugging Face hub, load up the corresponding environment and model, and run an evaluation.
 
 Or you can achieve the same result by executing our script from the command line:
 ```bash
@@ -153,7 +153,7 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ### Train your own policy
 
-Check out [examples](./examples) to see how you can start training a model on a dataset, which will be automatically downloaded if needed.
+Check out [example 3](./examples/3_train_policy.py) to see how you can start training a model on a dataset, which will be automatically downloaded if needed.
 
 In general, you can use our training script to easily train any policy in any environment:
 ```bash
