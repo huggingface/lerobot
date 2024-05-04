@@ -43,8 +43,8 @@ print(f"average number of frames per episode: {dataset.num_samples / dataset.num
 print(f"frames per second used during data collection: {dataset.fps=}")
 print(f"keys to access images from cameras: {dataset.image_keys=}")
 
-# access frame indices associated to episode number 5
-episode_index = 5
+# access frame indices associated to first episode
+episode_index = 0
 from_idx = dataset.episode_data_index["from"][episode_index].item()
 to_idx = dataset.episode_data_index["to"][episode_index].item()
 
@@ -60,7 +60,7 @@ frames = [frame.permute((1, 2, 0)).numpy() for frame in frames]
 
 # Finally, we save the frames to a mp4 video for visualization.
 Path("outputs/examples/1_load_lerobot_dataset").mkdir(parents=True, exist_ok=True)
-imageio.mimsave("outputs/examples/1_load_lerobot_dataset/episode_5.mp4", frames, fps=dataset.fps)
+imageio.mimsave("outputs/examples/1_load_lerobot_dataset/episode_0.mp4", frames, fps=dataset.fps)
 
 # For many machine learning applications we need to load histories of past observations, or trajectorys of future actions.
 # Our datasets can load previous and future frames for each key/modality,
