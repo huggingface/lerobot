@@ -71,6 +71,9 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
         queue is empty.
         """
+        assert "observation.images.top" in batch
+        assert "observation.state" in batch
+
         self.eval()
 
         batch = self.normalize_inputs(batch)

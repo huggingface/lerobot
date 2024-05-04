@@ -115,7 +115,6 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         """
         assert "observation.image" in batch
         assert "observation.state" in batch
-        assert len(batch) == 2
 
         batch = self.normalize_inputs(batch)
 
