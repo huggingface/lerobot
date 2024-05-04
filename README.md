@@ -95,6 +95,7 @@ wandb login
 
 ```
 .
+├── examples             # contains demonstration examples, start here to learn about LeRobot
 ├── lerobot
 |   ├── configs          # contains hydra yaml files with all options that you can override in the command line
 |   |   ├── default.yaml   # selected by default, it loads pusht environment and diffusion policy
@@ -103,17 +104,15 @@ wandb login
 |   ├── common           # contains classes and utilities
 |   |   ├── datasets       # various datasets of human demonstrations: aloha, pusht, xarm
 |   |   ├── envs           # various sim environments: aloha, pusht, xarm
-|   |   └── policies       # various policies: act, diffusion, tdmpc
-|   └── scripts                  # contains functions to execute via command line
-|       ├── visualize_dataset.py  # load a dataset and render its demonstrations
-|       ├── eval.py               # load policy and evaluate it on an environment
-|       └── train.py              # train a policy via imitation learning and/or reinforcement learning
+|   |   ├── policies       # various policies: act, diffusion, tdmpc
+|   |   └── utils          # various utilities
+|   └── scripts          # contains functions to execute via command line
+|       ├── eval.py                 # load policy and evaluate it on an environment
+|       ├── train.py                # train a policy via imitation learning and/or reinforcement learning
+|       ├── push_dataset_to_hub.py  # convert your dataset into LeRobot dataset format and upload it to the Hugging Face hub
+|       └── visualize_dataset.py    # load a dataset and render its demonstrations
 ├── outputs               # contains results of scripts execution: logs, videos, model checkpoints
-├── .github
-|   └── workflows
-|       └── test.yml      # defines install settings for continuous integration and specifies end-to-end tests
 └── tests                 # contains pytest utilities for continuous integration
-
 ```
 
 ### Visualize datasets
@@ -134,19 +133,20 @@ Check out [example 2](./examples/2_evaluate_pretrained_policy.py) to see how you
 
 Or you can achieve the same result by executing our script from the command line:
 ```bash
+# TODO: Not working right now, update `lerobot/diffusion_policy_pusht_image` to fix
 python lerobot/scripts/eval.py \
--p lerobot/diffusion_policy_pusht_image \
-eval_episodes=10 \
-hydra.run.dir=outputs/eval/example_hub
+    -p lerobot/diffusion_policy_pusht_image \
+    eval_episodes=10 \
+    hydra.run.dir=outputs/eval/example_hub
 ```
 
 After training your own policy, you can also re-evaluate the checkpoints with:
 
 ```bash
 python lerobot/scripts/eval.py \
--p PATH/TO/TRAIN/OUTPUT/FOLDER \
-eval_episodes=10 \
-hydra.run.dir=outputs/eval/example_dir
+    -p PATH/TO/TRAIN/OUTPUT/FOLDER \
+    eval_episodes=10 \
+    hydra.run.dir=outputs/eval/example_dir
 ```
 
 See `python lerobot/scripts/eval.py --help` for more instructions.
@@ -158,11 +158,11 @@ Check out [example 3](./examples/3_train_policy.py) to see how you can start tra
 In general, you can use our training script to easily train any policy in any environment:
 ```bash
 python lerobot/scripts/train.py \
-env=aloha \
-task=sim_insertion \
-repo_id=lerobot/aloha_sim_insertion_scripted \
-policy=act \
-hydra.run.dir=outputs/train/aloha_act
+    env=aloha \
+    task=sim_insertion \
+    repo_id=lerobot/aloha_sim_insertion_scripted \
+    policy=act \
+    hydra.run.dir=outputs/train/aloha_act
 ```
 
 After training, you may want to revisit model evaluation to change the evaluation settings. In fact, during training every checkpoint is already evaluated but on a low number of episodes for efficiency. Check out [example](./examples) to evaluate any model checkpoint on more episodes to increase statistical significance.
