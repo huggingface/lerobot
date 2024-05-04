@@ -1,13 +1,9 @@
 import logging
-import os
-from pathlib import Path
 
 import torch
 from omegaconf import OmegaConf
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-
-DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
 
 def make_dataset(
@@ -31,7 +27,6 @@ def make_dataset(
     dataset = LeRobotDataset(
         cfg.dataset_repo_id,
         split=split,
-        root=DATA_DIR,
         delta_timestamps=delta_timestamps,
     )
 

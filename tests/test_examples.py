@@ -18,7 +18,7 @@ def _run_script(path):
 def test_example_1():
     path = "examples/1_load_lerobot_dataset.py"
     _run_script(path)
-    assert Path("outputs/examples/1_load_lerobot_dataset/episode_5.mp4").exists()
+    assert Path("outputs/examples/1_load_lerobot_dataset/episode_0.mp4").exists()
 
 
 def test_examples_3_and_2():

@@ -11,7 +11,6 @@ Example usage:
     `python tests/scripts/save_dataset_to_safetensors.py`
 """
 
-import os
 import shutil
 from pathlib import Path
 
@@ -29,7 +28,7 @@ def save_dataset_to_safetensors(output_dir, repo_id="lerobot/pusht"):
 
     repo_dir.mkdir(parents=True, exist_ok=True)
     dataset = LeRobotDataset(
-        repo_id=repo_id, root=Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
+        repo_id=repo_id,
     )
 
     # save 2 first frames of first episode

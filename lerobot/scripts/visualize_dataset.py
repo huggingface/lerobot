@@ -1,116 +1,245 @@
+""" Visualize data of **all** frames of any episode of a dataset of type LeRobotDataset.
+
+Note: The last frame of the episode doesnt always correspond to a final state.
+That's because our datasets are composed of transition from state to state up to
+the antepenultimate state associated to the ultimate action to arrive in the final state.
+However, there might not be a transition from a final state to another state.
+
+Note: This script aims to visualize the data used to train the neural networks.
+~What you see is what you get~. When visualizing image modality, it is often expected to observe
+lossly compression artifacts since these images have been decoded from compressed mp4 videos to
+save disk space. The compression factor applied has been tuned to not affect success rate.
+
+Examples:
+
+- Visualize data stored on a local machine:
+```
+local$ python lerobot/scripts/visualize_dataset.py \
+    --repo-id lerobot/pusht \
+    --episode-index 0
+```
+
+- Visualize data stored on a distant machine with a local viewer:
+```
+distant$ python lerobot/scripts/visualize_dataset.py \
+    --repo-id lerobot/pusht \
+    --episode-index 0 \
+    --save 1 \
+    --output-dir path/to/directory
+
+local$ scp distant:path/to/directory/lerobot_pusht_episode_0.rrd .
+local$ rerun lerobot_pusht_episode_0.rrd
+```
+
+- Visualize data stored on a distant machine through streaming:
+(You need to forward the websocket port to the distant machine, with 
+`ssh -L 9087:localhost:9087 username@remote-host`)
+```
+distant$ python lerobot/scripts/visualize_dataset.py \
+    --repo-id lerobot/pusht \
+    --episode-index 0 \
+    --mode distant \
+    --ws-port 9087
+
+local$ rerun ws://localhost:9087
+```
+
+"""
+
+import argparse
 import logging
-import threading
+import time
 from pathlib import Path
 
-import einops
-import hydra
-import imageio
+import rerun as rr
 import torch
+import tqdm
 
-from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.logger import log_output_dir
-from lerobot.common.utils.utils import init_logging
-
-NUM_EPISODES_TO_RENDER = 50
-MAX_NUM_STEPS = 1000
-FIRST_FRAME = 0
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 
-@hydra.main(version_base="1.2", config_name="default", config_path="../configs")
-def visualize_dataset_cli(cfg: dict):
-    visualize_dataset(cfg, out_dir=hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
+class EpisodeSampler(torch.utils.data.Sampler):
+    def __init__(self, dataset, episode_index):
+        from_idx = dataset.episode_data_index["from"][episode_index].item()
+        to_idx = dataset.episode_data_index["to"][episode_index].item()
+        self.frame_ids = range(from_idx, to_idx)
+
+    def __iter__(self):
+        return iter(self.frame_ids)
+
+    def __len__(self):
+        return len(self.frame_ids)
 
 
-def cat_and_write_video(video_path, frames, fps):
-    frames = torch.cat(frames)
-
-    # Expects images in [0, 1].
-    frame = frames[0]
-    if frame.ndim == 4:
-        raise NotImplementedError("We currently dont support multiple timestamps.")
-    c, h, w = frame.shape
-    assert c < h and c < w, f"expect channel first images, but instead {frame.shape}"
-
-    # sanity check that images are float32 in range [0,1]
-    assert frame.dtype == torch.float32, f"expect torch.float32, but instead {frame.dtype=}"
-    assert frame.max() <= 1, f"expect pixels lower than 1, but instead {frame.max()=}"
-    assert frame.min() >= 0, f"expect pixels greater than 1, but instead {frame.min()=}"
-
-    # convert to channel last uint8 [0, 255]
-    frames = einops.rearrange(frames, "b c h w -> b h w c")
-    frames = (frames * 255).type(torch.uint8)
-    imageio.mimsave(video_path, frames.numpy(), fps=fps)
+def to_hwc_uint8_numpy(chw_float32_torch):
+    assert chw_float32_torch.dtype == torch.float32
+    assert chw_float32_torch.ndim == 3
+    c, h, w = chw_float32_torch.shape
+    assert c < h and c < w, f"expect channel first images, but instead {chw_float32_torch.shape}"
+    hwc_uint8_numpy = (chw_float32_torch * 255).type(torch.uint8).permute(1, 2, 0).numpy()
+    return hwc_uint8_numpy
 
 
-def visualize_dataset(cfg: dict, out_dir=None):
-    if out_dir is None:
-        raise NotImplementedError()
+def visualize_dataset(
+    repo_id: str,
+    episode_index: int,
+    batch_size: int = 32,
+    num_workers: int = 0,
+    mode: str = "local",
+    web_port: int = 9090,
+    ws_port: int = 9087,
+    save: bool = False,
+    output_dir: Path | None = None,
+) -> Path | None:
+    if save:
+        assert (
+            output_dir is not None
+        ), "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
 
-    init_logging()
-    log_output_dir(out_dir)
+    logging.info("Loading dataset")
+    dataset = LeRobotDataset(repo_id)
 
-    logging.info("make_dataset")
-    dataset = make_dataset(cfg)
-
-    logging.info("Start rendering episodes from offline buffer")
-    video_paths = render_dataset(dataset, out_dir, MAX_NUM_STEPS * NUM_EPISODES_TO_RENDER)
-    for video_path in video_paths:
-        logging.info(video_path)
-    return video_paths
-
-
-def render_dataset(dataset, out_dir, max_num_episodes):
-    out_dir = Path(out_dir)
-    video_paths = []
-    threads = []
-
+    logging.info("Loading dataloader")
+    episode_sampler = EpisodeSampler(dataset, episode_index)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=4,
-        batch_size=1,
-        shuffle=False,
+        num_workers=num_workers,
+        batch_size=batch_size,
+        sampler=episode_sampler,
     )
-    dl_iter = iter(dataloader)
 
-    for ep_id in range(min(max_num_episodes, dataset.num_episodes)):
-        logging.info(f"Rendering episode {ep_id}")
+    logging.info("Starting Rerun")
 
-        frames = {}
-        end_of_episode = False
-        while not end_of_episode:
-            item = next(dl_iter)
+    if mode not in ["local", "distant"]:
+        raise ValueError(mode)
 
-            for im_key in dataset.image_keys:
-                # when first frame of episode, initialize frames dict
-                if im_key not in frames:
-                    frames[im_key] = []
-                # add current frame to list of frames to render
-                frames[im_key].append(item[im_key])
+    spawn_local_viewer = mode == "local" and not save
+    rr.init(f"{repo_id}/episode_{episode_index}", spawn=spawn_local_viewer)
+    if mode == "distant":
+        rr.serve(open_browser=False, web_port=web_port, ws_port=ws_port)
 
-            end_of_episode = item["index"].item() == dataset.episode_data_index["to"][ep_id] - 1
+    logging.info("Logging to Rerun")
 
-        out_dir.mkdir(parents=True, exist_ok=True)
-        for im_key in dataset.image_keys:
-            if len(dataset.image_keys) > 1:
-                im_name = im_key.replace("observation.images.", "")
-                video_path = out_dir / f"episode_{ep_id}_{im_name}.mp4"
-            else:
-                video_path = out_dir / f"episode_{ep_id}.mp4"
-            video_paths.append(video_path)
+    if num_workers > 0:
+        # TODO(rcadene): fix data workers hanging when `rr.init` is called
+        logging.warning("If data loader is hanging, try `--num-workers 0`.")
 
-            thread = threading.Thread(
-                target=cat_and_write_video,
-                args=(str(video_path), frames[im_key], dataset.fps),
-            )
-            thread.start()
-            threads.append(thread)
+    for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
+        # iterate over the batch
+        for i in range(len(batch["index"])):
+            rr.set_time_sequence("frame_index", batch["frame_index"][i].item())
+            rr.set_time_seconds("timestamp", batch["timestamp"][i].item())
 
-    for thread in threads:
-        thread.join()
+            # display each camera image
+            for key in dataset.image_keys:
+                # TODO(rcadene): add `.compress()`? is it lossless?
+                rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
 
-    logging.info("End of visualize_dataset")
-    return video_paths
+            # display each dimension of action space (e.g. actuators command)
+            if "action" in batch:
+                for dim_idx, val in enumerate(batch["action"][i]):
+                    rr.log(f"action/{dim_idx}", rr.Scalar(val.item()))
+
+            # display each dimension of observed state space (e.g. agent position in joint space)
+            if "observation.state" in batch:
+                for dim_idx, val in enumerate(batch["observation.state"][i]):
+                    rr.log(f"state/{dim_idx}", rr.Scalar(val.item()))
+
+            if "next.done" in batch:
+                rr.log("next.done", rr.Scalar(batch["next.done"][i].item()))
+
+            if "next.reward" in batch:
+                rr.log("next.reward", rr.Scalar(batch["next.reward"][i].item()))
+
+            if "next.success" in batch:
+                rr.log("next.success", rr.Scalar(batch["next.success"][i].item()))
+
+    if mode == "local" and save:
+        # save .rrd locally
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        repo_id_str = repo_id.replace("/", "_")
+        rrd_path = output_dir / f"{repo_id_str}_episode_{episode_index}.rrd"
+        rr.save(rrd_path)
+        return rrd_path
+
+    elif mode == "distant":
+        # stop the process from exiting since it is serving the websocket connection
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("Ctrl-C received. Exiting.")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--repo-id",
+        type=str,
+        required=True,
+        help="Name of hugging face repositery containing a LeRobotDataset dataset (e.g. `lerobot/pusht`).",
+    )
+    parser.add_argument(
+        "--episode-index",
+        type=int,
+        required=True,
+        help="Episode to visualize.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Batch size loaded by DataLoader.",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=0,
+        help="Number of processes of Dataloader for loading the data.",
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="local",
+        help=(
+            "Mode of viewing between 'local' or 'distant'. "
+            "'local' requires data to be on a local machine. It spawns a viewer to visualize the data locally. "
+            "'distant' creates a server on the distant machine where the data is stored. Visualize the data by connecting to the server with `rerun ws://localhost:PORT` on the local machine."
+        ),
+    )
+    parser.add_argument(
+        "--web-port",
+        type=int,
+        default=9090,
+        help="Web port for rerun.io when `--mode distant` is set.",
+    )
+    parser.add_argument(
+        "--ws-port",
+        type=int,
+        default=9087,
+        help="Web socket port for rerun.io when `--mode distant` is set.",
+    )
+    parser.add_argument(
+        "--save",
+        type=int,
+        default=0,
+        help=(
+            "Save a .rrd file in the directory provided by `--output-dir`. "
+            "It also deactivates the spawning of a viewer. ",
+            "Visualize the data by running `rerun path/to/file.rrd` on your local machine.",
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        help="Directory path to write a .rrd file when `--save 1` is set.",
+    )
+
+    args = parser.parse_args()
+    visualize_dataset(**vars(args))
 
 
 if __name__ == "__main__":
-    visualize_dataset_cli()
+    main()
