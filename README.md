@@ -29,13 +29,13 @@
 ---
 
 
-🤗 LeRobot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier for entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
+🤗 LeRobot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier of entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
 
 🤗 LeRobot contains state-of-the-art approaches that have been shown to transfer to the real-world with a focus on imitation learning and reinforcement learning.
 
 🤗 LeRobot already provides a set of pretrained models, datasets with human collected demonstrations, and simulated environments so that everyone can get started. In the coming weeks, the plan is to add more and more support for real-world robotics on the most affordable and capable robots out there.
 
-🤗 LeRobot hosts pretrained models and datasets on this HuggingFace community page: [huggingface.co/lerobot](https://huggingface.co/lerobot)
+🤗 LeRobot hosts pretrained models and datasets on this Hugging Face community page: [huggingface.co/lerobot](https://huggingface.co/lerobot)
 
 #### Examples of pretrained models and environments
 
@@ -86,7 +86,7 @@ For instance, to install 🤗 LeRobot with aloha and pusht, use:
 pip install ".[aloha, pusht]"
 ```
 
-To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiments tracking, log in with
+To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
 ```bash
 wandb login
 ```
@@ -118,7 +118,7 @@ wandb login
 
 ### Visualize datasets
 
-Check out [examples](./examples) to see how you can import our dataset class, download the data from the HuggingFace hub and use our rendering utilities.
+Check out [examples](./examples) to see how you can import our dataset class, download the data from the Hugging Face hub and use our rendering utilities.
 
 Or you can achieve the same result by executing our script from the command line:
 ```bash
@@ -130,7 +130,7 @@ hydra.run.dir=outputs/visualize_dataset/example
 
 ### Evaluate a pretrained policy
 
-Check out [examples](./examples) to see how you can load a pretrained policy from HuggingFace hub, load up the corresponding environment and model, and run an evaluation.
+Check out [examples](./examples) to see how you can load a pretrained policy from the Hugging Face hub, load up the corresponding environment and model, and run an evaluation.
 
 Or you can achieve the same result by executing our script from the command line:
 ```bash
@@ -155,7 +155,7 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 Check out [examples](./examples) to see how you can start training a model on a dataset, which will be automatically downloaded if needed.
 
-In general, you can use our training script to easily train any policy on any environment:
+In general, you can use our training script to easily train any policy in any environment:
 ```bash
 python lerobot/scripts/train.py \
 env=aloha \
@@ -177,7 +177,7 @@ If you would like to contribute to 🤗 LeRobot, please check out our [contribut
 # TODO(rcadene, AdilZouitine): rewrite this section
 ```
 
-To add a dataset to the hub, first login and use a token generated from [huggingface settings](https://huggingface.co/settings/tokens) with write access:
+To add a dataset to the hub, first login and use a token generated from [Hugging Face settings](https://huggingface.co/settings/tokens) with write access:
 ```bash
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
@@ -242,14 +242,14 @@ python tests/scripts/mock_dataset.py --in-data-dir data/$DATASET --out-data-dir 
 # TODO(rcadene, alexander-soare): rewrite this section
 ```
 
-Once you have trained a policy you may upload it to the HuggingFace hub.
+Once you have trained a policy you may upload it to the Hugging Face hub.
 
 Firstly, make sure you have a model repository set up on the hub. The hub ID looks like HF_USER/REPO_NAME.
 
 Secondly, assuming you have trained a policy, you need the following (which should all be in any of the subdirectories of `checkpoints` in your training output folder, if you've used the LeRobot training script):
 
 - `config.json`: A serialized version of the policy configuration (following the policy's dataclass config).
-- `model.safetensors`: The `torch.nn.Module` parameters saved in [Hugging Face Safetensors](https://huggingface.co/docs/safetensors/index) format.
+- `model.safetensors`: The `torch.nn.Module` parameters, saved in [Hugging Face Safetensors](https://huggingface.co/docs/safetensors/index) format.
 - `config.yaml`: This is the consolidated Hydra training configuration containing the policy, environment, and dataset configs. The policy configuration should match `config.json` exactly. The environment config is useful for anyone who wants to evaluate your policy. The dataset config just serves as a paper trail for reproducibility.
 
 To upload these to the hub, run the following with a desired revision ID.

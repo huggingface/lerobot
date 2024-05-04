@@ -15,7 +15,7 @@ from tests.utils import require_env
 def test_available_env_task(env_name: str, task_name: list):
     """
     This test verifies that all environments listed in `lerobot/__init__.py` can
-    be sucessfully imported — if they're installed — and that their
+    be successfully imported — if they're installed — and that their
     `available_tasks_per_env` are valid.
     """
     package_name = f"gym_{env_name}"
