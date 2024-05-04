@@ -153,7 +153,7 @@ def visualize_dataset(
             if "next.success" in batch:
                 rr.log("next.success", rr.Scalar(batch["next.success"][i].item()))
 
-    if mode == "local":
+    if mode == "local" and save:
         # save .rrd locally
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
