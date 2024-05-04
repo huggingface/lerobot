@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 from copy import deepcopy
 from pathlib import Path
 
@@ -97,9 +96,7 @@ def test_compute_stats_on_xarm():
     We compare with taking a straight min, mean, max, std of all the data in one pass (which we can do
     because we are working with a small dataset).
     """
-    dataset = LeRobotDataset(
-        "lerobot/xarm_lift_medium", root=Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
-    )
+    dataset = LeRobotDataset("lerobot/xarm_lift_medium")
 
     # reduce size of dataset sample on which stats compute is tested to 10 frames
     dataset.hf_dataset = dataset.hf_dataset.select(range(10))
@@ -254,7 +251,6 @@ def test_backward_compatibility(repo_id):
 
     dataset = LeRobotDataset(
         repo_id,
-        root=Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None,
     )
 
     test_dir = Path("tests/data/save_dataset_to_safetensors") / repo_id

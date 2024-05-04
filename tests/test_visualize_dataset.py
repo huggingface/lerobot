@@ -1,31 +1,18 @@
 import pytest
 
-from lerobot.common.utils.utils import init_hydra_config
 from lerobot.scripts.visualize_dataset import visualize_dataset
-
-from .utils import DEFAULT_CONFIG_PATH
 
 
 @pytest.mark.parametrize(
     "repo_id",
-    [
-        "lerobot/aloha_sim_insertion_human",
-    ],
+    ["lerobot/pusht"],
 )
 def test_visualize_dataset(tmpdir, repo_id):
-    # TODO(rcadene): this test might fail with other datasets/policies/envs, since visualization_dataset
-    # doesnt support multiple timesteps which requires delta_timestamps to None for images.
-    cfg = init_hydra_config(
-        DEFAULT_CONFIG_PATH,
-        overrides=[
-            "policy=act",
-            "env=aloha",
-            f"dataset_repo_id={repo_id}",
-        ],
+    rrd_path = visualize_dataset(
+        repo_id,
+        episode_index=0,
+        batch_size=32,
+        save=True,
+        output_dir=tmpdir,
     )
-    video_paths = visualize_dataset(cfg, out_dir=tmpdir)
-
-    assert len(video_paths) > 0
-
-    for video_path in video_paths:
-        assert video_path.exists()
+    assert rrd_path.exists()

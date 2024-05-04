@@ -110,7 +110,6 @@ def push_meta_data_to_hub(repo_id, meta_data_dir, revision):
         repo_id=repo_id,
         revision=revision,
         repo_type="dataset",
-        allow_patterns=["*.json, *.safetensors"],
     )
 
 
@@ -160,7 +159,7 @@ def push_dataset_to_hub(
     if out_dir.exists():
         shutil.rmtree(out_dir)
 
-    if tests_out_dir.exists():
+    if tests_out_dir.exists() and save_tests_to_disk:
         shutil.rmtree(tests_out_dir)
 
     if not raw_dir.exists():

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import datasets
@@ -13,6 +14,7 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import VideoFrame, load_from_videos
 
+DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 CODEBASE_VERSION = "v1.2"
 
 
@@ -21,7 +23,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self,
         repo_id: str,
         version: str | None = CODEBASE_VERSION,
-        root: Path | None = None,
+        root: Path | None = DATA_DIR,
         split: str = "train",
         transform: callable = None,
         delta_timestamps: dict[list[float]] | None = None,
