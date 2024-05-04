@@ -10,6 +10,8 @@ from pathlib import Path
 
 import tqdm
 
+ALOHA_RAW_URLS_DIR = "lerobot/common/datasets/push_dataset_to_hub/_aloha_raw_urls"
+
 
 def download_raw(raw_dir, dataset_id):
     if "pusht" in dataset_id:
@@ -87,66 +89,36 @@ def download_xarm(raw_dir: Path):
 
 
 def download_aloha(raw_dir: Path, dataset_id: str):
-    # TODO(rcadene): remove gdown and use hugging face download instead
     import gdown
 
-    logging.warning(
-        "Aloha download is broken and requires a custom version of gdown which is not limited on number of files"
-    )
+    subset_id = dataset_id.replace("aloha_", "")
+    urls_path = Path(ALOHA_RAW_URLS_DIR) / f"{subset_id}.txt"
+    assert urls_path.exists(), f"{subset_id}.txt not found in '{ALOHA_RAW_URLS_DIR}' directory."
 
-    folder_urls = {
-        "aloha_sim_insertion_human": "https://drive.google.com/drive/folders/1RgyD0JgTX30H4IM5XZn8I3zSV_mr8pyF",
-        "aloha_sim_insertion_scripted": "https://drive.google.com/drive/folders/1TsojQQSXtHEoGnqgJ3gmpPQR2DPLtS2N",
-        "aloha_sim_transfer_cube_human": "https://drive.google.com/drive/folders/1sc-E4QYW7A0o23m1u2VWNGVq5smAsfCo",
-        "aloha_sim_transfer_cube_scripted": "https://drive.google.com/drive/folders/1aRyoOhQwxhyt1J8XgEig4s6kzaw__LXj",
-    }
+    with open(urls_path) as f:
+        # strip lines and ignore empty lines
+        urls = [url.strip() for url in f if url.strip()]
 
-    ep48_urls = {
-        "aloha_sim_insertion_human": "https://drive.google.com/file/d/18Cudl6nikDtgRolea7je8iF_gGKzynOP/view?usp=drive_link",
-        "aloha_sim_insertion_scripted": "https://drive.google.com/file/d/1wfMSZ24oOh5KR_0aaP3Cnu_c4ZCveduB/view?usp=drive_link",
-        "aloha_sim_transfer_cube_human": "https://drive.google.com/file/d/18smMymtr8tIxaNUQ61gW6dG50pt3MvGq/view?usp=drive_link",
-        "aloha_sim_transfer_cube_scripted": "https://drive.google.com/file/d/1pnGIOd-E4-rhz2P3VxpknMKRZCoKt6eI/view?usp=drive_link",
-    }
-
-    ep49_urls = {
-        "aloha_sim_insertion_human": "https://drive.google.com/file/d/1C1kZYyROzs-PrLc0SkDgUgMi4-L3lauE/view?usp=drive_link",
-        "aloha_sim_insertion_scripted": "https://drive.google.com/file/d/17EuCUWS6uCCr6yyNzpXdcdE-_TTNCKtf/view?usp=drive_link",
-        "aloha_sim_transfer_cube_human": "https://drive.google.com/file/d/1Nk7l53d9sJoGDBKAOnNrExX5nLacATc6/view?usp=drive_link",
-        "aloha_sim_transfer_cube_scripted": "https://drive.google.com/file/d/1GKReZHrXU73NMiC5zKCq_UtqPVtYq8eo/view?usp=drive_link",
-    }
-    num_episodes = {  # noqa: F841 # we keep this for reference
-        "aloha_sim_insertion_human": 50,
-        "aloha_sim_insertion_scripted": 50,
-        "aloha_sim_transfer_cube_human": 50,
-        "aloha_sim_transfer_cube_scripted": 50,
-    }
-
-    episode_len = {  # noqa: F841 # we keep this for reference
-        "aloha_sim_insertion_human": 500,
-        "aloha_sim_insertion_scripted": 400,
-        "aloha_sim_transfer_cube_human": 400,
-        "aloha_sim_transfer_cube_scripted": 400,
-    }
-
-    cameras = {  # noqa: F841 # we keep this for reference
-        "aloha_sim_insertion_human": ["top"],
-        "aloha_sim_insertion_scripted": ["top"],
-        "aloha_sim_transfer_cube_human": ["top"],
-        "aloha_sim_transfer_cube_scripted": ["top"],
-    }
-
-    assert dataset_id in folder_urls
-    assert dataset_id in ep48_urls
-    assert dataset_id in ep49_urls
+    # sanity check
+    for url in urls:
+        assert (
+            "drive.google.com/drive/folders" in url or "drive.google.com/file" in url
+        ), f"Wrong url provided '{url}' in file '{urls_path}'."
 
     raw_dir = Path(raw_dir)
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    gdown.download_folder(folder_urls[dataset_id], output=str(raw_dir))
+    logging.info(f"Start downloading from google drive for {dataset_id}")
+    for url in urls:
+        if "drive.google.com/drive/folders" in url:
+            # when a folder url is given, download up to 50 files from the folder
+            gdown.download_folder(url, output=str(raw_dir), remaining_ok=True)
 
-    # because of the 50 files limit per directory, two files episode 48 and 49 were missing
-    gdown.download(ep48_urls[dataset_id], output=str(raw_dir / "episode_48.hdf5"), fuzzy=True)
-    gdown.download(ep49_urls[dataset_id], output=str(raw_dir / "episode_49.hdf5"), fuzzy=True)
+        elif "drive.google.com/file" in url:
+            # because of the 50 files limit per folder, we download the remaining files (file by file)
+            gdown.download(url, output=str(raw_dir), fuzzy=True)
+
+    logging.info(f"End downloading from google drive for {dataset_id}")
 
 
 def download_umi(raw_dir: Path):
@@ -166,10 +138,31 @@ if __name__ == "__main__":
         "xarm_lift_medium_replay",
         "xarm_push_medium",
         "xarm_push_medium_replay",
+        "aloha_mobile_cabinet",
+        "aloha_mobile_chair",
+        "aloha_mobile_elevator",
+        "aloha_mobile_shrimp",
+        "aloha_mobile_wash_pan",
+        "aloha_mobile_wipe_wine",
         "aloha_sim_insertion_human",
         "aloha_sim_insertion_scripted",
         "aloha_sim_transfer_cube_human",
         "aloha_sim_transfer_cube_scripted",
+        "aloha_static_battery",
+        "aloha_static_candy",
+        "aloha_static_coffee",
+        "aloha_static_coffee_new",
+        "aloha_static_cups_open",
+        "aloha_static_fork_pick_up",
+        "aloha_static_pingpong_test",
+        "aloha_static_pro_pencil",
+        "aloha_static_screw_driver",
+        "aloha_static_tape",
+        "aloha_static_thread_velcro",
+        "aloha_static_towel",
+        "aloha_static_vinh_cup",
+        "aloha_static_vinh_cup_left",
+        "aloha_static_ziploc_slide",
         "umi_cup_in_the_wild",
     ]
     for dataset_id in dataset_ids:
