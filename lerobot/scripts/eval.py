@@ -121,7 +121,7 @@ def rollout(
     max_steps = env.call("_max_episode_steps")[0]
     progbar = trange(
         max_steps,
-        desc=f"Running rollout with {max_steps} steps (maximum) per rollout",
+        desc=f"Running rollout with at most {max_steps} steps",
         disable=not enable_progbar,
         leave=False,
     )

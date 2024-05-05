@@ -91,12 +91,3 @@ policy:
 
   # Inference
   num_inference_steps: 100
-
-  # ---
-  # TODO(alexander-soare): Remove these from the policy config.
-  use_ema: true
-  ema_update_after_step: 0
-  ema_min_alpha: 0.0
-  ema_max_alpha: 0.9999
-  ema_inv_gamma: 1.0
-  ema_power: 0.75
