@@ -249,6 +249,17 @@ def test_normalize(insert_temporal_dim):
 # pass if it's run on another platform due to floating point errors
 @require_x86_64_kernel
 def test_backward_compatibility(env_name, policy_name, extra_overrides):
+    """
+    NOTE: If this test does not pass, and you have intentionally changed something in the policy:
+        1. Inspect the differences in policy outputs and make sure you can account for them. Your PR should
+           include a report on what changed and how that affected the outputs.
+        2. Go to the `if __name__ == "__main__"` block of `test/scripts/save_policy_to_safetensors.py` and
+           add the policies you want to update the test artifacts for.
+        3. Run `python test/scripts/save_policy_to_safetensors.py`. The test artifact should be updated.
+        4. Check that this test now passes.
+        5. Remember to restore `test/scripts/save_policy_to_safetensors.py` to its original state.
+        6. Remember to stage and commit the resulting changes to `tests/data`.
+    """
     env_policy_dir = Path("tests/data/save_policy_to_safetensors") / f"{env_name}_{policy_name}"
     saved_output_dict = load_file(env_policy_dir / "output_dict.safetensors")
     saved_grad_stats = load_file(env_policy_dir / "grad_stats.safetensors")
