@@ -118,15 +118,6 @@ class DiffusionConfig:
     # Inference
     num_inference_steps: int | None = None
 
-    # ---
-    # TODO(alexander-soare): Remove these from the policy config.
-    use_ema: bool = True
-    ema_update_after_step: int = 0
-    ema_min_alpha: float = 0.0
-    ema_max_alpha: float = 0.9999
-    ema_inv_gamma: float = 1.0
-    ema_power: float = 0.75
-
     def __post_init__(self):
         """Input validation (not exhaustive)."""
         if not self.vision_backbone.startswith("resnet"):

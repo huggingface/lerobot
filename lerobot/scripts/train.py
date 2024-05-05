@@ -89,9 +89,6 @@ def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
     if lr_scheduler is not None:
         lr_scheduler.step()
 
-    if hasattr(policy, "ema") and policy.ema is not None:
-        policy.ema.step(policy.diffusion)
-
     if isinstance(policy, PolicyWithUpdate):
         # To possibly update an internal buffer (for instance an Exponential Moving Average like in TDMPC).
         policy.update()
