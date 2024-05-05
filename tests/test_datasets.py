@@ -41,7 +41,7 @@ def test_factory(env_name, repo_id, policy_name):
     )
     dataset = make_dataset(cfg)
     delta_timestamps = dataset.delta_timestamps
-    image_keys = dataset.image_keys
+    camera_keys = dataset.camera_keys
 
     item = dataset[0]
 
@@ -71,7 +71,7 @@ def test_factory(env_name, repo_id, policy_name):
         else:
             assert item[key].ndim == ndim, f"{key}"
 
-        if key in image_keys:
+        if key in camera_keys:
             assert item[key].dtype == torch.float32, f"{key}"
             # TODO(rcadene): we assume for now that image normalization takes place in the model
             assert item[key].max() <= 1.0, f"{key}"

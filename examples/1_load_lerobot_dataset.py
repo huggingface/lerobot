@@ -39,7 +39,7 @@ print(dataset.hf_dataset)
 # And provides additional utilities for robotics and compatibility with Pytorch
 print(f"\naverage number of frames per episode: {dataset.num_samples / dataset.num_episodes:.3f}")
 print(f"frames per second used during data collection: {dataset.fps=}")
-print(f"keys to access images from cameras: {dataset.image_keys=}\n")
+print(f"keys to access images from cameras: {dataset.camera_keys=}\n")
 
 # Access frame indexes associated to first episode
 episode_index = 0

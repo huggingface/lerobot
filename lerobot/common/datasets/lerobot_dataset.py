@@ -62,17 +62,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.hf_dataset.features
 
     @property
-    def image_keys(self) -> list[str]:
-        """Keys to access images from cameras."""
-        image_keys = []
+    def camera_keys(self) -> list[str]:
+        """Keys to access image and video stream from cameras."""
+        keys = []
         for key, feats in self.hf_dataset.features.items():
-            if isinstance(feats, datasets.Image):
-                image_keys.append(key)
-        return image_keys + self.video_frame_keys
+            if isinstance(feats, (datasets.Image, VideoFrame)):
+                keys.append(key)
+        return keys
 
     @property
     def video_frame_keys(self) -> list[str]:
-        """Keys to access video frames from cameras."""
+        """Keys to access video frames that requires to be decoded into images.
+
+        Note: It is empty if the dataset contains images only,
+        or equal to `self.cameras` if the dataset contains videos only,
+        or can even be a subset of `self.cameras` in a case of a mixed image/video dataset.
+        """
         video_frame_keys = []
         for key, feats in self.hf_dataset.features.items():
             if isinstance(feats, VideoFrame):
@@ -136,7 +141,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"  Number of Episodes: {self.num_episodes},\n"
             f"  Type: {'video (.mp4)' if self.video else 'image (.png)'},\n"
             f"  Recorded Frames per Second: {self.fps},\n"
-            f"  Image Keys: {self.image_keys},\n"
+            f"  Camera Keys: {self.camera_keys},\n"
             f"  Video Frame Keys: {self.video_frame_keys if self.video else 'N/A'},\n"
             f"  Transformations: {self.transform},\n"
             f")"

@@ -27,10 +27,8 @@ DATA_DIR=tests/data pytest -sx tests/test_stuff.py::test_something
 python lerobot/scripts/train.py --some.option=true
 ```
 
-## Before submitting
-Please read the [contributor guideline](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md#submitting-a-pull-request-pr).
-
-
-## Who can review?
-Anyone in the community is free to review the PR once the tests have passed. Feel free to tag
+## SECTION TO REMOVE BEFORE SUBMITTING YOUR PR
+**Note**: Anyone in the community is free to review the PR once the tests have passed. Feel free to tag
 members/contributors who may be interested in your PR. Try to avoid tagging more than 3 people.
+
+**Note**: Before submitting this PR, please read the [contributor guideline](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md#submitting-a-pull-request-pr).

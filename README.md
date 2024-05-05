@@ -117,21 +117,25 @@ wandb login
 
 ### Visualize datasets
 
-You can easily visualize episodes from a dataset by executing our script from the command line:
+Check out [example 1](./examples/1_load_lerobot_dataset.py) that illustrates how to use our dataset class which automatically download data from the Hugging Face hub.
+
+You can also locally visualize episodes from a dataset by executing our script from the command line:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
     --repo-id lerobot/pusht \
     --episode-index 0
 ```
 
-Check out [example 1](./examples/1_load_lerobot_dataset.py) to learn how you can import and use our dataset class and download the data from the Hugging Face hub.
+It will open `rerun.io` and display the camera streams, robot states and actions.
+![](media/battery-720p.mov)
 
+Our script can also visualize datasets stored on a distant server. See `python lerobot/scripts/visualize_dataset.py --help` for more instructions.
 
 ### Evaluate a pretrained policy
 
-Check out [example 2](./examples/2_evaluate_pretrained_policy.py) to see how you can load a pretrained policy from Hugging Face hub, load up the corresponding environment and model, and run an evaluation.
+Check out [example 2](./examples/2_evaluate_pretrained_policy.py) that illustrates how to download a pretrained policy from Hugging Face hub, and run an evaluation on its corresponding environment.
 
-Or you can achieve the same result by executing our script from the command line:
+We also provide a more capable script to parallelize the evaluation over multiple environments during the same rollout. Here is an example with a pretrained model hosted on [lerobot/diffusion_pusht](https://huggingface.co/lerobot/diffusion_pusht):
 ```bash
 python lerobot/scripts/eval.py \
     -p lerobot/diffusion_pusht \
@@ -139,8 +143,7 @@ python lerobot/scripts/eval.py \
     eval.batch_size=10
 ```
 
-After training your own policy, you can also re-evaluate the checkpoints with:
-
+Note: After training your own policy, you can re-evaluate the checkpoints with:
 ```bash
 python lerobot/scripts/eval.py \
     -p PATH/TO/TRAIN/OUTPUT/FOLDER
@@ -150,20 +153,29 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ### Train your own policy
 
-Check out [example 3](./examples/3_train_policy.py) to see how you can start training a model on a dataset, which will be automatically downloaded if needed.
+Check out [example 3](./examples/3_train_policy.py) that illustrates how to start training a model.
 
-In general, you can use our training script to easily train any policy on its environment:
+In general, you can use our training script to easily train any policy. To use wandb for logging training and evaluation curves, make sure you ran `wandb login`. Here is an example of training the ACT policy on trajectories collected by humans on the Aloha simulation environment for the insertion task:
 ```bash
-# TODO(aliberts): not working
 python lerobot/scripts/train.py \
-    env=aloha \
-    task=sim_insertion \
-    repo_id=lerobot/aloha_sim_insertion_scripted \
     policy=act \
+    env=aloha \
+    env.task=AlohaInsertion-v0 \
+    dataset_repo_id=lerobot/aloha_sim_insertion_human \
     hydra.run.dir=outputs/train/aloha_act
 ```
 
-After training, you may want to revisit model evaluation to change the evaluation settings. In fact, during training every checkpoint is already evaluated but on a low number of episodes for efficiency. Check out [example](./examples) to evaluate any model checkpoint on more episodes to increase statistical significance.
+Here is an example of logs from wandb:
+![](media/battery-720p.mov)
+
+You can deactivate wandb by adding these arguments to the command line:
+```
+    wandb.disable_artifact=true \
+    wandb.enable=false
+```
+
+Note: During training, every checkpoint is evaluated on a low number of episodes for efficiency. After training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
+
 
 ## Contribute
 
@@ -176,57 +188,18 @@ To add a dataset to the hub, begin by logging in with a token that has write acc
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-Then, push your dataset to the hub using the following command:
-
+Then move your dataset folder in `data` directory (e.g. `data/aloha_ping_pong`), and push your dataset to the hub using the following command:
 ```bash
 python lerobot/scripts/push_dataset_to_hub.py \
 --data-dir data \
---dataset-id pusht \
---raw-format pusht_zarr \
---community-id lerobot \
---revision v1.3 \
---dry-run 0 \
---save-to-disk 0 \
---save-tests-to-disk 0 \
---debug 0
+--dataset-id aloha_ping_ping \
+--raw-format aloha_hdf5 \
+--community-id lerobot
 ```
 
-For detailed explanations of the arguments, consult the help command:
+See `python lerobot/scripts/push_dataset_to_hub.py --help` for more instructions.
 
-```bash
-python lerobot/scripts/push_dataset_to_hub.py --help
-```
-
-We currently support the following raw formats:
-
-```
-pusht_zarr | umi_zarr | aloha_hdf5 | xarm_pkl
-```
-
-For the `revision` parameter, set the version to match `CODEBASE_VERSION` using:
-
-```bash
-python -c "from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION; print(CODEBASE_VERSION)"
-```
-
-If there is a need to update the unit tests, set `save-tests-to-disk` to 1 to mock the dataset:
-
-```bash
-python lerobot/scripts/push_dataset_to_hub.py \
---data-dir data \
---dataset-id pusht \
---raw-format pusht_zarr \
---community-id lerobot \
---revision v1.3 \
---dry-run 0 \
---save-to-disk 0 \
---save-tests-to-disk 1 \
---debug 0
-```
-
-The mock dataset will be located in `tests/data/$COMMUNITY_ID/$DATASET_ID/`, which can be used to update the unit tests.
-
-To implement a new raw format, create a file in `lerobot/common/datasets/push_dataset_to_hub/{raw_format}_format.py` and implement the functions: `check_format`, `load_from_raw`, and `to_hf_dataset`. Combine these functions in `from_raw_to_lerobot_format`. You can find examples here: [pusht_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/pusht_zarr_format.py), [umi_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/umi_zarr_format.py), [aloha_hdf5](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/aloha_hdf5_format.py), and [xarm_pkl](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/xarm_pkl_format.py). Then, add the new format to [`get_from_raw_to_lerobot_format_fn`](https://github.com/huggingface/lerobot/blob/main/lerobot/scripts/push_dataset_to_hub.py#L69) in [`lerobot/scripts/push_dataset_to_hub.py`](https://github.com/huggingface/lerobot/blob/main/lerobot/scripts/push_dataset_to_hub.py). Et voilà! You are now ready to use this new format in [`push_dataset_to_hub.py`](https://github.com/huggingface/lerobot/blob/main/lerobot/scripts/push_dataset_to_hub.py) and can submit a PR to add it 🤗.
+If your dataset format is not supported, implement your own in `lerobot/common/datasets/push_dataset_to_hub/${raw_format}_format.py` by copying examples like [pusht_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/pusht_zarr_format.py), [umi_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/umi_zarr_format.py), [aloha_hdf5](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/aloha_hdf5_format.py), or [xarm_pkl](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/xarm_pkl_format.py).
 
 
 ### Add a pretrained policy
@@ -282,11 +255,4 @@ with profile(
         for i in range(num_episodes):
             prof.step()
             # insert code to profile, potentially whole body of eval_policy function
-```
-
-```bash
-python lerobot/scripts/eval.py \
-    --config outputs/pusht/.hydra/config.yaml \
-    pretrained_model_path=outputs/pusht/model.pt \
-    eval_episodes=7
 ```
