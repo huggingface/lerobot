@@ -338,7 +338,7 @@ def eval_policy(
                     target=write_video,
                     args=(
                         str(video_path),
-                        stacked_frames[: done_index + 2],  # + 2 to capture the observation frame after done
+                        stacked_frames[: done_index + 1],  # + 1 to capture the last observation
                         env.unwrapped.metadata["render_fps"],
                     ),
                 )
