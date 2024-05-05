@@ -117,7 +117,7 @@ wandb login
 
 ### Visualize datasets
 
-You can easily visualize episode from a dataset by executing our script from the command line:
+You can easily visualize episodes from a dataset by executing our script from the command line:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
     --repo-id lerobot/pusht \

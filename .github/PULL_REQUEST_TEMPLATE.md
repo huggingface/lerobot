@@ -1,5 +1,5 @@
 ## What this does
-Explain what does this PR do. Feel free to tag your PR with the appropriate label(s).
+Explain what this PR does. Feel free to tag your PR with the appropriate label(s).
 
 Examples:
 |  Title               | Label           |
