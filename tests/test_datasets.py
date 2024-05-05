@@ -100,6 +100,7 @@ def test_compute_stats_on_xarm():
 
     # reduce size of dataset sample on which stats compute is tested to 10 frames
     dataset.hf_dataset = dataset.hf_dataset.select(range(10))
+    dataset.index = [i for i in dataset.index if i < 10]
 
     # Note: we set the batch size to be smaller than the whole dataset to make sure we are testing batched
     # computation of the statistics. While doing this, we also make sure it works when we don't divide the

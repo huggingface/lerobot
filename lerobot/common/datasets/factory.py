@@ -1,15 +1,12 @@
 import logging
 
 import torch
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 
-def make_dataset(
-    cfg,
-    split="train",
-):
+def make_dataset(cfg: DictConfig, split="train") -> LeRobotDataset:
     if cfg.env.name not in cfg.dataset_repo_id:
         logging.warning(
             f"There might be a mismatch between your training dataset ({cfg.dataset_repo_id=}) and your "
@@ -28,6 +25,7 @@ def make_dataset(
         cfg.dataset_repo_id,
         split=split,
         delta_timestamps=delta_timestamps,
+        n_end_keyframes_dropped=eval(cfg.training.get("n_end_keyframes_dropped", "0")),
     )
 
     if cfg.get("override_dataset_stats"):
