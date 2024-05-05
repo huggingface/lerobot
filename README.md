@@ -183,8 +183,8 @@ huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 Then you can upload it to the hub with:
 ```bash
 HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload $HF_USER/$DATASET data/$DATASET \
---repo-type dataset  \
---revision v1.0
+    --repo-type dataset  \
+    --revision v1.0
 ```
 
 You will need to set the corresponding version as a default argument in your dataset class:
@@ -203,10 +203,10 @@ If you want to improve an existing dataset, you can download it locally with:
 ```bash
 mkdir -p data/$DATASET
 HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli download ${HF_USER}/$DATASET \
---repo-type dataset \
---local-dir data/$DATASET \
---local-dir-use-symlinks=False \
---revision v1.0
+    --repo-type dataset \
+    --local-dir data/$DATASET \
+    --local-dir-use-symlinks=False \
+    --revision v1.0
 ```
 
 Iterate on your code and dataset with:
@@ -217,14 +217,14 @@ DATA_DIR=data python train.py
 Upload a new version (v2.0 or v1.1 if the changes are respectively more or less significant):
 ```bash
 HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload $HF_USER/$DATASET data/$DATASET \
---repo-type dataset \
---revision v1.1 \
---delete "*"
+    --repo-type dataset \
+    --revision v1.1 \
+    --delete "*"
 ```
 
 Then you will need to set the corresponding version as a default argument in your dataset class:
 ```python
-  version: str | None = "v1.1",
+version: str | None = "v1.1",
 ```
 See: [`lerobot/common/datasets/pusht.py`](https://github.com/Cadene/lerobot/blob/main/lerobot/common/datasets/pusht.py)
 
@@ -291,7 +291,7 @@ with profile(
 
 ```bash
 python lerobot/scripts/eval.py \
---config outputs/pusht/.hydra/config.yaml \
-pretrained_model_path=outputs/pusht/model.pt \
-eval_episodes=7
+    --config outputs/pusht/.hydra/config.yaml \
+    pretrained_model_path=outputs/pusht/model.pt \
+    eval_episodes=7
 ```
