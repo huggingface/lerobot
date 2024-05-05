@@ -242,7 +242,7 @@ def test_normalize(insert_temporal_dim):
             "diffusion",
             ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
         ),
-        # ("aloha", "act", ["policy.n_action_steps=10"]),
+        ("aloha", "act", ["policy.n_action_steps=10"]),
     ],
 )
 # As artifacts have been generated on an x86_64 kernel, this test won't
@@ -254,7 +254,7 @@ def test_backward_compatibility(env_name, policy_name, extra_overrides):
         1. Inspect the differences in policy outputs and make sure you can account for them. Your PR should
            include a report on what changed and how that affected the outputs.
         2. Go to the `if __name__ == "__main__"` block of `test/scripts/save_policy_to_safetensors.py` and
-           comment in the policies you want to update the test artifacts for.
+           add the policies you want to update the test artifacts for.
         3. Run `python test/scripts/save_policy_to_safetensors.py`. The test artifact should be updated.
         4. Check that this test now passes.
         5. Remember to restore `test/scripts/save_policy_to_safetensors.py` to its original state.

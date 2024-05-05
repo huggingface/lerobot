@@ -1,5 +1,9 @@
 # @package _global_
 
+# Defaults for training for the PushT dataset as per https://github.com/real-stanford/diffusion_policy.
+# Note: We do not track EMA model weights as we discovered it does not improve the results. See
+#       https://github.com/huggingface/lerobot/pull/134 for more details.
+
 seed: 100000
 dataset_repo_id: lerobot/pusht
 
