@@ -9,6 +9,7 @@ Example:
         print(lerobot.available_tasks_per_env)
         print(lerobot.available_datasets)
         print(lerobot.available_datasets_per_env)
+        print(lerobot.available_real_world_datasets)
         print(lerobot.available_policies)
         print(lerobot.available_policies_per_env)
     ```
@@ -55,10 +56,33 @@ available_datasets_per_env = {
     ],
 }
 
-available_datasets_without_env = ["lerobot/umi_cup_in_the_wild"]
+available_real_world_datasets = [
+    "lerobot/aloha_mobile_cabinet",
+    "lerobot/aloha_mobile_chair",
+    "lerobot/aloha_mobile_elevator",
+    "lerobot/aloha_mobile_shrimp",
+    "lerobot/aloha_mobile_wash_pan",
+    "lerobot/aloha_mobile_wipe_wine",
+    "lerobot/aloha_static_battery",
+    "lerobot/aloha_static_candy",
+    "lerobot/aloha_static_coffee",
+    "lerobot/aloha_static_coffee_new",
+    "lerobot/aloha_static_cups_open",
+    "lerobot/aloha_static_fork_pick_up",
+    "lerobot/aloha_static_pingpong_test",
+    "lerobot/aloha_static_pro_pencil",
+    "lerobot/aloha_static_screw_driver",
+    "lerobot/aloha_static_tape",
+    "lerobot/aloha_static_thread_velcro",
+    "lerobot/aloha_static_towel",
+    "lerobot/aloha_static_vinh_cup",
+    "lerobot/aloha_static_vinh_cup_left",
+    "lerobot/aloha_static_ziploc_slide",
+    "lerobot/umi_cup_in_the_wild",
+]
 
 available_datasets = list(
-    itertools.chain(*available_datasets_per_env.values(), available_datasets_without_env)
+    itertools.chain(*available_datasets_per_env.values(), available_real_world_datasets)
 )
 
 # TODO(rcadene, aliberts, alexander-soare): Add real-world env with a gym API
