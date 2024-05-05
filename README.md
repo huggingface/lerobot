@@ -133,20 +133,17 @@ Check out [example 2](./examples/2_evaluate_pretrained_policy.py) to see how you
 
 Or you can achieve the same result by executing our script from the command line:
 ```bash
-# TODO: Not working right now, update `lerobot/diffusion_policy_pusht_image` to fix
 python lerobot/scripts/eval.py \
     -p lerobot/diffusion_pusht \
-    eval_episodes=10 \
-    hydra.run.dir=outputs/eval/example_hub
+    eval.n_episodes=10 \
+    eval.batch_size=10
 ```
 
 After training your own policy, you can also re-evaluate the checkpoints with:
 
 ```bash
 python lerobot/scripts/eval.py \
-    -p PATH/TO/TRAIN/OUTPUT/FOLDER \
-    eval_episodes=10 \
-    hydra.run.dir=outputs/eval/example_dir
+    -p PATH/TO/TRAIN/OUTPUT/FOLDER
 ```
 
 See `python lerobot/scripts/eval.py --help` for more instructions.

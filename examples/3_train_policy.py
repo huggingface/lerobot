@@ -33,7 +33,6 @@ dataset = make_dataset(hydra_cfg)
 # For this example, no arguments need to be passed because the defaults are set up for PushT.
 # If you're doing something different, you will likely need to change at least some of the defaults.
 cfg = DiffusionConfig()
-# TODO(alexander-soare): Remove LR scheduler from the policy.
 policy = DiffusionPolicy(cfg, dataset_stats=dataset.stats)
 policy.train()
 policy.to(device)
