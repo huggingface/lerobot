@@ -58,7 +58,7 @@ def test_examples_3_and_2():
     file_contents = _find_and_replace(
         file_contents,
         [
-            ('pretrained_policy_name = "lerobot/diffusion_policy_pusht_image"', ""),
+            ('pretrained_policy_name = "lerobot/diffusion_pusht"', ""),
             ("pretrained_policy_path = Path(snapshot_download(pretrained_policy_name))", ""),
             (
                 '# pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")',

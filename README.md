@@ -135,7 +135,7 @@ Or you can achieve the same result by executing our script from the command line
 ```bash
 # TODO: Not working right now, update `lerobot/diffusion_policy_pusht_image` to fix
 python lerobot/scripts/eval.py \
-    -p lerobot/diffusion_policy_pusht_image \
+    -p lerobot/diffusion_pusht \
     eval_episodes=10 \
     hydra.run.dir=outputs/eval/example_hub
 ```
