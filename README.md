@@ -152,8 +152,9 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 Check out [example 3](./examples/3_train_policy.py) to see how you can start training a model on a dataset, which will be automatically downloaded if needed.
 
-In general, you can use our training script to easily train any policy in any environment:
+In general, you can use our training script to easily train any policy on its environment:
 ```bash
+# TODO(aliberts): not working
 python lerobot/scripts/train.py \
     env=aloha \
     task=sim_insertion \

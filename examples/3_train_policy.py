@@ -18,7 +18,7 @@ from lerobot.common.utils.utils import init_hydra_config
 output_directory = Path("outputs/train/example_pusht_diffusion")
 os.makedirs(output_directory, exist_ok=True)
 
-# Number of offline training steps (we'll only do offline training for this example.
+# Number of offline training steps (we'll only do offline training for this example.)
 # Adjust as you prefer. 5000 steps are needed to get something worth evaluating.
 training_steps = 5000
 device = torch.device("cuda")
