@@ -58,16 +58,13 @@ def test_examples_3_and_2():
     file_contents = _find_and_replace(
         file_contents,
         [
-            ('pretrained_policy_name = "lerobot/diffusion_pusht"', ""),
-            ("pretrained_policy_path = Path(snapshot_download(pretrained_policy_name))", ""),
+            ('pretrained_policy_path = Path(snapshot_download("lerobot/diffusion_pusht"))', ""),
             (
                 '# pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")',
                 'pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")',
             ),
-            ('"eval.n_episodes=10"', '"eval.n_episodes=1"'),
-            ('"eval.batch_size=10"', '"eval.batch_size=1"'),
-            ('"device=cuda"', '"device=cpu"'),
+            ('device = torch.device("cuda")', 'device = torch.device("cpu")'),
         ],
     )
 
-    assert Path("outputs/train/example_pusht_diffusion").exists()
+    assert Path("outputs/eval/example_pusht_diffusion/rollout.mp4").exists()

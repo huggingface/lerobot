@@ -165,20 +165,24 @@ python lerobot/scripts/train.py \
     policy=act \
     env=aloha \
     env.task=AlohaInsertion-v0 \
-    dataset_repo_id=lerobot/aloha_sim_insertion_human \
-    hydra.run.dir=outputs/train/aloha_act
+    dataset_repo_id=lerobot/aloha_sim_insertion_human
 ```
 
-Here is an example of logs from wandb:
+The experiment directory is automatically generated and will show up in yellow in your terminal. It looks like `outputs/train/2024-05-05/20-21-12_aloha_act_default`. You can manually specify an experiment directory by adding this argument to the `train.py` python command:
+```bash
+    hydra.run.dir=your/new/experiment/dir
+```
+
+A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of logs from wandb:
 ![](media/wandb.png)
 
-You can deactivate wandb by adding these arguments to the command line:
-```
+You can deactivate wandb by adding these arguments to the `train.py` python command:
+```bash
     wandb.disable_artifact=true \
     wandb.enable=false
 ```
 
-Note: During training, every checkpoint is evaluated on a low number of episodes for efficiency. After training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
+Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. After training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
 
 
 ## Contribute
@@ -187,12 +191,12 @@ If you would like to contribute to 🤗 LeRobot, please check out our [contribut
 
 ### Add a new dataset
 
-To add a dataset to the hub, begin by logging in with a token that has write access, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
+To add a dataset to the hub, you need to login using a write-access token, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
 ```bash
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-Then move your dataset folder in `data` directory (e.g. `data/aloha_ping_pong`), and push your dataset to the hub using the following command:
+Then move your dataset folder in `data` directory (e.g. `data/aloha_ping_pong`), and push your dataset to the hub with:
 ```bash
 python lerobot/scripts/push_dataset_to_hub.py \
 --data-dir data \
@@ -208,33 +212,19 @@ If your dataset format is not supported, implement your own in `lerobot/common/d
 
 ### Add a pretrained policy
 
-```python
-# TODO(rcadene, alexander-soare): rewrite this section
-```
+Once you have trained a policy you may upload it to the Hugging Face hub using a hub id that looks like `${hf_user}/${repo_name}` (e.g. [lerobot/diffusion_pusht](https://huggingface.co/lerobot/diffusion_pusht)).
 
-Once you have trained a policy you may upload it to the Hugging Face hub.
-
-Firstly, make sure you have a model repository set up on the hub. The hub ID looks like HF_USER/REPO_NAME.
-
-Secondly, assuming you have trained a policy, you need the following (which should all be in any of the subdirectories of `checkpoints` in your training output folder, if you've used the LeRobot training script):
-
+You first need to find the checkpoint located inside your experiment directory (e.g. `outputs/train/2024-05-05/20-21-12_aloha_act_default/checkpoints/002500`). It should contain:
 - `config.json`: A serialized version of the policy configuration (following the policy's dataclass config).
-- `model.safetensors`: The `torch.nn.Module` parameters, saved in [Hugging Face Safetensors](https://huggingface.co/docs/safetensors/index) format.
-- `config.yaml`: This is the consolidated Hydra training configuration containing the policy, environment, and dataset configs. The policy configuration should match `config.json` exactly. The environment config is useful for anyone who wants to evaluate your policy. The dataset config just serves as a paper trail for reproducibility.
+- `model.safetensors`: A set of `torch.nn.Module` parameters, saved in [Hugging Face Safetensors](https://huggingface.co/docs/safetensors/index) format.
+- `config.yaml`: A consolidated Hydra training configuration containing the policy, environment, and dataset configs. The policy configuration should match `config.json` exactly. The environment config is useful for anyone who wants to evaluate your policy. The dataset config just serves as a paper trail for reproducibility.
 
-To upload these to the hub, run the following with a desired revision ID.
-
+To upload these to the hub, run the following:
 ```bash
-huggingface-cli upload $HUB_ID PATH/TO/OUTPUT/DIR --revision $REVISION_ID
+huggingface-cli upload ${hf_user}/${repo_name} path/to/checkpoint/dir
 ```
 
-If you want this to be the default revision also run the following (don't worry, it won't upload the files again; it will just adjust the file pointers):
-
-```bash
-huggingface-cli upload $HUB_ID PATH/TO/OUTPUT/DIR
-```
-
-See `eval.py` for an example of how a user may use your policy.
+See [eval.py](https://github.com/huggingface/lerobot/blob/main/lerobot/scripts/eval.py) for an example of how other people may use your policy.
 
 
 ### Improve your code with profiling

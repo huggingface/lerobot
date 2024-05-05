@@ -337,7 +337,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # Note: this helper will be used in offline and online training loops.
-    def _maybe_eval_and_maybe_save(step):
+    def evaluate_and_checkpoint_if_needed(step):
         if step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             eval_info = eval_policy(
@@ -393,9 +393,9 @@ def train(cfg: dict, out_dir=None, job_name=None):
         if step % cfg.training.log_freq == 0:
             log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline)
 
-        # Note: _maybe_eval_and_maybe_save happens **after** the `step`th training update has completed, so we pass in
-        # step + 1.
-        _maybe_eval_and_maybe_save(step + 1)
+        # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
+        # so we pass in step + 1.
+        evaluate_and_checkpoint_if_needed(step + 1)
 
         step += 1
 
@@ -461,9 +461,9 @@ def train(cfg: dict, out_dir=None, job_name=None):
             if step % cfg.training.log_freq == 0:
                 log_train_info(logger, train_info, step, cfg, online_dataset, is_offline)
 
-            # Note: _maybe_eval_and_maybe_save happens **after** the `step`th training update has completed, so we pass
-            # in step + 1.
-            _maybe_eval_and_maybe_save(step + 1)
+            # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
+            # so we pass in step + 1.
+            evaluate_and_checkpoint_if_needed(step + 1)
 
             step += 1
             online_step += 1
