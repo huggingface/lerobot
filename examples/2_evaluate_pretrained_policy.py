@@ -10,7 +10,7 @@ from huggingface_hub import snapshot_download
 from lerobot.scripts.eval import eval
 
 # Get a pretrained policy from the hub.
-pretrained_policy_name = "lerobot/diffusion_policy_pusht_image"
+pretrained_policy_name = "lerobot/diffusion_pusht"
 pretrained_policy_path = Path(snapshot_download(pretrained_policy_name))
 # OR uncomment the following to evaluate a policy from the local outputs/train folder.
 # pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")

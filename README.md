@@ -135,7 +135,7 @@ Check out [examples](./examples) to see how you can load a pretrained policy fro
 Or you can achieve the same result by executing our script from the command line:
 ```bash
 python lerobot/scripts/eval.py \
--p lerobot/diffusion_policy_pusht_image \
+-p lerobot/diffusion_pusht \
 eval_episodes=10 \
 hydra.run.dir=outputs/eval/example_hub
 ```
