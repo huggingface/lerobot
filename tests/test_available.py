@@ -43,5 +43,6 @@ def test_print():
     print(lerobot.available_tasks_per_env)
     print(lerobot.available_datasets)
     print(lerobot.available_datasets_per_env)
+    print(lerobot.available_real_world_datasets)
     print(lerobot.available_policies)
     print(lerobot.available_policies_per_env)
