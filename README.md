@@ -127,7 +127,7 @@ python lerobot/scripts/visualize_dataset.py \
 ```
 
 It will open `rerun.io` and display the camera streams, robot states and actions.
-![](media/battery-720p.mov)
+![](http://remicadene.com/assets/videos/battery-720p.mov)
 
 Our script can also visualize datasets stored on a distant server. See `python lerobot/scripts/visualize_dataset.py --help` for more instructions.
 
@@ -166,7 +166,7 @@ python lerobot/scripts/train.py \
 ```
 
 Here is an example of logs from wandb:
-![](media/battery-720p.mov)
+![](media/wandb.png)
 
 You can deactivate wandb by adding these arguments to the command line:
 ```
