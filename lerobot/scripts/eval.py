@@ -2,18 +2,18 @@
 
 Usage examples:
 
-You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/diffusion_policy_pusht_image)
+You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/diffusion_pusht)
 for 10 episodes.
 
 ```
-python lerobot/scripts/eval.py -p lerobot/diffusion_policy_pusht_image eval.n_episodes=10
+python lerobot/scripts/eval.py -p lerobot/diffusion_pusht eval.n_episodes=10
 ```
 
 OR, you want to evaluate a model checkpoint from the LeRobot training script for 10 episodes.
 
 ```
 python lerobot/scripts/eval.py \
-    -p outputs/train/diffusion_policy_pusht_image/checkpoints/005000 \
+    -p outputs/train/diffusion_pusht/checkpoints/005000 \
     eval.n_episodes=10
 ```
 
@@ -23,7 +23,7 @@ Note that in both examples, the repo/folder should contain at least `config.json
 Note the formatting for providing the number of episodes. Generally, you may provide any number of arguments
 with `qualified.parameter.name=value`. In this case, the parameter eval.n_episodes appears as `n_episodes`
 nested under `eval` in the `config.yaml` found at
-https://huggingface.co/lerobot/diffusion_policy_pusht_image/tree/main.
+https://huggingface.co/lerobot/diffusion_pusht/tree/main.
 """
 
 import argparse
