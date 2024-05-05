@@ -171,68 +171,63 @@ If you would like to contribute to 🤗 LeRobot, please check out our [contribut
 
 ### Add a new dataset
 
-```python
-# TODO(rcadene, AdilZouitine): rewrite this section
-```
-
-To add a dataset to the hub, first login and use a token generated from [Hugging Face settings](https://huggingface.co/settings/tokens) with write access:
+To add a dataset to the hub, begin by logging in with a token that has write access, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
 ```bash
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-Then you can upload it to the hub with:
+Then, push your dataset to the hub using the following command:
+
 ```bash
-HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload $HF_USER/$DATASET data/$DATASET \
-    --repo-type dataset  \
-    --revision v1.0
+python lerobot/scripts/push_dataset_to_hub.py \
+--data-dir data \
+--dataset-id pusht \
+--raw-format pusht_zarr \
+--community-id lerobot \
+--revision v1.3 \
+--dry-run 0 \
+--save-to-disk 0 \
+--save-tests-to-disk 0 \
+--debug 0
 ```
 
-You will need to set the corresponding version as a default argument in your dataset class:
-```python
-  version: str | None = "v1.1",
-```
-See: [`lerobot/common/datasets/pusht.py`](https://github.com/Cadene/lerobot/blob/main/lerobot/common/datasets/pusht.py)
+For detailed explanations of the arguments, consult the help command:
 
-For instance, for [lerobot/pusht](https://huggingface.co/datasets/lerobot/pusht), we used:
 ```bash
-HF_USER=lerobot
-DATASET=pusht
+python lerobot/scripts/push_dataset_to_hub.py --help
 ```
 
-If you want to improve an existing dataset, you can download it locally with:
+We currently support the following raw formats:
+
+```
+pusht_zarr | umi_zarr | aloha_hdf5 | xarm_pkl
+```
+
+For the `revision` parameter, set the version to match `CODEBASE_VERSION` using:
+
 ```bash
-mkdir -p data/$DATASET
-HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli download ${HF_USER}/$DATASET \
-    --repo-type dataset \
-    --local-dir data/$DATASET \
-    --local-dir-use-symlinks=False \
-    --revision v1.0
+python -c "from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION; print(CODEBASE_VERSION)"
 ```
 
-Iterate on your code and dataset with:
+If there is a need to update the unit tests, set `save-tests-to-disk` to 1 to mock the dataset:
+
 ```bash
-DATA_DIR=data python train.py
+python lerobot/scripts/push_dataset_to_hub.py \
+--data-dir data \
+--dataset-id pusht \
+--raw-format pusht_zarr \
+--community-id lerobot \
+--revision v1.3 \
+--dry-run 0 \
+--save-to-disk 0 \
+--save-tests-to-disk 1 \
+--debug 0
 ```
 
-Upload a new version (v2.0 or v1.1 if the changes are respectively more or less significant):
-```bash
-HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli upload $HF_USER/$DATASET data/$DATASET \
-    --repo-type dataset \
-    --revision v1.1 \
-    --delete "*"
-```
+The mock dataset will be located in `tests/data/$COMMUNITY_ID/$DATASET_ID/`, which can be used to update the unit tests.
 
-Then you will need to set the corresponding version as a default argument in your dataset class:
-```python
-version: str | None = "v1.1",
-```
-See: [`lerobot/common/datasets/pusht.py`](https://github.com/Cadene/lerobot/blob/main/lerobot/common/datasets/pusht.py)
+To implement a new raw format, create a file in `lerobot/common/datasets/push_dataset_to_hub/{raw_format}_format.py` and implement the functions: `check_format`, `load_from_raw`, and `to_hf_dataset`. Combine these functions in `from_raw_to_lerobot_format`. You can find examples here: [pusht_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/pusht_zarr_format.py), [umi_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/umi_zarr_format.py), [aloha_hdf5](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/aloha_hdf5_format.py), and [xarm_pkl](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/xarm_pkl_format.py). Then, add the new format to [`get_from_raw_to_lerobot_format_fn`](https://github.com/huggingface/lerobot/blob/main/lerobot/scripts/push_dataset_to_hub.py#L69) in [`lerobot/scripts/push_dataset_to_hub.py`](https://github.com/huggingface/lerobot/blob/main/lerobot/scripts/push_dataset_to_hub.py). Et voilà! You are now ready to use this new format in [`push_dataset_to_hub.py`](https://github.com/huggingface/lerobot/blob/main/lerobot/scripts/push_dataset_to_hub.py) and can submit a PR to add it 🤗.
 
-
-Finally, you might want to mock the dataset if you need to update the unit tests as well:
-```bash
-python tests/scripts/mock_dataset.py --in-data-dir data/$DATASET --out-data-dir tests/data/$DATASET
-```
 
 ### Add a pretrained policy
 
