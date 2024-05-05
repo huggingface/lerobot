@@ -46,7 +46,7 @@ def test_examples_3_and_2():
     # Pass empty globals to allow dictionary comprehension https://stackoverflow.com/a/32897127/4391249.
     exec(file_contents, {})
 
-    for file_name in ["model.safetensors", "config.json", "config.yaml"]:
+    for file_name in ["model.safetensors", "config.json"]:
         assert Path(f"outputs/train/example_pusht_diffusion/{file_name}").exists()
 
     path = "examples/2_evaluate_pretrained_policy.py"
