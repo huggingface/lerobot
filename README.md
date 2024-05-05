@@ -126,8 +126,8 @@ python lerobot/scripts/visualize_dataset.py \
     --episode-index 0
 ```
 
-It will open `rerun.io` and display the camera streams, robot states and actions.
-![](http://remicadene.com/assets/videos/battery-720p.mov)
+It will open `rerun.io` and display the camera streams, robot states and actions, like this:
+https://github.com/huggingface/lerobot/assets/4681518/fd46b787-b532-47e2-bb6f-fd536a55a7ed
 
 Our script can also visualize datasets stored on a distant server. See `python lerobot/scripts/visualize_dataset.py --help` for more instructions.
 
