@@ -1,5 +1,9 @@
 # @package _global_
 
+# Defaults for training for the PushT dataset as per https://github.com/real-stanford/diffusion_policy.
+# Note: We do not track EMA model weights as we discovered it does not improve the results. See
+#       https://github.com/huggingface/lerobot/pull/134 for more details.
+
 seed: 100000
 dataset_repo_id: lerobot/pusht
 
@@ -91,12 +95,3 @@ policy:
 
   # Inference
   num_inference_steps: 100
-
-  # ---
-  # TODO(alexander-soare): Remove these from the policy config.
-  use_ema: true
-  ema_update_after_step: 0
-  ema_min_alpha: 0.0
-  ema_max_alpha: 0.9999
-  ema_inv_gamma: 1.0
-  ema_power: 0.75
