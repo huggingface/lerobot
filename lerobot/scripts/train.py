@@ -368,7 +368,8 @@ def train(cfg: dict, out_dir=None, job_name=None):
     # create dataloader for offline training
     dataloader = torch.utils.data.DataLoader(
         offline_dataset,
-        num_workers=4,
+        num_workers=cfg.training.dataloader_num_workers,
+        persistent_workers=cfg.training.dataloader_persistent_workers,
         batch_size=cfg.training.batch_size,
         shuffle=True,
         pin_memory=cfg.device != "cpu",
@@ -415,7 +416,8 @@ def train(cfg: dict, out_dir=None, job_name=None):
     )
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
-        num_workers=4,
+        num_workers=cfg.training.dataloader_num_workers,
+        persistent_workers=cfg.training.dataloader_persistent_workers,
         batch_size=cfg.training.batch_size,
         sampler=sampler,
         pin_memory=cfg.device != "cpu",
