@@ -63,12 +63,13 @@ jobs:
 
       - name: Test
         run: pytest -v --cov=./lerobot --cov-report=xml --disable-warnings tests
-      #   TODO(aliberts): Link with HF Codecov account
-      # - name: Upload coverage reports to Codecov with GitHub Action
-      #   uses: codecov/codecov-action@v4
-      #   with:
-      #     files: ./coverage.xml
-      #     verbose: true
+
+      - name: Upload coverage reports to Codecov with GitHub Action
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          verbose: true
+
       - name: Tests end-to-end
         run: make test-end-to-end
 
