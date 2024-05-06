@@ -3,7 +3,6 @@
 TODO(alexander-soare):
   - Remove reliance on Robomimic for SpatialSoftmax.
   - Remove reliance on diffusers for DDPMScheduler and LR scheduler.
-  - Consider adding loss masking when there are pad frames.
 """
 
 import math
@@ -267,6 +266,11 @@ class DiffusionModel(nn.Module):
             raise ValueError(f"Unsupported prediction type {self.config.prediction_type}")
 
         loss = F.mse_loss(pred, target, reduction="none")
+
+        # Mask loss wherever the action is padded with copies (edges of the dataset trajectory).
+        if self.config.do_mask_loss_for_padding and "action_is_pad" in batch:
+            in_episode_bound = ~batch["action_is_pad"]
+            loss = loss * in_episode_bound.unsqueeze(-1)
 
         return loss.mean()
 

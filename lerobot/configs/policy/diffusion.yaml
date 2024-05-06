@@ -95,3 +95,6 @@ policy:
 
   # Inference
   num_inference_steps: 100
+
+  # Loss computation
+  do_mask_loss_for_padding: false
