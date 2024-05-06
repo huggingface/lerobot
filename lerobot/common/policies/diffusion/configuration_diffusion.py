@@ -64,6 +64,9 @@ class DiffusionConfig:
         clip_sample_range: The magnitude of the clipping range as described above.
         num_inference_steps: Number of reverse diffusion steps to use at inference time (steps are evenly
             spaced). If not provided, this defaults to be the same as `num_train_timesteps`.
+        do_mask_loss_for_padding: Whether to mask the loss when there are copy-padded actions. See
+            `LeRobotDataset` and `load_previous_and_future_frames` for mor information. Note, this defaults
+            to False as the original Diffusion Policy implementation does the same.
     """
 
     # Inputs / output structure.
@@ -117,6 +120,9 @@ class DiffusionConfig:
 
     # Inference
     num_inference_steps: int | None = None
+
+    # Loss computation
+    do_mask_loss_for_padding: bool = False
 
     def __post_init__(self):
         """Input validation (not exhaustive)."""
