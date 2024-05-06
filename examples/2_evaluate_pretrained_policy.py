@@ -5,6 +5,7 @@ training outputs directory. In the latter case, you might want to run examples/3
 
 from pathlib import Path
 
+import gym_pusht  # noqa: F401
 import gymnasium as gym
 import imageio
 import numpy
