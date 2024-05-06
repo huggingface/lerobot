@@ -60,7 +60,7 @@ import torch
 from huggingface_hub import HfApi
 from safetensors.torch import save_file
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.push_dataset_to_hub._download_raw import download_raw
 from lerobot.common.datasets.push_dataset_to_hub.compute_stats import compute_stats
 from lerobot.common.datasets.utils import flatten_dict
@@ -110,7 +110,6 @@ def push_meta_data_to_hub(repo_id, meta_data_dir, revision):
         repo_id=repo_id,
         revision=revision,
         repo_type="dataset",
-        allow_patterns=["*.json, *.safetensors"],
     )
 
 
@@ -160,7 +159,7 @@ def push_dataset_to_hub(
     if out_dir.exists():
         shutil.rmtree(out_dir)
 
-    if tests_out_dir.exists():
+    if tests_out_dir.exists() and save_tests_to_disk:
         shutil.rmtree(tests_out_dir)
 
     if not raw_dir.exists():
@@ -253,7 +252,7 @@ def main():
     parser.add_argument(
         "--revision",
         type=str,
-        default="v1.2",
+        default=CODEBASE_VERSION,
         help="Codebase version used to generate the dataset.",
     )
     parser.add_argument(

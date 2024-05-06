@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 from copy import deepcopy
 from pathlib import Path
 
@@ -42,7 +41,7 @@ def test_factory(env_name, repo_id, policy_name):
     )
     dataset = make_dataset(cfg)
     delta_timestamps = dataset.delta_timestamps
-    image_keys = dataset.image_keys
+    camera_keys = dataset.camera_keys
 
     item = dataset[0]
 
@@ -72,7 +71,7 @@ def test_factory(env_name, repo_id, policy_name):
         else:
             assert item[key].ndim == ndim, f"{key}"
 
-        if key in image_keys:
+        if key in camera_keys:
             assert item[key].dtype == torch.float32, f"{key}"
             # TODO(rcadene): we assume for now that image normalization takes place in the model
             assert item[key].max() <= 1.0, f"{key}"
@@ -97,9 +96,7 @@ def test_compute_stats_on_xarm():
     We compare with taking a straight min, mean, max, std of all the data in one pass (which we can do
     because we are working with a small dataset).
     """
-    dataset = LeRobotDataset(
-        "lerobot/xarm_lift_medium", root=Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
-    )
+    dataset = LeRobotDataset("lerobot/xarm_lift_medium")
 
     # reduce size of dataset sample on which stats compute is tested to 10 frames
     dataset.hf_dataset = dataset.hf_dataset.select(range(10))
@@ -254,7 +251,6 @@ def test_backward_compatibility(repo_id):
 
     dataset = LeRobotDataset(
         repo_id,
-        root=Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None,
     )
 
     test_dir = Path("tests/data/save_dataset_to_safetensors") / repo_id
@@ -269,7 +265,7 @@ def test_backward_compatibility(repo_id):
 
         for key in new_frame:
             assert torch.isclose(
-                new_frame[key], old_frame[key], rtol=1e-05, atol=1e-08
+                new_frame[key], old_frame[key]
             ).all(), f"{key=} for index={i} does not contain the same value"
 
     # test2 first frames of first episode

@@ -2,18 +2,18 @@
 
 Usage examples:
 
-You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/diffusion_policy_pusht_image)
+You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/diffusion_pusht)
 for 10 episodes.
 
 ```
-python lerobot/scripts/eval.py -p lerobot/diffusion_policy_pusht_image eval.n_episodes=10
+python lerobot/scripts/eval.py -p lerobot/diffusion_pusht eval.n_episodes=10
 ```
 
 OR, you want to evaluate a model checkpoint from the LeRobot training script for 10 episodes.
 
 ```
 python lerobot/scripts/eval.py \
-    -p outputs/train/diffusion_policy_pusht_image/checkpoints/005000 \
+    -p outputs/train/diffusion_pusht/checkpoints/005000 \
     eval.n_episodes=10
 ```
 
@@ -23,7 +23,7 @@ Note that in both examples, the repo/folder should contain at least `config.json
 Note the formatting for providing the number of episodes. Generally, you may provide any number of arguments
 with `qualified.parameter.name=value`. In this case, the parameter eval.n_episodes appears as `n_episodes`
 nested under `eval` in the `config.yaml` found at
-https://huggingface.co/lerobot/diffusion_policy_pusht_image/tree/main.
+https://huggingface.co/lerobot/diffusion_pusht/tree/main.
 """
 
 import argparse
@@ -121,7 +121,7 @@ def rollout(
     max_steps = env.call("_max_episode_steps")[0]
     progbar = trange(
         max_steps,
-        desc=f"Running rollout with {max_steps} steps (maximum) per rollout",
+        desc=f"Running rollout with at most {max_steps} steps",
         disable=not enable_progbar,
         leave=False,
     )
@@ -338,7 +338,7 @@ def eval_policy(
                     target=write_video,
                     args=(
                         str(video_path),
-                        stacked_frames[: done_index + 2],  # + 2 to capture the observation frame after done
+                        stacked_frames[: done_index + 1],  # + 1 to capture the last observation
                         env.unwrapped.metadata["render_fps"],
                     ),
                 )
@@ -583,17 +583,18 @@ if __name__ == "__main__":
             pretrained_policy_path = Path(
                 snapshot_download(args.pretrained_policy_name_or_path, revision=args.revision)
             )
-        except HFValidationError:
-            logging.warning(
-                "The provided pretrained_policy_name_or_path is not a valid Hugging Face Hub repo ID. "
-                "Treating it as a local directory."
-            )
-        except RepositoryNotFoundError:
-            logging.warning(
-                "The provided pretrained_policy_name_or_path was not found on the Hugging Face Hub. Treating "
-                "it as a local directory."
-            )
-        pretrained_policy_path = Path(args.pretrained_policy_name_or_path)
+        except (HFValidationError, RepositoryNotFoundError) as e:
+            if isinstance(e, HFValidationError):
+                error_message = (
+                    "The provided pretrained_policy_name_or_path is not a valid Hugging Face Hub repo ID."
+                )
+            else:
+                error_message = (
+                    "The provided pretrained_policy_name_or_path was not found on the Hugging Face Hub."
+                )
+
+            logging.warning(f"{error_message} Treating it as a local directory.")
+            pretrained_policy_path = Path(args.pretrained_policy_name_or_path)
         if not pretrained_policy_path.is_dir() or not pretrained_policy_path.exists():
             raise ValueError(
                 "The provided pretrained_policy_name_or_path is not a valid/existing Hugging Face Hub "

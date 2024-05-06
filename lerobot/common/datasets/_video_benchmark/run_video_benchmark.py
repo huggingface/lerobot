@@ -1,5 +1,4 @@
 import json
-import os
 import random
 import shutil
 import subprocess
@@ -41,10 +40,8 @@ def run_video_benchmark(
     repo_id = cfg["repo_id"]
 
     # TODO(rcadene): rewrite with hardcoding of original images and episodes
-    dataset = LeRobotDataset(
-        repo_id,
-        root=Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None,
-    )
+    dataset = LeRobotDataset(repo_id)
+
     # Get fps
     fps = dataset.fps
 

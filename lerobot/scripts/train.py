@@ -8,7 +8,6 @@ import hydra
 import torch
 from datasets import concatenate_datasets
 from datasets.utils import disable_progress_bars, enable_progress_bars
-from diffusers.optimization import get_scheduler
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.utils import cycle
@@ -23,6 +22,53 @@ from lerobot.common.utils.utils import (
     set_global_seed,
 )
 from lerobot.scripts.eval import eval_policy
+
+
+def make_optimizer_and_scheduler(cfg, policy):
+    if cfg.policy.name == "act":
+        optimizer_params_dicts = [
+            {
+                "params": [
+                    p
+                    for n, p in policy.named_parameters()
+                    if not n.startswith("backbone") and p.requires_grad
+                ]
+            },
+            {
+                "params": [
+                    p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad
+                ],
+                "lr": cfg.training.lr_backbone,
+            },
+        ]
+        optimizer = torch.optim.AdamW(
+            optimizer_params_dicts, lr=cfg.training.lr, weight_decay=cfg.training.weight_decay
+        )
+        lr_scheduler = None
+    elif cfg.policy.name == "diffusion":
+        optimizer = torch.optim.Adam(
+            policy.diffusion.parameters(),
+            cfg.training.lr,
+            cfg.training.adam_betas,
+            cfg.training.adam_eps,
+            cfg.training.adam_weight_decay,
+        )
+        assert cfg.training.online_steps == 0, "Diffusion Policy does not handle online training."
+        from diffusers.optimization import get_scheduler
+
+        lr_scheduler = get_scheduler(
+            cfg.training.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=cfg.training.lr_warmup_steps,
+            num_training_steps=cfg.training.offline_steps,
+        )
+    elif policy.name == "tdmpc":
+        optimizer = torch.optim.Adam(policy.parameters(), cfg.training.lr)
+        lr_scheduler = None
+    else:
+        raise NotImplementedError()
+
+    return optimizer, lr_scheduler
 
 
 def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
@@ -43,9 +89,6 @@ def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
 
     if lr_scheduler is not None:
         lr_scheduler.step()
-
-    if hasattr(policy, "ema") and policy.ema is not None:
-        policy.ema.step(policy.diffusion)
 
     if isinstance(policy, PolicyWithUpdate):
         # To possibly update an internal buffer (for instance an Exponential Moving Average like in TDMPC).
@@ -276,46 +319,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
-    if cfg.policy.name == "act":
-        optimizer_params_dicts = [
-            {
-                "params": [
-                    p
-                    for n, p in policy.named_parameters()
-                    if not n.startswith("backbone") and p.requires_grad
-                ]
-            },
-            {
-                "params": [
-                    p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad
-                ],
-                "lr": cfg.training.lr_backbone,
-            },
-        ]
-        optimizer = torch.optim.AdamW(
-            optimizer_params_dicts, lr=cfg.training.lr, weight_decay=cfg.training.weight_decay
-        )
-        lr_scheduler = None
-    elif cfg.policy.name == "diffusion":
-        optimizer = torch.optim.Adam(
-            policy.diffusion.parameters(),
-            cfg.training.lr,
-            cfg.training.adam_betas,
-            cfg.training.adam_eps,
-            cfg.training.adam_weight_decay,
-        )
-        assert cfg.training.online_steps == 0, "Diffusion Policy does not handle online training."
-        lr_scheduler = get_scheduler(
-            cfg.training.lr_scheduler,
-            optimizer=optimizer,
-            num_warmup_steps=cfg.training.lr_warmup_steps,
-            num_training_steps=cfg.training.offline_steps,
-        )
-    elif policy.name == "tdmpc":
-        optimizer = torch.optim.Adam(policy.parameters(), cfg.training.lr)
-        lr_scheduler = None
-    else:
-        raise NotImplementedError()
+    optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
@@ -333,7 +337,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # Note: this helper will be used in offline and online training loops.
-    def _maybe_eval_and_maybe_save(step):
+    def evaluate_and_checkpoint_if_needed(step):
         if step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             eval_info = eval_policy(
@@ -389,9 +393,9 @@ def train(cfg: dict, out_dir=None, job_name=None):
         if step % cfg.training.log_freq == 0:
             log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline)
 
-        # Note: _maybe_eval_and_maybe_save happens **after** the `step`th training update has completed, so we pass in
-        # step + 1.
-        _maybe_eval_and_maybe_save(step + 1)
+        # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
+        # so we pass in step + 1.
+        evaluate_and_checkpoint_if_needed(step + 1)
 
         step += 1
 
@@ -457,9 +461,9 @@ def train(cfg: dict, out_dir=None, job_name=None):
             if step % cfg.training.log_freq == 0:
                 log_train_info(logger, train_info, step, cfg, online_dataset, is_offline)
 
-            # Note: _maybe_eval_and_maybe_save happens **after** the `step`th training update has completed, so we pass
-            # in step + 1.
-            _maybe_eval_and_maybe_save(step + 1)
+            # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
+            # so we pass in step + 1.
+            evaluate_and_checkpoint_if_needed(step + 1)
 
             step += 1
             online_step += 1
