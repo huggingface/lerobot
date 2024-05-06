@@ -60,7 +60,7 @@ import torch
 from huggingface_hub import HfApi
 from safetensors.torch import save_file
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.push_dataset_to_hub._download_raw import download_raw
 from lerobot.common.datasets.push_dataset_to_hub.compute_stats import compute_stats
 from lerobot.common.datasets.utils import flatten_dict
@@ -252,7 +252,7 @@ def main():
     parser.add_argument(
         "--revision",
         type=str,
-        default="v1.2",
+        default=CODEBASE_VERSION,
         help="Codebase version used to generate the dataset.",
     )
     parser.add_argument(

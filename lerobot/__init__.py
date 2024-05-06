@@ -85,13 +85,6 @@ available_datasets = list(
     itertools.chain(*available_datasets_per_env.values(), available_real_world_datasets)
 )
 
-# TODO(rcadene, aliberts, alexander-soare): Add real-world env with a gym API
-available_datasets_without_env = ["lerobot/umi_cup_in_the_wild"]
-
-available_datasets = list(
-    itertools.chain(*available_datasets_per_env.values(), available_datasets_without_env)
-)
-
 available_policies = [
     "act",
     "diffusion",

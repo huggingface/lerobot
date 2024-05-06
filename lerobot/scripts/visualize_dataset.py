@@ -32,7 +32,7 @@ local$ rerun lerobot_pusht_episode_0.rrd
 ```
 
 - Visualize data stored on a distant machine through streaming:
-(You need to forward the websocket port to the distant machine, with 
+(You need to forward the websocket port to the distant machine, with
 `ssh -L 9087:localhost:9087 username@remote-host`)
 ```
 distant$ python lerobot/scripts/visualize_dataset.py \
@@ -131,7 +131,7 @@ def visualize_dataset(
             rr.set_time_seconds("timestamp", batch["timestamp"][i].item())
 
             # display each camera image
-            for key in dataset.image_keys:
+            for key in dataset.camera_keys:
                 # TODO(rcadene): add `.compress()`? is it lossless?
                 rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
 

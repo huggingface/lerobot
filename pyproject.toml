@@ -4,9 +4,9 @@ version = "0.1.0"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 authors = [
     "Rémi Cadène <re.cadene@gmail.com>",
+    "Simon Alibert <alibert.sim@gmail.com>",
     "Alexander Soare <alexander.soare159@gmail.com>",
     "Quentin Gallouédec <quentin.gallouedec@ec-lyon.fr>",
-    "Simon Alibert <alibert.sim@gmail.com>",
     "Adil Zouitine <adilzouitinegm@gmail.com>",
     "Thomas Wolf <thomaswolfcontact@gmail.com>",
 ]

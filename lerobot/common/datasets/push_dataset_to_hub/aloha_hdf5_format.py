@@ -142,12 +142,12 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
 def to_hf_dataset(data_dict, video) -> Dataset:
     features = {}
 
-    image_keys = [key for key in data_dict if "observation.images." in key]
-    for image_key in image_keys:
+    keys = [key for key in data_dict if "observation.images." in key]
+    for key in keys:
         if video:
-            features[image_key] = VideoFrame()
+            features[key] = VideoFrame()
         else:
-            features[image_key] = Image()
+            features[key] = Image()
 
     features["observation.state"] = Sequence(
         length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)

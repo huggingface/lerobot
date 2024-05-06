@@ -46,7 +46,7 @@ def test_examples_3_and_2():
     # Pass empty globals to allow dictionary comprehension https://stackoverflow.com/a/32897127/4391249.
     exec(file_contents, {})
 
-    for file_name in ["model.safetensors", "config.json", "config.yaml"]:
+    for file_name in ["model.safetensors", "config.json"]:
         assert Path(f"outputs/train/example_pusht_diffusion/{file_name}").exists()
 
     path = "examples/2_evaluate_pretrained_policy.py"
@@ -58,16 +58,16 @@ def test_examples_3_and_2():
     file_contents = _find_and_replace(
         file_contents,
         [
-            ('pretrained_policy_name = "lerobot/diffusion_pusht"', ""),
-            ("pretrained_policy_path = Path(snapshot_download(pretrained_policy_name))", ""),
+            ('pretrained_policy_path = Path(snapshot_download("lerobot/diffusion_pusht"))', ""),
             (
                 '# pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")',
                 'pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")',
             ),
-            ('"eval.n_episodes=10"', '"eval.n_episodes=1"'),
-            ('"eval.batch_size=10"', '"eval.batch_size=1"'),
-            ('"device=cuda"', '"device=cpu"'),
+            ('device = torch.device("cuda")', 'device = torch.device("cpu")'),
+            ("step += 1", "break"),
         ],
     )
 
-    assert Path("outputs/train/example_pusht_diffusion").exists()
+    exec(file_contents, {})
+
+    assert Path("outputs/eval/example_pusht_diffusion/rollout.mp4").exists()
