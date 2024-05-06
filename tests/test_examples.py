@@ -67,4 +67,6 @@ def test_examples_3_and_2():
         ],
     )
 
+    exec(file_contents, {})
+
     assert Path("outputs/eval/example_pusht_diffusion/rollout.mp4").exists()
