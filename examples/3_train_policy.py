@@ -49,7 +49,7 @@ optimizer = torch.optim.Adam(policy.parameters(), lr=1e-4)
 # Create dataloader for offline training.
 dataloader = torch.utils.data.DataLoader(
     dataset,
-    num_workers=0,
+    num_workers=4,
     batch_size=64,
     shuffle=True,
     pin_memory=device != torch.device("cpu"),

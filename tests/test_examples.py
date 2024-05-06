@@ -37,7 +37,7 @@ def test_examples_3_and_2():
         file_contents,
         [
             ("training_steps = 5000", "training_steps = 1"),
-            # ("num_workers=4", "num_workers=0"),
+            ("num_workers=4", "num_workers=0"),
             ('device = torch.device("cuda")', 'device = torch.device("cpu")'),
             ("batch_size=64", "batch_size=1"),
         ],
@@ -64,6 +64,7 @@ def test_examples_3_and_2():
                 'pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")',
             ),
             ('device = torch.device("cuda")', 'device = torch.device("cpu")'),
+            ("step += 1", "break"),
         ],
     )
 
