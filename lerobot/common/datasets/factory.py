@@ -28,6 +28,7 @@ def make_dataset(
         cfg.dataset_repo_id,
         split=split,
         delta_timestamps=delta_timestamps,
+        use_cache=cfg.training.dataset_use_cache,
     )
 
     if cfg.get("override_dataset_stats"):

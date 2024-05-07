@@ -27,7 +27,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         split: str = "train",
         transform: callable = None,
         delta_timestamps: dict[list[float]] | None = None,
+        use_cache: bool = False,
     ):
+        """
+        Args:
+            use_cache: Enable this to cache all items as tensors for faster data loading after the first
+                epoch. Useful if you have a small enough dataset to fit into memory. You may set multiple
+                workers for the PyTorch Dataloader but remember to set persistent_workers=True.
+        """
         super().__init__()
         self.repo_id = repo_id
         self.version = version
@@ -44,6 +51,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.info = load_info(repo_id, version, root)
         if self.video:
             self.videos_dir = load_videos(repo_id, version, root)
+        self.cache = {} if use_cache else None
 
     @property
     def fps(self) -> int:
@@ -104,19 +112,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return 1 / self.fps - 1e-4
 
     def __len__(self):
-        return self.num_samples
+        return self.num_samples // 8
 
     def __getitem__(self, idx):
-        item = self.hf_dataset[idx]
+        if self.cache is not None and idx in self.cache:
+            item = self.cache[idx]
+        else:
+            item = self.hf_dataset[idx]
 
-        if self.delta_timestamps is not None:
-            item = load_previous_and_future_frames(
-                item,
-                self.hf_dataset,
-                self.episode_data_index,
-                self.delta_timestamps,
-                self.tolerance_s,
-            )
+            if self.delta_timestamps is not None:
+                item = load_previous_and_future_frames(
+                    item,
+                    self.hf_dataset,
+                    self.episode_data_index,
+                    self.delta_timestamps,
+                    self.tolerance_s,
+                )
 
             if self.video:
                 item = load_from_videos(
