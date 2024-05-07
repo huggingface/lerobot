@@ -1111,34 +1111,32 @@ name = "gym-aloha"
 version = "0.1.1"
 description = "A gym environment for ALOHA"
 optional = true
-python-versions = "^3.10"
-files = []
-develop = false
+python-versions = "<4.0,>=3.10"
+files = [
+    {file = "gym_aloha-0.1.1-py3-none-any.whl", hash = "sha256:2698037246dbb106828f0bc229b61007b0a21d5967c72cc373f7bc1083203584"},
+    {file = "gym_aloha-0.1.1.tar.gz", hash = "sha256:614ae1cf116323e7b5ae2f0e9bd282c4f052aee15e839e5587ddce45995359bc"},
+]
 
 [package.dependencies]
 dm-control = ">=1.0.14"
 gymnasium = ">=0.29.1"
 imageio = {version = ">=2.34.0", extras = ["ffmpeg"]}
-mujoco = "^2.3.7"
+mujoco = ">=2.3.7,<3.0.0"
 
 [package.extras]
 dev = ["debugpy (>=1.8.1)", "pre-commit (>=3.7.0)"]
 test = ["pytest (>=8.1.0)", "pytest-cov (>=5.0.0)"]
-
-[package.source]
-type = "git"
-url = "https://github.com/huggingface/gym-aloha.git"
-reference = "user/aliberts/2024_05_07_remove_upper_bounds"
-resolved_reference = "32e1d915c4895fd814addbecc1fc6b7f6490cd71"
 
 [[package]]
 name = "gym-pusht"
 version = "0.1.2"
 description = "A gymnasium environment for PushT."
 optional = true
-python-versions = "^3.10"
-files = []
-develop = false
+python-versions = "<4.0,>=3.10"
+files = [
+    {file = "gym_pusht-0.1.2-py3-none-any.whl", hash = "sha256:46d3c06eea468ef64262a2ff1961cdca0a63e95049900e1519c67da9f4490a75"},
+    {file = "gym_pusht-0.1.2.tar.gz", hash = "sha256:b185a967454a430d125952e356043d3fe979fc51e5de08845edec8ca30765a98"},
+]
 
 [package.dependencies]
 gymnasium = ">=0.29.1"
@@ -1152,35 +1150,25 @@ shapely = ">=2.0.3"
 dev = ["debugpy (>=1.8.1)", "pre-commit (>=3.7.0)"]
 test = ["pytest (>=8.1.0)", "pytest-cov (>=5.0.0)"]
 
-[package.source]
-type = "git"
-url = "https://github.com/huggingface/gym-pusht.git"
-reference = "user/aliberts/2024_05_07_remove_upper_bounds"
-resolved_reference = "fa7e937286582ede3d3d81d499edf9f076e25fee"
-
 [[package]]
 name = "gym-xarm"
 version = "0.1.1"
 description = "A gym environment for xArm"
 optional = true
-python-versions = "^3.10"
-files = []
-develop = false
+python-versions = "<4.0,>=3.10"
+files = [
+    {file = "gym_xarm-0.1.1-py3-none-any.whl", hash = "sha256:3bd7e3c1c5521ba80a56536f01a5e11321580704d72160355ce47a828a8808ad"},
+    {file = "gym_xarm-0.1.1.tar.gz", hash = "sha256:e455524561b02d06b92a4f7d524f448d84a7484d9a2dbc78600e3c66240e0fb7"},
+]
 
 [package.dependencies]
 gymnasium = ">=0.29.1"
 gymnasium-robotics = ">=1.2.4"
-mujoco = "^2.3.7"
+mujoco = ">=2.3.7,<3.0.0"
 
 [package.extras]
 dev = ["debugpy (>=1.8.1)", "pre-commit (>=3.7.0)"]
 test = ["pytest (>=8.1.0)", "pytest-cov (>=5.0.0)"]
-
-[package.source]
-type = "git"
-url = "https://github.com/huggingface/gym-xarm.git"
-reference = "user/aliberts/2024_05_07_remove_upper_bounds"
-resolved_reference = "5627a6eee9d1871fece1bf6f910c04c1de10013e"
 
 [[package]]
 name = "gymnasium"
@@ -4368,4 +4356,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "ff460923c27964d0d31394540cbef8f858a0c9ac4a2783cb3af6c71bd5630e6e"
+content-hash = "692283714801f8d9c6d81e38db0e5d9718e053f31b7b8d2a15cc2eb8dd1f92fc"
