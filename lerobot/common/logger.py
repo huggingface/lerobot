@@ -17,9 +17,10 @@ def log_output_dir(out_dir):
 
 
 def cfg_to_group(cfg, return_list=False):
-    """Return a wandb-safe group name for logging. Optionally returns group name as list."""
-    # lst = [cfg.task, cfg.modality, re.sub("[^0-9a-zA-Z]+", "-", cfg.exp_name)]
+    """Return a group name for logging. Optionally returns group name as list."""
     lst = [
+        f"policy:{cfg.policy.name}",
+        f"dataset:{cfg.dataset_repo_id}",
         f"env:{cfg.env.name}",
         f"seed:{cfg.seed}",
     ]
