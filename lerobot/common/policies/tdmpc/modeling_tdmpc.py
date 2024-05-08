@@ -96,6 +96,8 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
             config.output_shapes, config.output_normalization_modes, dataset_stats
         )
 
+        self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+
     def save(self, fp):
         """Save state dict of TOLD model to filepath."""
         torch.save(self.state_dict(), fp)
@@ -118,6 +120,29 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         # CEM for the next step.
         self._prev_mean: torch.Tensor | None = None
 
+    def _check_and_preprocess_batch_keys(
+        self, batch: dict[str, Tensor], train_mode: bool = False
+    ) -> dict[str, Tensor]:
+        """Check that the keys can be handled by this policy and standardizes the image key.
+
+        This should be run after input normalization.
+        """
+        batch = dict(batch)  # shallow copy
+        assert "observation.state" in batch
+        # There should only be one image key.
+        image_keys = {k for k in batch if k.startswith("observation.image") and not k.endswith("_is_pad")}
+        assert image_keys == set(
+            self.expected_image_keys
+        ), f"Expected image keys: {self.expected_image_keys}. Got {image_keys}."
+        if train_mode:
+            assert "action" in batch
+            assert "action_is_pad" in batch
+        image_key = next(iter(image_keys))
+        if image_key != "observation.image":
+            batch["observation.image"] = batch[image_key]
+            del batch[image_key]
+        return batch
+
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]):
         """Select a single action given environment observations."""
@@ -125,6 +150,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         assert "observation.state" in batch
 
         batch = self.normalize_inputs(batch)
+        batch = self._check_and_preprocess_batch_keys(batch)
 
         self._queues = populate_queues(self._queues, batch)
 
@@ -303,6 +329,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         device = get_device_from_parameters(self)
 
         batch = self.normalize_inputs(batch)
+        batch = self._check_and_preprocess_batch_keys(batch, train_mode=True)
         batch = self.normalize_targets(batch)
 
         info = {}

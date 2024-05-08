@@ -67,6 +67,25 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         if self.config.n_action_steps is not None:
             self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
+    def _check_and_preprocess_batch(
+        self, batch: dict[str, Tensor], train_mode: bool = False
+    ) -> dict[str, Tensor]:
+        """Check that the keys can be handled by this policy and stack all images into one tensor.
+
+        This should be run after input normalization.
+        """
+        batch = dict(batch)  # shallow copy
+        assert "observation.state" in batch
+        image_keys = {k for k in batch if k.startswith("observation.image") and not k.endswith("_is_pad")}
+        assert image_keys == set(
+            self.expected_image_keys
+        ), f"Expected image keys: {self.expected_image_keys}. Got {image_keys}."
+        if train_mode:
+            assert "action" in batch
+            assert "action_is_pad" in batch
+        batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+        return batch
+
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.
@@ -78,7 +97,7 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         self.eval()
 
         batch = self.normalize_inputs(batch)
-        self._check_and_preprocess_batch(batch)
+        batch = self._check_and_preprocess_batch(batch)
 
         if len(self._action_queue) == 0:
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
@@ -95,7 +114,7 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
-        self._check_and_preprocess_batch(batch, train_mode=True)
+        batch = self._check_and_preprocess_batch(batch, train_mode=True)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
         l1_loss = (
@@ -117,21 +136,6 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
             loss_dict["loss"] = l1_loss
 
         return loss_dict
-
-    def _check_and_preprocess_batch(self, batch: dict[str, Tensor], train_mode: bool = False):
-        """Check that the keys can be handled by this policy and stack all images into one tensor.
-
-        This should be run after input normalization.
-        """
-        assert "observation.state" in batch
-        image_keys = {k for k in batch if k.startswith("observation.image") and not k.endswith("_is_pad")}
-        assert image_keys == set(
-            self.expected_image_keys
-        ), f"Expected image keys: {self.expected_image_keys}. Got {image_keys}."
-        if train_mode:
-            assert "action" in batch
-            assert "action_is_pad" in batch
-        batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
 
 
 class ACT(nn.Module):
