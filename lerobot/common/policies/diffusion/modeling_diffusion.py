@@ -317,7 +317,9 @@ class DiffusionRgbEncoder(nn.Module):
         # Use a dry run to get the feature map shape.
         with torch.inference_mode():
             feat_map_shape = tuple(
-                self.backbone(torch.zeros(size=(1, *config.input_shapes["observation.image"]))).shape[1:]
+                self.backbone(
+                    torch.zeros(size=(1, config.input_shapes["observation.image"][0], *config.crop_shape))
+                ).shape[1:]
             )
         self.pool = SpatialSoftmax(feat_map_shape, num_kp=config.spatial_softmax_num_keypoints)
         self.feature_dim = config.spatial_softmax_num_keypoints * 2
