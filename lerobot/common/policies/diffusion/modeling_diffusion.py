@@ -28,19 +28,6 @@ from lerobot.common.policies.utils import (
 )
 
 
-def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
-    """
-    Factory for noise scheduler instances of the requested type. All kwargs are passed
-    to the scheduler.
-    """
-    if name == "DDPM":
-        return DDPMScheduler(**kwargs)
-    elif name == "DDIM":
-        return DDIMScheduler(**kwargs)
-    else:
-        raise ValueError(f"Unsupported noise scheduler type {name}")
-
-
 class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
     """
     Diffusion Policy as per "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion"
@@ -138,6 +125,19 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
         return {"loss": loss}
+
+
+def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
+    """
+    Factory for noise scheduler instances of the requested type. All kwargs are passed
+    to the scheduler.
+    """
+    if name == "DDPM":
+        return DDPMScheduler(**kwargs)
+    elif name == "DDIM":
+        return DDIMScheduler(**kwargs)
+    else:
+        raise ValueError(f"Unsupported noise scheduler type {name}")
 
 
 class DiffusionModel(nn.Module):
