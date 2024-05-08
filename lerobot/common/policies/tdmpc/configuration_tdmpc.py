@@ -9,7 +9,7 @@ class TDMPCConfig:
     camera observations.
 
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
-    Those are: `input_shapes`, `output_shapes`, and perhaps `max_random_shift`.
+    Those are: `input_shapes`, `output_shapes`, and perhaps `max_random_shift_ratio`.
 
     Args:
         n_action_repeats: The number of times to repeat the action returned by the planning. (hint: Google

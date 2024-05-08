@@ -298,8 +298,11 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
             G -= running_discount * self.config.uncertainty_regularizer_coeff * terminal_values.std(0)
         return G
 
-    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        """Run the batch through the model and compute the loss."""
+    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor | float]:
+        """Run the batch through the model and compute the loss.
+
+        Returns a dictionary with loss as a tensor, and scalar valued
+        """
         device = get_device_from_parameters(self)
 
         batch = self.normalize_inputs(batch)

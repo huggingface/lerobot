@@ -8,7 +8,7 @@ env:
   from_pixels: True
   pixels_only: False
   image_size: 84
-  episode_length: 25
+  episode_length: 100
   fps: ${fps}
   state_dim: 4
   action_dim: 4
