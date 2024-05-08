@@ -67,14 +67,30 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         self.diffusion = DiffusionModel(config)
 
     def reset(self):
-        """
-        Clear observation and action queues. Should be called on `env.reset()`
-        """
+        """Clear observation and action queues. Should be called on `env.reset()`"""
         self._queues = {
             "observation.image": deque(maxlen=self.config.n_obs_steps),
             "observation.state": deque(maxlen=self.config.n_obs_steps),
             "action": deque(maxlen=self.config.n_action_steps),
         }
+
+    def _preprocess_batch_keys(self, batch: dict[str, Tensor], train_mode: bool = False):
+        """Check that the keys can be handled by this policy and standardize the image key.
+
+        This should be run after input normalization.
+        """
+        assert "observation.state" in batch
+        # There should only be one image key.
+        image_keys = {k for k in batch if k.startswith("observation.image") and not k.endswith("_is_pad")}
+        assert (
+            len(image_keys) == 1
+        ), f"{self.__class__.__name__} only handles one image for now. Got image keys {image_keys}."
+        if train_mode:
+            assert "action" in batch
+            assert "action_is_pad" in batch
+        image_key = next(iter(image_keys))
+        batch["observation.image"] = batch[image_key]
+        del batch[image_key]
 
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -98,10 +114,8 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         "horizon" may not the best name to describe what the variable actually means, because this period is
         actually measured from the first observation which (if `n_obs_steps` > 1) happened in the past.
         """
-        assert "observation.image" in batch
-        assert "observation.state" in batch
-
         batch = self.normalize_inputs(batch)
+        self._preprocess_batch_keys(batch)
 
         self._queues = populate_queues(self._queues, batch)
 
@@ -121,6 +135,7 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
+        self._preprocess_batch_keys(batch)
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
         return {"loss": loss}
@@ -185,13 +200,12 @@ class DiffusionModel(nn.Module):
 
     def generate_actions(self, batch: dict[str, Tensor]) -> Tensor:
         """
-        This function expects `batch` to have (at least):
+        This function expects `batch` to have:
         {
             "observation.state": (B, n_obs_steps, state_dim)
             "observation.image": (B, n_obs_steps, C, H, W)
         }
         """
-        assert set(batch).issuperset({"observation.state", "observation.image"})
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
         assert n_obs_steps == self.config.n_obs_steps
 
@@ -315,9 +329,13 @@ class DiffusionRgbEncoder(nn.Module):
 
         # Set up pooling and final layers.
         # Use a dry run to get the feature map shape.
+        image_keys = {k for k in config.input_shapes if k.startswith("observation.image")}
+        assert len(image_keys) == 1
         with torch.inference_mode():
             feat_map_shape = tuple(
-                self.backbone(torch.zeros(size=(1, *config.input_shapes["observation.image"]))).shape[1:]
+                self.backbone(
+                    torch.zeros(size=(1, config.input_shapes[next(iter(image_keys))][0], *config.crop_shape))
+                ).shape[1:]
             )
         self.pool = SpatialSoftmax(feat_map_shape, num_kp=config.spatial_softmax_num_keypoints)
         self.feature_dim = config.spatial_softmax_num_keypoints * 2
