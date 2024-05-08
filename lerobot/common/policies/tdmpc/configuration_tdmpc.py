@@ -47,7 +47,7 @@ class TDMPCConfig:
         elite_weighting_temperature: The temperature to use for softmax weighting (by trajectory value) of the
             elites, when updating the gaussian parameters for CEM.
         gaussian_mean_momentum: Momentum (α) used for EMA updates of the mean parameter μ of the gaussian
-            paramters optimized in CEM. Updates are calculated as μ⁻ ← αμ⁻ + (1-α)μ.
+            parameters optimized in CEM. Updates are calculated as μ⁻ ← αμ⁻ + (1-α)μ.
         max_random_shift_ratio: Maximum random shift (as a proportion of the image size) to apply to the
             image(s) (in units of pixels) for training-time augmentation. If set to 0, no such augmentation
             is applied. Note that the input images are assumed to be square for this augmentation.
