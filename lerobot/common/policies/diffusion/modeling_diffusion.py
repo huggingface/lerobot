@@ -14,6 +14,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from huggingface_hub import PyTorchModelHubMixin
 from robomimic.models.base_nets import SpatialSoftmax
 from torch import Tensor, nn
@@ -138,12 +139,14 @@ class DiffusionModel(nn.Module):
             * config.n_obs_steps,
         )
 
-        self.noise_scheduler = DDPMScheduler(
+        noise_scheduler_class = DDPMScheduler
+        if config.noise_scheduler_type == "DDIM":
+            noise_scheduler_class = DDIMScheduler
+        self.noise_scheduler = noise_scheduler_class(
             num_train_timesteps=config.num_train_timesteps,
             beta_start=config.beta_start,
             beta_end=config.beta_end,
             beta_schedule=config.beta_schedule,
-            variance_type="fixed_small",
             clip_sample=config.clip_sample,
             clip_sample_range=config.clip_sample_range,
             prediction_type=config.prediction_type,
