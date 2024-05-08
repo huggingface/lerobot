@@ -13,6 +13,7 @@ import einops
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
+from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from huggingface_hub import PyTorchModelHubMixin
 from robomimic.models.base_nets import SpatialSoftmax
@@ -126,6 +127,19 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         return {"loss": loss}
 
 
+def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
+    """
+    Factory for noise scheduler instances of the requested type. All kwargs are passed
+    to the scheduler.
+    """
+    if name == "DDPM":
+        return DDPMScheduler(**kwargs)
+    elif name == "DDIM":
+        return DDIMScheduler(**kwargs)
+    else:
+        raise ValueError(f"Unsupported noise scheduler type {name}")
+
+
 class DiffusionModel(nn.Module):
     def __init__(self, config: DiffusionConfig):
         super().__init__()
@@ -138,12 +152,12 @@ class DiffusionModel(nn.Module):
             * config.n_obs_steps,
         )
 
-        self.noise_scheduler = DDPMScheduler(
+        self.noise_scheduler = _make_noise_scheduler(
+            config.noise_scheduler_type,
             num_train_timesteps=config.num_train_timesteps,
             beta_start=config.beta_start,
             beta_end=config.beta_end,
             beta_schedule=config.beta_schedule,
-            variance_type="fixed_small",
             clip_sample=config.clip_sample,
             clip_sample_range=config.clip_sample_range,
             prediction_type=config.prediction_type,
@@ -315,11 +329,13 @@ class DiffusionRgbEncoder(nn.Module):
 
         # Set up pooling and final layers.
         # Use a dry run to get the feature map shape.
+        # The dummy input should take the number of image channels from `config.input_shapes` and it should use the
+        # height and width from `config.crop_shape`.
+        dummy_input = torch.zeros(size=(1, config.input_shapes["observation.image"][0], *config.crop_shape))
         with torch.inference_mode():
-            feat_map_shape = tuple(
-                self.backbone(torch.zeros(size=(1, *config.input_shapes["observation.image"]))).shape[1:]
-            )
-        self.pool = SpatialSoftmax(feat_map_shape, num_kp=config.spatial_softmax_num_keypoints)
+            dummy_feature_map = self.backbone(dummy_input)
+        feature_map_shape = tuple(dummy_feature_map.shape[1:])
+        self.pool = SpatialSoftmax(feature_map_shape, num_kp=config.spatial_softmax_num_keypoints)
         self.feature_dim = config.spatial_softmax_num_keypoints * 2
         self.out = nn.Linear(config.spatial_softmax_num_keypoints * 2, self.feature_dim)
         self.relu = nn.ReLU()
