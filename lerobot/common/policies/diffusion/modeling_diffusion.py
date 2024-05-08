@@ -66,6 +66,8 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
 
         self.diffusion = DiffusionModel(config)
 
+        self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+
     def reset(self):
         """Clear observation and action queues. Should be called on `env.reset()`"""
         self._queues = {
@@ -74,7 +76,7 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
             "action": deque(maxlen=self.config.n_action_steps),
         }
 
-    def _preprocess_batch_keys(self, batch: dict[str, Tensor], train_mode: bool = False):
+    def _check_and_preprocess_batch_keys(self, batch: dict[str, Tensor], train_mode: bool = False):
         """Check that the keys can be handled by this policy and standardize the image key.
 
         This should be run after input normalization.
@@ -82,9 +84,9 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         assert "observation.state" in batch
         # There should only be one image key.
         image_keys = {k for k in batch if k.startswith("observation.image") and not k.endswith("_is_pad")}
-        assert (
-            len(image_keys) == 1
-        ), f"{self.__class__.__name__} only handles one image for now. Got image keys {image_keys}."
+        assert image_keys == set(
+            self.expected_image_keys
+        ), f"Expected image keys: {self.expected_image_keys}. Got {image_keys}."
         if train_mode:
             assert "action" in batch
             assert "action_is_pad" in batch
@@ -116,7 +118,7 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         actually measured from the first observation which (if `n_obs_steps` > 1) happened in the past.
         """
         batch = self.normalize_inputs(batch)
-        self._preprocess_batch_keys(batch)
+        self._check_and_preprocess_batch_keys(batch)
 
         self._queues = populate_queues(self._queues, batch)
 
@@ -136,7 +138,7 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
-        self._preprocess_batch_keys(batch)
+        self._check_and_preprocess_batch_keys(batch, train_mode=True)
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
         return {"loss": loss}
