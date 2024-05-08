@@ -1,0 +1,19 @@
+created_by: Cary Snyder
+domain: astronomy_technology
+seed_examples:
+- answer: | 3
+  question: How many MMRTGs can nasa fuel with plutonium?
+- answer: | Gale Crater
+  question: Where did Curiosity land?
+- answer: | July 30, 2020
+  question: When was MMRTG launched into space?
+- answer: | Titan
+  question: Which moon will the Dragonfily mission fly to?
+- answer: | Saturn
+  question: Which planet has the moon Titan?
+task_description: ' MMRTGs'
+document: 
+ repo: https://github.com/juliadenham/Summit_knowledge
+ commit: 95176e7e83e80dfaed8ff7e621071881c598884b
+ patterns:
+   - multi_mission_radioisotope_thermoelectric_generator.md
