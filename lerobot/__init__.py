@@ -89,11 +89,12 @@ available_policies = [
     "act",
     "diffusion",
     "tdmpc",
+    "vqbet",
 ]
 
 available_policies_per_env = {
     "aloha": ["act"],
-    "pusht": ["diffusion"],
+    "pusht": ["diffusion", "vqbet"],
     "xarm": ["tdmpc"],
 }
 
