@@ -10,7 +10,7 @@ dataset_repo_id: lerobot/pusht
 training:
   offline_steps: 200000
   online_steps: 0
-  eval_freq: 100 # jay
+  eval_freq: 10000
   save_freq: 5000
   log_freq: 250
   save_model: true
@@ -27,7 +27,7 @@ training:
 
   # VQ-BeT specific
   vqvae_lr: 1.0e-3
-  discretize_step: 30 # jay
+  discretize_step: 3000
   bet_weight_decay: 2e-4
   bet_learning_rate: 5.5e-5
   bet_betas: [0.9, 0.999]
