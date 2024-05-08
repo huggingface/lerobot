@@ -30,7 +30,7 @@ from lerobot.common.policies.utils import (
 
 def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
     """
-    Factory for noise scheduler instances of the given name. All kwargs are passed
+    Factory for noise scheduler instances of the requested type. All kwargs are passed
     to the scheduler.
     """
     if name == "DDPM":
