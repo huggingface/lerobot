@@ -28,7 +28,7 @@ from lerobot.common.policies.utils import (
 )
 
 
-def _make_noise_scheduler(name: str, kwargs: dict) -> DDPMScheduler | DDIMScheduler:
+def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
     """
     Factory for noise scheduler instances of the given name. All kwargs are passed
     to the scheduler.
