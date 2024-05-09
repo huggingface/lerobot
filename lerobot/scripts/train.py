@@ -303,6 +303,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     init_logging()
 
     if cfg.training.online_steps > 0 and cfg.eval.batch_size > 1:
+        # TODO(now)
         logging.warning("eval.batch_size > 1 not supported for online training steps")
 
     # Check device is available
