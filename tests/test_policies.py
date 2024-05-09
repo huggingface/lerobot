@@ -236,7 +236,7 @@ def test_normalize(insert_temporal_dim):
 @pytest.mark.parametrize(
     "env_name, policy_name, extra_overrides",
     [
-        # ("xarm", "tdmpc", ["policy.n_action_repeats=2"]),
+        ("xarm", "tdmpc", []),
         (
             "pusht",
             "diffusion",
