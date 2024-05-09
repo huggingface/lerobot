@@ -22,18 +22,8 @@ training_steps = 5000
 device = torch.device("cuda")
 log_freq = 250
 
-# Set up the dataset.
-delta_timestamps = {
-    # Load the previous image and state at -0.1 seconds before current frame,
-    # then load current image and state corresponding to 0.0 second.
-    "observation.image": [-0.1, 0.0],
-    "observation.state": [-0.1, 0.0],
-    # Load the previous action (-0.1), the next action to be executed (0.0),
-    # and 14 future actions with a 0.1 seconds spacing. All these actions will be
-    # used to supervise the policy.
-    "action": [-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4],
-}
-dataset = LeRobotDataset("lerobot/pusht", delta_timestamps=delta_timestamps)
+# Load the dataset from Hugging Face hub (or from the local cache).
+dataset = LeRobotDataset("lerobot/pusht")
 
 # Set up the the policy.
 # Policies are initialized with a configuration class, in this case `DiffusionConfig`.
@@ -43,6 +33,14 @@ cfg = DiffusionConfig()
 policy = DiffusionPolicy(cfg, dataset_stats=dataset.stats)
 policy.train()
 policy.to(device)
+
+# This policy makes use of past observations and a horizon of actions for training. The dataset needs to know
+# about this. For that, the policy has a method that takes as input a frames-per-second (fps) argument and
+# returns a dictionary mapping each data key to a list of relative timestamps. For example. If we need a
+# horizon of 4 actions, starting from the "previous" frame and at 10 FPS, the dictionary would contain
+# {"action": [-0.1, 0.0, 0.1, 0.2]}. The policy is equipped with a method to produce this dictionary.
+# Here, we know that for the PushT simulation environment is 10.
+dataset.delta_timestamps = policy.make_delta_timestamps(fps=10)
 
 optimizer = torch.optim.Adam(policy.parameters(), lr=1e-4)
 

@@ -48,6 +48,9 @@ class Policy(Protocol):
         with caching.
         """
 
+    def make_delta_timestamps(self, fps: float) -> dict[str, list[float]]:
+        """Makes delta_timestamps dictionary need for LeRobotDataset to return sequences of frames."""
+
 
 @runtime_checkable
 class PolicyWithUpdate(Policy, Protocol):

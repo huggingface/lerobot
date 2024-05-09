@@ -16,19 +16,9 @@ def make_dataset(
             f"environment ({cfg.env.name=})."
         )
 
-    delta_timestamps = cfg.training.get("delta_timestamps")
-    if delta_timestamps is not None:
-        for key in delta_timestamps:
-            if isinstance(delta_timestamps[key], str):
-                delta_timestamps[key] = eval(delta_timestamps[key])
-
     # TODO(rcadene): add data augmentations
 
-    dataset = LeRobotDataset(
-        cfg.dataset_repo_id,
-        split=split,
-        delta_timestamps=delta_timestamps,
-    )
+    dataset = LeRobotDataset(cfg.dataset_repo_id, split=split)
 
     if cfg.get("override_dataset_stats"):
         for key, stats_dict in cfg.override_dataset_stats.items():

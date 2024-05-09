@@ -126,6 +126,17 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         loss = self.diffusion.compute_loss(batch)
         return {"loss": loss}
 
+    def make_delta_timestamps(self, fps: float):
+        """Makes delta_timestamps dictionary need for LeRobotDataset to return sequences of frames."""
+        return {
+            "observation.image": [i / fps for i in range(1 - self.config.n_obs_steps, 1)],
+            "observation.state": [i / fps for i in range(1 - self.config.n_obs_steps, 1)],
+            "action": [
+                i / fps
+                for i in range(1 - self.config.n_obs_steps, 1 - self.config.n_obs_steps + self.config.horizon)
+            ],
+        }
+
 
 def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
     """
