@@ -85,6 +85,7 @@ policy:
   diffusion_step_embed_dim: 128
   use_film_scale_modulation: True
   # Noise scheduler.
+  noise_scheduler_type: DDPM
   num_train_timesteps: 100
   beta_schedule: squaredcos_cap_v2
   beta_start: 0.0001
