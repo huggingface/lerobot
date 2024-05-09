@@ -62,6 +62,8 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
 
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
 
+        self.reset()
+
     def reset(self):
         """This should be called whenever the environment is reset."""
         if self.config.n_action_steps is not None:
