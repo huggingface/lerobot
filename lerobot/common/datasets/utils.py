@@ -15,6 +15,7 @@
 # limitations under the License.
 import json
 from pathlib import Path
+from typing import Dict
 
 import datasets
 import torch
@@ -243,6 +244,76 @@ def load_previous_and_future_frames(
         item[f"{key}_is_pad"] = is_pad
 
     return item
+
+
+def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> Dict[str, torch.Tensor]:
+    """
+    Calculate episode data index for the provided HuggingFace Dataset. Relies on episode_index column of hf_dataset.
+
+    Parameters:
+    - hf_dataset (datasets.Dataset): A HuggingFace dataset containing the episode index.
+
+    Returns:
+    - episode_data_index: A dictionary containing the data index for each episode. The dictionary has two keys:
+        - "from": A tensor containing the starting index of each episode.
+        - "to": A tensor containing the ending index of each episode.
+    """
+    episode_data_index = {"from": [], "to": []}
+
+    current_episode = None
+    """
+    The episode_index is a list of integers, each representing the episode index of the corresponding example.
+    For instance, the following is a valid episode_index:
+      [0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2]
+
+    Below, we iterate through the episode_index and populate the episode_data_index dictionary with the starting and
+    ending index of each episode. For the episode_index above, the episode_data_index dictionary will look like this:
+        {
+            "from": [0, 3, 7],
+            "to": [3, 7, 12]
+        }
+    """
+    for idx, episode_idx in enumerate(hf_dataset["episode_index"]):
+        if episode_idx != current_episode:
+            # We encountered a new episode, so we append its starting location to the "from" list
+            episode_data_index["from"].append(idx)
+            # If this is not the first episode, we append the ending location of the previous episode to the "to" list
+            if current_episode is not None:
+                episode_data_index["to"].append(idx)
+            # Let's keep track of the current episode index
+            current_episode = episode_idx
+        else:
+            # We are still in the same episode, so there is nothing for us to do here
+            pass
+    # We have reached the end of the dataset, so we append the ending location of the last episode to the "to" list
+    episode_data_index["to"].append(idx + 1)
+
+    for k in ["from", "to"]:
+        episode_data_index[k] = torch.tensor(episode_data_index[k])
+
+    return episode_data_index
+
+
+def reset_episode_index(hf_dataset: datasets.Dataset) -> datasets.Dataset:
+    """
+    Reset the `episode_index` of the provided HuggingFace Dataset.
+
+    `episode_data_index` (and related functionality such as `load_previous_and_future_frames`) requires the
+    `episode_index` to be sorted, continuous (1,1,1 and not 1,2,1) and start at 0.
+
+    This brings the `episode_index` to the required format.
+    """
+    unique_episode_idxs = torch.stack(hf_dataset["episode_index"]).unique().tolist()
+    episode_idx_to_reset_idx_mapping = {
+        ep_id: reset_ep_id for reset_ep_id, ep_id in enumerate(unique_episode_idxs)
+    }
+
+    def modify_ep_idx_func(example):
+        example["episode_index"] = episode_idx_to_reset_idx_mapping[example["episode_index"].item()]
+        return example
+
+    hf_dataset = hf_dataset.map(modify_ep_idx_func)
+    return hf_dataset
 
 
 def cycle(iterable):
