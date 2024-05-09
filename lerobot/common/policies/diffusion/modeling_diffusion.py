@@ -67,7 +67,12 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
 
         self.diffusion = DiffusionModel(config)
 
-        self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+        image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+        # Note: This check is covered in the post-init of the config but have a sanity check just in case.
+        assert len(image_keys) == 1
+        self.input_image_key = image_keys[0]
+
+        self.reset()
 
     def reset(self):
         """Clear observation and action queues. Should be called on `env.reset()`"""
@@ -76,29 +81,6 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
             "observation.state": deque(maxlen=self.config.n_obs_steps),
             "action": deque(maxlen=self.config.n_action_steps),
         }
-
-    def _check_and_preprocess_batch_keys(
-        self, batch: dict[str, Tensor], train_mode: bool = False
-    ) -> dict[str, Tensor]:
-        """Check that the keys can be handled by this policy and standardizes the image key.
-
-        This should be run after input normalization.
-        """
-        batch = dict(batch)  # shallow copy
-        assert "observation.state" in batch
-        # There should only be one image key.
-        image_keys = {k for k in batch if k.startswith("observation.image") and not k.endswith("_is_pad")}
-        assert image_keys == set(
-            self.expected_image_keys
-        ), f"Expected image keys: {self.expected_image_keys}. Got {image_keys}."
-        if train_mode:
-            assert "action" in batch
-            assert "action_is_pad" in batch
-        image_key = next(iter(image_keys))
-        if image_key != "observation.image":
-            batch["observation.image"] = batch[image_key]
-            del batch[image_key]
-        return batch
 
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -123,13 +105,13 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         actually measured from the first observation which (if `n_obs_steps` > 1) happened in the past.
         """
         batch = self.normalize_inputs(batch)
-        batch = self._check_and_preprocess_batch_keys(batch)
+        batch["observation.image"] = batch[self.input_image_key]
 
         self._queues = populate_queues(self._queues, batch)
 
         if len(self._queues["action"]) == 0:
             # stack n latest observations from the queue
-            batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch}
+            batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
             actions = self.diffusion.generate_actions(batch)
 
             # TODO(rcadene): make above methods return output dictionary?
@@ -143,7 +125,7 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
-        batch = self._check_and_preprocess_batch_keys(batch, train_mode=True)
+        batch["observation.image"] = batch[self.input_image_key]
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
         return {"loss": loss}
@@ -352,9 +334,9 @@ class DiffusionRgbEncoder(nn.Module):
         # Use a dry run to get the feature map shape.
         # The dummy input should take the number of image channels from `config.input_shapes` and it should
         # use the height and width from `config.crop_shape`.
-        image_keys = {k for k in config.input_shapes if k.startswith("observation.image")}
+        image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
         assert len(image_keys) == 1
-        image_key = next(iter(image_keys))
+        image_key = image_keys[0]
         dummy_input = torch.zeros(size=(1, config.input_shapes[image_key][0], *config.crop_shape))
         with torch.inference_mode():
             dummy_feature_map = self.backbone(dummy_input)

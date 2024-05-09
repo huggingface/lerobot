@@ -96,15 +96,12 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
             config.output_shapes, config.output_normalization_modes, dataset_stats
         )
 
-        self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+        image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+        # Note: This check is covered in the post-init of the config but have a sanity check just in case.
+        assert len(image_keys) == 1
+        self.input_image_key = image_keys[0]
 
-    def save(self, fp):
-        """Save state dict of TOLD model to filepath."""
-        torch.save(self.state_dict(), fp)
-
-    def load(self, fp):
-        """Load a saved state dict from filepath into current agent."""
-        self.load_state_dict(torch.load(fp))
+        self.reset()
 
     def reset(self):
         """
@@ -120,37 +117,11 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         # CEM for the next step.
         self._prev_mean: torch.Tensor | None = None
 
-    def _check_and_preprocess_batch_keys(
-        self, batch: dict[str, Tensor], train_mode: bool = False
-    ) -> dict[str, Tensor]:
-        """Check that the keys can be handled by this policy and standardizes the image key.
-
-        This should be run after input normalization.
-        """
-        batch = dict(batch)  # shallow copy
-        assert "observation.state" in batch
-        # There should only be one image key.
-        image_keys = {k for k in batch if k.startswith("observation.image") and not k.endswith("_is_pad")}
-        assert image_keys == set(
-            self.expected_image_keys
-        ), f"Expected image keys: {self.expected_image_keys}. Got {image_keys}."
-        if train_mode:
-            assert "action" in batch
-            assert "action_is_pad" in batch
-        image_key = next(iter(image_keys))
-        if image_key != "observation.image":
-            batch["observation.image"] = batch[image_key]
-            del batch[image_key]
-        return batch
-
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]):
         """Select a single action given environment observations."""
-        assert "observation.image" in batch
-        assert "observation.state" in batch
-
         batch = self.normalize_inputs(batch)
-        batch = self._check_and_preprocess_batch_keys(batch)
+        batch["observation.image"] = batch[self.input_image_key]
 
         self._queues = populate_queues(self._queues, batch)
 
@@ -329,13 +300,10 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         device = get_device_from_parameters(self)
 
         batch = self.normalize_inputs(batch)
-        batch = self._check_and_preprocess_batch_keys(batch, train_mode=True)
+        batch["observation.image"] = batch[self.input_image_key]
         batch = self.normalize_targets(batch)
 
         info = {}
-
-        # TODO(alexander-soare): Refactor TDMPC and make it comply with the policy interface documentation.
-        batch_size = batch["index"].shape[0]
 
         # (b, t) -> (t, b)
         for key in batch:
@@ -364,6 +332,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         # Run latent rollout using the latent dynamics model and policy model.
         # Note this has shape `horizon+1` because there are `horizon` actions and a current `z`. Each action
         # gives us a next `z`.
+        batch_size = batch["index"].shape[0]
         z_preds = torch.empty(horizon + 1, batch_size, self.config.latent_dim, device=device)
         z_preds[0] = self.model.encode(current_observation)
         reward_preds = torch.empty_like(reward, device=device)
