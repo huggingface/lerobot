@@ -17,7 +17,7 @@ from lerobot.common.utils.utils import seeded_context, set_global_seed
     ]
     + [lambda: torch.rand(1, device="cuda")]
     if torch.cuda.is_available()
-    else (),
+    else [],
 )
 def test_seeding(rand_fn: Callable[[], int]):
     set_global_seed(0)
