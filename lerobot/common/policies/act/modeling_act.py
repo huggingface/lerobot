@@ -166,10 +166,10 @@ class ACT(nn.Module):
               │ encoder │ │     │ │Transf.│             │
               │         │ │     │ │encoder│             │
               └───▲─────┘ │     │ │       │             │
-                  │       │     │ └───▲───┘             │
-                  │       │     │     │                 │
-                inputs    └─────┼─────┘                 │
-                                │                       │
+                  │       │     │ └▲──▲─▲─┘             │
+                  │       │     │  │  │ │               │
+                inputs    └─────┼──┘  │ image emb.      │
+                                │    state emb.         │
                                 └───────────────────────┘
     """
 
@@ -311,18 +311,18 @@ class ACT(nn.Module):
             all_cam_features.append(cam_features)
             all_cam_pos_embeds.append(cam_pos_embed)
         # Concatenate camera observation feature maps and positional embeddings along the width dimension.
-        encoder_in = torch.cat(all_cam_features, axis=3)
-        cam_pos_embed = torch.cat(all_cam_pos_embeds, axis=3)
+        encoder_in = torch.cat(all_cam_features, axis=-1)
+        cam_pos_embed = torch.cat(all_cam_pos_embeds, axis=-1)
 
         # Get positional embeddings for robot state and latent.
-        robot_state_embed = self.encoder_robot_state_input_proj(batch["observation.state"])
-        latent_embed = self.encoder_latent_input_proj(latent_sample)
+        robot_state_embed = self.encoder_robot_state_input_proj(batch["observation.state"])  # (B, C)
+        latent_embed = self.encoder_latent_input_proj(latent_sample)  # (B, C)
 
         # Stack encoder input and positional embeddings moving to (S, B, C).
         encoder_in = torch.cat(
             [
                 torch.stack([latent_embed, robot_state_embed], axis=0),
-                encoder_in.flatten(2).permute(2, 0, 1),
+                einops.rearrange(encoder_in, "b c h w -> (h w) b c"),
             ]
         )
         pos_embed = torch.cat(

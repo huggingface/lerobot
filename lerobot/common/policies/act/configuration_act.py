@@ -130,9 +130,3 @@ class ACTConfig:
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
             )
-        # There should only be one image key.
-        image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
-        if len(image_keys) != 1:
-            raise ValueError(
-                f"{self.__class__.__name__} only handles one image for now. Got image keys {image_keys}."
-            )
