@@ -102,10 +102,7 @@ class Logger:
             # note wandb artifact does not accept ":" or "/" in its name
             artifact = self._wandb.Artifact(
                 self._group.replace(":", "_").replace("/", "_")
-                + "-"
-                + str(self._seed)
-                + "-"
-                + str(identifier),
+                + f"-{self._seed}-{identifier}",
                 type="buffer",
             )
             artifact.add_file(fp)
