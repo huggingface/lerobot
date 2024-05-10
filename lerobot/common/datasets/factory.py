@@ -9,7 +9,7 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 def make_dataset(
     cfg,
     split="train",
-):
+) -> LeRobotDataset:
     if cfg.env.name not in cfg.dataset_repo_id:
         logging.warning(
             f"There might be a mismatch between your training dataset ({cfg.dataset_repo_id=}) and your "

@@ -301,7 +301,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor | float]:
         """Run the batch through the model and compute the loss.
 
-        Returns a dictionary with loss as a tensor, and scalar valued
+        Returns a dictionary with loss as a tensor, and other information as native floats.
         """
         device = get_device_from_parameters(self)
 
@@ -309,9 +309,6 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         batch = self.normalize_targets(batch)
 
         info = {}
-
-        # TODO(alexander-soare): Refactor TDMPC and make it comply with the policy interface documentation.
-        batch_size = batch["index"].shape[0]
 
         # (b, t) -> (t, b)
         for key in batch:
@@ -340,6 +337,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         # Run latent rollout using the latent dynamics model and policy model.
         # Note this has shape `horizon+1` because there are `horizon` actions and a current `z`. Each action
         # gives us a next `z`.
+        batch_size = batch["index"].shape[0]
         z_preds = torch.empty(horizon + 1, batch_size, self.config.latent_dim, device=device)
         z_preds[0] = self.model.encode(current_observation)
         reward_preds = torch.empty_like(reward, device=device)
