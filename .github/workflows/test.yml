@@ -66,9 +66,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # - name: Install EGL
-      #   run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
-
       - name: Install poetry
         run: |
           pipx install poetry && poetry config virtualenvs.in-project true
@@ -78,7 +75,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-          cache: "poetry"
 
       - name: Install poetry dependencies
         run: |
