@@ -103,7 +103,7 @@ def test_policy(env_name, policy_name, extra_overrides):
             dct["observation.image"] = dct["observation.images.top"]
             del dct["observation.images.top"]
             cfg[keys[0]][keys[1]] = dct
-        cfg.training.override_dataset_stats = None
+        cfg.override_dataset_stats = None
 
     # Check that we can make the policy object.
     dataset = make_dataset(cfg)
