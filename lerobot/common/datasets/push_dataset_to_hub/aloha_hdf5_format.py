@@ -17,6 +17,7 @@
 Contains utilities to process raw data format of HDF5 files like in: https://github.com/tonyzhaozh/act
 """
 
+import gc
 import re
 import shutil
 from pathlib import Path
@@ -145,6 +146,8 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
             episode_data_index["to"].append(id_from + num_frames)
 
         id_from += num_frames
+
+        gc.collect()
 
         # process first episode only
         if debug:

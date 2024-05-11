@@ -25,7 +25,6 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --dataset-id pusht \
 --raw-format pusht_zarr \
 --community-id lerobot \
---revision v1.2 \
 --dry-run 1 \
 --save-to-disk 1 \
 --save-tests-to-disk 0 \
@@ -36,7 +35,6 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --dataset-id xarm_lift_medium \
 --raw-format xarm_pkl \
 --community-id lerobot \
---revision v1.2 \
 --dry-run 1 \
 --save-to-disk 1 \
 --save-tests-to-disk 0 \
@@ -47,7 +45,6 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --dataset-id aloha_sim_insertion_scripted \
 --raw-format aloha_hdf5 \
 --community-id lerobot \
---revision v1.2 \
 --dry-run 1 \
 --save-to-disk 1 \
 --save-tests-to-disk 0 \
@@ -58,7 +55,6 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --dataset-id umi_cup_in_the_wild \
 --raw-format umi_zarr \
 --community-id lerobot \
---revision v1.2 \
 --dry-run 1 \
 --save-to-disk 1 \
 --save-tests-to-disk 0 \
@@ -237,6 +233,9 @@ def push_dataset_to_hub(
             fname = f"{key}_episode_{episode_index:06d}.mp4"
             shutil.copy(videos_dir / fname, tests_videos_dir / fname)
 
+    if not save_to_disk:
+        shutil.rmtree(out_dir)
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -314,7 +313,7 @@ def main():
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=16,
+        default=8,
         help="Number of processes of Dataloader for computing the dataset statistics.",
     )
     parser.add_argument(
