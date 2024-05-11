@@ -84,8 +84,7 @@ class Logger:
             if self._wandb and not self._disable_wandb_artifact:
                 # note wandb artifact does not accept ":" or "/" in its name
                 artifact = self._wandb.Artifact(
-                    self._group.replace(":", "_").replace("/", "_")
-                    + f"-{self._seed}-{identifier}",
+                    f"{self._group.replace(':', '_').replace('/', '_')}-{self._seed}-{identifier}",
                     type="model",
                 )
                 artifact.add_file(save_dir / SAFETENSORS_SINGLE_FILE)
@@ -98,8 +97,7 @@ class Logger:
         if self._wandb and not self._disable_wandb_artifact:
             # note wandb artifact does not accept ":" or "/" in its name
             artifact = self._wandb.Artifact(
-                self._group.replace(":", "_").replace("/", "_")
-                + f"-{self._seed}-{identifier}",
+                f"{self._group.replace(':', '_').replace('/', '_')}-{self._seed}-{identifier}",
                 type="buffer",
             )
             artifact.add_file(fp)
