@@ -114,6 +114,11 @@ class Logger:
         assert mode in {"train", "eval"}
         if self._wandb is not None:
             for k, v in d.items():
+                if not isinstance(v, (int, float, str)):
+                    logging.warning(
+                        f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
+                    )
+                    continue
                 self._wandb.log({f"{mode}/{k}": v}, step=step)
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
