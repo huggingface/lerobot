@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests.utils import require_package
+
 
 def _find_and_replace(text: str, finds_and_replaces: list[tuple[str, str]]) -> str:
     for f, r in finds_and_replaces:
@@ -21,6 +23,7 @@ def test_example_1():
     assert Path("outputs/examples/1_load_lerobot_dataset/episode_0.mp4").exists()
 
 
+@require_package("gym_pusht")
 def test_examples_3_and_2():
     """
     Train a model with example 3, check the outputs.
