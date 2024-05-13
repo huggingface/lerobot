@@ -14,6 +14,7 @@ device: cuda  # cpu
 # AND for the evaluation environments.
 seed: ???
 dataset_repo_id: lerobot/pusht
+dataset_version: "v1.3"
 
 training:
   offline_steps: ???

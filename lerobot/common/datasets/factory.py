@@ -26,6 +26,7 @@ def make_dataset(
 
     dataset = LeRobotDataset(
         cfg.dataset_repo_id,
+        version=cfg.dataset_version,
         split=split,
         delta_timestamps=delta_timestamps,
     )
