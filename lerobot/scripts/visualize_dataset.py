@@ -47,6 +47,7 @@ local$ rerun ws://localhost:9087
 """
 
 import argparse
+import gc
 import logging
 import time
 from pathlib import Path
@@ -115,14 +116,16 @@ def visualize_dataset(
 
     spawn_local_viewer = mode == "local" and not save
     rr.init(f"{repo_id}/episode_{episode_index}", spawn=spawn_local_viewer)
+
+    # Manually call python garbage collector after `rr.init` to avoid hanging in a blocking flush
+    # when iterating on a dataloader with `num_workers` > 0
+    # TODO(rcadene): remove `gc.collect` when rerun version 0.16 is out, which includes a fix
+    gc.collect()
+
     if mode == "distant":
         rr.serve(open_browser=False, web_port=web_port, ws_port=ws_port)
 
     logging.info("Logging to Rerun")
-
-    if num_workers > 0:
-        # TODO(rcadene): fix data workers hanging when `rr.init` is called
-        logging.warning("If data loader is hanging, try `--num-workers 0`.")
 
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
         # iterate over the batch
@@ -196,7 +199,7 @@ def main():
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=0,
+        default=4,
         help="Number of processes of Dataloader for loading the data.",
     )
     parser.add_argument(

@@ -22,9 +22,8 @@ test-end-to-end:
 	${MAKE} test-act-ete-eval
 	${MAKE} test-diffusion-ete-train
 	${MAKE} test-diffusion-ete-eval
-	# TODO(rcadene, alexander-soare): enable end-to-end tests for tdmpc
-	# ${MAKE} test-tdmpc-ete-train
-	# ${MAKE} test-tdmpc-ete-eval
+	${MAKE} test-tdmpc-ete-train
+	${MAKE} test-tdmpc-ete-eval
 	${MAKE} test-default-ete-eval
 
 test-act-ete-train:
@@ -80,7 +79,7 @@ test-tdmpc-ete-train:
 		policy=tdmpc \
 		env=xarm \
 		env.task=XarmLift-v0 \
-		dataset_repo_id=lerobot/xarm_lift_medium_replay \
+		dataset_repo_id=lerobot/xarm_lift_medium \
 		wandb.enable=False \
 		training.offline_steps=2 \
 		training.online_steps=2 \

@@ -88,9 +88,9 @@ class Logger:
             # Also save the full Hydra config for the env configuration.
             OmegaConf.save(self._cfg, save_dir / "config.yaml")
             if self._wandb and not self._disable_wandb_artifact:
-                # note wandb artifact does not accept ":" in its name
+                # note wandb artifact does not accept ":" or "/" in its name
                 artifact = self._wandb.Artifact(
-                    self._group.replace(":", "_") + "-" + str(self._seed) + "-" + str(identifier),
+                    f"{self._group.replace(':', '_').replace('/', '_')}-{self._seed}-{identifier}",
                     type="model",
                 )
                 artifact.add_file(save_dir / SAFETENSORS_SINGLE_FILE)
@@ -100,9 +100,10 @@ class Logger:
         self._buffer_dir.mkdir(parents=True, exist_ok=True)
         fp = self._buffer_dir / f"{str(identifier)}.pkl"
         buffer.save(fp)
-        if self._wandb:
+        if self._wandb and not self._disable_wandb_artifact:
+            # note wandb artifact does not accept ":" or "/" in its name
             artifact = self._wandb.Artifact(
-                self._group + "-" + str(self._seed) + "-" + str(identifier),
+                f"{self._group.replace(':', '_').replace('/', '_')}-{self._seed}-{identifier}",
                 type="buffer",
             )
             artifact.add_file(fp)
@@ -120,6 +121,11 @@ class Logger:
         assert mode in {"train", "eval"}
         if self._wandb is not None:
             for k, v in d.items():
+                if not isinstance(v, (int, float, str)):
+                    logging.warning(
+                        f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
+                    )
+                    continue
                 self._wandb.log({f"{mode}/{k}": v}, step=step)
         elif self._local_writer is not None:
             for k, v in d.items():
