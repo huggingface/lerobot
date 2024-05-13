@@ -335,10 +335,7 @@ class SpatialSoftmax(nn.Module):
 
         # we could use torch.linspace directly but that seems to behave slightly differently than numpy
         # and cause a small degradation in pc_success of pre-trained models.
-        pos_x, pos_y = np.meshgrid(
-            np.linspace(-1., 1., self._in_w),
-            np.linspace(-1., 1., self._in_h)
-        )
+        pos_x, pos_y = np.meshgrid(np.linspace(-1.0, 1.0, self._in_w), np.linspace(-1.0, 1.0, self._in_h))
         pos_x = torch.from_numpy(pos_x.reshape(self._in_h * self._in_w, 1)).float()
         pos_y = torch.from_numpy(pos_y.reshape(self._in_h * self._in_w, 1)).float()
         # register as buffer so it's moved to the correct device, etc.
