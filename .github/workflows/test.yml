@@ -57,6 +57,38 @@ jobs:
             && rm -rf tests/outputs outputs
 
 
+  pytest-minimal:
+    name: Pytest (minimal install)
+    runs-on: ubuntu-latest
+    env:
+      DATA_DIR: tests/data
+      MUJOCO_GL: egl
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install poetry
+        run: |
+          pipx install poetry && poetry config virtualenvs.in-project true
+          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install poetry dependencies
+        run: |
+          poetry install --extras "test"
+
+      - name: Test with pytest
+        run: |
+          pytest tests -v --cov=./lerobot --durations=0 \
+            -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
+            -W ignore::UserWarning:torch.utils.data.dataloader:558 \
+            -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
+            && rm -rf tests/outputs outputs
+
+
   end-to-end:
     name: End-to-end
     runs-on: ubuntu-latest

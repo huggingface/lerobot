@@ -1,4 +1,5 @@
 import platform
+from functools import wraps
 
 import pytest
 import torch
@@ -61,7 +62,6 @@ def require_env(func):
     Decorator that skips the test if the required environment package is not installed.
     As it need 'env_name' in args, it also checks whether it is provided as an argument.
     """
-    from functools import wraps
 
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -82,3 +82,20 @@ def require_env(func):
         return func(*args, **kwargs)
 
     return wrapper
+
+
+def require_package(package_name):
+    """
+    Decorator that skips the test if the specified package is not installed.
+    """
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if not is_package_available(package_name):
+                pytest.skip(f"{package_name} not installed")
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
