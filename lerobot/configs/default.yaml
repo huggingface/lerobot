@@ -40,3 +40,6 @@ wandb:
   disable_artifact: false
   project: lerobot
   notes: ""
+
+tensorboard:
+  enable: false

@@ -351,7 +351,8 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 start_seed=cfg.seed,
             )
             log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline)
-            logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+            if cfg.wandb.enable or cfg.tensorboard.enable:
+                logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
 
         if cfg.training.save_model and step % cfg.training.save_freq == 0:
