@@ -71,7 +71,9 @@ class VQBeTConfig:
 
     # Inputs / output structure.
     n_obs_steps: int = 5
-    n_action_steps: int = 5
+    # n_action_steps: int = 7
+    n_action_pred_token: int = 3
+    n_action_pred_chunk: int = 5
 
     input_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {
