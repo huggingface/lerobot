@@ -97,9 +97,10 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
         self._obs_queues = populate_queues(self._obs_queues, batch)
 
         if not self.check_discretized():
-            raise NotImplementedError(
-                "Should train VQ-VAE before rollout."
-            )
+            self.vqbet._action_head._vqvae_model.discretized = True
+            # raise NotImplementedError(
+            #     "Should train VQ-VAE before rollout."
+            # )
         assert "observation.image" in batch
         assert "observation.state" in batch
 
@@ -490,6 +491,14 @@ class VQBeTHead(nn.Module):
                 cbet_logits[:, 1, :],
                 action_bins[:, 1],
             )
+            # cbet_loss3 = self._criterion(  # F.cross_entropy
+            #     cbet_logits[:, 2, :],
+            #     action_bins[:, 2],
+            # )
+            # cbet_loss4 = self._criterion(  # F.cross_entropy
+            #     cbet_logits[:, 3, :],
+            #     action_bins[:, 3],
+            # )
         cbet_loss = cbet_loss1 * 5 + cbet_loss2 * self.secondary_code_multiplier
 
         equal_total_code_rate = (
@@ -527,6 +536,140 @@ class VQBeTOptimizer:
         self.offline_steps = cfg.training.offline_steps
         self.optimizing_step = 0
 
+        # Option 1
+
+        # vqvae_params = (
+        #     list(policy.vqbet._action_head._vqvae_model.encoder.parameters())
+        #     + list(policy.vqbet._action_head._vqvae_model.decoder.parameters())
+        #     + list(policy.vqbet._action_head._vqvae_model.vq_layer.parameters())
+        # )
+        # self.vqvae_optimizer = torch.optim.Adam(
+        #     vqvae_params, lr=cfg.training.vqvae_lr, weight_decay=0.0001
+        # )
+
+        # self.encoder_optimizer = torch.optim.Adam(
+        #     policy.vqbet.parameters(),
+        #     cfg.training.lr,
+        #     cfg.training.adam_betas,
+        #     cfg.training.adam_eps,
+        #     cfg.training.adam_weight_decay,
+        # )
+
+        # self.bet_optimizer1 = policy.vqbet._policy.configure_optimizers(
+        #     weight_decay=cfg.training.bet_weight_decay,
+        #     learning_rate=cfg.training.bet_learning_rate,
+        #     betas=cfg.training.bet_betas,
+        # )
+        # if policy.vqbet._action_head.sequentially_select:
+        #     self.bet_optimizer1.add_param_group(
+        #         {"params": policy.vqbet._action_head._map_to_cbet_preds_bin1.parameters()}
+        #     )
+        #     self.bet_optimizer1.add_param_group(
+        #         {"params": policy.vqbet._action_head._map_to_cbet_preds_bin2.parameters()}
+        #     )
+        # else:
+        #     self.bet_optimizer1.add_param_group(
+        #         {"params": policy.vqbet._action_head._map_to_cbet_preds_bin.parameters()}
+        #     )
+        
+        # self.bet_optimizer2 = torch.optim.AdamW(
+        #     policy.vqbet._action_head._map_to_cbet_preds_offset.parameters(),
+        #     lr=cfg.training.bet_learning_rate,
+        #     weight_decay=cfg.training.bet_weight_decay,
+        #     betas=cfg.training.bet_betas,
+        # )
+
+        # Option 2
+
+        # vqvae_params = (
+        #     list(policy.vqbet._action_head._vqvae_model.encoder.parameters())
+        #     + list(policy.vqbet._action_head._vqvae_model.decoder.parameters())
+        #     + list(policy.vqbet._action_head._vqvae_model.vq_layer.parameters())
+        # )
+        # self.vqvae_optimizer = torch.optim.Adam(
+        #     vqvae_params, lr=cfg.training.vqvae_lr, weight_decay=0.0001
+        # )
+
+        # self.encoder_optimizer = torch.optim.Adam(
+        #     policy.vqbet.parameters(),
+        #     cfg.training.lr,
+        #     cfg.training.adam_betas,
+        #     cfg.training.adam_eps,
+        #     cfg.training.adam_weight_decay,
+        # )
+
+        # self.bet_optimizer1 = policy.vqbet._policy.configure_optimizers(
+        #     weight_decay=cfg.training.adam_weight_decay,
+        #     learning_rate=cfg.training.lr,
+        #     betas=cfg.training.adam_betas,
+        #     optimizer = "Adam",
+        #     eps=cfg.training.adam_eps,
+        # )
+        # if policy.vqbet._action_head.sequentially_select:
+        #     self.bet_optimizer1.add_param_group(
+        #         {"params": policy.vqbet._action_head._map_to_cbet_preds_bin1.parameters()}
+        #     )
+        #     self.bet_optimizer1.add_param_group(
+        #         {"params": policy.vqbet._action_head._map_to_cbet_preds_bin2.parameters()}
+        #     )
+        # else:
+        #     self.bet_optimizer1.add_param_group(
+        #         {"params": policy.vqbet._action_head._map_to_cbet_preds_bin.parameters()}
+        #     )
+        
+        # self.bet_optimizer2 = torch.optim.Adam(
+        #     policy.vqbet._action_head._map_to_cbet_preds_offset.parameters(),
+        #     cfg.training.lr,
+        #     cfg.training.adam_betas,
+        #     cfg.training.adam_eps,
+        #     cfg.training.adam_weight_decay,
+        # )
+
+        # Option 3
+
+        # vqvae_params = (
+        #     list(policy.vqbet._action_head._vqvae_model.encoder.parameters())
+        #     + list(policy.vqbet._action_head._vqvae_model.decoder.parameters())
+        #     + list(policy.vqbet._action_head._vqvae_model.vq_layer.parameters())
+        # )
+        # self.vqvae_optimizer = torch.optim.Adam(
+        #     vqvae_params, lr=cfg.training.vqvae_lr, weight_decay=0.0001
+        # )
+
+        # self.encoder_optimizer = torch.optim.AdamW(
+        #     policy.vqbet.parameters(),
+        #     lr=cfg.training.bet_learning_rate,
+        #     weight_decay=cfg.training.bet_weight_decay,
+        #     betas=cfg.training.bet_betas,
+        # )
+
+        # self.bet_optimizer1 = policy.vqbet._policy.configure_optimizers(
+        #     weight_decay=cfg.training.bet_weight_decay,
+        #     learning_rate=cfg.training.bet_learning_rate,
+        #     betas=cfg.training.bet_betas,
+        # )
+        # if policy.vqbet._action_head.sequentially_select:
+        #     self.bet_optimizer1.add_param_group(
+        #         {"params": policy.vqbet._action_head._map_to_cbet_preds_bin1.parameters()}
+        #     )
+        #     self.bet_optimizer1.add_param_group(
+        #         {"params": policy.vqbet._action_head._map_to_cbet_preds_bin2.parameters()}
+        #     )
+        # else:
+        #     self.bet_optimizer1.add_param_group(
+        #         {"params": policy.vqbet._action_head._map_to_cbet_preds_bin.parameters()}
+        #     )
+        
+        # self.bet_optimizer2 = torch.optim.AdamW(
+        #     policy.vqbet._action_head._map_to_cbet_preds_offset.parameters(),
+        #     lr=cfg.training.bet_learning_rate,
+        #     weight_decay=cfg.training.bet_weight_decay,
+        #     betas=cfg.training.bet_betas,
+        # )
+
+
+        # Option 4
+
         vqvae_params = (
             list(policy.vqbet._action_head._vqvae_model.encoder.parameters())
             + list(policy.vqbet._action_head._vqvae_model.decoder.parameters())
@@ -549,17 +692,24 @@ class VQBeTOptimizer:
             learning_rate=cfg.training.bet_learning_rate,
             betas=cfg.training.bet_betas,
         )
-        if policy.vqbet._action_head.sequentially_select:
-            self.bet_optimizer1.add_param_group(
-                {"params": policy.vqbet._action_head._map_to_cbet_preds_bin1.parameters()}
-            )
-            self.bet_optimizer1.add_param_group(
-                {"params": policy.vqbet._action_head._map_to_cbet_preds_bin2.parameters()}
-            )
-        else:
-            self.bet_optimizer1.add_param_group(
-                {"params": policy.vqbet._action_head._map_to_cbet_preds_bin.parameters()}
-            )
+        # if policy.vqbet._action_head.sequentially_select:
+        #     self.bet_optimizer1.add_param_group(
+        #         {"params": policy.vqbet._action_head._map_to_cbet_preds_bin1.parameters()}
+        #     )
+        #     self.bet_optimizer1.add_param_group(
+        #         {"params": policy.vqbet._action_head._map_to_cbet_preds_bin2.parameters()}
+        #     )
+        # else:
+        #     self.bet_optimizer1.add_param_group(
+        #         {"params": policy.vqbet._action_head._map_to_cbet_preds_bin.parameters()}
+        #     )
+
+        self.bet_optimizer0 = torch.optim.AdamW(
+            policy.vqbet._action_head._map_to_cbet_preds_bin.parameters(),
+            lr=cfg.training.bet_learning_rate,
+            weight_decay=cfg.training.bet_weight_decay,
+            betas=cfg.training.bet_betas,
+        )
         
         self.bet_optimizer2 = torch.optim.AdamW(
             policy.vqbet._action_head._map_to_cbet_preds_offset.parameters(),
@@ -580,6 +730,7 @@ class VQBeTOptimizer:
             if self.optimizing_step < 0.6 * self.offline_steps:
                 self.encoder_optimizer.step()
                 self.bet_optimizer1.step()
+                self.bet_optimizer0.step()
                 self.bet_optimizer2.step()
             else:
                 self.bet_optimizer2.step()
@@ -593,6 +744,7 @@ class VQBeTOptimizer:
             if self.optimizing_step < 0.6 * self.offline_steps:
                 self.encoder_optimizer.zero_grad()
                 self.bet_optimizer1.zero_grad()
+                self.bet_optimizer0.zero_grad()
                 self.bet_optimizer2.zero_grad()
             else:
                 self.bet_optimizer2.zero_grad()
@@ -604,17 +756,33 @@ class VQBeTScheduler:
         self.offline_steps = cfg.training.offline_steps
         self.optimizing_step = 0
 
-        self.lr_scheduler = get_scheduler(
+        self.lr_scheduler1 = get_scheduler(
             cfg.training.lr_scheduler,
             optimizer=optimizer.encoder_optimizer,
             num_warmup_steps=cfg.training.lr_warmup_steps,
             num_training_steps=cfg.training.offline_steps,
         )
 
+        # self.lr_scheduler2 = get_scheduler(
+        #     cfg.training.lr_scheduler,
+        #     optimizer=optimizer.bet_optimizer1,
+        #     num_warmup_steps=cfg.training.lr_warmup_steps,
+        #     num_training_steps=cfg.training.offline_steps,
+        # )
+
+        # self.lr_scheduler3 = get_scheduler(
+        #     cfg.training.lr_scheduler,
+        #     optimizer=optimizer.bet_optimizer2,
+        #     num_warmup_steps=cfg.training.lr_warmup_steps,
+        #     num_training_steps=cfg.training.offline_steps,
+        # )
+
     def step(self):
         self.optimizing_step +=1
         if self.optimizing_step >= self.discretize_step:
-            self.lr_scheduler.step()
+            self.lr_scheduler1.step()
+            # self.lr_scheduler2.step()
+            # self.lr_scheduler3.step()
 
 class DiffusionRgbEncoder(nn.Module):
     """Encoder an RGB image into a 1D feature vector.
@@ -2848,7 +3016,7 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             block.attn.bias = block.attn.bias[:, :, :block_size, :block_size]
 
-    def configure_optimizers(self, weight_decay, learning_rate, betas):
+    def configure_optimizers(self, weight_decay, learning_rate, betas, optimizer="Adamw", eps=None):
         """
         This long function is unfortunately doing something very simple and is being very defensive:
         We are separating out all parameters of the model into two buckets: those that will experience
@@ -2898,5 +3066,10 @@ class GPT(nn.Module):
                 "weight_decay": 0.0,
             },
         ]
-        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas)
+        if optimizer=="Adamw":
+            optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas)
+        elif optimizer=="Adam":
+            optimizer = torch.optim.Adam(optim_groups, lr=learning_rate, betas=betas, eps=eps)
+        else:
+            raise NotImplementedError
         return optimizer
