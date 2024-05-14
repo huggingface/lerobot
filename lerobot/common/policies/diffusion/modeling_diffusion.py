@@ -295,7 +295,7 @@ class SpatialSoftmax(nn.Module):
     (https://arxiv.org/pdf/1509.06113). A minimal port of the robomimic implementation.
 
     At a high level, this takes 2D feature maps (from a convnet/ViT) and returns the "center of mass"
-    of activations of each channel, i.e., spatial keypoints for the policy to focus on.
+    of activations of each channel, i.e., keypoints in the image space for the policy to focus on.
 
     Example: take feature maps of size (512x10x12). We generate a grid of normalized coordinates (10x12x2):
     -----------------------------------------------------
@@ -307,15 +307,15 @@ class SpatialSoftmax(nn.Module):
     We apply channel-wise softmax over the activations (512x120) and compute dot product with the coordinates (120x2)
     to get expected points of maximal activation (512x2).
 
-    Optionally, when num_kp != None, can learn a linear mapping from the feature maps to a lower/higher dimensional space using a conv1x1
-    before computing the softmax.
+    Optionally, when num_kp != None, can learn a linear mapping from the feature maps to a lower/higher dimensional
+    space using a conv1x1 before computing the softmax.
     """
 
     def __init__(self, input_shape, num_kp=None, temperature=1.0, learnable_temperature=False):
         """
         Args:
             input_shape (list): (C, H, W) input feature map shape.
-            num_kp (int): number of keypoints to output. If None, output will have the same number of channels as input.
+            num_kp (int): number of keypoints in output. If None, output will have the same number of channels as input.
             temperature (float): temperature for softmax normalization.
             learnable_temperature (bool): whether to learn the temperature parameter.
         """
