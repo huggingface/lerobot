@@ -103,6 +103,7 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         # the first action.
         if self.config.temporal_ensemble_momentum is not None:
             actions = self.model(batch)[0]  # (batch_size, chunk_size, action_dim)
+            actions = self.unnormalize_outputs({"action": actions})["action"]
             if self._ensembled_actions is None:
                 self._ensembled_actions = actions.clone()
             else:
