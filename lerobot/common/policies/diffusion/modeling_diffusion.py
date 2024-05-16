@@ -303,11 +303,12 @@ class SpatialSoftmax(nn.Module):
     | ...          | ...            | ... | ...         |
     | (-1., 1.)    | (-0.82, 1.)    | ... | (1., 1.)    |
     -----------------------------------------------------
-    We apply channel-wise softmax over the activations (512x120) and compute dot product with the coordinates (120x2)
-    to get expected points of maximal activation (512x2).
+    This is achieved by applying channel-wise softmax over the activations (512x120) and computing the dot
+    product with the coordinates (120x2) to get expected points of maximal activation (512x2).
 
-    Optionally, when num_kp != None, can learn a linear mapping (of shape (num_kp, H, W)) from the input feature maps
-    using a conv1x1 before computing softmax.
+    The example above results in 512 keypoints (corresponding to the 512 input channels). We can optionally
+    provide num_kp != None to control the number of keypoints. This is achieved by a first applying a learnable
+    linear mapping (in_channels, H, W) -> (num_kp, H, W).
     """
 
     def __init__(self, input_shape, num_kp=None):
