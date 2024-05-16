@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import logging
 import time
 from copy import deepcopy
@@ -72,6 +87,7 @@ def make_optimizer_and_scheduler(cfg, policy):
 
 
 def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
+    """Returns a dictionary of items for logging."""
     start_time = time.time()
     policy.train()
     output_dict = policy.forward(batch)
@@ -99,6 +115,7 @@ def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
         "grad_norm": float(grad_norm),
         "lr": optimizer.param_groups[0]["lr"],
         "update_s": time.time() - start_time,
+        **{k: v for k, v in output_dict.items() if k != "loss"},
     }
 
     return info
@@ -122,7 +139,7 @@ def train_notebook(out_dir=None, job_name=None, config_name="default", config_pa
     train(cfg, out_dir=out_dir, job_name=job_name)
 
 
-def log_train_info(logger, info, step, cfg, dataset, is_offline):
+def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
     loss = info["loss"]
     grad_norm = info["grad_norm"]
     lr = info["lr"]
