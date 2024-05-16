@@ -105,6 +105,6 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_override
 if __name__ == "__main__":
     # Instructions: include the policies that you want to save artifacts for here. Please make sure to revert
     # your changes when you are done.
-    env_policies = [("aloha", "act", ["policy.n_action_steps=10"])]
+    env_policies = []
     for env, policy, extra_overrides in env_policies:
         save_policy_to_safetensors("tests/data/save_policy_to_safetensors", env, policy, extra_overrides)
