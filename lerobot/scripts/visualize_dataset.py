@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """ Visualize data of **all** frames of any episode of a dataset of type LeRobotDataset.
 
 Note: The last frame of the episode doesnt always correspond to a final state.
@@ -47,6 +62,7 @@ local$ rerun ws://localhost:9087
 """
 
 import argparse
+import gc
 import logging
 import time
 from pathlib import Path
@@ -115,14 +131,16 @@ def visualize_dataset(
 
     spawn_local_viewer = mode == "local" and not save
     rr.init(f"{repo_id}/episode_{episode_index}", spawn=spawn_local_viewer)
+
+    # Manually call python garbage collector after `rr.init` to avoid hanging in a blocking flush
+    # when iterating on a dataloader with `num_workers` > 0
+    # TODO(rcadene): remove `gc.collect` when rerun version 0.16 is out, which includes a fix
+    gc.collect()
+
     if mode == "distant":
         rr.serve(open_browser=False, web_port=web_port, ws_port=ws_port)
 
     logging.info("Logging to Rerun")
-
-    if num_workers > 0:
-        # TODO(rcadene): fix data workers hanging when `rr.init` is called
-        logging.warning("If data loader is hanging, try `--num-workers 0`.")
 
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
         # iterate over the batch
@@ -196,7 +214,7 @@ def main():
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=0,
+        default=4,
         help="Number of processes of Dataloader for loading the data.",
     )
     parser.add_argument(
