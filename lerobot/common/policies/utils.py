@@ -19,6 +19,10 @@ from torch import nn
 
 def populate_queues(queues, batch):
     for key in batch:
+        # Ignore keys not in the queues already (leaving the responsibility to the caller to make sure the
+        # queues have the keys they want).
+        if key not in queues:
+            continue
         if len(queues[key]) != queues[key].maxlen:
             # initialize by copying the first observation several times until the queue is full
             while len(queues[key]) != queues[key].maxlen:

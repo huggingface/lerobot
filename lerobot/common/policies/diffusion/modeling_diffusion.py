@@ -19,6 +19,7 @@
 TODO(alexander-soare):
   - Remove reliance on Robomimic for SpatialSoftmax.
   - Remove reliance on diffusers for DDPMScheduler and LR scheduler.
+  - Make compatible with multiple image keys.
 """
 
 import math
@@ -83,10 +84,18 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
 
         self.diffusion = DiffusionModel(config)
 
+        image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+        # Note: This check is covered in the post-init of the config but have a sanity check just in case.
+        if len(image_keys) != 1:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} only handles one image for now. Got image keys {image_keys}."
+            )
+        self.input_image_key = image_keys[0]
+
+        self.reset()
+
     def reset(self):
-        """
-        Clear observation and action queues. Should be called on `env.reset()`
-        """
+        """Clear observation and action queues. Should be called on `env.reset()`"""
         self._queues = {
             "observation.image": deque(maxlen=self.config.n_obs_steps),
             "observation.state": deque(maxlen=self.config.n_obs_steps),
@@ -115,16 +124,14 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         "horizon" may not the best name to describe what the variable actually means, because this period is
         actually measured from the first observation which (if `n_obs_steps` > 1) happened in the past.
         """
-        assert "observation.image" in batch
-        assert "observation.state" in batch
-
         batch = self.normalize_inputs(batch)
+        batch["observation.image"] = batch[self.input_image_key]
 
         self._queues = populate_queues(self._queues, batch)
 
         if len(self._queues["action"]) == 0:
             # stack n latest observations from the queue
-            batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch}
+            batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
             actions = self.diffusion.generate_actions(batch)
 
             # TODO(rcadene): make above methods return output dictionary?
@@ -138,6 +145,7 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
+        batch["observation.image"] = batch[self.input_image_key]
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
         return {"loss": loss}
@@ -215,13 +223,12 @@ class DiffusionModel(nn.Module):
 
     def generate_actions(self, batch: dict[str, Tensor]) -> Tensor:
         """
-        This function expects `batch` to have (at least):
+        This function expects `batch` to have:
         {
             "observation.state": (B, n_obs_steps, state_dim)
             "observation.image": (B, n_obs_steps, C, H, W)
         }
         """
-        assert set(batch).issuperset({"observation.state", "observation.image"})
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
         assert n_obs_steps == self.config.n_obs_steps
 
@@ -345,9 +352,12 @@ class DiffusionRgbEncoder(nn.Module):
 
         # Set up pooling and final layers.
         # Use a dry run to get the feature map shape.
-        # The dummy input should take the number of image channels from `config.input_shapes` and it should use the
-        # height and width from `config.crop_shape`.
-        dummy_input = torch.zeros(size=(1, config.input_shapes["observation.image"][0], *config.crop_shape))
+        # The dummy input should take the number of image channels from `config.input_shapes` and it should
+        # use the height and width from `config.crop_shape`.
+        image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+        assert len(image_keys) == 1
+        image_key = image_keys[0]
+        dummy_input = torch.zeros(size=(1, config.input_shapes[image_key][0], *config.crop_shape))
         with torch.inference_mode():
             dummy_feature_map = self.backbone(dummy_input)
         feature_map_shape = tuple(dummy_feature_map.shape[1:])
