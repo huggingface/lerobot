@@ -145,10 +145,3 @@ class ACTConfig:
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
             )
-        # Check that there is only one image.
-        # TODO(alexander-soare): generalize this to multiple images.
-        if (
-            sum(k.startswith("observation.images.") for k in self.input_shapes) != 1
-            or "observation.images.top" not in self.input_shapes
-        ):
-            raise ValueError('For now, only "observation.images.top" is accepted for an image input.')
