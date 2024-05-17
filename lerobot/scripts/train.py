@@ -444,6 +444,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
                 policy,
                 n_episodes=1,
                 return_episode_data=True,
+                # TODO(now): Actually we shouldn't be seeding this every time!
                 start_seed=cfg.training.online_env_seed,
                 enable_progbar=False,
             )
