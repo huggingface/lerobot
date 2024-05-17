@@ -73,7 +73,7 @@ policy:
   n_vae_encoder_layers: 4
 
   # Inference.
-  use_temporal_aggregation: false
+  temporal_ensemble_momentum: null
 
   # Training and loss computation.
   dropout: 0.1
