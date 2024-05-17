@@ -119,6 +119,9 @@ class ACTConfig:
     dim_feedforward: int = 3200
     feedforward_activation: str = "relu"
     n_encoder_layers: int = 4
+    # Note: Although the original ACT implementation has 7 for `n_decoder_layers`, there is a bug in the code
+    # that means only the first layer is used. Here we match the original implementation by setting this to 1.
+    # See this issue https://github.com/tonyzhaozh/act/issues/25#issue-2258740521.
     n_decoder_layers: int = 1
     # VAE.
     use_vae: bool = True
