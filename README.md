@@ -177,11 +177,13 @@ A link to the wandb logs for the run will also show up in yellow in your termina
 
 You can deactivate wandb by adding these arguments to the `train.py` python command:
 ```bash
+    # this first one is not necessary to disable wandb, but you can set it with wandb enabled to avoid
+    # uploading model checkpoints
     wandb.disable_artifact=true \
     wandb.enable=false
 ```
 
-Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. After training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
+Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. You may use `eval.n_episodes=500` to evaluate on more episodes than the default. Or, after training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
 
 
 ## Contribute
