@@ -115,7 +115,7 @@ class ACTConfig:
     dim_feedforward: int = 3200
     feedforward_activation: str = "relu"
     n_encoder_layers: int = 4
-    n_decoder_layers: int = 1
+    n_decoder_layers: int = 7
     # VAE.
     use_vae: bool = True
     latent_dim: int = 32
