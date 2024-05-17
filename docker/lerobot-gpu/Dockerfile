@@ -16,8 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python${PYTHON_VERSION} python${PYTHON_VERSION}-venv \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Create virtual environment
+# Install poetry
 RUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python
+RUN curl -sSL https://install.python-poetry.org | python -
+
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN echo "source /opt/venv/bin/activate" >> /root/.bashrc
