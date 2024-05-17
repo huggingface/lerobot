@@ -105,6 +105,8 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
             actions = self.model(batch)[0]  # (batch_size, chunk_size, action_dim)
             actions = self.unnormalize_outputs({"action": actions})["action"]
             if self._ensembled_actions is None:
+                # Initializes `self._ensembled_action` to the sequence of actions predicted during the first
+                # time step of the episode.
                 self._ensembled_actions = actions.clone()
             else:
                 # self._ensembled_actions will have shape (batch_size, chunk_size - 1, action_dim). Compute
