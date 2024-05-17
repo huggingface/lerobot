@@ -223,8 +223,7 @@ def push_dataset_to_hub(
         test_hf_dataset = test_hf_dataset.with_format(None)
         test_hf_dataset.save_to_disk(str(tests_out_dir / "train"))
 
-        # copy meta data to tests directory
-        shutil.copytree(meta_data_dir, tests_meta_data_dir)
+        save_meta_data(info, stats, episode_data_index, tests_meta_data_dir)
 
         # copy videos of first episode to tests directory
         episode_index = 0
@@ -233,7 +232,8 @@ def push_dataset_to_hub(
             fname = f"{key}_episode_{episode_index:06d}.mp4"
             shutil.copy(videos_dir / fname, tests_videos_dir / fname)
 
-    if not save_to_disk:
+    if not save_to_disk and out_dir.exists():
+        # remove possible temporary files remaining in the output directory
         shutil.rmtree(out_dir)
 
 
