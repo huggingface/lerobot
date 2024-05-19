@@ -19,7 +19,6 @@ from pathlib import Path
 import torch
 from safetensors.torch import save_file
 
-from lerobot import available_policies_per_env
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils.utils import init_hydra_config, set_global_seed
@@ -27,14 +26,14 @@ from lerobot.scripts.train import make_optimizer_and_scheduler
 from tests.utils import DEFAULT_CONFIG_PATH
 
 
-def get_policy_stats(env_name, policy_name):
+def get_policy_stats(env_name, policy_name, extra_overrides):
     cfg = init_hydra_config(
         DEFAULT_CONFIG_PATH,
         overrides=[
             f"env={env_name}",
             f"policy={policy_name}",
             "device=cpu",
-        ],
+        ] + extra_overrides,
     )
     set_global_seed(1337)
     dataset = make_dataset(cfg)
@@ -88,14 +87,14 @@ def get_policy_stats(env_name, policy_name):
     return output_dict, grad_stats, param_stats, actions
 
 
-def save_policy_to_safetensors(output_dir, env_name, policy_name):
+def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_overrides):
     env_policy_dir = Path(output_dir) / f"{env_name}_{policy_name}"
 
     if env_policy_dir.exists():
         shutil.rmtree(env_policy_dir)
 
     env_policy_dir.mkdir(parents=True, exist_ok=True)
-    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name)
+    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name, extra_overrides)
     save_file(output_dict, env_policy_dir / "output_dict.safetensors")
     save_file(grad_stats, env_policy_dir / "grad_stats.safetensors")
     save_file(param_stats, env_policy_dir / "param_stats.safetensors")
@@ -103,6 +102,14 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name):
 
 
 if __name__ == "__main__":
-    for env, policies in available_policies_per_env.items():
-        for policy in policies:
-            save_policy_to_safetensors("tests/data/save_policy_to_safetensors", env, policy)
+    env_policies = [
+        ("xarm", "tdmpc", []),
+        (
+            "pusht",
+            "diffusion",
+            ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
+        ),
+        ("aloha", "act", ["policy.n_action_steps=10"]),
+    ]
+    for env, policy, extra_overrides in env_policies:
+        save_policy_to_safetensors("tests/data/save_policy_to_safetensors", env, policy, extra_overrides)
