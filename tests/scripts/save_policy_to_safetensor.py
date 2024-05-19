@@ -33,7 +33,8 @@ def get_policy_stats(env_name, policy_name, extra_overrides):
             f"env={env_name}",
             f"policy={policy_name}",
             "device=cpu",
-        ] + extra_overrides,
+        ]
+        + extra_overrides,
     )
     set_global_seed(1337)
     dataset = make_dataset(cfg)
