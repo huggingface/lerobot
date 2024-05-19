@@ -67,6 +67,8 @@ jobs:
       MUJOCO_GL: egl
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true  # Ensure LFS files are pulled
 
       - name: Install poetry
         run: |
