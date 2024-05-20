@@ -92,6 +92,9 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_override
     env_policy_dir = Path(output_dir) / f"{env_name}_{policy_name}"
 
     if env_policy_dir.exists():
+        print(f"Overwrite existing safetensors in '{env_policy_dir}':")
+        print(f" - Validate with: `git add {env_policy_dir}`")
+        print(f" - Revert with: `git checkout -- {env_policy_dir}`")
         shutil.rmtree(env_policy_dir)
 
     env_policy_dir.mkdir(parents=True, exist_ok=True)
