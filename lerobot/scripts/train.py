@@ -34,6 +34,7 @@ from lerobot.common.policies.policy_protocol import PolicyWithUpdate
 from lerobot.common.utils.utils import (
     format_big_number,
     get_safe_torch_device,
+    init_hydra_config,
     init_logging,
     set_global_seed,
 )
@@ -120,24 +121,6 @@ def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
     }
 
     return info
-
-
-@hydra.main(version_base="1.2", config_name="default", config_path="../configs")
-def train_cli(cfg: dict):
-    train(
-        cfg,
-        out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
-        job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
-    )
-
-
-def train_notebook(out_dir=None, job_name=None, config_name="default", config_path="../configs"):
-    from hydra import compose, initialize
-
-    hydra.core.global_hydra.GlobalHydra.instance().clear()
-    initialize(config_path=config_path)
-    cfg = compose(config_name=config_name)
-    train(cfg, out_dir=out_dir, job_name=job_name)
 
 
 def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
@@ -316,15 +299,19 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     init_logging()
 
+    # log metrics to terminal and wandb
+    logger = Logger(out_dir, job_name, cfg)
+
     if cfg.training.online_steps > 0 and cfg.eval.batch_size > 1:
         logging.warning("eval.batch_size > 1 not supported for online training steps")
+
+    set_global_seed(cfg.seed)
 
     # Check device is available
     get_safe_torch_device(cfg.device, log=True)
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    set_global_seed(cfg.seed)
 
     logging.info("make_dataset")
     offline_dataset = make_dataset(cfg)
@@ -333,17 +320,31 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     eval_env = make_env(cfg)
 
     logging.info("make_policy")
-    policy = make_policy(hydra_cfg=cfg, dataset_stats=offline_dataset.stats)
+    policy = make_policy(
+        hydra_cfg=cfg,
+        dataset_stats=offline_dataset.stats,
+        pretrained_policy_name_or_path=logger.last_checkpoint_path if cfg.resume else None,
+    )
 
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
+    step = 0  # number of policy updates (forward + backward + optim)
+
+    if cfg.resume:
+        print("You have set resume=True, indicating that you wish to resume a run.")
+        # Make sure there is a checkpoint.
+        if not Path(logger.last_checkpoint_path).exists():
+            raise RuntimeError(f"You have set resume=True, but {logger.last_checkpoint_path} does not exist.")
+        # Get the configuration file from the last checkpoint.
+        checkpoint_cfg = init_hydra_config(logger.last_checkpoint_path)
+        # TODO(now): Do a diff check.
+        cfg = checkpoint_cfg
+        step = logger.load_last_training_state(optimizer, lr_scheduler)
+
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
-
-    # log metrics to terminal and wandb
-    logger = Logger(out_dir, job_name, cfg)
 
     log_output_dir(out_dir)
     logging.info(f"{cfg.env.task=}")
@@ -395,9 +396,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     dl_iter = cycle(dataloader)
 
     policy.train()
-    step = 0  # number of policy update (forward + backward + optim)
     is_offline = True
-    for offline_step in range(cfg.training.offline_steps):
+    for offline_step in range(step, cfg.training.offline_steps):
         if offline_step == 0:
             logging.info("Start offline training on a fixed dataset")
         batch = next(dl_iter)
@@ -489,6 +489,24 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     eval_env.close()
     online_training_env.close()
     logging.info("End of training")
+
+
+@hydra.main(version_base="1.2", config_name="default", config_path="../configs")
+def train_cli(cfg: dict):
+    train(
+        cfg,
+        out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
+        job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
+    )
+
+
+def train_notebook(out_dir=None, job_name=None, config_name="default", config_path="../configs"):
+    from hydra import compose, initialize
+
+    hydra.core.global_hydra.GlobalHydra.instance().clear()
+    initialize(config_path=config_path)
+    cfg = compose(config_name=config_name)
+    train(cfg, out_dir=out_dir, job_name=job_name)
 
 
 if __name__ == "__main__":

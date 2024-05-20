@@ -20,11 +20,15 @@ import logging
 import os
 from pathlib import Path
 
+import torch
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from omegaconf import OmegaConf
 from termcolor import colored
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.common.policies.policy_protocol import Policy
+from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
 
 
 def log_output_dir(out_dir):
@@ -49,11 +53,11 @@ class Logger:
         self._log_dir = Path(log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._job_name = job_name
-        self._model_dir = self._log_dir / "checkpoints"
+        self._checkpoint_dir = self._log_dir / "checkpoints"
+        self._last_checkpoint_path = self._checkpoint_dir / "last"
         self._buffer_dir = self._log_dir / "buffers"
         self._save_model = cfg.training.save_model
         self._disable_wandb_artifact = cfg.wandb.disable_artifact
-        self._save_buffer = cfg.training.get("save_buffer", False)
         self._group = cfg_to_group(cfg)
         self._seed = cfg.seed
         self._cfg = cfg
@@ -83,16 +87,20 @@ class Logger:
                 # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
                 job_type="train_eval",
                 # TODO(rcadene): add resume option
-                resume=None,
+                resume="must",
             )
             print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
             logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
             self._wandb = wandb
 
-    def save_model(self, policy: Policy, identifier):
+    @property
+    def last_checkpoint_path(self):
+        return self._last_checkpoint_path
+
+    def save_model(self, policy: Policy, identifier: str):
         if self._save_model:
-            self._model_dir.mkdir(parents=True, exist_ok=True)
-            save_dir = self._model_dir / str(identifier)
+            self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            save_dir = self._checkpoint_dir / str(identifier)
             policy.save_pretrained(save_dir)
             # Also save the full Hydra config for the env configuration.
             OmegaConf.save(self._cfg, save_dir / "config.yaml")
@@ -104,27 +112,47 @@ class Logger:
                 )
                 artifact.add_file(save_dir / SAFETENSORS_SINGLE_FILE)
                 self._wandb.log_artifact(artifact)
+        os.symlink(save_dir.absolute(), self._last_checkpoint_path)  # TODO(now): Check this works
 
-    def save_buffer(self, buffer, identifier):
-        self._buffer_dir.mkdir(parents=True, exist_ok=True)
-        fp = self._buffer_dir / f"{str(identifier)}.pkl"
-        buffer.save(fp)
-        if self._wandb and not self._disable_wandb_artifact:
-            # note wandb artifact does not accept ":" or "/" in its name
-            artifact = self._wandb.Artifact(
-                f"{self._group.replace(':', '_').replace('/', '_')}-{self._seed}-{identifier}",
-                type="buffer",
+    def save_training_state(
+        self, train_step: int, optimizer: Optimizer, scheduler: LRScheduler | None, identifier: str
+    ):
+        training_state = {
+            "step": train_step,
+            "optimizer": optimizer.state_dict(),
+            **get_global_random_state(),
+        }
+        if scheduler is not None:
+            training_state["scheduler"] = scheduler.state_dict()
+        torch.save(training_state, self._checkpoint_dir / str(identifier) / "training_state.pth")
+
+    def load_last_training_state(self, optimizer: Optimizer, scheduler: LRScheduler | None) -> int:
+        """
+        Load the optimizer and scheduler state_dict from the last checkpoint, set the random state, and return
+        the global training step.
+        """
+        training_state = torch.load(self._checkpoint_dir / "last" / "training_state.pth")
+        optimizer.load_state_dict(training_state["optimizer"])
+        if scheduler is not None:
+            scheduler.load_state_dict(training_state["scheduler"])
+        elif "scheduler" in training_state:
+            raise ValueError(
+                "The checkpoint contains a scheduler state_dict, but no LRScheduler was provided."
             )
-            artifact.add_file(fp)
-            self._wandb.log_artifact(artifact)
+        # Small hack to get the expected keys: use `get_global_random_state`.
+        set_global_random_state({k: training_state[k] for k in get_global_random_state()})
+        return training_state["step"]
 
-    def finish(self, agent, buffer):
-        if self._save_model:
-            self.save_model(agent, identifier="final")
-        if self._save_buffer:
-            self.save_buffer(buffer, identifier="buffer")
-        if self._wandb:
-            self._wandb.finish()
+    def save_checkpont(
+        self,
+        train_step: int,
+        policy: Policy,
+        optimizer: Optimizer,
+        scheduler: LRScheduler | None,
+        identifier: str,
+    ):
+        self.save_model(policy, identifier)
+        self.save_training_state(train_step, optimizer, scheduler, identifier)
 
     def log_dict(self, d, step, mode="train"):
         assert mode in {"train", "eval"}

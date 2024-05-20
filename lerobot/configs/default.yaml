@@ -5,10 +5,19 @@ defaults:
 
 hydra:
   run:
+    # Set `dir` to where you would like to save all of the run outputs. If you run another training session
+    # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
     dir: outputs/train/${now:%Y-%m-%d}/${now:%H-%M-%S}_${env.name}_${policy.name}_${hydra.job.name}
   job:
     name: default
 
+# Set `resume` to true to resume a previous run. In order for this to work, you will need to make sure
+# `hydra.run.dir` is the directory of an existing run with at least one checkpoint in it.
+# Note that run resumption works by grabbing the configuration file from
+# {hydra.run.dir}/checkpoints/{specific_checkpoint_dir}/config.yaml. Any differences between the provided
+# configuration and the prior configuration (apart from the resume parameter itself) are ignored. If you wish
+# to change something, you can consider modifying the configuration in the file directly.
+resume: false
 device: cuda  # cpu
 # `seed` is used for training (eg: model initialization, dataset shuffling)
 # AND for the evaluation environments.
