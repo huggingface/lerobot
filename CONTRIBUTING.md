@@ -195,6 +195,11 @@ Follow these steps to start contributing:
    git commit
    ```
 
+   Note, if you already commited some changes that have a wrong formatting, you can use:
+   ```bash
+   pre-commit run --all-files
+   ```
+
    Please write [good commit messages](https://chris.beams.io/posts/git-commit/).
 
    It is a good idea to sync your copy of the code with the original

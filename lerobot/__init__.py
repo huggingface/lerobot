@@ -61,13 +61,21 @@ available_datasets_per_env = {
         "lerobot/aloha_sim_insertion_scripted",
         "lerobot/aloha_sim_transfer_cube_human",
         "lerobot/aloha_sim_transfer_cube_scripted",
+        "lerobot/aloha_sim_insertion_human_image",
+        "lerobot/aloha_sim_insertion_scripted_image",
+        "lerobot/aloha_sim_transfer_cube_human_image",
+        "lerobot/aloha_sim_transfer_cube_scripted_image",
     ],
-    "pusht": ["lerobot/pusht"],
+    "pusht": ["lerobot/pusht", "lerobot/pusht_image"],
     "xarm": [
         "lerobot/xarm_lift_medium",
         "lerobot/xarm_lift_medium_replay",
         "lerobot/xarm_push_medium",
         "lerobot/xarm_push_medium_replay",
+        "lerobot/xarm_lift_medium_image",
+        "lerobot/xarm_lift_medium_replay_image",
+        "lerobot/xarm_push_medium_image",
+        "lerobot/xarm_push_medium_replay_image",
     ],
 }
 

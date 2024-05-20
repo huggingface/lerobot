@@ -24,17 +24,16 @@ import shutil
 from pathlib import Path
 
 import tqdm
-
-ALOHA_RAW_URLS_DIR = "lerobot/common/datasets/push_dataset_to_hub/_aloha_raw_urls"
+from huggingface_hub import snapshot_download
 
 
 def download_raw(raw_dir, dataset_id):
-    if "pusht" in dataset_id:
+    if "aloha" in dataset_id or "image" in dataset_id:
+        download_hub(raw_dir, dataset_id)
+    elif "pusht" in dataset_id:
         download_pusht(raw_dir)
     elif "xarm" in dataset_id:
         download_xarm(raw_dir)
-    elif "aloha" in dataset_id:
-        download_aloha(raw_dir, dataset_id)
     elif "umi" in dataset_id:
         download_umi(raw_dir)
     else:
@@ -103,37 +102,13 @@ def download_xarm(raw_dir: Path):
     zip_path.unlink()
 
 
-def download_aloha(raw_dir: Path, dataset_id: str):
-    import gdown
-
-    subset_id = dataset_id.replace("aloha_", "")
-    urls_path = Path(ALOHA_RAW_URLS_DIR) / f"{subset_id}.txt"
-    assert urls_path.exists(), f"{subset_id}.txt not found in '{ALOHA_RAW_URLS_DIR}' directory."
-
-    with open(urls_path) as f:
-        # strip lines and ignore empty lines
-        urls = [url.strip() for url in f if url.strip()]
-
-    # sanity check
-    for url in urls:
-        assert (
-            "drive.google.com/drive/folders" in url or "drive.google.com/file" in url
-        ), f"Wrong url provided '{url}' in file '{urls_path}'."
-
+def download_hub(raw_dir: Path, dataset_id: str):
     raw_dir = Path(raw_dir)
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    logging.info(f"Start downloading from google drive for {dataset_id}")
-    for url in urls:
-        if "drive.google.com/drive/folders" in url:
-            # when a folder url is given, download up to 50 files from the folder
-            gdown.download_folder(url, output=str(raw_dir), remaining_ok=True)
-
-        elif "drive.google.com/file" in url:
-            # because of the 50 files limit per folder, we download the remaining files (file by file)
-            gdown.download(url, output=str(raw_dir), fuzzy=True)
-
-    logging.info(f"End downloading from google drive for {dataset_id}")
+    logging.info(f"Start downloading from huggingface.co/cadene for {dataset_id}")
+    snapshot_download(f"cadene/{dataset_id}_raw", repo_type="dataset", local_dir=raw_dir)
+    logging.info(f"Finish downloading from huggingface.co/cadene for {dataset_id}")
 
 
 def download_umi(raw_dir: Path):
@@ -148,21 +123,30 @@ def download_umi(raw_dir: Path):
 if __name__ == "__main__":
     data_dir = Path("data")
     dataset_ids = [
+        "pusht_image",
+        "xarm_lift_medium_image",
+        "xarm_lift_medium_replay_image",
+        "xarm_push_medium_image",
+        "xarm_push_medium_replay_image",
+        "aloha_sim_insertion_human_image",
+        "aloha_sim_insertion_scripted_image",
+        "aloha_sim_transfer_cube_human_image",
+        "aloha_sim_transfer_cube_scripted_image",
         "pusht",
         "xarm_lift_medium",
         "xarm_lift_medium_replay",
         "xarm_push_medium",
         "xarm_push_medium_replay",
+        "aloha_sim_insertion_human",
+        "aloha_sim_insertion_scripted",
+        "aloha_sim_transfer_cube_human",
+        "aloha_sim_transfer_cube_scripted",
         "aloha_mobile_cabinet",
         "aloha_mobile_chair",
         "aloha_mobile_elevator",
         "aloha_mobile_shrimp",
         "aloha_mobile_wash_pan",
         "aloha_mobile_wipe_wine",
-        "aloha_sim_insertion_human",
-        "aloha_sim_insertion_scripted",
-        "aloha_sim_transfer_cube_human",
-        "aloha_sim_transfer_cube_scripted",
         "aloha_static_battery",
         "aloha_static_candy",
         "aloha_static_coffee",
