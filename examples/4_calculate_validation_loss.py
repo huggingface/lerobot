@@ -55,9 +55,14 @@ first_val_frame_index = full_dataset.episode_data_index["from"][num_train_episod
 #   It utilizes the `datasets` library's syntax for slicing datasets.
 #   For more information on the Slice API, please see:
 #   https://huggingface.co/docs/datasets/v2.19.0/loading#slice-splits
+train_dataset = LeRobotDataset(
+    "lerobot/pusht", split=f"train[:{first_val_frame_index}]", delta_timestamps=delta_timestamps
+)
 val_dataset = LeRobotDataset(
     "lerobot/pusht", split=f"train[{first_val_frame_index}:]", delta_timestamps=delta_timestamps
 )
+print(f"Number of frames in training dataset (90% subset): {len(train_dataset)}")
+print(f"Number of frames in validation dataset (10% subset): {len(val_dataset)}")
 
 # Create dataloader for evaluation.
 val_dataloader = torch.utils.data.DataLoader(
