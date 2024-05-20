@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import logging
 import time
 from copy import deepcopy
@@ -8,7 +23,7 @@ import hydra
 import torch
 from datasets import concatenate_datasets
 from datasets.utils import disable_progress_bars, enable_progress_bars
-from diffusers.optimization import get_scheduler
+from omegaconf import DictConfig
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.utils import cycle
@@ -55,6 +70,8 @@ def make_optimizer_and_scheduler(cfg, policy):
             cfg.training.adam_weight_decay,
         )
         assert cfg.training.online_steps == 0, "Diffusion Policy does not handle online training."
+        from diffusers.optimization import get_scheduler
+
         lr_scheduler = get_scheduler(
             cfg.training.lr_scheduler,
             optimizer=optimizer,
@@ -71,6 +88,7 @@ def make_optimizer_and_scheduler(cfg, policy):
 
 
 def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
+    """Returns a dictionary of items for logging."""
     start_time = time.time()
     policy.train()
     output_dict = policy.forward(batch)
@@ -98,6 +116,7 @@ def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
         "grad_norm": float(grad_norm),
         "lr": optimizer.param_groups[0]["lr"],
         "update_s": time.time() - start_time,
+        **{k: v for k, v in output_dict.items() if k != "loss"},
     }
 
     return info
@@ -121,7 +140,7 @@ def train_notebook(out_dir=None, job_name=None, config_name="default", config_pa
     train(cfg, out_dir=out_dir, job_name=job_name)
 
 
-def log_train_info(logger, info, step, cfg, dataset, is_offline):
+def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
     loss = info["loss"]
     grad_norm = info["grad_norm"]
     lr = info["lr"]
@@ -289,7 +308,7 @@ def add_episodes_inplace(
     sampler.num_samples = len(concat_dataset)
 
 
-def train(cfg: dict, out_dir=None, job_name=None):
+def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
     if out_dir is None:
         raise NotImplementedError()
     if job_name is None:
@@ -336,7 +355,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # Note: this helper will be used in offline and online training loops.
-    def _maybe_eval_and_maybe_save(step):
+    def evaluate_and_checkpoint_if_needed(step):
         if step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             eval_info = eval_policy(
@@ -392,9 +411,9 @@ def train(cfg: dict, out_dir=None, job_name=None):
         if step % cfg.training.log_freq == 0:
             log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline)
 
-        # Note: _maybe_eval_and_maybe_save happens **after** the `step`th training update has completed, so we pass in
-        # step + 1.
-        _maybe_eval_and_maybe_save(step + 1)
+        # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
+        # so we pass in step + 1.
+        evaluate_and_checkpoint_if_needed(step + 1)
 
         step += 1
 
@@ -460,9 +479,9 @@ def train(cfg: dict, out_dir=None, job_name=None):
             if step % cfg.training.log_freq == 0:
                 log_train_info(logger, train_info, step, cfg, online_dataset, is_offline)
 
-            # Note: _maybe_eval_and_maybe_save happens **after** the `step`th training update has completed, so we pass
-            # in step + 1.
-            _maybe_eval_and_maybe_save(step + 1)
+            # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
+            # so we pass in step + 1.
+            evaluate_and_checkpoint_if_needed(step + 1)
 
             step += 1
             online_step += 1

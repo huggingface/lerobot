@@ -4,36 +4,42 @@ Once you have trained a model with this script, you can try to evaluate it on
 examples/2_evaluate_pretrained_policy.py
 """
 
-import os
 from pathlib import Path
 
 import torch
-from omegaconf import OmegaConf
 
-from lerobot.common.datasets.factory import make_dataset
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
-from lerobot.common.utils.utils import init_hydra_config
 
+# Create a directory to store the training checkpoint.
 output_directory = Path("outputs/train/example_pusht_diffusion")
-os.makedirs(output_directory, exist_ok=True)
+output_directory.mkdir(parents=True, exist_ok=True)
 
-# Number of offline training steps (we'll only do offline training for this example.
+# Number of offline training steps (we'll only do offline training for this example.)
 # Adjust as you prefer. 5000 steps are needed to get something worth evaluating.
 training_steps = 5000
 device = torch.device("cuda")
 log_freq = 250
 
 # Set up the dataset.
-hydra_cfg = init_hydra_config("lerobot/configs/default.yaml", overrides=["env=pusht"])
-dataset = make_dataset(hydra_cfg)
+delta_timestamps = {
+    # Load the previous image and state at -0.1 seconds before current frame,
+    # then load current image and state corresponding to 0.0 second.
+    "observation.image": [-0.1, 0.0],
+    "observation.state": [-0.1, 0.0],
+    # Load the previous action (-0.1), the next action to be executed (0.0),
+    # and 14 future actions with a 0.1 seconds spacing. All these actions will be
+    # used to supervise the policy.
+    "action": [-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4],
+}
+dataset = LeRobotDataset("lerobot/pusht", delta_timestamps=delta_timestamps)
 
 # Set up the the policy.
 # Policies are initialized with a configuration class, in this case `DiffusionConfig`.
 # For this example, no arguments need to be passed because the defaults are set up for PushT.
 # If you're doing something different, you will likely need to change at least some of the defaults.
 cfg = DiffusionConfig()
-# TODO(alexander-soare): Remove LR scheduler from the policy.
 policy = DiffusionPolicy(cfg, dataset_stats=dataset.stats)
 policy.train()
 policy.to(device)
@@ -69,7 +75,5 @@ while not done:
             done = True
             break
 
-# Save the policy.
+# Save a policy checkpoint.
 policy.save_pretrained(output_directory)
-# Save the Hydra configuration so we have the environment configuration for eval.
-OmegaConf.save(hydra_cfg, output_directory / "config.yaml")

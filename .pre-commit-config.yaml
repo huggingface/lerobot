@@ -18,7 +18,7 @@ repos:
     hooks:
     -   id: pyupgrade
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.2
+    rev: v0.4.3
     hooks:
       - id: ruff
         args: [--fix]

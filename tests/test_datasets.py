@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import json
 import logging
 from copy import deepcopy
@@ -41,7 +56,7 @@ def test_factory(env_name, repo_id, policy_name):
     )
     dataset = make_dataset(cfg)
     delta_timestamps = dataset.delta_timestamps
-    image_keys = dataset.image_keys
+    camera_keys = dataset.camera_keys
 
     item = dataset[0]
 
@@ -71,7 +86,7 @@ def test_factory(env_name, repo_id, policy_name):
         else:
             assert item[key].ndim == ndim, f"{key}"
 
-        if key in image_keys:
+        if key in camera_keys:
             assert item[key].dtype == torch.float32, f"{key}"
             # TODO(rcadene): we assume for now that image normalization takes place in the model
             assert item[key].max() <= 1.0, f"{key}"

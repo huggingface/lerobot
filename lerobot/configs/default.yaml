@@ -25,7 +25,7 @@ training:
   eval_freq: ???
   save_freq: ???
   log_freq: 250
-  save_model: false
+  save_model: true
 
 eval:
   n_episodes: 1
@@ -35,7 +35,7 @@ eval:
   use_async_envs: false
 
 wandb:
-  enable: true
+  enable: false
   # Set to true to disable saving an artifact despite save_model == True
   disable_artifact: false
   project: lerobot

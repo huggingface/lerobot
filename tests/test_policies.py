@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import inspect
 from pathlib import Path
 
@@ -49,6 +64,14 @@ def test_get_policy_and_config_classes(policy_name: str):
             "act",
             ["env.task=AlohaTransferCube-v0", "dataset_repo_id=lerobot/aloha_sim_transfer_cube_scripted"],
         ),
+        # Note: these parameters also need custom logic in the test function for overriding the Hydra config.
+        (
+            "aloha",
+            "diffusion",
+            ["env.task=AlohaInsertion-v0", "dataset_repo_id=lerobot/aloha_sim_insertion_human"],
+        ),
+        # Note: these parameters also need custom logic in the test function for overriding the Hydra config.
+        ("pusht", "act", ["env.task=PushT-v0", "dataset_repo_id=lerobot/pusht"]),
     ],
 )
 @require_env
@@ -71,6 +94,31 @@ def test_policy(env_name, policy_name, extra_overrides):
         ]
         + extra_overrides,
     )
+
+    # Additional config override logic.
+    if env_name == "aloha" and policy_name == "diffusion":
+        for keys in [
+            ("training", "delta_timestamps"),
+            ("policy", "input_shapes"),
+            ("policy", "input_normalization_modes"),
+        ]:
+            dct = dict(cfg[keys[0]][keys[1]])
+            dct["observation.images.top"] = dct["observation.image"]
+            del dct["observation.image"]
+            cfg[keys[0]][keys[1]] = dct
+        cfg.override_dataset_stats = None
+
+    # Additional config override logic.
+    if env_name == "pusht" and policy_name == "act":
+        for keys in [
+            ("policy", "input_shapes"),
+            ("policy", "input_normalization_modes"),
+        ]:
+            dct = dict(cfg[keys[0]][keys[1]])
+            dct["observation.image"] = dct["observation.images.top"]
+            del dct["observation.images.top"]
+            cfg[keys[0]][keys[1]] = dct
+        cfg.override_dataset_stats = None
 
     # Check that we can make the policy object.
     dataset = make_dataset(cfg)
@@ -236,7 +284,7 @@ def test_normalize(insert_temporal_dim):
 @pytest.mark.parametrize(
     "env_name, policy_name, extra_overrides",
     [
-        # ("xarm", "tdmpc", ["policy.n_action_repeats=2"]),
+        ("xarm", "tdmpc", []),
         (
             "pusht",
             "diffusion",

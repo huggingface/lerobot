@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Evaluate a policy on an environment by running rollouts and computing metrics.
 
 Usage examples:
@@ -583,17 +598,18 @@ if __name__ == "__main__":
             pretrained_policy_path = Path(
                 snapshot_download(args.pretrained_policy_name_or_path, revision=args.revision)
             )
-        except HFValidationError:
-            logging.warning(
-                "The provided pretrained_policy_name_or_path is not a valid Hugging Face Hub repo ID. "
-                "Treating it as a local directory."
-            )
-        except RepositoryNotFoundError:
-            logging.warning(
-                "The provided pretrained_policy_name_or_path was not found on the Hugging Face Hub. Treating "
-                "it as a local directory."
-            )
-        pretrained_policy_path = Path(args.pretrained_policy_name_or_path)
+        except (HFValidationError, RepositoryNotFoundError) as e:
+            if isinstance(e, HFValidationError):
+                error_message = (
+                    "The provided pretrained_policy_name_or_path is not a valid Hugging Face Hub repo ID."
+                )
+            else:
+                error_message = (
+                    "The provided pretrained_policy_name_or_path was not found on the Hugging Face Hub."
+                )
+
+            logging.warning(f"{error_message} Treating it as a local directory.")
+            pretrained_policy_path = Path(args.pretrained_policy_name_or_path)
         if not pretrained_policy_path.is_dir() or not pretrained_policy_path.exists():
             raise ValueError(
                 "The provided pretrained_policy_name_or_path is not a valid/existing Hugging Face Hub "
