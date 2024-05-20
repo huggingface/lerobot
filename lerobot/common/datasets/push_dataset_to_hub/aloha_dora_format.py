@@ -5,12 +5,11 @@ Contains utilities to process raw data format from dora-record
 
 from pathlib import Path
 
-from datasets import Dataset
 import pandas as pd
+from datasets import Dataset
 
 
 def check_format(raw_dir) -> bool:
-
     leader_file = list(raw_dir.glob("*_leader.parquet"))
 
     if len(leader_file) != 1:
@@ -21,7 +20,6 @@ def check_format(raw_dir) -> bool:
 
 
 def load_from_raw(raw_dir: Path, out_dir=None, fps=30, video=True, debug=False):
-
     parquet_files = list(raw_dir.glob("*.parquet"))
     leader_file = list(raw_dir.glob("*_leader.parquet"))[0]
 
@@ -58,14 +56,11 @@ def load_from_raw(raw_dir: Path, out_dir=None, fps=30, video=True, debug=False):
 
 
 def to_hf_dataset(df, video) -> Dataset:
-
     hf_dataset = Dataset.from_pandas(df)
     return hf_dataset
 
 
-def from_raw_to_lerobot_format(
-    raw_dir: Path, out_dir: Path, fps=None, video=True, debug=False
-):
+def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=True, debug=False):
     # sanity check
     check_format(raw_dir)
 
