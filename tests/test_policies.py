@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import inspect
 from pathlib import Path
 
@@ -16,7 +31,7 @@ from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import init_hydra_config
 from tests.scripts.save_policy_to_safetensor import get_policy_stats
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_env, require_x86_64_kernel
+from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_cpu, require_env, require_x86_64_kernel
 
 
 @pytest.mark.parametrize("policy_name", available_policies)
@@ -49,6 +64,14 @@ def test_get_policy_and_config_classes(policy_name: str):
             "act",
             ["env.task=AlohaTransferCube-v0", "dataset_repo_id=lerobot/aloha_sim_transfer_cube_scripted"],
         ),
+        # Note: these parameters also need custom logic in the test function for overriding the Hydra config.
+        (
+            "aloha",
+            "diffusion",
+            ["env.task=AlohaInsertion-v0", "dataset_repo_id=lerobot/aloha_sim_insertion_human"],
+        ),
+        # Note: these parameters also need custom logic in the test function for overriding the Hydra config.
+        ("pusht", "act", ["env.task=PushT-v0", "dataset_repo_id=lerobot/pusht"]),
     ],
 )
 @require_env
@@ -71,6 +94,31 @@ def test_policy(env_name, policy_name, extra_overrides):
         ]
         + extra_overrides,
     )
+
+    # Additional config override logic.
+    if env_name == "aloha" and policy_name == "diffusion":
+        for keys in [
+            ("training", "delta_timestamps"),
+            ("policy", "input_shapes"),
+            ("policy", "input_normalization_modes"),
+        ]:
+            dct = dict(cfg[keys[0]][keys[1]])
+            dct["observation.images.top"] = dct["observation.image"]
+            del dct["observation.image"]
+            cfg[keys[0]][keys[1]] = dct
+        cfg.override_dataset_stats = None
+
+    # Additional config override logic.
+    if env_name == "pusht" and policy_name == "act":
+        for keys in [
+            ("policy", "input_shapes"),
+            ("policy", "input_normalization_modes"),
+        ]:
+            dct = dict(cfg[keys[0]][keys[1]])
+            dct["observation.image"] = dct["observation.images.top"]
+            del dct["observation.images.top"]
+            cfg[keys[0]][keys[1]] = dct
+        cfg.override_dataset_stats = None
 
     # Check that we can make the policy object.
     dataset = make_dataset(cfg)
@@ -248,16 +296,17 @@ def test_normalize(insert_temporal_dim):
 # As artifacts have been generated on an x86_64 kernel, this test won't
 # pass if it's run on another platform due to floating point errors
 @require_x86_64_kernel
+@require_cpu
 def test_backward_compatibility(env_name, policy_name, extra_overrides):
     """
     NOTE: If this test does not pass, and you have intentionally changed something in the policy:
         1. Inspect the differences in policy outputs and make sure you can account for them. Your PR should
            include a report on what changed and how that affected the outputs.
-        2. Go to the `if __name__ == "__main__"` block of `test/scripts/save_policy_to_safetensors.py` and
+        2. Go to the `if __name__ == "__main__"` block of `tests/scripts/save_policy_to_safetensors.py` and
            add the policies you want to update the test artifacts for.
-        3. Run `python test/scripts/save_policy_to_safetensors.py`. The test artifact should be updated.
+        3. Run `python tests/scripts/save_policy_to_safetensors.py`. The test artifact should be updated.
         4. Check that this test now passes.
-        5. Remember to restore `test/scripts/save_policy_to_safetensors.py` to its original state.
+        5. Remember to restore `tests/scripts/save_policy_to_safetensors.py` to its original state.
         6. Remember to stage and commit the resulting changes to `tests/data`.
     """
     env_policy_dir = Path("tests/data/save_policy_to_safetensors") / f"{env_name}_{policy_name}"

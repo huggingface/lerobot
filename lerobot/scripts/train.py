@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import logging
 import time
 from copy import deepcopy
@@ -8,6 +23,7 @@ import hydra
 import torch
 from datasets import concatenate_datasets
 from datasets.utils import disable_progress_bars, enable_progress_bars
+from omegaconf import DictConfig
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -73,6 +89,7 @@ def make_optimizer_and_scheduler(cfg, policy):
 
 
 def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
+    """Returns a dictionary of items for logging."""
     start_time = time.time()
     policy.train()
     output_dict = policy.forward(batch)
@@ -100,6 +117,7 @@ def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
         "grad_norm": float(grad_norm),
         "lr": optimizer.param_groups[0]["lr"],
         "update_s": time.time() - start_time,
+        **{k: v for k, v in output_dict.items() if k != "loss"},
     }
     info.update({k: v for k, v in output_dict.items() if k not in info})
 
@@ -124,7 +142,7 @@ def train_notebook(out_dir=None, job_name=None, config_name="default", config_pa
     train(cfg, out_dir=out_dir, job_name=job_name)
 
 
-def log_train_info(logger, info, step, cfg, dataset, is_offline):
+def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
     loss = info["loss"]
     grad_norm = info["grad_norm"]
     lr = info["lr"]
@@ -294,7 +312,7 @@ def add_episodes_inplace(
     sampler.num_samples = len(concat_dataset)
 
 
-def train(cfg: dict, out_dir=None, job_name=None):
+def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
     if out_dir is None:
         raise NotImplementedError()
     if job_name is None:
