@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
+import re
 from pathlib import Path
 from typing import Dict
 
@@ -80,7 +81,15 @@ def hf_transform_to_torch(items_dict):
 def load_hf_dataset(repo_id, version, root, split) -> datasets.Dataset:
     """hf_dataset contains all the observations, states, actions, rewards, etc."""
     if root is not None:
-        hf_dataset = load_from_disk(str(Path(root) / repo_id / split))
+        hf_dataset = load_from_disk(str(Path(root) / repo_id / "train"))
+        # TODO(rcadene): clean this which enables getting a subset of dataset
+        if split != "train":
+            match = match = re.search(r"train\[(\d+):\]", split)
+            if match:
+                from_frame_index = int(match.group(1))
+                hf_dataset = hf_dataset.select(range(from_frame_index, len(hf_dataset)))
+            else:
+                raise ValueError(split)
     else:
         hf_dataset = load_dataset(repo_id, revision=version, split=split)
     hf_dataset.set_transform(hf_transform_to_torch)
