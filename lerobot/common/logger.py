@@ -18,6 +18,8 @@
 
 import logging
 import os
+import re
+from glob import glob
 from pathlib import Path
 
 import torch
@@ -73,7 +75,19 @@ class Logger:
             os.environ["WANDB_SILENT"] = "true"
             import wandb
 
+            wandb_run_id = None
+            if cfg.resume:
+                # Get the WandB run ID.
+                paths = glob(str(self._checkpoint_dir / "../wandb/latest-run/run-*"))
+                if len(paths) != 1:
+                    raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
+                match = re.search(r"run-([^\.]+).wandb", paths[0].split("/")[-1])
+                if match is None:
+                    raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
+                wandb_run_id = match.groups(0)[0]
+
             wandb.init(
+                id=wandb_run_id,
                 project=project,
                 entity=entity,
                 name=job_name,
@@ -87,14 +101,14 @@ class Logger:
                 # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
                 job_type="train_eval",
                 # TODO(rcadene): add resume option
-                resume="must",
+                resume="must" if cfg.resume else None,
             )
             print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
             logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
             self._wandb = wandb
 
     @property
-    def last_checkpoint_path(self):
+    def last_checkpoint_path(self) -> Path:
         return self._last_checkpoint_path
 
     def save_model(self, policy: Policy, identifier: str):
@@ -112,6 +126,8 @@ class Logger:
                 )
                 artifact.add_file(save_dir / SAFETENSORS_SINGLE_FILE)
                 self._wandb.log_artifact(artifact)
+        if self._last_checkpoint_path.exists():
+            os.remove(self._last_checkpoint_path)
         os.symlink(save_dir.absolute(), self._last_checkpoint_path)  # TODO(now): Check this works
 
     def save_training_state(

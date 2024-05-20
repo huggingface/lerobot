@@ -322,8 +322,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     logging.info("make_policy")
     policy = make_policy(
         hydra_cfg=cfg,
-        dataset_stats=offline_dataset.stats,
-        pretrained_policy_name_or_path=logger.last_checkpoint_path if cfg.resume else None,
+        dataset_stats=offline_dataset.stats if not cfg.resume else None,
+        pretrained_policy_name_or_path=str(logger.last_checkpoint_path) if cfg.resume else None,
     )
 
     # Create optimizer and scheduler
@@ -335,10 +335,12 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     if cfg.resume:
         print("You have set resume=True, indicating that you wish to resume a run.")
         # Make sure there is a checkpoint.
-        if not Path(logger.last_checkpoint_path).exists():
-            raise RuntimeError(f"You have set resume=True, but {logger.last_checkpoint_path} does not exist.")
+        if not logger.last_checkpoint_path.exists():
+            raise RuntimeError(
+                f"You have set resume=True, but {str(logger.last_checkpoint_path)} does not exist."
+            )
         # Get the configuration file from the last checkpoint.
-        checkpoint_cfg = init_hydra_config(logger.last_checkpoint_path)
+        checkpoint_cfg = init_hydra_config(str(logger.last_checkpoint_path))
         # TODO(now): Do a diff check.
         cfg = checkpoint_cfg
         step = logger.load_last_training_state(optimizer, lr_scheduler)
@@ -376,8 +378,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             logging.info(f"Checkpoint policy after step {step}")
             # Note: Save with step as the identifier, and format it to have at least 6 digits but more if
             # needed (choose 6 as a minimum for consistency without being overkill).
-            logger.save_model(
+            logger.save_checkpont(
+                step,
                 policy,
+                optimizer,
+                lr_scheduler,
                 identifier=str(step).zfill(
                     max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
                 ),
