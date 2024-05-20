@@ -17,6 +17,7 @@ dataset_repo_id: lerobot/pusht
 
 training:
   offline_steps: ???
+  # NOTE: `online_steps` is not implemented yet. It's here as a placeholder.
   online_steps: ???
   online_steps_between_rollouts: ???
   online_sampling_ratio: 0.5
