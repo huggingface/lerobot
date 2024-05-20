@@ -295,10 +295,10 @@ def write_episode_data_html(output_dir, file_name, js_fname, ep_index, dataset):
 def write_episodes_list_html(output_dir, file_name, ep_indices, ep_html_fnames, dataset):
     """Write an html file containing information related to the dataset and a list of links to
     html pages of episodes."""
-    soup, body = create_html_page(dataset.hf_dataset.info.dataset_name)
+    soup, body = create_html_page("TODO")
 
     h3 = soup.new_tag("h3")
-    h3.string = dataset.hf_dataset.info.dataset_name
+    h3.string = "TODO"
     body.append(h3)
 
     ul_info = soup.new_tag("ul")
