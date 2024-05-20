@@ -40,7 +40,7 @@ delta_timestamps = {
     "action": [-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4],
 }
 
-# Load the last 10% episodes of the dataset as a validation set.
+# Load the last 10% of episodes of the dataset as a validation set.
 # - Load full dataset
 full_dataset = LeRobotDataset("lerobot/pusht", split="train")
 # - Calculate train and val subsets
@@ -48,7 +48,7 @@ num_train_episodes = math.floor(full_dataset.num_episodes * 90 / 100)
 num_val_episodes = full_dataset.num_episodes - num_train_episodes
 print(f"Number of episodes in full dataset: {full_dataset.num_episodes}")
 print(f"Number of episodes in training dataset (90% subset): {num_train_episodes}")
-print(f"Number of episodes in validation dataset (10% reset): {num_val_episodes}")
+print(f"Number of episodes in validation dataset (10% subset): {num_val_episodes}")
 # - Get first frame index of the validation set
 first_val_frame_index = full_dataset.episode_data_index["from"][num_train_episodes].item()
 # - Load frames subset belonging to validation set using the `split` argument.

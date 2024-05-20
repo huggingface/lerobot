@@ -84,12 +84,12 @@ def load_hf_dataset(repo_id, version, root, split) -> datasets.Dataset:
         hf_dataset = load_from_disk(str(Path(root) / repo_id / "train"))
         # TODO(rcadene): clean this which enables getting a subset of dataset
         if split != "train":
-            match = match = re.search(r"train\[(\d+):\]", split)
+            match = re.search(r"train\[(\d+):\]", split)
             if match:
                 from_frame_index = int(match.group(1))
                 hf_dataset = hf_dataset.select(range(from_frame_index, len(hf_dataset)))
             else:
-                raise ValueError(split)
+                raise ValueError(split), '`split` should either be "train" or of the form "train[{int}:]"'
     else:
         hf_dataset = load_dataset(repo_id, revision=version, split=split)
     hf_dataset.set_transform(hf_transform_to_torch)
