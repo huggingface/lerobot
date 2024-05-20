@@ -30,7 +30,7 @@ from lerobot.common.datasets.utils import (
 from lerobot.common.datasets.video_utils import VideoFrame, load_from_videos
 
 DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
-CODEBASE_VERSION = "v1.3"
+CODEBASE_VERSION = "v1.4"
 
 
 class LeRobotDataset(torch.utils.data.Dataset):
