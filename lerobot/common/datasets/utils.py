@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
+import re
 from pathlib import Path
 from typing import Dict
 
@@ -80,7 +81,23 @@ def hf_transform_to_torch(items_dict):
 def load_hf_dataset(repo_id, version, root, split) -> datasets.Dataset:
     """hf_dataset contains all the observations, states, actions, rewards, etc."""
     if root is not None:
-        hf_dataset = load_from_disk(str(Path(root) / repo_id / split))
+        hf_dataset = load_from_disk(str(Path(root) / repo_id / "train"))
+        # TODO(rcadene): clean this which enables getting a subset of dataset
+        if split != "train":
+            if "%" in split:
+                raise NotImplementedError(f"We dont support splitting based on percentage for now ({split}).")
+            match_from = re.search(r"train\[(\d+):\]", split)
+            match_to = re.search(r"train\[:(\d+)\]", split)
+            if match_from:
+                from_frame_index = int(match_from.group(1))
+                hf_dataset = hf_dataset.select(range(from_frame_index, len(hf_dataset)))
+            elif match_to:
+                to_frame_index = int(match_to.group(1))
+                hf_dataset = hf_dataset.select(range(to_frame_index))
+            else:
+                raise ValueError(
+                    f'`split` ({split}) should either be "train", "train[INT:]", or "train[:INT]"'
+                )
     else:
         hf_dataset = load_dataset(repo_id, revision=version, split=split)
     hf_dataset.set_transform(hf_transform_to_torch)
@@ -273,6 +290,12 @@ def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> Dict[str, torc
             "to": [3, 7, 12]
         }
     """
+    if len(hf_dataset) == 0:
+        episode_data_index = {
+            "from": torch.tensor([]),
+            "to": torch.tensor([]),
+        }
+        return episode_data_index
     for idx, episode_idx in enumerate(hf_dataset["episode_index"]):
         if episode_idx != current_episode:
             # We encountered a new episode, so we append its starting location to the "from" list
@@ -303,6 +326,8 @@ def reset_episode_index(hf_dataset: datasets.Dataset) -> datasets.Dataset:
 
     This brings the `episode_index` to the required format.
     """
+    if len(hf_dataset) == 0:
+        return hf_dataset
     unique_episode_idxs = torch.stack(hf_dataset["episode_index"]).unique().tolist()
     episode_idx_to_reset_idx_mapping = {
         ep_id: reset_ep_id for reset_ep_id, ep_id in enumerate(unique_episode_idxs)
