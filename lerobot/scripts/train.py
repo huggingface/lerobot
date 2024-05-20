@@ -100,7 +100,7 @@ def update_policy(
     use_amp: bool = False,
 ):
     """Returns a dictionary of items for logging."""
-    start_time = time.time()
+    start_time = time.perf_counter()
     device = get_device_from_parameters(policy)
     policy.train()
     with torch.autocast(device_type=device.type) if use_amp else nullcontext():
@@ -137,7 +137,7 @@ def update_policy(
         "loss": loss.item(),
         "grad_norm": float(grad_norm),
         "lr": optimizer.param_groups[0]["lr"],
-        "update_s": time.time() - start_time,
+        "update_s": time.perf_counter() - start_time,
         **{k: v for k, v in output_dict.items() if k != "loss"},
     }
 
