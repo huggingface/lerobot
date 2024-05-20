@@ -92,6 +92,8 @@ To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tra
 wandb login
 ```
 
+(note: you will also need to enable WandB in the configuration. See below.)
+
 ## Walkthrough
 
 ```
@@ -158,13 +160,13 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 Check out [example 3](./examples/3_train_policy.py) that illustrates how to start training a model.
 
-In general, you can use our training script to easily train any policy. To use wandb for logging training and evaluation curves, make sure you ran `wandb login`. Here is an example of training the ACT policy on trajectories collected by humans on the Aloha simulation environment for the insertion task:
+In general, you can use our training script to easily train any policy. Here is an example of training the ACT policy on trajectories collected by humans on the Aloha simulation environment for the insertion task:
 ```bash
 python lerobot/scripts/train.py \
     policy=act \
     env=aloha \
     env.task=AlohaInsertion-v0 \
-    dataset_repo_id=lerobot/aloha_sim_insertion_human
+    dataset_repo_id=lerobot/aloha_sim_insertion_human \
 ```
 
 The experiment directory is automatically generated and will show up in yellow in your terminal. It looks like `outputs/train/2024-05-05/20-21-12_aloha_act_default`. You can manually specify an experiment directory by adding this argument to the `train.py` python command:
@@ -172,17 +174,17 @@ The experiment directory is automatically generated and will show up in yellow i
     hydra.run.dir=your/new/experiment/dir
 ```
 
-A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of logs from wandb:
-![](media/wandb.png)
+To use wandb for logging training and evaluation curves, make sure you've run `wandb login` as a one-time setup step. Then, when running the training command above, enable WandB in the configuration by adding:
 
-You can deactivate wandb by adding these arguments to the `train.py` python command:
 ```bash
-    wandb.disable_artifact=true \
-    wandb.enable=false
+    wandb.enable=true
 ```
 
-Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. After training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
+A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of what they look like in your browser:
 
+![](media/wandb.png)
+
+Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. After training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ## Contribute
 
