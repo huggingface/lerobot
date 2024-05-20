@@ -14,7 +14,7 @@ LeRobot offers a training script at [`lerobot/scripts/train.py`](../../lerobot/s
 
 Explaining the ins and outs of [Hydra](https://hydra.cc/docs/intro/) is beyond the scope of this document, but here we'll share the main points you need to know.
 
-First, `lerobot/configs` might have a directory structure like this:
+First, `lerobot/configs` has a directory structure like this:
 
 ```
 .
@@ -76,7 +76,7 @@ _As an aside: we've set up our configurations so that they reproduce state-of-th
 
 ## Overriding configuration parameters in the CLI
 
-If you look in `env/aloha.yaml` you might see:
+If you look in `env/aloha.yaml` you will see something like:
 
 ```yaml
 # lerobot/configs/env/aloha.yaml
@@ -84,7 +84,7 @@ env:
   task: AlohaInsertion-v0
 ```
 
-And if you look in `policy/act.yaml` you might see:
+And if you look in `policy/act.yaml` you will see something like:
 
 ```yaml
 # lerobot/configs/policy/act.yaml

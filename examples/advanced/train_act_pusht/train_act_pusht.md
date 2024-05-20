@@ -1,16 +1,18 @@
-In this tutorial we will adapt the default configuration for ACT to be compatible with the PushT environment and dataset.
+In this tutorial we will learn how to adapt a policy configuration to be compatible with a new environment and dataset. As a concrete example, we will adapt the default configuration for ACT to be compatible with the PushT environment and dataset.
 
 If you haven't already read our tutorial on the [training script and configuration tooling](../4_train_policy_with_script.md) please do so prior to tackling this tutorial.
 
-Let's get started! Now, why don't you try running:
+Let's get started!
+
+Suppose we want to train ACT for PushT. Well, there are aspects of the ACT configuration that are specific to the ALOHA environments, and these happen to be incompatible with PushT. Therefore, trying to run the following will almost certainly raise an exception of sorts (eg: feature dimension mismatch):
 
 ```bash
 python lerobot/scripts/train.py policy=act env=pusht dataset_repo_id=lerobot/pusht
 ```
 
-That was a little mean of us, because if you did try running that command, you almost certainly got an exception of sorts. That's because there are aspects of the ACT configuration that are specific to the ALOHA environments, and here we have tried to use PushT.
+We need to adapt the parameters of the ACT policy configuration to the PushT environment. The most important ones are the image keys.
 
-The most important ones are the image keys. ALOHA's datasets and environments typically use a variable number of cameras. In `lerobot/configs/policy/act.yaml` you may notice two relevant sections. Here we show you the minimal diff needed to adjust to PushT:
+ALOHA's datasets and environments typically use a variable number of cameras. In `lerobot/configs/policy/act.yaml` you may notice two relevant sections. Here we show you the minimal diff needed to adjust to PushT:
 
 ```diff
 override_dataset_stats:
