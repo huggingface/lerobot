@@ -74,6 +74,7 @@ test-diffusion-ete-eval:
 		env.episode_length=8 \
 		device=cpu \
 
+# TODO(alexander-soare): Restore online_steps to 2 when it is reinstated.
 test-tdmpc-ete-train:
 	python lerobot/scripts/train.py \
 		policy=tdmpc \
@@ -82,7 +83,7 @@ test-tdmpc-ete-train:
 		dataset_repo_id=lerobot/xarm_lift_medium \
 		wandb.enable=False \
 		training.offline_steps=2 \
-		training.online_steps=2 \
+		training.online_steps=0 \
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=2 \
