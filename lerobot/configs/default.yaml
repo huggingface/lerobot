@@ -35,7 +35,7 @@ eval:
   use_async_envs: false
 
 wandb:
-  enable: true
+  enable: false
   # Set to true to disable saving an artifact despite save_model == True
   disable_artifact: false
   project: lerobot
