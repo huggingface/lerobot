@@ -152,6 +152,10 @@ python lerobot/scripts/train.py \
 
 There's one new thing here: `hydra.run.dir=outputs/train/act_aloha_sim_transfer_cube_human`, which specifies where to save the training output.
 
+## Resuming a training run
+
+If your training run is interrupted partway through (or you finish a training run and want to pick up where you left off), you may resume the run. All that's required is that you run the same training command again, but add `resume=true`. Note that the configuration you provide in your training command will be the one that's used. If you change something (for example, you increase the number of training steps), it will override the prior configuration.
+
 ---
 
 So far we've seen how to train Diffusion Policy for PushT and ACT for ALOHA. Now, what if we want to train ACT for PushT? Well, there are aspects of the ACT configuration that are specific to the ALOHA environments, and these happen to be incompatible with PushT. Therefore, trying to run the following will almost certainly raise an exception of sorts (eg: feature dimension mismatch):
