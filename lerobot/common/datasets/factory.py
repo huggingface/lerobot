@@ -31,6 +31,7 @@ def resolve_delta_timestamps(cfg):
     if delta_timestamps is not None:
         for key in delta_timestamps:
             if isinstance(delta_timestamps[key], str):
+                # TODO(rcadene, alexander-soare): remove `eval` to avoid exploit
                 cfg.training.delta_timestamps[key] = eval(delta_timestamps[key])
 
 
