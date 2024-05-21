@@ -84,10 +84,14 @@ def get_from_raw_to_lerobot_format_fn(raw_format):
         from lerobot.common.datasets.push_dataset_to_hub.umi_zarr_format import from_raw_to_lerobot_format
     elif raw_format == "aloha_hdf5":
         from lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format import from_raw_to_lerobot_format
+    elif raw_format == "aloha_dora":
+        from lerobot.common.datasets.push_dataset_to_hub.aloha_dora_format import from_raw_to_lerobot_format
     elif raw_format == "xarm_pkl":
         from lerobot.common.datasets.push_dataset_to_hub.xarm_pkl_format import from_raw_to_lerobot_format
     else:
-        raise ValueError(raw_format)
+        raise ValueError(
+            f"The selected {raw_format} can't be found. Did you add it to `lerobot/scripts/push_dataset_to_hub.py::get_from_raw_to_lerobot_format_fn`?"
+        )
 
     return from_raw_to_lerobot_format
 
