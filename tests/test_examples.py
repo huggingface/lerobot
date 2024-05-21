@@ -45,11 +45,11 @@ def test_example_1():
 
 
 @require_package("gym_pusht")
-def test_examples_2_through_4():
+def test_examples_basic2_basic3_advanced1():
     """
     Train a model with example 3, check the outputs.
     Evaluate the trained model with example 2, check the outputs.
-    Calculate the validation loss with example 4, check the outputs.
+    Calculate the validation loss with advanced example 1, check the outputs.
     """
 
     ### Test example 3
@@ -97,7 +97,7 @@ def test_examples_2_through_4():
     assert Path("outputs/eval/example_pusht_diffusion/rollout.mp4").exists()
 
     ## Test example 4
-    file_contents = _read_file("examples/4_calculate_validation_loss.py")
+    file_contents = _read_file("examples/advanced/2_calculate_validation_loss.py")
 
     # Run on a single example from the last episode, use CPU, and use the local model.
     file_contents = _find_and_replace(
