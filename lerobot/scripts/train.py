@@ -231,7 +231,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     if cfg.resume:
         if not logger.last_checkpoint_dir.exists():
             raise RuntimeError(
-                f"You have set resume=True, but there is no model checpoint in {logger.last_checkpoint_dir}."
+                f"You have set resume=True, but there is no model checkpoint in {logger.last_checkpoint_dir}."
             )
         else:
             checkpoint_cfg_path = str(logger.last_pretrained_model_dir / "config.yaml")
