@@ -146,7 +146,7 @@ test-default-ete-eval:
 
 
 test-act-pusht-tutorial:
-	cp examples/advanced/train_act_pusht/act_pusht.yaml lerobot/configs/policy/created_by_Makefile.yaml
+	cp examples/advanced/1_train_act_pusht/act_pusht.yaml lerobot/configs/policy/created_by_Makefile.yaml
 	python lerobot/scripts/train.py \
 		policy=created_by_Makefile.yaml \
 		env=pusht \
