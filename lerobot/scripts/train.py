@@ -471,6 +471,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 policy,
                 n_episodes=1,
                 return_episode_data=True,
+                # TODO(now): Actually we shouldn't be seeding this every time!
                 start_seed=cfg.training.online_env_seed,
                 enable_progbar=False,
             )
