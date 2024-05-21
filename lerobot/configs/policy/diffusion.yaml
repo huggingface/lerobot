@@ -7,6 +7,20 @@
 seed: 100000
 dataset_repo_id: lerobot/pusht
 
+override_dataset_stats:
+  # TODO(rcadene, alexander-soare): should we remove image stats as well? do we use a pretrained vision model?
+  observation.image:
+    mean: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
+    std: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
+  # TODO(rcadene, alexander-soare): we override state and action stats to use the same as the pretrained model
+  # from the original codebase, but we should remove these and train our own pretrained model
+  observation.state:
+    min: [13.456424, 32.938293]
+    max: [496.14618, 510.9579]
+  action:
+    min: [12.0, 25.0]
+    max: [511.0, 511.0]
+
 training:
   offline_steps: 200000
   online_steps: 0
@@ -33,20 +47,6 @@ training:
 eval:
   n_episodes: 50
   batch_size: 50
-
-override_dataset_stats:
-  # TODO(rcadene, alexander-soare): should we remove image stats as well? do we use a pretrained vision model?
-  observation.image:
-    mean: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
-    std: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
-  # TODO(rcadene, alexander-soare): we override state and action stats to use the same as the pretrained model
-  # from the original codebase, but we should remove these and train our own pretrained model
-  observation.state:
-    min: [13.456424, 32.938293]
-    max: [496.14618, 510.9579]
-  action:
-    min: [12.0, 25.0]
-    max: [511.0, 511.0]
 
 policy:
   name: diffusion

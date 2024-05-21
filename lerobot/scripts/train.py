@@ -1,5 +1,21 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import logging
 import time
+from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
 
@@ -8,6 +24,8 @@ import hydra
 import torch
 from datasets import concatenate_datasets
 from datasets.utils import disable_progress_bars, enable_progress_bars
+from omegaconf import DictConfig
+from torch.cuda.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -16,6 +34,7 @@ from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import PolicyWithUpdate
+from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.utils import (
     format_big_number,
     get_safe_torch_device,
@@ -54,7 +73,6 @@ def make_optimizer_and_scheduler(cfg, policy):
             cfg.training.adam_eps,
             cfg.training.adam_weight_decay,
         )
-        assert cfg.training.online_steps == 0, "Diffusion Policy does not handle online training."
         from diffusers.optimization import get_scheduler
 
         lr_scheduler = get_scheduler(
@@ -72,20 +90,40 @@ def make_optimizer_and_scheduler(cfg, policy):
     return optimizer, lr_scheduler
 
 
-def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
-    start_time = time.time()
+def update_policy(
+    policy,
+    batch,
+    optimizer,
+    grad_clip_norm,
+    grad_scaler: GradScaler,
+    lr_scheduler=None,
+    use_amp: bool = False,
+):
+    """Returns a dictionary of items for logging."""
+    start_time = time.perf_counter()
+    device = get_device_from_parameters(policy)
     policy.train()
-    output_dict = policy.forward(batch)
-    # TODO(rcadene): policy.unnormalize_outputs(out_dict)
-    loss = output_dict["loss"]
-    loss.backward()
+    with torch.autocast(device_type=device.type) if use_amp else nullcontext():
+        output_dict = policy.forward(batch)
+        # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+        loss = output_dict["loss"]
+    grad_scaler.scale(loss).backward()
+
+    # Unscale the graident of the optimzer's assigned params in-place **prior to gradient clipping**.
+    grad_scaler.unscale_(optimizer)
+
     grad_norm = torch.nn.utils.clip_grad_norm_(
         policy.parameters(),
         grad_clip_norm,
         error_if_nonfinite=False,
     )
 
-    optimizer.step()
+    # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
+    # although it still skips optimizer.step() if the gradients contain infs or NaNs.
+    grad_scaler.step(optimizer)
+    # Updates the scale for next iteration.
+    grad_scaler.update()
+
     optimizer.zero_grad()
 
     if lr_scheduler is not None:
@@ -99,7 +137,8 @@ def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
         "loss": loss.item(),
         "grad_norm": float(grad_norm),
         "lr": optimizer.param_groups[0]["lr"],
-        "update_s": time.time() - start_time,
+        "update_s": time.perf_counter() - start_time,
+        **{k: v for k, v in output_dict.items() if k != "loss"},
     }
 
     return info
@@ -123,7 +162,7 @@ def train_notebook(out_dir=None, job_name=None, config_name="default", config_pa
     train(cfg, out_dir=out_dir, job_name=job_name)
 
 
-def log_train_info(logger, info, step, cfg, dataset, is_offline):
+def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
     loss = info["loss"]
     grad_norm = info["grad_norm"]
     lr = info["lr"]
@@ -192,26 +231,6 @@ def log_eval_info(logger, info, step, cfg, dataset, is_offline):
     info["is_offline"] = is_offline
 
     logger.log_dict(info, step, mode="eval")
-
-
-def calculate_online_sample_weight(n_off: int, n_on: int, pc_on: float):
-    """
-    Calculate the sampling weight to be assigned to samples so that a specified percentage of the batch comes from online dataset (on average).
-
-    Parameters:
-    - n_off (int): Number of offline samples, each with a sampling weight of 1.
-    - n_on (int): Number of online samples.
-    - pc_on (float): Desired percentage of online samples in decimal form (e.g., 50% as 0.5).
-
-    The total weight of offline samples is n_off * 1.0.
-    The total weight of offline samples is n_on * w.
-    The total combined weight of all samples is n_off + n_on * w.
-    The fraction of the weight that is online is n_on * w / (n_off + n_on * w).
-    We want this fraction to equal pc_on, so we set up the equation n_on * w / (n_off + n_on * w) = pc_on.
-    The solution is w = - (n_off * pc_on) / (n_on * (pc_on - 1))
-    """
-    assert 0.0 <= pc_on <= 1.0
-    return -(n_off * pc_on) / (n_on * (pc_on - 1))
 
 
 def add_episodes_inplace(
@@ -292,7 +311,7 @@ def add_episodes_inplace(
     sampler.num_samples = len(concat_dataset)
 
 
-def train(cfg: dict, out_dir=None, job_name=None):
+def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
     if out_dir is None:
         raise NotImplementedError()
     if job_name is None:
@@ -300,11 +319,11 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     init_logging()
 
-    if cfg.training.online_steps > 0 and cfg.eval.batch_size > 1:
-        logging.warning("eval.batch_size > 1 not supported for online training steps")
+    if cfg.training.online_steps > 0:
+        raise NotImplementedError("Online training is not implemented yet.")
 
     # Check device is available
-    get_safe_torch_device(cfg.device, log=True)
+    device = get_safe_torch_device(cfg.device, log=True)
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -322,6 +341,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+    grad_scaler = GradScaler(enabled=cfg.use_amp)
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
@@ -342,14 +362,15 @@ def train(cfg: dict, out_dir=None, job_name=None):
     def evaluate_and_checkpoint_if_needed(step):
         if step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
-            eval_info = eval_policy(
-                eval_env,
-                policy,
-                cfg.eval.n_episodes,
-                video_dir=Path(out_dir) / "eval",
-                max_episodes_rendered=4,
-                start_seed=cfg.seed,
-            )
+            with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
+                eval_info = eval_policy(
+                    eval_env,
+                    policy,
+                    cfg.eval.n_episodes,
+                    video_dir=Path(out_dir) / "eval",
+                    max_episodes_rendered=4,
+                    start_seed=cfg.seed,
+                )
             log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline)
             if cfg.wandb.enable:
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
@@ -373,7 +394,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
         num_workers=4,
         batch_size=cfg.training.batch_size,
         shuffle=True,
-        pin_memory=cfg.device != "cpu",
+        pin_memory=device.type != "cpu",
         drop_last=False,
     )
     dl_iter = cycle(dataloader)
@@ -387,9 +408,17 @@ def train(cfg: dict, out_dir=None, job_name=None):
         batch = next(dl_iter)
 
         for key in batch:
-            batch[key] = batch[key].to(cfg.device, non_blocking=True)
+            batch[key] = batch[key].to(device, non_blocking=True)
 
-        train_info = update_policy(policy, batch, optimizer, cfg.training.grad_clip_norm, lr_scheduler)
+        train_info = update_policy(
+            policy,
+            batch,
+            optimizer,
+            cfg.training.grad_clip_norm,
+            grad_scaler=grad_scaler,
+            lr_scheduler=lr_scheduler,
+            use_amp=cfg.use_amp,
+        )
 
         # TODO(rcadene): is it ok if step_t=0 = 0 and not 1 as previously done?
         if step % cfg.training.log_freq == 0:
@@ -403,7 +432,6 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     # create an env dedicated to online episodes collection from policy rollout
     online_training_env = make_env(cfg, n_envs=1)
-
     # create an empty online dataset similar to offline dataset
     online_dataset = deepcopy(offline_dataset)
     online_dataset.hf_dataset = {}
@@ -420,7 +448,7 @@ def train(cfg: dict, out_dir=None, job_name=None):
         num_workers=4,
         batch_size=cfg.training.batch_size,
         sampler=sampler,
-        pin_memory=cfg.device != "cpu",
+        pin_memory=device.type != "cpu",
         drop_last=False,
     )
     dl_iter = cycle(dataloader)
@@ -471,7 +499,6 @@ def train(cfg: dict, out_dir=None, job_name=None):
             online_step += 1
 
     eval_env.close()
-    online_training_env.close()
     logging.info("End of training")
 
 
