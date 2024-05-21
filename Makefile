@@ -19,6 +19,7 @@ build-gpu:
 
 test-end-to-end:
 	${MAKE} test-act-ete-train
+	${MAKE} test-act-ete-train-resume
 	${MAKE} test-act-ete-eval
 	${MAKE} test-act-ete-train-amp
 	${MAKE} test-act-ete-eval-amp
@@ -46,9 +47,16 @@ test-act-ete-train:
 		training.batch_size=2 \
 		hydra.run.dir=tests/outputs/act/
 
+test-act-ete-train-resume:
+	python lerobot/scripts/train.py \
+		hydra.run.dir=tests/outputs/act/ \
+		training.offline_steps=4 \
+		resume=true
+
+
 test-act-ete-eval:
 	python lerobot/scripts/eval.py \
-		-p tests/outputs/act/checkpoints/000002 \
+		-p tests/outputs/act/checkpoints/000002/pretrained_model \
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=8 \
@@ -75,7 +83,7 @@ test-act-ete-train-amp:
 
 test-act-ete-eval-amp:
 	python lerobot/scripts/eval.py \
-		-p tests/outputs/act/checkpoints/000002 \
+		-p tests/outputs/act/checkpoints/000002/pretrained_model \
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=8 \
@@ -102,7 +110,7 @@ test-diffusion-ete-train:
 
 test-diffusion-ete-eval:
 	python lerobot/scripts/eval.py \
-		-p tests/outputs/diffusion/checkpoints/000002 \
+		-p tests/outputs/diffusion/checkpoints/000002/pretrained_model \
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=8 \
@@ -129,7 +137,7 @@ test-tdmpc-ete-train:
 
 test-tdmpc-ete-eval:
 	python lerobot/scripts/eval.py \
-		-p tests/outputs/tdmpc/checkpoints/000002 \
+		-p tests/outputs/tdmpc/checkpoints/000002/pretrained_model \
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=8 \

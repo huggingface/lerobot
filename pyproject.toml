@@ -58,6 +58,7 @@ imagecodecs = { version = ">=2024.1.1", optional = true }
 pyav = ">=12.0.5"
 moviepy = ">=1.0.3"
 rerun-sdk = ">=0.15.1"
+deepdiff = ">=7.0.1"
 
 
 [tool.poetry.extras]

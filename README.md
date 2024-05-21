@@ -149,9 +149,9 @@ python lerobot/scripts/eval.py \
 ```
 
 Note: After training your own policy, you can re-evaluate the checkpoints with:
+
 ```bash
-python lerobot/scripts/eval.py \
-    -p PATH/TO/TRAIN/OUTPUT/FOLDER
+python lerobot/scripts/eval.py -p {OUTPUT_DIR}/checkpoints/last/pretrained_model
 ```
 
 See `python lerobot/scripts/eval.py --help` for more instructions.
@@ -172,6 +172,19 @@ python lerobot/scripts/train.py \
 The experiment directory is automatically generated and will show up in yellow in your terminal. It looks like `outputs/train/2024-05-05/20-21-12_aloha_act_default`. You can manually specify an experiment directory by adding this argument to the `train.py` python command:
 ```bash
     hydra.run.dir=your/new/experiment/dir
+```
+
+In the experiment directory there will be a folder called `checkpoints` which will have the following structure:
+
+```bash
+checkpoints
+├── 000250  # checkpoint_dir for training step 250
+│   ├── pretrained_model  # Hugging Face pretrained model dir
+│   │   ├── config.json  # Hugging Face pretrained model config
+│   │   ├── config.yaml  # consolidated Hydra config
+│   │   ├── model.safetensors  # model weights
+│   │   └── README.md  # Hugging Face model card
+│   └── training_state.pth  # optimizer/scheduler/rng state and training step
 ```
 
 To use wandb for logging training and evaluation curves, make sure you've run `wandb login` as a one-time setup step. Then, when running the training command above, enable WandB in the configuration by adding:
