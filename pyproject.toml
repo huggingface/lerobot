@@ -58,17 +58,19 @@ imagecodecs = { version = ">=2024.1.1", optional = true }
 pyav = ">=12.0.5"
 moviepy = ">=1.0.3"
 rerun-sdk = ">=0.15.1"
-statsmodels = "^0.14.2"
-matplotlib = "^3.8.4"
+statsmodels = {version = ">=0.14.2", optional = true}
+matplotlib = {version = ">=3.8.4", optional = true}
+terminaltables = {version = ">=3.1.10", optional = true}
 
 
 [tool.poetry.extras]
 pusht = ["gym-pusht"]
 xarm = ["gym-xarm"]
 aloha = ["gym-aloha"]
+umi = ["imagecodecs"]
+compare = ["statsmodels", "matplotlib", "terminaltables"]
 dev = ["pre-commit", "debugpy"]
 test = ["pytest", "pytest-cov"]
-umi = ["imagecodecs"]
 
 [tool.ruff]
 line-length = 110
