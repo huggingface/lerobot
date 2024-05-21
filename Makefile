@@ -39,7 +39,7 @@ test-act-ete-train:
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		device=cpu \
-		training.save_model=true \
+		training.save_checkpoint=true \
 		training.save_freq=2 \
 		policy.n_action_steps=20 \
 		policy.chunk_size=20 \
@@ -65,7 +65,7 @@ test-act-ete-train-amp:
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		device=cpu \
-		training.save_model=true \
+		training.save_checkpoint=true \
 		training.save_freq=2 \
 		policy.n_action_steps=20 \
 		policy.chunk_size=20 \
@@ -95,7 +95,7 @@ test-diffusion-ete-train:
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		device=cpu \
-		training.save_model=true \
+		training.save_checkpoint=true \
 		training.save_freq=2 \
 		training.batch_size=2 \
 		hydra.run.dir=tests/outputs/diffusion/
@@ -122,7 +122,7 @@ test-tdmpc-ete-train:
 		eval.batch_size=1 \
 		env.episode_length=2 \
 		device=cpu \
-		training.save_model=true \
+		training.save_checkpoint=true \
 		training.save_freq=2 \
 		training.batch_size=2 \
 		hydra.run.dir=tests/outputs/tdmpc/

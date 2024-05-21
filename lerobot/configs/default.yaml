@@ -38,7 +38,7 @@ training:
   eval_freq: ???
   save_freq: ???
   log_freq: 250
-  save_model: true
+  save_checkpoint: true
 
 eval:
   n_episodes: 1
@@ -49,7 +49,7 @@ eval:
 
 wandb:
   enable: false
-  # Set to true to disable saving an artifact despite save_model == True
+  # Set to true to disable saving an artifact despite save_checkpoint == True
   disable_artifact: false
   project: lerobot
   notes: ""

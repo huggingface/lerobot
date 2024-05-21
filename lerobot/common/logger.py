@@ -13,8 +13,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Borrowed from https://github.com/fyhMer/fowm/blob/main/src/logger.py
+
 # TODO(rcadene, alexander-soare): clean this file
-"""Borrowed from https://github.com/fyhMer/fowm/blob/main/src/logger.py"""
+"""
 
 import logging
 import os
@@ -31,10 +33,6 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
-
-
-def log_output_dir(out_dir):
-    logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {out_dir}")
 
 
 def cfg_to_group(cfg, return_list=False):
@@ -57,13 +55,12 @@ class Logger:
         self._job_name = job_name
         self._checkpoint_dir = self._log_dir / "checkpoints"
         self._last_checkpoint_path = self._checkpoint_dir / "last"
-        self._buffer_dir = self._log_dir / "buffers"
-        self._save_model = cfg.training.save_model
         self._disable_wandb_artifact = cfg.wandb.disable_artifact
         self._group = cfg_to_group(cfg)
         self._seed = cfg.seed
         self._cfg = cfg
-        self._eval = []
+
+        # Set up WandB.
         project = cfg.get("wandb", {}).get("project")
         entity = cfg.get("wandb", {}).get("entity")
         enable_wandb = cfg.get("wandb", {}).get("enable", False)
@@ -112,20 +109,19 @@ class Logger:
         return self._last_checkpoint_path
 
     def save_model(self, policy: Policy, identifier: str):
-        if self._save_model:
-            self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            save_dir = self._checkpoint_dir / str(identifier)
-            policy.save_pretrained(save_dir)
-            # Also save the full Hydra config for the env configuration.
-            OmegaConf.save(self._cfg, save_dir / "config.yaml")
-            if self._wandb and not self._disable_wandb_artifact:
-                # note wandb artifact does not accept ":" or "/" in its name
-                artifact = self._wandb.Artifact(
-                    f"{self._group.replace(':', '_').replace('/', '_')}-{self._seed}-{identifier}",
-                    type="model",
-                )
-                artifact.add_file(save_dir / SAFETENSORS_SINGLE_FILE)
-                self._wandb.log_artifact(artifact)
+        self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        save_dir = self._checkpoint_dir / str(identifier)
+        policy.save_pretrained(save_dir)
+        # Also save the full Hydra config for the env configuration.
+        OmegaConf.save(self._cfg, save_dir / "config.yaml")
+        if self._wandb and not self._disable_wandb_artifact:
+            # note wandb artifact does not accept ":" or "/" in its name
+            artifact = self._wandb.Artifact(
+                f"{self._group.replace(':', '_').replace('/', '_')}-{self._seed}-{identifier}",
+                type="model",
+            )
+            artifact.add_file(save_dir / SAFETENSORS_SINGLE_FILE)
+            self._wandb.log_artifact(artifact)
         if self._last_checkpoint_path.exists():
             os.remove(self._last_checkpoint_path)
         os.symlink(save_dir.absolute(), self._last_checkpoint_path)  # TODO(now): Check this works

@@ -262,7 +262,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 f"You have set resume=True, but {str(logger.last_checkpoint_path)} does not exist."
             )
         # Get the configuration file from the last checkpoint.
-        checkpoint_cfg = init_hydra_config(str(logger.last_checkpoint_path))
+        checkpoint_cfg = init_hydra_config(str(logger.last_checkpoint_path / "config.yaml"))
         # TODO(now): Do a diff check.
         cfg = checkpoint_cfg
         step = logger.load_last_training_state(optimizer, lr_scheduler)
@@ -297,7 +297,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
 
-        if cfg.training.save_model and step % cfg.training.save_freq == 0:
+        if cfg.training.save_checkpoint and step % cfg.training.save_freq == 0:
             logging.info(f"Checkpoint policy after step {step}")
             # Note: Save with step as the identifier, and format it to have at least 6 digits but more if
             # needed (choose 6 as a minimum for consistency without being overkill).
