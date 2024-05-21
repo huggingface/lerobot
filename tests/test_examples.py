@@ -111,7 +111,7 @@ def test_examples_2_through_4():
                 '# pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")',
                 'pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")',
             ),
-            ('split="train[24342:]"', 'split="train[-1:]"'),
+            ('split=f"train[{first_val_frame_index}:]"', 'split="train[30:]"'),
             ("num_workers=4", "num_workers=0"),
             ('device = torch.device("cuda")', 'device = torch.device("cpu")'),
             ("batch_size=64", "batch_size=1"),
