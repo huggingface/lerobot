@@ -236,8 +236,8 @@ def write_episode_data_html(output_dir, file_name, js_fname, ep_index, dataset):
     first_frame_idx = dataset.episode_data_index["from"][ep_index].item()
 
     for key in dataset.video_frame_keys:
-        # Example of video_path: 'videos/observation.image_episode_000004.mp4'
-        video_path = dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"]
+        # Example of video_path: 'https://huggingface.co/datasets/{dataset.repo_id}/resolve/{dataset.version}/videos/observation.image_episode_000004.mp4'
+        video_path = f"https://huggingface.co/datasets/{dataset.repo_id}/resolve/{dataset.version}/" + dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"]
         videos_div.append(create_video(f"video_{key}", video_path))
 
     # Add controls for videos and graph
