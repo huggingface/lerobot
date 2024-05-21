@@ -4,12 +4,13 @@ version = "0.1.0"
 description = ""
 authors = ["Simon Alibert <alibert.sim@gmail.com>"]
 readme = "README.md"
-packages = [{include = "gym_dora"}]
+packages = [{ include = "gym_dora" }]
 
 [tool.poetry.dependencies]
 python = "^3.10"
 gymnasium = ">=0.29.1"
-
+dora-rs = ">=0.3.4"
+pyarrow = ">=12.0.0"
 
 [build-system]
 requires = ["poetry-core"]
