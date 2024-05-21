@@ -154,7 +154,9 @@ There's one new thing here: `hydra.run.dir=outputs/train/act_aloha_sim_transfer_
 
 ## Resuming a training run
 
-If your training run is interrupted partway through (or you finish a training run and want to pick up where you left off), you may resume the run. All that's required is that you run the same training command again, but add `resume=true`. Note that the configuration you provide in your training command will be the one that's used. If you change something (for example, you increase the number of training steps), it will override the prior configuration.
+If your training run is interrupted partway through (or you finish a training run and want to pick up where you left off), you may resume the run. All that's required is that you run the same training command again, but add `resume=true`.
+
+Note that with `resume=true` the default behavior is to ignore the configuration you provide with your training command, and use the one from the checkpoint. But, it is possible to use `override_config_on_resume=true` to override the prior configuration with the configuration in your training command.
 
 ---
 

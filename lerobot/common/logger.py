@@ -68,13 +68,18 @@ class Logger:
     pretrained_model_dir_name = "pretrained_model"
     training_state_file_name = "training_state.pth"
 
-    def __init__(self, log_dir: str, job_name: str, cfg: DictConfig):
+    def __init__(self, cfg: DictConfig, log_dir: str, wandb_job_name: str | None = None):
+        """
+        Args:
+            log_dir: The directory to save all logs and training outputs to.
+            job_name: The WandB job name.
+        """
         self._cfg = cfg
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.checkpoints_dir = self.log_dir / "checkpoints"
-        self.last_checkpoint_dir = self.checkpoints_dir / "last"
-        self.last_pretrained_model_dir = self.last_checkpoint_dir / self.pretrained_model_dir_name
+        self.checkpoints_dir = self.get_checkpoints_dir(log_dir)
+        self.last_checkpoint_dir = self.get_last_checkpoint_dir(log_dir)
+        self.last_pretrained_model_dir = self.get_last_pretrained_model_dir(log_dir)
 
         # Set up WandB.
         self._group = cfg_to_group(cfg)
@@ -97,7 +102,7 @@ class Logger:
                 id=wandb_run_id,
                 project=project,
                 entity=entity,
-                name=job_name,
+                name=wandb_job_name,
                 notes=cfg.get("wandb", {}).get("notes"),
                 tags=cfg_to_group(cfg, return_list=True),
                 dir=log_dir,
@@ -111,6 +116,24 @@ class Logger:
             print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
             logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
             self._wandb = wandb
+
+    @classmethod
+    def get_checkpoints_dir(cls, log_dir: str | Path) -> Path:
+        """Given the log directory, get the sub-directory in which checkpoints will be saved."""
+        return Path(log_dir) / "checkpoints"
+
+    @classmethod
+    def get_last_checkpoint_dir(cls, log_dir: str | Path) -> Path:
+        """Given the log directory, get the sub-directory in which the last checkpoint will be saved."""
+        return cls.get_checkpoints_dir(log_dir) / "last"
+
+    @classmethod
+    def get_last_pretrained_model_dir(cls, log_dir: str | Path) -> Path:
+        """
+        Given the log directory, get the sub-directory in which the last checkpoint's pretrained weights will
+        be saved.
+        """
+        return cls.get_last_checkpoint_dir(log_dir) / cls.pretrained_model_dir_name
 
     def save_model(self, save_dir: Path, policy: Policy, wandb_artifact_name: str | None = None):
         """Save the weights of the Policy model using PyTorchModelHubMixin.

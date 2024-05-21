@@ -13,9 +13,12 @@ hydra:
 
 # Set `resume` to true to resume a previous run. In order for this to work, you will need to make sure
 # `hydra.run.dir` is the directory of an existing run with at least one checkpoint in it.
-# Note that when resuming a run, the provided configuration takes precedence over the checkpoint
-# configuration.
+# Note that when resuming a run, the default behavior is to use the configuration from the checkpoint,
+# regardless of what's provided with the training command at the time of resumption.
 resume: false
+# Set `override_config_on_resume` to true to use the provided configuration instead of the one from the
+# checkpoint.
+override_config_on_resume: false
 device: cuda  # cpu
 # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
 # automatic gradient scaling is used.

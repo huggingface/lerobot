@@ -223,44 +223,56 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     init_logging()
 
-    # log metrics to terminal and wandb
-    logger = Logger(out_dir, job_name, cfg)
-
     # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
     # to check for any differences between the provided config and the checkpoint's config.
     if cfg.resume:
-        if not logger.last_checkpoint_dir.exists():
+        if not Logger.get_last_checkpoint_dir(out_dir).exists():
             raise RuntimeError(
-                f"You have set resume=True, but there is no model checpoint in {logger.last_checkpoint_dir}."
+                "You have set resume=True, but there is no model checkpoint in "
+                f"{Logger.get_last_checkpoint_dir(out_dir)}."
             )
-        else:
-            checkpoint_cfg_path = str(logger.last_pretrained_model_dir / "config.yaml")
-            logging.info(
-                colored(
-                    "You have set resume=True, indicating that you wish to resume a run. The provided config "
-                    f"is being overriden by {checkpoint_cfg_path}",
-                    color="yellow",
-                    attrs=["bold"],
-                )
+        checkpoint_cfg_path = str(Logger.get_last_pretrained_model_dir(out_dir) / "config.yaml")
+        logging.info(
+            colored(
+                "You have set resume=True, indicating that you wish to resume a run",
+                color="yellow",
+                attrs=["bold"],
             )
-            # Get the configuration file from the last checkpoint.
-            checkpoint_cfg = init_hydra_config(checkpoint_cfg_path)
-            # Hack to resolve the delta_timestamps ahead of time in order to properly diff.
-            resolve_delta_timestamps(cfg)
-            diff = DeepDiff(OmegaConf.to_container(checkpoint_cfg), OmegaConf.to_container(cfg))
-            if len(diff) > 0:
-                # Log a warning about differences between the checkpoint configuration and the provided
-                # configuration (but ignore the `resume` parameter).
-                if "values_changed" in diff and "root['resume']" in diff["values_changed"]:
-                    del diff["values_changed"]["root['resume']"]
-                logging.warning(
-                    colored(
-                        "At least one difference was detected between the checkpoint configuration and the "
-                        f"provided configuration: \n{pformat(diff)}\nNote that the provided configuration "
-                        "takes precedence.",
-                        color="yellow",
-                    )
-                )
+        )
+        # Get the configuration file from the last checkpoint.
+        checkpoint_cfg = init_hydra_config(checkpoint_cfg_path)
+        # Check for differences between the checkpoint configuration and provided configuration.
+        # Hack to resolve the delta_timestamps ahead of time in order to properly diff.
+        resolve_delta_timestamps(cfg)
+        diff = DeepDiff(OmegaConf.to_container(checkpoint_cfg), OmegaConf.to_container(cfg))
+        # Ignore the `resume` and `override_config_on_resume` parameters.
+        if "values_changed" in diff:
+            for k in ["root['resume']", "root['override_config_on_resume']"]:
+                if k in diff["values_changed"]:
+                    del diff["values_changed"][k]
+        # Log a warning about differences between the checkpoint configuration and the provided
+        # configuration.
+        logging.warning(
+            colored(
+                "At least one difference was detected between the checkpoint configuration and "
+                f"the provided configuration: \n{pformat(diff)}\nNote that since "
+                f"{cfg.override_config_on_resume=}, the "
+                f"{'provided' if cfg.override_config_on_resume else 'checkpoint'} configuration takes "
+                "precedence.",
+                color="yellow",
+            )
+        )
+        if not cfg.override_config_on_resume:
+            # Use the checkpoint config instead of the provided config (but keep the provided `resume` and
+            # `override_config_on_resume` parameters).
+            resume = cfg.resume
+            override_config_on_resume = cfg.override_config_on_resume
+            cfg = checkpoint_cfg
+            cfg.resume = resume
+            cfg.override_config_on_resume = override_config_on_resume
+
+    # log metrics to terminal and wandb
+    logger = Logger(cfg, out_dir, wandb_job_name=job_name)
 
     if cfg.training.online_steps > 0:
         raise NotImplementedError("Online training is not implemented yet.")
