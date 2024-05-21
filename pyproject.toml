@@ -43,7 +43,7 @@ opencv-python = ">=4.9.0"
 diffusers = "^0.27.2"
 torchvision = ">=0.18.0"
 h5py = ">=3.10.0"
-huggingface-hub = ">=0.21.4"
+huggingface-hub = {extras = ["hf-transfer"], version = "^0.23.0"}
 gymnasium = ">=0.29.1"
 cmake = ">=3.29.0.1"
 gym-pusht = { version = ">=0.1.3", optional = true}

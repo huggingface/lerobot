@@ -26,7 +26,7 @@ from lerobot.scripts.train import make_optimizer_and_scheduler
 from tests.utils import DEFAULT_CONFIG_PATH
 
 
-def get_policy_stats(env_name, policy_name, extra_overrides=None):
+def get_policy_stats(env_name, policy_name, extra_overrides):
     cfg = init_hydra_config(
         DEFAULT_CONFIG_PATH,
         overrides=[
@@ -92,6 +92,9 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_override
     env_policy_dir = Path(output_dir) / f"{env_name}_{policy_name}"
 
     if env_policy_dir.exists():
+        print(f"Overwrite existing safetensors in '{env_policy_dir}':")
+        print(f" - Validate with: `git add {env_policy_dir}`")
+        print(f" - Revert with: `git checkout -- {env_policy_dir}`")
         shutil.rmtree(env_policy_dir)
 
     env_policy_dir.mkdir(parents=True, exist_ok=True)
@@ -103,8 +106,14 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_override
 
 
 if __name__ == "__main__":
-    # Instructions: include the policies that you want to save artifacts for here. Please make sure to revert
-    # your changes when you are done.
-    env_policies = []
+    env_policies = [
+        ("xarm", "tdmpc", []),
+        (
+            "pusht",
+            "diffusion",
+            ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
+        ),
+        ("aloha", "act", ["policy.n_action_steps=10"]),
+    ]
     for env, policy, extra_overrides in env_policies:
         save_policy_to_safetensors("tests/data/save_policy_to_safetensors", env, policy, extra_overrides)
