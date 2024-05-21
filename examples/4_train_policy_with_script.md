@@ -37,9 +37,7 @@ When you run the training script with
 python lerobot/scripts/train.py
 ```
 
-Hydra takes over via the `@hydra.main` decorator. If you take a look at the `@hydra.main`'s arguments you will see `config_path="../configs", config_name="default"`. This means Hydra looks for `default.yaml` in `../configs` (which resolves to `lerobot/configs`).
-
-Therefore, `default.yaml` is the first configuration file that Hydra considers. At the top of the file, is a `defaults` section which looks likes this:
+Hydra is set up to read `default.yaml` (via the `@hydra.main` decorator). If you take a look at the `@hydra.main`'s arguments you will see `config_path="../configs", config_name="default"`. At the top of `default.yaml`, is a `defaults` section which looks likes this:
 
 ```yaml
 defaults:
@@ -48,35 +46,37 @@ defaults:
   - policy: diffusion
 ```
 
-So, Hydra then grabs `env/pusht.yaml` and `policy/diffusion.yaml` and incorporates their configuration parameters as well (any configuration parameters already present in `default.yaml` are overriden).
+This logic tells Hydra to incorporate configuration parameters from `env/pusht.yaml` and `policy/diffusion.yaml`. _Note: Be aware of the order as any configuration parameters with the same name will be overidden. Thus, `default.yaml` is overriden by `env/pusht.yaml`  which is overidden by `policy/diffusion.yaml`_.
 
-Below the `defaults` section, `default.yaml` also contains regular configuration parameters.
+Then, `default.yaml` also contains common configuration parameters such as `device: cuda` or `use_amp: false` (for enabling fp16 training). Some other parameters are set to `???` which indicates that they are expected to be set in additional yaml files. For instance, `training.offline_steps: ???` in `default.yaml` is set to `200000` in `diffusion.yaml`.
 
-If you want to train Diffusion Policy with PushT, you really only need to run:
+Thanks to this `defaults` section in `default.yaml`, if you want to train Diffusion Policy with PushT, you really only need to run:
 
 ```bash
 python lerobot/scripts/train.py
 ```
 
-That's because `default.yaml` already defaults to using Diffusion Policy and PushT. To be more explicit, you could also do the following (which would have the same effect):
+However, you can be more explicit and launch the exact same Diffusion Policy training on PushT with:
 
 ```bash
 python lerobot/scripts/train.py policy=diffusion env=pusht
 ```
 
-If you want to train ACT with Aloha, you can do:
+This way of overriding defaults via the CLI is especially useful when you want to change the policy and/or environment. For instance, you can train ACT on the default Aloha environment with:
 
 ```bash
 python lerobot/scripts/train.py policy=act env=aloha
 ```
 
-**Notice, how the config overrides are passed** as `param_name=param_value`. This is the format the Hydra excepts for parsing the overrides.
+There are two things to note here:
+- Config overrides are passed as `param_name=param_value`.
+- Here we have overridden the defaults section. `policy=act` tells Hydra to use `policy/act.yaml`, and `env=aloha` tells Hydra to use `env/pusht.yaml`.
 
-_As an aside: we've set up our configurations so that they reproduce state-of-the-art results from papers in the literature._
+_As an aside: we've set up all of our configurations so that they reproduce state-of-the-art results from papers in the literature._
 
 ## Overriding configuration parameters in the CLI
 
-If you look in `env/aloha.yaml` you will see something like:
+Now let's say that we want to train on a different task in the Aloha environment. If you look in `env/aloha.yaml` you will see something like:
 
 ```yaml
 # lerobot/configs/env/aloha.yaml
@@ -91,24 +91,26 @@ And if you look in `policy/act.yaml` you will see something like:
 dataset_repo_id: lerobot/aloha_sim_insertion_human
 ```
 
-But our Aloha environment actually supports a cube transfer task as well. To train for this task, you _could_ modify the two configuration files respectively.
+But our Aloha environment actually supports a cube transfer task as well. To train for this task, you could manually modify the two yaml configuration files respectively.
 
-We need to select the cube transfer task for the ALOHA environment.
+First, we'd need to switch to using the cube transfer task for the ALOHA environment.
 
-```yaml
+```diff
 # lerobot/configs/env/aloha.yaml
 env:
-   task: AlohaTransferCube-v0
+-  task: AlohaInsertion-v0
++  task: AlohaTransferCube-v0
 ```
 
-We also need to use the cube transfer dataset.
+Then, we'd also need to switch to using the cube transfer dataset.
 
-```yaml
+```diff
 # lerobot/configs/policy/act.yaml
-dataset_repo_id: lerobot/aloha_sim_transfer_cube_human
+-dataset_repo_id: lerobot/aloha_sim_insertion_human
++dataset_repo_id: lerobot/aloha_sim_transfer_cube_human
 ```
 
-Now you'd be able to run:
+Then, you'd be able to run:
 
 ```bash
 python lerobot/scripts/train.py policy=act env=aloha
@@ -116,7 +118,7 @@ python lerobot/scripts/train.py policy=act env=aloha
 
 and you'd be training and evaluating on the cube transfer task.
 
-OR, your could leave the configuration files in their original state and override the defaults via the command line:
+An alternative approach to editing the yaml configuration files, would be to override the defaults via the command line:
 
 ```bash
 python lerobot/scripts/train.py \
@@ -126,7 +128,7 @@ python lerobot/scripts/train.py \
     env.task=AlohaTransferCube-v0
 ```
 
-There's something new here. Notice the `.` delimiter used to traverse the configuration hierarchy.
+There's something new here. Notice the `.` delimiter used to traverse the configuration hierarchy. _But be aware that the `defaults` section is an exception. As you saw above, we didn't need to write `defaults.policy=act` in the CLI. `policy=act` was enough._
 
 Putting all that knowledge together, here's the command that was used to train https://huggingface.co/lerobot/act_aloha_sim_transfer_cube_human.
 
