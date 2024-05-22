@@ -8,10 +8,11 @@ from random import randrange
 import math
 from math import ceil
 from dataclasses import dataclass
-
+import warnings
 
 import einops
 from einops import rearrange, repeat, reduce, pack, unpack
+import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
@@ -77,8 +78,8 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
             "observation.image": deque(maxlen=self.config.n_obs_steps),
             "observation.state": deque(maxlen=self.config.n_obs_steps),
         }
-        if self.config.n_action_steps is not None:
-            self._action_queue = deque([], maxlen=self.config.n_action_steps)
+        if self.config.n_action_pred_chunk is not None:
+            self._action_queue = deque([], maxlen=self.config.n_action_pred_chunk)
 
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -89,45 +90,42 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
         queue is empty.
         """
 
-        # seungjae TODO: implement averaging action over horizons
-
         self.eval()
 
         batch = self.normalize_inputs(batch)
         self._obs_queues = populate_queues(self._obs_queues, batch)
 
         if not self.check_discretized():
-            raise NotImplementedError(
-                "Should train VQ-VAE before rollout."
-            )
+            self.vqbet._action_head._vqvae_model.discretized = True
+            warnings.warn('To evaluate in the environment, the model was forced to stop learning the Residual VQ. If you are not evaluating with a pre-trained model, this can degrade overall performance.')
         assert "observation.image" in batch
         assert "observation.state" in batch
 
-        # jay TODO
-        # took from act, need to separate single act pred, and act seq pred.
-        # for act seq pred, we should provide averaged act over horizon.
-
         if len(self._action_queue) == 0:
-            # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
-            # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
-            batch = {key: torch.stack(list(self._obs_queues[key]), dim=1) for key in batch}
-            actions = self.vqbet(batch)[:, : self.config.n_action_steps]
 
-            # TODO(rcadene): make _forward return output dictionary?
+            batch = {key: torch.stack(list(self._obs_queues[key]), dim=1) for key in batch}
+            actions = self.vqbet(batch, rollout=True)[:, : self.config.n_action_pred_chunk]
+
             actions = self.unnormalize_outputs({"action": actions})["action"]
 
             self._action_queue.extend(actions.transpose(0, 1))
-        return self._action_queue.popleft()
+
+        action = self._action_queue.popleft()
+        return action
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
         if not self.check_discretized():
-            loss = self.vqbet.discretize(self.config.discretize_step, batch['action'])
-            return {"loss": loss}
-        _, loss = self.vqbet(batch)
-        return {"loss": loss['actor_loss']}
+            loss, n_different_codes, n_different_combinations = self.vqbet.discretize(self.config.discretize_step, batch['action'])
+            return {"loss": loss, "n_different_codes": n_different_codes, "n_different_combinations": n_different_combinations}
+
+        _, loss = self.vqbet(batch, rollout=False)
+
+        return {"loss": loss['actor_loss'], 'equal_single_code_rate': loss['equal_single_code_rate'], 'equal_single_code_rate2': loss['equal_single_code_rate2'], "offset_loss_weight": loss['offset_loss_weight'], \
+                "action_diff": loss['action_diff'], "action_diff_tot": loss['action_diff_tot'], "action_diff_mean_res1": loss['action_diff_mean_res1'], "action_diff_mean_res2": loss['action_diff_mean_res2'], \
+                "action_diff_max": loss['action_diff_max']}
 
 
 class VQBeTModel(nn.Module):
@@ -135,13 +133,24 @@ class VQBeTModel(nn.Module):
         super().__init__()
         self.config = config
 
-        self.rgb_encoder = DiffusionRgbEncoder(config)
+        self.rgb_encoder = VQBeTRgbEncoder(config)
 
-        global_cond_dim = (config.output_shapes["action"][0] + self.rgb_encoder.feature_dim)
+        self.global_cond_dim = self.rgb_encoder.feature_dim
+
+        # action token and EOS token
+        self._action_token = nn.Parameter(torch.randn(1, 1, self.config.n_embd)) # Batch, Timestep, Data type, GPT input dim
+        self._eos_token = nn.Parameter(torch.randn(1, 1, self.config.n_embd))
+
+        self.state_projector = MLP(
+                config.output_shapes["action"][0], hidden_channels=[self.config.n_embd]
+            )
+        self.obs_projector = MLP(
+                self.global_cond_dim, hidden_channels=[self.config.n_embd]
+            )
         self._policy = GPT(
             GPTConfig(
                 block_size=self.config.block_size,
-                input_dim=global_cond_dim,
+                input_dim=self.config.n_embd,
                 output_dim=self.config.output_dim,
                 n_layer=self.config.n_layer,
                 n_head=self.config.n_head,
@@ -152,18 +161,19 @@ class VQBeTModel(nn.Module):
         self._action_head = VQBeTHead(
             config.output_dim,
             config.output_shapes["action"][0],
+            offset_loss_weight=config.offset_loss_weight,
             hidden_size=config.mlp_hidden_dim,
             vqvae_groups=config.vqvae_groups,
             vqvae_n_embed=config.vqvae_n_embed,
             vqvae_embedding_dim=config.vqvae_embedding_dim,
-            n_action_steps=config.n_action_steps
+            n_action_pred_chunk=config.n_action_pred_chunk
         )
 
     def discretize(self, discretize_step, actions):
         return self._action_head.discretize(discretize_step, actions)
 
     # ========= inference  ============
-    def forward(self, batch: dict[str, Tensor]) -> Tensor:
+    def forward(self, batch: dict[str, Tensor], rollout: bool) -> Tensor:
         # Input validation.
         assert set(batch).issuperset({"observation.state", "observation.image"})
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
@@ -174,33 +184,48 @@ class VQBeTModel(nn.Module):
         # Separate batch and sequence dims.
         img_features = einops.rearrange(img_features, "(b n) ... -> b n ...", b=batch_size)
         # Concatenate state and image features then flatten to (B, global_cond_dim).
-        global_cond = torch.cat([batch["observation.state"], img_features], dim=-1)
+        
 
-        obs = global_cond
-        if 'action' in batch.keys():
-            action = batch["action"]
-        else:
-            action = None
-        if 'goal' in batch.keys():
-            goal = batch["goal"]
-            num_goal_token = goal.shape[1]
-        else:
-            goal = None
-            num_goal_token = 0
+        global_cond = torch.cat([
+                torch.unsqueeze(self.obs_projector(img_features), dim=2), 
+                torch.unsqueeze(self.state_projector(batch["observation.state"]), dim=2), 
+                self._action_token.repeat(batch_size, n_obs_steps, 1, 1)
+            ], dim=-2).view(batch_size, -1, self.config.n_embd)
+        if img_features.shape[1] != n_obs_steps:
+            raise NotImplementedError
+        # eos_token = self._eos_token.repeat(batch_size, 1, 1) # TODO remove EOS token
+        len_additional_action_token = self.config.n_action_pred_token-1
+        action_token = self._action_token.repeat(batch_size, len_additional_action_token, 1)
+        
+        # prompt_length = global_cond.shape[1]+1
+        global_cond = torch.cat([global_cond, action_token], dim=1)
 
-
+        
         # get action features
-        features = self._policy(obs)
-        features = features[:, num_goal_token:]
+        features = self._policy(global_cond)
+        historical_act_pred_index = np.arange(0, n_obs_steps) * 3 + 2 # TODO make it compatible with other values
+        features = torch.cat([
+            features[:, historical_act_pred_index],
+            features[:, -len_additional_action_token:]
+        ], dim=1)
         # action head
         pred_action = self._action_head(
             features,
-            **{"action_seq": action},
         )
 
-        if action is None:
-            return pred_action["predicted_action"][:, -1, :].reshape(batch_size, self.config.n_action_steps, -1)
+        if rollout:
+            return pred_action["predicted_action"][:, n_obs_steps-1, :].reshape(batch_size, self.config.n_action_pred_chunk, -1)
         else:
+            action = batch["action"]
+            n, total_w, act_dim = action.shape
+            act_w = self.config.n_action_pred_chunk
+            num_token = total_w + 1 - act_w
+            output_shape = (n, num_token, act_w, act_dim)
+            output = torch.empty(output_shape).to(action.device)
+            for i in range(num_token):
+                output[:, i, :, :] = action[:, i : i + act_w, :]
+            action = output
+
             loss = self._action_head.loss_fn(
                 pred_action,
                 action,
@@ -222,7 +247,7 @@ class VQBeTHead(nn.Module):
         vqvae_groups=2,  # G(number of groups)
         vqvae_n_embed=16,  # C(number of code integers)
         vqvae_embedding_dim=512,  # D(embedding dims)
-        n_action_steps=1, # action chunk size
+        n_action_pred_chunk=1, # action chunk size
     ):
         super().__init__()
         self.input_size = input_size
@@ -230,40 +255,26 @@ class VQBeTHead(nn.Module):
         self.hidden_size = hidden_size
         self.offset_loss_weight = offset_loss_weight
         self.secondary_code_multiplier = secondary_code_multiplier
-        self.sequentially_select = False
 
         self._G = vqvae_groups  # G(number of groups)
         self._C = vqvae_n_embed  # C(number of code integers)
         self._D = vqvae_embedding_dim  # D(embedding dims)
-        self.n_action_steps = n_action_steps # action chunk size
+        self.n_action_pred_chunk = n_action_pred_chunk # action chunk size
 
 
-        if self.sequentially_select:
-            print("use sequantial prediction for vq dictionary!")
-            self._map_to_cbet_preds_bin1 = MLP(
-                in_channels=self.input_size,
-                hidden_channels=[self.hidden_size, self.hidden_size, self._C],
-            )
-            self._map_to_cbet_preds_bin2 = MLP(
-                in_channels=self.input_size + self._C,
-                hidden_channels=[self.hidden_size, self._C],
-            )
-        else:
-            self._map_to_cbet_preds_bin = MLP(
-                in_channels=self.input_size,
-                hidden_channels=[self.hidden_size, self.hidden_size, self._G * self._C],
-            )
+        self._map_to_cbet_preds_bin = MLP(
+            in_channels=self.input_size,
+            hidden_channels=[self._G * self._C],
+        )
         self._map_to_cbet_preds_offset = MLP(
             in_channels=self.input_size,
             hidden_channels=[
-                self.hidden_size,
-                self.hidden_size,
-                self._G * self._C * n_action_steps * self.output_size,
+                self._G * self._C * n_action_pred_chunk * self.output_size,
             ],
         )
         # init vqvae
         vqvae_config = {
-            "action_chunk": self.n_action_steps,
+            "action_chunk": self.n_action_pred_chunk,
             "action_dim": self.output_size,
             "vqvae_n_latent_dims": self._D,
             "vqvae_n_embed": self._C,
@@ -281,63 +292,33 @@ class VQBeTHead(nn.Module):
             self._vqvae_model.decoder.to(get_device_from_parameters(self))
             self._vqvae_model.device = get_device_from_parameters(self)
 
-        loss = pretrain_vqvae(self._vqvae_model, discretize_step, actions)
+        loss, n_different_codes, n_different_combinations = pretrain_vqvae(self._vqvae_model, discretize_step, actions)
         if self._vqvae_model.discretized:
             print("Finished discretizing action data!")
             self._vqvae_model.eval()
             for param in self._vqvae_model.vq_layer.parameters():
                 param.requires_grad = False
-        return loss
+        return loss, n_different_codes, n_different_combinations
 
     def forward(self, x, **kwargs):
         N, T, _ = x.shape
         x = einops.rearrange(x, "N T WA -> (N T) WA")
 
-        if self.sequentially_select:
-            cbet_logits1 = self._map_to_cbet_preds_bin1(x)
-            cbet_offsets = self._map_to_cbet_preds_offset(x)
-            cbet_offsets = einops.rearrange(
-                cbet_offsets, "(NT) (G C WA) -> (NT) G C WA", G=self._G, C=self._C
-            )
-            cbet_probs1 = torch.softmax(cbet_logits1, dim=-1)
-            NT, choices = cbet_probs1.shape
-            G = self._G
-            sampled_centers1 = einops.rearrange(
-                torch.multinomial(cbet_probs1.view(-1, choices), num_samples=1),
-                "(NT) 1 -> NT",
-                NT=NT,
-            )
-            cbet_logits2 = self._map_to_cbet_preds_bin2(
-                torch.cat(
-                    (x, F.one_hot(sampled_centers1, num_classes=self._C)),
-                    axis=1,
-                )
-            )
-            cbet_probs2 = torch.softmax(cbet_logits2, dim=-1)
-            sampled_centers2 = einops.rearrange(
-                torch.multinomial(cbet_probs2.view(-1, choices), num_samples=1),
-                "(NT) 1 -> NT",
-                NT=NT,
-            )
-            sampled_centers = torch.stack(
-                (sampled_centers1, sampled_centers2), axis=1
-            )  # NT, G
-        else:
-            cbet_logits = self._map_to_cbet_preds_bin(x)
-            cbet_offsets = self._map_to_cbet_preds_offset(x)
-            cbet_logits = einops.rearrange(
-                cbet_logits, "(NT) (G C) -> (NT) G C", G=self._G
-            )
-            cbet_offsets = einops.rearrange(
-                cbet_offsets, "(NT) (G C WA) -> (NT) G C WA", G=self._G, C=self._C
-            )
-            cbet_probs = torch.softmax(cbet_logits, dim=-1)
-            NT, G, choices = cbet_probs.shape
-            sampled_centers = einops.rearrange(
-                torch.multinomial(cbet_probs.view(-1, choices), num_samples=1),
-                "(NT G) 1 -> NT G",
-                NT=NT,
-            )
+        cbet_logits = self._map_to_cbet_preds_bin(x)
+        cbet_offsets = self._map_to_cbet_preds_offset(x)
+        cbet_logits = einops.rearrange(
+            cbet_logits, "(NT) (G C) -> (NT) G C", G=self._G
+        )
+        cbet_offsets = einops.rearrange(
+            cbet_offsets, "(NT) (G C WA) -> (NT) G C WA", G=self._G, C=self._C
+        )
+        cbet_probs = torch.softmax(cbet_logits, dim=-1)
+        NT, G, choices = cbet_probs.shape
+        sampled_centers = einops.rearrange(
+            torch.multinomial(cbet_probs.view(-1, choices), num_samples=1),
+            "(NT G) 1 -> NT G",
+            NT=NT,
+        )
 
         indices = (
             torch.arange(NT).unsqueeze(1).cuda(),
@@ -372,13 +353,10 @@ class VQBeTHead(nn.Module):
         )
 
         return {
-            "input": x,
-            "cbet_logits1": cbet_logits1 if "cbet_logits1" in locals() else None,
-            "cbet_logits2": cbet_logits2 if "cbet_logits2" in locals() else None,
             "cbet_logits": cbet_logits if "cbet_logits" in locals() else None,
             "predicted_action": predicted_action,
-            "decoded_action": decoded_action,
             "sampled_centers": sampled_centers,
+            "decoded_action": decoded_action, 
             "G": G,
             "NT": NT,
             "N": N,
@@ -388,29 +366,17 @@ class VQBeTHead(nn.Module):
     def loss_fn(self, pred, target, **kwargs):
         # Rename the inputs for clarity.
         action_seq = target
-        gpt_output = pred["input"]
         predicted_action = pred["predicted_action"]
-        decoded_action = pred["decoded_action"]
         sampled_centers = pred["sampled_centers"]
+        decoded_action = pred["decoded_action"]
         G, NT, N, T = pred["G"], pred["NT"], pred["N"], pred["T"]
-        if self.sequentially_select:
-            cbet_logits1 = pred["cbet_logits1"]
-            cbet_logits2 = pred["cbet_logits2"]
-        else:
-            cbet_logits = pred["cbet_logits"]
+        cbet_logits = pred["cbet_logits"]
 
         predicted_action = einops.rearrange(
             predicted_action, "N T (W A) -> (N T) W A", W=self._vqvae_model.input_dim_h
         )
 
-        n, total_w, act_dim = action_seq.shape
-        act_w = self._vqvae_model.input_dim_h
-        obs_w = total_w + 1 - act_w
-        output_shape = (n, obs_w, act_w, act_dim)
-        output = torch.empty(output_shape).to(action_seq.device)
-        for i in range(obs_w):
-            output[:, i, :, :] = action_seq[:, i : i + act_w, :]
-        action_seq = einops.rearrange(output, "N T W A -> (N T) W A")
+        action_seq = einops.rearrange(action_seq, "N T W A -> (N T) W A")
         # Figure out the loss for the actions.
         # First, we need to find the closest cluster center for each action.
         state_vq, action_bins = self._vqvae_model.get_code(
@@ -423,73 +389,15 @@ class VQBeTHead(nn.Module):
 
         offset_loss = torch.nn.L1Loss()(action_seq, predicted_action)
 
-        action_diff = F.mse_loss(
-            einops.rearrange(action_seq, "(N T) W A -> N T W A", T=obs_w)[:, -1, 0, :],
-            einops.rearrange(predicted_action, "(N T) W A -> N T W A", T=obs_w)[
-                :, -1, 0, :
-            ],
-        )  # batch, time, windowsize (t ... t+N), action dim -> [:, -1, 0, :] is for rollout
-        action_diff_tot = F.mse_loss(
-            einops.rearrange(action_seq, "(N T) W A -> N T W A", T=obs_w)[:, -1, :, :],
-            einops.rearrange(predicted_action, "(N T) W A -> N T W A", T=obs_w)[
-                :, -1, :, :
-            ],
-        )  # batch, time, windowsize (t ... t+N), action dim -> [:, -1, 0, :] is for rollout
-        action_diff_mean_res1 = (
-            abs(
-                einops.rearrange(action_seq, "(N T) W A -> N T W A", T=obs_w)[
-                    :, -1, 0, :
-                ]
-                - einops.rearrange(decoded_action, "(N T) W A -> N T W A", T=obs_w)[
-                    :, -1, 0, :
-                ]
-            )
-        ).mean()
-        action_diff_mean_res2 = (
-            abs(
-                einops.rearrange(action_seq, "(N T) W A -> N T W A", T=obs_w)[
-                    :, -1, 0, :
-                ]
-                - einops.rearrange(predicted_action, "(N T) W A -> N T W A", T=obs_w)[
-                    :, -1, 0, :
-                ]
-            )
-        ).mean()
-        action_diff_max = (
-            abs(
-                einops.rearrange(action_seq, "(N T) W A -> N T W A", T=obs_w)[
-                    :, -1, 0, :
-                ]
-                - einops.rearrange(predicted_action, "(N T) W A -> N T W A", T=obs_w)[
-                    :, -1, 0, :
-                ]
-            )
-        ).max()
 
-        if self.sequentially_select:
-            cbet_loss1 = self._criterion(  # F.cross_entropy
-                cbet_logits1[:, :],
-                action_bins[:, 0],
-            )
-            cbet_logits2 = self._map_to_cbet_preds_bin2(
-                torch.cat(
-                    (gpt_output, F.one_hot(action_bins[:, 0], num_classes=self._C)),
-                    axis=1,
-                )
-            )
-            cbet_loss2 = self._criterion(  # F.cross_entropy
-                cbet_logits2[:, :],
-                action_bins[:, 1],
-            )
-        else:
-            cbet_loss1 = self._criterion(  # F.cross_entropy
-                cbet_logits[:, 0, :],
-                action_bins[:, 0],
-            )
-            cbet_loss2 = self._criterion(  # F.cross_entropy
-                cbet_logits[:, 1, :],
-                action_bins[:, 1],
-            )
+        cbet_loss1 = self._criterion(  # F.cross_entropy
+            cbet_logits[:, 0, :],
+            action_bins[:, 0],
+        )
+        cbet_loss2 = self._criterion(  # F.cross_entropy
+            cbet_logits[:, 1, :],
+            action_bins[:, 1],
+        )
         cbet_loss = cbet_loss1 * 5 + cbet_loss2 * self.secondary_code_multiplier
 
         equal_total_code_rate = (
@@ -505,6 +413,49 @@ class VQBeTHead(nn.Module):
             (action_bins[:, 1] == sampled_centers[:, 1]).int()
         ) / (NT)
 
+        action_diff = F.mse_loss(
+            einops.rearrange(action_seq, "(N T) W A -> N T W A", T=T)[:, 4, :, :],
+            einops.rearrange(predicted_action, "(N T) W A -> N T W A", T=T)[
+                :, 4, :, :
+            ],
+        )  # batch, time, windowsize (t ... t+N), action dim -> [:, -1, 0, :] is for rollout
+        action_diff_tot = F.mse_loss(
+            einops.rearrange(action_seq, "(N T) W A -> N T W A", T=T)[:, :, :, :],
+            einops.rearrange(predicted_action, "(N T) W A -> N T W A", T=T)[
+                :, :, :, :
+            ],
+        )  # batch, time, windowsize (t ... t+N), action dim -> [:, -1, 0, :] is for rollout
+        action_diff_mean_res1 = (
+            abs(
+                einops.rearrange(action_seq, "(N T) W A -> N T W A", T=T)[
+                    :, 4, :, :
+                ]
+                - einops.rearrange(decoded_action, "(N T) W A -> N T W A", T=T)[
+                    :, 4, :, :
+                ]
+            )
+        ).mean()
+        action_diff_mean_res2 = (
+            abs(
+                einops.rearrange(action_seq, "(N T) W A -> N T W A", T=T)[
+                    :, 4, :, :
+                ]
+                - einops.rearrange(predicted_action, "(N T) W A -> N T W A", T=T)[
+                    :, 4, :, :
+                ]
+            )
+        ).mean()
+        action_diff_max = (
+            abs(
+                einops.rearrange(action_seq, "(N T) W A -> N T W A", T=T)[
+                    :, 4, :, :
+                ]
+                - einops.rearrange(predicted_action, "(N T) W A -> N T W A", T=T)[
+                    :, 4, :, :
+                ]
+            )
+        ).max()
+
         loss = cbet_loss + self.offset_loss_weight * offset_loss
         loss_dict = {
             "classification_loss": cbet_loss.detach().cpu().item(),
@@ -513,19 +464,17 @@ class VQBeTHead(nn.Module):
             "equal_total_code_rate": equal_total_code_rate,
             "equal_single_code_rate": equal_single_code_rate,
             "equal_single_code_rate2": equal_single_code_rate2,
-            "action_diff": action_diff.detach().cpu().item(),
-            "action_diff_tot": action_diff_tot.detach().cpu().item(),
-            "action_diff_mean_res1": action_diff_mean_res1.detach().cpu().item(),
-            "action_diff_mean_res2": action_diff_mean_res2.detach().cpu().item(),
-            "action_diff_max": action_diff_max.detach().cpu().item(),
         }
-        return {"actor_loss": loss}, loss_dict
+        return {"actor_loss": loss, "equal_single_code_rate": equal_single_code_rate, "equal_single_code_rate2": equal_single_code_rate2, "offset_loss_weight": self.offset_loss_weight, \
+                "action_diff": action_diff, "action_diff_tot": action_diff_tot, "action_diff_mean_res1": action_diff_mean_res1, "action_diff_mean_res2": action_diff_mean_res2, \
+                "action_diff_max": action_diff_max}, loss_dict
 
 class VQBeTOptimizer:
     def __init__(self, policy, cfg):
         self.discretize_step = cfg.training.discretize_step
         self.offline_steps = cfg.training.offline_steps
         self.optimizing_step = 0
+
 
         vqvae_params = (
             list(policy.vqbet._action_head._vqvae_model.encoder.parameters())
@@ -537,7 +486,7 @@ class VQBeTOptimizer:
         )
 
         self.encoder_optimizer = torch.optim.Adam(
-            policy.vqbet.parameters(),
+            policy.vqbet.rgb_encoder.parameters(),
             cfg.training.lr,
             cfg.training.adam_betas,
             cfg.training.adam_eps,
@@ -549,19 +498,28 @@ class VQBeTOptimizer:
             learning_rate=cfg.training.bet_learning_rate,
             betas=cfg.training.bet_betas,
         )
-        if policy.vqbet._action_head.sequentially_select:
-            self.bet_optimizer1.add_param_group(
-                {"params": policy.vqbet._action_head._map_to_cbet_preds_bin1.parameters()}
+
+        self.bet_optimizer1.add_param_group(
+                {"params": policy.vqbet._action_token}
             )
-            self.bet_optimizer1.add_param_group(
-                {"params": policy.vqbet._action_head._map_to_cbet_preds_bin2.parameters()}
+        self.bet_optimizer1.add_param_group(
+                {"params": policy.vqbet._eos_token}
             )
-        else:
-            self.bet_optimizer1.add_param_group(
-                {"params": policy.vqbet._action_head._map_to_cbet_preds_bin.parameters()}
+        self.bet_optimizer1.add_param_group(
+                {"params": policy.vqbet.state_projector.parameters()}
             )
-        
+        self.bet_optimizer1.add_param_group(
+                {"params": policy.vqbet.obs_projector.parameters()}
+            )
+
         self.bet_optimizer2 = torch.optim.AdamW(
+            policy.vqbet._action_head._map_to_cbet_preds_bin.parameters(),
+            lr=cfg.training.bet_learning_rate,
+            weight_decay=cfg.training.bet_weight_decay,
+            betas=cfg.training.bet_betas,
+        )
+        
+        self.bet_optimizer3 = torch.optim.AdamW(
             policy.vqbet._action_head._map_to_cbet_preds_offset.parameters(),
             lr=cfg.training.bet_learning_rate,
             weight_decay=cfg.training.bet_weight_decay,
@@ -581,8 +539,9 @@ class VQBeTOptimizer:
                 self.encoder_optimizer.step()
                 self.bet_optimizer1.step()
                 self.bet_optimizer2.step()
+                self.bet_optimizer3.step()
             else:
-                self.bet_optimizer2.step()
+                self.bet_optimizer3.step()
 
     def zero_grad(self):
         if self.optimizing_step < self.discretize_step:
@@ -594,8 +553,9 @@ class VQBeTOptimizer:
                 self.encoder_optimizer.zero_grad()
                 self.bet_optimizer1.zero_grad()
                 self.bet_optimizer2.zero_grad()
+                self.bet_optimizer3.zero_grad()
             else:
-                self.bet_optimizer2.zero_grad()
+                self.bet_optimizer3.zero_grad()
 
 class VQBeTScheduler:
     def __init__(self, optimizer, cfg):
@@ -604,22 +564,27 @@ class VQBeTScheduler:
         self.offline_steps = cfg.training.offline_steps
         self.optimizing_step = 0
 
-        self.lr_scheduler = get_scheduler(
+        self.lr_scheduler1 = get_scheduler(
             cfg.training.lr_scheduler,
             optimizer=optimizer.encoder_optimizer,
             num_warmup_steps=cfg.training.lr_warmup_steps,
             num_training_steps=cfg.training.offline_steps,
         )
 
+
     def step(self):
         self.optimizing_step +=1
         if self.optimizing_step >= self.discretize_step:
-            self.lr_scheduler.step()
+            self.lr_scheduler1.step()
+            # self.lr_scheduler2.step()
+            # self.lr_scheduler3.step()
 
-class DiffusionRgbEncoder(nn.Module):
+class VQBeTRgbEncoder(nn.Module):
     """Encoder an RGB image into a 1D feature vector.
 
     Includes the ability to normalize and crop the image first.
+
+    Same with DiffusionRgbEncoder from modeling_diffusion.py
     """
 
     def __init__(self, config: VQBeTConfig):
@@ -720,50 +685,6 @@ def _replace_submodules(
 
 
 
-# PyTorch dataset class for loading actions
-# class ActionDataset(torch.utils.data.Dataset):
-#     def __init__(self, actions):
-#         self.actions = actions
-
-#     def __len__(self):
-#         return len(self.actions)
-
-#     def __getitem__(self, idx):
-#         return self.actions[idx]
-class EncoderMLP(nn.Module):
-    def __init__(
-        self,
-        input_dim,
-        output_dim=16,
-        hidden_dim=128,
-        layer_num=1,
-        last_activation=None,
-    ):
-        super(EncoderMLP, self).__init__()
-        layers = []
-
-        layers.append(nn.Linear(input_dim, hidden_dim))
-        layers.append(nn.ReLU())
-        for _ in range(layer_num):
-            layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.ReLU())
-
-        self.encoder = nn.Sequential(*layers)
-        self.fc = nn.Linear(hidden_dim, output_dim)
-
-        if last_activation is not None:
-            self.last_layer = last_activation
-        else:
-            self.last_layer = None
-        self.apply(weights_init_encoder)
-
-    def forward(self, x):
-        h = self.encoder(x)
-        state = self.fc(h)
-        if self.last_layer:
-            state = self.last_layer(state)
-        return state
-
 
 class VqVae(nn.Module):
     def __init__(
@@ -802,18 +723,22 @@ class VqVae(nn.Module):
         self.embedding_dim = self.n_latent_dims
 
         if self.input_dim_h == 1:
-            self.encoder = EncoderMLP(
-                input_dim=input_dim_w, output_dim=n_latent_dims
+            self.encoder = MLP(
+                in_channels=input_dim_w,
+                hidden_channels=[128, 128, n_latent_dims],
             )
-            self.decoder = EncoderMLP(
-                input_dim=n_latent_dims, output_dim=input_dim_w
+            self.decoder = MLP(
+                in_channels=n_latent_dims,
+                hidden_channels=[128, 128, input_dim_w],
             )
         else:
-            self.encoder = EncoderMLP(
-                input_dim=input_dim_w * self.input_dim_h, output_dim=n_latent_dims
+            self.encoder = MLP(
+                in_channels=input_dim_w * self.input_dim_h,
+                hidden_channels=[128, 128, n_latent_dims],
             )
-            self.decoder = EncoderMLP(
-                input_dim=n_latent_dims, output_dim=input_dim_w * self.input_dim_h
+            self.decoder = MLP(
+                in_channels=n_latent_dims,
+                hidden_channels=[128, 128, input_dim_w * self.input_dim_h],
             )
 
 
@@ -962,10 +887,12 @@ def pretrain_vqvae(vqvae_model, discretize_step, actions):
     loss, metric = vqvae_model.vqvae_forward(
         actions
     )  # N T D
+    n_different_codes = len(torch.unique(metric[2]))
+    n_different_combinations = len(torch.unique(metric[2], dim=0))
     vqvae_model.optimized_steps += 1
     if vqvae_model.optimized_steps >= discretize_step:
         vqvae_model.discretized = True
-    return loss
+    return loss, n_different_codes, n_different_combinations
 
 
 def exists(val):
@@ -1214,83 +1141,6 @@ class ResidualVQ(nn.Module):
         return ret
 
 
-# grouped residual vq
-
-
-class GroupedResidualVQ(nn.Module):
-    def __init__(self, *, dim, groups=1, accept_image_fmap=False, **kwargs):
-        super().__init__()
-        self.dim = dim
-        self.groups = groups
-        assert (dim % groups) == 0
-        dim_per_group = dim // groups
-
-        self.accept_image_fmap = accept_image_fmap
-
-        self.rvqs = nn.ModuleList([])
-
-        for _ in range(groups):
-            self.rvqs.append(
-                ResidualVQ(
-                    dim=dim_per_group, accept_image_fmap=accept_image_fmap, **kwargs
-                )
-            )
-
-    @property
-    def codebooks(self):
-        return torch.stack(tuple(rvq.codebooks for rvq in self.rvqs))
-
-    def get_codes_from_indices(self, indices):
-        codes = tuple(
-            rvq.get_codes_from_indices(chunk_indices)
-            for rvq, chunk_indices in zip(self.rvqs, indices)
-        )
-        return torch.stack(codes)
-
-    def forward(
-        self, x, indices=None, return_all_codes=False, sample_codebook_temp=None
-    ):
-        shape = x.shape
-        split_dim = 1 if self.accept_image_fmap else -1
-        assert shape[split_dim] == self.dim
-
-        # split the feature dimension into groups
-
-        x = x.chunk(self.groups, dim=split_dim)
-
-        indices = default(indices, tuple())
-        return_ce_loss = len(indices) > 0
-        assert len(indices) == 0 or len(indices) == self.groups
-
-        forward_kwargs = dict(
-            return_all_codes=return_all_codes, sample_codebook_temp=sample_codebook_temp
-        )
-
-        # invoke residual vq on each group
-
-        out = tuple(
-            rvq(chunk, indices=chunk_indices, **forward_kwargs)
-            for rvq, chunk, chunk_indices in zip_longest(self.rvqs, x, indices)
-        )
-        out = tuple(zip(*out))
-
-        # if returning cross entropy loss to rvq codebooks
-
-        if return_ce_loss:
-            quantized, ce_losses = out
-            return torch.cat(quantized, dim=split_dim), sum(ce_losses)
-
-        # otherwise, get all the zipped outputs and combine them
-
-        quantized, all_indices, commit_losses, *maybe_all_codes = out
-
-        quantized = torch.cat(quantized, dim=split_dim)
-        all_indices = torch.stack(all_indices)
-        commit_losses = torch.stack(commit_losses)
-
-        ret = (quantized, all_indices, commit_losses, *maybe_all_codes)
-        return ret
-
 
 
 class VectorQuantize(nn.Module):
@@ -1307,7 +1157,6 @@ class VectorQuantize(nn.Module):
         kmeans_init=False,
         kmeans_iters=10,
         sync_kmeans=True,
-        use_cosine_sim=False,
         threshold_ema_dead_code=0,
         channel_last=True,
         accept_image_fmap=False,
@@ -1371,7 +1220,6 @@ class VectorQuantize(nn.Module):
 
         self.sync_update_v = sync_update_v
 
-        codebook_class = EuclideanCodebook if not use_cosine_sim else CosineSimCodebook
 
         gumbel_sample_fn = partial(
             gumbel_sample,
@@ -1403,9 +1251,6 @@ class VectorQuantize(nn.Module):
         )
 
         if affine_param:
-            assert (
-                not use_cosine_sim
-            ), "affine param is only compatible with euclidean codebook"
             codebook_kwargs = dict(
                 **codebook_kwargs,
                 affine_param=True,
@@ -1414,7 +1259,7 @@ class VectorQuantize(nn.Module):
                 affine_param_codebook_decay=affine_param_codebook_decay,
             )
 
-        self._codebook = codebook_class(**codebook_kwargs)
+        self._codebook = EuclideanCodebook(**codebook_kwargs)
 
         self.in_place_codebook_optimizer = (
             in_place_codebook_optimizer(self._codebook.parameters())
@@ -1904,7 +1749,6 @@ def kmeans(
     samples,
     num_clusters,
     num_iters=10,
-    use_cosine_sim=False,
     sample_fn=batched_sample_vectors,
     all_reduce_fn=noop,
 ):
@@ -1918,10 +1762,7 @@ def kmeans(
     means = sample_fn(samples, num_clusters)
 
     for _ in range(num_iters):
-        if use_cosine_sim:
-            dists = samples @ rearrange(means, "h n d -> h d n")
-        else:
-            dists = -torch.cdist(samples, means, p=2)
+        dists = -torch.cdist(samples, means, p=2)
 
         buckets = torch.argmax(dists, dim=-1)
         bins = batched_bincount(buckets, minlength=num_clusters)
@@ -1935,9 +1776,6 @@ def kmeans(
         new_means.scatter_add_(1, repeat(buckets, "h n -> h n d", d=dim), samples)
         new_means = new_means / rearrange(bins_min_clamped, "... -> ... 1")
         all_reduce_fn(new_means)
-
-        if use_cosine_sim:
-            new_means = l2norm(new_means)
 
         means = torch.where(rearrange(zero_mask, "... -> ... 1"), means, new_means)
 
@@ -2277,193 +2115,6 @@ class EuclideanCodebook(nn.Module):
         return quantize, embed_ind, dist
 
 
-class CosineSimCodebook(nn.Module):
-    def __init__(
-        self,
-        dim,
-        codebook_size,
-        num_codebooks=1,
-        kmeans_init=False,
-        kmeans_iters=10,
-        sync_kmeans=True,
-        decay=0.8,
-        eps=1e-5,
-        threshold_ema_dead_code=2,
-        reset_cluster_size=None,
-        use_ddp=False,
-        learnable_codebook=False,
-        gumbel_sample=gumbel_sample,
-        sample_codebook_temp=1.0,
-        ema_update=True,
-    ):
-        super().__init__()
-        self.transform_input = l2norm
-
-        self.ema_update = ema_update
-        self.decay = decay
-
-        if not kmeans_init:
-            embed = l2norm(uniform_init(num_codebooks, codebook_size, dim))
-        else:
-            embed = torch.zeros(num_codebooks, codebook_size, dim)
-
-        self.codebook_size = codebook_size
-        self.num_codebooks = num_codebooks
-
-        self.kmeans_iters = kmeans_iters
-        self.eps = eps
-        self.threshold_ema_dead_code = threshold_ema_dead_code
-        self.reset_cluster_size = default(reset_cluster_size, threshold_ema_dead_code)
-
-        assert callable(gumbel_sample)
-        self.gumbel_sample = gumbel_sample
-        self.sample_codebook_temp = sample_codebook_temp
-
-        self.sample_fn = (
-            sample_vectors_distributed
-            if use_ddp and sync_kmeans
-            else batched_sample_vectors
-        )
-        self.kmeans_all_reduce_fn = (
-            distributed.all_reduce if use_ddp and sync_kmeans else noop
-        )
-        self.all_reduce_fn = distributed.all_reduce if use_ddp else noop
-
-        self.register_buffer("initted", torch.Tensor([not kmeans_init]))
-        self.register_buffer("cluster_size", torch.zeros(num_codebooks, codebook_size))
-        self.register_buffer("embed_avg", embed.clone())
-
-        self.learnable_codebook = learnable_codebook
-        if learnable_codebook:
-            self.embed = nn.Parameter(embed)
-        else:
-            self.register_buffer("embed", embed)
-
-    @torch.jit.ignore
-    def init_embed_(self, data, mask=None):
-        if self.initted:
-            return
-
-        if exists(mask):
-            c = data.shape[0]
-            data = rearrange(data[mask], "(c n) d -> c n d", c=c)
-
-        embed, cluster_size = kmeans(
-            data,
-            self.codebook_size,
-            self.kmeans_iters,
-            use_cosine_sim=True,
-            sample_fn=self.sample_fn,
-            all_reduce_fn=self.kmeans_all_reduce_fn,
-        )
-
-        embed_sum = embed * rearrange(cluster_size, "... -> ... 1")
-
-        self.embed.data.copy_(embed)
-        self.embed_avg.data.copy_(embed_sum)
-        self.cluster_size.data.copy_(cluster_size)
-        self.initted.data.copy_(torch.Tensor([True]))
-
-    def replace(self, batch_samples, batch_mask):
-        batch_samples = l2norm(batch_samples)
-
-        for ind, (samples, mask) in enumerate(
-            zip(batch_samples.unbind(dim=0), batch_mask.unbind(dim=0))
-        ):
-            if not torch.any(mask):
-                continue
-
-            sampled = self.sample_fn(
-                rearrange(samples, "... -> 1 ..."), mask.sum().item()
-            )
-            sampled = rearrange(sampled, "1 ... -> ...")
-
-            self.embed.data[ind][mask] = sampled
-            self.embed_avg.data[ind][mask] = sampled * self.reset_cluster_size
-            self.cluster_size.data[ind][mask] = self.reset_cluster_size
-
-    def expire_codes_(self, batch_samples):
-        if self.threshold_ema_dead_code == 0:
-            return
-
-        expired_codes = self.cluster_size < self.threshold_ema_dead_code
-
-        if not torch.any(expired_codes):
-            return
-
-        batch_samples = rearrange(batch_samples, "h ... d -> h (...) d")
-        self.replace(batch_samples, batch_mask=expired_codes)
-
-    @autocast(enabled=False)
-    def forward(self, x, sample_codebook_temp=None, mask=None, freeze_codebook=False):
-        needs_codebook_dim = x.ndim < 4
-        sample_codebook_temp = default(sample_codebook_temp, self.sample_codebook_temp)
-
-        x = x.float()
-
-        if needs_codebook_dim:
-            x = rearrange(x, "... -> 1 ...")
-
-        dtype = x.dtype
-
-        flatten, ps = pack_one(x, "h * d")
-
-        if exists(mask):
-            mask = repeat(
-                mask,
-                "b n -> c (b h n)",
-                c=flatten.shape[0],
-                h=flatten.shape[-2] // (mask.shape[0] * mask.shape[1]),
-            )
-
-        self.init_embed_(flatten, mask=mask)
-
-        embed = self.embed if self.learnable_codebook else self.embed.detach()
-
-        dist = einsum("h n d, h c d -> h n c", flatten, embed)
-
-        embed_ind, embed_onehot = self.gumbel_sample(
-            dist, dim=-1, temperature=sample_codebook_temp, training=self.training
-        )
-        embed_ind = unpack_one(embed_ind, ps, "h *")
-
-        if self.training:
-            unpacked_onehot = unpack_one(embed_onehot, ps, "h * c")
-            quantize = einsum("h b n c, h c d -> h b n d", unpacked_onehot, embed)
-        else:
-            quantize = batched_embedding(embed_ind, embed)
-
-        if self.training and self.ema_update and not freeze_codebook:
-            if exists(mask):
-                embed_onehot[~mask] = 0.0
-
-            bins = embed_onehot.sum(dim=1)
-            self.all_reduce_fn(bins)
-
-            ema_inplace(self.cluster_size.data, bins, self.decay)
-
-            embed_sum = einsum("h n d, h n c -> h c d", flatten, embed_onehot)
-            self.all_reduce_fn(embed_sum.contiguous())
-            ema_inplace(self.embed_avg.data, embed_sum, self.decay)
-
-            cluster_size = laplace_smoothing(
-                self.cluster_size, self.codebook_size, self.eps
-            ) * self.cluster_size.sum(dim=-1, keepdim=True)
-
-            embed_normalized = self.embed_avg / rearrange(cluster_size, "... -> ... 1")
-            embed_normalized = l2norm(embed_normalized)
-
-            self.embed.data.copy_(l2norm(embed_normalized))
-            self.expire_codes_(x)
-
-        if needs_codebook_dim:
-            quantize, embed_ind = map(
-                lambda t: rearrange(t, "1 ... -> ..."), (quantize, embed_ind)
-            )
-
-        dist = unpack_one(dist, ps, "h * d")
-        return quantize, embed_ind, dist
-
 
 class FocalLoss(nn.Module):
     """
@@ -2492,154 +2143,24 @@ class FocalLoss(nn.Module):
             return loss.sum()
 
 class MLP(torch.nn.Sequential):
-    """This block implements the multi-layer perceptron (MLP) module.
-    Adapted for backward compatibility from the torchvision library:
-    https://pytorch.org/vision/0.14/generated/torchvision.ops.MLP.html
-
-    LICENSE:
-
-    From PyTorch:
-
-    Copyright (c) 2016-     Facebook, Inc            (Adam Paszke)
-    Copyright (c) 2014-     Facebook, Inc            (Soumith Chintala)
-    Copyright (c) 2011-2014 Idiap Research Institute (Ronan Collobert)
-    Copyright (c) 2012-2014 Deepmind Technologies    (Koray Kavukcuoglu)
-    Copyright (c) 2011-2012 NEC Laboratories America (Koray Kavukcuoglu)
-    Copyright (c) 2011-2013 NYU                      (Clement Farabet)
-    Copyright (c) 2006-2010 NEC Laboratories America (Ronan Collobert, Leon Bottou, Iain Melvin, Jason Weston)
-    Copyright (c) 2006      Idiap Research Institute (Samy Bengio)
-    Copyright (c) 2001-2004 Idiap Research Institute (Ronan Collobert, Samy Bengio, Johnny Mariethoz)
-
-    From Caffe2:
-
-    Copyright (c) 2016-present, Facebook Inc. All rights reserved.
-
-    All contributions by Facebook:
-    Copyright (c) 2016 Facebook Inc.
-
-    All contributions by Google:
-    Copyright (c) 2015 Google Inc.
-    All rights reserved.
-
-    All contributions by Yangqing Jia:
-    Copyright (c) 2015 Yangqing Jia
-    All rights reserved.
-
-    All contributions by Kakao Brain:
-    Copyright 2019-2020 Kakao Brain
-
-    All contributions by Cruise LLC:
-    Copyright (c) 2022 Cruise LLC.
-    All rights reserved.
-
-    All contributions from Caffe:
-    Copyright(c) 2013, 2014, 2015, the respective contributors
-    All rights reserved.
-
-    All other contributions:
-    Copyright(c) 2015, 2016 the respective contributors
-    All rights reserved.
-
-    Caffe2 uses a copyright model similar to Caffe: each contributor holds
-    copyright over their contributions to Caffe2. The project versioning records
-    all such contribution and copyright details. If a contributor wants to further
-    mark their specific copyright on a particular contribution, they should
-    indicate their copyright solely in the commit message of the change when it is
-    committed.
-
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    1. Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-
-    2. Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-
-    3. Neither the names of Facebook, Deepmind Technologies, NYU, NEC Laboratories America
-    and IDIAP Research Institute nor the names of its contributors may be
-    used to endorse or promote products derived from this software without
-    specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-    ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
-    LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-    CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-    SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-    INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-    ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
-
-
-    Args:
-        in_channels (int): Number of channels of the input
-        hidden_channels (List[int]): List of the hidden channel dimensions
-        norm_layer (Callable[..., torch.nn.Module], optional): Norm layer that will be stacked on top of the linear layer. If ``None`` this layer won't be used. Default: ``None``
-        activation_layer (Callable[..., torch.nn.Module], optional): Activation function which will be stacked on top of the normalization layer (if not None), otherwise on top of the linear layer. If ``None`` this layer won't be used. Default: ``torch.nn.ReLU``
-        inplace (bool, optional): Parameter for the activation layer, which can optionally do the operation in-place.
-            Default is ``None``, which uses the respective default values of the ``activation_layer`` and Dropout layer.
-        bias (bool): Whether to use bias in the linear layer. Default ``True``
-        dropout (float): The probability for the dropout layer. Default: 0.0
-    """
 
     def __init__(
         self,
         in_channels: int,
         hidden_channels: List[int],
-        activation_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.ReLU,
-        inplace: Optional[bool] = None,
-        bias: bool = True,
-        dropout: float = 0.0,
     ):
-        params = {} if inplace is None else {"inplace": inplace}
 
         layers = []
         in_dim = in_channels
         for hidden_dim in hidden_channels[:-1]:
-            layers.append(torch.nn.Linear(in_dim, hidden_dim, bias=bias))
-            layers.append(activation_layer(**params))
-            layers.append(torch.nn.Dropout(dropout, **params))
+            layers.append(torch.nn.Linear(in_dim, hidden_dim))
+            layers.append(torch.nn.ReLU())
             in_dim = hidden_dim
 
-        layers.append(torch.nn.Linear(in_dim, hidden_channels[-1], bias=bias))
-        layers.append(torch.nn.Dropout(dropout, **params))
+        layers.append(torch.nn.Linear(in_dim, hidden_channels[-1]))
 
         super().__init__(*layers)
 
-def weights_init_encoder(m):
-    if isinstance(m, nn.Linear):
-        nn.init.orthogonal_(m.weight.data)
-        m.bias.data.fill_(0.0)
-    elif isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-        assert m.weight.size(2) == m.weight.size(3)
-        m.weight.data.fill_(0.0)
-        m.bias.data.fill_(0.0)
-        mid = m.weight.size(2) // 2
-        gain = nn.init.calculate_gain("relu")
-        nn.init.orthogonal_(m.weight.data[:, :, mid, mid], gain)
-
-
-
-# @torch.jit.script # good to enable when not using torch.compile, disable when using (our default)
-def new_gelu(x):
-    """
-    Implementation of the GELU activation function currently in Google BERT repo (identical to OpenAI GPT).
-    Reference: Gaussian Error Linear Units (GELU) paper: https://arxiv.org/abs/1606.08415
-    """
-    return (
-        0.5
-        * x
-        * (
-            1.0
-            + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0)))
-        )
-    )
 
 
 class CausalSelfAttention(nn.Module):
@@ -2697,20 +2218,6 @@ class CausalSelfAttention(nn.Module):
         return y
 
 
-class GPT_MLP(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd)
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd)
-        self.dropout = nn.Dropout(config.dropout)
-
-    def forward(self, x):
-        x = self.c_fc(x)
-        x = new_gelu(x)
-        x = self.c_proj(x)
-        x = self.dropout(x)
-        return x
-
 
 class Block(nn.Module):
     def __init__(self, config):
@@ -2718,7 +2225,12 @@ class Block(nn.Module):
         self.ln_1 = nn.LayerNorm(config.n_embd)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = nn.LayerNorm(config.n_embd)
-        self.mlp = GPT_MLP(config)
+        self.mlp = nn.Sequential(
+                    nn.Linear(config.n_embd, 4 * config.n_embd),
+                    nn.GELU(),
+                    nn.Linear(4 * config.n_embd, config.n_embd),
+                    nn.Dropout(config.dropout)
+                )
 
     def forward(self, x):
         x = x + self.attn(self.ln_1(x))
@@ -2848,7 +2360,7 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             block.attn.bias = block.attn.bias[:, :, :block_size, :block_size]
 
-    def configure_optimizers(self, weight_decay, learning_rate, betas):
+    def configure_optimizers(self, weight_decay, learning_rate, betas, optimizer="Adamw", eps=None):
         """
         This long function is unfortunately doing something very simple and is being very defensive:
         We are separating out all parameters of the model into two buckets: those that will experience
@@ -2898,5 +2410,10 @@ class GPT(nn.Module):
                 "weight_decay": 0.0,
             },
         ]
-        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas)
+        if optimizer=="Adamw":
+            optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas)
+        elif optimizer=="Adam":
+            optimizer = torch.optim.Adam(optim_groups, lr=learning_rate, betas=betas, eps=eps)
+        else:
+            raise NotImplementedError
         return optimizer
