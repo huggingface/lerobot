@@ -217,7 +217,6 @@ def eval_policy(
     """
     start = time.time()
     policy.eval()
-    max_episodes_rendered = 20
 
     # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
     # divisible by env.num_envs we end up discarding some data in the last batch.
@@ -230,7 +229,6 @@ def eval_policy(
     all_seeds = []
     threads = []  # for video saving threads
     n_episodes_rendered = 0  # for saving the correct number of videos
-    all_coverages = []
 
     # Callback for visualization.
     def render_frame(env: gym.vector.VectorEnv):
@@ -282,7 +280,6 @@ def eval_policy(
         max_rewards.extend(batch_max_rewards.tolist())
         batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
         all_successes.extend(batch_successes.tolist())
-        all_coverages.extend((rollout_data['reward'][:, -1]*0.95).tolist())
         all_seeds.extend(seeds)
 
         if return_episode_data:
@@ -335,9 +332,7 @@ def eval_policy(
                 if n_episodes_rendered >= max_episodes_rendered:
                     break
                 video_dir.mkdir(parents=True, exist_ok=True)
-                final_cover = "%.3f" % all_coverages[n_episodes_rendered]
-                max_cover = "%.3f" % ((max_rewards[n_episodes_rendered] * 0.95))
-                video_path = video_dir / f"eval_episode_{max_cover}_{final_cover}.mp4"
+                video_path = video_dir / f"eval_episode_{n_episodes_rendered}.mp4"
                 video_paths.append(str(video_path))
                 thread = threading.Thread(
                     target=write_video,
@@ -358,44 +353,7 @@ def eval_policy(
     # Wait till all video rendering threads are done.
     for thread in threads:
         thread.join()
-    import matplotlib.pyplot as plt
-    plt.hist(all_coverages, bins=100)
-    plt.xlabel('Value')
-    plt.ylabel('Quantity')
-    plt.title('Histogram of Data')
-    plt.ylim(0, 500)
-    fig_path = video_dir / "final_coverage_histogram100.png"
-    plt.savefig(fig_path)  # Save the plot as a PNG file
-    plt.close()
 
-    max_coverage = [0.95 * value for value in max_rewards]
-    plt.hist(max_coverage, bins=100)
-    plt.xlabel('Value')
-    plt.ylabel('Quantity')
-    plt.title('Histogram of Data')
-    plt.ylim(0, 500)
-    fig_path = video_dir / "max_coverage_histogram100.png"
-    plt.savefig(fig_path)  # Save the plot as a PNG file
-    plt.close()
-
-    plt.hist(all_coverages, bins=50)
-    plt.xlabel('Value')
-    plt.ylabel('Quantity')
-    plt.title('Histogram of Data')
-    plt.ylim(0, 500)
-    fig_path = video_dir / "final_coverage_histogram.png"
-    plt.savefig(fig_path)  # Save the plot as a PNG file
-    plt.close()
-
-    max_coverage = [0.95 * value for value in max_rewards]
-    plt.hist(max_coverage, bins=50)
-    plt.xlabel('Value')
-    plt.ylabel('Quantity')
-    plt.title('Histogram of Data')
-    plt.ylim(0, 500)
-    fig_path = video_dir / "max_coverage_histogram.png"
-    plt.savefig(fig_path)  # Save the plot as a PNG file
-    plt.close()
     # Compile eval info.
     info = {
         "per_episode": [

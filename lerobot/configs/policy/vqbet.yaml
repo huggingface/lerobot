@@ -24,7 +24,7 @@ override_dataset_stats:
 training:
   offline_steps: 800000
   online_steps: 0
-  eval_freq: 20000 # jay
+  eval_freq: 20000
   save_freq: 20000
   log_freq: 250
   save_model: true
@@ -41,7 +41,7 @@ training:
 
   # VQ-BeT specific
   vqvae_lr: 1.0e-3
-  discretize_step: 20000 # jay
+  discretize_step: 20000
   bet_weight_decay: 2e-4
   bet_learning_rate: 5.5e-5
   bet_betas: [0.9, 0.999]
@@ -60,7 +60,6 @@ policy:
 
   # Input / output structure.
   n_obs_steps: 5
-  # n_action_steps: 7 # n_action_pred_token + n_action_pred_window - 1
   n_action_pred_token: 7
   n_action_pred_chunk: 5
 

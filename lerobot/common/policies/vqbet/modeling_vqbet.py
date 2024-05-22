@@ -8,7 +8,7 @@ from random import randrange
 import math
 from math import ceil
 from dataclasses import dataclass
-
+import warnings
 
 import einops
 from einops import rearrange, repeat, reduce, pack, unpack
@@ -97,9 +97,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
 
         if not self.check_discretized():
             self.vqbet._action_head._vqvae_model.discretized = True
-            # raise NotImplementedError(
-            #     "Should train VQ-VAE before rollout."
-            # )
+            warnings.warn('To evaluate in the environment, the model was forced to stop learning the Residual VQ. If you are not evaluating with a pre-trained model, this can degrade overall performance.')
         assert "observation.image" in batch
         assert "observation.state" in batch
 
@@ -195,7 +193,7 @@ class VQBeTModel(nn.Module):
             ], dim=-2).view(batch_size, -1, self.config.n_embd)
         if img_features.shape[1] != n_obs_steps:
             raise NotImplementedError
-        # eos_token = self._eos_token.repeat(batch_size, 1, 1)
+        # eos_token = self._eos_token.repeat(batch_size, 1, 1) # TODO remove EOS token
         len_additional_action_token = self.config.n_action_pred_token-1
         action_token = self._action_token.repeat(batch_size, len_additional_action_token, 1)
         
@@ -205,7 +203,7 @@ class VQBeTModel(nn.Module):
         
         # get action features
         features = self._policy(global_cond)
-        historical_act_pred_index = np.arange(0, n_obs_steps) * 3 + 2
+        historical_act_pred_index = np.arange(0, n_obs_steps) * 3 + 2 # TODO make it compatible with other values
         features = torch.cat([
             features[:, historical_act_pred_index],
             features[:, -len_additional_action_token:]
