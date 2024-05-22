@@ -8,7 +8,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake \
     git git-lfs openssh-client \
-    nano vim \
+    nano vim ffmpeg \
     htop atop nvtop \
     sed gawk grep curl wget \
     tcpdump sysstat screen \

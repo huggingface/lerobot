@@ -1,8 +1,23 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 Contains utilities to process raw data format of HDF5 files like in: https://github.com/tonyzhaozh/act
 """
 
-import re
+import gc
 import shutil
 from pathlib import Path
 
@@ -64,10 +79,8 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
     episode_data_index = {"from": [], "to": []}
 
     id_from = 0
-
-    for ep_path in tqdm.tqdm(hdf5_files, total=len(hdf5_files)):
+    for ep_idx, ep_path in tqdm.tqdm(enumerate(hdf5_files), total=len(hdf5_files)):
         with h5py.File(ep_path, "r") as ep:
-            ep_idx = int(re.search(r"episode_(\d+)", ep_path.name).group(1))
             num_frames = ep["/action"].shape[0]
 
             # last step of demonstration is considered done
@@ -76,6 +89,10 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
 
             state = torch.from_numpy(ep["/observations/qpos"][:])
             action = torch.from_numpy(ep["/action"][:])
+            if "/observations/qvel" in ep:
+                velocity = torch.from_numpy(ep["/observations/qvel"][:])
+            if "/observations/effort" in ep:
+                effort = torch.from_numpy(ep["/observations/effort"][:])
 
             ep_dict = {}
 
@@ -116,6 +133,10 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
                     ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
 
             ep_dict["observation.state"] = state
+            if "/observations/velocity" in ep:
+                ep_dict["observation.velocity"] = velocity
+            if "/observations/effort" in ep:
+                ep_dict["observation.effort"] = effort
             ep_dict["action"] = action
             ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames)
             ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
@@ -130,6 +151,8 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
             episode_data_index["to"].append(id_from + num_frames)
 
         id_from += num_frames
+
+        gc.collect()
 
         # process first episode only
         if debug:
@@ -152,6 +175,14 @@ def to_hf_dataset(data_dict, video) -> Dataset:
     features["observation.state"] = Sequence(
         length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
     )
+    if "observation.velocity" in data_dict:
+        features["observation.velocity"] = Sequence(
+            length=data_dict["observation.velocity"].shape[1], feature=Value(dtype="float32", id=None)
+        )
+    if "observation.effort" in data_dict:
+        features["observation.effort"] = Sequence(
+            length=data_dict["observation.effort"].shape[1], feature=Value(dtype="float32", id=None)
+        )
     features["action"] = Sequence(
         length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)
     )

@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 Tony Z. Zhao and The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Action Chunking Transformer Policy
 
 As per Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware (https://arxiv.org/abs/2304.13705).
@@ -46,7 +61,8 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         super().__init__()
         if config is None:
             config = ACTConfig()
-        self.config = config
+        self.config: ACTConfig = config
+
         self.normalize_inputs = Normalize(
             config.input_shapes, config.input_normalization_modes, dataset_stats
         )
@@ -56,11 +72,18 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         self.unnormalize_outputs = Unnormalize(
             config.output_shapes, config.output_normalization_modes, dataset_stats
         )
+
         self.model = ACT(config)
+
+        self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+
+        self.reset()
 
     def reset(self):
         """This should be called whenever the environment is reset."""
-        if self.config.n_action_steps is not None:
+        if self.config.temporal_ensemble_momentum is not None:
+            self._ensembled_actions = None
+        else:
             self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     @torch.no_grad
@@ -71,30 +94,49 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
         queue is empty.
         """
-        assert "observation.images.top" in batch
-        assert "observation.state" in batch
-
         self.eval()
 
         batch = self.normalize_inputs(batch)
-        self._stack_images(batch)
+        batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
 
+        # If we are doing temporal ensembling, keep track of the exponential moving average (EMA), and return
+        # the first action.
+        if self.config.temporal_ensemble_momentum is not None:
+            actions = self.model(batch)[0]  # (batch_size, chunk_size, action_dim)
+            actions = self.unnormalize_outputs({"action": actions})["action"]
+            if self._ensembled_actions is None:
+                # Initializes `self._ensembled_action` to the sequence of actions predicted during the first
+                # time step of the episode.
+                self._ensembled_actions = actions.clone()
+            else:
+                # self._ensembled_actions will have shape (batch_size, chunk_size - 1, action_dim). Compute
+                # the EMA update for those entries.
+                alpha = self.config.temporal_ensemble_momentum
+                self._ensembled_actions = alpha * self._ensembled_actions + (1 - alpha) * actions[:, :-1]
+                # The last action, which has no prior moving average, needs to get concatenated onto the end.
+                self._ensembled_actions = torch.cat([self._ensembled_actions, actions[:, -1:]], dim=1)
+            # "Consume" the first action.
+            action, self._ensembled_actions = self._ensembled_actions[:, 0], self._ensembled_actions[:, 1:]
+            return action
+
+        # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
+        # querying the policy.
         if len(self._action_queue) == 0:
-            # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
-            # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
-            actions = self.model(batch)[0][: self.config.n_action_steps]
+            actions = self.model(batch)[0][:, : self.config.n_action_steps]
 
             # TODO(rcadene): make _forward return output dictionary?
             actions = self.unnormalize_outputs({"action": actions})["action"]
 
+            # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
+            # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
+        batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
         batch = self.normalize_targets(batch)
-        self._stack_images(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
         l1_loss = (
@@ -116,21 +158,6 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
             loss_dict["loss"] = l1_loss
 
         return loss_dict
-
-    def _stack_images(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        """Stacks all the images in a batch and puts them in a new key: "observation.images".
-
-        This function expects `batch` to have (at least):
-        {
-            "observation.state": (B, state_dim) batch of robot states.
-            "observation.images.{name}": (B, C, H, W) tensor of images.
-        }
-        """
-        # Stack images in the order dictated by input_shapes.
-        batch["observation.images"] = torch.stack(
-            [batch[k] for k in self.config.input_shapes if k.startswith("observation.images.")],
-            dim=-4,
-        )
 
 
 class ACT(nn.Module):
@@ -161,10 +188,10 @@ class ACT(nn.Module):
               │ encoder │ │     │ │Transf.│             │
               │         │ │     │ │encoder│             │
               └───▲─────┘ │     │ │       │             │
-                  │       │     │ └───▲───┘             │
-                  │       │     │     │                 │
-                inputs    └─────┼─────┘                 │
-                                │                       │
+                  │       │     │ └▲──▲─▲─┘             │
+                  │       │     │  │  │ │               │
+                inputs    └─────┼──┘  │ image emb.      │
+                                │    state emb.         │
                                 └───────────────────────┘
     """
 
@@ -306,18 +333,18 @@ class ACT(nn.Module):
             all_cam_features.append(cam_features)
             all_cam_pos_embeds.append(cam_pos_embed)
         # Concatenate camera observation feature maps and positional embeddings along the width dimension.
-        encoder_in = torch.cat(all_cam_features, axis=3)
-        cam_pos_embed = torch.cat(all_cam_pos_embeds, axis=3)
+        encoder_in = torch.cat(all_cam_features, axis=-1)
+        cam_pos_embed = torch.cat(all_cam_pos_embeds, axis=-1)
 
         # Get positional embeddings for robot state and latent.
-        robot_state_embed = self.encoder_robot_state_input_proj(batch["observation.state"])
-        latent_embed = self.encoder_latent_input_proj(latent_sample)
+        robot_state_embed = self.encoder_robot_state_input_proj(batch["observation.state"])  # (B, C)
+        latent_embed = self.encoder_latent_input_proj(latent_sample)  # (B, C)
 
         # Stack encoder input and positional embeddings moving to (S, B, C).
         encoder_in = torch.cat(
             [
                 torch.stack([latent_embed, robot_state_embed], axis=0),
-                encoder_in.flatten(2).permute(2, 0, 1),
+                einops.rearrange(encoder_in, "b c h w -> (h w) b c"),
             ]
         )
         pos_embed = torch.cat(
