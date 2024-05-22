@@ -68,8 +68,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.stats = load_stats(repo_id, version, root)
         self.info = load_info(repo_id, version, root)
         self.include_video_images = include_video_images
-        if self.video:
-            self.videos_dir = load_videos(repo_id, version, root)
+        # if self.video:
+        # self.videos_dir = load_videos(repo_id, version, root)
 
     @property
     def fps(self) -> int:

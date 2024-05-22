@@ -123,7 +123,7 @@ def visualize_dataset(
     # to do so. Those will be retrieved directly.
     dataset = LeRobotDataset(repo_id, include_video_images=False)
     video_reader = SequentialRerunVideoReader(
-        dataset.videos_dir.parent, dataset.tolerance_s, compression=95
+        dataset.repo_id, dataset.tolerance_s, compression=95
     )
 
     logging.info("Loading dataloader")

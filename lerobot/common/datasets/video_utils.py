@@ -15,20 +15,20 @@
 # limitations under the License.
 import logging
 import math
+import multiprocessing
 import subprocess
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
+import av
 import pyarrow as pa
+import rerun as rr
 import torch
 import torchvision
 from datasets.features.features import register_feature
-
-import av
-import multiprocessing
-import rerun as rr
+from huggingface_hub.file_download import hf_hub_download
 
 
 class PeekableIterator:
@@ -75,19 +75,22 @@ class SequentialRerunVideoReader:
     Frames must be consumed in-order.
     """
 
-    def __init__(self, video_dir: Path, tolerance: float, compression: int | None = 95):
-        self.video_dir = video_dir
+    def __init__(self, repo_id: str, tolerance: float, compression: int | None = 95):
+        self.repo_id = repo_id
         self.streams: dict[Path, PeekableIterator] = {}
         self.tolerance = tolerance
         self.compression = compression
 
-    def next_frame(self, path, timestamp):
+    def start_downloading(self, path):
         if path not in self.streams:
             self.streams[path] = PeekableIterator(
                 stream_rerun_images_from_video_mp(
-                    self.video_dir / path, compression=self.compression
+                    self.repo_id, path, compression=self.compression
                 )
             )
+
+    def next_frame(self, path, timestamp):
+        self.start_downloading(path)
 
         (next_frame_ts, next_frame) = self.streams[path].peek()
 
@@ -108,7 +111,10 @@ class SequentialRerunVideoReader:
 
 
 def stream_rerun_images_from_video(
-    video_path: Path, frame_queue: multiprocessing.Queue, compression: int | None
+    repo_id,
+    video_path: str,
+    frame_queue: multiprocessing.Queue,
+    compression: int | None,
 ):
     """Streams frames from a video file
 
@@ -117,7 +123,9 @@ def stream_rerun_images_from_video(
         frame_queue (multiprocessing.Queue): Queue to store the frames
         compression (int | None): Compression level for the images
     """
-    container = av.open(video_path)
+    cached_video_path = hf_hub_download(repo_id, video_path, repo_type="dataset")
+
+    container = av.open(cached_video_path)
 
     for frame in container.decode(video=0):
         pts = float(frame.pts * frame.time_base)
@@ -131,14 +139,16 @@ def stream_rerun_images_from_video(
     frame_queue.put(None)
 
 
-def stream_rerun_images_from_video_mp(video_path: Path, compression: int | None) -> Any:
+def stream_rerun_images_from_video_mp(
+    repo_id: str, video_path: str, compression: int | None
+) -> Any:
     frame_queue: multiprocessing.Queue[(int, rr.Image)] = multiprocessing.Queue(
         maxsize=5
     )
 
     extractor_proc = multiprocessing.Process(
         target=stream_rerun_images_from_video,
-        args=(video_path, frame_queue, compression),
+        args=(repo_id, video_path, frame_queue, compression),
     )
     extractor_proc.start()
 
