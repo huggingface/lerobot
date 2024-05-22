@@ -16,6 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python${PYTHON_VERSION} python${PYTHON_VERSION}-venv \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Setup `python`
+RUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python
+
 # Install gh cli tool
 RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
     && mkdir -p -m 755 /etc/apt/keyrings \
@@ -25,8 +28,11 @@ RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
     && apt update \
     && apt install gh -y
 
-# Setup `python`
-RUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python
+# Install miniconda
+RUN mkdir -p /miniconda3 \
+    && wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /miniconda3/miniconda.sh \
+    && bash /miniconda3/miniconda.sh -b -u -p /miniconda3 \
+    && rm -rf /miniconda3/miniconda.sh
 
 # Install poetry
 RUN curl -sSL https://install.python-poetry.org | python -
