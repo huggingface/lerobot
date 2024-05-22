@@ -20,15 +20,19 @@ build-gpu:
 test-end-to-end:
 	${MAKE} test-act-ete-train
 	${MAKE} test-act-ete-eval
+	${MAKE} test-act-ete-train-amp
+	${MAKE} test-act-ete-eval-amp
 	${MAKE} test-diffusion-ete-train
 	${MAKE} test-diffusion-ete-eval
 	${MAKE} test-tdmpc-ete-train
 	${MAKE} test-tdmpc-ete-eval
 	${MAKE} test-default-ete-eval
+	${MAKE} test-act-pusht-tutorial
 
 test-act-ete-train:
 	python lerobot/scripts/train.py \
 		policy=act \
+		policy.dim_model=64 \
 		env=aloha \
 		wandb.enable=False \
 		training.offline_steps=2 \
@@ -51,9 +55,40 @@ test-act-ete-eval:
 		env.episode_length=8 \
 		device=cpu \
 
+test-act-ete-train-amp:
+	python lerobot/scripts/train.py \
+		policy=act \
+		policy.dim_model=64 \
+		env=aloha \
+		wandb.enable=False \
+		training.offline_steps=2 \
+		training.online_steps=0 \
+		eval.n_episodes=1 \
+		eval.batch_size=1 \
+		device=cpu \
+		training.save_model=true \
+		training.save_freq=2 \
+		policy.n_action_steps=20 \
+		policy.chunk_size=20 \
+		training.batch_size=2 \
+		hydra.run.dir=tests/outputs/act/ \
+		use_amp=true
+
+test-act-ete-eval-amp:
+	python lerobot/scripts/eval.py \
+		-p tests/outputs/act/checkpoints/000002 \
+		eval.n_episodes=1 \
+		eval.batch_size=1 \
+		env.episode_length=8 \
+		device=cpu \
+		use_amp=true
+
 test-diffusion-ete-train:
 	python lerobot/scripts/train.py \
 		policy=diffusion \
+		policy.down_dims=\[64,128,256\] \
+		policy.diffusion_step_embed_dim=32 \
+		policy.num_inference_steps=10 \
 		env=pusht \
 		wandb.enable=False \
 		training.offline_steps=2 \
@@ -74,6 +109,7 @@ test-diffusion-ete-eval:
 		env.episode_length=8 \
 		device=cpu \
 
+# TODO(alexander-soare): Restore online_steps to 2 when it is reinstated.
 test-tdmpc-ete-train:
 	python lerobot/scripts/train.py \
 		policy=tdmpc \
@@ -82,7 +118,7 @@ test-tdmpc-ete-train:
 		dataset_repo_id=lerobot/xarm_lift_medium \
 		wandb.enable=False \
 		training.offline_steps=2 \
-		training.online_steps=2 \
+		training.online_steps=0 \
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=2 \
@@ -100,7 +136,6 @@ test-tdmpc-ete-eval:
 		env.episode_length=8 \
 		device=cpu \
 
-
 test-default-ete-eval:
 	python lerobot/scripts/eval.py \
 		--config lerobot/configs/default.yaml \
@@ -108,3 +143,21 @@ test-default-ete-eval:
 		eval.batch_size=1 \
 		env.episode_length=8 \
 		device=cpu \
+
+
+test-act-pusht-tutorial:
+	cp examples/advanced/1_train_act_pusht/act_pusht.yaml lerobot/configs/policy/created_by_Makefile.yaml
+	python lerobot/scripts/train.py \
+		policy=created_by_Makefile.yaml \
+		env=pusht \
+		wandb.enable=False \
+		training.offline_steps=2 \
+		eval.n_episodes=1 \
+		eval.batch_size=1 \
+		env.episode_length=2 \
+		device=cpu \
+		training.save_model=true \
+		training.save_freq=2 \
+		training.batch_size=2 \
+		hydra.run.dir=tests/outputs/act_pusht/
+	rm lerobot/configs/policy/created_by_Makefile.yaml
