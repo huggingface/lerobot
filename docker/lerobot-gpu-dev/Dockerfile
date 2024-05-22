@@ -41,5 +41,8 @@ RUN conda init bash \
 RUN curl -sSL https://install.python-poetry.org | python -
 ENV PATH="/root/.local/bin:$PATH"
 
+# Ensure conda environment activation and poetry path in .bashrc
+RUN echo "source /root/miniconda3/etc/profile.d/conda.sh && conda activate lerobot" >> /root/.bashrc
+
 # Set EGL as the rendering backend for MuJoCo
 ENV MUJOCO_GL="egl"
