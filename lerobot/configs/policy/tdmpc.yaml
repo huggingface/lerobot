@@ -5,7 +5,8 @@ dataset_repo_id: lerobot/xarm_lift_medium
 
 training:
   offline_steps: 25000
-  online_steps: 25000
+  # TODO(alexander-soare): uncomment when online training gets reinstated
+  online_steps: 0  # 25000 not implemented yet
   eval_freq: 5000
   online_steps_between_rollouts: 1
   online_sampling_ratio: 0.5
