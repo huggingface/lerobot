@@ -13,11 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sed gawk grep curl wget \
     tcpdump sysstat screen \
     libglib2.0-0 libgl1-mesa-glx libegl1-mesa ffmpeg \
-    python${PYTHON_VERSION} python${PYTHON_VERSION}-venv \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Setup `python`
-RUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python
 
 # Install gh cli tool
 RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
@@ -39,8 +35,7 @@ ENV PATH="/root/miniconda3/bin/:$PATH"
 # Setup conda & create env
 RUN conda init bash \
     && . ~/.bashrc \
-    && conda create -y -n lerobot python=3.10 \
-    && conda activate lerobot
+    && conda create -y -n lerobot python=${PYTHON_VERSION}
 
 # Install poetry
 RUN curl -sSL https://install.python-poetry.org | python -
