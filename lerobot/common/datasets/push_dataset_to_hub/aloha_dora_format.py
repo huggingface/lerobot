@@ -93,7 +93,7 @@ def load_from_raw(raw_dir: Path, out_dir: Path):
 
     # Remove rows with a NaN in any column. It can happened during the first frames of an episode,
     # because some cameras didnt start recording yet.
-    data_df = data_df.dropna(axis=1)
+    data_df = data_df.dropna(axis=0)
 
     # Create symlink to raw videos directory (that needs to be absolute not relative)
     # out_dir.mkdir(parents=True, exist_ok=True)
