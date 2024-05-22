@@ -64,7 +64,7 @@ import tqdm
 from bs4 import BeautifulSoup
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.utils.utils import format_big_number, init_logging
+from lerobot.common.utils.utils import init_logging
 
 
 class NoCacheHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
@@ -316,9 +316,9 @@ def write_episodes_list_html(output_dir, file_name, ep_indices, ep_html_fnames, 
     li_info.string = f"Frames per second: {dataset.fps}"
     ul_info.append(li_info)
 
-    li_info = soup.new_tag("li")
-    li_info.string = f"Size: {format_big_number(dataset.hf_dataset.info.size_in_bytes)}B"
-    ul_info.append(li_info)
+    # li_info = soup.new_tag("li")
+    # li_info.string = f"Size: {format_big_number(dataset.hf_dataset.info.size_in_bytes)}B"
+    # ul_info.append(li_info)
 
     ul = soup.new_tag("ul")
     body.append(ul)
@@ -363,7 +363,7 @@ def visualize_dataset(
     # Create a simlink from the dataset video folder containg mp4 files to the output directory
     # so that the http server can get access to the mp4 files.
     ln_videos_dir = output_dir / "videos"
-    ln_videos_dir.symlink_to(dataset.videos_dir)
+    ln_videos_dir.symlink_to(dataset.videos_dir.resolve())
 
     if episode_indices is None:
         episode_indices = list(range(dataset.num_episodes))
