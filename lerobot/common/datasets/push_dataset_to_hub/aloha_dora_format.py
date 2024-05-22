@@ -76,15 +76,6 @@ def load_from_raw(raw_dir: Path, out_dir: Path):
     data_df["next.done"] = False
     data_df.loc[data_df.groupby("episode_index").tail(1).index, "next.done"] = True
 
-    # Get the episode index containing for each unique episode index
-    first_ep_index_df = data_df.groupby("episode_index").agg(start_index=("index", "first")).reset_index()
-    from_ = first_ep_index_df["start_index"].tolist()
-    to_ = from_[1:] + [len(data_df)]
-    episode_data_index = {
-        "from": from_,
-        "to": to_,
-    }
-
     data_df["timestamp"] = data_df["timestamp_utc"].map(lambda x: x.timestamp())
     # each episode starts with timestamp 0 to match the ones from the video
     data_df["timestamp"] = data_df.groupby("episode_index")["timestamp"].transform(lambda x: x - x.iloc[0])
@@ -134,6 +125,15 @@ def load_from_raw(raw_dir: Path, out_dir: Path):
             data_dict[key] = torch.stack([torch.from_numpy(x.copy()) for x in data_df[key].values])
         else:
             raise ValueError(key)
+
+    # Get the episode index containing for each unique episode index
+    first_ep_index_df = data_df.groupby("episode_index").agg(start_index=("index", "first")).reset_index()
+    from_ = first_ep_index_df["start_index"].tolist()
+    to_ = from_[1:] + [len(data_df)]
+    episode_data_index = {
+        "from": from_,
+        "to": to_,
+    }
 
     return data_dict, episode_data_index
 
