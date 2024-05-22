@@ -172,7 +172,7 @@ jobs:
           context: .
           file: ./docker/lerobot-gpu-dev/Dockerfile
           push: true
-          tags: huggingface/lerobot-gpu-dev
+          tags: huggingface/lerobot-gpu:dev
           build-args: PYTHON_VERSION=${{ env.PYTHON_VERSION }}
 
       # - name: Post to a Slack channel
