@@ -117,6 +117,7 @@ class VQBeTConfig:
     n_embd: int = 120
     dropout: float = 0.1
     mlp_hidden_dim: int = 1024
+    offset_loss_weight: float = 10000.
 
     def __post_init__(self):
         """Input validation (not exhaustive)."""
