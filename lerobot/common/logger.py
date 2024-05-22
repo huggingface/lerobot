@@ -63,7 +63,22 @@ def get_wandb_run_id_from_filesystem(checkpoint_dir: Path) -> str:
 
 
 class Logger:
-    """Primary logger object. Logs either locally or using wandb."""
+    """Primary logger object. Logs either locally or using wandb.
+
+    The logger creates the following directory structure:
+
+    provided_log_dir
+    ├── .hydra  # hydra's configuration cache
+    ├── checkpoints
+    │   ├── specific_checkpoint_name
+    │   │   ├── pretrained_model  # Hugging Face pretrained model directory
+    │   │   │   ├── ...
+    │   │   └── training_state.pth  # optimizer, scheduler, and random states + training step
+    |   ├── another_specific_checkpoint_name
+    │   │   ├── ...
+    |   ├── ...
+    │   └── last  # a softlink to the last logged checkpoint
+    """
 
     pretrained_model_dir_name = "pretrained_model"
     training_state_file_name = "training_state.pth"
