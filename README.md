@@ -99,6 +99,7 @@ wandb login
 ```
 .
 ├── examples             # contains demonstration examples, start here to learn about LeRobot
+|   └── advanced         # contains even more examples for those who have mastered the basics
 ├── lerobot
 |   ├── configs          # contains hydra yaml files with all options that you can override in the command line
 |   |   ├── default.yaml   # selected by default, it loads pusht environment and diffusion policy
@@ -158,9 +159,10 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ### Train your own policy
 
-Check out [example 3](./examples/3_train_policy.py) that illustrates how to start training a model.
+Check out [example 3](./examples/3_train_policy.py) that illustrates how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
 
 In general, you can use our training script to easily train any policy. Here is an example of training the ACT policy on trajectories collected by humans on the Aloha simulation environment for the insertion task:
+
 ```bash
 python lerobot/scripts/train.py \
     policy=act \
@@ -184,7 +186,19 @@ A link to the wandb logs for the run will also show up in yellow in your termina
 
 ![](media/wandb.png)
 
-Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. After training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
+Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. You may use `eval.n_episodes=500` to evaluate on more episodes than the default. Or, after training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
+
+#### Reproduce state-of-the-art (SOTA)
+
+We have organized our configuration files (found under [`lerobot/configs`](./lerobot/configs)) such that they reproduce SOTA results from a given model variant in their respective original works. Simply running:
+
+```bash
+python lerobot/scripts/train.py policy=diffusion env=pusht
+```
+
+reproduces SOTA results for Diffusion Policy on the PushT task.
+
+Pretrained policies, along with reproduction details, can be found under the "Models" section of https://huggingface.co/lerobot.
 
 ## Contribute
 

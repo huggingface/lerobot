@@ -27,6 +27,7 @@ test-end-to-end:
 	${MAKE} test-tdmpc-ete-train
 	${MAKE} test-tdmpc-ete-eval
 	${MAKE} test-default-ete-eval
+	${MAKE} test-act-pusht-tutorial
 
 test-act-ete-train:
 	python lerobot/scripts/train.py \
@@ -142,3 +143,21 @@ test-default-ete-eval:
 		eval.batch_size=1 \
 		env.episode_length=8 \
 		device=cpu \
+
+
+test-act-pusht-tutorial:
+	cp examples/advanced/1_train_act_pusht/act_pusht.yaml lerobot/configs/policy/created_by_Makefile.yaml
+	python lerobot/scripts/train.py \
+		policy=created_by_Makefile.yaml \
+		env=pusht \
+		wandb.enable=False \
+		training.offline_steps=2 \
+		eval.n_episodes=1 \
+		eval.batch_size=1 \
+		env.episode_length=2 \
+		device=cpu \
+		training.save_model=true \
+		training.save_freq=2 \
+		training.batch_size=2 \
+		hydra.run.dir=tests/outputs/act_pusht/
+	rm lerobot/configs/policy/created_by_Makefile.yaml
