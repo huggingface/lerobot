@@ -72,6 +72,8 @@ import torch
 import tqdm
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.video_utils import SequentialRerunVideoReader
+from lerobot.common.utils.utils import init_logging
 
 
 class EpisodeSampler(torch.utils.data.Sampler):
@@ -91,8 +93,12 @@ def to_hwc_uint8_numpy(chw_float32_torch):
     assert chw_float32_torch.dtype == torch.float32
     assert chw_float32_torch.ndim == 3
     c, h, w = chw_float32_torch.shape
-    assert c < h and c < w, f"expect channel first images, but instead {chw_float32_torch.shape}"
-    hwc_uint8_numpy = (chw_float32_torch * 255).type(torch.uint8).permute(1, 2, 0).numpy()
+    assert (
+        c < h and c < w
+    ), f"expect channel first images, but instead {chw_float32_torch.shape}"
+    hwc_uint8_numpy = (
+        (chw_float32_torch * 255).type(torch.uint8).permute(1, 2, 0).numpy()
+    )
     return hwc_uint8_numpy
 
 
@@ -113,7 +119,12 @@ def visualize_dataset(
         ), "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
 
     logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id)
+    # We don't need to include the images in the dataset for visualization since it's very slow
+    # to do so. Those will be retrieved directly.
+    dataset = LeRobotDataset(repo_id, include_video_images=False)
+    video_reader = SequentialRerunVideoReader(
+        dataset.videos_dir.parent, dataset.tolerance_s, compression=95
+    )
 
     logging.info("Loading dataloader")
     episode_sampler = EpisodeSampler(dataset, episode_index)
@@ -150,8 +161,11 @@ def visualize_dataset(
 
             # display each camera image
             for key in dataset.camera_keys:
-                # TODO(rcadene): add `.compress()`? is it lossless?
-                rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
+                img = video_reader.next_frame(
+                    batch[key]["path"][i], batch[key]["timestamp"][i]
+                )
+                if img is not None:
+                    rr.log(key, img)
 
             # display each dimension of action space (e.g. actuators command)
             if "action" in batch:
@@ -188,6 +202,8 @@ def visualize_dataset(
                 time.sleep(1)
         except KeyboardInterrupt:
             print("Ctrl-C received. Exiting.")
+
+    return None
 
 
 def main():

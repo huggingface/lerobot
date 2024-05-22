@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import math
 import subprocess
 import warnings
 from dataclasses import dataclass, field
@@ -25,9 +26,136 @@ import torch
 import torchvision
 from datasets.features.features import register_feature
 
+import av
+import multiprocessing
+import rerun as rr
+
+
+class PeekableIterator:
+    """Trivial implementation of a peekable iterator
+
+    Next element can be peeked without consuming it.
+    Use next() to consume the element.
+    """
+
+    def __init__(self, iterable):
+        self.iterator = iter(iterable)
+        self.peeked = None
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.peeked is not None:
+            if self.peeked is StopIteration:
+                raise StopIteration
+            ret = self.peeked
+            self.peeked = None
+            return ret
+        return next(self.iterator)
+
+    def peek(self):
+        if not self.peeked:
+            try:
+                self.peeked = next(self.iterator)
+            except StopIteration:
+                self.peeked = StopIteration
+                return None
+        return self.peeked
+
+
+class SequentialRerunVideoReader:
+    """Video reader that returns sequential `rerun.Image` objects from a video file.
+
+    Each call to `next_frame()` returns the next frame in the video file
+    within the specified tolerance of the requested video timestamp.
+
+    The stream decoding happens in its own process with a 10-frame read-ahead.
+
+    Frames must be consumed in-order.
+    """
+
+    def __init__(self, video_dir: Path, tolerance: float, compression: int | None = 95):
+        self.video_dir = video_dir
+        self.streams: dict[Path, PeekableIterator] = {}
+        self.tolerance = tolerance
+        self.compression = compression
+
+    def next_frame(self, path, timestamp):
+        if path not in self.streams:
+            self.streams[path] = PeekableIterator(
+                stream_rerun_images_from_video_mp(
+                    self.video_dir / path, compression=self.compression
+                )
+            )
+
+        (next_frame_ts, next_frame) = self.streams[path].peek()
+
+        while (
+            next_frame_ts < timestamp
+            and math.fabs(next_frame_ts - timestamp) > self.tolerance
+        ):
+            next(self.streams[path])
+            (next_frame_ts, next_frame) = self.streams[path].peek()
+            if next_frame_ts is None:
+                return None
+
+        if math.fabs(next_frame_ts - timestamp) < self.tolerance:
+            next(self.streams[path])
+            return next_frame
+        else:
+            return None
+
+
+def stream_rerun_images_from_video(
+    video_path: Path, frame_queue: multiprocessing.Queue, compression: int | None
+):
+    """Streams frames from a video file
+
+    Args:
+        video_path (Path): Path to the video file
+        frame_queue (multiprocessing.Queue): Queue to store the frames
+        compression (int | None): Compression level for the images
+    """
+    container = av.open(video_path)
+
+    for frame in container.decode(video=0):
+        pts = float(frame.pts * frame.time_base)
+        rgb = frame.to_ndarray(format="rgb24")
+        img = rr.Image(rgb)
+        if compression is not None:
+            img = img.compress(jpeg_quality=95)
+
+        frame_queue.put((pts, img))
+
+    frame_queue.put(None)
+
+
+def stream_rerun_images_from_video_mp(video_path: Path, compression: int | None) -> Any:
+    frame_queue: multiprocessing.Queue[(int, rr.Image)] = multiprocessing.Queue(
+        maxsize=5
+    )
+
+    extractor_proc = multiprocessing.Process(
+        target=stream_rerun_images_from_video,
+        args=(video_path, frame_queue, compression),
+    )
+    extractor_proc.start()
+
+    while True:
+        frame_data = frame_queue.get()
+        if frame_data is None:
+            break
+        yield frame_data
+
+    extractor_proc.join()
+
 
 def load_from_videos(
-    item: dict[str, torch.Tensor], video_frame_keys: list[str], videos_dir: Path, tolerance_s: float
+    item: dict[str, torch.Tensor],
+    video_frame_keys: list[str],
+    videos_dir: Path,
+    tolerance_s: float,
 ):
     """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
     in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a Segmentation Fault.
@@ -43,17 +171,23 @@ def load_from_videos(
             timestamps = [frame["timestamp"] for frame in item[key]]
             paths = [frame["path"] for frame in item[key]]
             if len(set(paths)) > 1:
-                raise NotImplementedError("All video paths are expected to be the same for now.")
+                raise NotImplementedError(
+                    "All video paths are expected to be the same for now."
+                )
             video_path = data_dir / paths[0]
 
-            frames = decode_video_frames_torchvision(video_path, timestamps, tolerance_s)
+            frames = decode_video_frames_torchvision(
+                video_path, timestamps, tolerance_s
+            )
             item[key] = frames
         else:
             # load one frame
             timestamps = [item[key]["timestamp"]]
             video_path = data_dir / item[key]["path"]
 
-            frames = decode_video_frames_torchvision(video_path, timestamps, tolerance_s)
+            frames = decode_video_frames_torchvision(
+                video_path, timestamps, tolerance_s
+            )
             item[key] = frames[0]
 
     return item

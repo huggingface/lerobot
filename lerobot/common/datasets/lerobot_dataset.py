@@ -29,7 +29,10 @@ from lerobot.common.datasets.utils import (
     load_videos,
     reset_episode_index,
 )
-from lerobot.common.datasets.video_utils import VideoFrame, load_from_videos
+from lerobot.common.datasets.video_utils import (
+    VideoFrame,
+    load_from_videos,
+)
 
 DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 CODEBASE_VERSION = "v1.4"
@@ -44,6 +47,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         split: str = "train",
         transform: callable = None,
         delta_timestamps: dict[list[float]] | None = None,
+        include_video_images: bool = False,
     ):
         super().__init__()
         self.repo_id = repo_id
@@ -63,6 +67,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.hf_dataset = reset_episode_index(self.hf_dataset)
         self.stats = load_stats(repo_id, version, root)
         self.info = load_info(repo_id, version, root)
+        self.include_video_images = include_video_images
         if self.video:
             self.videos_dir = load_videos(repo_id, version, root)
 
@@ -139,7 +144,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self.tolerance_s,
             )
 
-        if self.video:
+        # Note: this decoding adds significant overhead when loading video frames
+        # It may be worth looking at the  SequentialRerunVideoReader to optimize it
+        # in a similar fashion. Some care needs to be executed there since __getitem__
+        # is already called on a separate process and the SequentialRerunVideoReader
+        # spawns its own process, but benefits from decoding that entire file sequentially
+        # on that process.
+        if self.video and self.include_video_images:
             item = load_from_videos(
                 item,
                 self.video_frame_keys,
