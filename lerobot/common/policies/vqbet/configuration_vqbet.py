@@ -108,15 +108,18 @@ class VQBeTConfig:
     vqvae_groups: int = 2
     vqvae_n_embed: int = 16
     vqvae_embedding_dim: int = 256
+    vqvae_enc_hidden_dim: int = 128
     # VQ-BeT
-    block_size: int = 50
-    output_dim: int = 256
-    n_layer: int = 6
-    n_head: int = 6
-    n_embd: int = 120
+    gpt_block_size: int = 500
+    gpt_input_dim: int = 512
+    gpt_output_dim: int = 512
+    gpt_n_layer: int = 8
+    gpt_n_head: int = 8
+    gpt_n_embed: int = 512
     dropout: float = 0.1
     mlp_hidden_dim: int = 1024
     offset_loss_weight: float = 10000.
+    secondary_code_multiplier: float = 0.5
 
     def __post_init__(self):
         """Input validation (not exhaustive)."""

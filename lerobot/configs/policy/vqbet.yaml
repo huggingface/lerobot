@@ -22,7 +22,7 @@ override_dataset_stats:
     max: [511.0, 511.0]
 
 training:
-  offline_steps: 800000
+  offline_steps: 250000
   online_steps: 0
   eval_freq: 20000
   save_freq: 20000
@@ -90,12 +90,15 @@ policy:
   vqvae_groups: 2
   vqvae_n_embed: 16
   vqvae_embedding_dim: 256
+  vqvae_enc_hidden_dim: 128
   # VQ-BeT
-  block_size: 500
-  output_dim: 512
-  n_layer: 8 # 8
-  n_head: 8 # 4
-  n_embd: 512
+  gpt_block_size: 500
+  gpt_input_dim: 512
+  gpt_output_dim: 512
+  gpt_n_layer: 8
+  gpt_n_head: 8
+  gpt_n_embed: 512
   dropout: 0.1
-  mlp_hidden_dim: 1024 # 512
+  mlp_hidden_dim: 1024
   offset_loss_weight: 10000.
+  secondary_code_multiplier: 0.5
