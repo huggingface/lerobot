@@ -57,7 +57,6 @@
 - Thanks to Tony Zaho, Zipeng Fu and colleagues for open sourcing ACT policy, ALOHA environments and datasets. Ours are adapted from [ALOHA](https://tonyzhaozh.github.io/aloha) and [Mobile ALOHA](https://mobile-aloha.github.io).
 - Thanks to Cheng Chi, Zhenjia Xu and colleagues for open sourcing Diffusion policy, Pusht environment and datasets, as well as UMI datasets. Ours are adapted from [Diffusion Policy](https://diffusion-policy.cs.columbia.edu) and [UMI Gripper](https://umi-gripper.github.io).
 - Thanks to Nicklas Hansen, Yunhai Feng and colleagues for open sourcing TDMPC policy, Simxarm environments and datasets. Ours are adapted from [TDMPC](https://github.com/nicklashansen/tdmpc) and [FOWM](https://www.yunhaifeng.com/FOWM).
-- Thanks to Vincent Moens and colleagues for open sourcing [TorchRL](https://github.com/pytorch/rl). It allowed for quick experimentations on the design of `LeRobot`.
 - Thanks to Antonio Loquercio and Ashish Kumar for their early support.
 
 
@@ -78,6 +77,10 @@ Install 🤗 LeRobot:
 pip install .
 ```
 
+> **NOTE:** Depending on your platform, If you encounter any build errors during this step
+you may need to install `cmake` and `build-essential` for building some of our dependencies.
+On linux: `sudo apt-get install cmake build-essential`
+
 For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
 - [aloha](https://github.com/huggingface/gym-aloha)
 - [xarm](https://github.com/huggingface/gym-xarm)
@@ -93,11 +96,14 @@ To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tra
 wandb login
 ```
 
+(note: you will also need to enable WandB in the configuration. See below.)
+
 ## Walkthrough
 
 ```
 .
 ├── examples             # contains demonstration examples, start here to learn about LeRobot
+|   └── advanced         # contains even more examples for those who have mastered the basics
 ├── lerobot
 |   ├── configs          # contains hydra yaml files with all options that you can override in the command line
 |   |   ├── default.yaml   # selected by default, it loads pusht environment and diffusion policy
@@ -157,15 +163,16 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ### Train your own policy
 
-Check out [example 3](./examples/3_train_policy.py) that illustrates how to start training a model.
+Check out [example 3](./examples/3_train_policy.py) that illustrates how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
 
-In general, you can use our training script to easily train any policy. To use wandb for logging training and evaluation curves, make sure you ran `wandb login`. Here is an example of training the ACT policy on trajectories collected by humans on the Aloha simulation environment for the insertion task:
+In general, you can use our training script to easily train any policy. Here is an example of training the ACT policy on trajectories collected by humans on the Aloha simulation environment for the insertion task:
+
 ```bash
 python lerobot/scripts/train.py \
     policy=act \
     env=aloha \
     env.task=AlohaInsertion-v0 \
-    dataset_repo_id=lerobot/aloha_sim_insertion_human
+    dataset_repo_id=lerobot/aloha_sim_insertion_human \
 ```
 
 The experiment directory is automatically generated and will show up in yellow in your terminal. It looks like `outputs/train/2024-05-05/20-21-12_aloha_act_default`. You can manually specify an experiment directory by adding this argument to the `train.py` python command:
@@ -173,17 +180,29 @@ The experiment directory is automatically generated and will show up in yellow i
     hydra.run.dir=your/new/experiment/dir
 ```
 
-A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of logs from wandb:
-![](media/wandb.png)
+To use wandb for logging training and evaluation curves, make sure you've run `wandb login` as a one-time setup step. Then, when running the training command above, enable WandB in the configuration by adding:
 
-You can deactivate wandb by adding these arguments to the `train.py` python command:
 ```bash
-    wandb.disable_artifact=true \
-    wandb.enable=false
+    wandb.enable=true
 ```
 
-Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. After training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
+A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of what they look like in your browser:
 
+![](media/wandb.png)
+
+Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. You may use `eval.n_episodes=500` to evaluate on more episodes than the default. Or, after training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
+
+#### Reproduce state-of-the-art (SOTA)
+
+We have organized our configuration files (found under [`lerobot/configs`](./lerobot/configs)) such that they reproduce SOTA results from a given model variant in their respective original works. Simply running:
+
+```bash
+python lerobot/scripts/train.py policy=diffusion env=pusht
+```
+
+reproduces SOTA results for Diffusion Policy on the PushT task.
+
+Pretrained policies, along with reproduction details, can be found under the "Models" section of https://huggingface.co/lerobot.
 
 ## Contribute
 
@@ -196,11 +215,11 @@ To add a dataset to the hub, you need to login using a write-access token, which
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-Then move your dataset folder in `data` directory (e.g. `data/aloha_ping_pong`), and push your dataset to the hub with:
+Then move your dataset folder in `data` directory (e.g. `data/aloha_static_pingpong_test`), and push your dataset to the hub with:
 ```bash
 python lerobot/scripts/push_dataset_to_hub.py \
 --data-dir data \
---dataset-id aloha_ping_ping \
+--dataset-id aloha_static_pingpong_test \
 --raw-format aloha_hdf5 \
 --community-id lerobot
 ```

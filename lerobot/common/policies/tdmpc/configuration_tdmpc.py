@@ -1,3 +1,19 @@
+#!/usr/bin/env python
+
+# Copyright 2024 Nicklas Hansen, Xiaolong Wang, Hao Su,
+# and The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 from dataclasses import dataclass, field
 
 
@@ -47,7 +63,7 @@ class TDMPCConfig:
         elite_weighting_temperature: The temperature to use for softmax weighting (by trajectory value) of the
             elites, when updating the gaussian parameters for CEM.
         gaussian_mean_momentum: Momentum (α) used for EMA updates of the mean parameter μ of the gaussian
-            paramters optimized in CEM. Updates are calculated as μ⁻ ← αμ⁻ + (1-α)μ.
+            parameters optimized in CEM. Updates are calculated as μ⁻ ← αμ⁻ + (1-α)μ.
         max_random_shift_ratio: Maximum random shift (as a proportion of the image size) to apply to the
             image(s) (in units of pixels) for training-time augmentation. If set to 0, no such augmentation
             is applied. Note that the input images are assumed to be square for this augmentation.
@@ -131,12 +147,18 @@ class TDMPCConfig:
 
     def __post_init__(self):
         """Input validation (not exhaustive)."""
-        if self.input_shapes["observation.image"][-2] != self.input_shapes["observation.image"][-1]:
+        # There should only be one image key.
+        image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
+        if len(image_keys) != 1:
+            raise ValueError(
+                f"{self.__class__.__name__} only handles one image for now. Got image keys {image_keys}."
+            )
+        image_key = next(iter(image_keys))
+        if self.input_shapes[image_key][-2] != self.input_shapes[image_key][-1]:
             # TODO(alexander-soare): This limitation is solely because of code in the random shift
             # augmentation. It should be able to be removed.
             raise ValueError(
-                "Only square images are handled now. Got image shape "
-                f"{self.input_shapes['observation.image']}."
+                f"Only square images are handled now. Got image shape {self.input_shapes[image_key]}."
             )
         if self.n_gaussian_samples <= 0:
             raise ValueError(

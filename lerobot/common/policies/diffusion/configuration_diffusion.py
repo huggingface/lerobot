@@ -1,3 +1,19 @@
+#!/usr/bin/env python
+
+# Copyright 2024 Columbia Artificial Intelligence, Robotics Lab,
+# and The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 from dataclasses import dataclass, field
 
 
@@ -51,6 +67,7 @@ class DiffusionConfig:
         use_film_scale_modulation: FiLM (https://arxiv.org/abs/1709.07871) is used for the Unet conditioning.
             Bias modulation is used be default, while this parameter indicates whether to also use scale
             modulation.
+        noise_scheduler_type: Name of the noise scheduler to use. Supported options: ["DDPM", "DDIM"].
         num_train_timesteps: Number of diffusion steps for the forward diffusion schedule.
         beta_schedule: Name of the diffusion beta schedule as per DDPMScheduler from Hugging Face diffusers.
         beta_start: Beta value for the first forward-diffusion step.
@@ -110,6 +127,7 @@ class DiffusionConfig:
     diffusion_step_embed_dim: int = 128
     use_film_scale_modulation: bool = True
     # Noise scheduler.
+    noise_scheduler_type: str = "DDPM"
     num_train_timesteps: int = 100
     beta_schedule: str = "squaredcos_cap_v2"
     beta_start: float = 0.0001
@@ -130,17 +148,30 @@ class DiffusionConfig:
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
+        # There should only be one image key.
+        image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
+        if len(image_keys) != 1:
+            raise ValueError(
+                f"{self.__class__.__name__} only handles one image for now. Got image keys {image_keys}."
+            )
+        image_key = next(iter(image_keys))
         if (
-            self.crop_shape[0] > self.input_shapes["observation.image"][1]
-            or self.crop_shape[1] > self.input_shapes["observation.image"][2]
+            self.crop_shape[0] > self.input_shapes[image_key][1]
+            or self.crop_shape[1] > self.input_shapes[image_key][2]
         ):
             raise ValueError(
-                f'`crop_shape` should fit within `input_shapes["observation.image"]`. Got {self.crop_shape} '
-                f'for `crop_shape` and {self.input_shapes["observation.image"]} for '
-                '`input_shapes["observation.image"]`.'
+                f"`crop_shape` should fit within `input_shapes[{image_key}]`. Got {self.crop_shape} "
+                f"for `crop_shape` and {self.input_shapes[image_key]} for "
+                "`input_shapes[{image_key}]`."
             )
         supported_prediction_types = ["epsilon", "sample"]
         if self.prediction_type not in supported_prediction_types:
             raise ValueError(
                 f"`prediction_type` must be one of {supported_prediction_types}. Got {self.prediction_type}."
+            )
+        supported_noise_schedulers = ["DDPM", "DDIM"]
+        if self.noise_scheduler_type not in supported_noise_schedulers:
+            raise ValueError(
+                f"`noise_scheduler_type` must be one of {supported_noise_schedulers}. "
+                f"Got {self.noise_scheduler_type}."
             )
