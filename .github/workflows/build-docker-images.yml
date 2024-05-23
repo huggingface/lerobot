@@ -166,7 +166,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      - name: Build and Push GPU
+      - name: Build and Push GPU dev
         uses: docker/build-push-action@v5
         with:
           context: .
