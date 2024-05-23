@@ -33,7 +33,7 @@ from lerobot.common.utils.utils import init_logging
 
 def check_format(raw_dir) -> bool:
     # TODO(rcadene): remove hardcoding
-    raw_dir = raw_dir / "018f9fdc-6b7b-7432-a529-40d2cc718032"
+    raw_dir = raw_dir / "018fa076-ad19-7c77-afa4-49f7f072e86f"
     assert raw_dir.exists()
 
     leader_file = list(raw_dir.glob("*.parquet"))
@@ -44,7 +44,7 @@ def check_format(raw_dir) -> bool:
 
 def load_from_raw(raw_dir: Path, out_dir: Path):
     # TODO(rcadene): remove hardcoding
-    raw_dir = raw_dir / "018f9fdc-6b7b-7432-a529-40d2cc718032"
+    raw_dir = raw_dir / "018fa076-ad19-7c77-afa4-49f7f072e86f"
 
     # Load data stream that will be used as reference for the timestamps synchronization
     reference_key = "observation.images.cam_right_wrist"
@@ -91,7 +91,7 @@ def load_from_raw(raw_dir: Path, out_dir: Path):
 
     # sanity check episode indices go from 0 to n-1
     ep_ids = [ep_idx for ep_idx, _ in df.groupby("episode_index")]
-    expected_ep_ids = list(range(df["episode_index"].max()))
+    expected_ep_ids = list(range(df["episode_index"].max() + 1))
     assert ep_ids == expected_ep_ids, f"Episodes indices go from {ep_ids} instead of {expected_ep_ids}"
 
     # Create symlink to raw videos directory (that needs to be absolute not relative)

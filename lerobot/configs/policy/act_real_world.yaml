@@ -25,8 +25,8 @@ training:
   offline_steps: 80000
   online_steps: 0
   eval_freq: 99999999999999
-  save_freq: 100000
-  log_freq: 250
+  save_freq: 1000
+  log_freq: 100
   save_model: true
 
   batch_size: 8
