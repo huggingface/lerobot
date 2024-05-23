@@ -10,7 +10,6 @@ on:
 
 env:
   PYTHON_VERSION: "3.10"
-#   CI_SLACK_CHANNEL: ${{ secrets.CI_DOCKER_CHANNEL }}
 
 jobs:
   latest-cpu:
@@ -51,30 +50,6 @@ jobs:
           tags: huggingface/lerobot-cpu
           build-args: PYTHON_VERSION=${{ env.PYTHON_VERSION }}
 
-    #   - name: Post to a Slack channel
-    #     id: slack
-    #     #uses: slackapi/slack-github-action@v1.25.0
-    #     uses: slackapi/slack-github-action@6c661ce58804a1a20f6dc5fbee7f0381b469e001
-    #     with:
-    #       # Slack channel id, channel name, or user id to post message.
-    #       # See also: https://api.slack.com/methods/chat.postMessage#channels
-    #       channel-id: ${{ env.CI_SLACK_CHANNEL }}
-    #       # For posting a rich message using Block Kit
-    #       payload: |
-    #         {
-    #           "text": "lerobot-cpu Docker Image build result: ${{ job.status }}\n${{ github.event.pull_request.html_url || github.event.head_commit.url }}",
-    #           "blocks": [
-    #             {
-    #               "type": "section",
-    #               "text": {
-    #                 "type": "mrkdwn",
-    #                 "text": "lerobot-cpu Docker Image build result: ${{ job.status }}\n${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
-    #               }
-    #             }
-    #           ]
-    #         }
-    #     env:
-    #       SLACK_BOT_TOKEN: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
 
   latest-cuda:
     name: GPU
@@ -113,30 +88,6 @@ jobs:
           tags: huggingface/lerobot-gpu
           build-args: PYTHON_VERSION=${{ env.PYTHON_VERSION }}
 
-      # - name: Post to a Slack channel
-      #   id: slack
-      #   #uses: slackapi/slack-github-action@v1.25.0
-      #   uses: slackapi/slack-github-action@6c661ce58804a1a20f6dc5fbee7f0381b469e001
-      #   with:
-      #     # Slack channel id, channel name, or user id to post message.
-      #     # See also: https://api.slack.com/methods/chat.postMessage#channels
-      #     channel-id: ${{ env.CI_SLACK_CHANNEL }}
-      #     # For posting a rich message using Block Kit
-      #     payload: |
-      #       {
-      #         "text": "lerobot-gpu Docker Image build result: ${{ job.status }}\n${{ github.event.pull_request.html_url || github.event.head_commit.url }}",
-      #         "blocks": [
-      #           {
-      #             "type": "section",
-      #             "text": {
-      #               "type": "mrkdwn",
-      #               "text": "lerobot-gpu Docker Image build result: ${{ job.status }}\n${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
-      #             }
-      #           }
-      #         ]
-      #       }
-      #   env:
-      #     SLACK_BOT_TOKEN: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
 
   latest-cuda-dev:
     name: GPU Dev
@@ -174,28 +125,3 @@ jobs:
           push: true
           tags: huggingface/lerobot-gpu:dev
           build-args: PYTHON_VERSION=${{ env.PYTHON_VERSION }}
-
-      # - name: Post to a Slack channel
-      #   id: slack
-      #   #uses: slackapi/slack-github-action@v1.25.0
-      #   uses: slackapi/slack-github-action@6c661ce58804a1a20f6dc5fbee7f0381b469e001
-      #   with:
-      #     # Slack channel id, channel name, or user id to post message.
-      #     # See also: https://api.slack.com/methods/chat.postMessage#channels
-      #     channel-id: ${{ env.CI_SLACK_CHANNEL }}
-      #     # For posting a rich message using Block Kit
-      #     payload: |
-      #       {
-      #         "text": "lerobot-gpu-dev Docker Image build result: ${{ job.status }}\n${{ github.event.pull_request.html_url || github.event.head_commit.url }}",
-      #         "blocks": [
-      #           {
-      #             "type": "section",
-      #             "text": {
-      #               "type": "mrkdwn",
-      #               "text": "lerobot-gpu-dev Docker Image build result: ${{ job.status }}\n${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
-      #             }
-      #           }
-      #         ]
-      #       }
-      #   env:
-      #     SLACK_BOT_TOKEN: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
