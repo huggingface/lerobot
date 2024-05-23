@@ -32,8 +32,6 @@ from lerobot.common.utils.utils import init_logging
 
 
 def check_format(raw_dir) -> bool:
-    # TODO(rcadene): remove hardcoding
-    raw_dir = raw_dir / "018fa076-ad19-7c77-afa4-49f7f072e86f"
     assert raw_dir.exists()
 
     leader_file = list(raw_dir.glob("*.parquet"))
@@ -43,9 +41,6 @@ def check_format(raw_dir) -> bool:
 
 
 def load_from_raw(raw_dir: Path, out_dir: Path):
-    # TODO(rcadene): remove hardcoding
-    raw_dir = raw_dir / "018fa076-ad19-7c77-afa4-49f7f072e86f"
-
     # Load data stream that will be used as reference for the timestamps synchronization
     reference_key = "observation.images.cam_right_wrist"
     reference_df = pd.read_parquet(raw_dir / f"{reference_key}.parquet")
