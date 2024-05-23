@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class VQBeTConfig:
-    """Configuration class for DiffusionPolicy.
+    """Configuration class for VQ-BeT.
 
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.
 
@@ -13,9 +13,8 @@ class VQBeTConfig:
     Args:
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
-        horizon: Diffusion model action prediction size as detailed in `DiffusionPolicy.select_action`.
-        n_action_steps: The number of action steps to run in the environment for one invocation of the policy.
-            See `DiffusionPolicy.select_action` for more details.
+        n_action_pred_token: TODO(jayLEE0301)
+        n_action_pred_chunk: TODO(jayLEE0301)
         input_shapes: A dictionary defining the shapes of the input data for the policy.
             The key represents the input data name, and the value is a list indicating the dimensions
             of the corresponding data. For example, "observation.image" refers to an input from
@@ -41,32 +40,21 @@ class VQBeTConfig:
         use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
             The group sizes are set to be about 16 (to be precise, feature_dim // 16).
         spatial_softmax_num_keypoints: Number of keypoints for SpatialSoftmax.
-        down_dims: Feature dimension for each stage of temporal downsampling in the diffusion modeling Unet.
-            You may provide a variable number of dimensions, therefore also controlling the degree of
-            downsampling.
-        kernel_size: The convolutional kernel size of the diffusion modeling Unet.
-        n_groups: Number of groups used in the group norm of the Unet's convolutional blocks.
-        diffusion_step_embed_dim: The Unet is conditioned on the diffusion timestep via a small non-linear
-            network. This is the output dimension of that network, i.e., the embedding dimension.
-        use_film_scale_modulation: FiLM (https://arxiv.org/abs/1709.07871) is used for the Unet conditioning.
-            Bias modulation is used be default, while this parameter indicates whether to also use scale
-            modulation.
-        num_train_timesteps: Number of diffusion steps for the forward diffusion schedule.
-        beta_schedule: Name of the diffusion beta schedule as per DDPMScheduler from Hugging Face diffusers.
-        beta_start: Beta value for the first forward-diffusion step.
-        beta_end: Beta value for the last forward-diffusion step.
-        prediction_type: The type of prediction that the diffusion modeling Unet makes. Choose from "epsilon"
-            or "sample". These have equivalent outcomes from a latent variable modeling perspective, but
-            "epsilon" has been shown to work better in many deep neural network settings.
-        clip_sample: Whether to clip the sample to [-`clip_sample_range`, +`clip_sample_range`] for each
-            denoising step at inference time. WARNING: you will need to make sure your action-space is
-            normalized to fit within this range.
-        clip_sample_range: The magnitude of the clipping range as described above.
-        num_inference_steps: Number of reverse diffusion steps to use at inference time (steps are evenly
-            spaced). If not provided, this defaults to be the same as `num_train_timesteps`.
-        do_mask_loss_for_padding: Whether to mask the loss when there are copy-padded actions. See
-            `LeRobotDataset` and `load_previous_and_future_frames` for mor information. Note, this defaults
-            to False as the original Diffusion Policy implementation does the same.
+        discretize_step: TODO(jayLEE0301)
+        vqvae_groups: TODO(jayLEE0301)
+        vqvae_n_embed: TODO(jayLEE0301)
+        vqvae_embedding_dim: TODO(jayLEE0301)
+        vqvae_enc_hidden_dim: TODO(jayLEE0301)
+        gpt_block_size: TODO(jayLEE0301)
+        gpt_input_dim: TODO(jayLEE0301)
+        gpt_output_dim: TODO(jayLEE0301)
+        gpt_n_layer: TODO(jayLEE0301)
+        gpt_n_head: TODO(jayLEE0301)
+        gpt_hidden_dim: TODO(jayLEE0301)
+        dropout: TODO(jayLEE0301)
+        mlp_hidden_dim: TODO(jayLEE0301)
+        offset_loss_weight: TODO(jayLEE0301)
+        secondary_code_loss_weight: TODO(jayLEE0301)
     """
 
     # Inputs / output structure.
@@ -115,11 +103,11 @@ class VQBeTConfig:
     gpt_output_dim: int = 512
     gpt_n_layer: int = 8
     gpt_n_head: int = 8
-    gpt_n_embed: int = 512
+    gpt_hidden_dim: int = 512
     dropout: float = 0.1
     mlp_hidden_dim: int = 1024
     offset_loss_weight: float = 10000.
-    secondary_code_multiplier: float = 0.5
+    secondary_code_loss_weight: float = 0.5
 
     def __post_init__(self):
         """Input validation (not exhaustive)."""

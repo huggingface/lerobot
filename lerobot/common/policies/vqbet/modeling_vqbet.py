@@ -173,7 +173,7 @@ class VQBeTModel(nn.Module):
             ], dim=-2).view(batch_size, -1, self.config.gpt_input_dim)
         if img_features.shape[1] != n_obs_steps:
             raise NotImplementedError
-        # eos_token = self._eos_token.repeat(batch_size, 1, 1) # TODO remove EOS token
+        # eos_token = self._eos_token.repeat(batch_size, 1, 1) # TODO(jayLEE0301) remove EOS token
         len_additional_action_token = self.config.n_action_pred_token-1
         action_token = self._action_token.repeat(batch_size, len_additional_action_token, 1)
         
@@ -183,7 +183,7 @@ class VQBeTModel(nn.Module):
         
         # get action features
         features = self._policy(global_cond)
-        historical_act_pred_index = np.arange(0, n_obs_steps) * 3 + 2 # TODO make it compatible with other values
+        historical_act_pred_index = np.arange(0, n_obs_steps) * 3 + 2 # TODO(jayLEE0301) make it compatible with other values
         features = torch.cat([
             features[:, historical_act_pred_index],
             features[:, -len_additional_action_token:]
@@ -225,7 +225,7 @@ class VQBeTHead(nn.Module):
         self.output_size = config.output_shapes["action"][0]
         self.hidden_size = config.mlp_hidden_dim
         self.offset_loss_weight = config.offset_loss_weight
-        self.secondary_code_multiplier = config.secondary_code_multiplier
+        self.secondary_code_loss_weight = config.secondary_code_loss_weight
 
         self.vqvae_groups = config.vqvae_groups
         self.vqvae_n_embed = config.vqvae_n_embed  # C(number of code integers)
@@ -358,7 +358,7 @@ class VQBeTHead(nn.Module):
             cbet_logits[:, 1, :],
             action_bins[:, 1],
         )
-        cbet_loss = cbet_loss1 * 5 + cbet_loss2 * self.secondary_code_multiplier
+        cbet_loss = cbet_loss1 * 5 + cbet_loss2 * self.secondary_code_loss_weight
 
         equal_primary_code_rate = torch.sum(
             (action_bins[:, 0] == sampled_centers[:, 0]).int()
@@ -2058,11 +2058,11 @@ class MLP(torch.nn.Sequential):
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
-        assert config.gpt_n_embed % config.gpt_n_head == 0
+        assert config.gpt_hidden_dim % config.gpt_n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.gpt_n_embed, 3 * config.gpt_n_embed)
+        self.c_attn = nn.Linear(config.gpt_hidden_dim, 3 * config.gpt_hidden_dim)
         # output projection
-        self.c_proj = nn.Linear(config.gpt_n_embed, config.gpt_n_embed)
+        self.c_proj = nn.Linear(config.gpt_hidden_dim, config.gpt_hidden_dim)
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
@@ -2074,17 +2074,17 @@ class CausalSelfAttention(nn.Module):
             ),
         )
         self.gpt_n_head = config.gpt_n_head
-        self.gpt_n_embed = config.gpt_n_embed
+        self.gpt_hidden_dim = config.gpt_hidden_dim
 
     def forward(self, x):
         (
             B,
             T,
             C,
-        ) = x.size()  # batch size, sequence length, embedding dimensionality (gpt_n_embed)
+        ) = x.size()  # batch size, sequence length, embedding dimensionality (gpt_hidden_dim)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v = self.c_attn(x).split(self.gpt_n_embed, dim=2)
+        q, k, v = self.c_attn(x).split(self.gpt_hidden_dim, dim=2)
         k = k.view(B, T, self.gpt_n_head, C // self.gpt_n_head).transpose(
             1, 2
         )  # (B, nh, T, hs)
@@ -2114,13 +2114,13 @@ class CausalSelfAttention(nn.Module):
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.ln_1 = nn.LayerNorm(config.gpt_n_embed)
+        self.ln_1 = nn.LayerNorm(config.gpt_hidden_dim)
         self.attn = CausalSelfAttention(config)
-        self.ln_2 = nn.LayerNorm(config.gpt_n_embed)
+        self.ln_2 = nn.LayerNorm(config.gpt_hidden_dim)
         self.mlp = nn.Sequential(
-                    nn.Linear(config.gpt_n_embed, 4 * config.gpt_n_embed),
+                    nn.Linear(config.gpt_hidden_dim, 4 * config.gpt_hidden_dim),
                     nn.GELU(),
-                    nn.Linear(4 * config.gpt_n_embed, config.gpt_n_embed),
+                    nn.Linear(4 * config.gpt_hidden_dim, config.gpt_hidden_dim),
                     nn.Dropout(config.dropout)
                 )
 
@@ -2178,14 +2178,14 @@ class GPT(nn.Module):
 
         self.transformer = nn.ModuleDict(
             dict(
-                wte=nn.Linear(config.gpt_input_dim, config.gpt_n_embed),
-                wpe=nn.Embedding(config.gpt_block_size, config.gpt_n_embed),
+                wte=nn.Linear(config.gpt_input_dim, config.gpt_hidden_dim),
+                wpe=nn.Embedding(config.gpt_block_size, config.gpt_hidden_dim),
                 drop=nn.Dropout(config.dropout),
                 h=nn.ModuleList([Block(config) for _ in range(config.gpt_n_layer)]),
-                ln_f=nn.LayerNorm(config.gpt_n_embed),
+                ln_f=nn.LayerNorm(config.gpt_hidden_dim),
             )
         )
-        self.lm_head = nn.Linear(config.gpt_n_embed, config.gpt_output_dim, bias=False)
+        self.lm_head = nn.Linear(config.gpt_hidden_dim, config.gpt_output_dim, bias=False)
         # init all weights, and apply a special scaled init to the residual projections, per GPT-2 paper
         self.apply(self._init_weights)
         for pn, p in self.named_parameters():
@@ -2211,10 +2211,10 @@ class GPT(nn.Module):
         # forward the GPT model itself
         tok_emb = self.transformer.wte(
             input
-        )  # token embeddings of shape (b, t, gpt_n_embed)
+        )  # token embeddings of shape (b, t, gpt_hidden_dim)
         pos_emb = self.transformer.wpe(
             pos
-        )  # position embeddings of shape (1, t, gpt_n_embed)
+        )  # position embeddings of shape (1, t, gpt_hidden_dim)
         x = self.transformer.drop(tok_emb + pos_emb)
         for block in self.transformer.h:
             x = block(x)
