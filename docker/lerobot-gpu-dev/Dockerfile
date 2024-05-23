@@ -16,9 +16,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python${PYTHON_VERSION} python${PYTHON_VERSION}-venv \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Setup `python`
-RUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python
-
 # Install gh cli tool
 RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
     && mkdir -p -m 755 /etc/apt/keyrings \
@@ -29,25 +26,15 @@ RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
     && apt install gh -y \
     && apt clean && rm -rf /var/lib/apt/lists/*
 
-# Install miniconda
-RUN mkdir -p /root/miniconda3 \
-    && wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /root/miniconda3/miniconda.sh \
-    && bash /root/miniconda3/miniconda.sh -b -u -p /root/miniconda3 \
-    && rm -rf /root/miniconda3/miniconda.sh
-ENV PATH="/root/miniconda3/bin/:$PATH"
-
-# Setup conda & create env
-RUN conda init bash \
-    && . ~/.bashrc \
-    && conda create -y -n lerobot python=3.10 \
-    && conda activate lerobot
+# Setup `python`
+RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # Install poetry
 RUN curl -sSL https://install.python-poetry.org | python -
 ENV PATH="/root/.local/bin:$PATH"
-
-# Ensure conda environment activation and poetry path in .bashrc
-RUN echo "source /root/miniconda3/etc/profile.d/conda.sh && conda activate lerobot" >> /root/.bashrc
+RUN echo 'if [ "$HOME" != "/root" ]; then ln -sf /root/.local/bin/poetry $HOME/.local/bin/poetry; fi' >> /root/.bashrc
+RUN poetry config virtualenvs.create false
+RUN poetry config virtualenvs.in-project true
 
 # Set EGL as the rendering backend for MuJoCo
 ENV MUJOCO_GL="egl"
