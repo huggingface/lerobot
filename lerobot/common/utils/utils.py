@@ -53,7 +53,8 @@ def set_global_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 @contextmanager
@@ -72,13 +73,15 @@ def seeded_context(seed: int) -> Generator[None, None, None]:
     random_state = random.getstate()
     np_random_state = np.random.get_state()
     torch_random_state = torch.random.get_rng_state()
-    torch_cuda_random_state = torch.cuda.random.get_rng_state()
+    if torch.cuda.is_available():
+        torch_cuda_random_state = torch.cuda.random.get_rng_state()
     set_global_seed(seed)
     yield None
     random.setstate(random_state)
     np.random.set_state(np_random_state)
     torch.random.set_rng_state(torch_random_state)
-    torch.cuda.random.set_rng_state(torch_cuda_random_state)
+    if torch.cuda.is_available():
+        torch.cuda.random.set_rng_state(torch_cuda_random_state)
 
 
 def init_logging():
