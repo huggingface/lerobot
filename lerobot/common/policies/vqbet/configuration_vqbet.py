@@ -108,6 +108,7 @@ class VQBeTConfig:
     mlp_hidden_dim: int = 1024
     offset_loss_weight: float = 10000.
     secondary_code_loss_weight: float = 0.5
+    bet_softmax_temperature: float = 0.1
 
     def __post_init__(self):
         """Input validation (not exhaustive)."""

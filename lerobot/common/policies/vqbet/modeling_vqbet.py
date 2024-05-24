@@ -270,7 +270,7 @@ class VQBeTHead(nn.Module):
         cbet_offsets = einops.rearrange(
             cbet_offsets, "(NT) (G C WA) -> (NT) G C WA", G=self.config.vqvae_groups, C=self.config.vqvae_n_embed
         )
-        cbet_probs = torch.softmax(cbet_logits, dim=-1)
+        cbet_probs = torch.softmax(cbet_logits / self.config.bet_softmax_temperature, dim=-1)
         NT, G, choices = cbet_probs.shape
         sampled_centers = einops.rearrange(
             torch.multinomial(cbet_probs.view(-1, choices), num_samples=1),

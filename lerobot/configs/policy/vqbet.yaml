@@ -100,3 +100,4 @@ policy:
   mlp_hidden_dim: 1024
   offset_loss_weight: 10000.
   secondary_code_loss_weight: 0.5
+  bet_softmax_temperature: 0.1
