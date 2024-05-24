@@ -176,7 +176,7 @@ class OctoModel(nn.Module):
 
         self.rgb_encoder = OctoRgbEncoder(config)
         feat_map_shape = self.rgb_encoder.feature_map_shape
-        obs_seq_max_len = ((feat_map_shape[1] * feat_map_shape[2]) + 1) * config.n_obs_steps
+        obs_seq_len = ((feat_map_shape[1] * feat_map_shape[2]) + 1) * config.n_obs_steps
         self.transformer = OctoNet(
             n_obs=config.n_obs_steps,
             qpos_dim=config.input_shapes["observation.state"][0],
@@ -185,7 +185,7 @@ class OctoModel(nn.Module):
             n_layers=config.n_layers,
             n_heads=config.n_heads,
             d_ffn=config.d_ffn,
-            obs_seq_max_len=obs_seq_max_len,
+            obs_seq_len=obs_seq_len,
             dropout=config.dropout,
         )
         self.action_head = DiffusionActionHead(
@@ -471,7 +471,7 @@ class OctoNet(nn.Module):
         n_layers,
         n_heads,
         d_ffn,
-        obs_seq_max_len,
+        obs_seq_len,
         dropout=0.1,
         use_causal_mask=True,
     ):
@@ -480,12 +480,12 @@ class OctoNet(nn.Module):
         # hardcode this to use only one readout head for now
         n_readouts = 1
 
-        pos_emb_max_len = obs_seq_max_len + n_readouts * n_obs
+        pos_emb_max_len = obs_seq_len + n_readouts * n_obs
         self.n_readouts = n_readouts
 
         causal_mask = None
         if use_causal_mask:
-            causal_mask = make_mask(obs_seq_max_len // n_obs, n_obs)
+            causal_mask = make_mask(obs_seq_len // n_obs, n_obs)
         self.qpos_proj = nn.Linear(qpos_dim, embed_dim)
         self.img_proj = nn.Linear(img_dim, embed_dim)
         self.readout_tokens = nn.Parameter(torch.randn((1, n_obs, n_readouts, embed_dim)))
