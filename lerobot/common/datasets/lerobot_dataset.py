@@ -169,8 +169,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if k in item:
                 del item[k]
 
-        item["dataset_repo_id"] = self.repo_id
-
         if self.transform is not None:
             item = self.transform(item)
 

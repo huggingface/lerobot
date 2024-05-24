@@ -276,12 +276,12 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             "Multiple datasets were provided. Applying the following index mapping to the provided datasets: "
             f"{pformat(id_to_index, indent=2)}"
         )
+        for dataset_repo_id, dataset in zip(cfg.dataset_repo_id, _offline_datasets, strict=True):
 
-        def transform(item):
-            item["dataset_index"] = torch.tensor(id_to_index[item["dataset_repo_id"]])
-            return item
+            def transform(item, d_id=dataset_repo_id):
+                item["dataset_index"] = torch.tensor(id_to_index[d_id])
+                return item
 
-        for dataset in _offline_datasets:
             if dataset.transform is None:
                 dataset.transform = transform
             else:

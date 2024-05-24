@@ -354,7 +354,3 @@ def test_consolidate_stats():
     for data_key, data in zip(["a", "b", "c"], [data_a, data_b, data_c], strict=True):
         for agg_fn in ["mean", "min", "max"]:
             assert torch.allclose(stats[data_key][agg_fn], einops.reduce(data, "n -> 1", agg_fn))
-
-
-if __name__ == "__main__":
-    test_consolidate_stats()

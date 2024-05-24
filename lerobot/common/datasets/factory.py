@@ -27,6 +27,9 @@ def make_dataset(cfg, dataset_repo_id: str | None = None, split: str = "train") 
         cfg: A Hydra config as per the LeRobot config scheme.
         dataset_repo_id: Override the repo id in `cfg` (this is useful when the configuration contains a list
             of repo IDs instead of just one).
+        split: TODO(now)
+    Returns:
+        The LeRobotDataset.
     """
     dataset_repo_id = cfg.dataset_repo_id if dataset_repo_id is None else dataset_repo_id
 
