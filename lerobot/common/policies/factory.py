@@ -55,6 +55,11 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
         from lerobot.common.policies.act.modeling_act import ACTPolicy
 
         return ACTPolicy, ACTConfig
+    elif name == "octo":
+        from lerobot.common.policies.octo.configuration_octo import OctoConfig
+        from lerobot.common.policies.octo.modeling_octo import OctoPolicy
+
+        return OctoPolicy, OctoConfig
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 

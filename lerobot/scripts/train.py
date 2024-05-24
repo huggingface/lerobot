@@ -80,6 +80,11 @@ def make_optimizer_and_scheduler(cfg, policy):
     elif policy.name == "tdmpc":
         optimizer = torch.optim.Adam(policy.parameters(), cfg.training.lr)
         lr_scheduler = None
+    elif policy.name == "octo":
+        optimizer = torch.optim.AdamW(
+            policy.parameters(), cfg.training.lr, weight_decay=cfg.training.weight_decay
+        )
+        lr_scheduler = None
     else:
         raise NotImplementedError()
 

@@ -108,15 +108,11 @@ available_datasets = list(
     itertools.chain(*available_datasets_per_env.values(), available_real_world_datasets)
 )
 
-available_policies = [
-    "act",
-    "diffusion",
-    "tdmpc",
-]
+available_policies = ["act", "diffusion", "tdmpc", "octo"]
 
 available_policies_per_env = {
     "aloha": ["act"],
-    "pusht": ["diffusion"],
+    "pusht": ["diffusion", "octo"],
     "xarm": ["tdmpc"],
 }
 
