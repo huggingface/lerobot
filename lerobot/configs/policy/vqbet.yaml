@@ -1,6 +1,6 @@
 # @package _global_
 
-# Defaults for training for the PushT dataset as per https://github.com/real-stanford/diffusion_policy.
+# Defaults for training for the PushT dataset.
 
 seed: 100000
 dataset_repo_id: lerobot/pusht
@@ -100,5 +100,6 @@ policy:
   dropout: 0.1
   mlp_hidden_dim: 1024
   offset_loss_weight: 10000.
+  primary_code_loss_weight: 5.0
   secondary_code_loss_weight: 0.5
   bet_softmax_temperature: 0.1
