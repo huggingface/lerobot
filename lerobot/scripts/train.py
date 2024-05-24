@@ -262,6 +262,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         intersection_data_keys = set(_offline_datasets[0].hf_dataset.features)
         for dataset in _offline_datasets:
             intersection_data_keys.intersection_update(dataset.hf_dataset.features)
+        if len(intersection_data_keys) == 0:
+            raise RuntimeError(
+                "Multiple datasets were provided but they had no keys common to all of them. The "
+                "multi-dataset functionality currently only keeps common keys."
+            )
         for dataset_repo_id, dataset in zip(cfg.dataset_repo_id, _offline_datasets, strict=True):
             extra_keys = set(dataset.hf_dataset.features).difference(intersection_data_keys)
             logging.warning(
@@ -285,7 +290,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             if dataset.transform is None:
                 dataset.transform = transform
             else:
-                raise NotImplementedError("")
+                raise NotImplementedError("TODO(now)")
         # Concatenate the datasets.
         offline_dataset = torch.utils.data.ConcatDataset(_offline_datasets)
     else:
