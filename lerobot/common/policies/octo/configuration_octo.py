@@ -64,7 +64,7 @@ class OctoConfig:
         n_heads: Number of heads in the Octo transformer.
         d_ffn: Dimension of the feed-forward network in the Octo transformer.
         dropout: Dropout rate in the Octo transformer.
-        use_causal_mask: Whether to use a causal mask in the Octo transformer.
+        use_blockwise_causal_mask: Whether to use a causal mask in the Octo transformer.
         time_dim: Dimension of the time features in the action head.
         n_diffusion_head_layers: Number of layers in the action head.
         # =====================
@@ -121,14 +121,15 @@ class OctoConfig:
     crop_is_random: bool = True
     pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True
-    # OctoTransformer.
+    # OctoTransformer. Config for "vit_s" variant.
     embed_dim: int = 384
     n_readouts: int = 1
     n_layers: int = 12
     n_heads: int = 6
     d_ffn: int = 1536
-    dropout: int = 0.1
-    use_causal_mask: bool = True
+    dropout: int = 0.0
+    add_positional_encoding: bool = False
+    use_blockwise_causal_mask: bool = True
     time_dim: int = 32
     n_diffusion_head_layers: int = 3
     # Noise scheduler.

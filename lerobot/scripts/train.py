@@ -83,9 +83,15 @@ def make_optimizer_and_scheduler(cfg, policy):
         lr_scheduler = None
     elif cfg.policy.name == "octo":
         optimizer = torch.optim.AdamW(
-            policy.parameters(), cfg.training.lr, weight_decay=cfg.training.weight_decay
+            policy.parameters(),
+            cfg.training.lr,
+            cfg.training.adam_betas,
+            cfg.training.adam_eps,
+            cfg.training.adam_weight_decay,
         )
-        from diffusers.optimization import get_scheduler
+        # we use the transformers library because diffusers doesn't have the
+        # inverse square root scheduler octo originally uses.
+        from transformers.optimization import get_scheduler
 
         lr_scheduler = get_scheduler(
             cfg.training.lr_scheduler,

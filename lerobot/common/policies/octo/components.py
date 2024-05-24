@@ -4,12 +4,11 @@ import torch
 import torch.nn as nn
 
 
-class PositionalEncoding(nn.Module):
+class AddPositionalEncoding(nn.Module):
     def __init__(self, max_len, d_model, dropout=0.1):
         super().__init__()
 
         self.dropout = nn.Dropout(p=dropout)
-        # +1 for the readout token
         self.pe = nn.Parameter(torch.randn(1, max_len, d_model))
 
     def reset_parameters(self):

@@ -36,9 +36,9 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.octo.components import (
+    AddPositionalEncoding,
     FourierFeatures,
     MLPResNet,
-    PositionalEncoding,
     TimeMLP,
 )
 from lerobot.common.policies.octo.configuration_octo import OctoConfig
@@ -136,7 +136,7 @@ class OctoPolicy(nn.Module, PyTorchModelHubMixin):
         if len(self._queues["action"]) == 0:
             # stack n latest observations from the queue
             batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
-            actions = self.diffusion.generate_actions(batch)
+            actions = self.octo.generate_actions(batch)
 
             # TODO(rcadene): make above methods return output dictionary?
             actions = self.unnormalize_outputs({"action": actions})["action"]
@@ -151,7 +151,7 @@ class OctoPolicy(nn.Module, PyTorchModelHubMixin):
         batch = self.normalize_inputs(batch)
         batch["observation.image"] = batch[self.input_image_key]
         batch = self.normalize_targets(batch)
-        loss = self.diffusion.compute_loss(batch)
+        loss = self.octo.compute_loss(batch)
         return {"loss": loss}
 
 
@@ -175,8 +175,9 @@ class OctoModel(nn.Module):
 
         self.rgb_encoder = OctoRgbEncoder(config)
         feat_map_shape = self.rgb_encoder.feature_map_shape
-        obs_seq_len = ((feat_map_shape[1] * feat_map_shape[2]) + 1) * config.n_obs_steps
-        self.transformer = OctoNet(
+        num_state_obs = 1
+        obs_seq_len = ((feat_map_shape[1] * feat_map_shape[2]) + num_state_obs) * config.n_obs_steps
+        self.transformer = OctoTransformer(
             n_obs=config.n_obs_steps,
             qpos_dim=config.input_shapes["observation.state"][0],
             img_dim=feat_map_shape[0],
@@ -224,6 +225,7 @@ class OctoModel(nn.Module):
             device=device,
             generator=generator,
         )
+        sample = rearrange(sample, "b t d -> b (t d)")
 
         self.noise_scheduler.set_timesteps(self.num_inference_steps)
 
@@ -235,6 +237,7 @@ class OctoModel(nn.Module):
             # Compute previous image: x_t -> x_t-1
             sample = self.noise_scheduler.step(model_output, t, sample, generator=generator).prev_sample
 
+        sample = rearrange(sample, "b (t d) -> b t d", t=self.config.horizon)
         return sample
 
     def generate_actions(self, batch: dict[str, Tensor]) -> Tensor:
@@ -253,7 +256,7 @@ class OctoModel(nn.Module):
         # Separate batch and obs_step dims, flatten into a sequence of patch tokens for each step.
         img_features = rearrange(img_features, "(b n) c h w -> b n (h w) c", b=batch_size)
 
-        readout_embeds = self.octo_module(batch["observation.state"], img_features)
+        readout_embeds = self.transformer(batch["observation.state"], img_features)
 
         # run sampling
         sample = self.conditional_sample(batch_size, readout_embeds)
@@ -289,7 +292,7 @@ class OctoModel(nn.Module):
         # Separate batch and obs_step dims, flatten into a sequence of patch tokens for each step.
         img_features = rearrange(img_features, "(b n) c h w -> b n (h w) c", b=batch_size)
 
-        readout_embeds = self.octo_module(batch["observation.state"], img_features)
+        readout_embeds = self.transformer(batch["observation.state"], img_features)
 
         trajectory = batch["action"]
 
@@ -300,14 +303,15 @@ class OctoModel(nn.Module):
         timesteps = torch.randint(
             low=0,
             high=self.noise_scheduler.config.num_train_timesteps,
-            size=(trajectory.shape[0],),
+            size=(trajectory.shape[0], 1),
             device=trajectory.device,
         ).long()
         # Add noise to the clean trajectories according to the noise magnitude at each timestep.
         noisy_trajectory = self.noise_scheduler.add_noise(trajectory, eps, timesteps)
 
         # Run the denoising network (that might denoise the trajectory, or attempt to predict the noise).
-        pred = self.action_head(readout_embeds, timesteps, noisy_trajectory)
+        pred = self.action_head(readout_embeds, timesteps, rearrange(noisy_trajectory, "b t d -> b (t d)"))
+        pred = rearrange(pred, "b (t d) -> b t d", t=horizon)
 
         # Compute the loss.
         # The target is either the original trajectory, or the noise.
@@ -428,25 +432,6 @@ def _replace_submodules(
     return root_module
 
 
-class OctoTransformer(nn.Module):
-    def __init__(
-        self, embed_dim, n_layers, n_heads, d_ffn, causal_mask=None, pos_emb_max_len=1000, dropout=0.1
-    ):
-        super().__init__()
-
-        self.register_buffer("causal_mask", causal_mask)
-        self.pos_emb = PositionalEncoding(pos_emb_max_len, embed_dim, dropout=dropout)
-        encoder_layers = TransformerEncoderLayer(
-            embed_dim, n_heads, dim_feedforward=d_ffn, dropout=dropout, batch_first=True
-        )
-        self.transformer_encoder = TransformerEncoder(encoder_layers, n_layers)
-
-    def forward(self, x):
-        x = self.pos_emb(x)
-        x = self.transformer_encoder(x, mask=self.causal_mask)
-        return x
-
-
 def make_mask(obs_len, n_obs, n_readouts=1):
     # very janky implementation of group-wise masking
     size = (obs_len + n_readouts) * n_obs
@@ -458,7 +443,7 @@ def make_mask(obs_len, n_obs, n_readouts=1):
     return mask
 
 
-class OctoNet(nn.Module):
+class OctoTransformer(nn.Module):
     def __init__(
         self,
         n_obs,
@@ -469,32 +454,33 @@ class OctoNet(nn.Module):
         n_heads,
         d_ffn,
         obs_seq_len,
-        dropout=0.1,
-        use_causal_mask=True,
+        n_readouts=1,
+        dropout=0.0,
+        add_positional_encoding=False,
+        use_blockwise_causal_mask=True,
     ):
         super().__init__()
 
-        # hardcode this to use only one readout head for now
-        n_readouts = 1
-
-        pos_emb_max_len = obs_seq_len + n_readouts * n_obs
         self.n_readouts = n_readouts
+        self.add_positional_encoding = add_positional_encoding
 
-        causal_mask = None
-        if use_causal_mask:
-            causal_mask = make_mask(obs_seq_len // n_obs, n_obs)
         self.qpos_proj = nn.Linear(qpos_dim, embed_dim)
         self.img_proj = nn.Linear(img_dim, embed_dim)
         self.readout_tokens = nn.Parameter(torch.randn((1, n_obs, n_readouts, embed_dim)))
-        self.octo_transformer = OctoTransformer(
-            embed_dim,
-            n_layers,
-            n_heads,
-            d_ffn,
-            causal_mask=causal_mask,
-            dropout=dropout,
-            pos_emb_max_len=pos_emb_max_len,
+
+        blockwise_causal_mask = None
+        if use_blockwise_causal_mask:
+            blockwise_causal_mask = make_mask(obs_seq_len // n_obs, n_obs)
+        self.register_buffer("blockwise_causal_mask", blockwise_causal_mask)
+
+        if add_positional_encoding:
+            pos_emb_max_len = obs_seq_len + n_readouts * n_obs
+            self.pos_emb = AddPositionalEncoding(pos_emb_max_len, embed_dim, dropout=dropout)
+
+        encoder_layers = TransformerEncoderLayer(
+            embed_dim, n_heads, dim_feedforward=d_ffn, dropout=dropout, batch_first=True
         )
+        self.transformer_encoder = TransformerEncoder(encoder_layers, n_layers)
 
     def forward(self, qpos, img_feats):
         b, t, *_ = img_feats.size()
@@ -505,7 +491,9 @@ class OctoNet(nn.Module):
             dim=2,
         )
         x = rearrange(x, "b t l f -> b (t l) f")
-        x = self.octo_transformer(x)
+        if self.add_positional_encoding:
+            x = self.pos_emb(x)
+        x = self.transformer_encoder(x, mask=self.blockwise_causal_mask)
         x = rearrange(x, "b (t l) f -> b t l f", t=t)
         readout_embeds = x[:, :, -self.n_readouts :, :]
         return readout_embeds
