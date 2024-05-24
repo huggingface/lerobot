@@ -168,6 +168,8 @@ As a concrete example, this becomes particularly handy when you have a folder wi
 python lerobot/scripts/train.py --config-dir outputs/train/my_experiment/checkpoints/pretrained_model --config-name config
 ```
 
+Note that you may still use the regular syntax for config parameter overrides (eg: by adding `training.offline_steps=200000`).
+
 ---
 
 So far we've seen how to train Diffusion Policy for PushT and ACT for ALOHA. Now, what if we want to train ACT for PushT? Well, there are aspects of the ACT configuration that are specific to the ALOHA environments, and these happen to be incompatible with PushT. Therefore, trying to run the following will almost certainly raise an exception of sorts (eg: feature dimension mismatch):
