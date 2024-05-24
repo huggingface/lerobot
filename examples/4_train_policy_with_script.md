@@ -165,16 +165,10 @@ Note: here we use regular syntax for providing CLI arguments to a Python script,
 As a concrete example, this becomes particularly handy when you have a folder with training outputs, and would like to re-run the training. For example, say you previously ran the training script with one of the earlier commands and have `outputs/train/my_experiment/checkpoints/pretrained_model/config.yaml`. This `config.yaml` file will have the full set of configuration parameters within it. To run the training with the same configuration again, do:
 
 ```bash
-python lerobot/scripts/train.py --config-dir outputs/train/my_experiment/checkpoints/pretrained_model --config-name config
+python lerobot/scripts/train.py --config-dir outputs/train/my_experiment/checkpoints/last/pretrained_model --config-name config
 ```
 
 Note that you may still use the regular syntax for config parameter overrides (eg: by adding `training.offline_steps=200000`).
-
-## Resuming a training run
-
-If your training run is interrupted partway through (or you finish a training run and want to pick up where you left off), you may resume the run. All that's required is that you run the same training command again, but add `resume=true`.
-
-Note that with `resume=true` the default behavior is to ignore the configuration you provide with your training command, and use the one from the checkpoint. But, it is possible to use `override_config_on_resume=true` to override the prior configuration with the configuration in your training command.
 
 ---
 
