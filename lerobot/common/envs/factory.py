@@ -28,11 +28,11 @@ def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv
         raise ValueError("`n_envs must be at least 1")
 
     kwargs = {
-        "obs_type": "pixels_agent_pos",
-        "render_mode": "rgb_array",
+        # "obs_type": "pixels_agent_pos",
+        # "render_mode": "rgb_array",
         "max_episode_steps": cfg.env.episode_length,
-        "visualization_width": 384,
-        "visualization_height": 384,
+        # "visualization_width": 384,
+        # "visualization_height": 384,
     }
 
     package_name = f"gym_{cfg.env.name}"
