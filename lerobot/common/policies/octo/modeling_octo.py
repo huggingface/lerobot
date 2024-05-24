@@ -450,6 +450,17 @@ class OctoTransformer(nn.Module):
         return x
 
 
+def make_mask(obs_len, n_obs, n_readouts=1):
+    # very janky implementation of group-wise masking
+    size = (obs_len + n_readouts) * n_obs
+    mask = torch.full((size, size), -float("inf"))
+    mask = torch.triu(mask, diagonal=1)
+    for i in range(n_obs):
+        mask[:, ((i + 1) * obs_len) + i] = -float("inf")
+        mask[((i + 1) * obs_len) + i, ((i + 1) * obs_len) + i] = 0
+    return mask
+
+
 class OctoNet(nn.Module):
     def __init__(
         self,
@@ -473,8 +484,8 @@ class OctoNet(nn.Module):
         self.n_readouts = n_readouts
 
         causal_mask = None
-        # if use_causal_mask:
-        # 	causal_mask = make_mask(obs_seq_max_len // n_obs, n_obs)
+        if use_causal_mask:
+            causal_mask = make_mask(obs_seq_max_len // n_obs, n_obs)
         self.qpos_proj = nn.Linear(qpos_dim, embed_dim)
         self.img_proj = nn.Linear(img_dim, embed_dim)
         self.readout_tokens = nn.Parameter(torch.randn((1, n_obs, n_readouts, embed_dim)))
