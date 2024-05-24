@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 Columbia Artificial Intelligence, Robotics Lab,
+# Copyright 2024 Robotic AI & Learning Lab Berkeley
 # and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -170,6 +170,42 @@ def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMSche
 
 class OctoModel(nn.Module):
     def __init__(self, config: OctoConfig):
+        """An overview of how this minimal Octo works:
+
+        - The input sequence is constructed by obtaining projections of normalized state data and flattened rgb-encoder
+          feature maps for each observation step, and concatenating them.
+        - A learned "readout" token gets appended after tokens of each observation step.
+        - The transformer processes this sequence, with a mask that prevents
+            a) observation and readout tokens from attending to any future tokens,
+            b) observation tokens from attending to any readout tokens, and
+            c) readout tokens from attending to each other.
+
+        Say we use n_obs=2 with a 7-DOF state observation (joint angles, gripper, etc.) and a 96x96 wrist image.
+        With token_dim=384, we have:
+        - Feature maps of shape (2, 256, 6, 6) from a resnet18 encoder that are flattened to (2, 256, 36), projected
+          and rearranged (2, 36, 384).
+        - State observations of shape (2, 6) are projected and rearranged to (2, 1, 384).
+        - Readout tokens of shape (2, 1, 384) that are learnt.
+        These are appended to get a sequence of shape (2, 37, 384) --> (74, 384), that is processed by the transformer.
+
+        We take the embeddings of just readout tokens, average them, and pass them to the Action Diffusion Head, which
+        predicts the noise to remove from a action trajectory, conditioned on the mean readouts embedding and time.
+
+         _______________________________________________________________
+         | 0 | 1 | 2 | 3 | 4 | ... | 36 | 37 | 38 | 39 | ... | 73 | 74 |
+         |---|---|---|---|---|-----|----|----|----|----|-----|----|----|
+         |obs|obs|obs|obs|obs| ... |obs |rout|obs |obs | ... |obs |rout|
+         |t=1|t=1|t=1|t=1|t=1| ... |t=1 |t=1 |t=2 |t=2 | ... |t=2 |t=2 |
+         |---|---|---|---|---|-----|----|----|----|----|-----|----|----|
+                                           |                        |
+                                           V                        V
+                                       <r_embed_1>               <r_embed_2>
+                                           |                       |
+                                           ----------(Mean)---------
+                                                       |
+                                                       V
+                                            (Action Diffusion Head)
+        """
         super().__init__()
         self.config = config
 
@@ -432,14 +468,18 @@ def _replace_submodules(
     return root_module
 
 
-def make_mask(obs_len, n_obs, n_readouts=1):
-    # very janky implementation of group-wise masking
-    size = (obs_len + n_readouts) * n_obs
-    mask = torch.full((size, size), -float("inf"))
+def make_mask(layout):
+    obs_seq_len = layout["obs_seq_len"]
+    n_obs = layout["n_obs"]
+    n_readouts = layout["n_readouts"]
+
+    input_seq_len = (obs_seq_len + n_readouts) * n_obs
+    mask = torch.full((input_seq_len, input_seq_len), -float("inf"))
     mask = torch.triu(mask, diagonal=1)
-    for i in range(n_obs):
-        mask[:, ((i + 1) * obs_len) + i] = -float("inf")
-        mask[((i + 1) * obs_len) + i, ((i + 1) * obs_len) + i] = 0
+    for i in range(obs_seq_len, input_seq_len, obs_seq_len + n_readouts):
+        for j in range(n_readouts):
+            mask[:, i + j] = -float("inf")
+            mask[i + j, i + j] = 0
     return mask
 
 
@@ -470,7 +510,8 @@ class OctoTransformer(nn.Module):
 
         blockwise_causal_mask = None
         if use_blockwise_causal_mask:
-            blockwise_causal_mask = make_mask(obs_seq_len // n_obs, n_obs)
+            layout = {"obs_seq_len": obs_seq_len // n_obs, "n_obs": n_obs, "n_readouts": n_readouts}
+            blockwise_causal_mask = make_mask(layout)
         self.register_buffer("blockwise_causal_mask", blockwise_causal_mask)
 
         if add_positional_encoding:

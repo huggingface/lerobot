@@ -121,7 +121,8 @@ class OctoConfig:
     crop_is_random: bool = True
     pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True
-    # OctoTransformer. Config for "vit_s" variant.
+    # OctoTransformer ("vit_s" variant).
+    # https://github.com/octo-models/octo/blob/main/octo/model/components/transformer.py#L274
     embed_dim: int = 384
     n_readouts: int = 1
     n_layers: int = 12
@@ -134,7 +135,7 @@ class OctoConfig:
     n_diffusion_head_layers: int = 3
     # Noise scheduler.
     noise_scheduler_type: str = "DDPM"
-    num_train_timesteps: int = 100
+    num_train_timesteps: int = 20
     beta_schedule: str = "squaredcos_cap_v2"
     beta_start: float = 0.0001
     beta_end: float = 0.02
