@@ -229,6 +229,7 @@ class OctoModel(nn.Module):
             cond_dim=config.embed_dim,
             actions_dim=config.output_shapes["action"][0] * config.horizon,
             n_diffusion_head_layers=config.n_diffusion_head_layers,
+            diffusion_head_dim=config.diffusion_head_dim,
         )
 
         self.noise_scheduler = _make_noise_scheduler(
@@ -541,13 +542,16 @@ class OctoTransformer(nn.Module):
 
 
 class DiffusionActionHead(nn.Module):
-    def __init__(self, time_dim, cond_dim, actions_dim, n_diffusion_head_layers):
+    def __init__(self, time_dim, cond_dim, actions_dim, n_diffusion_head_layers, diffusion_head_dim):
         super().__init__()
 
         self.ff = FourierFeatures(time_dim)
         self.time_ff_encoder = TimeMLP(time_dim, (2 * time_dim, time_dim))
         self.net = MLPResNet(
-            time_dim + cond_dim + actions_dim, actions_dim, hidden_dim=256, num_layers=n_diffusion_head_layers
+            time_dim + cond_dim + actions_dim,
+            actions_dim,
+            hidden_dim=diffusion_head_dim,
+            num_layers=n_diffusion_head_layers,
         )
 
     def forward(self, readout_embeds, time, actions):

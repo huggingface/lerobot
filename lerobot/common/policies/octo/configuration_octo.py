@@ -133,6 +133,7 @@ class OctoConfig:
     use_blockwise_causal_mask: bool = True
     time_dim: int = 32
     n_diffusion_head_layers: int = 3
+    diffusion_head_dim: int = 256
     # Noise scheduler.
     noise_scheduler_type: str = "DDPM"
     num_train_timesteps: int = 20
