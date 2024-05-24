@@ -16,14 +16,15 @@
 import logging
 import time
 from contextlib import nullcontext
-from copy import deepcopy
 from pathlib import Path
+from pprint import pformat
 
 import hydra
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, ListConfig
 from torch.cuda.amp import GradScaler
 
+from lerobot.common.datasets.compute_stats import consolidate_stats
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
@@ -58,7 +59,9 @@ def make_optimizer_and_scheduler(cfg, policy):
             },
         ]
         optimizer = torch.optim.AdamW(
-            optimizer_params_dicts, lr=cfg.training.lr, weight_decay=cfg.training.weight_decay
+            optimizer_params_dicts,
+            lr=cfg.training.lr,
+            weight_decay=cfg.training.weight_decay,
         )
         lr_scheduler = None
     elif cfg.policy.name == "diffusion":
@@ -167,9 +170,11 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
     num_samples = (step + 1) * cfg.training.batch_size
-    avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
+    avg_samples_per_ep = sum(d.num_samples for d in dataset.datasets) / sum(
+        d.num_episodes for d in dataset.datasets
+    )
     num_episodes = num_samples / avg_samples_per_ep
-    num_epochs = num_samples / dataset.num_samples
+    num_epochs = num_samples / sum(d.num_samples for d in dataset.datasets)
     log_items = [
         f"step:{format_big_number(step)}",
         # number of samples seen during training
@@ -248,13 +253,53 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     set_global_seed(cfg.seed)
 
     logging.info("make_dataset")
-    offline_dataset = make_dataset(cfg)
+    is_multi_dataset = isinstance(cfg.dataset_repo_id, ListConfig)
+    if is_multi_dataset:
+        # If multiple dataset repo IDs are provided we make multiple corresponding LeRobot datasets and
+        # concatentate them.
+        _offline_datasets = [make_dataset(cfg, dataset_repo_id=repo_id) for repo_id in cfg.dataset_repo_id]
+        # Disable any data keys that are not common across all of the datasets.
+        intersection_data_keys = set(_offline_datasets[0].hf_dataset.features)
+        for dataset in _offline_datasets:
+            intersection_data_keys.intersection_update(dataset.hf_dataset.features)
+        for dataset_repo_id, dataset in zip(cfg.dataset_repo_id, _offline_datasets, strict=True):
+            extra_keys = set(dataset.hf_dataset.features).difference(intersection_data_keys)
+            logging.warning(
+                f"keys {extra_keys} of {dataset_repo_id} were disabled as they are not contained in all the "
+                "other datasets."
+            )
+            dataset.disable_data_keys(extra_keys)
+        # Add a transform that gives each dataset an index (corresponding to the order in which the  datasets
+        # were provided in the config).
+        id_to_index = {repo_id: i for i, repo_id in enumerate(cfg.dataset_repo_id)}
+        logging.info(
+            "Multiple datasets were provided. Applying the following index mapping to the provided datasets: "
+            f"{pformat(id_to_index, indent=2)}"
+        )
+
+        def transform(item):
+            item["dataset_index"] = torch.tensor(id_to_index[item["dataset_repo_id"]])
+            return item
+
+        for dataset in _offline_datasets:
+            if dataset.transform is None:
+                dataset.transform = transform
+            else:
+                raise NotImplementedError("")
+        # Concatenate the datasets.
+        offline_dataset = torch.utils.data.ConcatDataset(_offline_datasets)
+    else:
+        offline_dataset = torch.utils.data.ConcatDataset([make_dataset(cfg)])
 
     logging.info("make_env")
     eval_env = make_env(cfg)
 
     logging.info("make_policy")
-    policy = make_policy(hydra_cfg=cfg, dataset_stats=offline_dataset.stats)
+
+    policy = make_policy(
+        hydra_cfg=cfg,
+        dataset_stats=consolidate_stats(offline_dataset.datasets),
+    )
 
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
@@ -271,8 +316,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     logging.info(f"{cfg.env.task=}")
     logging.info(f"{cfg.training.offline_steps=} ({format_big_number(cfg.training.offline_steps)})")
     logging.info(f"{cfg.training.online_steps=}")
-    logging.info(f"{offline_dataset.num_samples=} ({format_big_number(offline_dataset.num_samples)})")
-    logging.info(f"{offline_dataset.num_episodes=}")
+    logging.info(f"# offline frames: {sum(d.num_samples for d in offline_dataset.datasets)}")
+    logging.info(f"# offline episodes: {sum(d.num_episodes for d in offline_dataset.datasets)}")
     logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
     logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -289,7 +334,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
                 )
-            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline)
+            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline=True)
             if cfg.wandb.enable:
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
@@ -301,7 +346,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             logger.save_model(
                 policy,
                 identifier=str(step).zfill(
-                    max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
+                    max(
+                        6,
+                        len(str(cfg.training.offline_steps + cfg.training.online_steps)),
+                    )
                 ),
             )
             logging.info("Resume training")
@@ -318,14 +366,14 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     dl_iter = cycle(dataloader)
 
     policy.train()
-    is_offline = True
     for step in range(cfg.training.offline_steps):
         if step == 0:
             logging.info("Start offline training on a fixed dataset")
         batch = next(dl_iter)
 
         for key in batch:
-            batch[key] = batch[key].to(device, non_blocking=True)
+            if isinstance(batch[key], torch.Tensor):
+                batch[key] = batch[key].to(device, non_blocking=True)
 
         train_info = update_policy(
             policy,
@@ -337,33 +385,12 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             use_amp=cfg.use_amp,
         )
 
-        # TODO(rcadene): is it ok if step_t=0 = 0 and not 1 as previously done?
         if step % cfg.training.log_freq == 0:
-            log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline)
+            log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline=True)
 
         # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
         # so we pass in step + 1.
         evaluate_and_checkpoint_if_needed(step + 1)
-
-    # create an empty online dataset similar to offline dataset
-    online_dataset = deepcopy(offline_dataset)
-    online_dataset.hf_dataset = {}
-    online_dataset.episode_data_index = {}
-
-    # create dataloader for online training
-    concat_dataset = torch.utils.data.ConcatDataset([offline_dataset, online_dataset])
-    weights = [1.0] * len(concat_dataset)
-    sampler = torch.utils.data.WeightedRandomSampler(
-        weights, num_samples=len(concat_dataset), replacement=True
-    )
-    dataloader = torch.utils.data.DataLoader(
-        concat_dataset,
-        num_workers=4,
-        batch_size=cfg.training.batch_size,
-        sampler=sampler,
-        pin_memory=device.type != "cpu",
-        drop_last=False,
-    )
 
     eval_env.close()
     logging.info("End of training")

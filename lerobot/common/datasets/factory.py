@@ -21,13 +21,18 @@ from omegaconf import OmegaConf
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 
-def make_dataset(
-    cfg,
-    split="train",
-):
-    if cfg.env.name not in cfg.dataset_repo_id:
+def make_dataset(cfg, dataset_repo_id: str | None = None, split: str = "train") -> LeRobotDataset:
+    """
+    Args:
+        cfg: A Hydra config as per the LeRobot config scheme.
+        dataset_repo_id: Override the repo id in `cfg` (this is useful when the configuration contains a list
+            of repo IDs instead of just one).
+    """
+    dataset_repo_id = cfg.dataset_repo_id if dataset_repo_id is None else dataset_repo_id
+
+    if cfg.env.name not in dataset_repo_id:
         logging.warning(
-            f"There might be a mismatch between your training dataset ({cfg.dataset_repo_id=}) and your "
+            f"There might be a mismatch between your training dataset ({dataset_repo_id=}) and your "
             f"environment ({cfg.env.name=})."
         )
 
@@ -40,7 +45,7 @@ def make_dataset(
     # TODO(rcadene): add data augmentations
 
     dataset = LeRobotDataset(
-        cfg.dataset_repo_id,
+        dataset_repo_id,
         split=split,
         delta_timestamps=delta_timestamps,
     )

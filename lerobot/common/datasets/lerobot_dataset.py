@@ -15,6 +15,7 @@
 # limitations under the License.
 import os
 from pathlib import Path
+from typing import Callable, Iterable
 
 import datasets
 import torch
@@ -42,7 +43,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         version: str | None = CODEBASE_VERSION,
         root: Path | None = DATA_DIR,
         split: str = "train",
-        transform: callable = None,
+        transform: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
     ):
         super().__init__()
@@ -65,6 +66,23 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.info = load_info(repo_id, version, root)
         if self.video:
             self.videos_dir = load_videos(repo_id, version, root)
+        # Track a set of keys that are disabled for the purposes of __getitem___.
+        self.disabled_data_keys: set[str] = set()
+
+    def disable_data_keys(self, keys: Iterable[str]):
+        """Disable selected data keys in the __getitem__ return."""
+        for k in keys:
+            if k not in self.hf_dataset.features:
+                raise ValueError(f"Provided key {k} is not present in the dataset.")
+            self.disabled_data_keys.add(k)
+
+    def enable_data_keys(self, keys: list[str]):
+        """Enable selected data keys in the __getitem__ return."""
+        for k in keys:
+            if k not in self.hf_dataset.features:
+                raise ValueError(f"Provided key {k} is not present in the dataset.")
+            if k in self.disabled_data_keys:
+                self.disabled_data_keys.remove(k)
 
     @property
     def fps(self) -> int:
@@ -147,6 +165,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self.tolerance_s,
             )
 
+        for k in self.disabled_data_keys:
+            if k in item:
+                del item[k]
+
+        item["dataset_repo_id"] = self.repo_id
+
         if self.transform is not None:
             item = self.transform(item)
 
@@ -171,7 +195,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     @classmethod
     def from_preloaded(
         cls,
-        repo_id: str,
+        repo_id: str = "from_preloaded",
         version: str | None = CODEBASE_VERSION,
         root: Path | None = None,
         split: str = "train",
@@ -183,7 +207,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         stats=None,
         info=None,
         videos_dir=None,
-    ):
+    ) -> "LeRobotDataset":
+        """Create a LeRobot Dataset from existing data and attributes instead of loading from the filesystem.
+
+        Note: Meta-data attributes like `repo_id`, `version`, `root`, etc are optional and potentially
+        meaningless depending on the downstream usage of the return dataset.
+        """
         # create an empty object of type LeRobotDataset
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
@@ -195,52 +224,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.hf_dataset = hf_dataset
         obj.episode_data_index = episode_data_index
         obj.stats = stats
-        obj.info = info
+        obj.info = info if info is not None else {}
         obj.videos_dir = videos_dir
+        obj.disabled_data_keys = set()
         return obj
-
-
-def concatenate_datasets(datasets: list[LeRobotDataset]) -> LeRobotDataset:
-    """ "Take a list of datasets and concatenate them to form one dataset.
-
-    The resulting dataset is reindexed, starting from zero, and preserving the ordering of the provided datasets.
-
-    All datasets are expected to have at least "action" and "observation.state" keys. "observation.image" keys can vary
-    between datasets. Where keys match across datasets, it is expected that the data has a common shape. Note: in future
-    iterations of LeRobot, some of these limitations may be relaxed.
-    """
-
-
-if __name__ == "__main__":
-    sim_datasets = [
-        "lerobot/aloha_sim_insertion_human",
-        "lerobot/aloha_sim_insertion_scripted",
-        "lerobot/aloha_sim_transfer_cube_human",
-        "lerobot/aloha_sim_transfer_cube_scripted",
-    ]
-
-    real_datasets = [
-        "lerobot/aloha_static_battery",
-        "lerobot/aloha_static_candy",
-        "lerobot/aloha_static_coffee",
-        "lerobot/aloha_static_coffee_new",
-        "lerobot/aloha_static_cups_open",
-        "lerobot/aloha_static_fork_pick_up",
-        "lerobot/aloha_static_pingpong_test",
-        "lerobot/aloha_static_pro_pencil",
-        "lerobot/aloha_static_screw_driver",
-        "lerobot/aloha_static_tape",
-        "lerobot/aloha_static_thread_velcro",
-        "lerobot/aloha_static_towel",
-        "lerobot/aloha_static_vinh_cup",
-        "lerobot/aloha_static_vinh_cup_left",
-        "lerobot/aloha_static_ziploc_slide",
-    ]
-
-    concatenate_datasets([LeRobotDataset(dataset_name for dataset_name in real_datasets)])
-
-    # for dataset_name in real_datasets:
-    #     print(f"{dataset_name=}")
-    #     dataset = LeRobotDataset(dataset_name)
-    #     item = next(iter(dataset))
-    #     print(item.keys())
