@@ -96,6 +96,7 @@ policy:
   gpt_n_layer: 8
   gpt_n_head: 8
   gpt_hidden_dim: 512
+  gpt_num_obs_mode: 2
   dropout: 0.1
   mlp_hidden_dim: 1024
   offset_loss_weight: 10000.

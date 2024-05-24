@@ -142,7 +142,6 @@ class VQBeTModel(nn.Module):
 
         # action token and EOS token
         self._action_token = nn.Parameter(torch.randn(1, 1, self.config.gpt_input_dim)) # Batch, Timestep, Data type, GPT input dim
-        self._eos_token = nn.Parameter(torch.randn(1, 1, self.config.gpt_input_dim))
 
         self.state_projector = MLP(
                 config.output_shapes["action"][0], 
@@ -177,7 +176,6 @@ class VQBeTModel(nn.Module):
             ], dim=-2).view(batch_size, -1, self.config.gpt_input_dim)
         if img_features.shape[1] != n_obs_steps:
             raise NotImplementedError
-        # eos_token = self._eos_token.repeat(batch_size, 1, 1) # TODO(jayLEE0301) remove EOS token
         len_additional_action_token = self.config.n_action_pred_token-1
         action_token = self._action_token.repeat(batch_size, len_additional_action_token, 1)
         
@@ -186,7 +184,7 @@ class VQBeTModel(nn.Module):
         
         # get action features
         features = self.policy(observation_feature)
-        historical_act_pred_index = np.arange(0, n_obs_steps) * 3 + 2 # TODO(jayLEE0301) make it compatible with other values
+        historical_act_pred_index = np.arange(0, n_obs_steps) * (self.config.gpt_num_obs_mode+1) + self.config.gpt_num_obs_mode
         features = torch.cat([
             features[:, historical_act_pred_index],
             features[:, -len_additional_action_token:]
@@ -430,9 +428,6 @@ class VQBeTOptimizer:
 
         self.bet_optimizer1.add_param_group(
                 {"params": policy.vqbet._action_token}
-            )
-        self.bet_optimizer1.add_param_group(
-                {"params": policy.vqbet._eos_token}
             )
         self.bet_optimizer1.add_param_group(
                 {"params": policy.vqbet.state_projector.parameters()}
