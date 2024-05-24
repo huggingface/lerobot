@@ -130,8 +130,60 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
 
 
 class VQBeTModel(nn.Module):
-    """
-    TODO(jayLEE0301)
+    """VQ-BeT: The underlying neural network for VQ-BeT
+
+    Note: In this code we use the terms `rgb_encoder`, 'policy', `action_head`. The meanings are as follows.
+        - The `rgb_encoder` process rgb-style image observations to one-dimensional embedding vectors
+        - A `policy` is a minGPT architecture, that takes observation sequences and action query tokens to generate `features`.
+        - These `features` pass through the action head, which passes through the code prediction, offset prediction head, 
+        and finally generates a prediction for the action chunks.
+
+        -------------------------------** legend **-------------------------------
+        │   n = n_obs_steps, p = n_action_pred_token, c = n_action_pred_chunk)   │
+        │   o_{t} : visual observation at timestep {t}                           │
+        │   s_{t} : state observation at timestep {t}                            │
+        │   a_{t} : action at timestep {t}                                       │
+        │   A_Q : action_query_token                                             │
+        --------------------------------------------------------------------------
+
+        
+        Phase 1. Discretize action using Residual VQ (for config.discretize_step steps)
+
+
+        ┌─────────────────┐            ┌─────────────────┐            ┌─────────────────┐
+        │                 │            │                 │            │                 │
+        │   RVQ encoder   │    ─►      │     Residual    │    ─►      │   RVQ Decoder   │
+        │ (a_{t}~a_{t+p}) │            │  Code Quantizer │            │                 │
+        │                 │            │                 │            │                 │
+        └─────────────────┘            └─────────────────┘            └─────────────────┘
+
+        Phase 2.
+        
+
+        o_{t-n+1}         o_{t-n+2}           ...         o_{t}
+            │                 │                             │ 
+            │ s_{t-n+1}       │ s_{t-n+2}         ...       │   s_{t}           p
+            │     │           │     │                       │     │     ┌───────┴───────┐
+            │     │    A_Q    │     │    A_Q          ...   │     │    A_Q     ...     A_Q
+            │     │     │     │     │     │                 │     │     │               │
+        ┌───▼─────▼─────▼─────▼─────▼─────▼─────────────────▼─────▼─────▼───────────────▼───┐
+        │                                                                                   │
+        │                                       GPT                                         │       =>    policy
+        │                                                                                   │
+        └───────────────▼─────────────────▼─────────────────────────────▼───────────────▼───┘
+                        │                 │                             │               │
+                    ┌───┴───┐         ┌───┴───┐                     ┌───┴───┐       ┌───┴───┐
+                  code    offset    code    offset                code    offset  code    offset
+                    ▼       │         ▼       │                     ▼       │       ▼       │       =>    action_head
+               RVQ Decoder  │    RVQ Decoder  │                RVQ Decoder  │  RVQ Decoder  │
+                    └── + ──┘         └── + ──┘                     └── + ──┘       └── + ──┘
+                        ▼                 ▼                             ▼               ▼
+                   action chunk      action chunk                  action chunk     action chunk
+                    a_{t_n+1} ~       a_{t_n+2} ~                   a_{t} ~     ...  a_{t+p-1} ~ 
+                     a_{t_n+c}         a_{t_n+c+1}                   a_{t+c-1}        a_{t+p+c-1}
+
+                                                                        ▼
+                                                      ONLY this chunk is used in rollout!
     """
     def __init__(self, config: VQBeTConfig):
         super().__init__()
