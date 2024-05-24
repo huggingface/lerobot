@@ -41,6 +41,7 @@ from lerobot.scripts.eval import eval_policy
 
 
 def make_optimizer_and_scheduler(cfg, policy):
+    print(policy.name)
     if cfg.policy.name == "act":
         optimizer_params_dicts = [
             {
@@ -80,11 +81,18 @@ def make_optimizer_and_scheduler(cfg, policy):
     elif policy.name == "tdmpc":
         optimizer = torch.optim.Adam(policy.parameters(), cfg.training.lr)
         lr_scheduler = None
-    elif policy.name == "octo":
+    elif cfg.policy.name == "octo":
         optimizer = torch.optim.AdamW(
             policy.parameters(), cfg.training.lr, weight_decay=cfg.training.weight_decay
         )
-        lr_scheduler = None
+        from diffusers.optimization import get_scheduler
+
+        lr_scheduler = get_scheduler(
+            cfg.training.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=cfg.training.lr_warmup_steps,
+            num_training_steps=cfg.training.offline_steps,
+        )
     else:
         raise NotImplementedError()
 

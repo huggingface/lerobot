@@ -56,17 +56,19 @@ class OctoConfig:
             `None` means no pretrained weights.
         use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
             The group sizes are set to be about 16 (to be precise, feature_dim // 16).
-        spatial_softmax_num_keypoints: Number of keypoints for SpatialSoftmax.
-        down_dims: Feature dimension for each stage of temporal downsampling in the diffusion modeling Unet.
-            You may provide a variable number of dimensions, therefore also controlling the degree of
-            downsampling.
-        kernel_size: The convolutional kernel size of the diffusion modeling Unet.
-        n_groups: Number of groups used in the group norm of the Unet's convolutional blocks.
-        diffusion_step_embed_dim: The Unet is conditioned on the diffusion timestep via a small non-linear
-            network. This is the output dimension of that network, i.e., the embedding dimension.
-        use_film_scale_modulation: FiLM (https://arxiv.org/abs/1709.07871) is used for the Unet conditioning.
-            Bias modulation is used be default, while this parameter indicates whether to also use scale
-            modulation.
+
+        # === change these wack copilot generated docstrings ====
+        embed_dim: Dimension of the embedding in Octo's transformer.
+        n_readouts: Number of readout heads to use.
+        n_layers: Number of layers in the Octo transformer.
+        n_heads: Number of heads in the Octo transformer.
+        d_ffn: Dimension of the feed-forward network in the Octo transformer.
+        dropout: Dropout rate in the Octo transformer.
+        use_causal_mask: Whether to use a causal mask in the Octo transformer.
+        time_dim: Dimension of the time features in the action head.
+        n_diffusion_head_layers: Number of layers in the action head.
+        # =====================
+
         noise_scheduler_type: Name of the noise scheduler to use. Supported options: ["DDPM", "DDIM"].
         num_train_timesteps: Number of diffusion steps for the forward diffusion schedule.
         beta_schedule: Name of the diffusion beta schedule as per DDPMScheduler from Hugging Face diffusers.
@@ -120,15 +122,15 @@ class OctoConfig:
     pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True
     # OctoTransformer.
-    embed_dim: 384
-    n_readouts: 1
-    n_layers: 12
-    n_heads: 6
-    d_ffn: 1536
-    dropout: 0.1
-    use_causal_mask: True
-    time_dim: 32
-    n_diffusion_head_layers: 3
+    embed_dim: int = 384
+    n_readouts: int = 1
+    n_layers: int = 12
+    n_heads: int = 6
+    d_ffn: int = 1536
+    dropout: int = 0.1
+    use_causal_mask: bool = True
+    time_dim: int = 32
+    n_diffusion_head_layers: int = 3
     # Noise scheduler.
     noise_scheduler_type: str = "DDPM"
     num_train_timesteps: int = 100

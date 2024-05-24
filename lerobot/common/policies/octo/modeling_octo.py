@@ -179,7 +179,7 @@ class OctoModel(nn.Module):
         obs_seq_max_len = ((feat_map_shape[1] * feat_map_shape[2]) + 1) * config.n_obs_steps
         self.transformer = OctoNet(
             n_obs=config.n_obs_steps,
-            qpos_dim=config.qpos_dim,
+            qpos_dim=config.input_shapes["observation.state"][0],
             img_dim=feat_map_shape[0],
             embed_dim=config.embed_dim,
             n_layers=config.n_layers,

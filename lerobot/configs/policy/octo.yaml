@@ -32,6 +32,7 @@ training:
   batch_size: 64
   grad_clip_norm: 10
   lr: 1.0e-4
+  weight_decay: 0.1
   lr_scheduler: cosine
   lr_warmup_steps: 500
   adam_betas: [0.95, 0.999]
