@@ -14,7 +14,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Diffusion Policy as per "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion"
+"""Octo Policy as per "Octo: An Open-Source Generalist Robot Policy"
 
 TODO(alexander-soare):
   - Remove reliance on diffusers for DDPMScheduler and LR scheduler.
@@ -24,7 +24,6 @@ TODO(alexander-soare):
 from collections import deque
 from typing import Callable
 
-import einops
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
@@ -52,11 +51,11 @@ from lerobot.common.policies.utils import (
 
 class OctoPolicy(nn.Module, PyTorchModelHubMixin):
     """
-    Diffusion Policy as per "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion"
-    (paper: https://arxiv.org/abs/2303.04137, code: https://github.com/real-stanford/diffusion_policy).
+    Octo Policy as per "Octo: An Open-Source Generalist Robot Policy"
+    (paper: https://arxiv.org/pdf/2405.12213, code: https://github.com/octo-models/octo/).
     """
 
-    name = "diffusion"
+    name = "octo"
 
     def __init__(
         self,
@@ -213,7 +212,7 @@ class OctoModel(nn.Module):
 
     # ========= inference  ============
     def conditional_sample(
-        self, batch_size: int, global_cond: Tensor | None = None, generator: torch.Generator | None = None
+        self, batch_size: int, readout_embeds: Tensor, generator: torch.Generator | None = None
     ) -> Tensor:
         device = get_device_from_parameters(self)
         dtype = get_dtype_from_parameters(self)
@@ -230,11 +229,9 @@ class OctoModel(nn.Module):
 
         for t in self.noise_scheduler.timesteps:
             # Predict model output.
-            model_output = self.unet(
-                sample,
-                torch.full(sample.shape[:1], t, dtype=torch.long, device=sample.device),
-                global_cond=global_cond,
-            )
+            t_ = t.repeat((batch_size, 1)).to(device)
+            model_output = self.action_head(readout_embeds, t_, sample)
+
             # Compute previous image: x_t -> x_t-1
             sample = self.noise_scheduler.step(model_output, t, sample, generator=generator).prev_sample
 
@@ -252,14 +249,14 @@ class OctoModel(nn.Module):
         assert n_obs_steps == self.config.n_obs_steps
 
         # Extract image feature (first combine batch and sequence dims).
-        img_features = self.rgb_encoder(einops.rearrange(batch["observation.image"], "b n ... -> (b n) ..."))
-        # Separate batch and sequence dims.
-        img_features = einops.rearrange(img_features, "(b n) ... -> b n ...", b=batch_size)
-        # Concatenate state and image features then flatten to (B, global_cond_dim).
-        global_cond = torch.cat([batch["observation.state"], img_features], dim=-1).flatten(start_dim=1)
+        img_features = self.rgb_encoder(rearrange(batch["observation.image"], "b n ... -> (b n) ..."))
+        # Separate batch and obs_step dims, flatten into a sequence of patch tokens for each step.
+        img_features = rearrange(img_features, "(b n) c h w -> b n (h w) c", b=batch_size)
+
+        readout_embeds = self.octo_module(batch["observation.state"], img_features)
 
         # run sampling
-        sample = self.conditional_sample(batch_size, global_cond=global_cond)
+        sample = self.conditional_sample(batch_size, readout_embeds)
 
         # `horizon` steps worth of actions (from the first observation).
         actions = sample[..., : self.config.output_shapes["action"][0]]
@@ -287,12 +284,12 @@ class OctoModel(nn.Module):
         assert horizon == self.config.horizon
         assert n_obs_steps == self.config.n_obs_steps
 
-        # Extract image feature (first combine batch and sequence dims).
-        img_features = self.rgb_encoder(einops.rearrange(batch["observation.image"], "b n ... -> (b n) ..."))
-        # Separate batch and sequence dims.
-        img_features = einops.rearrange(img_features, "(b n) ... -> b n ...", b=batch_size)
-        # Concatenate state and image features then flatten to (B, global_cond_dim).
-        global_cond = torch.cat([batch["observation.state"], img_features], dim=-1).flatten(start_dim=1)
+        # Extract image feature (first combine batch and obs_step dims).
+        img_features = self.rgb_encoder(rearrange(batch["observation.image"], "b n ... -> (b n) ..."))
+        # Separate batch and obs_step dims, flatten into a sequence of patch tokens for each step.
+        img_features = rearrange(img_features, "(b n) c h w -> b n (h w) c", b=batch_size)
+
+        readout_embeds = self.octo_module(batch["observation.state"], img_features)
 
         trajectory = batch["action"]
 
@@ -310,7 +307,7 @@ class OctoModel(nn.Module):
         noisy_trajectory = self.noise_scheduler.add_noise(trajectory, eps, timesteps)
 
         # Run the denoising network (that might denoise the trajectory, or attempt to predict the noise).
-        pred = self.unet(noisy_trajectory, timesteps, global_cond=global_cond)
+        pred = self.action_head(readout_embeds, timesteps, noisy_trajectory)
 
         # Compute the loss.
         # The target is either the original trajectory, or the noise.

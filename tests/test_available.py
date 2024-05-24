@@ -21,6 +21,7 @@ import pytest
 import lerobot
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
+from lerobot.common.policies.octo.modeling_octo import OctoPolicy
 from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
 from tests.utils import require_env
 
@@ -48,6 +49,7 @@ def test_available_policies():
         ACTPolicy,
         DiffusionPolicy,
         TDMPCPolicy,
+        OctoPolicy,
     ]
     policies = [pol_cls.name for pol_cls in policy_classes]
     assert set(policies) == set(lerobot.available_policies), policies
