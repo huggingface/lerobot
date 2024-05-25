@@ -801,7 +801,7 @@ class VqVae(nn.Module):
         dec_out = self.decoder(state_vq)
         encoder_loss = (state - dec_out).abs().mean()
 
-        rep_loss = encoder_loss * vq_loss_state * 5
+        rep_loss = encoder_loss + vq_loss_state * 5
 
         metric = (
             encoder_loss.clone().detach(),
