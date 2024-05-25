@@ -56,19 +56,16 @@ class OctoConfig:
             `None` means no pretrained weights.
         use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
             The group sizes are set to be about 16 (to be precise, feature_dim // 16).
-
-        # === change these wack copilot generated docstrings ====
-        embed_dim: Dimension of the embedding in Octo's transformer.
-        n_readouts: Number of readout heads to use.
-        n_layers: Number of layers in the Octo transformer.
-        n_heads: Number of heads in the Octo transformer.
-        d_ffn: Dimension of the feed-forward network in the Octo transformer.
-        dropout: Dropout rate in the Octo transformer.
-        use_blockwise_causal_mask: Whether to use a causal mask in the Octo transformer.
-        time_dim: Dimension of the time features in the action head.
-        n_diffusion_head_layers: Number of layers in the action head.
-        # =====================
-
+        embed_dim: Dimension of the tokens in the Octo transformer.
+        n_readouts: Number of larned readout heads to use.
+        n_layers: Number of transformer encoder layers.
+        n_heads: Number of heads in the transformer.
+        d_ffn: Dimension of the feed-forward network in the transformer.
+        dropout: Dropout rate in the transformer, MLP layers, and positional encoding.
+        use_blockwise_causal_mask: Whether to use the blockwise causal mask.
+        time_dim: Dimension of the denoising iteration index feature projection.
+        n_diffusion_head_layers: Number of layers in the action diffusion head.
+        diffusion_head_dim: Hidden dimensions in the action diffusion head.
         noise_scheduler_type: Name of the noise scheduler to use. Supported options: ["DDPM", "DDIM"].
         num_train_timesteps: Number of diffusion steps for the forward diffusion schedule.
         beta_schedule: Name of the diffusion beta schedule as per DDPMScheduler from Hugging Face diffusers.
