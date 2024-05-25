@@ -409,7 +409,7 @@ class VQBeTHead(nn.Module):
         predicted_action = pred["predicted_action"]
         sampled_centers = pred["sampled_centers"]
         decoded_action = pred["decoded_action"]
-        NT = predicted_action.shape[0]
+        NT = predicted_action.shape[0] * predicted_action.shape[1]
         T = predicted_action.shape[1]
         cbet_logits = pred["cbet_logits"]
 
