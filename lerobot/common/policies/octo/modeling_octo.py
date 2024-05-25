@@ -16,9 +16,11 @@
 # limitations under the License.
 """Octo Policy as per "Octo: An Open-Source Generalist Robot Policy"
 
-TODO(alexander-soare):
+TODO:
   - Remove reliance on diffusers for DDPMScheduler and LR scheduler.
   - Make compatible with multiple image keys.
+  - Add support multiple proprioceptive observations.
+  - Add support for language and goal conditioning.
 """
 
 from collections import deque
@@ -36,10 +38,10 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.octo.components import (
+    MLP,
     AddPositionalEncoding,
     FourierFeatures,
     MLPResNet,
-    TimeMLP,
 )
 from lerobot.common.policies.octo.configuration_octo import OctoConfig
 from lerobot.common.policies.utils import (
@@ -170,58 +172,71 @@ def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMSche
 
 class OctoModel(nn.Module):
     def __init__(self, config: OctoConfig):
-        """An overview of how this minimal Octo works:
+        """An overview of this minimal Octo model implementation:
 
-        - The input sequence is constructed by obtaining projections of normalized state data and flattened rgb-encoder
-          feature maps for each observation step, and concatenating them.
-        - A learned "readout" token gets appended after tokens of each observation step.
-        - The transformer processes this sequence, with a mask that prevents
-            a) observation and readout tokens from attending to any future tokens,
-            b) observation tokens from attending to any readout tokens, and
-            c) readout tokens from attending to each other.
+        There are two main components:
+        1) OctoTransformer, which processes the input sequence of state and image tokens (collectively called
+            "observation tokens") and readout tokens as follows:
+            - Normalized states and flattened feature maps from all observation steps are projected using FFNs into
+                observation tokens and concattenated.
+            - Learned "readout tokens" are appended next to tokens of each observation step.
+            - A block-wise causal mask (see make_mask for an example viz) that is used to prevent
+                a) observation and readout tokens from attending to any future tokens,
+                b) observation tokens from attending to any readout tokens, and
+                c) readout tokens from attending to each other.
+        2) DiffusionActionHead, which predicts the noise to remove from a noisy trajectory, conditioned on the mean of
+            embeddings of the readout tokens from 1) and a projection of the denoising iteration K.
 
-        Say we use n_obs=2 with a 7-DOF state observation (joint angles, gripper, etc.) and a 96x96 wrist image.
+        Say we use n_obs=2 with a num_dof=7 state (joint angles, gripper, etc.) and a 96x96 wrist image.
         With token_dim=384, we have:
-        - Feature maps of shape (2, 256, 6, 6) from a resnet18 encoder that are flattened to (2, 256, 36), projected
-          and rearranged (2, 36, 384).
-        - State observations of shape (2, 6) are projected and rearranged to (2, 1, 384).
+        - Feature maps of shape (2, 256, 6, 6) from resnet18 that are flattened to patches (2, 256, 36), projected
+          and rearranged to (2, 36, 384).
+        - State observations of shape (2, 7) are projected and rearranged to (2, 1, 384).
         - Readout tokens of shape (2, 1, 384) that are learnt.
-        These are appended to get a sequence of shape (2, 37, 384) --> (74, 384), that is processed by the transformer.
+        These are appended to get the input sequence of shape (2, 37, 384) --> (74, 384).
 
-        We take the embeddings of just readout tokens, average them, and pass them to the Action Diffusion Head, which
-        predicts the noise to remove from a action trajectory, conditioned on the mean readouts embedding and time.
+        ---------------------------------------------------------------
+        | 0 | 1 | 2 | 3 | 4 | ... | 36 | 37 | 38 | 39 | ... | 73 | 74 |
+        |---|---|---|---|---|-----|----|----|----|----|-----|----|----|
+        |obs|obs|obs|obs|obs| ... |obs |rout|obs |obs | ... |obs |rout|
+        |t=1|t=1|t=1|t=1|t=1| ... |t=1 |t=1 |t=2 |t=2 | ... |t=2 |t=2 |
+        |---|---|---|---|---|-----|----|----|----|----|-----|----|----|
+                                          |                        |
+                                          V                        V
+                                      <r_embed_1>              <r_embed_2>
+                                          |                        |
+                                          --------> (Mean) <--------
+                                                      |
+                                                      V
+              <noisy_sample>, <K_proj> --> (Action Diffusion Head) --> <noise_pred>
 
-         _______________________________________________________________
-         | 0 | 1 | 2 | 3 | 4 | ... | 36 | 37 | 38 | 39 | ... | 73 | 74 |
-         |---|---|---|---|---|-----|----|----|----|----|-----|----|----|
-         |obs|obs|obs|obs|obs| ... |obs |rout|obs |obs | ... |obs |rout|
-         |t=1|t=1|t=1|t=1|t=1| ... |t=1 |t=1 |t=2 |t=2 | ... |t=2 |t=2 |
-         |---|---|---|---|---|-----|----|----|----|----|-----|----|----|
-                                           |                        |
-                                           V                        V
-                                       <r_embed_1>               <r_embed_2>
-                                           |                       |
-                                           ----------(Mean)---------
-                                                       |
-                                                       V
-                                            (Action Diffusion Head)
+        Note that this implementation does not (yet) include certain features from the original Octo implementation:
+        1) Language and Goal Conditioning: The original Octo supports conditioning on language and goal images, which
+            would be tokenized and prepended to the input sequence.
+        1) Multiple trajectory generation: The original Octo generates a trajectory for each readout token (i.e,
+            trajectory starting at each observation step). This implementation only generates a single trajectory.
+        2) MAP over multiple readout tokens: The original Octo has an option to use Multihead Attention Pooling over
+            multiple readout tokens for each observation step. This supports multiple readout tokens but utilizes a
+            simple mean pooling over all of them.
         """
         super().__init__()
         self.config = config
 
         self.rgb_encoder = OctoRgbEncoder(config)
         feat_map_shape = self.rgb_encoder.feature_map_shape
+        # we are assuming there is a single proprioceptive observation per step for now.
+        # TODO: generalize to multiple proprioceptive observations in the future.
         num_state_obs = 1
-        obs_seq_len = ((feat_map_shape[1] * feat_map_shape[2]) + num_state_obs) * config.n_obs_steps
+        n_obs_tokens = ((feat_map_shape[1] * feat_map_shape[2]) + num_state_obs) * config.n_obs_steps
         self.transformer = OctoTransformer(
             n_obs=config.n_obs_steps,
-            qpos_dim=config.input_shapes["observation.state"][0],
+            state_dim=config.input_shapes["observation.state"][0],
             img_dim=feat_map_shape[0],
             embed_dim=config.embed_dim,
             n_layers=config.n_layers,
             n_heads=config.n_heads,
             d_ffn=config.d_ffn,
-            obs_seq_len=obs_seq_len,
+            n_obs_tokens=n_obs_tokens,
             dropout=config.dropout,
         )
         self.action_head = DiffusionActionHead(
@@ -470,14 +485,40 @@ def _replace_submodules(
 
 
 def make_mask(layout):
-    obs_seq_len = layout["obs_seq_len"]
+    """Make the block-wise causal mask for the OctoTransformer.
+    The layout is expected to be a dictionary with the following keys:
+    - n_obs_tokens: number of observation tokens in input sequence.
+    - n_obs: number of observation steps.
+    - n_readouts: number of readout tokens.
+
+    Example:
+    layout = {"n_obs_tokens": 4, "n_obs": 2, "n_readouts": 1}
+    ----------------------------
+    | 0 | 1 | 2 | 3 | 4 | 5 |
+    |---|---|---|---|---|---|
+    | O | X | X | X | X | X |
+    | O | O | X | X | X | X |
+    | O | O | O | X | X | X | < readout
+    | O | O | X | O | X | X |
+    | O | O | X | O | O | X |
+    | O | O | X | O | O | O | < readout
+    ----------------------------
+              ^           ^
+            readout    readout
+
+    Args:
+        layout: dict, layout of the observation sequence.
+    Returns:
+        mask: torch.Tensor, block-wise causal mask.
+    """
     n_obs = layout["n_obs"]
+    n_obs_tokens_per_step = layout["n_obs_tokens"] // n_obs
     n_readouts = layout["n_readouts"]
 
-    input_seq_len = (obs_seq_len + n_readouts) * n_obs
+    input_seq_len = (n_obs_tokens_per_step + n_readouts) * n_obs
     mask = torch.full((input_seq_len, input_seq_len), -float("inf"))
     mask = torch.triu(mask, diagonal=1)
-    for i in range(obs_seq_len, input_seq_len, obs_seq_len + n_readouts):
+    for i in range(n_obs_tokens_per_step, input_seq_len, n_obs_tokens_per_step + n_readouts):
         for j in range(n_readouts):
             mask[:, i + j] = -float("inf")
             mask[i + j, i + j] = 0
@@ -485,16 +526,33 @@ def make_mask(layout):
 
 
 class OctoTransformer(nn.Module):
+    """Transformer Encoder for Octo, as described above.
+
+    Args:
+        n_obs: int, number of observation steps.
+        state_dim: int, dimension of the proprioceptive observation.
+        img_dim: int, dimension of the image feature patches.
+        embed_dim: int, dimension of the input token embeddings.
+        n_layers: int, number of transformer encoder layers.
+        n_heads: int, number of attention heads.
+        d_ffn: int, dimension of the feedforward network.
+        n_obs_tokens: int, total number of observation tokens in the input sequence.
+        n_readouts: int, number of readout tokens.
+        dropout: float, dropout rate for attention and MLP modules.
+        add_positional_encoding: bool, whether to add learned positional encodings to tokens.
+        use_blockwise_causal_mask: bool, whether to use the block-wise causal mask.
+    """
+
     def __init__(
         self,
         n_obs,
-        qpos_dim,
+        state_dim,
         img_dim,
         embed_dim,
         n_layers,
         n_heads,
         d_ffn,
-        obs_seq_len,
+        n_obs_tokens,
         n_readouts=1,
         dropout=0.0,
         add_positional_encoding=False,
@@ -505,18 +563,18 @@ class OctoTransformer(nn.Module):
         self.n_readouts = n_readouts
         self.add_positional_encoding = add_positional_encoding
 
-        self.qpos_proj = nn.Linear(qpos_dim, embed_dim)
+        self.state_proj = nn.Linear(state_dim, embed_dim)
         self.img_proj = nn.Linear(img_dim, embed_dim)
         self.readout_tokens = nn.Parameter(torch.randn((1, n_obs, n_readouts, embed_dim)))
 
         blockwise_causal_mask = None
         if use_blockwise_causal_mask:
-            layout = {"obs_seq_len": obs_seq_len // n_obs, "n_obs": n_obs, "n_readouts": n_readouts}
+            layout = {"n_obs_tokens": n_obs_tokens, "n_obs": n_obs, "n_readouts": n_readouts}
             blockwise_causal_mask = make_mask(layout)
         self.register_buffer("blockwise_causal_mask", blockwise_causal_mask)
 
         if add_positional_encoding:
-            pos_emb_max_len = obs_seq_len + n_readouts * n_obs
+            pos_emb_max_len = n_obs_tokens + n_readouts * n_obs
             self.pos_emb = AddPositionalEncoding(pos_emb_max_len, embed_dim, dropout=dropout)
 
         encoder_layers = TransformerEncoderLayer(
@@ -524,12 +582,23 @@ class OctoTransformer(nn.Module):
         )
         self.transformer_encoder = TransformerEncoder(encoder_layers, n_layers)
 
-    def forward(self, qpos, img_feats):
+    def forward(self, state, img_feats):
+        """
+        Args:
+            state: torch.Tensor, shape [batch_size, n_obs_steps, state_dim]
+            img_feats: torch.Tensor, shape [batch_size, n_obs_steps, n_patches, embed_dim]
+        Returns:
+            readout_embeds: torch.Tensor, shape [batch_size, n_obs_steps, n_readouts, embed_dim]
+        """
         b, t, *_ = img_feats.size()
         img_proj = self.img_proj(img_feats)
-        qpos_proj = self.qpos_proj(qpos)
+        state_proj = self.state_proj(state)
         x = torch.cat(
-            [img_proj, qpos_proj.view((b, t, 1, -1)), repeat(self.readout_tokens, "1 t r d -> b t r d", b=b)],
+            [
+                img_proj,
+                state_proj.view((b, t, 1, -1)),
+                repeat(self.readout_tokens, "1 t r d -> b t r d", b=b),
+            ],
             dim=2,
         )
         x = rearrange(x, "b t l f -> b (t l) f")
@@ -542,11 +611,21 @@ class OctoTransformer(nn.Module):
 
 
 class DiffusionActionHead(nn.Module):
+    """Diffusion Action Head for Octo, as described above.
+
+    Args:
+        time_dim: int, dimension of the denoising iteration projection.
+        cond_dim: int, dimension of the conditioning features.
+        actions_dim: int, dimension of the output actions (should be pred_horizon * action_dim).
+        n_diffusion_head_layers: int, number of diffusion head layers.
+        diffusion_head_dim: int, dimension of the hidden layers in the diffusion head.
+    """
+
     def __init__(self, time_dim, cond_dim, actions_dim, n_diffusion_head_layers, diffusion_head_dim):
         super().__init__()
 
         self.ff = FourierFeatures(time_dim)
-        self.time_ff_encoder = TimeMLP(time_dim, (2 * time_dim, time_dim))
+        self.time_ff_encoder = MLP(time_dim, (2 * time_dim, time_dim))
         self.net = MLPResNet(
             time_dim + cond_dim + actions_dim,
             actions_dim,
@@ -555,9 +634,17 @@ class DiffusionActionHead(nn.Module):
         )
 
     def forward(self, readout_embeds, time, actions):
-        obs_enc = readout_embeds.mean(dim=(1, 2))
+        """
+        Args:
+            readout_embeds: torch.Tensor, shape [batch_size, n_obs_steps, n_readouts, embed_dim]
+            time: torch.Tensor, shape [batch_size, 1]
+            actions: torch.Tensor, shape [batch_size, pred_horizon * action_dim]
+        Returns:
+            eps_pred: torch.Tensor, shape [batch_size, pred_horizon * action_dim]
+        """
+        mean_readouts_embed = readout_embeds.mean(dim=(1, 2))
         ff = self.ff(time)
         t_cond = self.time_ff_encoder(ff)
-        x = torch.cat([t_cond, obs_enc, actions], dim=-1)
+        x = torch.cat([t_cond, mean_readouts_embed, actions], dim=-1)
         eps_pred = self.net(x)
         return eps_pred

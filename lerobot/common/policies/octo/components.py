@@ -5,6 +5,15 @@ import torch.nn as nn
 
 
 class AddPositionalEncoding(nn.Module):
+    """
+    Learnable positional encoding as in "Attention is All You Need"
+
+    Arguments:
+        max_len: int, maximum length of the input sequence
+        d_model: int, dimension of the input sequence
+        dropout: float, Optional, dropout rate
+    """
+
     def __init__(self, max_len, d_model, dropout=0.1):
         super().__init__()
 
@@ -16,14 +25,19 @@ class AddPositionalEncoding(nn.Module):
 
     def forward(self, x):
         """
-        Arguments:
-                x: Tensor, shape ``[batch_size, seq_len, embedding_dim]``
+        Args:
+            x: torch.Tensor, shape [B, L, D]
         """
         x = x + self.pe[:, : x.size(1)]
         return self.dropout(x)
 
 
 class FourierFeatures(nn.Module):
+    """Learnable fourier feature transform as in
+    "Fourier Features Let Networks Learn High Frequency Functions in Low Dimensional Domains"
+    https://arxiv.org/abs/2006.10739
+    """
+
     def __init__(self, output_size, learnable=True):
         super().__init__()
 
@@ -31,7 +45,6 @@ class FourierFeatures(nn.Module):
         self.learnable = learnable
 
         if learnable:
-            # we'll just assume this will always be used for denoising iteration k of size [B, 1]
             self.kernel = nn.Parameter(torch.randn(output_size // 2, 1))
         else:
             half_dim = output_size // 2
@@ -40,12 +53,30 @@ class FourierFeatures(nn.Module):
             self.register_buffer("f", f)
 
     def forward(self, x):
+        """
+        Args:
+            x: torch.Tensor, shape [B, 1]
+        Returns:
+            torch.Tensor, shape [B, output_size]
+        """
         f = 2 * torch.pi * x @ self.kernel.t() if self.learnable else self.f * x
         return torch.cat([torch.cos(f), torch.sin(f)], dim=-1)
 
 
-class TimeMLP(nn.Module):
-    def __init__(self, input_dim, hidden_dims: Iterable[int]):
+class MLP(nn.Module):
+    """An MLP with SiLU activation function. Original Octo implementation optionally
+    uses Dropout and LayerNorm that seem to be disabled by default.
+
+    Args:
+        input_dim: int, dimension of the input
+        hidden_dims: Iterable[int], dimensions of the hidden layers
+    """
+
+    def __init__(
+        self,
+        input_dim,
+        hidden_dims: Iterable[int],
+    ):
         super().__init__()
         layers = []
         for i, dim in enumerate(hidden_dims):
@@ -56,10 +87,24 @@ class TimeMLP(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):
+        """
+        Args:
+            x: torch.Tensor, shape [B, input_dim]
+        Returns:
+            torch.Tensor, shape [B, output_dim]
+        """
         return self.net(x)
 
 
 class MLPResNetBlock(nn.Module):
+    """An MLP ResNet block with optional dropout and layer norm.
+
+    Args:
+        in_dim: int, input dimension.
+        dropout: float, Optional, dropout rate.
+        use_layer_norm: bool, Optional, whether to use layer norm.
+    """
+
     def __init__(self, in_dim, dropout=0, use_layer_norm=True):
         super().__init__()
 
@@ -73,10 +118,25 @@ class MLPResNetBlock(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):
+        """
+        Args:
+            x: torch.Tensor, shape [B, in_dim]
+        Returns:
+            torch.Tensor, shape [B, in_dim]
+        """
         return x + self.net(x)
 
 
 class MLPResNet(nn.Module):
+    """An MLP ResNet with optional dropout and layer norm.
+
+    Args:
+        in_dim: int, input dimension.
+        out_dim: int, output dimension.
+        hidden_dim: int, dimension of the hidden layers.
+        num_layers: int, number of hidden layers.
+    """
+
     def __init__(self, in_dim, out_dim, hidden_dim, num_layers):
         super().__init__()
 
@@ -88,4 +148,10 @@ class MLPResNet(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):
+        """
+        Args:
+            x: torch.Tensor, shape [B, in_dim]
+        Returns:
+            torch.Tensor, shape [B, out_dim]
+        """
         return self.net(x)

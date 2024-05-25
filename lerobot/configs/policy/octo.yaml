@@ -86,7 +86,7 @@ policy:
   use_blockwise_causal_mask: True
   time_dim: 32
   n_diffusion_head_layers: 3
-  diffusion_head_hidden_dim: 256
+  diffusion_head_dim: 256
   # Noise scheduler.
   noise_scheduler_type: DDPM
   num_train_timesteps: 20
