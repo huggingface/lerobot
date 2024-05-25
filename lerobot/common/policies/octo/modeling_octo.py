@@ -193,10 +193,10 @@ class OctoModel(nn.Module):
           and rearranged to (2, 36, 384).
         - State observations of shape (2, 7) are projected and rearranged to (2, 1, 384).
         - Readout tokens of shape (2, 1, 384) that are learnt.
-        These are appended to get the input sequence of shape (2, 37, 384) --> (74, 384).
+        These are appended to get the input sequence of shape (2, 38, 384) --> (76, 384).
 
         ---------------------------------------------------------------
-        | 0 | 1 | 2 | 3 | 4 | ... | 36 | 37 | 38 | 39 | ... | 73 | 74 |
+        | 0 | 1 | 2 | 3 | 4 | ... | 36 | 37 | 38 | 39 | ... | 74 | 75 |
         |---|---|---|---|---|-----|----|----|----|----|-----|----|----|
         |obs|obs|obs|obs|obs| ... |obs |rout|obs |obs | ... |obs |rout|
         |t=1|t=1|t=1|t=1|t=1| ... |t=1 |t=1 |t=2 |t=2 | ... |t=2 |t=2 |
