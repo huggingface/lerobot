@@ -609,8 +609,6 @@ class OctoTransformer(nn.Module):
 
         x = torch.cat([obs_tokens, readout_tokens], dim=2)
         x = rearrange(x, "b t l f -> b (t l) f")
-        if self.add_positional_encoding:
-            x = self.pos_emb(x)
         x = self.transformer_encoder(x, mask=self.blockwise_causal_mask)
         x = rearrange(x, "b (t l) f -> b t l f", t=t)
         readout_embeds = x[:, :, -self.n_readouts :, :]

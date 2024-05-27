@@ -126,7 +126,6 @@ class OctoConfig:
     n_heads: int = 6
     d_ffn: int = 1536
     dropout: int = 0.0
-    add_positional_encoding: bool = False
     use_blockwise_causal_mask: bool = True
     time_dim: int = 32
     n_diffusion_head_layers: int = 3
