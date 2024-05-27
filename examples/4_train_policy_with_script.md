@@ -10,7 +10,7 @@ LeRobot offers a training script at [`lerobot/scripts/train.py`](../../lerobot/s
 - Makes a policy.
 - Runs a standard training loop with forward pass, backward pass, optimization step, and occasional logging, evaluation (of the policy on the environment), and checkpointing.
 
-## Our use of Hydra
+## Basics of how we use Hydra
 
 Explaining the ins and outs of [Hydra](https://hydra.cc/docs/intro/) is beyond the scope of this document, but here we'll share the main points you need to know.
 
@@ -151,6 +151,24 @@ python lerobot/scripts/train.py \
 ```
 
 There's one new thing here: `hydra.run.dir=outputs/train/act_aloha_sim_transfer_cube_human`, which specifies where to save the training output.
+
+## Using a configuration file not in `lerobot/configs`
+
+Above we discusses the our training script is set up such that Hydra looks for `default.yaml` in `lerobot/configs`. But, if you have a configuration file elsewhere in your filesystem you may use:
+
+```bash
+python lerobot/scripts/train.py --config-dir PARENT/PATH --config-name FILE_NAME_WITHOUT_EXTENSION
+```
+
+Note: here we use regular syntax for providing CLI arguments to a Python script, not Hydra's `param_name=param_value` syntax.
+
+As a concrete example, this becomes particularly handy when you have a folder with training outputs, and would like to re-run the training. For example, say you previously ran the training script with one of the earlier commands and have `outputs/train/my_experiment/checkpoints/pretrained_model/config.yaml`. This `config.yaml` file will have the full set of configuration parameters within it. To run the training with the same configuration again, do:
+
+```bash
+python lerobot/scripts/train.py --config-dir outputs/train/my_experiment/checkpoints/pretrained_model --config-name config
+```
+
+Note that you may still use the regular syntax for config parameter overrides (eg: by adding `training.offline_steps=200000`).
 
 ---
 

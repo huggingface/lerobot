@@ -77,6 +77,10 @@ Install 🤗 LeRobot:
 pip install .
 ```
 
+> **NOTE:** Depending on your platform, If you encounter any build errors during this step
+you may need to install `cmake` and `build-essential` for building some of our dependencies.
+On linux: `sudo apt-get install cmake build-essential`
+
 For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
 - [aloha](https://github.com/huggingface/gym-aloha)
 - [xarm](https://github.com/huggingface/gym-xarm)
