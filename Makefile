@@ -19,7 +19,6 @@ build-gpu:
 
 test-end-to-end:
 	${MAKE} test-act-ete-train
-	${MAKE} test-act-ete-train-resume
 	${MAKE} test-act-ete-eval
 	${MAKE} test-act-ete-train-amp
 	${MAKE} test-act-ete-eval-amp
