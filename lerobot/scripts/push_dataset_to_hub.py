@@ -25,7 +25,6 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --dataset-id pusht \
 --raw-format pusht_zarr \
 --community-id lerobot \
---revision v1.2 \
 --dry-run 1 \
 --save-to-disk 1 \
 --save-tests-to-disk 0 \
@@ -36,7 +35,6 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --dataset-id xarm_lift_medium \
 --raw-format xarm_pkl \
 --community-id lerobot \
---revision v1.2 \
 --dry-run 1 \
 --save-to-disk 1 \
 --save-tests-to-disk 0 \
@@ -47,7 +45,6 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --dataset-id aloha_sim_insertion_scripted \
 --raw-format aloha_hdf5 \
 --community-id lerobot \
---revision v1.2 \
 --dry-run 1 \
 --save-to-disk 1 \
 --save-tests-to-disk 0 \
@@ -58,7 +55,6 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --dataset-id umi_cup_in_the_wild \
 --raw-format umi_zarr \
 --community-id lerobot \
---revision v1.2 \
 --dry-run 1 \
 --save-to-disk 1 \
 --save-tests-to-disk 0 \
@@ -227,8 +223,7 @@ def push_dataset_to_hub(
         test_hf_dataset = test_hf_dataset.with_format(None)
         test_hf_dataset.save_to_disk(str(tests_out_dir / "train"))
 
-        # copy meta data to tests directory
-        shutil.copytree(meta_data_dir, tests_meta_data_dir)
+        save_meta_data(info, stats, episode_data_index, tests_meta_data_dir)
 
         # copy videos of first episode to tests directory
         episode_index = 0
@@ -236,6 +231,10 @@ def push_dataset_to_hub(
         for key in lerobot_dataset.video_frame_keys:
             fname = f"{key}_episode_{episode_index:06d}.mp4"
             shutil.copy(videos_dir / fname, tests_videos_dir / fname)
+
+    if not save_to_disk and out_dir.exists():
+        # remove possible temporary files remaining in the output directory
+        shutil.rmtree(out_dir)
 
 
 def main():
@@ -314,7 +313,7 @@ def main():
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=16,
+        default=8,
         help="Number of processes of Dataloader for computing the dataset statistics.",
     )
     parser.add_argument(
