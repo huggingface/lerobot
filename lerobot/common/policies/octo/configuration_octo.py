@@ -60,8 +60,8 @@ class OctoConfig:
         n_readouts: Number of larned readout heads to use.
         n_layers: Number of transformer encoder layers.
         n_heads: Number of heads in the transformer.
-        d_ffn: Dimension of the feed-forward network in the transformer.
-        dropout: Dropout rate in the transformer, MLP layers, and positional encoding.
+        d_ffn: Dimension of the feedforward network in the transformer.
+        p_dropout: Dropout rate in the attention and feedforward networks.
         use_blockwise_causal_mask: Whether to use the blockwise causal mask.
         time_dim: Dimension of the denoising iteration index feature projection.
         n_diffusion_head_layers: Number of layers in the action diffusion head.

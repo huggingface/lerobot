@@ -537,7 +537,7 @@ class OctoTransformer(nn.Module):
         d_ffn: int, dimension of the feedforward network.
         n_obs_tokens: int, total number of observation tokens in the input sequence.
         n_readouts: int, number of readout tokens.
-        dropout: float, dropout rate for attention and MLP modules.
+        p_dropout: float, dropout rate for attention and feedforward networks.
         use_blockwise_causal_mask: bool, whether to use the block-wise causal mask.
     """
 
@@ -552,7 +552,7 @@ class OctoTransformer(nn.Module):
         d_ffn,
         n_obs_tokens,
         n_readouts=1,
-        dropout=0.0,
+        p_dropout=0.1,
         use_blockwise_causal_mask=True,
     ):
         super().__init__()
@@ -578,9 +578,15 @@ class OctoTransformer(nn.Module):
         self.register_buffer("blockwise_causal_mask", blockwise_causal_mask)
 
         encoder_layers = TransformerEncoderLayer(
-            embed_dim, n_heads, dim_feedforward=d_ffn, dropout=dropout, batch_first=True
+            embed_dim,
+            n_heads,
+            dim_feedforward=d_ffn,
+            dropout=p_dropout,
+            batch_first=True,
+            norm_first=True,
+            activation="gelu",
         )
-        self.transformer_encoder = TransformerEncoder(encoder_layers, n_layers)
+        self.transformer_encoder = TransformerEncoder(encoder_layers, n_layers, norm=nn.LayerNorm(embed_dim))
 
     def forward(self, state, img_feats):
         """
