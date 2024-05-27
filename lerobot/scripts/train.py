@@ -245,31 +245,24 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         # Hack to resolve the delta_timestamps ahead of time in order to properly diff.
         resolve_delta_timestamps(cfg)
         diff = DeepDiff(OmegaConf.to_container(checkpoint_cfg), OmegaConf.to_container(cfg))
-        # Ignore the `resume` and `override_config_on_resume` parameters.
-        if "values_changed" in diff:
-            for k in ["root['resume']", "root['override_config_on_resume']"]:
-                if k in diff["values_changed"]:
-                    del diff["values_changed"][k]
+        # Ignore the `resume` and parameters.
+        if "values_changed" in diff and "root['resume']" in diff["values_changed"]:
+            del diff["values_changed"]["root['resume']"]
         # Log a warning about differences between the checkpoint configuration and the provided
         # configuration.
-        logging.warning(
-            colored(
+        if len(diff) > 0:
+            logging.warning(
                 "At least one difference was detected between the checkpoint configuration and "
-                f"the provided configuration: \n{pformat(diff)}\nNote that since "
-                f"{cfg.override_config_on_resume=}, the "
-                f"{'provided' if cfg.override_config_on_resume else 'checkpoint'} configuration takes "
-                "precedence.",
-                color="yellow",
+                f"the provided configuration: \n{pformat(diff)}\nNote that the checkpoint configuration "
+                "takes precedence.",
             )
+        # Use the checkpoint config instead of the provided config (but keep `resume` parameter).
+        cfg = checkpoint_cfg
+        cfg.resume = True
+    elif Logger.get_last_checkpoint_dir(out_dir).exists():
+        raise RuntimeError(
+            f"The configured output directory {Logger.get_last_checkpoint_dir(out_dir)} already exists."
         )
-        if not cfg.override_config_on_resume:
-            # Use the checkpoint config instead of the provided config (but keep the provided `resume` and
-            # `override_config_on_resume` parameters).
-            resume = cfg.resume
-            override_config_on_resume = cfg.override_config_on_resume
-            cfg = checkpoint_cfg
-            cfg.resume = resume
-            cfg.override_config_on_resume = override_config_on_resume
 
     # log metrics to terminal and wandb
     logger = Logger(cfg, out_dir, wandb_job_name=job_name)

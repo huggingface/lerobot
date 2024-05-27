@@ -48,29 +48,6 @@ test-act-ete-train:
 		training.batch_size=2 \
 		hydra.run.dir=tests/outputs/act/
 
-# TODO(alexander-soare): This does not test override_config_on_resume=false. To do so, we need a way of
-# interrupting the prior training before it is done so that we don't need to increase
-# `training.offline_steps`.
-test-act-ete-train-resume:
-	python lerobot/scripts/train.py \
-		policy=act \
-		policy.dim_model=64 \
-		env=aloha \
-		wandb.enable=False \
-		training.offline_steps=4 \
-		training.online_steps=0 \
-		eval.n_episodes=1 \
-		eval.batch_size=1 \
-		device=cpu \
-		training.save_checkpoint=true \
-		training.save_freq=2 \
-		policy.n_action_steps=20 \
-		policy.chunk_size=20 \
-		training.batch_size=2 \
-		hydra.run.dir=tests/outputs/act/ \
-		resume=true \
-		override_config_on_resume=true
-
 test-act-ete-eval:
 	python lerobot/scripts/eval.py \
 		-p tests/outputs/act/checkpoints/000002/pretrained_model \

@@ -2,7 +2,7 @@ This tutorial explains how to resume a training run that you've started with the
 
 ## Basic training resumption
 
-Let's consider the example of training ACT for one of the ALOHA tasks. Here's a command that can acheive that:
+Let's consider the example of training ACT for one of the ALOHA tasks. Here's a command that can achieve that:
 
 ```bash
 python lerobot/scripts/train.py \
@@ -21,34 +21,14 @@ Here we're using the default dataset and environment for ACT, and we've taken ca
 To resume, all that we have to do is run the training script, providing the run directory, and the resume option:
 
 ```bash
-python lerobot/scripts/train.py hydra.run.dir=outputs/train/run_resumption resume=true
+python lerobot/scripts/train.py \
+    hydra.run.dir=outputs/train \
+    run_resumption resume=true
 ```
 
 You should see from the logging that your training picks up from where it left off.
 
-Note that with `resume=true` the default behavior is to use the configuration file from the last checkpoint in the training output directory. So it doesn't matter that we haven't provided all the other configuration parameters from our previous command.
-
-## Overriding prior configuration parameters
-
-Sometimes we may want to resume training but with some configuration parameters overridden. Let's say for example, that we want to resume training but we want more frequent logging:
-
-```bash
-python lerobot/scripts/train.py \
-    --config-dir outputs/train/run_resumption/checkpoints/last/pretrained_model \
-    --config-name config \
-    hydra.run.dir=outputs/train/run_resumption \
-    training.log_freq=10 \
-    resume=true \
-    override_config_on_resume=true
-```
-
-You should see from the logging that your training picks up from where it left off, and that the logging is more frequent.
-
-Let's break down this command as compared to the more simple training resumption command above.
-
-- We have added `override_config_on_resume=true`. This means that instead of implictly using the configuration file from the checkpoint, we use the one that Hydra resolves based on the commmand.
-- We have changed the logging frequency with `training.log_freq=10`.
-- We have provided the `--config-dir` and `--config-name` parameters to point Hydra to the checkpoint configuration. This is important because we have `override_config_on_resume=true`, meaning that the checkpoint configuration is ignored in favor of the one provided to via the command line. In order to handle this, we explicitly provide the checkpoint configuration via the command line.
+Note that with `resume=true`, the configuration file from the last checkpoint in the training output directory is loaded. So it doesn't matter that we haven't provided all the other configuration parameters from our previous command (although there may be warnings to notify you that your command has a different configuration than than the checkpoint).
 
 ---
 
