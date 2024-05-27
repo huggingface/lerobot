@@ -4,34 +4,6 @@ import torch
 import torch.nn as nn
 
 
-class AddPositionalEncoding(nn.Module):
-    """
-    Learnable positional encoding as in "Attention is All You Need"
-
-    Arguments:
-        max_len: int, maximum length of the input sequence
-        d_model: int, dimension of the input sequence
-        dropout: float, Optional, dropout rate
-    """
-
-    def __init__(self, max_len, d_model, dropout=0.1):
-        super().__init__()
-
-        self.dropout = nn.Dropout(p=dropout)
-        self.pe = nn.Parameter(torch.randn(1, max_len, d_model))
-
-    def reset_parameters(self):
-        nn.init.normal_(self.pe.weight, 0, 0.02)
-
-    def forward(self, x):
-        """
-        Args:
-            x: torch.Tensor, shape [B, L, D]
-        """
-        x = x + self.pe[:, : x.size(1)]
-        return self.dropout(x)
-
-
 class FourierFeatures(nn.Module):
     """Learnable fourier feature transform as in
     "Fourier Features Let Networks Learn High Frequency Functions in Low Dimensional Domains"

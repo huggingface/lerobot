@@ -39,7 +39,6 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.octo.components import (
     MLP,
-    AddPositionalEncoding,
     FourierFeatures,
     MLPResNet,
 )
@@ -227,7 +226,7 @@ class OctoModel(nn.Module):
         # we are assuming there is a single proprioceptive observation per step for now.
         # TODO: generalize to multiple proprioceptive observations in the future.
         num_state_obs = 1
-        n_obs_tokens = ((feat_map_shape[1] * feat_map_shape[2]) + num_state_obs) * config.n_obs_steps
+        n_obs_tokens = (feat_map_shape[1] * feat_map_shape[2]) + num_state_obs
         self.transformer = OctoTransformer(
             n_obs=config.n_obs_steps,
             state_dim=config.input_shapes["observation.state"][0],
@@ -484,7 +483,7 @@ def _replace_submodules(
     return root_module
 
 
-def make_mask(layout):
+def make_blockwise_causal_mask(layout):
     """Make the block-wise causal mask for the OctoTransformer.
     The layout is expected to be a dictionary with the following keys:
     - n_obs_tokens: number of observation tokens in input sequence.
@@ -512,13 +511,13 @@ def make_mask(layout):
         mask: torch.Tensor, block-wise causal mask.
     """
     n_obs = layout["n_obs"]
-    n_obs_tokens_per_step = layout["n_obs_tokens"] // n_obs
+    n_obs_tokens = layout["n_obs_tokens"]
     n_readouts = layout["n_readouts"]
 
-    input_seq_len = (n_obs_tokens_per_step + n_readouts) * n_obs
+    input_seq_len = (n_obs_tokens + n_readouts) * n_obs
     mask = torch.full((input_seq_len, input_seq_len), -float("inf"))
     mask = torch.triu(mask, diagonal=1)
-    for i in range(n_obs_tokens_per_step, input_seq_len, n_obs_tokens_per_step + n_readouts):
+    for i in range(n_obs_tokens, input_seq_len, n_obs_tokens + n_readouts):
         for j in range(n_readouts):
             mask[:, i + j] = -float("inf")
             mask[i + j, i + j] = 0
@@ -539,7 +538,6 @@ class OctoTransformer(nn.Module):
         n_obs_tokens: int, total number of observation tokens in the input sequence.
         n_readouts: int, number of readout tokens.
         dropout: float, dropout rate for attention and MLP modules.
-        add_positional_encoding: bool, whether to add learned positional encodings to tokens.
         use_blockwise_causal_mask: bool, whether to use the block-wise causal mask.
     """
 
@@ -555,27 +553,29 @@ class OctoTransformer(nn.Module):
         n_obs_tokens,
         n_readouts=1,
         dropout=0.0,
-        add_positional_encoding=False,
         use_blockwise_causal_mask=True,
     ):
         super().__init__()
 
         self.n_readouts = n_readouts
-        self.add_positional_encoding = add_positional_encoding
 
         self.state_proj = nn.Linear(state_dim, embed_dim)
         self.img_proj = nn.Linear(img_dim, embed_dim)
         self.readout_tokens = nn.Parameter(torch.randn((1, n_obs, n_readouts, embed_dim)))
 
+        # init as per original Octo implementation
+        self.obs_pos_emb = nn.Parameter(
+            torch.normal(mean=0, std=torch.full((1, n_obs, n_obs_tokens, embed_dim), 0.02))
+        )
+        self.readout_pos_emb = nn.Parameter(
+            torch.normal(mean=0, std=torch.full((1, n_obs, n_readouts, embed_dim), 0.02))
+        )
+
         blockwise_causal_mask = None
         if use_blockwise_causal_mask:
             layout = {"n_obs_tokens": n_obs_tokens, "n_obs": n_obs, "n_readouts": n_readouts}
-            blockwise_causal_mask = make_mask(layout)
+            blockwise_causal_mask = make_blockwise_causal_mask(layout)
         self.register_buffer("blockwise_causal_mask", blockwise_causal_mask)
-
-        if add_positional_encoding:
-            pos_emb_max_len = n_obs_tokens + n_readouts * n_obs
-            self.pos_emb = AddPositionalEncoding(pos_emb_max_len, embed_dim, dropout=dropout)
 
         encoder_layers = TransformerEncoderLayer(
             embed_dim, n_heads, dim_feedforward=d_ffn, dropout=dropout, batch_first=True
@@ -593,14 +593,21 @@ class OctoTransformer(nn.Module):
         b, t, *_ = img_feats.size()
         img_proj = self.img_proj(img_feats)
         state_proj = self.state_proj(state)
-        x = torch.cat(
-            [
-                img_proj,
-                state_proj.view((b, t, 1, -1)),
-                repeat(self.readout_tokens, "1 t r d -> b t r d", b=b),
-            ],
-            dim=2,
+
+        obs_tokens = (
+            torch.cat(
+                [
+                    state_proj.view((b, t, 1, -1)),
+                    img_proj,
+                ],
+                dim=2,
+            )
+            + self.obs_pos_emb
         )
+
+        readout_tokens = repeat(self.readout_tokens, "1 t n f -> b t n f", b=b) + self.readout_pos_emb
+
+        x = torch.cat([obs_tokens, readout_tokens], dim=2)
         x = rearrange(x, "b t l f -> b (t l) f")
         if self.add_positional_encoding:
             x = self.pos_emb(x)
