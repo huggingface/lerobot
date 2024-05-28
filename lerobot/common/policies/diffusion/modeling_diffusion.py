@@ -18,7 +18,6 @@
 
 TODO(alexander-soare):
   - Remove reliance on diffusers for DDPMScheduler and LR scheduler.
-  - Make compatible with multiple image keys.
 """
 
 import math
