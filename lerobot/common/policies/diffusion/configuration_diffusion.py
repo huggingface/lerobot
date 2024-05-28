@@ -155,7 +155,7 @@ class DiffusionConfig:
                 f"{self.__class__.__name__} only handles one image for now. Got image keys {image_keys}."
             )
         image_key = next(iter(image_keys))
-        if (
+        if self.crop_shape is not None and (
             self.crop_shape[0] > self.input_shapes[image_key][1]
             or self.crop_shape[1] > self.input_shapes[image_key][2]
         ):
