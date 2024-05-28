@@ -35,7 +35,7 @@ def test_drop_n_first_frames():
     sampler = EpisodeAwareSampler(episode_data_index, drop_n_first_frames=1)
     assert sampler.indices == [1, 4, 5]
     assert len(sampler) == 3
-    assert set(sampler) == {1, 4, 5}
+    assert list(sampler) == [1, 4, 5]
 
 
 def test_drop_n_last_frames():
@@ -51,7 +51,7 @@ def test_drop_n_last_frames():
     sampler = EpisodeAwareSampler(episode_data_index, drop_n_last_frames=1)
     assert sampler.indices == [0, 3, 4]
     assert len(sampler) == 3
-    assert set(sampler) == {0, 3, 4}
+    assert list(sampler) == [0, 3, 4]
 
 
 def test_episode_indices_to_use():
@@ -67,7 +67,7 @@ def test_episode_indices_to_use():
     sampler = EpisodeAwareSampler(episode_data_index, episode_indices_to_use=[0, 2])
     assert sampler.indices == [0, 1, 3, 4, 5]
     assert len(sampler) == 5
-    assert set(sampler) == {0, 1, 3, 4, 5}
+    assert list(sampler) == [0, 1, 3, 4, 5]
 
 
 def test_shuffle():
