@@ -22,8 +22,8 @@ To resume, all that we have to do is run the training script, providing the run 
 
 ```bash
 python lerobot/scripts/train.py \
-    hydra.run.dir=outputs/train \
-    run_resumption resume=true
+    hydra.run.dir=outputs/train/run_resumption \
+    resume=true
 ```
 
 You should see from the logging that your training picks up from where it left off.
