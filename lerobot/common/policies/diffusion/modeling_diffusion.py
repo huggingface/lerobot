@@ -162,9 +162,10 @@ class DiffusionModel(nn.Module):
         self.config = config
 
         self.rgb_encoder = DiffusionRgbEncoder(config)
+        num_images = len([k for k in config.input_shapes if k.startswith("observation.image")])
         self.unet = DiffusionConditionalUnet1d(
             config,
-            global_cond_dim=(config.output_shapes["action"][0] + self.rgb_encoder.feature_dim)
+            global_cond_dim=(config.output_shapes["action"][0] + self.rgb_encoder.feature_dim * num_images)
             * config.n_obs_steps,
         )
 
@@ -220,9 +221,10 @@ class DiffusionModel(nn.Module):
         img_features = self.rgb_encoder(
             einops.rearrange(batch["observation.images"], "b s n ... -> (b s n) ...")
         )
-        # Separate batch dim, and treat the sequence dimension and camera index dimension as the same.
+        # Separate batch dim and sequence dim back out. The camera index dim gets absorbed into the feature
+        # dim (effectively concatenating the camera features).
         img_features = einops.rearrange(
-            img_features, "(b s n) ... -> b (s n) ...", b=batch_size, s=n_obs_steps
+            img_features, "(b s n) ... -> b s (n ...)", b=batch_size, s=n_obs_steps
         )
         # Concatenate state and image features then flatten to (B, global_cond_dim).
         return torch.cat([batch["observation.state"], img_features], dim=-1).flatten(start_dim=1)
@@ -429,7 +431,7 @@ class DiffusionRgbEncoder(nn.Module):
         # use the height and width from `config.crop_shape` if it is provided, otherwise it should use the
         # height and width from `config.input_shapes`.
         image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
-        assert len(image_keys) == 1
+        # Note: we have a check in the config class to make sure all images have the same shape.
         image_key = image_keys[0]
         dummy_input_h_w = (
             config.crop_shape if config.crop_shape is not None else config.input_shapes[image_key][1:]
