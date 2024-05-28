@@ -28,7 +28,7 @@ OR, you want to evaluate a model checkpoint from the LeRobot training script for
 
 ```
 python lerobot/scripts/eval.py \
-    -p outputs/train/diffusion_pusht/checkpoints/005000 \
+    -p outputs/train/diffusion_pusht/checkpoints/005000/pretrained_model \
     eval.n_episodes=10
 ```
 
