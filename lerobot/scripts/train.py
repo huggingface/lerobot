@@ -355,6 +355,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         sampler=EpisodeAwareSampler(
             offline_dataset.episode_data_index,
             drop_n_last_frames=cfg.drop_n_last_frames if hasattr(cfg, "drop_n_last_frames") else 0,
+            shuffle=True,
         ),
         pin_memory=device.type != "cpu",
         drop_last=False,
