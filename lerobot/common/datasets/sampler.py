@@ -30,12 +30,12 @@ class EpisodeAwareSampler:
         """Sampler that optionally incorporates episode boundary information.
 
         Args:
-            episode_data_index (dict): Dictionary with keys 'from' and 'to' containing the start and end indices of each episode.
-            episode_indices_to_use (list, optional): List of episode indices to use. If None, all episodes are used. Defaults to None.
-                                                     Assumes that episodes are indexed from 0 to N-1.
-            drop_n_first_frames (int, optional): Number of frames to drop from the start of each episode. Defaults to 0.
-            drop_n_last_frames (int, optional): Number of frames to drop from the end of each episode. Defaults to 0.
-            shuffle (bool, optional): Whether to shuffle the indices. Defaults to False.
+            episode_data_index: Dictionary with keys 'from' and 'to' containing the start and end indices of each episode.
+            episode_indices_to_use: List of episode indices to use. If None, all episodes are used.
+                                    Assumes that episodes are indexed from 0 to N-1.
+            drop_n_first_frames: Number of frames to drop from the start of each episode.
+            drop_n_last_frames: Number of frames to drop from the end of each episode.
+            shuffle: Whether to shuffle the indices.
         """
         indices = []
         for episode_idx, (start_index, end_index) in enumerate(
