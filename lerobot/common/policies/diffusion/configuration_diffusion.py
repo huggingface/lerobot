@@ -26,21 +26,29 @@ class DiffusionConfig:
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
     Those are: `input_shapes` and `output_shapes`.
 
+    Notes on the inputs and outputs:
+        - "observation.state" is required as an input key.
+        - At least one key starting with "observation.image is required as an input.
+        - If there are multiple keys beginning with "observation.image" they are treated as multiple camera
+          views.
+          Right now we only support all images having the same shape.
+        - "action" is required as an output key.
+
     Args:
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
         horizon: Diffusion model action prediction size as detailed in `DiffusionPolicy.select_action`.
         n_action_steps: The number of action steps to run in the environment for one invocation of the policy.
             See `DiffusionPolicy.select_action` for more details.
-        input_shapes: A dictionary defining the shapes of the input data for the policy.
-            The key represents the input data name, and the value is a list indicating the dimensions
-            of the corresponding data. For example, "observation.image" refers to an input from
-            a camera with dimensions [3, 96, 96], indicating it has three color channels and 96x96 resolution.
-            Importantly, shapes doesnt include batch dimension or temporal dimension.
-        output_shapes: A dictionary defining the shapes of the output data for the policy.
-            The key represents the output data name, and the value is a list indicating the dimensions
-            of the corresponding data. For example, "action" refers to an output shape of [14], indicating
-            14-dimensional actions. Importantly, shapes doesnt include batch dimension or temporal dimension.
+        input_shapes: A dictionary defining the shapes of the input data for the policy. The key represents
+            the input data name, and the value is a list indicating the dimensions of the corresponding data.
+            For example, "observation.image" refers to an input from a camera with dimensions [3, 96, 96],
+            indicating it has three color channels and 96x96 resolution. Importantly, `input_shapes` doesn't
+            include batch dimension or temporal dimension.
+        output_shapes: A dictionary defining the shapes of the output data for the policy. The key represents
+            the output data name, and the value is a list indicating the dimensions of the corresponding data.
+            For example, "action" refers to an output shape of [14], indicating 14-dimensional actions.
+            Importantly, `output_shapes` doesn't include batch dimension or temporal dimension.
         input_normalization_modes: A dictionary with key representing the modality (e.g. "observation.state"),
             and the value specifies the normalization mode to apply. The two available modes are "mean_std"
             which subtracts the mean and divides by the standard deviation and "min_max" which rescale in a
@@ -160,6 +168,14 @@ class DiffusionConfig:
                         f"for `crop_shape` and {self.input_shapes[image_key]} for "
                         "`input_shapes[{image_key}]`."
                     )
+        # Check that all input images have the same shape.
+        first_image_key = next(iter(image_keys))
+        for image_key in image_keys:
+            if self.input_shapes[image_key] != self.input_shapes[first_image_key]:
+                raise ValueError(
+                    f"`input_shapes[{image_key}]` does not match `input_shapes[{first_image_key}]`, but we "
+                    "expect all image shapes to match."
+                )
         supported_prediction_types = ["epsilon", "sample"]
         if self.prediction_type not in supported_prediction_types:
             raise ValueError(
