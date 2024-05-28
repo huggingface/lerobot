@@ -25,7 +25,7 @@ class EpisodeAwareSampler:
         episode_indices_to_use: Union[list, None] = None,
         drop_n_first_frames: int = 0,
         drop_n_last_frames: int = 0,
-        shuffle: bool = True,
+        shuffle: bool = False,
     ):
         """Sampler that optionally incorporates episode boundary information.
 
@@ -35,7 +35,7 @@ class EpisodeAwareSampler:
                                                      Assumes that episodes are indexed from 0 to N-1.
             drop_n_first_frames (int, optional): Number of frames to drop from the start of each episode. Defaults to 0.
             drop_n_last_frames (int, optional): Number of frames to drop from the end of each episode. Defaults to 0.
-            shuffle (bool, optional): Whether to shuffle the indices. Defaults to True.
+            shuffle (bool, optional): Whether to shuffle the indices. Defaults to False.
         """
         indices = []
         for episode_idx, (start_index, end_index) in enumerate(
