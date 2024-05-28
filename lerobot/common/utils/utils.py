@@ -19,7 +19,7 @@ import random
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Generator
+from typing import Any, Generator
 
 import hydra
 import numpy as np
@@ -48,12 +48,38 @@ def get_safe_torch_device(cfg_device: str, log: bool = False) -> torch.device:
     return device
 
 
+def get_global_random_state() -> dict[str, Any]:
+    """Get the random state for `random`, `numpy`, and `torch`."""
+    random_state_dict = {
+        "random_state": random.getstate(),
+        "numpy_random_state": np.random.get_state(),
+        "torch_random_state": torch.random.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        random_state_dict["torch_cuda_random_state"] = torch.cuda.random.get_rng_state()
+    return random_state_dict
+
+
+def set_global_random_state(random_state_dict: dict[str, Any]):
+    """Set the random state for `random`, `numpy`, and `torch`.
+
+    Args:
+        random_state_dict: A dictionary of the form returned by `get_global_random_state`.
+    """
+    random.setstate(random_state_dict["random_state"])
+    np.random.set_state(random_state_dict["numpy_random_state"])
+    torch.random.set_rng_state(random_state_dict["torch_random_state"])
+    if torch.cuda.is_available():
+        torch.cuda.random.set_rng_state(random_state_dict["torch_cuda_random_state"])
+
+
 def set_global_seed(seed):
     """Set seed for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 @contextmanager
@@ -69,16 +95,10 @@ def seeded_context(seed: int) -> Generator[None, None, None]:
     c = random.random()  # produces yet another random number, but the same it would have if we never made `b`
     ```
     """
-    random_state = random.getstate()
-    np_random_state = np.random.get_state()
-    torch_random_state = torch.random.get_rng_state()
-    torch_cuda_random_state = torch.cuda.random.get_rng_state()
+    random_state_dict = get_global_random_state()
     set_global_seed(seed)
     yield None
-    random.setstate(random_state)
-    np.random.set_state(np_random_state)
-    torch.random.set_rng_state(torch_random_state)
-    torch.cuda.random.set_rng_state(torch_cuda_random_state)
+    set_global_random_state(random_state_dict)
 
 
 def init_logging():
