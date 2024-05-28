@@ -31,6 +31,15 @@ class TDMPCConfig:
         n_action_repeats: The number of times to repeat the action returned by the planning. (hint: Google
             action repeats in Q-learning or ask your favorite chatbot)
         horizon: Horizon for model predictive control.
+        input_shapes: A dictionary defining the shapes of the input data for the policy. The key represents
+            the input data name, and the value is a list indicating the dimensions of the corresponding data.
+            For example, "observation.image" refers to an input from a camera with dimensions [3, 96, 96],
+            indicating it has three color channels and 96x96 resolution. Importantly, `input_shapes` doesn't
+            include batch dimension or temporal dimension.
+        output_shapes: A dictionary defining the shapes of the output data for the policy. The key represents
+            the output data name, and the value is a list indicating the dimensions of the corresponding data.
+            For example, "action" refers to an output shape of [14], indicating 14-dimensional actions.
+            Importantly, `output_shapes` doesn't include batch dimension or temporal dimension.
         input_normalization_modes: A dictionary with key representing the modality (e.g. "observation.state"),
             and the value specifies the normalization mode to apply. The two available modes are "mean_std"
             which subtracts the mean and divides by the standard deviation and "min_max" which rescale in a
