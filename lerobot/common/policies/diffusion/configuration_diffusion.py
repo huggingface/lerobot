@@ -149,16 +149,17 @@ class DiffusionConfig:
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
         image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
-        for image_key in image_keys:
-            if self.crop_shape is not None and (
-                self.crop_shape[0] > self.input_shapes[image_key][1]
-                or self.crop_shape[1] > self.input_shapes[image_key][2]
-            ):
-                raise ValueError(
-                    f"`crop_shape` should fit within `input_shapes[{image_key}]`. Got {self.crop_shape} "
-                    f"for `crop_shape` and {self.input_shapes[image_key]} for "
-                    "`input_shapes[{image_key}]`."
-                )
+        if self.crop_shape is not None:
+            for image_key in image_keys:
+                if (
+                    self.crop_shape[0] > self.input_shapes[image_key][1]
+                    or self.crop_shape[1] > self.input_shapes[image_key][2]
+                ):
+                    raise ValueError(
+                        f"`crop_shape` should fit within `input_shapes[{image_key}]`. Got {self.crop_shape} "
+                        f"for `crop_shape` and {self.input_shapes[image_key]} for "
+                        "`input_shapes[{image_key}]`."
+                    )
         supported_prediction_types = ["epsilon", "sample"]
         if self.prediction_type not in supported_prediction_types:
             raise ValueError(
