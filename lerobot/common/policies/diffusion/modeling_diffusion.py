@@ -426,7 +426,8 @@ class DiffusionRgbEncoder(nn.Module):
         # Set up pooling and final layers.
         # Use a dry run to get the feature map shape.
         # The dummy input should take the number of image channels from `config.input_shapes` and it should
-        # use the height and width from `config.crop_shape`.
+        # use the height and width from `config.crop_shape` if provided, otherwise height and width should
+        # also be obtained from `config.input_shapes`.
         image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
         assert len(image_keys) == 1
         image_key = image_keys[0]

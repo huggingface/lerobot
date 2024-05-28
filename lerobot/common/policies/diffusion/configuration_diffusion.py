@@ -150,7 +150,7 @@ class DiffusionConfig:
             )
         image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
         for image_key in image_keys:
-            if (
+            if self.crop_shape is not None and (
                 self.crop_shape[0] > self.input_shapes[image_key][1]
                 or self.crop_shape[1] > self.input_shapes[image_key][2]
             ):
