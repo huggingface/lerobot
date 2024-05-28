@@ -85,5 +85,6 @@ def test_shuffle():
     assert len(sampler) == 6
     assert list(sampler) == [0, 1, 2, 3, 4, 5]
     sampler = EpisodeAwareSampler(episode_data_index, shuffle=True)
+    assert sampler.indices == [0, 1, 2, 3, 4, 5]
     assert len(sampler) == 6
     assert set(sampler) == {0, 1, 2, 3, 4, 5}
