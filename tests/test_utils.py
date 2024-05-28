@@ -18,16 +18,14 @@ from lerobot.common.utils.utils import (
     set_global_seed,
 )
 
-rand_fns = (
-    [
-        random.random,
-        np.random.random,
-        lambda: torch.rand(1).item(),
-    ]
-    + [lambda: torch.rand(1, device="cuda")]
-    if torch.cuda.is_available()
-    else []
-)
+# Random generation functions for testing the seeding and random state get/set.
+rand_fns = [
+    random.random,
+    np.random.random,
+    lambda: torch.rand(1).item(),
+]
+if torch.cuda.is_available():
+    rand_fns.append(lambda: torch.rand(1, device="cuda"))
 
 
 @pytest.mark.parametrize("rand_fn", rand_fns)
