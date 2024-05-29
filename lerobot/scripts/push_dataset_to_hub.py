@@ -248,7 +248,7 @@ def main():
         "--input-data-dir",
         type=Path,
         required=True,
-        help="Root directory containing input raw datasets (e.g. `data` or `tmp/data` or `/tmp/lerobot/data`).",
+        help="Directory containing input raw datasets (e.g. `data/aloha_mobile_chair_raw` or `data/pusht_raw`).",
     )
     parser.add_argument(
         "--output-data-dir",
