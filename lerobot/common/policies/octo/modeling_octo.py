@@ -715,11 +715,7 @@ class OctoDiffusionActionHead(nn.Module):
     """Diffusion Action Head for Octo, as described above.
 
     Args:
-        time_dim: int, dimension of the denoising iteration projection.
-        cond_dim: int, dimension of the conditioning features.
-        actions_dim: int, dimension of the output actions (should be pred_horizon * action_dim).
-        n_diffusion_head_layers: int, number of diffusion head layers.
-        diffusion_head_dim: int, dimension of the hidden layers in the diffusion head.
+        config: OctoConfig, configuration class instance.
     """
 
     def __init__(self, config: OctoConfig):
@@ -728,7 +724,7 @@ class OctoDiffusionActionHead(nn.Module):
         self.fourier_feature_embedder = OctoFourierFeatures(config.time_dim)
         self.time_feature_encoder = OctoMLP(config.time_dim, (2 * config.time_dim, config.time_dim))
         self.net = OctoMLPResNet(
-            config.time_dim + config.cond_dim + config.actions_dim,
+            config.time_dim + config.embed_dim + config.actions_dim,
             config.output_shapes["action"][0] * config.horizon,
             hidden_dim=config.diffusion_head_dim,
             num_layers=config.n_diffusion_head_layers,

@@ -86,7 +86,7 @@ def make_optimizer_and_scheduler(cfg, policy):
             cfg.training.lr,
             weight_decay=cfg.training.adamw_weight_decay,
         )
-        # note: this doesn't have the inverse square root scheduler octo originally uses.
+        # todo: this doesn't have the inverse square root scheduler octo originally uses, port it.
         from diffusers.optimization import get_scheduler
 
         lr_scheduler = get_scheduler(
