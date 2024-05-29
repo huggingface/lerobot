@@ -724,7 +724,7 @@ class OctoDiffusionActionHead(nn.Module):
         self.fourier_feature_embedder = OctoFourierFeatures(config.time_dim)
         self.time_feature_encoder = OctoMLP(config.time_dim, (2 * config.time_dim, config.time_dim))
         self.net = OctoMLPResNet(
-            config.time_dim + config.embed_dim + config.actions_dim,
+            config.time_dim + config.embed_dim + config.output_shapes["action"][0],
             config.output_shapes["action"][0] * config.horizon,
             hidden_dim=config.diffusion_head_dim,
             num_layers=config.n_diffusion_head_layers,
