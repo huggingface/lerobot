@@ -15,7 +15,7 @@ training:
   eval_freq: 10000
   save_freq: 100000
   log_freq: 250
-  save_model: true
+  save_checkpoint: true
 
   batch_size: 8
   lr: 1e-5

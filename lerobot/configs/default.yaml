@@ -5,10 +5,17 @@ defaults:
 
 hydra:
   run:
+    # Set `dir` to where you would like to save all of the run outputs. If you run another training session
+    # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
     dir: outputs/train/${now:%Y-%m-%d}/${now:%H-%M-%S}_${env.name}_${policy.name}_${hydra.job.name}
   job:
     name: default
 
+# Set `resume` to true to resume a previous run. In order for this to work, you will need to make sure
+# `hydra.run.dir` is the directory of an existing run with at least one checkpoint in it.
+# Note that when resuming a run, the default behavior is to use the configuration from the checkpoint,
+# regardless of what's provided with the training command at the time of resumption.
+resume: false
 device: cuda  # cpu
 # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
 # automatic gradient scaling is used.
@@ -29,7 +36,7 @@ training:
   eval_freq: ???
   save_freq: ???
   log_freq: 250
-  save_model: true
+  save_checkpoint: true
 
 eval:
   n_episodes: 1
@@ -40,7 +47,7 @@ eval:
 
 wandb:
   enable: false
-  # Set to true to disable saving an artifact despite save_model == True
+  # Set to true to disable saving an artifact despite save_checkpoint == True
   disable_artifact: false
   project: lerobot
   notes: ""

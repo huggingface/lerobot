@@ -304,7 +304,11 @@ class DiffusionModel(nn.Module):
         loss = F.mse_loss(pred, target, reduction="none")
 
         # Mask loss wherever the action is padded with copies (edges of the dataset trajectory).
-        if self.config.do_mask_loss_for_padding and "action_is_pad" in batch:
+        if self.config.do_mask_loss_for_padding:
+            if "action_is_pad" not in batch:
+                raise ValueError(
+                    f"You need to provide 'action_is_pad' in the batch when {self.config.do_mask_loss_for_padding=}."
+                )
             in_episode_bound = ~batch["action_is_pad"]
             loss = loss * in_episode_bound.unsqueeze(-1)
 
@@ -423,11 +427,15 @@ class DiffusionRgbEncoder(nn.Module):
         # Set up pooling and final layers.
         # Use a dry run to get the feature map shape.
         # The dummy input should take the number of image channels from `config.input_shapes` and it should
-        # use the height and width from `config.crop_shape`.
+        # use the height and width from `config.crop_shape` if it is provided, otherwise it should use the
+        # height and width from `config.input_shapes`.
         image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
         assert len(image_keys) == 1
         image_key = image_keys[0]
-        dummy_input = torch.zeros(size=(1, config.input_shapes[image_key][0], *config.crop_shape))
+        dummy_input_h_w = (
+            config.crop_shape if config.crop_shape is not None else config.input_shapes[image_key][1:]
+        )
+        dummy_input = torch.zeros(size=(1, config.input_shapes[image_key][0], *dummy_input_h_w))
         with torch.inference_mode():
             dummy_feature_map = self.backbone(dummy_input)
         feature_map_shape = tuple(dummy_feature_map.shape[1:])
