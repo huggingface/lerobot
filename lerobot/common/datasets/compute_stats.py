@@ -159,10 +159,7 @@ def compute_stats(dataset: LeRobotDataset, batch_size=32, num_workers=16, max_nu
 
 
 def consolidate_stats(ls_datasets: list[LeRobotDataset]) -> dict[str, torch.Tensor]:
-    """Consolidate stats across multiple datsets into one set of stats without recomputing from scratch.
-
-    This is technically not possible to do for the standard deviation as the sum of squares is required.
-    Instead, we choose the
+    """Consolidate stats across multiple datasets into one set of stats without recomputing from scratch.
 
     The final stats will have the union of all data keys from each of the datasets.
     """

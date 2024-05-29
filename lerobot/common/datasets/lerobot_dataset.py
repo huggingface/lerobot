@@ -15,7 +15,7 @@
 # limitations under the License.
 import os
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable
 
 import datasets
 import torch
@@ -69,7 +69,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Track a set of keys that are disabled for the purposes of __getitem___.
         self.disabled_data_keys: set[str] = set()
 
-    def disable_data_keys(self, keys: Iterable[str]):
+    def disable_data_keys(self, keys: list[str]):
         """Disable selected data keys in the __getitem__ return."""
         for k in keys:
             if k not in self.hf_dataset.features:
@@ -207,6 +207,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         videos_dir=None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from existing data and attributes instead of loading from the filesystem.
+
+        It is especially useful when converting raw data into LeRobotDataset before saving the dataset
+        on the filesystem or uploading to the hub.
 
         Note: Meta-data attributes like `repo_id`, `version`, `root`, etc are optional and potentially
         meaningless depending on the downstream usage of the return dataset.
