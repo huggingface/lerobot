@@ -743,7 +743,6 @@ class OctoDiffusionActionHead(nn.Module):
         mean_readouts_embed = readout_embeds.mean(dim=(1, 2))
         time_feature = self.fourier_feature_embedder(time)
         time_cond = self.time_feature_encoder(time_feature)
-        print(time_cond.shape, mean_readouts_embed.shape, actions.shape)
         x = torch.cat([time_cond, mean_readouts_embed, actions], dim=-1)
         eps_pred = self.net(x)
         return eps_pred
