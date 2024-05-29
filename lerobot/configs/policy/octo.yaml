@@ -29,10 +29,10 @@ training:
   log_freq: 250
   save_model: true
 
-  batch_size: 128
+  batch_size: 64
   grad_clip_norm: 1.0
-  lr: 1.0e-4
-  lr_scheduler: inverse_sqrt
+  lr: 3.0e-4
+  lr_scheduler: cosine
   lr_warmup_steps: 2000
   adamw_weight_decay: 0.1
   online_steps_between_rollouts: 1
@@ -81,7 +81,7 @@ policy:
   n_layers: 12
   n_heads: 6
   d_ffn: 1536
-  dropout: 0.
+  p_dropout: 0.
   add_positional_encoding: False
   use_blockwise_causal_mask: True
   time_dim: 32

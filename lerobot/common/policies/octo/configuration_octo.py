@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 Columbia Artificial Intelligence, Robotics Lab,
+# Copyright 2024 Robotic AI, Learning Lab Berkeley,
 # and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -125,7 +125,7 @@ class OctoConfig:
     n_layers: int = 12
     n_heads: int = 6
     d_ffn: int = 1536
-    dropout: int = 0.0
+    p_dropout: int = 0.0
     use_blockwise_causal_mask: bool = True
     time_dim: int = 32
     n_diffusion_head_layers: int = 3

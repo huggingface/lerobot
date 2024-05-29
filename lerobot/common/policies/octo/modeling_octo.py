@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 Robotic AI & Learning Lab Berkeley
+# Copyright 2024 Robotic AI, Learning Lab Berkeley,
 # and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -213,10 +213,11 @@ class OctoModel(nn.Module):
         1) Language and Goal Conditioning: The original Octo supports conditioning on language and goal images, which
             would be tokenized and prepended to the input sequence.
         1) Multiple trajectory generation: The original Octo generates a trajectory for each readout token (i.e,
-            trajectory starting at each observation step). This implementation only generates a single trajectory.
+            trajectory starting at each observation step). This implementation only generates a single trajectory from
+            the last readout token.
         2) MAP over multiple readout tokens: The original Octo has an option to use Multihead Attention Pooling over
             multiple readout tokens for each observation step. This supports multiple readout tokens but utilizes a
-            simple mean pooling over all of them.
+            simple mean pooling over them.
         """
         super().__init__()
         self.config = config
@@ -236,7 +237,7 @@ class OctoModel(nn.Module):
             n_heads=config.n_heads,
             d_ffn=config.d_ffn,
             n_obs_tokens=n_obs_tokens,
-            dropout=config.dropout,
+            p_dropout=config.p_dropout,
         )
         self.action_head = DiffusionActionHead(
             time_dim=config.time_dim,
@@ -653,7 +654,7 @@ class DiffusionActionHead(nn.Module):
         Returns:
             eps_pred: torch.Tensor, shape [batch_size, pred_horizon * action_dim]
         """
-        mean_readouts_embed = readout_embeds.mean(dim=(1, 2))
+        mean_readouts_embed = readout_embeds[:, -1, :, :].mean(dim=-2)
         ff = self.ff(time)
         t_cond = self.time_ff_encoder(ff)
         x = torch.cat([t_cond, mean_readouts_embed, actions], dim=-1)
