@@ -34,6 +34,8 @@ jobs:
 
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Login to DockerHub
         uses: docker/login-action@v3
@@ -72,6 +74,8 @@ jobs:
 
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Login to DockerHub
         uses: docker/login-action@v3
