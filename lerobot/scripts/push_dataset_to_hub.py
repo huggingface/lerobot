@@ -254,7 +254,7 @@ def main():
         "--output-data-dir",
         type=Path,
         required=True,
-        help="Root directory containing output dataset (e.g. `data` or `tmp/data` or `/tmp/lerobot/data`).",
+        help="Root directory containing output dataset (e.g. `data/lerobot/aloha_mobile_chair` or `data/lerobot/pusht`).",
     )
     parser.add_argument(
         "--dataset-id",
