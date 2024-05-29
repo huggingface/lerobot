@@ -14,6 +14,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from dataclasses import dataclass, field
 
 
@@ -57,12 +58,11 @@ class OctoConfig:
         use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
             The group sizes are set to be about 16 (to be precise, feature_dim // 16).
         embed_dim: Dimension of the tokens in the Octo transformer.
-        n_readouts: Number of larned readout heads to use.
+        n_readouts_per_step: Number of larned readout heads to use per observation step.
         n_layers: Number of transformer encoder layers.
         n_heads: Number of heads in the transformer.
         d_ffn: Dimension of the feedforward network in the transformer.
         p_dropout: Dropout rate in the attention and feedforward networks.
-        use_blockwise_causal_mask: Whether to use the blockwise causal mask.
         time_dim: Dimension of the denoising iteration index feature projection.
         n_diffusion_head_layers: Number of layers in the action diffusion head.
         diffusion_head_dim: Hidden dimensions in the action diffusion head.
@@ -121,12 +121,11 @@ class OctoConfig:
     # OctoTransformer ("vit_s" variant).
     # https://github.com/octo-models/octo/blob/main/octo/model/components/transformer.py#L274
     embed_dim: int = 384
-    n_readouts: int = 1
+    n_readouts_per_step: int = 1
     n_layers: int = 12
     n_heads: int = 6
     d_ffn: int = 1536
     p_dropout: int = 0.0
-    use_blockwise_causal_mask: bool = True
     time_dim: int = 32
     n_diffusion_head_layers: int = 3
     diffusion_head_dim: int = 256

@@ -1,9 +1,5 @@
 # @package _global_
 
-# Defaults for training for the PushT dataset as per https://github.com/real-stanford/diffusion_policy.
-# Note: We do not track EMA model weights as we discovered it does not improve the results. See
-#       https://github.com/huggingface/lerobot/pull/134 for more details.
-
 seed: 100000
 dataset_repo_id: lerobot/pusht
 
@@ -41,7 +37,6 @@ policy:
   n_action_steps: 8
 
   input_shapes:
-    # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
     observation.image: [3, 96, 96]
     observation.state: ["${env.state_dim}"]
   output_shapes:
@@ -68,8 +63,6 @@ policy:
   n_heads: 6
   d_ffn: 1536
   p_dropout: 0.
-  add_positional_encoding: False
-  use_blockwise_causal_mask: True
   time_dim: 32
   n_diffusion_head_layers: 3
   diffusion_head_dim: 256
