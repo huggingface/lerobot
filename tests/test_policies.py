@@ -292,6 +292,11 @@ def test_normalize(insert_temporal_dim):
             ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
         ),
         ("aloha", "act", ["policy.n_action_steps=10"]),
+        (
+            "pusht",
+            "octo",
+            ["policy.n_action_steps=8", "policy.num_inference_steps=10"],
+        ),
     ],
 )
 # As artifacts have been generated on an x86_64 kernel, this test won't
