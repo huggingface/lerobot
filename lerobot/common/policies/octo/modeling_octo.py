@@ -724,7 +724,7 @@ class OctoDiffusionActionHead(nn.Module):
         self.fourier_feature_embedder = OctoFourierFeatures(config.time_dim)
         self.time_feature_encoder = OctoMLP(config.time_dim, (2 * config.time_dim, config.time_dim))
         self.net = OctoMLPResNet(
-            config.time_dim + config.embed_dim + config.output_shapes["action"][0],
+            config.time_dim + config.embed_dim + (config.output_shapes["action"][0] * config.horizon),
             config.output_shapes["action"][0] * config.horizon,
             hidden_dim=config.diffusion_head_dim,
             num_layers=config.n_diffusion_head_layers,
@@ -741,8 +741,9 @@ class OctoDiffusionActionHead(nn.Module):
         """
         # we use the mean of all readout tokens for now but there is room for experimentation.
         mean_readouts_embed = readout_embeds.mean(dim=(1, 2))
-        time_emb = self.fourier_feature_embedder(time)
-        time_cond = self.time_feature_encoder(time_emb)
+        time_feature = self.fourier_feature_embedder(time)
+        time_cond = self.time_feature_encoder(time_feature)
+        print(time_cond.shape, mean_readouts_embed.shape, actions.shape)
         x = torch.cat([time_cond, mean_readouts_embed, actions], dim=-1)
         eps_pred = self.net(x)
         return eps_pred
