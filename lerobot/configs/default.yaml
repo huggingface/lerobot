@@ -37,6 +37,8 @@ training:
   save_freq: ???
   log_freq: 250
   save_checkpoint: true
+  num_workers: 4
+  batch_size: ???
 
 eval:
   n_episodes: 1
