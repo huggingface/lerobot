@@ -37,11 +37,6 @@ from torch import Tensor, nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
-from lerobot.common.policies.octo.components import (
-    MLP,
-    FourierFeatures,
-    MLPResNet,
-)
 from lerobot.common.policies.octo.configuration_octo import OctoConfig
 from lerobot.common.policies.utils import (
     get_device_from_parameters,
@@ -87,7 +82,7 @@ class OctoPolicy(nn.Module, PyTorchModelHubMixin):
         # queues are populated during rollout of the policy, they contain the n latest observations and actions
         self._queues = None
 
-        self.octo = OctoModel(config)
+        self.model = OctoModel(config)
 
         image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
         # Note: This check is covered in the post-init of the config but have a sanity check just in case.
@@ -137,7 +132,7 @@ class OctoPolicy(nn.Module, PyTorchModelHubMixin):
         if len(self._queues["action"]) == 0:
             # stack n latest observations from the queue
             batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
-            actions = self.octo.generate_actions(batch)
+            actions = self.model.generate_actions(batch)
 
             # TODO(rcadene): make above methods return output dictionary?
             actions = self.unnormalize_outputs({"action": actions})["action"]
@@ -152,7 +147,7 @@ class OctoPolicy(nn.Module, PyTorchModelHubMixin):
         batch = self.normalize_inputs(batch)
         batch["observation.image"] = batch[self.input_image_key]
         batch = self.normalize_targets(batch)
-        loss = self.octo.compute_loss(batch)
+        loss = self.model.compute_loss(batch)
         return {"loss": loss}
 
 
@@ -177,7 +172,7 @@ class OctoModel(nn.Module):
         1) OctoTransformer, which processes the input sequence of state and image tokens (collectively called
             "observation tokens") and readout tokens as follows:
             - Normalized states and flattened feature maps from all observation steps are projected using FFNs into
-                observation tokens and concattenated.
+                observation tokens and concatenated.
             - Learned "readout tokens" are appended next to tokens of each observation step.
             - A block-wise causal mask (see make_mask for an example viz) that is used to prevent
                 a) observation and readout tokens from attending to any future tokens,
@@ -227,17 +222,11 @@ class OctoModel(nn.Module):
         # we are assuming there is a single proprioceptive observation per step for now.
         # TODO: generalize to multiple proprioceptive observations in the future.
         num_state_obs = 1
-        n_obs_tokens = (feat_map_shape[1] * feat_map_shape[2]) + num_state_obs
+        n_obs_tokens_per_step = (feat_map_shape[1] * feat_map_shape[2]) + num_state_obs
         self.transformer = OctoTransformer(
-            n_obs=config.n_obs_steps,
-            state_dim=config.input_shapes["observation.state"][0],
+            config,
             img_dim=feat_map_shape[0],
-            embed_dim=config.embed_dim,
-            n_layers=config.n_layers,
-            n_heads=config.n_heads,
-            d_ffn=config.d_ffn,
-            n_obs_tokens=n_obs_tokens,
-            p_dropout=config.p_dropout,
+            n_obs_tokens_per_step=n_obs_tokens_per_step,
         )
         self.action_head = DiffusionActionHead(
             time_dim=config.time_dim,
@@ -384,8 +373,42 @@ class OctoModel(nn.Module):
         return loss.mean()
 
 
+def _replace_submodules(
+    root_module: nn.Module, predicate: Callable[[nn.Module], bool], func: Callable[[nn.Module], nn.Module]
+) -> nn.Module:
+    """
+    Args:
+        root_module: The module for which the submodules need to be replaced
+        predicate: Takes a module as an argument and must return True if the that module is to be replaced.
+        func: Takes a module as an argument and returns a new module to replace it with.
+    Returns:
+        The root module with its submodules replaced.
+    """
+    if predicate(root_module):
+        return func(root_module)
+
+    replace_list = [k.split(".") for k, m in root_module.named_modules(remove_duplicate=True) if predicate(m)]
+    for *parents, k in replace_list:
+        parent_module = root_module
+        if len(parents) > 0:
+            parent_module = root_module.get_submodule(".".join(parents))
+        if isinstance(parent_module, nn.Sequential):
+            src_module = parent_module[int(k)]
+        else:
+            src_module = getattr(parent_module, k)
+        tgt_module = func(src_module)
+        if isinstance(parent_module, nn.Sequential):
+            parent_module[int(k)] = tgt_module
+        else:
+            setattr(parent_module, k, tgt_module)
+    # verify that all BN are replaced
+    assert not any(predicate(m) for _, m in root_module.named_modules(remove_duplicate=True))
+    return root_module
+
+
 class OctoRgbEncoder(nn.Module):
     """Encoder an RGB image into a 1D feature vector.
+    (Copied from Diffusion Policy code.)
 
     Includes the ability to normalize and crop the image first.
     """
@@ -451,74 +474,37 @@ class OctoRgbEncoder(nn.Module):
         return self.backbone(x)
 
 
-def _replace_submodules(
-    root_module: nn.Module, predicate: Callable[[nn.Module], bool], func: Callable[[nn.Module], nn.Module]
-) -> nn.Module:
-    """
-    Args:
-        root_module: The module for which the submodules need to be replaced
-        predicate: Takes a module as an argument and must return True if the that module is to be replaced.
-        func: Takes a module as an argument and returns a new module to replace it with.
-    Returns:
-        The root module with its submodules replaced.
-    """
-    if predicate(root_module):
-        return func(root_module)
-
-    replace_list = [k.split(".") for k, m in root_module.named_modules(remove_duplicate=True) if predicate(m)]
-    for *parents, k in replace_list:
-        parent_module = root_module
-        if len(parents) > 0:
-            parent_module = root_module.get_submodule(".".join(parents))
-        if isinstance(parent_module, nn.Sequential):
-            src_module = parent_module[int(k)]
-        else:
-            src_module = getattr(parent_module, k)
-        tgt_module = func(src_module)
-        if isinstance(parent_module, nn.Sequential):
-            parent_module[int(k)] = tgt_module
-        else:
-            setattr(parent_module, k, tgt_module)
-    # verify that all BN are replaced
-    assert not any(predicate(m) for _, m in root_module.named_modules(remove_duplicate=True))
-    return root_module
-
-
-def make_blockwise_causal_mask(layout):
+def make_blockwise_causal_mask(n_obs_tokens_per_step, n_obs_steps, n_readouts):
     """Make the block-wise causal mask for the OctoTransformer.
-    The layout is expected to be a dictionary with the following keys:
-    - n_obs_tokens: number of observation tokens in input sequence.
-    - n_obs: number of observation steps.
-    - n_readouts: number of readout tokens.
 
     Example:
-    layout = {"n_obs_tokens": 4, "n_obs": 2, "n_readouts": 1}
-    ----------------------------
-    | 0 | 1 | 2 | 3 | 4 | 5 |
-    |---|---|---|---|---|---|
-    | O | X | X | X | X | X |
-    | O | O | X | X | X | X |
-    | O | O | O | X | X | X | < readout
-    | O | O | X | O | X | X |
-    | O | O | X | O | O | X |
-    | O | O | X | O | O | O | < readout
-    ----------------------------
-              ^           ^
-            readout    readout
+    --------------------------------------
+    Obs Timestep | 0 | 0 | 0 | 1 | 1 | 1 |
+    --------------------------------------
+    Token index  | 0 | 1 | 2 | 3 | 4 | 5 |
+    -------------|---|---|---|---|---|---|
+    0 attends to | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+    1 attends to | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ |
+    2 attends to | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | < readout
+    3 attends to | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
+    4 attends to | ✓ | ✓ | ✗ | ✓ | ✓ | ✗ |
+    5 attends to | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | < readout
+    --------------------------------------
+                           ^           ^
+                           readout     readout
 
     Args:
-        layout: dict, layout of the observation sequence.
+        n_obs_tokens_per_step: int, number of observation tokens in each step.
+        n_obs_steps: int, number of observation steps.
+        n_readouts: int, number of readout tokens.
     Returns:
         mask: torch.Tensor, block-wise causal mask.
     """
-    n_obs = layout["n_obs"]
-    n_obs_tokens = layout["n_obs_tokens"]
-    n_readouts = layout["n_readouts"]
 
-    input_seq_len = (n_obs_tokens + n_readouts) * n_obs
+    input_seq_len = (n_obs_tokens_per_step + n_readouts) * n_obs_steps
     mask = torch.full((input_seq_len, input_seq_len), -float("inf"))
     mask = torch.triu(mask, diagonal=1)
-    for i in range(n_obs_tokens, input_seq_len, n_obs_tokens + n_readouts):
+    for i in range(n_obs_tokens_per_step, input_seq_len, n_obs_tokens_per_step + n_readouts):
         for j in range(n_readouts):
             mask[:, i + j] = -float("inf")
             mask[i + j, i + j] = 0
@@ -529,65 +515,53 @@ class OctoTransformer(nn.Module):
     """Transformer Encoder for Octo, as described above.
 
     Args:
-        n_obs: int, number of observation steps.
-        state_dim: int, dimension of the proprioceptive observation.
+        config: OctoConfig, configuration class instance.
         img_dim: int, dimension of the image feature patches.
-        embed_dim: int, dimension of the input token embeddings.
-        n_layers: int, number of transformer encoder layers.
-        n_heads: int, number of attention heads.
-        d_ffn: int, dimension of the feedforward network.
-        n_obs_tokens: int, total number of observation tokens in the input sequence.
-        n_readouts: int, number of readout tokens.
-        p_dropout: float, dropout rate for attention and feedforward networks.
-        use_blockwise_causal_mask: bool, whether to use the block-wise causal mask.
+        n_obs_tokens_per_step: int, number of observation tokens in the input sequence per timestep.
     """
 
-    def __init__(
-        self,
-        n_obs,
-        state_dim,
-        img_dim,
-        embed_dim,
-        n_layers,
-        n_heads,
-        d_ffn,
-        n_obs_tokens,
-        n_readouts=1,
-        p_dropout=0.1,
-        use_blockwise_causal_mask=True,
-    ):
+    def __init__(self, config: OctoConfig, img_dim: int, n_obs_tokens_per_step: int):
         super().__init__()
 
-        self.n_readouts = n_readouts
+        self.config = config
 
-        self.state_proj = nn.Linear(state_dim, embed_dim)
-        self.img_proj = nn.Linear(img_dim, embed_dim)
-        self.readout_tokens = nn.Parameter(torch.randn((1, n_obs, n_readouts, embed_dim)))
+        self.state_proj = nn.Linear(config.input_shapes["observation.state"][0], config.embed_dim)
+        self.img_proj = nn.Linear(img_dim, config.embed_dim)
+        self.readout_tokens = nn.Parameter(
+            torch.randn((1, config.n_obs_steps, config.n_readouts, config.embed_dim))
+        )
 
         # init as per original Octo implementation
         self.obs_pos_emb = nn.Parameter(
-            torch.normal(mean=0, std=torch.full((1, n_obs, n_obs_tokens, embed_dim), 0.02))
+            torch.normal(
+                mean=0, std=torch.full((1, config.n_obs_steps, n_obs_tokens_per_step, config.embed_dim), 0.02)
+            )
         )
         self.readout_pos_emb = nn.Parameter(
-            torch.normal(mean=0, std=torch.full((1, n_obs, n_readouts, embed_dim), 0.02))
+            torch.normal(
+                mean=0, std=torch.full((1, config.n_obs_steps, config.n_readouts, config.embed_dim), 0.02)
+            )
         )
 
         blockwise_causal_mask = None
-        if use_blockwise_causal_mask:
-            layout = {"n_obs_tokens": n_obs_tokens, "n_obs": n_obs, "n_readouts": n_readouts}
-            blockwise_causal_mask = make_blockwise_causal_mask(layout)
+        if config.use_blockwise_causal_mask:
+            blockwise_causal_mask = make_blockwise_causal_mask(
+                n_obs_tokens_per_step, config.n_obs_steps, config.n_readouts
+            )
         self.register_buffer("blockwise_causal_mask", blockwise_causal_mask)
 
         encoder_layers = TransformerEncoderLayer(
-            embed_dim,
-            n_heads,
-            dim_feedforward=d_ffn,
-            dropout=p_dropout,
+            config.embed_dim,
+            config.n_heads,
+            dim_feedforward=config.d_ffn,
+            dropout=config.p_dropout,
             batch_first=True,
             norm_first=True,
             activation="gelu",
         )
-        self.transformer_encoder = TransformerEncoder(encoder_layers, n_layers, norm=nn.LayerNorm(embed_dim))
+        self.transformer_encoder = TransformerEncoder(
+            encoder_layers, config.n_layers, norm=nn.LayerNorm(config.embed_dim)
+        )
 
     def forward(self, state, img_feats):
         """
@@ -618,8 +592,129 @@ class OctoTransformer(nn.Module):
         x = rearrange(x, "b t l f -> b (t l) f")
         x = self.transformer_encoder(x, mask=self.blockwise_causal_mask)
         x = rearrange(x, "b (t l) f -> b t l f", t=t)
-        readout_embeds = x[:, :, -self.n_readouts :, :]
+        readout_embeds = x[:, :, -self.config.n_readouts :, :]
         return readout_embeds
+
+
+class FourierFeatures(nn.Module):
+    """Learnable fourier feature transform as in
+    "Fourier Features Let Networks Learn High Frequency Functions in Low Dimensional Domains"
+    https://arxiv.org/abs/2006.10739
+    """
+
+    def __init__(self, output_size, learnable=True):
+        super().__init__()
+
+        self.output_size = output_size
+        self.learnable = learnable
+
+        if learnable:
+            self.kernel = nn.Parameter(torch.randn(output_size // 2, 1))
+        else:
+            half_dim = output_size // 2
+            f = torch.log(10000) / (half_dim - 1)
+            f = torch.exp(torch.arange(half_dim) * -f)
+            self.register_buffer("f", f)
+
+    def forward(self, x):
+        """
+        Args:
+            x: torch.Tensor, shape [B, 1]
+        Returns:
+            torch.Tensor, shape [B, output_size]
+        """
+        f = 2 * torch.pi * x @ self.kernel.t() if self.learnable else self.f * x
+        return torch.cat([torch.cos(f), torch.sin(f)], dim=-1)
+
+
+class MLP(nn.Module):
+    """An MLP with SiLU activation function. Original Octo implementation optionally
+    uses Dropout and LayerNorm that seem to be disabled by default.
+
+    Args:
+        input_dim: int, dimension of the input
+        hidden_dims: Iterable[int], dimensions of the hidden layers
+    """
+
+    def __init__(self, input_dim, hidden_dims):
+        super().__init__()
+        layers = []
+        for i, dim in enumerate(hidden_dims):
+            layers.append(nn.Linear(input_dim, dim))
+            if i + 1 < len(hidden_dims):
+                layers.append(nn.SiLU())
+            input_dim = dim
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        """
+        Args:
+            x: torch.Tensor, shape [B, input_dim]
+        Returns:
+            torch.Tensor, shape [B, output_dim]
+        """
+        return self.net(x)
+
+
+class MLPResNetBlock(nn.Module):
+    """An MLP ResNet block with optional dropout and layer norm.
+
+    Args:
+        in_dim: int, input dimension.
+        dropout: float, Optional, dropout rate.
+        use_layer_norm: bool, Optional, whether to use layer norm.
+    """
+
+    def __init__(self, in_dim, dropout=0, use_layer_norm=True):
+        super().__init__()
+
+        layers = []
+        if dropout > 0:
+            layers.append(nn.Dropout(dropout))
+        if use_layer_norm:
+            layers.append(nn.LayerNorm(in_dim))
+        layers += [nn.Linear(in_dim, in_dim * 4), nn.SiLU(), nn.Linear(in_dim * 4, in_dim)]
+
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        """
+        Args:
+            x: torch.Tensor, shape [B, in_dim]
+        Returns:
+            torch.Tensor, shape [B, in_dim]
+        """
+        return x + self.net(x)
+
+
+class MLPResNet(nn.Module):
+    """An MLP ResNet with optional dropout and layer norm.
+
+    Args:
+        in_dim: int, input dimension.
+        out_dim: int, output dimension.
+        hidden_dim: int, dimension of the hidden layers.
+        num_layers: int, number of hidden layers.
+    """
+
+    def __init__(self, in_dim, out_dim, hidden_dim, num_layers):
+        super().__init__()
+
+        layers = [nn.Linear(in_dim, hidden_dim)]
+        for _ in range(num_layers):
+            layers.append(MLPResNetBlock(hidden_dim))
+        layers += [nn.SiLU(), nn.Linear(hidden_dim, out_dim)]
+
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        """
+        Args:
+            x: torch.Tensor, shape [B, in_dim]
+        Returns:
+            torch.Tensor, shape [B, out_dim]
+        """
+        return self.net(x)
 
 
 class DiffusionActionHead(nn.Module):
@@ -633,16 +728,16 @@ class DiffusionActionHead(nn.Module):
         diffusion_head_dim: int, dimension of the hidden layers in the diffusion head.
     """
 
-    def __init__(self, time_dim, cond_dim, actions_dim, n_diffusion_head_layers, diffusion_head_dim):
+    def __init__(self, config: OctoConfig):
         super().__init__()
 
-        self.ff = FourierFeatures(time_dim)
-        self.time_ff_encoder = MLP(time_dim, (2 * time_dim, time_dim))
+        self.fourier_feature_embedder = FourierFeatures(config.time_dim)
+        self.time_feature_encoder = MLP(config.time_dim, (2 * config.time_dim, config.time_dim))
         self.net = MLPResNet(
-            time_dim + cond_dim + actions_dim,
-            actions_dim,
-            hidden_dim=diffusion_head_dim,
-            num_layers=n_diffusion_head_layers,
+            config.time_dim + config.cond_dim + config.actions_dim,
+            config.output_shapes["action"][0] * config.horizon,
+            hidden_dim=config.diffusion_head_dim,
+            num_layers=config.n_diffusion_head_layers,
         )
 
     def forward(self, readout_embeds, time, actions):
@@ -654,9 +749,10 @@ class DiffusionActionHead(nn.Module):
         Returns:
             eps_pred: torch.Tensor, shape [batch_size, pred_horizon * action_dim]
         """
+        # we only use the last readout token for now but there is room for experimentation (mean pooling, MAP, etc.)
         mean_readouts_embed = readout_embeds[:, -1, :, :].mean(dim=-2)
-        ff = self.ff(time)
-        t_cond = self.time_ff_encoder(ff)
-        x = torch.cat([t_cond, mean_readouts_embed, actions], dim=-1)
+        time_emb = self.fourier_feature_embedder(time)
+        time_cond = self.time_feature_encoder(time_emb)
+        x = torch.cat([time_cond, mean_readouts_embed, actions], dim=-1)
         eps_pred = self.net(x)
         return eps_pred
