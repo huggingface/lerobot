@@ -70,6 +70,8 @@ jobs:
       #     files: ./coverage.xml
       #     verbose: true
       - name: Tests end-to-end
+        env:
+          DEVICE: cuda
         run: make test-end-to-end
 
     #   - name: Generate Report
