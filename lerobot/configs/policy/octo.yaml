@@ -61,7 +61,7 @@ policy:
   n_readouts: 1
   n_layers: 12
   n_heads: 6
-  d_ffn: 1536
+  dim_feedforward: 1536
   p_dropout: 0.
   time_dim: 32
   n_diffusion_head_layers: 3

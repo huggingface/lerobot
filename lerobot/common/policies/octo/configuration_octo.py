@@ -61,7 +61,7 @@ class OctoConfig:
         n_readouts_per_step: Number of larned readout heads to use per observation step.
         n_layers: Number of transformer encoder layers.
         n_heads: Number of heads in the transformer.
-        d_ffn: Dimension of the feedforward network in the transformer.
+        dim_feedforward: Dimension of the feedforward network in the transformer.
         p_dropout: Dropout rate in the attention and feedforward networks.
         time_dim: Dimension of the denoising iteration index feature projection.
         n_diffusion_head_layers: Number of layers in the action diffusion head.
@@ -124,7 +124,7 @@ class OctoConfig:
     n_readouts_per_step: int = 1
     n_layers: int = 12
     n_heads: int = 6
-    d_ffn: int = 1536
+    dim_feedforward: int = 1536
     p_dropout: int = 0.0
     time_dim: int = 32
     n_diffusion_head_layers: int = 3
@@ -140,7 +140,7 @@ class OctoConfig:
     clip_sample_range: float = 1.0
 
     # Inference
-    num_inference_steps: int | None = None
+    num_inference_steps: int | None = 20
 
     # Loss computation
     do_mask_loss_for_padding: bool = False
