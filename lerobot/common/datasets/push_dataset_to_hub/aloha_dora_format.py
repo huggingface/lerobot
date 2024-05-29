@@ -45,7 +45,8 @@ def load_from_raw(raw_dir: Path, out_dir: Path):
     reference_files = list(raw_dir.glob("observation.images.cam_*.parquet"))
     if len(reference_files) == 0:
         raise ValueError(f"Missing reference files for camera, starting with  in '{raw_dir}'")
-    reference_key = reference_files[0].stem
+    # select first camera in alphanumeric order
+    reference_key = sorted(reference_files)[0].stem
     reference_df = pd.read_parquet(raw_dir / f"{reference_key}.parquet")
     reference_df = reference_df[["timestamp_utc", reference_key]]
 
