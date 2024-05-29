@@ -169,6 +169,7 @@ def consolidate_stats(ls_datasets: list[LeRobotDataset]) -> dict[str, torch.Tens
     stats = {k: {} for k in data_keys}
     for data_key in data_keys:
         for stat_key in ["min", "max"]:
+            # compute `max(dataset_0["max"], dataset_1["max"], ...)`
             stats[data_key][stat_key] = einops.reduce(
                 torch.stack([d.stats[data_key][stat_key] for d in ls_datasets if data_key in d.stats], dim=0),
                 "n ... -> ...",
