@@ -30,7 +30,7 @@ from lerobot.common.policies.factory import get_policy_and_config_classes, make_
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import init_hydra_config
-from tests.scripts.save_policy_to_safetensor import get_policy_stats
+from tests.scripts.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_cpu, require_env, require_x86_64_kernel
 
 
@@ -72,6 +72,8 @@ def test_get_policy_and_config_classes(policy_name: str):
         ),
         # Note: these parameters also need custom logic in the test function for overriding the Hydra config.
         ("pusht", "act", ["env.task=PushT-v0", "dataset_repo_id=lerobot/pusht"]),
+        ("dora_aloha_real", "act_real", []),
+        ("dora_aloha_real", "act_real_no_state", []),
     ],
 )
 @require_env
@@ -291,6 +293,8 @@ def test_normalize(insert_temporal_dim):
             ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
         ),
         ("aloha", "act", ["policy.n_action_steps=10"]),
+        ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"]),
+        ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"]),
     ],
 )
 # As artifacts have been generated on an x86_64 kernel, this test won't
