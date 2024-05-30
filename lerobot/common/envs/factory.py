@@ -38,7 +38,7 @@ def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv
         raise e
 
     gym_handle = f"{package_name}/{cfg.env.task}"
-    gym_kwgs = cfg.env.get("gym", {})
+    gym_kwgs = dict(cfg.env.get("gym", {}))
 
     if cfg.env.get("episode_length"):
         gym_kwgs["max_episode_steps"] = cfg.env.episode_length
