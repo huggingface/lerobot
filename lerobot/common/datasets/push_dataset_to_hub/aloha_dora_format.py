@@ -69,12 +69,10 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
             # "nearest" is the best option over "backward", since the latter can desynchronizes camera timestamps by
             # matching timestamps that are too far appart, in order to fit the backward constraints. It's not the case for "nearest".
             # However, note that "nearest" might synchronize the reference camera with other cameras on slightly future timestamps.
-            # This is not a problem when the tolerance is set to be low enough to avoid matching timestamps that
             # are too far appart.
             direction="nearest",
             tolerance=pd.Timedelta(f"{1/fps} seconds"),
         )
-
     # Remove rows with episode_index -1 which indicates data that correspond to in-between episodes
     df = df[df["episode_index"] != -1]
 
@@ -89,9 +87,10 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
                 raise ValueError(path)
             episode_index = int(match.group(1))
             episode_index_per_cam[key] = episode_index
-        assert (
-            len(set(episode_index_per_cam.values())) == 1
-        ), f"All cameras are expected to belong to the same episode, but getting {episode_index_per_cam}"
+        if len(set(episode_index_per_cam.values())) != 1:
+            raise ValueError(
+                f"All cameras are expected to belong to the same episode, but getting {episode_index_per_cam}"
+            )
         return episode_index
 
     df["episode_index"] = df.apply(get_episode_index, axis=1)
@@ -119,7 +118,8 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
     # sanity check episode indices go from 0 to n-1
     ep_ids = [ep_idx for ep_idx, _ in df.groupby("episode_index")]
     expected_ep_ids = list(range(df["episode_index"].max() + 1))
-    assert ep_ids == expected_ep_ids, f"Episodes indices go from {ep_ids} instead of {expected_ep_ids}"
+    if ep_ids != expected_ep_ids:
+        raise ValueError(f"Episodes indices go from {ep_ids} instead of {expected_ep_ids}")
 
     # Create symlink to raw videos directory (that needs to be absolute not relative)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -132,7 +132,8 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
             continue
         for ep_idx in ep_ids:
             video_path = videos_dir / f"{key}_episode_{ep_idx:06d}.mp4"
-            assert video_path.exists(), f"Video file not found in {video_path}"
+            if not video_path.exists():
+                raise ValueError(f"Video file not found in {video_path}")
 
     data_dict = {}
     for key in df:
@@ -144,7 +145,8 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
 
             # sanity check the video path is well formated
             video_path = videos_dir.parent / data_dict[key][0]["path"]
-            assert video_path.exists(), f"Video file not found in {video_path}"
+            if not video_path.exists():
+                raise ValueError(f"Video file not found in {video_path}")
         # is number
         elif df[key].iloc[0].ndim == 0 or df[key].iloc[0].shape[0] == 1:
             data_dict[key] = torch.from_numpy(df[key].values)
