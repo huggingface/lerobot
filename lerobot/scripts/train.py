@@ -69,7 +69,7 @@ def make_optimizer_and_scheduler(cfg, policy):
             cfg.training.adam_eps,
             cfg.training.adam_weight_decay,
         )
-        from diffusers.optimization import get_scheduler
+        from transformers.optimization import get_scheduler
 
         lr_scheduler = get_scheduler(
             cfg.training.lr_scheduler,
