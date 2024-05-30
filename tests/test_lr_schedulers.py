@@ -22,9 +22,10 @@ def test_get_lr_scheduler():
 
 
 def test_cosine_lr_scheduler():
-    intervals = 250
+    lr = 1e-4
     num_warmup_steps = 500
     num_training_steps = 2000
+    record_intervals = 250
     recorded_lrs_at_intervals = [
         2.0e-7,
         5.0200000e-5,
@@ -35,22 +36,20 @@ def test_cosine_lr_scheduler():
         2.4909365e-5,
         6.6464649e-6,
     ]
-    optimizer = torch.optim.AdamW(
-        torch.nn.Linear(10, 10).parameters(), lr=1e-4, betas=(0.95, 0.999), eps=1e-8, weight_decay=1e-6
-    )
+    optimizer = torch.optim.AdamW(torch.nn.Linear(10, 10).parameters(), lr=lr)
 
     lr_scheduler = get_scheduler(
         "cosine", optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps
     )
     assert lr_scheduler.get_last_lr()[0] == 0.0
 
-    for i in range(num_training_steps - intervals):
+    for step_idx in range(num_training_steps - record_intervals):
         lr_scheduler.step()
-        if i % intervals == 0:
+        if step_idx % record_intervals == 0:
             recorded = recorded_lrs_at_intervals.pop(0)
             assert math.isclose(
                 lr_scheduler.get_last_lr()[0], recorded, abs_tol=1e-7
-            ), f"LR value mismatch at step {i}: {lr_scheduler.get_last_lr()[0]} vs. {recorded}"
+            ), f"LR value mismatch at step {step_idx}: {lr_scheduler.get_last_lr()[0]} vs. {recorded}"
 
     lr_scheduler.step()
     assert math.isclose(
@@ -59,9 +58,10 @@ def test_cosine_lr_scheduler():
 
 
 def test_inverse_sqrt_lr_scheduler():
-    intervals = 250
+    lr = 1e-4
     num_warmup_steps = 500
     num_training_steps = 2000
+    record_intervals = 250
     recorded_lrs_at_intervals = [
         2.0e-7,
         5.02e-5,
@@ -72,21 +72,19 @@ def test_inverse_sqrt_lr_scheduler():
         5.7715792e-5,
         5.3436983e-5,
     ]
-    optimizer = torch.optim.AdamW(
-        torch.nn.Linear(10, 10).parameters(), lr=1e-4, betas=(0.95, 0.999), eps=1e-8, weight_decay=1e-6
-    )
+    optimizer = torch.optim.AdamW(torch.nn.Linear(10, 10).parameters(), lr=lr)
 
     lr_scheduler = get_scheduler(
         "inverse_sqrt", optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps
     )
 
-    for i in range(num_training_steps - intervals):
+    for step_idx in range(num_training_steps - record_intervals):
         lr_scheduler.step()
-        if i % intervals == 0:
+        if step_idx % record_intervals == 0:
             recorded = recorded_lrs_at_intervals.pop(0)
             assert math.isclose(
                 lr_scheduler.get_last_lr()[0], recorded, abs_tol=1e-7
-            ), f"LR value mismatch at step {i}: {lr_scheduler.get_last_lr()[0]} vs. {recorded}"
+            ), f"LR value mismatch at step {step_idx}: {lr_scheduler.get_last_lr()[0]} vs. {recorded}"
 
     lr_scheduler.step()
     assert math.isclose(
