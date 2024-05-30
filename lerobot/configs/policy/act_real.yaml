@@ -1,7 +1,7 @@
 # @package _global_
 
 seed: 1000
-dataset_repo_id: cadene/aloha_v2_static_dora_test
+dataset_repo_id: cadene/wrist_gripper
 
 override_dataset_stats:
   observation.images.cam_right_wrist:
@@ -27,7 +27,7 @@ training:
   eval_freq: -1
   save_freq: 10000
   log_freq: 100
-  save_model: true
+  save_checkpoint: true
 
   batch_size: 8
   lr: 1e-5
