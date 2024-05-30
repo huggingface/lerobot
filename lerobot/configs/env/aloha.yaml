@@ -5,7 +5,6 @@ fps: 50
 env:
   name: aloha
   task: AlohaInsertion-v0
-  image_size: [3, 480, 640]
   state_dim: 14
   action_dim: 14
   fps: ${fps}
@@ -13,5 +12,3 @@ env:
   gym:
     obs_type: pixels_agent_pos
     render_mode: rgb_array
-    visualization_width: 384
-    visualization_height: 384
