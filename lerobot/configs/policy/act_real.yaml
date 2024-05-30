@@ -11,7 +11,7 @@
 # ```bash
 # python lerobot/scripts/train.py \
 #   policy=act_real \
-#   env=aloha_real
+#   env=dora_aloha_real
 # ```
 
 seed: 1000
