@@ -43,7 +43,11 @@ def check_format(raw_dir) -> bool:
 
 def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
     # Load data stream that will be used as reference for the timestamps synchronization
-    reference_key = "observation.images.cam_right_wrist"
+    reference_files = list(raw_dir.glob("observation.images.cam_*.parquet"))
+    if len(reference_files) == 0:
+        raise ValueError(f"Missing reference files for camera, starting with  in '{raw_dir}'")
+    # select first camera in alphanumeric order
+    reference_key = sorted(reference_files)[0].stem
     reference_df = pd.read_parquet(raw_dir / f"{reference_key}.parquet")
     reference_df = reference_df[["timestamp_utc", reference_key]]
 
@@ -51,7 +55,10 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
     df = reference_df
     for path in raw_dir.glob("*.parquet"):
         key = path.stem  # action or observation.state or ...
-        if key == reference_key or "failed_episode_index" in key:
+        if key == reference_key:
+            continue
+        if "failed_episode_index" in key:
+            # TODO(rcadene): add support for removing episodes that are tagged as "failed"
             continue
         modality_df = pd.read_parquet(path)
         modality_df = modality_df[["timestamp_utc", key]]
@@ -59,6 +66,11 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
             df,
             modality_df,
             on="timestamp_utc",
+            # "nearest" is the best option over "backward", since the latter can desynchronizes camera timestamps by
+            # matching timestamps that are too far appart, in order to fit the backward constraints. It's not the case for "nearest".
+            # However, note that "nearest" might synchronize the reference camera with other cameras on slightly future timestamps.
+            # This is not a problem when the tolerance is set to be low enough to avoid matching timestamps that
+            # are too far appart.
             direction="nearest",
             tolerance=pd.Timedelta(f"{1/fps} seconds"),
         )
