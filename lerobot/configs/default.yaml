@@ -24,6 +24,7 @@ use_amp: false
 # AND for the evaluation environments.
 seed: ???
 dataset_repo_id: lerobot/pusht
+video_backend: pyav
 
 training:
   offline_steps: ???
