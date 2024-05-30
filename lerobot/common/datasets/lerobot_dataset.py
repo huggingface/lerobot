@@ -13,12 +13,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 import os
 from pathlib import Path
+from typing import Callable
 
 import datasets
 import torch
+import torch.utils
 
+from lerobot.common.datasets.compute_stats import aggregate_stats
 from lerobot.common.datasets.utils import (
     calculate_episode_data_index,
     load_episode_data_index,
@@ -42,7 +46,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         version: str | None = CODEBASE_VERSION,
         root: Path | None = DATA_DIR,
         split: str = "train",
-        transform: callable = None,
+        transform: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
     ):
         super().__init__()
@@ -171,7 +175,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     @classmethod
     def from_preloaded(
         cls,
-        repo_id: str,
+        repo_id: str = "from_preloaded",
         version: str | None = CODEBASE_VERSION,
         root: Path | None = None,
         split: str = "train",
@@ -183,7 +187,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
         stats=None,
         info=None,
         videos_dir=None,
-    ):
+    ) -> "LeRobotDataset":
+        """Create a LeRobot Dataset from existing data and attributes instead of loading from the filesystem.
+
+        It is especially useful when converting raw data into LeRobotDataset before saving the dataset
+        on the filesystem or uploading to the hub.
+
+        Note: Meta-data attributes like `repo_id`, `version`, `root`, etc are optional and potentially
+        meaningless depending on the downstream usage of the return dataset.
+        """
         # create an empty object of type LeRobotDataset
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
@@ -195,6 +207,192 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.hf_dataset = hf_dataset
         obj.episode_data_index = episode_data_index
         obj.stats = stats
-        obj.info = info
+        obj.info = info if info is not None else {}
         obj.videos_dir = videos_dir
         return obj
+
+
+class MultiLeRobotDataset(torch.utils.data.Dataset):
+    """A dataset consisting of multiple underlying `LeRobotDataset`s.
+
+    The underlying `LeRobotDataset`s are effectively concatenated, and this class adopts much of the API
+    structure of `LeRobotDataset`.
+    """
+
+    def __init__(
+        self,
+        repo_ids: list[str],
+        version: str | None = CODEBASE_VERSION,
+        root: Path | None = DATA_DIR,
+        split: str = "train",
+        transform: Callable | None = None,
+        delta_timestamps: dict[list[float]] | None = None,
+    ):
+        super().__init__()
+        self.repo_ids = repo_ids
+        # Construct the underlying datasets passing everything but `transform` and `delta_timestamps` which
+        # are handled by this class.
+        self._datasets = [
+            LeRobotDataset(
+                repo_id,
+                version=version,
+                root=root,
+                split=split,
+                delta_timestamps=delta_timestamps,
+                transform=transform,
+            )
+            for repo_id in repo_ids
+        ]
+        # Check that some properties are consistent across datasets. Note: We may relax some of these
+        # consistency requirements in future iterations of this class.
+        for repo_id, dataset in zip(self.repo_ids, self._datasets, strict=True):
+            if dataset.info != self._datasets[0].info:
+                raise ValueError(
+                    f"Detected a mismatch in dataset info between {self.repo_ids[0]} and {repo_id}. This is "
+                    "not yet supported."
+                )
+        # Disable any data keys that are not common across all of the datasets. Note: we may relax this
+        # restriction in future iterations of this class. For now, this is necessary at least for being able
+        # to use PyTorch's default DataLoader collate function.
+        self.disabled_data_keys = set()
+        intersection_data_keys = set(self._datasets[0].hf_dataset.features)
+        for dataset in self._datasets:
+            intersection_data_keys.intersection_update(dataset.hf_dataset.features)
+        if len(intersection_data_keys) == 0:
+            raise RuntimeError(
+                "Multiple datasets were provided but they had no keys common to all of them. The "
+                "multi-dataset functionality currently only keeps common keys."
+            )
+        for repo_id, dataset in zip(self.repo_ids, self._datasets, strict=True):
+            extra_keys = set(dataset.hf_dataset.features).difference(intersection_data_keys)
+            logging.warning(
+                f"keys {extra_keys} of {repo_id} were disabled as they are not contained in all the "
+                "other datasets."
+            )
+            self.disabled_data_keys.update(extra_keys)
+
+        self.version = version
+        self.root = root
+        self.split = split
+        self.transform = transform
+        self.delta_timestamps = delta_timestamps
+        self.stats = aggregate_stats(self._datasets)
+
+    @property
+    def repo_id_to_index(self):
+        """Return a mapping from dataset repo_id to a dataset index automatically created by this class.
+
+        This index is incorporated as a data key in the dictionary returned by `__getitem__`.
+        """
+        return {repo_id: i for i, repo_id in enumerate(self.repo_ids)}
+
+    @property
+    def repo_index_to_id(self):
+        """Return the inverse mapping if repo_id_to_index."""
+        return {v: k for k, v in self.repo_id_to_index}
+
+    @property
+    def fps(self) -> int:
+        """Frames per second used during data collection.
+
+        NOTE: Fow now, this relies on a check in __init__ to make sure all sub-datasets have the same info.
+        """
+        return self._datasets[0].info["fps"]
+
+    @property
+    def video(self) -> bool:
+        """Returns True if this dataset loads video frames from mp4 files.
+
+        Returns False if it only loads images from png files.
+
+        NOTE: Fow now, this relies on a check in __init__ to make sure all sub-datasets have the same info.
+        """
+        return self._datasets[0].info.get("video", False)
+
+    @property
+    def features(self) -> datasets.Features:
+        features = {}
+        for dataset in self._datasets:
+            features.update({k: v for k, v in dataset.features.items() if k not in self.disabled_data_keys})
+        return features
+
+    @property
+    def camera_keys(self) -> list[str]:
+        """Keys to access image and video stream from cameras."""
+        keys = []
+        for key, feats in self.features.items():
+            if isinstance(feats, (datasets.Image, VideoFrame)):
+                keys.append(key)
+        return keys
+
+    @property
+    def video_frame_keys(self) -> list[str]:
+        """Keys to access video frames that requires to be decoded into images.
+
+        Note: It is empty if the dataset contains images only,
+        or equal to `self.cameras` if the dataset contains videos only,
+        or can even be a subset of `self.cameras` in a case of a mixed image/video dataset.
+        """
+        video_frame_keys = []
+        for key, feats in self.features.items():
+            if isinstance(feats, VideoFrame):
+                video_frame_keys.append(key)
+        return video_frame_keys
+
+    @property
+    def num_samples(self) -> int:
+        """Number of samples/frames."""
+        return sum(d.num_samples for d in self._datasets)
+
+    @property
+    def num_episodes(self) -> int:
+        """Number of episodes."""
+        return sum(d.num_episodes for d in self._datasets)
+
+    @property
+    def tolerance_s(self) -> float:
+        """Tolerance in seconds used to discard loaded frames when their timestamps
+        are not close enough from the requested frames. It is only used when `delta_timestamps`
+        is provided or when loading video frames from mp4 files.
+        """
+        # 1e-4 to account for possible numerical error
+        return 1 / self.fps - 1e-4
+
+    def __len__(self):
+        return self.num_samples
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        if idx >= len(self):
+            raise IndexError(f"Index {idx} out of bounds.")
+        # Determine which dataset to get an item from based on the index.
+        start_idx = 0
+        dataset_idx = 0
+        for dataset in self._datasets:
+            if idx >= start_idx + dataset.num_samples:
+                start_idx += dataset.num_samples
+                dataset_idx += 1
+            break
+        else:
+            raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
+        item = self._datasets[dataset_idx][idx - start_idx]
+        item["dataset_index"] = torch.tensor(dataset_idx)
+        for data_key in self.disabled_data_keys:
+            if data_key in item:
+                del item[data_key]
+        return item
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(\n"
+            f"  Repository IDs: '{self.repo_ids}',\n"
+            f"  Version: '{self.version}',\n"
+            f"  Split: '{self.split}',\n"
+            f"  Number of Samples: {self.num_samples},\n"
+            f"  Number of Episodes: {self.num_episodes},\n"
+            f"  Type: {'video (.mp4)' if self.video else 'image (.png)'},\n"
+            f"  Recorded Frames per Second: {self.fps},\n"
+            f"  Camera Keys: {self.camera_keys},\n"
+            f"  Video Frame Keys: {self.video_frame_keys if self.video else 'N/A'},\n"
+            f"  Transformations: {self.transform},\n"
+            f")"
+        )

@@ -23,6 +23,10 @@ use_amp: false
 # `seed` is used for training (eg: model initialization, dataset shuffling)
 # AND for the evaluation environments.
 seed: ???
+# You may provide a list of datasets here. `train.py` creates them all and concatenates them. Note: only data
+# keys common between the datasets are kept. Each dataset gets and additional transform that inserts the
+# "dataset_index" into the returned item. The index mapping is made according to the order in which the
+# datsets are provided.
 dataset_repo_id: lerobot/pusht
 
 training:
