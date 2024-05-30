@@ -422,7 +422,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     logging.info("End of online training")
 
-    eval_env.close()
+    if cfg.training.eval_freq > 0:
+        eval_env.close()
     online_training_env.close()
 
 
