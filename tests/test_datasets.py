@@ -43,7 +43,11 @@ from lerobot.common.utils.utils import init_hydra_config, seeded_context
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE
 
 
-@pytest.mark.parametrize("env_name, repo_id, policy_name", lerobot.env_dataset_policy_triplets)
+@pytest.mark.parametrize(
+    "env_name, repo_id, policy_name",
+    lerobot.env_dataset_policy_triplets
+    + [("aloha", ["lerobot/aloha_sim_insertion_human", "lerobot/aloha_sim_transfer_cube_human"], "act")],
+)
 def test_factory(env_name, repo_id, policy_name):
     """
     Tests that:
