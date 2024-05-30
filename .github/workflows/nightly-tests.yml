@@ -64,10 +64,14 @@ jobs:
       - name: Test
         run: pytest -v --cov=./lerobot --cov-report=xml --disable-warnings tests
 
+      - name: ls
+        run: |
+          ls -glha .
+          ls -glha lerobot
+
       - name: Upload coverage reports to Codecov with GitHub Action
         uses: codecov/codecov-action@v3
         with:
-          files: ./coverage.xml
           verbose: true
 
       - name: Tests end-to-end
