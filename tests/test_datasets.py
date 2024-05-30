@@ -128,6 +128,7 @@ def test_multilerobotdataset_frames():
     expected_dataset_indices = []
     for i, sub_dataset in enumerate(sub_datasets):
         expected_dataset_indices.extend([i] * len(sub_dataset))
+
     for expected_dataset_index, sub_dataset_item, dataset_item in zip(
         expected_dataset_indices, chain(*sub_datasets), dataset, strict=True
     ):
