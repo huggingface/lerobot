@@ -4,7 +4,7 @@ fps: 30
 
 env:
   name: dora
-  task: DoraAloha2-v0
+  task: DoraAloha-v0
   state_dim: 14
   action_dim: 14
   fps: ${fps}
