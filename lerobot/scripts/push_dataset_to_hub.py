@@ -144,7 +144,8 @@ def push_videos_to_hub(repo_id, videos_dir, revision):
 
 
 def push_dataset_to_hub(
-    data_dir: Path,
+    raw_dir: Path,
+    out_dir: Path,
     dataset_id: str,
     raw_format: str | None,
     community_id: str,
@@ -161,9 +162,6 @@ def push_dataset_to_hub(
 ):
     repo_id = f"{community_id}/{dataset_id}"
 
-    raw_dir = data_dir / f"{dataset_id}_raw"
-
-    out_dir = data_dir / repo_id
     meta_data_dir = out_dir / "meta_data"
     videos_dir = out_dir / "videos"
 
@@ -245,10 +243,16 @@ def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--data-dir",
+        "--raw-dir",
         type=Path,
         required=True,
-        help="Root directory containing datasets (e.g. `data` or `tmp/data` or `/tmp/lerobot/data`).",
+        help="Directory containing input raw datasets (e.g. `data/aloha_mobile_chair_raw` or `data/pusht_raw).",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+        help="Root directory containing output dataset (e.g. `data/lerobot/aloha_mobile_chair` or `data/lerobot/pusht`).",
     )
     parser.add_argument(
         "--dataset-id",
