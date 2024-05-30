@@ -16,6 +16,7 @@
 import json
 import logging
 from copy import deepcopy
+from itertools import chain
 from pathlib import Path
 
 import einops
@@ -31,7 +32,7 @@ from lerobot.common.datasets.compute_stats import (
     get_stats_einops_patterns,
 )
 from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
 from lerobot.common.datasets.utils import (
     flatten_dict,
     hf_transform_to_torch,
@@ -111,6 +112,32 @@ def test_factory(env_name, repo_id, policy_name):
         # test missing keys in delta_timestamps
         for key in delta_timestamps:
             assert key in item, f"{key}"
+
+
+def test_multilerobotdataset_frames():
+    """Check that all dataset frames are incorporated."""
+    # Note: use the image variants of the dataset to make the test approx 3x faster.
+    repo_ids = ["lerobot/aloha_sim_insertion_human_image", "lerobot/aloha_sim_transfer_cube_human_image"]
+    sub_datasets = [LeRobotDataset(repo_id) for repo_id in repo_ids]
+    dataset = MultiLeRobotDataset(repo_ids)
+    assert len(dataset) == sum(len(d) for d in sub_datasets)
+    assert dataset.num_samples == sum(d.num_samples for d in sub_datasets)
+    assert dataset.num_episodes == sum(d.num_episodes for d in sub_datasets)
+
+    # Run through all items of the LeRobotDatasets in parallel with the items of the MultiLerobotDataset and
+    # check they match.
+    expected_dataset_indices = []
+    for i, sub_dataset in enumerate(sub_datasets):
+        expected_dataset_indices.extend([i] * len(sub_dataset))
+
+    for expected_dataset_index, sub_dataset_item, dataset_item in zip(
+        expected_dataset_indices, chain(*sub_datasets), dataset, strict=True
+    ):
+        dataset_index = dataset_item.pop("dataset_index")
+        assert dataset_index == expected_dataset_index
+        assert sub_dataset_item.keys() == dataset_item.keys()
+        for k in sub_dataset_item:
+            assert torch.equal(sub_dataset_item[k], dataset_item[k])
 
 
 def test_compute_stats_on_xarm():
