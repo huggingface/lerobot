@@ -198,7 +198,7 @@ class ACT(nn.Module):
     def __init__(self, config: ACTConfig):
         super().__init__()
         self.config = config
-        # BERT style VAE encoder with input [cls, *joint_space_configuration, *action_sequence].
+        # BERT style VAE encoder with input tokens [cls, robot_state, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
         if self.config.use_vae:
             self.vae_encoder = ACTEncoder(config)
@@ -214,7 +214,7 @@ class ACT(nn.Module):
             self.latent_dim = config.latent_dim
             # Projection layer from the VAE encoder's output to the latent distribution's parameter space.
             self.vae_encoder_latent_output_proj = nn.Linear(config.dim_model, self.latent_dim * 2)
-            # Fixed sinusoidal positional embedding the whole input to the VAE encoder. Unsqueeze for batch
+            # Fixed sinusoidal positional embedding for the input to the VAE encoder. Unsqueeze for batch
             # dimension.
             self.register_buffer(
                 "vae_encoder_pos_enc",
