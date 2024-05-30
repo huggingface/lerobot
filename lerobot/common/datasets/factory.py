@@ -16,9 +16,9 @@
 import logging
 
 import torch
-from omegaconf import OmegaConf
+from omegaconf import ListConfig, OmegaConf
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
 
 
 def resolve_delta_timestamps(cfg):
@@ -35,11 +35,18 @@ def resolve_delta_timestamps(cfg):
                 cfg.training.delta_timestamps[key] = eval(delta_timestamps[key])
 
 
-def make_dataset(
-    cfg,
-    split="train",
-):
-    if cfg.env.name not in cfg.dataset_repo_id:
+def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotDataset:
+    """
+    Args:
+        cfg: A Hydra config as per the LeRobot config scheme.
+        split: TODO(now)
+    Returns:
+        The LeRobotDataset.
+    """
+    if not isinstance(cfg.dataset_repo_id, (str, ListConfig)):
+        raise ValueError("Expected cfg.dataset_repo_id to be either a single string or a list of strings.")
+
+    if isinstance(cfg.dataset_repo_id, str) and cfg.env.name not in cfg.dataset_repo_id:
         logging.warning(
             f"There might be a mismatch between your training dataset ({cfg.dataset_repo_id=}) and your "
             f"environment ({cfg.env.name=})."
@@ -49,11 +56,16 @@ def make_dataset(
 
     # TODO(rcadene): add data augmentations
 
-    dataset = LeRobotDataset(
-        cfg.dataset_repo_id,
-        split=split,
-        delta_timestamps=cfg.training.get("delta_timestamps"),
-    )
+    if isinstance(cfg.dataset_repo_id, str):
+        dataset = LeRobotDataset(
+            cfg.dataset_repo_id,
+            split=split,
+            delta_timestamps=cfg.training.get("delta_timestamps"),
+        )
+    else:
+        dataset = MultiLeRobotDataset(
+            cfg.dataset_repo_id, split=split, delta_timestamps=cfg.training.get("delta_timestamps")
+        )
 
     if cfg.get("override_dataset_stats"):
         for key, stats_dict in cfg.override_dataset_stats.items():
