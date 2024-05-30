@@ -101,7 +101,8 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
 
     # sanity check
     has_nan = df.isna().any().any()
-    assert not has_nan
+    if has_nan:
+        raise ValueError("Dataset contains Nan values.") 
 
     # sanity check episode indices go from 0 to n-1
     ep_ids = [ep_idx for ep_idx, _ in df.groupby("episode_index")]
