@@ -27,7 +27,7 @@ training:
   eval_freq: 5000
   save_freq: 5000
   log_freq: 250
-  save_model: true
+  save_checkpoint: true
 
   batch_size: 64
   grad_clip_norm: 10

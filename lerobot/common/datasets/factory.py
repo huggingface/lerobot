@@ -21,6 +21,20 @@ from omegaconf import OmegaConf
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 
+def resolve_delta_timestamps(cfg):
+    """Resolves delta_timestamps config key (in-place) by using `eval`.
+
+    Doesn't do anything if delta_timestamps is not specified or has already been resolve (as evidenced by
+    the data type of its values).
+    """
+    delta_timestamps = cfg.training.get("delta_timestamps")
+    if delta_timestamps is not None:
+        for key in delta_timestamps:
+            if isinstance(delta_timestamps[key], str):
+                # TODO(rcadene, alexander-soare): remove `eval` to avoid exploit
+                cfg.training.delta_timestamps[key] = eval(delta_timestamps[key])
+
+
 def make_dataset(
     cfg,
     split="train",
@@ -31,18 +45,14 @@ def make_dataset(
             f"environment ({cfg.env.name=})."
         )
 
-    delta_timestamps = cfg.training.get("delta_timestamps")
-    if delta_timestamps is not None:
-        for key in delta_timestamps:
-            if isinstance(delta_timestamps[key], str):
-                delta_timestamps[key] = eval(delta_timestamps[key])
+    resolve_delta_timestamps(cfg)
 
     # TODO(rcadene): add data augmentations
 
     dataset = LeRobotDataset(
         cfg.dataset_repo_id,
         split=split,
-        delta_timestamps=delta_timestamps,
+        delta_timestamps=cfg.training.get("delta_timestamps"),
     )
 
     if cfg.get("override_dataset_stats"):

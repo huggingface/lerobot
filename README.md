@@ -154,9 +154,9 @@ python lerobot/scripts/eval.py \
 ```
 
 Note: After training your own policy, you can re-evaluate the checkpoints with:
+
 ```bash
-python lerobot/scripts/eval.py \
-    -p PATH/TO/TRAIN/OUTPUT/FOLDER
+python lerobot/scripts/eval.py -p {OUTPUT_DIR}/checkpoints/last/pretrained_model
 ```
 
 See `python lerobot/scripts/eval.py --help` for more instructions.
@@ -178,6 +178,19 @@ python lerobot/scripts/train.py \
 The experiment directory is automatically generated and will show up in yellow in your terminal. It looks like `outputs/train/2024-05-05/20-21-12_aloha_act_default`. You can manually specify an experiment directory by adding this argument to the `train.py` python command:
 ```bash
     hydra.run.dir=your/new/experiment/dir
+```
+
+In the experiment directory there will be a folder called `checkpoints` which will have the following structure:
+
+```bash
+checkpoints
+├── 000250  # checkpoint_dir for training step 250
+│   ├── pretrained_model  # Hugging Face pretrained model dir
+│   │   ├── config.json  # Hugging Face pretrained model config
+│   │   ├── config.yaml  # consolidated Hydra config
+│   │   ├── model.safetensors  # model weights
+│   │   └── README.md  # Hugging Face model card
+│   └── training_state.pth  # optimizer/scheduler/rng state and training step
 ```
 
 To use wandb for logging training and evaluation curves, make sure you've run `wandb login` as a one-time setup step. Then, when running the training command above, enable WandB in the configuration by adding:
@@ -233,14 +246,14 @@ If your dataset format is not supported, implement your own in `lerobot/common/d
 
 Once you have trained a policy you may upload it to the Hugging Face hub using a hub id that looks like `${hf_user}/${repo_name}` (e.g. [lerobot/diffusion_pusht](https://huggingface.co/lerobot/diffusion_pusht)).
 
-You first need to find the checkpoint located inside your experiment directory (e.g. `outputs/train/2024-05-05/20-21-12_aloha_act_default/checkpoints/002500`). It should contain:
+You first need to find the checkpoint folder located inside your experiment directory (e.g. `outputs/train/2024-05-05/20-21-12_aloha_act_default/checkpoints/002500`). Within that there is a `pretrained_model` directory which should contain:
 - `config.json`: A serialized version of the policy configuration (following the policy's dataclass config).
 - `model.safetensors`: A set of `torch.nn.Module` parameters, saved in [Hugging Face Safetensors](https://huggingface.co/docs/safetensors/index) format.
 - `config.yaml`: A consolidated Hydra training configuration containing the policy, environment, and dataset configs. The policy configuration should match `config.json` exactly. The environment config is useful for anyone who wants to evaluate your policy. The dataset config just serves as a paper trail for reproducibility.
 
 To upload these to the hub, run the following:
 ```bash
-huggingface-cli upload ${hf_user}/${repo_name} path/to/checkpoint/dir
+huggingface-cli upload ${hf_user}/${repo_name} path/to/pretrained_model
 ```
 
 See [eval.py](https://github.com/huggingface/lerobot/blob/main/lerobot/scripts/eval.py) for an example of how other people may use your policy.
