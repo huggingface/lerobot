@@ -10,6 +10,7 @@ endif
 
 export PATH := $(dir $(PYTHON_PATH)):$(PATH)
 
+DEVICE ?= cpu
 
 build-cpu:
 	docker build -t lerobot:latest -f docker/lerobot-cpu/Dockerfile .
@@ -18,16 +19,16 @@ build-gpu:
 	docker build -t lerobot:latest -f docker/lerobot-gpu/Dockerfile .
 
 test-end-to-end:
-	${MAKE} test-act-ete-train
-	${MAKE} test-act-ete-eval
-	${MAKE} test-act-ete-train-amp
-	${MAKE} test-act-ete-eval-amp
-	${MAKE} test-diffusion-ete-train
-	${MAKE} test-diffusion-ete-eval
-	${MAKE} test-tdmpc-ete-train
-	${MAKE} test-tdmpc-ete-eval
-	${MAKE} test-default-ete-eval
-	${MAKE} test-act-pusht-tutorial
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-train
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-amp
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval-amp
+	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-train
+	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-eval
+	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train
+	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-eval
+	${MAKE} DEVICE=$(DEVICE) test-default-ete-eval
+	${MAKE} DEVICE=$(DEVICE) test-act-pusht-tutorial
 
 test-act-ete-train:
 	python lerobot/scripts/train.py \
@@ -39,7 +40,7 @@ test-act-ete-train:
 		training.online_steps=0 \
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
-		device=cpu \
+		device=$(DEVICE) \
 		training.save_checkpoint=true \
 		training.save_freq=2 \
 		policy.n_action_steps=20 \
@@ -53,7 +54,7 @@ test-act-ete-eval:
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=8 \
-		device=cpu \
+		device=$(DEVICE) \
 
 test-act-ete-train-amp:
 	python lerobot/scripts/train.py \
@@ -65,7 +66,7 @@ test-act-ete-train-amp:
 		training.online_steps=0 \
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
-		device=cpu \
+		device=$(DEVICE) \
 		training.save_checkpoint=true \
 		training.save_freq=2 \
 		policy.n_action_steps=20 \
@@ -80,7 +81,7 @@ test-act-ete-eval-amp:
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=8 \
-		device=cpu \
+		device=$(DEVICE) \
 		use_amp=true
 
 test-diffusion-ete-train:
@@ -95,7 +96,7 @@ test-diffusion-ete-train:
 		training.online_steps=0 \
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
-		device=cpu \
+		device=$(DEVICE) \
 		training.save_checkpoint=true \
 		training.save_freq=2 \
 		training.batch_size=2 \
@@ -107,7 +108,7 @@ test-diffusion-ete-eval:
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=8 \
-		device=cpu \
+		device=$(DEVICE) \
 
 # TODO(alexander-soare): Restore online_steps to 2 when it is reinstated.
 test-tdmpc-ete-train:
@@ -122,7 +123,7 @@ test-tdmpc-ete-train:
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=2 \
-		device=cpu \
+		device=$(DEVICE) \
 		training.save_checkpoint=true \
 		training.save_freq=2 \
 		training.batch_size=2 \
@@ -134,7 +135,7 @@ test-tdmpc-ete-eval:
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=8 \
-		device=cpu \
+		device=$(DEVICE) \
 
 test-default-ete-eval:
 	python lerobot/scripts/eval.py \
@@ -142,7 +143,7 @@ test-default-ete-eval:
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=8 \
-		device=cpu \
+		device=$(DEVICE) \
 
 test-act-pusht-tutorial:
 	cp examples/advanced/1_train_act_pusht/act_pusht.yaml lerobot/configs/policy/created_by_Makefile.yaml
@@ -154,7 +155,7 @@ test-act-pusht-tutorial:
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=2 \
-		device=cpu \
+		device=$(DEVICE) \
 		training.save_model=true \
 		training.save_freq=2 \
 		training.batch_size=2 \
