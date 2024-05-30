@@ -59,7 +59,7 @@ def unflatten_dict(d, sep="/"):
     return outdict
 
 
-def hf_transform_to_torch(items_dict):
+def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     """Get a transform function that convert items from Hugging Face dataset (pyarrow)
     to torch tensors. Importantly, images are converted from PIL, which corresponds to
     a channel last representation (h w c) of uint8 type, to a torch image representation
@@ -72,6 +72,8 @@ def hf_transform_to_torch(items_dict):
             items_dict[key] = [to_tensor(img) for img in items_dict[key]]
         elif isinstance(first_item, dict) and "path" in first_item and "timestamp" in first_item:
             # video frame will be processed downstream
+            pass
+        elif first_item is None:
             pass
         else:
             items_dict[key] = [torch.tensor(x) for x in items_dict[key]]
@@ -317,14 +319,18 @@ def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> Dict[str, torc
     return episode_data_index
 
 
-def reset_episode_index(hf_dataset: datasets.Dataset) -> datasets.Dataset:
-    """
-    Reset the `episode_index` of the provided HuggingFace Dataset.
+def reset_episode_index(hf_dataset: datasets.Dataset, start_index: int = 0) -> datasets.Dataset:
+    """Reset the `episode_index` of the provided HuggingFace Dataset.
 
     `episode_data_index` (and related functionality such as `load_previous_and_future_frames`) requires the
     `episode_index` to be sorted, continuous (1,1,1 and not 1,2,1) and start at 0.
 
     This brings the `episode_index` to the required format.
+
+    Args:
+        hf_dataset: Dataset for which we are resetting the indexing.
+        start_index: The episode index to start with for the new indexing. For most use cases in LeRobot this
+            should be left as 0.
     """
     if len(hf_dataset) == 0:
         return hf_dataset
@@ -337,7 +343,8 @@ def reset_episode_index(hf_dataset: datasets.Dataset) -> datasets.Dataset:
         example["episode_index"] = episode_idx_to_reset_idx_mapping[example["episode_index"].item()]
         return example
 
-    hf_dataset = hf_dataset.map(modify_ep_idx_func)
+    hf_dataset = hf_dataset.map(modify_ep_idx_func, input_columns=["episode_index"])
+
     return hf_dataset
 
 
