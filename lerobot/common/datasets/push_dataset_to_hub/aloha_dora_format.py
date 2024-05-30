@@ -88,7 +88,9 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
             episode_index = int(match.group(1))
             episode_index_per_cam[key] = episode_index
         if len(set(episode_index_per_cam.values())) != 1:
-            raise ValueError(f"All cameras are expected to belong to the same episode, but getting {episode_index_per_cam}")
+            raise ValueError(
+                f"All cameras are expected to belong to the same episode, but getting {episode_index_per_cam}"
+            )
         return episode_index
 
     df["episode_index"] = df.apply(get_episode_index, axis=1)
