@@ -68,10 +68,11 @@ def run_video_benchmark(
     if not imgs_dir.exists():
         imgs_dir.mkdir(parents=True, exist_ok=True)
         hf_dataset = dataset.hf_dataset.with_format(None)
-        imgs_dataset = hf_dataset.select_columns("observation.image")
+        img_keys = [key for key in hf_dataset.features if key.startswith("observation.image")]
+        imgs_dataset = hf_dataset.select_columns(img_keys[0])
 
         for i, item in enumerate(imgs_dataset):
-            img = item["observation.image"]
+            img = item[img_keys[0]]
             img.save(str(imgs_dir / f"frame_{i:06d}.png"), quality=100)
 
             if i >= ep_num_images - 1:
@@ -107,7 +108,7 @@ def run_video_benchmark(
 
     decoder = cfg["decoder"]
     decoder_kwgs = cfg["decoder_kwgs"]
-    device = cfg["device"]
+    backend = cfg["backend"]
 
     if decoder == "torchvision":
         decode_frames_fn = decode_video_frames_torchvision
@@ -152,7 +153,7 @@ def run_video_benchmark(
 
         start_time_s = time.monotonic()
         frames = decode_frames_fn(
-            video_path, timestamps=timestamps, tolerance_s=1e-4, device=device, **decoder_kwgs
+            video_path, timestamps=timestamps, tolerance_s=1e-4, backend=backend, **decoder_kwgs
         )
         avg_load_time = (time.monotonic() - start_time_s) / num_frames
         list_avg_load_time.append(avg_load_time)
@@ -234,10 +235,80 @@ def load_info(out_dir):
     return info
 
 
+def one_variable_study(
+    var_name: str, var_values: list, repo_ids: list, bench_dir: Path, timestamps_mode: str, dry_run: bool
+):
+    print(f"**`{var_name}`**")
+    headers = ["repo_id", var_name, "compression_factor", "load_time_factor", "avg_per_pixel_l2_error"]
+    rows = []
+    base_cfg = {
+        "repo_id": None,
+        # video encoding
+        "g": 2,
+        "crf": None,
+        "pix_fmt": "yuv444p",
+        # video decoding
+        "backend": "pyav",
+        "decoder": "torchvision",
+        "decoder_kwgs": {},
+    }
+    for repo_id in repo_ids:
+        for val in var_values:
+            cfg = base_cfg.copy()
+            cfg["repo_id"] = repo_id
+            cfg[var_name] = val
+            if not dry_run:
+                run_video_benchmark(
+                    bench_dir / repo_id / f"torchvision_{var_name}_{val}", cfg, timestamps_mode
+                )
+            info = load_info(bench_dir / repo_id / f"torchvision_{var_name}_{val}")
+            rows.append(
+                [
+                    repo_id,
+                    val,
+                    info["compression_factor"],
+                    info["load_time_factor"],
+                    info["avg_per_pixel_l2_error"],
+                ]
+            )
+    display_markdown_table(headers, rows)
+
+
+def best_study(repo_ids: list, bench_dir: Path, timestamps_mode: str, dry_run: bool):
+    """Change the config once you deciced what's best based on one-variable-studies"""
+    print("**best**")
+    headers = ["repo_id", "compression_factor", "load_time_factor", "avg_per_pixel_l2_error"]
+    rows = []
+    for repo_id in repo_ids:
+        cfg = {
+            "repo_id": repo_id,
+            # video encoding
+            "g": 2,
+            "crf": None,
+            "pix_fmt": "yuv444p",
+            # video decoding
+            "backend": "pyav",
+            "decoder": "torchvision",
+            "decoder_kwgs": {},
+        }
+        if not dry_run:
+            run_video_benchmark(bench_dir / repo_id / "torchvision_best", cfg, timestamps_mode)
+        info = load_info(bench_dir / repo_id / "torchvision_best")
+        rows.append(
+            [
+                repo_id,
+                info["compression_factor"],
+                info["load_time_factor"],
+                info["avg_per_pixel_l2_error"],
+            ]
+        )
+    display_markdown_table(headers, rows)
+
+
 def main():
     out_dir = Path("tmp/run_video_benchmark")
     dry_run = False
-    repo_ids = ["lerobot/pusht", "lerobot/umi_cup_in_the_wild"]
+    repo_ids = ["lerobot/pusht_image", "aliberts/aloha_mobile_shrimp_image"]
     timestamps_modes = [
         "1_frame",
         "2_frames",
@@ -250,122 +321,15 @@ def main():
         print(f"### `{timestamps_mode}`")
         print()
 
-        print("**`pix_fmt`**")
-        headers = ["repo_id", "pix_fmt", "compression_factor", "load_time_factor", "avg_per_pixel_l2_error"]
-        rows = []
-        for repo_id in repo_ids:
-            for pix_fmt in ["yuv420p", "yuv444p"]:
-                cfg = {
-                    "repo_id": repo_id,
-                    # video encoding
-                    "g": 2,
-                    "crf": None,
-                    "pix_fmt": pix_fmt,
-                    # video decoding
-                    "device": "cpu",
-                    "decoder": "torchvision",
-                    "decoder_kwgs": {},
-                }
-                if not dry_run:
-                    run_video_benchmark(bench_dir / repo_id / f"torchvision_{pix_fmt}", cfg, timestamps_mode)
-                info = load_info(bench_dir / repo_id / f"torchvision_{pix_fmt}")
-                rows.append(
-                    [
-                        repo_id,
-                        pix_fmt,
-                        info["compression_factor"],
-                        info["load_time_factor"],
-                        info["avg_per_pixel_l2_error"],
-                    ]
-                )
-        display_markdown_table(headers, rows)
-
-        print("**`g`**")
-        headers = ["repo_id", "g", "compression_factor", "load_time_factor", "avg_per_pixel_l2_error"]
-        rows = []
-        for repo_id in repo_ids:
-            for g in [1, 2, 3, 4, 5, 6, 10, 15, 20, 40, 100, None]:
-                cfg = {
-                    "repo_id": repo_id,
-                    # video encoding
-                    "g": g,
-                    "pix_fmt": "yuv444p",
-                    # video decoding
-                    "device": "cpu",
-                    "decoder": "torchvision",
-                    "decoder_kwgs": {},
-                }
-                if not dry_run:
-                    run_video_benchmark(bench_dir / repo_id / f"torchvision_g_{g}", cfg, timestamps_mode)
-                info = load_info(bench_dir / repo_id / f"torchvision_g_{g}")
-                rows.append(
-                    [
-                        repo_id,
-                        g,
-                        info["compression_factor"],
-                        info["load_time_factor"],
-                        info["avg_per_pixel_l2_error"],
-                    ]
-                )
-        display_markdown_table(headers, rows)
-
-        print("**`crf`**")
-        headers = ["repo_id", "crf", "compression_factor", "load_time_factor", "avg_per_pixel_l2_error"]
-        rows = []
-        for repo_id in repo_ids:
-            for crf in [0, 5, 10, 15, 20, None, 25, 30, 40, 50]:
-                cfg = {
-                    "repo_id": repo_id,
-                    # video encoding
-                    "g": 2,
-                    "crf": crf,
-                    "pix_fmt": "yuv444p",
-                    # video decoding
-                    "device": "cpu",
-                    "decoder": "torchvision",
-                    "decoder_kwgs": {},
-                }
-                if not dry_run:
-                    run_video_benchmark(bench_dir / repo_id / f"torchvision_crf_{crf}", cfg, timestamps_mode)
-                info = load_info(bench_dir / repo_id / f"torchvision_crf_{crf}")
-                rows.append(
-                    [
-                        repo_id,
-                        crf,
-                        info["compression_factor"],
-                        info["load_time_factor"],
-                        info["avg_per_pixel_l2_error"],
-                    ]
-                )
-        display_markdown_table(headers, rows)
-
-        print("**best**")
-        headers = ["repo_id", "compression_factor", "load_time_factor", "avg_per_pixel_l2_error"]
-        rows = []
-        for repo_id in repo_ids:
-            cfg = {
-                "repo_id": repo_id,
-                # video encoding
-                "g": 2,
-                "crf": None,
-                "pix_fmt": "yuv444p",
-                # video decoding
-                "device": "cpu",
-                "decoder": "torchvision",
-                "decoder_kwgs": {},
-            }
-            if not dry_run:
-                run_video_benchmark(bench_dir / repo_id / "torchvision_best", cfg, timestamps_mode)
-            info = load_info(bench_dir / repo_id / "torchvision_best")
-            rows.append(
-                [
-                    repo_id,
-                    info["compression_factor"],
-                    info["load_time_factor"],
-                    info["avg_per_pixel_l2_error"],
-                ]
-            )
-        display_markdown_table(headers, rows)
+        one_variable_study("pix_fmt", ["yuv420p", "yuv444p"], repo_ids, bench_dir, timestamps_mode, dry_run)
+        one_variable_study(
+            "g", [1, 2, 3, 4, 5, 6, 10, 15, 20, 40, 100, None], repo_ids, bench_dir, timestamps_mode, dry_run
+        )
+        one_variable_study(
+            "crf", [0, 5, 10, 15, 20, None, 25, 30, 40, 50], repo_ids, bench_dir, timestamps_mode, dry_run
+        )
+        one_variable_study("backend", ["pyav", "video_reader"], repo_ids, bench_dir, timestamps_mode, dry_run)
+        best_study(repo_ids, bench_dir, timestamps_mode, dry_run)
 
 
 if __name__ == "__main__":
