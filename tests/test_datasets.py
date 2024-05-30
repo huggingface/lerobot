@@ -350,3 +350,4 @@ def test_aggregate_stats():
     for data_key, data in zip(["a", "b", "c"], [data_a, data_b, data_c], strict=True):
         for agg_fn in ["mean", "min", "max"]:
             assert torch.allclose(stats[data_key][agg_fn], einops.reduce(data, "n -> 1", agg_fn))
+        assert torch.allclose(stats[data_key]["std"], torch.std(data, correction=0))

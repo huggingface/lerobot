@@ -39,12 +39,21 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
     """
     Args:
         cfg: A Hydra config as per the LeRobot config scheme.
-        split: TODO(now)
+        split: Select the data subset used to create an instance of LeRobotDataset.
+            All datasets hosted on [lerobot](https://huggingface.co/lerobot) contain only one subset: "train".
+            Thus, by default, `split="train"` selects all the available data. `split` aims to work like the
+            slicer in the hugging face datasets:
+            https://huggingface.co/docs/datasets/v2.19.0/loading#slice-splits
+            As of now, it only supports `split="train[:n]"` to load the first n frames of the dataset or
+            `split="train[n:]"` to load the last n frames. For instance `split="train[:1000]"`.
     Returns:
         The LeRobotDataset.
     """
     if not isinstance(cfg.dataset_repo_id, (str, ListConfig)):
-        raise ValueError("Expected cfg.dataset_repo_id to be either a single string or a list of strings.")
+        raise ValueError(
+            "Expected cfg.dataset_repo_id to be either a single string to load one dataset or a list of "
+            "strings to load multiple datasets."
+        )
 
     if isinstance(cfg.dataset_repo_id, str) and cfg.env.name not in cfg.dataset_repo_id:
         logging.warning(

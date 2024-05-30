@@ -251,11 +251,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                     f"Detected a mismatch in dataset info between {self.repo_ids[0]} and {repo_id}. This is "
                     "not yet supported."
                 )
-            if set(dataset.features) != set(self._datasets[0].features):
-                # Use a warning here as we don't want to explicitly block this sort of inconsistency.
-                logging.warning(
-                    f"Detected a mismatch in dataset features between {self.repo_ids[0]} and {repo_id}."
-                )
         # Disable any data keys that are not common across all of the datasets. Note: we may relax this
         # restriction in future iterations of this class. For now, this is necessary at least for being able
         # to use PyTorch's default DataLoader collate function.

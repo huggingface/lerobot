@@ -162,6 +162,12 @@ def aggregate_stats(ls_datasets) -> dict[str, torch.Tensor]:
     """Aggregate stats of multiple LeRobot datasets into one set of stats without recomputing from scratch.
 
     The final stats will have the union of all data keys from each of the datasets.
+
+    The final stats will have the union of all data keys from each of the datasets. For instance:
+    - new_max = max(max_dataset_0, max_dataset_1, ...)
+    - new_min = min(min_dataset_0, min_dataset_1, ...)
+    - new_mean = (mean of all data)
+    - new_std = (std of all data)
     """
     data_keys = set()
     for dataset in ls_datasets:
