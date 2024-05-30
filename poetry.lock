@@ -1104,7 +1104,7 @@ pyarrow = ">=12.0.0"
 type = "git"
 url = "https://github.com/dora-rs/dora-lerobot.git"
 reference = "HEAD"
-resolved_reference = "1c6c2a401c3a2967d41444be6286ca9a28893abf"
+resolved_reference = "ed0c00a4fdc6ec856c9842551acd7dc7ee776f79"
 subdirectory = "gym_dora"
 
 [[package]]
