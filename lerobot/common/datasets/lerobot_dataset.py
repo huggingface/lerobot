@@ -371,6 +371,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             if idx >= start_idx + dataset.num_samples:
                 start_idx += dataset.num_samples
                 dataset_idx += 1
+                continue
             break
         else:
             raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
