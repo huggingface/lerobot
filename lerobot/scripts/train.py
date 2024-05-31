@@ -16,7 +16,6 @@
 import logging
 import time
 from contextlib import nullcontext
-from copy import deepcopy
 from pathlib import Path
 from pprint import pformat
 
@@ -28,6 +27,8 @@ from termcolor import colored
 from torch.cuda.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
+from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
+from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
@@ -280,9 +281,18 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     logging.info("make_dataset")
     offline_dataset = make_dataset(cfg)
+    if isinstance(offline_dataset, MultiLeRobotDataset):
+        logging.info(
+            "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
+            f"{pformat(offline_dataset.repo_id_to_index , indent=2)}"
+        )
 
-    logging.info("make_env")
-    eval_env = make_env(cfg)
+    # Create environment used for evaluating checkpoints during training on simulation data.
+    # On real-world data, no need to create an environment as evaluations are done outside train.py,
+    # using the eval.py instead, with gym_dora environment and dora-rs.
+    if cfg.training.eval_freq > 0:
+        logging.info("make_env")
+        eval_env = make_env(cfg)
 
     logging.info("make_policy")
     policy = make_policy(
@@ -315,7 +325,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     # Note: this helper will be used in offline and online training loops.
     def evaluate_and_checkpoint_if_needed(step):
-        if step % cfg.training.eval_freq == 0:
+        if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
                 eval_info = eval_policy(
@@ -326,7 +336,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
                 )
-            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline)
+            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline=True)
             if cfg.wandb.enable:
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
@@ -347,18 +357,28 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             logging.info("Resume training")
 
     # create dataloader for offline training
+    if cfg.training.get("drop_n_last_frames"):
+        shuffle = False
+        sampler = EpisodeAwareSampler(
+            offline_dataset.episode_data_index,
+            drop_n_last_frames=cfg.training.drop_n_last_frames,
+            shuffle=True,
+        )
+    else:
+        shuffle = True
+        sampler = None
     dataloader = torch.utils.data.DataLoader(
         offline_dataset,
-        num_workers=4,
+        num_workers=cfg.training.num_workers,
         batch_size=cfg.training.batch_size,
-        shuffle=True,
+        shuffle=shuffle,
+        sampler=sampler,
         pin_memory=device.type != "cpu",
         drop_last=False,
     )
     dl_iter = cycle(dataloader)
 
     policy.train()
-    is_offline = True
     for _ in range(step, cfg.training.offline_steps):
         if step == 0:
             logging.info("Start offline training on a fixed dataset")
@@ -378,33 +398,13 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         )
 
         if step % cfg.training.log_freq == 0:
-            log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline)
+            log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline=True)
 
         # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
         # so we pass in step + 1.
         evaluate_and_checkpoint_if_needed(step + 1)
 
         step += 1
-
-    # create an empty online dataset similar to offline dataset
-    online_dataset = deepcopy(offline_dataset)
-    online_dataset.hf_dataset = {}
-    online_dataset.episode_data_index = {}
-
-    # create dataloader for online training
-    concat_dataset = torch.utils.data.ConcatDataset([offline_dataset, online_dataset])
-    weights = [1.0] * len(concat_dataset)
-    sampler = torch.utils.data.WeightedRandomSampler(
-        weights, num_samples=len(concat_dataset), replacement=True
-    )
-    dataloader = torch.utils.data.DataLoader(
-        concat_dataset,
-        num_workers=4,
-        batch_size=cfg.training.batch_size,
-        sampler=sampler,
-        pin_memory=device.type != "cpu",
-        drop_last=False,
-    )
 
     eval_env.close()
     logging.info("End of training")
