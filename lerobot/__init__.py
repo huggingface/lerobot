@@ -138,8 +138,8 @@ available_policies = [
 
 # keys and values refer to yaml files
 available_policies_per_env = {
-    "aloha": ["act", "diffusion"],
-    "pusht": ["act", "diffusion"],
+    "aloha": ["act"],
+    "pusht": ["diffusion"],
     "xarm": ["tdmpc"],
     "dora_aloha_real": ["act_real"],
 }
