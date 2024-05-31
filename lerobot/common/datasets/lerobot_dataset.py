@@ -381,6 +381,11 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         for data_key in self.disabled_data_keys:
             if data_key in item:
                 del item[data_key]
+
+        if self.transform is not None:
+            for cam in self.camera_keys:
+                item[cam] = self.transform(item[cam])
+
         return item
 
     def __repr__(self):
