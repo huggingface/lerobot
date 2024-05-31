@@ -29,6 +29,7 @@ class ACTConfig:
         - At least one key starting with "observation.image is required as an input.
         - If there are multiple keys beginning with "observation.images." they are treated as multiple camera
           views. Right now we only support all images having the same shape.
+        - May optionally work without an "observation.state" key for the proprioceptive robot state.
         - "action" is required as an output key.
 
     Args:
