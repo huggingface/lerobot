@@ -21,7 +21,8 @@ installation of neural net specific packages like pytorch, tensorflow, jax.
 Example:
 ```
 python lerobot/scripts/push_dataset_to_hub.py \
---data-dir data \
+--raw-data data_raw \
+--out-dir data \
 --dataset-id pusht \
 --raw-format pusht_zarr \
 --community-id lerobot \
@@ -31,7 +32,8 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --debug 1
 
 python lerobot/scripts/push_dataset_to_hub.py \
---data-dir data \
+--raw-dir data_raw \
+--out-dir data \
 --dataset-id xarm_lift_medium \
 --raw-format xarm_pkl \
 --community-id lerobot \
@@ -41,7 +43,8 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --debug 1
 
 python lerobot/scripts/push_dataset_to_hub.py \
---data-dir data \
+--raw-dir data_raw \
+--out-dir data \
 --dataset-id aloha_sim_insertion_scripted \
 --raw-format aloha_hdf5 \
 --community-id lerobot \
@@ -51,7 +54,8 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --debug 1
 
 python lerobot/scripts/push_dataset_to_hub.py \
---data-dir data \
+--raw-dir data_raw \
+--out-dir data \
 --dataset-id umi_cup_in_the_wild \
 --raw-format umi_zarr \
 --community-id lerobot \
@@ -287,10 +291,10 @@ def main():
         "--save-to-disk",
         type=int,
         default=1,
-        help="Save the dataset in the directory specified by `--data-dir`.",
+        help="Save the dataset in the directory specified by `--out-dir`.",
     )
     parser.add_argument(
-        "--tests-data-dir",
+        "--tests-out-dir",
         type=Path,
         default="tests/data",
         help="Directory containing tests artifacts datasets.",
@@ -298,8 +302,8 @@ def main():
     parser.add_argument(
         "--save-tests-to-disk",
         type=int,
-        default=1,
-        help="Save the dataset with 1 episode used for unit tests in the directory specified by `--tests-data-dir`.",
+        default=0,
+        help="Save the dataset with 1 episode used for unit tests in the directory specified by `--tests-out-dir`.",
     )
     parser.add_argument(
         "--fps",
