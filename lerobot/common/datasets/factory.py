@@ -55,7 +55,11 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
             "strings to load multiple datasets."
         )
 
-    if isinstance(cfg.dataset_repo_id, str) and cfg.env.name not in cfg.dataset_repo_id:
+    if (
+        cfg.env.name != "dora"
+        and isinstance(cfg.dataset_repo_id, str)
+        and cfg.env.name not in cfg.dataset_repo_id
+    ):
         logging.warning(
             f"There might be a mismatch between your training dataset ({cfg.dataset_repo_id=}) and your "
             f"environment ({cfg.env.name=})."
