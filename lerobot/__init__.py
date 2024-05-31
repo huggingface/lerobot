@@ -129,7 +129,7 @@ available_datasets = list(
     itertools.chain(*available_datasets_per_env.values(), available_real_world_datasets)
 )
 
-# refers to attribute "name" of policy instance
+# lists all available policies from `lerobot/common/policies` by their class attribute: `name`.
 available_policies = [
     "act",
     "diffusion",

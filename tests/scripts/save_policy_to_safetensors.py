@@ -77,7 +77,7 @@ def get_policy_stats(env_name, policy_name, extra_overrides):
     batch = next(iter(dataloader))
     obs = {}
     for k in batch:
-        if "observation" in k:
+        if k.startswith("observation"):
             obs[k] = batch[k]
 
     if "n_action_steps" in cfg.policy:
