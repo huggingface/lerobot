@@ -120,13 +120,13 @@ def init_logging():
     logging.getLogger().addHandler(console_handler)
 
 
-def format_big_number(num):
+def format_big_number(num, precision=0):
     suffixes = ["", "K", "M", "B", "T", "Q"]
     divisor = 1000.0
 
     for suffix in suffixes:
         if abs(num) < divisor:
-            return f"{num:.0f}{suffix}"
+            return f"{num:.{precision}f}{suffix}"
         num /= divisor
 
     return num
