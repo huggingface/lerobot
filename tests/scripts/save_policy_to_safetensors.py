@@ -115,8 +115,8 @@ if __name__ == "__main__":
             ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
         ),
         ("aloha", "act", ["policy.n_action_steps=10"]),
-        ("dora_aloha_real", "act_real", []),
-        ("dora_aloha_real", "act_real_no_state", []),
+        ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"]),
+        ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"]),
     ]
     for env, policy, extra_overrides in env_policies:
         save_policy_to_safetensors("tests/data/save_policy_to_safetensors", env, policy, extra_overrides)
