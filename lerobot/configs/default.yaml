@@ -53,3 +53,12 @@ wandb:
   disable_artifact: false
   project: lerobot
   notes: ""
+
+image_transform:
+  enable: false 
+  colorjittor_factor: 0.5
+  colorjittor_p: 0.5
+  sharpness_factor: 2
+  sharpness_p: 0.5
+  blur_factor: 0.5
+  blur_p: 0.5

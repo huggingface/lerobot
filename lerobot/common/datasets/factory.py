@@ -16,6 +16,7 @@
 import logging
 
 import torch
+from torchvision.transforms import v2
 from omegaconf import OmegaConf
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -47,12 +48,19 @@ def make_dataset(
 
     resolve_delta_timestamps(cfg)
 
-    # TODO(rcadene): add data augmentations
+    if cfg.image_transform.enable:
+        transform = v2.Compose([v2.ColorJitter(brightness=cfg.image_transform.colorjitter_factor, contrast=cfg.image_transform.colorjitter_factor),
+                                v2.RandomAdjustSharpness(cfg.image_transform.sharpness_factor, p=cfg.image_transform.sharpness_p), v2.RandomAdjustSharpness(cfg.image_transform.blur_factor, p=cfg.image_transform.blur_p),
+                                 v2.ToDtype(torch.float32, scale=True),
+        ])
+    else:
+        transform = None
 
     dataset = LeRobotDataset(
         cfg.dataset_repo_id,
         split=split,
         delta_timestamps=cfg.training.get("delta_timestamps"),
+        transform=transform
     )
 
     if cfg.get("override_dataset_stats"):

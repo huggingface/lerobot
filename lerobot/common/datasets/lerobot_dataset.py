@@ -148,7 +148,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             )
 
         if self.transform is not None:
-            item = self.transform(item)
+            for cam in self.camera_keys:
+                item[cam]=self.transform(item[cam])
 
         return item
 
