@@ -86,6 +86,9 @@ def test_policy(env_name, policy_name, extra_overrides):
         - Updating the policy.
         - Using the policy to select actions at inference time.
         - Test the action can be applied to the policy
+
+    Note: We test various combinations of policy and dataset. The combinations are by no means exhaustive,
+          and for now we add tests as we see fit.
     """
     cfg = init_hydra_config(
         DEFAULT_CONFIG_PATH,
