@@ -75,15 +75,16 @@ def get_policy_stats(env_name, policy_name, extra_overrides):
     # HACK: We reload a batch with no delta_timestamps as `select_action` won't expect a timestamps dimension
     dataset.delta_timestamps = None
     batch = next(iter(dataloader))
-    obs = {
-        k: batch[k]
-        for k in batch
-        if k in ["observation.image", "observation.images.top", "observation.state"]
-    }
+    obs = {}
+    for k in batch:
+        if k.startswith("observation"):
+            obs[k] = batch[k]
 
-    actions_queue = (
-        cfg.policy.n_action_steps if "n_action_steps" in cfg.policy else cfg.policy.n_action_repeats
-    )
+    if "n_action_steps" in cfg.policy:
+        actions_queue = cfg.policy.n_action_steps
+    else:
+        actions_queue = cfg.policy.n_action_repeats
+
     actions = {str(i): policy.select_action(obs).contiguous() for i in range(actions_queue)}
     return output_dict, grad_stats, param_stats, actions
 
@@ -114,6 +115,8 @@ if __name__ == "__main__":
             ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
         ),
         ("aloha", "act", ["policy.n_action_steps=10"]),
+        ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"]),
+        ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"]),
     ]
     for env, policy, extra_overrides in env_policies:
         save_policy_to_safetensors("tests/data/save_policy_to_safetensors", env, policy, extra_overrides)
