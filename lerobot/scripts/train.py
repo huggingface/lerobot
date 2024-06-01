@@ -107,7 +107,7 @@ def update_policy(
     with torch.autocast(device_type=device.type) if use_amp else nullcontext():
         output_dict = policy.forward(batch)
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
-        loss = output_dict["loss"]
+        loss = output_dict["loss"].mean()
     grad_scaler.scale(loss).backward()
 
     # Unscale the graident of the optimzer's assigned params in-place **prior to gradient clipping**.
