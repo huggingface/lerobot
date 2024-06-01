@@ -40,55 +40,10 @@ from lerobot.common.utils.utils import (
     get_safe_torch_device,
     init_hydra_config,
     init_logging,
+    make_optimizer_and_scheduler,
     set_global_seed,
 )
 from lerobot.scripts.eval import eval_policy
-
-
-def make_optimizer_and_scheduler(cfg, policy):
-    if cfg.policy.name == "act":
-        optimizer_params_dicts = [
-            {
-                "params": [
-                    p
-                    for n, p in policy.named_parameters()
-                    if not n.startswith("backbone") and p.requires_grad
-                ]
-            },
-            {
-                "params": [
-                    p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad
-                ],
-                "lr": cfg.training.lr_backbone,
-            },
-        ]
-        optimizer = torch.optim.AdamW(
-            optimizer_params_dicts, lr=cfg.training.lr, weight_decay=cfg.training.weight_decay
-        )
-        lr_scheduler = None
-    elif cfg.policy.name == "diffusion":
-        optimizer = torch.optim.Adam(
-            policy.diffusion.parameters(),
-            cfg.training.lr,
-            cfg.training.adam_betas,
-            cfg.training.adam_eps,
-            cfg.training.adam_weight_decay,
-        )
-        from diffusers.optimization import get_scheduler
-
-        lr_scheduler = get_scheduler(
-            cfg.training.lr_scheduler,
-            optimizer=optimizer,
-            num_warmup_steps=cfg.training.lr_warmup_steps,
-            num_training_steps=cfg.training.offline_steps,
-        )
-    elif policy.name == "tdmpc":
-        optimizer = torch.optim.Adam(policy.parameters(), cfg.training.lr)
-        lr_scheduler = None
-    else:
-        raise NotImplementedError()
-
-    return optimizer, lr_scheduler
 
 
 def update_policy(
