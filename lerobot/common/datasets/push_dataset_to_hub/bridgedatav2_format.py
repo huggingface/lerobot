@@ -197,6 +197,12 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
         if len(list(ep_path.glob("*.pkl"))) != 2:
             continue
 
+        is_in_scripted_raw = "scripted_raw" in str(ep_path)
+
+        if not is_in_scripted_raw:
+            date_time = datetime.strptime(str(ep_path).split("/")[-4], "%Y-%m-%d_%H-%M-%S")
+            latency_shift = date_time < datetime(2021, 7, 23)
+
         image_paths = list(ep_path.glob(os.path.join("images0", "*.jpg")))
         num_frames = len(image_paths)
 
@@ -204,10 +210,18 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
         done[-1] = True
 
         actions = load_actions(ep_path)
-        state = load_state(ep_path)
+        state, time_stamp = load_state_timestamp(ep_path)
         ep_dict = {}
         img_key = "observation.image"
         imgs_array = [PILImage.open(x) for x in image_paths]
+
+        if is_in_scripted_raw:
+            actions = [actions[0]] + actions  # duplicate first action to compensate for extra frame
+        else:
+            if latency_shift:
+                state = state[1:]
+                actions = actions[1:]
+                time_stamp = time_stamp[1:]
 
         if video:
             # save png images in temporary directory
@@ -231,8 +245,12 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
         ep_dict["observation.state"] = state
         ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames)
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
-        ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
+        ep_dict["timestamp"] = torch.tensor(time_stamp)
         ep_dict["next.done"] = done
+
+        if len(actions) != len(state):
+            print(str(len(actions)) + " " + str(len(state)) + " " + str(num_frames))
+            print(ep_path)
 
         assert isinstance(ep_idx, int)
         ep_dicts.append(ep_dict)
@@ -249,6 +267,27 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
             break
     data_dict = concatenate_episodes(ep_dicts)
     return data_dict, episode_data_index
+
+
+def to_hf_dataset(data_dict, video) -> Dataset:
+    features = {}
+    if video:
+        features["observation.image"] = VideoFrame()
+    else:
+        features["observation.image"] = Image()
+    features["observation.state"] = Sequence(
+        length=len(data_dict["observation.state"][0]), feature=Value(dtype="float32", id=None)
+    )
+    features["action"] = Sequence(length=len(data_dict["action"][0]), feature=Value(dtype="float32", id=None))
+    features["episode_index"] = Value(dtype="int64", id=None)
+    features["frame_index"] = Value(dtype="int64", id=None)
+    features["timestamp"] = Value(dtype="float32", id=None)
+    features["next.done"] = Value(dtype="bool", id=None)
+    features["index"] = Value(dtype="int64", id=None)
+
+    hf_dataset = Dataset.from_dict(data_dict, features=Features(features))
+    hf_dataset.set_transform(hf_transform_to_torch)
+    return hf_dataset
 
 
 def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=True, debug=False):
