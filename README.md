@@ -231,8 +231,8 @@ huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 Then move your dataset folder in `data` directory (e.g. `data/aloha_static_pingpong_test`), and push your dataset to the hub with:
 ```bash
 python lerobot/scripts/push_dataset_to_hub.py \
---raw-dir data_raw \
---out-dir out_data \
+--raw-dir data/aloha_static_pingpong_test_raw \
+--out-dir data \
 --dataset-id aloha_static_pingpong_test \
 --raw-format aloha_hdf5 \
 --community-id lerobot
