@@ -82,6 +82,7 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
                 v2.RandomAdjustSharpness(
                     cfg.image_transform.sharpness_factor, p=cfg.image_transform.sharpness_p
                 ),
+                # Using RandomAdjustSharpness with parameter < 1 adds blur to the image
                 v2.RandomAdjustSharpness(cfg.image_transform.blur_factor, p=cfg.image_transform.blur_p),
                 v2.ToDtype(torch.float32, scale=True),
             ]

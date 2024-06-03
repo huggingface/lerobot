@@ -61,8 +61,13 @@ wandb:
 image_transform:
   enable: false
   colorjittor_factor: 0.5
-  colorjittor_p: 0.5
-  sharpness_factor: 2
-  sharpness_p: 0.5
+  colorjittor_p: 0.5 
+  # Probability that ColorJittor is applied
+  sharpness_factor: 2 
+  # Should be more than 1, setting parameter to 1 does not change the image
+  sharpness_p: 0.5 
+  # Probability that Sharpness is applied
   blur_factor: 0.5
-  blur_p: 0.5
+  # Should be less than 1, setting parameter to 1 does not change the image
+  blur_p: 0.5 
+  # Probability that Blur is applied
