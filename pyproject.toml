@@ -58,7 +58,7 @@ imagecodecs = { version = ">=2024.1.1", optional = true }
 pyav = ">=12.0.5"
 moviepy = ">=1.0.3"
 rerun-sdk = ">=0.16.0"
-gradio_rerun = { url = "https://huggingface.co/spaces/jleibs/rerun_streaming_poc/resolve/main/gradio_rerun-0.0.2-py3-none-any.whl?download=true" }
+gradio_rerun = ">=0.0.3"
 
 
 [tool.poetry.extras]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-""" Visualize data from individual LeRobot dataset episodes.
+"""Visualize data from individual LeRobot dataset episodes.
 
 ```bash
 $ python lerobot/scripts/visualize_dataset_gradio.py
@@ -8,7 +8,6 @@ $ open http://127.0.0.1:7860
 ```
 
 """
-
 
 import gradio as gr
 import rerun as rr
@@ -48,19 +47,19 @@ def visualize_dataset(
     dataset = dataset["dataset"]
 
     rr.send_blueprint(
-        rrb.Vertical(
-            rrb.TimeSeriesView(),
-            rrb.Horizontal(
-                contents=[rrb.Spatial2DView(origin=key) for key in dataset.camera_keys]
+        rrb.Blueprint(
+            rrb.Vertical(
+                rrb.TimeSeriesView(),
+                rrb.Horizontal(contents=[rrb.Spatial2DView(origin=key) for key in dataset.camera_keys]),
             ),
+            rrb.TimePanel(expanded=False),
+            rrb.SelectionPanel(expanded=False),
         )
     )
 
     yield stream.read()
 
-    video_reader = SequentialRerunVideoReader(
-        dataset.repo_id, dataset.tolerance_s, compression=95
-    )
+    video_reader = SequentialRerunVideoReader(dataset.repo_id, dataset.tolerance_s, compression=95)
     for key in dataset.camera_keys:
         video_reader.start_downloading(key)
 
@@ -81,9 +80,7 @@ def visualize_dataset(
 
             # display each camera image
             for key in dataset.camera_keys:
-                img = video_reader.next_frame(
-                    batch[key]["path"][i], batch[key]["timestamp"][i]
-                )
+                img = video_reader.next_frame(batch[key]["path"][i], batch[key]["timestamp"][i])
                 if img is not None:
                     rr.log(key, img)
 
@@ -119,22 +116,15 @@ def main():
     with gr.Blocks() as demo:
         loaded_dataset = gr.State({})
         with gr.Row():
-            with gr.Column(scale=0.3):
-                with gr.Row():
-                    dataset = gr.Dropdown(choices=lerobot.available_real_world_datasets)
-                with gr.Row():
-                    episode = gr.Dropdown(choices=[], interactive=True)
-                with gr.Row():
-                    load = gr.Button("Load")
             with gr.Column():
-                viewer = Rerun(streaming=True, height=800)
+                dataset = gr.Dropdown(choices=lerobot.available_real_world_datasets)
+            with gr.Column():
+                episode = gr.Dropdown(choices=[], interactive=True)
+        with gr.Row():
+            viewer = Rerun(streaming=True, height=800)
 
-        dataset.change(
-            update_episodes, inputs=[dataset, loaded_dataset], outputs=[episode]
-        )
-        load.click(
-            visualize_dataset, inputs=[loaded_dataset, episode], outputs=[viewer]
-        )
+        dataset.change(update_episodes, inputs=[dataset, loaded_dataset], outputs=[episode])
+        episode.change(visualize_dataset, inputs=[loaded_dataset, episode], outputs=[viewer])
 
     demo.queue(default_concurrency_limit=10)
     demo.launch()
