@@ -43,7 +43,7 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --debug 1
 
 python lerobot/scripts/push_dataset_to_hub.py \
---raw-dir data_raw \
+--raw-dir data/aloha_sim_insertion_scripted_raw \
 --out-dir data \
 --dataset-id aloha_sim_insertion_scripted \
 --raw-format aloha_hdf5 \
