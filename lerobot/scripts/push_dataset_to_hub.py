@@ -54,7 +54,7 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --debug 1
 
 python lerobot/scripts/push_dataset_to_hub.py \
---raw-dir data_raw \
+--raw-dir data/umi_cup_in_the_wild_raw \
 --out-dir data \
 --dataset-id umi_cup_in_the_wild \
 --raw-format umi_zarr \
