@@ -21,7 +21,7 @@ installation of neural net specific packages like pytorch, tensorflow, jax.
 Example:
 ```
 python lerobot/scripts/push_dataset_to_hub.py \
---raw-data data_raw \
+--raw-data data/pusht_raw \
 --out-dir data \
 --dataset-id pusht \
 --raw-format pusht_zarr \
