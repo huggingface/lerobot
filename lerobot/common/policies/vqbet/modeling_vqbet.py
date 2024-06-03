@@ -61,9 +61,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
 
         self.vqbet = VQBeTModel(config)
 
-    def check_discretized(self):
-        return self.vqbet.action_head.vqvae_model.discretized
-
+        self.reset()
 
     def reset(self):
         """
@@ -74,6 +72,9 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
             "observation.state": deque(maxlen=self.config.n_obs_steps),
             "action": deque(maxlen=self.config.n_action_pred_chunk),
         }
+
+    def check_discretized(self):
+        return self.vqbet.action_head.vqvae_model.discretized
 
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
