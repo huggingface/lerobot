@@ -61,8 +61,7 @@ wandb:
 image_transform:
   enable: false
   colorjittor_factor: 0.5
-  colorjittor_p: 0.5 
-  # Probability that ColorJittor is applied
+  # Noise sampled from 0 to colorjittor_factor
   sharpness_factor: 2 
   # Should be more than 1, setting parameter to 1 does not change the image
   sharpness_p: 0.5 
