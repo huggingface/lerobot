@@ -17,9 +17,9 @@ import logging
 
 import torch
 from omegaconf import ListConfig, OmegaConf
-from torchvision.transforms import v2
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
+from lerobot.common.datasets.transforms import make_transforms
 
 
 def resolve_delta_timestamps(cfg):
@@ -72,22 +72,7 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
 
     resolve_delta_timestamps(cfg)
 
-    if cfg.image_transform.enable:
-        transform = v2.Compose(
-            [
-                v2.ColorJitter(
-                    brightness=cfg.image_transform.colorjitter_factor,
-                    contrast=cfg.image_transform.colorjitter_factor,
-                ),
-                v2.RandomAdjustSharpness(
-                    cfg.image_transform.sharpness_factor, p=cfg.image_transform.sharpness_p
-                ),
-                v2.RandomAdjustSharpness(cfg.image_transform.blur_factor, p=cfg.image_transform.blur_p),
-                v2.ToDtype(torch.float32, scale=True),
-            ]
-        )
-    else:
-        transform = None
+    transform = make_transforms(cfg.image_transform) if cfg.image_transform.enable else None
 
     if isinstance(cfg.dataset_repo_id, str):
         dataset = LeRobotDataset(
