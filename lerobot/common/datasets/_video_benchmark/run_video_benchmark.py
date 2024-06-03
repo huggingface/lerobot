@@ -287,7 +287,7 @@ def best_study(repo_ids: list, bench_dir: Path, timestamps_mode: str, dry_run: b
             "crf": None,
             "pix_fmt": "yuv444p",
             # video decoding
-            "backend": "pyav",
+            "backend": "video_reader",
             "decoder": "torchvision",
             "decoder_kwgs": {},
         }
