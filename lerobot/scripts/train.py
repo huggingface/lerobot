@@ -28,6 +28,7 @@ from torch.cuda.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
+from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
@@ -356,11 +357,22 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             logging.info("Resume training")
 
     # create dataloader for offline training
+    if cfg.training.get("drop_n_last_frames"):
+        shuffle = False
+        sampler = EpisodeAwareSampler(
+            offline_dataset.episode_data_index,
+            drop_n_last_frames=cfg.training.drop_n_last_frames,
+            shuffle=True,
+        )
+    else:
+        shuffle = True
+        sampler = None
     dataloader = torch.utils.data.DataLoader(
         offline_dataset,
         num_workers=cfg.training.num_workers,
         batch_size=cfg.training.batch_size,
-        shuffle=True,
+        shuffle=shuffle,
+        sampler=sampler,
         pin_memory=device.type != "cpu",
         drop_last=False,
     )
