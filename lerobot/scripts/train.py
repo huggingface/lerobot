@@ -171,7 +171,7 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
         f"lr:{lr:0.1e}",
         # in seconds
         f"updt_s:{update_s:.3f}",
-        f"dloading_s:{dataloading_s:.3f}",
+        f"dataloading_s:{dataloading_s:.3f}",
     ]
     logging.info(" ".join(log_items))
 
