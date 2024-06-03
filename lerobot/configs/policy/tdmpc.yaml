@@ -20,7 +20,7 @@ training:
     observation.image: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
     observation.state: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
     action: "[i / ${fps} for i in range(${policy.horizon})]"
-    next.reward: "[i / ${fps} for i in range(${policy.horizon})]"
+    next.reward: "[i / ${fps} + ${latency} for i in range(${policy.horizon})]"
 
 policy:
   name: tdmpc

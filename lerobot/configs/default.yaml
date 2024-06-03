@@ -57,3 +57,7 @@ wandb:
   disable_artifact: false
   project: lerobot
   notes: ""
+
+# These configs need to be defined in environment yaml files (e.g. `env/aloha.yaml`)
+fps: ???
+latency: ???

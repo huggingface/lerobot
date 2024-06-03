@@ -51,7 +51,7 @@ training:
   online_steps_between_rollouts: 1
 
   delta_timestamps:
-    action: "[i / ${fps} for i in range(${policy.chunk_size})]"
+    action: "[i / ${fps} + ${latency} for i in range(${policy.chunk_size})]"
 
 eval:
   n_episodes: 50

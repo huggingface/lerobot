@@ -1,6 +1,12 @@
 # @package _global_
 
 fps: 10
+# The latency corresponds to the delay in seconds between the current time at which the observation
+# is fed to the policy to compute the next action, and the next action being sent to the controller.
+# Note: For simulation environments, there could be no latency, but for real-world, latency is usually
+# set to `1 / fps` to account for the runtime of the policy (which is often lower than `1 / fps`) and then
+# a forced sleep to reach `+ 1 / fps` from current observation time.
+latency: 0
 
 env:
   name: pusht
