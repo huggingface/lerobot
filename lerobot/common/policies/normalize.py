@@ -147,7 +147,7 @@ class Normalize(nn.Module):
                 assert not torch.isinf(min).any(), _no_stats_error_str("min")
                 assert not torch.isinf(max).any(), _no_stats_error_str("max")
                 # normalize to [0,1]
-                batch[key] = (batch[key] - min) / (max - min)
+                batch[key] = (batch[key] - min) / (max - min + 1e-8)
                 # normalize to [-1, 1]
                 batch[key] = batch[key] * 2 - 1
             else:
