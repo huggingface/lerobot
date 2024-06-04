@@ -64,10 +64,10 @@ image_transform:
   colorjitter_p: 1.O
   sharpness_factor: 3.0
   # Should be more than 1, setting parameter to 1 does not change the image
-  sharpness_p: 0.5 
+  sharpness_p: 0.5
   blur_factor: 0.2
   # Should be less than 1, setting parameter to 1 does not change the image
-  blur_p: 0.5 
+  blur_p: 0.5
   n_subset: 3
   # Maximum number of transforms to apply
   list: ["colorjitter", "sharpness", "blur"]
