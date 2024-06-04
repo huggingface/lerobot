@@ -14,7 +14,7 @@ class VQBeTConfig:
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
         n_action_pred_token: Number of future tokens that VQ-BeT predicts.
-        n_action_pred_chunk: Action chunk size of each aciton prediction token.
+        action_chunk_size: Action chunk size of each action prediction token.
         input_shapes: A dictionary defining the shapes of the input data for the policy.
             The key represents the input data name, and the value is a list indicating the dimensions
             of the corresponding data. For example, "observation.image" refers to an input from
@@ -63,7 +63,7 @@ class VQBeTConfig:
     # Inputs / output structure.
     n_obs_steps: int = 5
     n_action_pred_token: int = 3
-    n_action_pred_chunk: int = 5
+    action_chunk_size: int = 5
 
     input_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {

@@ -47,7 +47,7 @@ training:
   delta_timestamps:
     observation.image: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
     observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
-    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, ${policy.n_action_pred_token} + ${policy.n_action_pred_chunk} - 1)]"
+    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, ${policy.n_action_pred_token} + ${policy.action_chunk_size} - 1)]"
 
 eval:
   n_episodes: 500
@@ -59,7 +59,7 @@ policy:
   # Input / output structure.
   n_obs_steps: 5
   n_action_pred_token: 7
-  n_action_pred_chunk: 5
+  action_chunk_size: 5
 
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
