@@ -209,7 +209,7 @@ def eval_policy(
     policy: torch.nn.Module,
     n_episodes: int,
     max_episodes_rendered: int = 0,
-    video_dir: Path | None = None,
+    videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
     enable_progbar: bool = False,
@@ -347,8 +347,8 @@ def eval_policy(
             ):
                 if n_episodes_rendered >= max_episodes_rendered:
                     break
-                video_dir.mkdir(parents=True, exist_ok=True)
-                video_path = video_dir / f"eval_episode_{n_episodes_rendered}.mp4"
+                videos_dir.mkdir(parents=True, exist_ok=True)
+                video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
                 video_paths.append(str(video_path))
                 thread = threading.Thread(
                     target=write_video,
@@ -543,7 +543,7 @@ def main(
             policy,
             hydra_cfg.eval.n_episodes,
             max_episodes_rendered=10,
-            video_dir=Path(out_dir) / "video",
+            videos_dir=Path(out_dir) / "videos",
             start_seed=hydra_cfg.seed,
             enable_progbar=True,
             enable_inner_progbar=True,
