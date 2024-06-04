@@ -60,10 +60,9 @@ wandb:
 
 image_transform:
   enable: false
-  colorjittor_range: (0, 1)
-  colorjittor_p: 1
-  # Range from which to sample colorjittor factor
-  sharpness_factor: 3 
+  colorjitter_factor: 0.5
+  colorjitter_p: 1.O
+  sharpness_factor: 3.0
   # Should be more than 1, setting parameter to 1 does not change the image
   sharpness_p: 0.5 
   blur_factor: 0.2
@@ -71,4 +70,4 @@ image_transform:
   blur_p: 0.5 
   n_subset: 3
   # Maximum number of transforms to apply
-  list: ["colorjittor", "sharpness", "blur"]
+  list: ["colorjitter", "sharpness", "blur"]
