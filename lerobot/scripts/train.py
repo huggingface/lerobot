@@ -332,7 +332,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     eval_env,
                     policy,
                     cfg.eval.n_episodes,
-                    video_dir=Path(out_dir) / "eval",
+                    video_dir=Path(out_dir) / "video",
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
                 )
