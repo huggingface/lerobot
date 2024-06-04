@@ -285,23 +285,27 @@ class VQBeTModel(nn.Module):
         img_features = self.rgb_encoder(einops.rearrange(batch["observation.image"], "b n ... -> (b n) ..."))
         # Separate batch and sequence dims.
         img_features = einops.rearrange(img_features, "(b n) ... -> b n ...", b=batch_size)
-        
-        # image observation feature, state feature, and action query token are grouped together with the same timestpe to form a group, which is listed in order to be entered into GPT sequentially.
-        observation_feature = torch.cat([
-                torch.unsqueeze(self.rgb_feature_projector(img_features), dim=2), 
-                torch.unsqueeze(self.state_projector(batch["observation.state"]), dim=2), 
-                self._action_token.repeat(batch_size, n_obs_steps, 1, 1)
-            ], dim=-2).view(batch_size, -1, self.config.gpt_input_dim)
-        assert img_features.shape[1] == n_obs_steps, "The number of input image feature tokens should be same with n_obs_steps"
+
+        # Arrange prior and current observation step tokens as shown in the class docstring.
+        # First project features to token dimension.
+        rgb_tokens = self.rgb_feature_projector(img_features)  # (batch, obs_step, d)
+        state_tokens = self.state_projector(batch["observation.state"])  # (batch, obs_step, d)
+        action_tokens = einops.repeat(
+            self._action_token, "1 1 d -> b n d", b=batch_size, n=n_obs_steps
+        )
+        # Interleave tokens by stacking and rearranging.
+        input_tokens = torch.stack([rgb_tokens, state_tokens, action_tokens], dim=2)
+        input_tokens = einops.rearrange(input_tokens, "b n t d -> b (n t) d")
+
         len_additional_action_token = self.config.n_action_pred_token-1
         action_token = self._action_token.repeat(batch_size, len_additional_action_token, 1)
 
         # add additional action query tokens for predicting future action chunks
-        observation_feature = torch.cat([observation_feature, action_token], dim=1)
+        input_tokens = torch.cat([input_tokens, action_token], dim=1)
 
         
         # get action features (pass through GPT)
-        features = self.policy(observation_feature)
+        features = self.policy(input_tokens)
         historical_act_pred_index = np.arange(0, n_obs_steps) * (self.config.gpt_num_obs_mode+1) + self.config.gpt_num_obs_mode
 
         # only extract the output tokens at the position of action query
