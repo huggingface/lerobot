@@ -61,6 +61,7 @@ wandb:
 image_transform:
   enable: false
   colorjittor_range: (0, 1)
+  colorjittor_p: 1
   # Range from which to sample colorjittor factor
   sharpness_factor: 3 
   # Should be more than 1, setting parameter to 1 does not change the image

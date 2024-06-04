@@ -47,11 +47,11 @@ class RandomSubsetApply(Transform):
 
 def make_transforms(cfg):
     image_transforms = []
-    if 'jit' in cfg.list_transforms:
+    if 'jit' in cfg.image_transform.list:
         image_transforms.append(v2.ColorJitter(brightness=cfg.colorjitter_range, contrast=cfg.colorjitter_range))
-    if 'sharpness' in cfg.list_transforms:
+    if 'sharpness' in cfg.image_transform.list:
         image_transforms.append(v2.RandomAdjustSharpness(cfg.sharpness_factor, p=cfg.sharpness_p))
-    if 'blur' in cfg.list_transforms:
+    if 'blur' in cfg.image_transform.list:
         image_transforms.append(v2.RandomAdjustSharpness(cfg.blur_factor, p=cfg.blur_p))
 
     return v2.Compose(RandomSubsetApply(image_transforms, n_subset=cfg.n_subset), v2.ToDtype(torch.float32, scale=True))
