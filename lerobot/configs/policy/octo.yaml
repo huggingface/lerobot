@@ -22,7 +22,7 @@ training:
   delta_timestamps:
     observation.image: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
     observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
-    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.horizon})]"
+    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, ${policy.horizon})]"
 
 eval:
   n_episodes: 50
@@ -58,7 +58,7 @@ policy:
   use_group_norm: True
   # OctoTransformer.
   embed_dim: 384
-  n_readouts: 1
+  n_readouts_per_step: 1
   n_layers: 12
   n_heads: 6
   dim_feedforward: 1536
