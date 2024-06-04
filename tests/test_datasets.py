@@ -244,7 +244,7 @@ def test_load_previous_and_future_frames_outside_tolerance_inside_episode_range(
     delta_timestamps = {"index": [-0.2, 0, 0.141]}
     tol = 0.04
     item = hf_dataset[2]
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         load_previous_and_future_frames(item, hf_dataset, episode_data_index, delta_timestamps, tol)
 
 
