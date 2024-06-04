@@ -224,7 +224,8 @@ def main():
         help=(
             "Mode of viewing between 'local' or 'distant'. "
             "'local' requires data to be on a local machine. It spawns a viewer to visualize the data locally. "
-            "'distant' creates a server on the distant machine where the data is stored. Visualize the data by connecting to the server with `rerun ws://localhost:PORT` on the local machine."
+            "'distant' creates a server on the distant machine where the data is stored. "
+            "Visualize the data by connecting to the server with `rerun ws://localhost:PORT` on the local machine."
         ),
     )
     parser.add_argument(
@@ -245,8 +246,8 @@ def main():
         default=0,
         help=(
             "Save a .rrd file in the directory provided by `--output-dir`. "
-            "It also deactivates the spawning of a viewer. ",
-            "Visualize the data by running `rerun path/to/file.rrd` on your local machine.",
+            "It also deactivates the spawning of a viewer. "
+            "Visualize the data by running `rerun path/to/file.rrd` on your local machine."
         ),
     )
     parser.add_argument(
