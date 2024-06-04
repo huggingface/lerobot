@@ -98,7 +98,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
 
             # the dimension of returned action is (batch_size, n_action_pred_chunk, action_dim)
             actions = self.unnormalize_outputs({"action": actions})["action"]
-            # since the data in the action queue's dimension is (n_action_pred_chunk, batch_size, action_dim, we transpose the action and fill the queue
+            # since the data in the action queue's dimension is (n_action_pred_chunk, batch_size, action_dim), we transpose the action and fill the queue
             self._queues["action"].extend(actions.transpose(0, 1))
 
         action = self._queues["action"].popleft()
