@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Evaluate a policy on an environment by running rollouts and computing metrics.
 
 Usage examples:
@@ -13,7 +28,7 @@ OR, you want to evaluate a model checkpoint from the LeRobot training script for
 
 ```
 python lerobot/scripts/eval.py \
-    -p outputs/train/diffusion_pusht/checkpoints/005000 \
+    -p outputs/train/diffusion_pusht/checkpoints/005000/pretrained_model \
     eval.n_episodes=10
 ```
 
@@ -31,6 +46,7 @@ import json
 import logging
 import threading
 import time
+from contextlib import nullcontext
 from copy import deepcopy
 from datetime import datetime as dt
 from pathlib import Path
@@ -193,7 +209,7 @@ def eval_policy(
     policy: torch.nn.Module,
     n_episodes: int,
     max_episodes_rendered: int = 0,
-    video_dir: Path | None = None,
+    videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
     enable_progbar: bool = False,
@@ -331,8 +347,8 @@ def eval_policy(
             ):
                 if n_episodes_rendered >= max_episodes_rendered:
                     break
-                video_dir.mkdir(parents=True, exist_ok=True)
-                video_path = video_dir / f"eval_episode_{n_episodes_rendered}.mp4"
+                videos_dir.mkdir(parents=True, exist_ok=True)
+                video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
                 video_paths.append(str(video_path))
                 thread = threading.Thread(
                     target=write_video,
@@ -487,9 +503,10 @@ def _compile_episode_data(
     }
 
 
-def eval(
+def main(
     pretrained_policy_path: str | None = None,
     hydra_cfg_path: str | None = None,
+    out_dir: str | None = None,
     config_overrides: list[str] | None = None,
 ):
     assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
@@ -497,15 +514,11 @@ def eval(
         hydra_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", config_overrides)
     else:
         hydra_cfg = init_hydra_config(hydra_cfg_path, config_overrides)
-    out_dir = (
-        f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
-    )
-
     if out_dir is None:
-        raise NotImplementedError()
+        out_dir = f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
 
     # Check device is available
-    get_safe_torch_device(hydra_cfg.device, log=True)
+    device = get_safe_torch_device(hydra_cfg.device, log=True)
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -524,16 +537,17 @@ def eval(
         policy = make_policy(hydra_cfg=hydra_cfg, dataset_stats=make_dataset(hydra_cfg).stats)
     policy.eval()
 
-    info = eval_policy(
-        env,
-        policy,
-        hydra_cfg.eval.n_episodes,
-        max_episodes_rendered=10,
-        video_dir=Path(out_dir) / "eval",
-        start_seed=hydra_cfg.seed,
-        enable_progbar=True,
-        enable_inner_progbar=True,
-    )
+    with torch.no_grad(), torch.autocast(device_type=device.type) if hydra_cfg.use_amp else nullcontext():
+        info = eval_policy(
+            env,
+            policy,
+            hydra_cfg.eval.n_episodes,
+            max_episodes_rendered=10,
+            videos_dir=Path(out_dir) / "videos",
+            start_seed=hydra_cfg.seed,
+            enable_progbar=True,
+            enable_inner_progbar=True,
+        )
     print(info["aggregated"])
 
     # Save info
@@ -570,6 +584,13 @@ if __name__ == "__main__":
     )
     parser.add_argument("--revision", help="Optionally provide the Hugging Face Hub revision ID.")
     parser.add_argument(
+        "--out-dir",
+        help=(
+            "Where to save the evaluation outputs. If not provided, outputs are saved in "
+            "outputs/eval/{timestamp}_{env_name}_{policy_name}"
+        ),
+    )
+    parser.add_argument(
         "overrides",
         nargs="*",
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
@@ -577,7 +598,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.pretrained_policy_name_or_path is None:
-        eval(hydra_cfg_path=args.config, config_overrides=args.overrides)
+        main(hydra_cfg_path=args.config, out_dir=args.out_dir, config_overrides=args.overrides)
     else:
         try:
             pretrained_policy_path = Path(
@@ -601,4 +622,8 @@ if __name__ == "__main__":
                 "repo ID, nor is it an existing local directory."
             )
 
-        eval(pretrained_policy_path=pretrained_policy_path, config_overrides=args.overrides)
+        main(
+            pretrained_policy_path=pretrained_policy_path,
+            out_dir=args.out_dir,
+            config_overrides=args.overrides,
+        )

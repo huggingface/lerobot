@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """ Visualize data of **all** frames of any episode of a dataset of type LeRobotDataset.
 
 Note: The last frame of the episode doesnt always correspond to a final state.
@@ -209,7 +224,8 @@ def main():
         help=(
             "Mode of viewing between 'local' or 'distant'. "
             "'local' requires data to be on a local machine. It spawns a viewer to visualize the data locally. "
-            "'distant' creates a server on the distant machine where the data is stored. Visualize the data by connecting to the server with `rerun ws://localhost:PORT` on the local machine."
+            "'distant' creates a server on the distant machine where the data is stored. "
+            "Visualize the data by connecting to the server with `rerun ws://localhost:PORT` on the local machine."
         ),
     )
     parser.add_argument(
@@ -230,8 +246,8 @@ def main():
         default=0,
         help=(
             "Save a .rrd file in the directory provided by `--output-dir`. "
-            "It also deactivates the spawning of a viewer. ",
-            "Visualize the data by running `rerun path/to/file.rrd` on your local machine.",
+            "It also deactivates the spawning of a viewer. "
+            "Visualize the data by running `rerun path/to/file.rrd` on your local machine."
         ),
     )
     parser.add_argument(

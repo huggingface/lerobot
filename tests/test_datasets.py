@@ -1,6 +1,22 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import json
 import logging
 from copy import deepcopy
+from itertools import chain
 from pathlib import Path
 
 import einops
@@ -10,26 +26,34 @@ from datasets import Dataset
 from safetensors.torch import load_file
 
 import lerobot
-from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.datasets.lerobot_dataset import (
-    LeRobotDataset,
-)
-from lerobot.common.datasets.push_dataset_to_hub.compute_stats import (
+from lerobot.common.datasets.compute_stats import (
+    aggregate_stats,
     compute_stats,
     get_stats_einops_patterns,
 )
+from lerobot.common.datasets.factory import make_dataset
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
 from lerobot.common.datasets.utils import (
     flatten_dict,
     hf_transform_to_torch,
     load_previous_and_future_frames,
     unflatten_dict,
 )
-from lerobot.common.utils.utils import init_hydra_config
+from lerobot.common.utils.utils import init_hydra_config, seeded_context
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE
 
 
-@pytest.mark.parametrize("env_name, repo_id, policy_name", lerobot.env_dataset_policy_triplets)
+@pytest.mark.parametrize(
+    "env_name, repo_id, policy_name",
+    lerobot.env_dataset_policy_triplets
+    + [("aloha", ["lerobot/aloha_sim_insertion_human", "lerobot/aloha_sim_transfer_cube_human"], "act")],
+)
 def test_factory(env_name, repo_id, policy_name):
+    """
+    Tests that:
+        - we can create a dataset with the factory.
+        - for a commonly used set of data keys, the data dimensions are correct.
+    """
     cfg = init_hydra_config(
         DEFAULT_CONFIG_PATH,
         overrides=[
@@ -88,6 +112,39 @@ def test_factory(env_name, repo_id, policy_name):
         # test missing keys in delta_timestamps
         for key in delta_timestamps:
             assert key in item, f"{key}"
+
+
+# TODO(alexander-soare): If you're hunting for savings on testing time, this takes about 5 seconds.
+def test_multilerobotdataset_frames():
+    """Check that all dataset frames are incorporated."""
+    # Note: use the image variants of the dataset to make the test approx 3x faster.
+    # Note: We really do need three repo_ids here as at some point this caught an issue with the chaining
+    # logic that wouldn't be caught with two repo IDs.
+    repo_ids = [
+        "lerobot/aloha_sim_insertion_human_image",
+        "lerobot/aloha_sim_transfer_cube_human_image",
+        "lerobot/aloha_sim_insertion_scripted_image",
+    ]
+    sub_datasets = [LeRobotDataset(repo_id) for repo_id in repo_ids]
+    dataset = MultiLeRobotDataset(repo_ids)
+    assert len(dataset) == sum(len(d) for d in sub_datasets)
+    assert dataset.num_samples == sum(d.num_samples for d in sub_datasets)
+    assert dataset.num_episodes == sum(d.num_episodes for d in sub_datasets)
+
+    # Run through all items of the LeRobotDatasets in parallel with the items of the MultiLerobotDataset and
+    # check they match.
+    expected_dataset_indices = []
+    for i, sub_dataset in enumerate(sub_datasets):
+        expected_dataset_indices.extend([i] * len(sub_dataset))
+
+    for expected_dataset_index, sub_dataset_item, dataset_item in zip(
+        expected_dataset_indices, chain(*sub_datasets), dataset, strict=True
+    ):
+        dataset_index = dataset_item.pop("dataset_index")
+        assert dataset_index == expected_dataset_index
+        assert sub_dataset_item.keys() == dataset_item.keys()
+        for k in sub_dataset_item:
+            assert torch.equal(sub_dataset_item[k], dataset_item[k])
 
 
 def test_compute_stats_on_xarm():
@@ -300,3 +357,31 @@ def test_backward_compatibility(repo_id):
     # i = dataset.episode_data_index["to"][-1].item()
     # load_and_compare(i - 2)
     # load_and_compare(i - 1)
+
+
+def test_aggregate_stats():
+    """Makes 3 basic datasets and checks that aggregate stats are computed correctly."""
+    with seeded_context(0):
+        data_a = torch.rand(30, dtype=torch.float32)
+        data_b = torch.rand(20, dtype=torch.float32)
+        data_c = torch.rand(20, dtype=torch.float32)
+
+    hf_dataset_1 = Dataset.from_dict(
+        {"a": data_a[:10], "b": data_b[:10], "c": data_c[:10], "index": torch.arange(10)}
+    )
+    hf_dataset_1.set_transform(hf_transform_to_torch)
+    hf_dataset_2 = Dataset.from_dict({"a": data_a[10:20], "b": data_b[10:], "index": torch.arange(10)})
+    hf_dataset_2.set_transform(hf_transform_to_torch)
+    hf_dataset_3 = Dataset.from_dict({"a": data_a[20:], "c": data_c[10:], "index": torch.arange(10)})
+    hf_dataset_3.set_transform(hf_transform_to_torch)
+    dataset_1 = LeRobotDataset.from_preloaded("d1", hf_dataset=hf_dataset_1)
+    dataset_1.stats = compute_stats(dataset_1, batch_size=len(hf_dataset_1), num_workers=0)
+    dataset_2 = LeRobotDataset.from_preloaded("d2", hf_dataset=hf_dataset_2)
+    dataset_2.stats = compute_stats(dataset_2, batch_size=len(hf_dataset_2), num_workers=0)
+    dataset_3 = LeRobotDataset.from_preloaded("d3", hf_dataset=hf_dataset_3)
+    dataset_3.stats = compute_stats(dataset_3, batch_size=len(hf_dataset_3), num_workers=0)
+    stats = aggregate_stats([dataset_1, dataset_2, dataset_3])
+    for data_key, data in zip(["a", "b", "c"], [data_a, data_b, data_c], strict=True):
+        for agg_fn in ["mean", "min", "max"]:
+            assert torch.allclose(stats[data_key][agg_fn], einops.reduce(data, "n -> 1", agg_fn))
+        assert torch.allclose(stats[data_key]["std"], torch.std(data, correction=0))

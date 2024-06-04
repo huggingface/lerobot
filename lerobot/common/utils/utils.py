@@ -1,10 +1,25 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import logging
 import os.path as osp
 import random
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Generator
+from typing import Any, Generator
 
 import hydra
 import numpy as np
@@ -33,12 +48,38 @@ def get_safe_torch_device(cfg_device: str, log: bool = False) -> torch.device:
     return device
 
 
+def get_global_random_state() -> dict[str, Any]:
+    """Get the random state for `random`, `numpy`, and `torch`."""
+    random_state_dict = {
+        "random_state": random.getstate(),
+        "numpy_random_state": np.random.get_state(),
+        "torch_random_state": torch.random.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        random_state_dict["torch_cuda_random_state"] = torch.cuda.random.get_rng_state()
+    return random_state_dict
+
+
+def set_global_random_state(random_state_dict: dict[str, Any]):
+    """Set the random state for `random`, `numpy`, and `torch`.
+
+    Args:
+        random_state_dict: A dictionary of the form returned by `get_global_random_state`.
+    """
+    random.setstate(random_state_dict["random_state"])
+    np.random.set_state(random_state_dict["numpy_random_state"])
+    torch.random.set_rng_state(random_state_dict["torch_random_state"])
+    if torch.cuda.is_available():
+        torch.cuda.random.set_rng_state(random_state_dict["torch_cuda_random_state"])
+
+
 def set_global_seed(seed):
     """Set seed for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 @contextmanager
@@ -54,16 +95,10 @@ def seeded_context(seed: int) -> Generator[None, None, None]:
     c = random.random()  # produces yet another random number, but the same it would have if we never made `b`
     ```
     """
-    random_state = random.getstate()
-    np_random_state = np.random.get_state()
-    torch_random_state = torch.random.get_rng_state()
-    torch_cuda_random_state = torch.cuda.random.get_rng_state()
+    random_state_dict = get_global_random_state()
     set_global_seed(seed)
     yield None
-    random.setstate(random_state)
-    np.random.set_state(np_random_state)
-    torch.random.set_rng_state(torch_random_state)
-    torch.cuda.random.set_rng_state(torch_cuda_random_state)
+    set_global_random_state(random_state_dict)
 
 
 def init_logging():
@@ -85,13 +120,13 @@ def init_logging():
     logging.getLogger().addHandler(console_handler)
 
 
-def format_big_number(num):
+def format_big_number(num, precision=0):
     suffixes = ["", "K", "M", "B", "T", "Q"]
     divisor = 1000.0
 
     for suffix in suffixes:
         if abs(num) < divisor:
-            return f"{num:.0f}{suffix}"
+            return f"{num:.{precision}f}{suffix}"
         num /= divisor
 
     return num

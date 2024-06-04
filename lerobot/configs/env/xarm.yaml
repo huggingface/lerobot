@@ -5,10 +5,13 @@ fps: 15
 env:
   name: xarm
   task: XarmLift-v0
-  from_pixels: True
-  pixels_only: False
   image_size: 84
-  episode_length: 25
-  fps: ${fps}
   state_dim: 4
   action_dim: 4
+  fps: ${fps}
+  episode_length: 25
+  gym:
+    obs_type: pixels_agent_pos
+    render_mode: rgb_array
+    visualization_width: 384
+    visualization_height: 384
