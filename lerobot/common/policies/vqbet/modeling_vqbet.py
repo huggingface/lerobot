@@ -208,7 +208,7 @@ class VQBeTModel(nn.Module):
         --------------------------------------------------------------------------
 
         
-        Phase 1. Discretize action using Residual VQ (for config.discretize_step steps)
+        Training Phase 1. Discretize action using Residual VQ (for config.discretize_step steps)
 
 
         ┌─────────────────┐            ┌─────────────────┐            ┌─────────────────┐
@@ -218,7 +218,7 @@ class VQBeTModel(nn.Module):
         │                 │            │                 │            │                 │
         └─────────────────┘            └─────────────────┘            └─────────────────┘
 
-        Phase 2.
+        Training Phase 2.
         
           timestep {t-n+1}   timestep {t-n+2}                timestep {t}
             ┌─────┴─────┐     ┌─────┴─────┐                 ┌─────┴─────┐
@@ -598,10 +598,10 @@ class VQBeTOptimizer:
 
     def step(self):
         self.optimizing_step +=1
-        # pretraining VQ-VAE (phase 1)
+        # pretraining VQ-VAE (Training Phase 1)
         if self.optimizing_step < self.discretize_step:
             self.vqvae_optimizer.step()
-        # training BeT (phase 2)
+        # training BeT (Training Phase 2)
         else:
             self.encoder_optimizer.step()
             self.bet_optimizer1.step()
@@ -609,10 +609,10 @@ class VQBeTOptimizer:
             self.bet_optimizer3.step()
 
     def zero_grad(self):
-        # pretraining VQ-VAE (phase 1)
+        # pretraining VQ-VAE (Training Phase 1)
         if self.optimizing_step < self.discretize_step:
             self.vqvae_optimizer.zero_grad()
-        # training BeT (phase 2)
+        # training BeT (Training Phase 2)
         else:
             self.encoder_optimizer.zero_grad()
             self.bet_optimizer1.zero_grad()
