@@ -70,7 +70,7 @@ python lerobot/scripts/train.py policy=act env=aloha
 
 There are two things to note here:
 - Config overrides are passed as `param_name=param_value`.
-- Here we have overridden the defaults section. `policy=act` tells Hydra to use `policy/act.yaml`, and `env=aloha` tells Hydra to use `env/pusht.yaml`.
+- Here we have overridden the defaults section. `policy=act` tells Hydra to use `policy/act.yaml`, and `env=aloha` tells Hydra to use `env/aloha.yaml`.
 
 _As an aside: we've set up all of our configurations so that they reproduce state-of-the-art results from papers in the literature._
 
