@@ -327,6 +327,9 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     # Note: this helper will be used in offline and online training loops.
     def evaluate_and_checkpoint_if_needed(step):
+        _num_digits = max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
+        step_identifier = f"{step:0{_num_digits}d}"
+
         if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
@@ -334,7 +337,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     eval_env,
                     policy,
                     cfg.eval.n_episodes,
-                    video_dir=Path(out_dir) / "eval",
+                    videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
                 )
@@ -352,9 +355,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 policy,
                 optimizer,
                 lr_scheduler,
-                identifier=str(step).zfill(
-                    max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
-                ),
+                identifier=step_identifier,
             )
             logging.info("Resume training")
 
