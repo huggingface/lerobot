@@ -242,8 +242,8 @@ class VQBeTModel(nn.Module):
                     └── + ──┘         └── + ──┘                     └── + ──┘       └── + ──┘
                         ▼                 ▼                             ▼               ▼
                    action chunk      action chunk                  action chunk     action chunk
-                    a_{t_n+1} ~       a_{t_n+2} ~                   a_{t} ~     ...  a_{t+p-1} ~ 
-                     a_{t_n+c}         a_{t_n+c+1}                   a_{t+c-1}        a_{t+p+c-1}
+                    a_{t-n+1} ~       a_{t-n+2} ~                   a_{t} ~     ...  a_{t+p-1} ~ 
+                     a_{t-n+c}         a_{t-n+c+1}                   a_{t+c-1}        a_{t+p+c-1}
 
                                                                         ▼
                                                       ONLY this chunk is used in rollout!
