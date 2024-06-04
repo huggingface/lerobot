@@ -60,13 +60,14 @@ wandb:
 
 image_transform:
   enable: false
-  colorjittor_factor: 0.5
-  # Noise sampled randomly from 0 to colorjittor_factor
-  sharpness_factor: 2 
+  colorjittor_range: (0, 1)
+  # Range from which to sample colorjittor factor
+  sharpness_factor: 3 
   # Should be more than 1, setting parameter to 1 does not change the image
   sharpness_p: 0.5 
-  # Probability that Sharpness is applied
-  blur_factor: 0.5
+  blur_factor: 0.2
   # Should be less than 1, setting parameter to 1 does not change the image
   blur_p: 0.5 
-  # Probability that Blur is applied
+  n_subset: 3
+  # Maximum number of transforms to apply
+  list: ["colorjittor", "sharpness", "blur"]
