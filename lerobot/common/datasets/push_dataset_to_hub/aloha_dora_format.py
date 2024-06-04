@@ -78,15 +78,29 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
 
     image_keys = [key for key in df if "observation.images." in key]
 
+    num_unaligned_images = 0
+    max_episode = 0
+
     def get_episode_index(row):
+        nonlocal num_unaligned_images
+        nonlocal max_episode
         episode_index_per_cam = {}
         for key in image_keys:
+            if isinstance(row[key], float):
+                num_unaligned_images += 1
+                return float("nan")
             path = row[key][0]["path"]
             match = re.search(r"_(\d{6}).mp4", path)
             if not match:
                 raise ValueError(path)
             episode_index = int(match.group(1))
             episode_index_per_cam[key] = episode_index
+
+            if episode_index > max_episode:
+                assert episode_index - max_episode == 1
+                max_episode = episode_index
+            else:
+                assert episode_index == max_episode
         if len(set(episode_index_per_cam.values())) != 1:
             raise ValueError(
                 f"All cameras are expected to belong to the same episode, but getting {episode_index_per_cam}"
@@ -111,11 +125,24 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
     del df["timestamp_utc"]
 
     # sanity check
-    has_nan = df.isna().any().any()
-    if has_nan:
-        raise ValueError("Dataset contains Nan values.")
+    num_rows_with_nan = df.isna().any(axis=1).sum()
+    assert (
+        num_rows_with_nan == num_unaligned_images
+    ), f"Found {num_rows_with_nan} rows with NaN values but {num_unaligned_images} unaligned images."
+    if num_unaligned_images > max_episode * 2:
+        # We allow a few unaligned images, typically at the beginning and end of the episodes for instance
+        # but if there are too many, we raise an error to avoid large chunks of missing data
+        raise ValueError(
+            f"Found {num_unaligned_images} unaligned images out of {max_episode} episodes. "
+            f"Check the timestamps of the cameras."
+        )
+
+    # Drop rows with NaN values now that we double checked and convert episode_index to int
+    df = df.dropna()
+    df["episode_index"] = df["episode_index"].astype(int)
 
     # sanity check episode indices go from 0 to n-1
+    assert df["episode_index"].max() == max_episode
     ep_ids = [ep_idx for ep_idx, _ in df.groupby("episode_index")]
     expected_ep_ids = list(range(df["episode_index"].max() + 1))
     if ep_ids != expected_ep_ids:
@@ -214,8 +241,6 @@ def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=Tru
 
     if fps is None:
         fps = 30
-    else:
-        raise NotImplementedError()
 
     if not video:
         raise NotImplementedError()

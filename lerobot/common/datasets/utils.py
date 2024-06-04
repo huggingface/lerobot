@@ -243,10 +243,11 @@ def load_previous_and_future_frames(
         is_pad = min_ > tolerance_s
 
         # check violated query timestamps are all outside the episode range
-        assert ((query_ts[is_pad] < ep_first_ts) | (ep_last_ts < query_ts[is_pad])).all(), (
-            f"One or several timestamps unexpectedly violate the tolerance ({min_} > {tolerance_s=}) inside episode range."
-            "This might be due to synchronization issues with timestamps during data collection."
-        )
+        if not ((query_ts[is_pad] < ep_first_ts) | (ep_last_ts < query_ts[is_pad])).all():
+            raise ValueError(
+                f"One or several timestamps unexpectedly violate the tolerance ({min_} > {tolerance_s=}) inside episode range."
+                "This might be due to synchronization issues with timestamps during data collection."
+            )
 
         # get dataset indices corresponding to frames to be loaded
         data_ids = ep_data_ids[argmin_]
