@@ -141,6 +141,50 @@ https://github-production-user-asset-6210df.s3.amazonaws.com/4681518/328035972-f
 
 Our script can also visualize datasets stored on a distant server. See `python lerobot/scripts/visualize_dataset.py --help` for more instructions.
 
+### The `LeRobotDataset` format
+
+A dataset in `LeRobotDataset` format is very simple to use. It can be loaded from a repository on the Hugging Face hub or a local folder simply with e.g. `dataset = LeRobotDataset("lerobot/aloha_static_coffee")` and can be indexed into like any Hugging Face dataset. For instance `dataset[0]` will retrieve a sample of the dataset observations and actions in pytorch tensos format ready to be fed to a model.
+
+A specificity of `LeRobotDataset` is that we can retrieve several frames for one sample query. By setting `delta_timestamps` to to a list of delta timestamps, e.g. `delta_timestamps = {"observation.image": [-1, -0.5, -0.20, 0]}`  one can retrieve, for each query, 4 images before the current time frame. See example [1_load_lerobot_dataset.py](examples/1_load_lerobot_dataset.py) for more details on `delta_timestamps`.
+
+Under the hood, the `LeRobotDataset` format makes use of several ways to serialize data which can be useful to understand if you plan to work more closely with this format. We tried to make a flexible yet simple dataset format that would cover most type of features and specificities present in RL and robotics.
+
+Here are the important details and internal structure organization of a typical `LeRobotDataset` instantiated with `dataset = LeRobotDataset("lerobot/aloha_static_coffee")`. The exact features will change from dataset to dataset but not the main aspects:
+
+```
+dataset attributes:
+  ├ hf_dataset: a Hugging Face dataset (backed by Arrow/parquet). Typical features example:
+  │  ├ observation.images.cam_high: VideoFrame
+  │  │   VideoFrame = {'path': path to a mp4 video, 'timestamp': float32 timestamp in the video}
+  │  ├ observation.state: List of float32: position of an arm joints (for instance)
+  │  ... (more observations)
+  │  ├ action: List of float32
+  │  ├ episode_index: int64: index of the episode for this sample
+  │  ├ frame_index: int64: index of the frame for this sample in the episode
+  │  ├ timestamp: float32: timestamp in the episode
+  │  ├ next.done: bool: True for the last frame in each episode
+  │  └ index: int64: general index in the whole dataset
+  ├ episode_data_index: contain 2 tensors with the beginning and end indices of each episode
+  │  ├ from: 1D int64 tensor of first frame index for each episode: shape (num episodes,) start with 0
+  │  └ to: 1D int64 tensor of last frame index for each episode: shape (num episodes,)
+  ├ stats: a dictionary of statistics (max, mean, min, std) for each feature in the dataset, for instance
+  │  ├ observation.images.cam_high: {'max': tensor of same shape as the observation.images.cam_high feature, ...}
+  │  ...
+  ├ info: a dictionary of metadata on the dataset
+  │  ├ fps: float - frame per second the dataset is recorded/synchronized to
+  │  └ video: bool - are there video in the dataset
+  ├ videos_dir: path to where the videos are stored/accessed
+  └ video_frame_keys: List of string: the video features of the hf_dataset
+```
+
+A `LeRobotDataset` is serialised using several widespread file formats for each of its parts, namely:
+- hf_dataset stored using Hugging Face datasets library serialization to parquet
+- videos are stored in mp4 format
+- episode_data_index saved using `safetensor` tensor serializtion format
+- stats saved using `safetensor` tensor serializtion format
+- info are saved using JSON
+
+
 ### Evaluate a pretrained policy
 
 Check out [example 2](./examples/2_evaluate_pretrained_policy.py) that illustrates how to download a pretrained policy from Hugging Face hub, and run an evaluation on its corresponding environment.
