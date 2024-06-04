@@ -1,0 +1,13 @@
+# @package _global_
+
+fps: 30
+
+env:
+  name: dora
+  task: DoraKoch-v0
+  state_dim: 6
+  action_dim: 6
+  fps: ${fps}
+  episode_length: 400
+  gym:
+    fps: ${fps}
