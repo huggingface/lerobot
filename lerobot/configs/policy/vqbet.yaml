@@ -39,7 +39,7 @@ training:
 
   # VQ-BeT specific
   vqvae_lr: 1.0e-3
-  discretize_step: 20000
+  n_vqvae_training_steps: 20000
   bet_weight_decay: 2e-4
   bet_learning_rate: 5.5e-5
   bet_betas: [0.9, 0.999]
@@ -84,7 +84,7 @@ policy:
   use_group_norm: True
   spatial_softmax_num_keypoints: 32
   # VQ-VAE
-  discretize_step: ${training.discretize_step}
+  n_vqvae_training_steps: ${training.n_vqvae_training_steps}
   vqvae_groups: 2
   vqvae_n_embed: 16
   vqvae_embedding_dim: 256

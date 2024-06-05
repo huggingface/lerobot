@@ -40,7 +40,7 @@ class VQBeTConfig:
         use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
             The group sizes are set to be about 16 (to be precise, feature_dim // 16).
         spatial_softmax_num_keypoints: Number of keypoints for SpatialSoftmax.
-        discretize_step: Number of optimization steps for training Residual VQ.
+        n_vqvae_training_steps: Number of optimization steps for training Residual VQ.
         vqvae_groups: Number of layers in Residual VQ.
         vqvae_n_embed: Number of embedding vectors in the RVQ dictionary (each layer).
         vqvae_embedding_dim: Dimension of each embedding vector in the RVQ dictionary.
@@ -97,7 +97,7 @@ class VQBeTConfig:
     use_group_norm: bool = True
     spatial_softmax_num_keypoints: int = 32
     # VQ-VAE
-    discretize_step: int = 3000
+    n_vqvae_training_steps: int = 3000
     vqvae_groups: int = 2
     vqvae_n_embed: int = 16
     vqvae_embedding_dim: int = 256

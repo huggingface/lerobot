@@ -113,7 +113,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
             # loss: total loss of training RVQ
             # n_different_codes: how many of total possible codes are being used (max: vqvae_n_embed).
             # n_different_combinations: how many different code combinations you are using out of all possible code combinations (max: vqvae_n_embed ^ vqvae_groups).
-            loss, n_different_codes, n_different_combinations = self.vqbet.discretize(self.config.discretize_step, batch['action'])
+            loss, n_different_codes, n_different_combinations = self.vqbet.discretize(self.config.n_vqvae_training_steps, batch['action'])
             return {"loss": loss, "n_different_codes": n_different_codes, "n_different_combinations": n_different_combinations}
         # if Residual VQ is already trained, VQ-BeT trains its GPT and bin prediction head / offset prediction head parts.
         _, loss_dict = self.vqbet(batch, rollout=False)
@@ -208,7 +208,7 @@ class VQBeTModel(nn.Module):
         --------------------------------------------------------------------------
 
         
-        Training Phase 1. Discretize action using Residual VQ (for config.discretize_step steps)
+        Training Phase 1. Discretize action using Residual VQ (for config.n_vqvae_training_steps steps)
 
 
         ┌─────────────────┐            ┌─────────────────┐            ┌─────────────────┐
@@ -280,8 +280,8 @@ class VQBeTModel(nn.Module):
                         ),
                     )
 
-    def discretize(self, discretize_step, actions):
-        return self.action_head.discretize(discretize_step, actions)
+    def discretize(self, n_vqvae_training_steps, actions):
+        return self.action_head.discretize(n_vqvae_training_steps, actions)
 
     def forward(self, batch: dict[str, Tensor], rollout: bool) -> Tensor:
         # Input validation.
@@ -378,8 +378,8 @@ class VQBeTHead(nn.Module):
         # loss
         self._focal_loss_fn = FocalLoss(gamma=2.0)
 
-    def discretize(self, discretize_step, actions):
-        loss, n_different_codes, n_different_combinations = pretrain_vqvae(self.vqvae_model, discretize_step, actions)
+    def discretize(self, n_vqvae_training_steps, actions):
+        loss, n_different_codes, n_different_combinations = pretrain_vqvae(self.vqvae_model, n_vqvae_training_steps, actions)
         return loss, n_different_codes, n_different_combinations
 
     def forward(self, x, **kwargs):
@@ -554,7 +554,7 @@ class VQBeTHead(nn.Module):
 
 class VQBeTOptimizer:
     def __init__(self, policy, cfg):
-        self.discretize_step = cfg.training.discretize_step
+        self.n_vqvae_training_steps = cfg.training.n_vqvae_training_steps
         self.offline_steps = cfg.training.offline_steps
         self.optimizing_step = 0
 
@@ -616,7 +616,7 @@ class VQBeTOptimizer:
     def step(self):
         self.optimizing_step +=1
         # pretraining VQ-VAE (Training Phase 1)
-        if self.optimizing_step < self.discretize_step:
+        if self.optimizing_step < self.n_vqvae_training_steps:
             self.vqvae_optimizer.step()
         # training BeT (Training Phase 2)
         else:
@@ -626,7 +626,7 @@ class VQBeTOptimizer:
 
     def zero_grad(self):
         # pretraining VQ-VAE (Training Phase 1)
-        if self.optimizing_step < self.discretize_step:
+        if self.optimizing_step < self.n_vqvae_training_steps:
             self.vqvae_optimizer.zero_grad()
         # training BeT (Training Phase 2)
         else:
@@ -638,7 +638,7 @@ class VQBeTScheduler:
     def __init__(self, optimizer, cfg):
         # VQ-BeT use scheduler only for rgb encoder. Since we took rgb encoder part from diffusion policy, we also follow the same scheduler from it.
         from diffusers.optimization import get_scheduler
-        self.discretize_step = cfg.training.discretize_step
+        self.n_vqvae_training_steps = cfg.training.n_vqvae_training_steps
         self.optimizing_step = 0
 
         self.lr_scheduler = get_scheduler(
@@ -651,7 +651,7 @@ class VQBeTScheduler:
 
     def step(self):
         self.optimizing_step +=1
-        if self.optimizing_step >= self.discretize_step:
+        if self.optimizing_step >= self.n_vqvae_training_steps:
             self.lr_scheduler.step()
 
 class VQBeTRgbEncoder(nn.Module):
@@ -907,7 +907,7 @@ class VqVae(nn.Module):
 
 
 
-def pretrain_vqvae(vqvae_model, discretize_step, actions):
+def pretrain_vqvae(vqvae_model, n_vqvae_training_steps, actions):
     if vqvae_model.config.action_chunk_size == 1:
         # not using action chunk
         actions = actions.reshape(-1, 1, actions.shape[-1])
@@ -926,8 +926,8 @@ def pretrain_vqvae(vqvae_model, discretize_step, actions):
     n_different_codes = len(torch.unique(metric[2]))
     n_different_combinations = len(torch.unique(metric[2], dim=0))
     vqvae_model.optimized_steps += 1
-    # if we updated RVQ more than `discretize_step` steps,
-    if vqvae_model.optimized_steps >= discretize_step:
+    # if we updated RVQ more than `n_vqvae_training_steps` steps,
+    if vqvae_model.optimized_steps >= n_vqvae_training_steps:
         vqvae_model.toggle_discretized(True)
         print("Finished discretizing action data!")
         vqvae_model.eval()
