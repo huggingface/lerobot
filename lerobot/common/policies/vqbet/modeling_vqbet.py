@@ -343,16 +343,11 @@ class VQBeTHead(nn.Module):
             and the output dimension of `self.map_to_cbet_preds_bin` is `self.config.vqvae_groups * self.config.vqvae_n_embed`, where 
                 `self.config.vqvae_groups` is number of RVQ layers, and
                 `self.config.vqvae_n_embed` is codebook size of RVQ.
-
             if the agent select the code sequentially, we use self.map_to_cbet_preds_primary_bin and self.map_to_cbet_preds_secondary_bin instead of self._map_to_cbet_preds_bin.
 
         self.map_to_cbet_preds_offset: output the predicted offsets for all the codes in all the layers. 
             The input dimension of ` self.map_to_cbet_preds_offset` is same with the output of GPT, 
-            and the output dimension of ` self.map_to_cbet_preds_offset` is `self.config.vqvae_groups * self.config.vqvae_n_embed * config.action_chunk_size * config.output_shapes["action"][0]`, where
-                `self.config.vqvae_groups` is number of RVQ layers,
-                `self.config.vqvae_n_embed` is codebook size of RVQ,
-                `config.action_chunk_size is action chunk size of each token, and
-                `config.output_shapes["action"][0]` is the dimension of action 
+            and the output dimension of ` self.map_to_cbet_preds_offset` is `self.config.vqvae_groups * self.config.vqvae_n_embed * config.action_chunk_size * config.output_shapes["action"][0]`
         """
 
         super().__init__()
