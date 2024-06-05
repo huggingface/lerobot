@@ -24,21 +24,28 @@ def main(repo_id):
     output_dir = Path("outputs/image_transforms") / Path(repo_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get first frame of given episode
-    from_idx = dataset.episode_data_index["from"][0].item()
-    frame = dataset[from_idx][dataset.camera_keys[0]]
+    # Get first frame of 1st episode
+    first_idx = dataset.episode_data_index["from"][0].item()
+    frame = dataset[first_idx][dataset.camera_keys[0]]
     to_pil(frame).save(output_dir / "original_frame.png", quality=100)
+
+    transforms = ["brightness", "contrast", "saturation", "hue", "sharpness"]
 
     # Apply each single transformation
     for transform_name in transforms:
+        overrides = [
+                "image_transform.enable=True",
+                "image_transform.max_num_transforms=1",
+        ]
+        for t in transforms:
+            if t == transform_name:
+                overrides.append(f"image_transform.{t}.weight=1")
+                overrides.append(f"image_transform.{t}_p=1")
+            else:
+                overrides.append(f"image_transform.{t}.weight=0")
         cfg = init_hydra_config(
             DEFAULT_CONFIG_PATH,
-            overrides=[
-                "image_transform.enable=True",
-                "image_transform.n_subset=1",
-                f"image_transform.list=[{transform_name}]",
-                f"image_transform.{transform_name}_p=1",
-            ],
+            overrides=overrides,
         )
         transform = make_transforms(cfg.image_transform)
         img = transform(frame)
