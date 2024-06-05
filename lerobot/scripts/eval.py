@@ -221,7 +221,7 @@ def eval_policy(
         policy: The policy.
         n_episodes: The number of episodes to evaluate.
         max_episodes_rendered: Maximum number of episodes to render into videos.
-        video_dir: Where to save rendered videos.
+        videos_dir: Where to save rendered videos.
         return_episode_data: Whether to return episode data for online training. Incorporates the data into
             the "episodes" key of the returned dictionary.
         start_seed: The first seed to use for the first individual rollout. For all subsequent rollouts the
