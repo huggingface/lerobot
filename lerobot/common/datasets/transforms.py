@@ -66,10 +66,12 @@ class RandomSubsetApply(Transform):
         return outputs
 
     def extra_repr(self) -> str:
-        format_string = [f"N={self.N}"]
-        for t in self.transforms:
-            format_string.append(f"    {t}")
-        return "\n".join(format_string)
+        return (
+            f"transforms={self.transforms}, "
+            f"p={self.p}, "
+            f"n_subset={self.n_subset}, "
+            f"random_order={self.random_order}"
+        )
 
 
 class RangeRandomSharpness(Transform):
