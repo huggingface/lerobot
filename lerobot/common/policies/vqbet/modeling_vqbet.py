@@ -532,9 +532,9 @@ class VQBeTHead(nn.Module):
         ) / (NT)
 
         action_mse_error = torch.mean((action_seq - predicted_action) ** 2)
-        vq_action_error = torch.mean(action_seq - decoded_action)
-        offset_action_error = torch.mean(action_seq - predicted_action)
-        action_error_max = torch.max(action_seq - predicted_action)
+        vq_action_error = torch.mean(torch.abs(action_seq - decoded_action))
+        offset_action_error = torch.mean(torch.abs(action_seq - predicted_action))
+        action_error_max = torch.max(torch.abs(action_seq - predicted_action))
 
         loss = cbet_loss + self.config.offset_loss_weight * offset_loss
 
