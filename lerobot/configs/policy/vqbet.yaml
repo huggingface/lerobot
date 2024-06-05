@@ -50,7 +50,7 @@ training:
     action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, ${policy.n_action_pred_token} + ${policy.action_chunk_size} - 1)]"
 
 eval:
-  n_episodes: 500
+  n_episodes: 50
   batch_size: 50
 
 policy:
