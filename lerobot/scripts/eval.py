@@ -209,7 +209,7 @@ def eval_policy(
     policy: torch.nn.Module,
     n_episodes: int,
     max_episodes_rendered: int = 0,
-    video_dir: Path | None = None,
+    videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
     enable_progbar: bool = False,
@@ -221,7 +221,7 @@ def eval_policy(
         policy: The policy.
         n_episodes: The number of episodes to evaluate.
         max_episodes_rendered: Maximum number of episodes to render into videos.
-        video_dir: Where to save rendered videos.
+        videos_dir: Where to save rendered videos.
         return_episode_data: Whether to return episode data for online training. Incorporates the data into
             the "episodes" key of the returned dictionary.
         start_seed: The first seed to use for the first individual rollout. For all subsequent rollouts the
@@ -347,8 +347,8 @@ def eval_policy(
             ):
                 if n_episodes_rendered >= max_episodes_rendered:
                     break
-                video_dir.mkdir(parents=True, exist_ok=True)
-                video_path = video_dir / f"eval_episode_{n_episodes_rendered}.mp4"
+                videos_dir.mkdir(parents=True, exist_ok=True)
+                video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
                 video_paths.append(str(video_path))
                 thread = threading.Thread(
                     target=write_video,
@@ -503,9 +503,10 @@ def _compile_episode_data(
     }
 
 
-def eval(
+def main(
     pretrained_policy_path: str | None = None,
     hydra_cfg_path: str | None = None,
+    out_dir: str | None = None,
     config_overrides: list[str] | None = None,
 ):
     assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
@@ -513,12 +514,8 @@ def eval(
         hydra_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", config_overrides)
     else:
         hydra_cfg = init_hydra_config(hydra_cfg_path, config_overrides)
-    out_dir = (
-        f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
-    )
-
     if out_dir is None:
-        raise NotImplementedError()
+        out_dir = f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
 
     # Check device is available
     device = get_safe_torch_device(hydra_cfg.device, log=True)
@@ -546,7 +543,7 @@ def eval(
             policy,
             hydra_cfg.eval.n_episodes,
             max_episodes_rendered=10,
-            video_dir=Path(out_dir) / "eval",
+            videos_dir=Path(out_dir) / "videos",
             start_seed=hydra_cfg.seed,
             enable_progbar=True,
             enable_inner_progbar=True,
@@ -587,6 +584,13 @@ if __name__ == "__main__":
     )
     parser.add_argument("--revision", help="Optionally provide the Hugging Face Hub revision ID.")
     parser.add_argument(
+        "--out-dir",
+        help=(
+            "Where to save the evaluation outputs. If not provided, outputs are saved in "
+            "outputs/eval/{timestamp}_{env_name}_{policy_name}"
+        ),
+    )
+    parser.add_argument(
         "overrides",
         nargs="*",
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
@@ -594,7 +598,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.pretrained_policy_name_or_path is None:
-        eval(hydra_cfg_path=args.config, config_overrides=args.overrides)
+        main(hydra_cfg_path=args.config, out_dir=args.out_dir, config_overrides=args.overrides)
     else:
         try:
             pretrained_policy_path = Path(
@@ -618,4 +622,8 @@ if __name__ == "__main__":
                 "repo ID, nor is it an existing local directory."
             )
 
-        eval(pretrained_policy_path=pretrained_policy_path, config_overrides=args.overrides)
+        main(
+            pretrained_policy_path=pretrained_policy_path,
+            out_dir=args.out_dir,
+            config_overrides=args.overrides,
+        )
