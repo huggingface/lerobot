@@ -60,14 +60,26 @@ wandb:
 
 image_transform:
   enable: false
-  colorjitter_factor: 0.5
-  colorjitter_p: 1.O
-  sharpness_factor: 3.0
-  # Should be more than 1, setting parameter to 1 does not change the image
-  sharpness_p: 0.5
-  blur_factor: 0.2
-  # Should be less than 1, setting parameter to 1 does not change the image
-  blur_p: 0.5
-  n_subset: 3
   # Maximum number of transforms to apply
-  list: ["colorjitter", "sharpness", "blur"]
+  max_num_transforms: 3
+  random_order: false
+  brightness:
+    weight: 1
+    min: 0.5
+    max: 1.5
+  contrast:
+    weight: 1
+    min: 0.5
+    max: 1.5
+  saturation:
+    weight: 1
+    min: 0.5
+    max: 1.5
+  hue:
+    weight: 1
+    min: -0.1
+    max: 0.1
+  sharpness:
+    weight: 1
+    min: 0.9
+    max: 1.1
