@@ -57,7 +57,6 @@ class RandomSubsetApply(Transform):
             selected_indices = selected_indices.sort().values
 
         selected_transforms = [self.transforms[i] for i in selected_indices]
-        print(selected_transforms)
 
         for transform in selected_transforms:
             outputs = transform(*inputs)
@@ -93,7 +92,6 @@ class RangeRandomSharpness(Transform):
 
     def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
         sharpness_factor = self.range_min + (self.range_max - self.range_min) * torch.rand(1).item()
-        print(f"{sharpness_factor=}")
         return self._call_kernel(F.adjust_sharpness, inpt, sharpness_factor=sharpness_factor)
 
 
