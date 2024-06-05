@@ -1,10 +1,34 @@
 # @package _global_
 
+# Use `act_real_no_state.yaml` to train on real-world Aloha/Aloha2 datasets when cameras are moving (e.g. wrist cameras)
+# Compared to `act_real.yaml`, it is camera only and does not use the state as input which is vector of robot joint positions.
+# We validated experimentaly that not using state reaches better success rate. Our hypothesis is that `act_real.yaml` might
+# overfits to the state, because the images are more complex to learn from since they are moving.
+#
+# Example of usage for training:
+# ```bash
+# python lerobot/scripts/train.py \
+#   policy=act_real_no_state \
+#   env=dora_aloha_real
+# ```
+
 seed: 1000
-dataset_repo_id: lerobot/aloha_sim_insertion_human
+dataset_repo_id: lerobot/aloha_static_vinh_cup
 
 override_dataset_stats:
-  observation.images.top:
+  observation.images.cam_right_wrist:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.cam_left_wrist:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.cam_high:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.cam_low:
     # stats from imagenet, since we use a pretrained vision model
     mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
     std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
@@ -12,9 +36,9 @@ override_dataset_stats:
 training:
   offline_steps: 80000
   online_steps: 0
-  eval_freq: 10000
-  save_freq: 100000
-  log_freq: 250
+  eval_freq: -1
+  save_freq: 10000
+  log_freq: 100
   save_checkpoint: true
 
   batch_size: 8
@@ -42,15 +66,19 @@ policy:
 
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
-    observation.images.top: [3, 480, 640]
-    observation.state: ["${env.state_dim}"]
+    observation.images.cam_right_wrist: [3, 480, 640]
+    observation.images.cam_left_wrist: [3, 480, 640]
+    observation.images.cam_high: [3, 480, 640]
+    observation.images.cam_low: [3, 480, 640]
   output_shapes:
     action: ["${env.action_dim}"]
 
   # Normalization / Unnormalization
   input_normalization_modes:
-    observation.images.top: mean_std
-    observation.state: mean_std
+    observation.images.cam_right_wrist: mean_std
+    observation.images.cam_left_wrist: mean_std
+    observation.images.cam_high: mean_std
+    observation.images.cam_low: mean_std
   output_normalization_modes:
     action: mean_std
 

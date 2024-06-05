@@ -70,7 +70,7 @@ python lerobot/scripts/train.py policy=act env=aloha
 
 There are two things to note here:
 - Config overrides are passed as `param_name=param_value`.
-- Here we have overridden the defaults section. `policy=act` tells Hydra to use `policy/act.yaml`, and `env=aloha` tells Hydra to use `env/pusht.yaml`.
+- Here we have overridden the defaults section. `policy=act` tells Hydra to use `policy/act.yaml`, and `env=aloha` tells Hydra to use `env/aloha.yaml`.
 
 _As an aside: we've set up all of our configurations so that they reproduce state-of-the-art results from papers in the literature._
 
@@ -165,7 +165,7 @@ Note: here we use regular syntax for providing CLI arguments to a Python script,
 As a concrete example, this becomes particularly handy when you have a folder with training outputs, and would like to re-run the training. For example, say you previously ran the training script with one of the earlier commands and have `outputs/train/my_experiment/checkpoints/pretrained_model/config.yaml`. This `config.yaml` file will have the full set of configuration parameters within it. To run the training with the same configuration again, do:
 
 ```bash
-python lerobot/scripts/train.py --config-dir outputs/train/my_experiment/checkpoints/pretrained_model --config-name config
+python lerobot/scripts/train.py --config-dir outputs/train/my_experiment/checkpoints/last/pretrained_model --config-name config
 ```
 
 Note that you may still use the regular syntax for config parameter overrides (eg: by adding `training.offline_steps=200000`).

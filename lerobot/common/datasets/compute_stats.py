@@ -16,17 +16,15 @@
 from copy import deepcopy
 from math import ceil
 
-import datasets
 import einops
 import torch
 import tqdm
 from datasets import Image
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.video_utils import VideoFrame
 
 
-def get_stats_einops_patterns(dataset: LeRobotDataset | datasets.Dataset, num_workers=0):
+def get_stats_einops_patterns(dataset, num_workers=0):
     """These einops patterns will be used to aggregate batches and compute statistics.
 
     Note: We assume the images are in channel first format
@@ -66,9 +64,8 @@ def get_stats_einops_patterns(dataset: LeRobotDataset | datasets.Dataset, num_wo
     return stats_patterns
 
 
-def compute_stats(
-    dataset: LeRobotDataset | datasets.Dataset, batch_size=32, num_workers=16, max_num_samples=None
-):
+def compute_stats(dataset, batch_size=32, num_workers=16, max_num_samples=None):
+    """Compute mean/std and min/max statistics of all data keys in a LeRobotDataset."""
     if max_num_samples is None:
         max_num_samples = len(dataset)
 
@@ -158,4 +155,55 @@ def compute_stats(
             "max": max[key],
             "min": min[key],
         }
+    return stats
+
+
+def aggregate_stats(ls_datasets) -> dict[str, torch.Tensor]:
+    """Aggregate stats of multiple LeRobot datasets into one set of stats without recomputing from scratch.
+
+    The final stats will have the union of all data keys from each of the datasets.
+
+    The final stats will have the union of all data keys from each of the datasets. For instance:
+    - new_max = max(max_dataset_0, max_dataset_1, ...)
+    - new_min = min(min_dataset_0, min_dataset_1, ...)
+    - new_mean = (mean of all data)
+    - new_std = (std of all data)
+    """
+    data_keys = set()
+    for dataset in ls_datasets:
+        data_keys.update(dataset.stats.keys())
+    stats = {k: {} for k in data_keys}
+    for data_key in data_keys:
+        for stat_key in ["min", "max"]:
+            # compute `max(dataset_0["max"], dataset_1["max"], ...)`
+            stats[data_key][stat_key] = einops.reduce(
+                torch.stack([d.stats[data_key][stat_key] for d in ls_datasets if data_key in d.stats], dim=0),
+                "n ... -> ...",
+                stat_key,
+            )
+        total_samples = sum(d.num_samples for d in ls_datasets if data_key in d.stats)
+        # Compute the "sum" statistic by multiplying each mean by the number of samples in the respective
+        # dataset, then divide by total_samples to get the overall "mean".
+        # NOTE: the brackets around (d.num_samples / total_samples) are needed tor minimize the risk of
+        # numerical overflow!
+        stats[data_key]["mean"] = sum(
+            d.stats[data_key]["mean"] * (d.num_samples / total_samples)
+            for d in ls_datasets
+            if data_key in d.stats
+        )
+        # The derivation for standard deviation is a little more involved but is much in the same spirit as
+        # the computation of the mean.
+        # Given two sets of data where the statistics are known:
+        # σ_combined = sqrt[ (n1 * (σ1^2 + d1^2) + n2 * (σ2^2 + d2^2)) / (n1 + n2) ]
+        # where d1 = μ1 - μ_combined, d2 = μ2 - μ_combined
+        # NOTE: the brackets around (d.num_samples / total_samples) are needed tor minimize the risk of
+        # numerical overflow!
+        stats[data_key]["std"] = torch.sqrt(
+            sum(
+                (d.stats[data_key]["std"] ** 2 + (d.stats[data_key]["mean"] - stats[data_key]["mean"]) ** 2)
+                * (d.num_samples / total_samples)
+                for d in ls_datasets
+                if data_key in d.stats
+            )
+        )
     return stats
