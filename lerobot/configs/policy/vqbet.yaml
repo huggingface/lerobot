@@ -103,3 +103,4 @@ policy:
   primary_code_loss_weight: 5.0
   secondary_code_loss_weight: 0.5
   bet_softmax_temperature: 0.1
+  sequentially_select: False

@@ -344,6 +344,8 @@ class VQBeTHead(nn.Module):
                 `self.config.vqvae_groups` is number of RVQ layers, and
                 `self.config.vqvae_n_embed` is codebook size of RVQ.
 
+            if the agent select the code sequentially, we use self.map_to_cbet_preds_primary_bin and self.map_to_cbet_preds_secondary_bin instead of self._map_to_cbet_preds_bin.
+
         self.map_to_cbet_preds_offset: output the predicted offsets for all the codes in all the layers. 
             The input dimension of ` self.map_to_cbet_preds_offset` is same with the output of GPT, 
             and the output dimension of ` self.map_to_cbet_preds_offset` is `self.config.vqvae_groups * self.config.vqvae_n_embed * config.action_chunk_size * config.output_shapes["action"][0]`, where
@@ -356,12 +358,20 @@ class VQBeTHead(nn.Module):
         super().__init__()
         self.config = config
 
-
-
-        self.map_to_cbet_preds_bin = MLP(
-            in_channels=config.gpt_output_dim,
-            hidden_channels=[self.config.vqvae_groups * self.config.vqvae_n_embed],
-        )
+        if config.sequentially_select:
+            self.map_to_cbet_preds_primary_bin = MLP(
+                in_channels=config.gpt_output_dim,
+                hidden_channels=[self.config.vqvae_n_embed],
+            )
+            self.map_to_cbet_preds_secondary_bin = MLP(
+                in_channels=config.gpt_output_dim + self.config.vqvae_n_embed,
+                hidden_channels=[self.config.vqvae_n_embed],
+            )
+        else:
+            self.map_to_cbet_preds_bin = MLP(
+                in_channels=config.gpt_output_dim,
+                hidden_channels=[self.config.vqvae_groups * self.config.vqvae_n_embed],
+            )
         self.map_to_cbet_preds_offset = MLP(
             in_channels=config.gpt_output_dim,
             hidden_channels=[
@@ -396,21 +406,53 @@ class VQBeTHead(nn.Module):
         # (batch size * number of action query tokens, action chunk size, action dimension)
         x = einops.rearrange(x, "N T WA -> (N T) WA")
 
-        cbet_logits = self.map_to_cbet_preds_bin(x)
+        # sample offsets
         cbet_offsets = self.map_to_cbet_preds_offset(x)
-        cbet_logits = einops.rearrange(
-            cbet_logits, "(NT) (G C) -> (NT) G C", G=self.config.vqvae_groups
-        )
         cbet_offsets = einops.rearrange(
             cbet_offsets, "(NT) (G C WA) -> (NT) G C WA", G=self.config.vqvae_groups, C=self.config.vqvae_n_embed
         )
-        cbet_probs = torch.softmax(cbet_logits / self.config.bet_softmax_temperature, dim=-1)
-        NT, G, choices = cbet_probs.shape
-        sampled_centers = einops.rearrange(
-            torch.multinomial(cbet_probs.view(-1, choices), num_samples=1),
-            "(NT G) 1 -> NT G",
-            NT=NT,
-        )
+        # if self.config.sequentially_select is True, bin prediction head first sample the primary code, and then sample secondary code
+        if self.config.sequentially_select:
+            cbet_primary_logits = self.map_to_cbet_preds_primary_bin(x)
+
+            # select primary bin first
+            cbet_primary_probs = torch.softmax(cbet_primary_logits / self.config.bet_softmax_temperature, dim=-1)
+            NT, choices = cbet_primary_probs.shape
+            sampled_primary_centers = einops.rearrange(
+                torch.multinomial(cbet_primary_probs.view(-1, choices), num_samples=1),
+                "(NT) 1 -> NT",
+                NT=NT,
+            )
+
+            cbet_secondary_logits = self.map_to_cbet_preds_secondary_bin(
+                torch.cat(
+                    (x, F.one_hot(sampled_primary_centers, num_classes=self.config.vqvae_n_embed)),
+                    axis=1,
+                )
+            )
+            cbet_secondary_probs = torch.softmax(cbet_secondary_logits / self.config.bet_softmax_temperature, dim=-1)
+            sampled_secondary_centers = einops.rearrange(
+                torch.multinomial(cbet_secondary_probs.view(-1, choices), num_samples=1),
+                "(NT) 1 -> NT",
+                NT=NT,
+            )
+            sampled_centers = torch.stack(
+                (sampled_primary_centers, sampled_secondary_centers), axis=1
+            )
+            cbet_logits = torch.stack([cbet_primary_logits, cbet_secondary_logits], dim=1)
+        # if self.config.sequentially_select is False, bin prediction head samples primary and secondary code at once.
+        else:
+            cbet_logits = self.map_to_cbet_preds_bin(x)
+            cbet_logits = einops.rearrange(
+                cbet_logits, "(NT) (G C) -> (NT) G C", G=self.config.vqvae_groups
+            )
+            cbet_probs = torch.softmax(cbet_logits / self.config.bet_softmax_temperature, dim=-1)
+            NT, G, choices = cbet_probs.shape
+            sampled_centers = einops.rearrange(
+                torch.multinomial(cbet_probs.view(-1, choices), num_samples=1),
+                "(NT G) 1 -> NT G",
+                NT=NT,
+            )
 
         indices = (
             torch.arange(NT).unsqueeze(1).cuda(),
@@ -576,15 +618,20 @@ class VQBeTOptimizer:
                 {"params": policy.vqbet.rgb_feature_projector.parameters()}
             )
 
+        if cfg.policy.sequentially_select:
+            vqbet_head_params = (
+                list(policy.vqbet.action_head.map_to_cbet_preds_primary_bin.parameters())
+                + list(policy.vqbet.action_head.map_to_cbet_preds_secondary_bin.parameters())
+                + list(policy.vqbet.action_head.map_to_cbet_preds_offset.parameters())
+            )
+
+        else:
+            vqbet_head_params = (
+                list(policy.vqbet.action_head.map_to_cbet_preds_bin.parameters())
+                + list(policy.vqbet.action_head.map_to_cbet_preds_offset.parameters())
+            )
         self.bet_optimizer2 = torch.optim.AdamW(
-            policy.vqbet.action_head.map_to_cbet_preds_bin.parameters(),
-            lr=cfg.training.bet_learning_rate,
-            weight_decay=cfg.training.bet_weight_decay,
-            betas=cfg.training.bet_betas,
-        )
-        
-        self.bet_optimizer3 = torch.optim.AdamW(
-            policy.vqbet.action_head.map_to_cbet_preds_offset.parameters(),
+            vqbet_head_params,
             lr=cfg.training.bet_learning_rate,
             weight_decay=cfg.training.bet_weight_decay,
             betas=cfg.training.bet_betas,
@@ -602,7 +649,6 @@ class VQBeTOptimizer:
             self.encoder_optimizer.step()
             self.bet_optimizer1.step()
             self.bet_optimizer2.step()
-            self.bet_optimizer3.step()
 
     def zero_grad(self):
         # pretraining VQ-VAE (Training Phase 1)
@@ -613,7 +659,6 @@ class VQBeTOptimizer:
             self.encoder_optimizer.zero_grad()
             self.bet_optimizer1.zero_grad()
             self.bet_optimizer2.zero_grad()
-            self.bet_optimizer3.zero_grad()
 
 class VQBeTScheduler:
     def __init__(self, optimizer, cfg):
