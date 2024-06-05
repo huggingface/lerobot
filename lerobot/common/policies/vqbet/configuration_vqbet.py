@@ -124,12 +124,19 @@ class VQBeTConfig:
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
-        if (
-            self.crop_shape[0] > self.input_shapes["observation.image"][1]
-            or self.crop_shape[1] > self.input_shapes["observation.image"][2]
+        # There should only be one image key.
+        image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
+        if len(image_keys) != 1:
+            raise ValueError(
+                f"{self.__class__.__name__} only handles one image for now. Got image keys {image_keys}."
+            )
+        image_key = next(iter(image_keys))
+        if self.crop_shape is not None and (
+            self.crop_shape[0] > self.input_shapes[image_key][1]
+            or self.crop_shape[1] > self.input_shapes[image_key][2]
         ):
             raise ValueError(
-                f'`crop_shape` should fit within `input_shapes["observation.image"]`. Got {self.crop_shape} '
-                f'for `crop_shape` and {self.input_shapes["observation.image"]} for '
-                '`input_shapes["observation.image"]`.'
+                f"`crop_shape` should fit within `input_shapes[{image_key}]`. Got {self.crop_shape} "
+                f"for `crop_shape` and {self.input_shapes[image_key]} for "
+                "`input_shapes[{image_key}]`."
             )
