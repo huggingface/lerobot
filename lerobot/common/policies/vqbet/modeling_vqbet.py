@@ -314,9 +314,7 @@ class VQBeTModel(nn.Module):
             features[:, -len_additional_action_token:]
         ], dim=1)
         # pass through action head
-        pred_action = self.action_head(
-            features,
-        )
+        pred_action = self.action_head(features)
         # if rollout, VQ-BeT don't calculate loss
         if rollout:
             return pred_action["predicted_action"][:, n_obs_steps-1, :].reshape(batch_size, self.config.action_chunk_size, -1)
