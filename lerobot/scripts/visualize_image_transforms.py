@@ -35,9 +35,6 @@ def main(cfg, output_dir=Path("outputs/image_transforms")):
 
     # Apply each single transformation
     for transform_name in transforms:
-        cfg.image_transform.enable = True
-        cfg.image_transform.max_num_transforms = 1
-
         for t in transforms:
             if t == transform_name:
                 cfg.image_transform[t].weight = 1
