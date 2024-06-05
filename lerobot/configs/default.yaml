@@ -59,7 +59,7 @@ wandb:
   notes: ""
 
 image_transform:
-  enable: false
+  enable: true
   # Maximum number of transforms to apply
   max_num_transforms: 3
   random_order: false
