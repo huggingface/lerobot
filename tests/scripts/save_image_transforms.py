@@ -15,7 +15,7 @@ to_pil = v2.ToPILImage()
 
 
 def main(repo_id):
-    dataset = LeRobotDataset(repo_id, transform=None)
+    dataset = LeRobotDataset(repo_id, image_transforms=None)
     output_dir = Path(ARTIFACT_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
 

@@ -8,7 +8,7 @@ from torchvision.transforms.v2 import functional as F  # noqa: N812
 from PIL import Image
 from safetensors.torch import load_file
 
-from lerobot.common.datasets.transforms import RandomSubsetApply, RangeRandomSharpness, make_transforms
+from lerobot.common.datasets.transforms import RandomSubsetApply, RangeRandomSharpness, make_image_transforms
 from lerobot.common.datasets.utils import flatten_dict
 from lerobot.common.utils.utils import init_hydra_config, seeded_context
 from tests.utils import DEFAULT_CONFIG_PATH
@@ -147,7 +147,7 @@ class TestMakeTransforms:
         config = self.config
         config[transform_key]["weight"] = 1
         cfg = OmegaConf.create(config)
-        transform = make_transforms(cfg, to_dtype=torch.uint8)
+        transform = make_image_transforms(cfg, to_dtype=torch.uint8)
 
         # expected_t = self.transforms[transform_key]
         with seeded_context(seed):

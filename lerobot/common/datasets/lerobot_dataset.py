@@ -46,7 +46,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         version: str | None = CODEBASE_VERSION,
         root: Path | None = DATA_DIR,
         split: str = "train",
-        transform: Callable | None = None,
+        image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
     ):
         super().__init__()
@@ -54,7 +54,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.version = version
         self.root = root
         self.split = split
-        self.transform = transform
+        self.transform = image_transforms
         self.delta_timestamps = delta_timestamps
         # load data from hub or locally when root is provided
         # TODO(rcadene, aliberts): implement faster transfer
@@ -226,7 +226,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         version: str | None = CODEBASE_VERSION,
         root: Path | None = DATA_DIR,
         split: str = "train",
-        transform: Callable | None = None,
+        image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
     ):
         super().__init__()
@@ -240,7 +240,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 root=root,
                 split=split,
                 delta_timestamps=delta_timestamps,
-                transform=transform,
+                image_transforms=image_transforms,
             )
             for repo_id in repo_ids
         ]
@@ -275,7 +275,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         self.version = version
         self.root = root
         self.split = split
-        self.transform = transform
+        self.transform = image_transforms
         self.delta_timestamps = delta_timestamps
         self.stats = aggregate_stats(self._datasets)
 

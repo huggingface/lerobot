@@ -4,14 +4,13 @@ import hydra
 from torchvision.transforms import ToPILImage
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.transforms import make_transforms
+from lerobot.common.datasets.transforms import make_image_transforms
 
 to_pil = ToPILImage()
 
 
 def main(cfg, output_dir=Path("outputs/image_transforms")):
-
-    dataset = LeRobotDataset(cfg.dataset_repo_id, transform=None)
+    dataset = LeRobotDataset(cfg.dataset_repo_id, image_transforms=None)
 
     output_dir = Path(output_dir) / Path(cfg.dataset_repo_id.split("/")[-1])
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -27,11 +26,11 @@ def main(cfg, output_dir=Path("outputs/image_transforms")):
     for transform_name in transforms:
         for t in transforms:
             if t == transform_name:
-                cfg.image_transform[t].weight = 1
+                cfg.image_transforms[t].weight = 1
             else:
-                cfg.image_transform[t].weight = 0
+                cfg.image_transforms[t].weight = 0
 
-        transform = make_transforms(cfg.image_transform)
+        transform = make_image_transforms(cfg.image_transforms)
         img = transform(frame)
         to_pil(img).save(output_dir / f"{transform_name}.png", quality=100)
 

@@ -58,10 +58,10 @@ wandb:
   project: lerobot
   notes: ""
 
-image_transform:
+image_transforms:
   # brigthness, contrast, saturation and hue are instances of torchvision Colorjitter, sharpness is an instance of custom class
   enable: true
-  # A subset of these transforms will be applied for each batch. This is the maximum size of that subset.  
+  # A subset of these transforms will be applied for each batch. This is the maximum size of that subset.
   max_num_transforms: 3
   # Torchvision suggest applying the transforms in the following order : brightness, contrast, saturation, hue
   # sharpness can be applied at any time before or after (we choose after).

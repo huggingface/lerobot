@@ -98,7 +98,7 @@ class RangeRandomSharpness(Transform):
         return self._call_kernel(F.adjust_sharpness, inpt, sharpness_factor=sharpness_factor)
 
 
-def make_transforms(cfg, to_dtype: torch.dtype = torch.float32):
+def make_image_transforms(cfg, to_dtype: torch.dtype = torch.float32):
     transforms_list = [
         v2.ColorJitter(brightness=(cfg.brightness.min, cfg.brightness.max)),
         v2.ColorJitter(contrast=(cfg.contrast.min, cfg.contrast.max)),

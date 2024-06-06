@@ -1,5 +1,5 @@
 """
-This script demonstrates how to implement torchvision image augmentation on an instance of a LeRobotDataset and how to show some transformed images. 
+This script demonstrates how to implement torchvision image augmentation on an instance of a LeRobotDataset and how to show some transformed images.
 The transformations are passed to the dataset as an argument upon creation, and transforms are applied to the observation images before they are returned.
 """
 
@@ -18,7 +18,7 @@ output_dir.mkdir(parents=True, exist_ok=True)
 repo_id = "lerobot/aloha_static_tape"
 
 # Create a LeRobotDataset with no transformations
-dataset = LeRobotDataset(repo_id, transform=None)
+dataset = LeRobotDataset(repo_id, image_transforms=None)
 
 # Get the index of the first observation in the first episode
 first_idx = dataset.episode_data_index["from"][0].item()
@@ -41,7 +41,7 @@ transforms = v2.Compose(
 )
 
 # Create another LeRobotDataset with the defined transformations
-transformed_dataset = LeRobotDataset(repo_id, transform=transforms)
+transformed_dataset = LeRobotDataset(repo_id, image_transforms=transforms)
 
 # Get a frame from the transformed dataset
 transformed_frame = transformed_dataset[first_idx][transformed_dataset.camera_keys[0]]
