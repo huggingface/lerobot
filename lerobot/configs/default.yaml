@@ -47,7 +47,6 @@ training:
   # faster data loading with datasets small enough to fit in memory. If you wish to use dataloader workers,
   # remember to set `dataloader_persistent_workers to True.
   dataset_use_cache: false
-  dataloader_num_workers: 4
   dataloader_persistent_workers: false
 
 eval:
