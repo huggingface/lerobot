@@ -59,10 +59,14 @@ wandb:
   notes: ""
 
 image_transform:
-  enable: false
-  # Maximum number of transforms to apply
+  # brigthness, contrast, saturation and hue are instances of torchvision Colorjitter, sharpness is an instance of custom class
+  enable: true
+  # A subset of these transforms will be applied for each batch. This is the maximum size of that subset.  
   max_num_transforms: 3
+  # Torchvision suggest applying the transforms in the following order : brightness, contrast, saturation, hue
+  # sharpness can be applied at any time before or after (we choose after).
   random_order: false
+  # Randomply samples transform parameters from the range [min, max]. The weight is used to determine the relative probability of applying the transform.
   brightness:
     weight: 1
     min: 0.5
@@ -75,6 +79,7 @@ image_transform:
     weight: 1
     min: 0.5
     max: 1.5
+  # hue is a rotation in degrees. The maximum range is [-0.5, 0.5] but we use [-0.1, 0.1] to avoid extreme unnecessary changes.
   hue:
     weight: 1
     min: -0.1
