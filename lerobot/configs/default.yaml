@@ -70,11 +70,11 @@ image_transform:
   brightness:
     weight: 1
     min: 0.8
-    max: 1.5
+    max: 1.2
   contrast:
     weight: 1
-    min: 0.5
-    max: 1.5
+    min: 0.8
+    max: 1.2
   saturation:
     weight: 1
     min: 0.5
@@ -82,9 +82,9 @@ image_transform:
   # hue is a rotation in degrees. The maximum range is [-0.5, 0.5] but we use [-0.05, 0.05] to avoid extreme unnecessary changes.
   hue:
     weight: 1
-    min: -0.0.5
-    max: 0.0.5
+    min: -0.05
+    max: 0.05
   sharpness:
     weight: 1
     min: 0.8
-    max: 1.8
+    max: 1.2
