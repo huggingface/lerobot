@@ -61,7 +61,7 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.utils._errors import RepositoryNotFoundError
 from huggingface_hub.utils._validators import HFValidationError
 from PIL import Image as PILImage
-from torch import Tensor
+from torch import Tensor, nn
 from tqdm import trange
 
 from lerobot.common.datasets.factory import make_dataset
@@ -105,7 +105,7 @@ def rollout(
 
     Args:
         env: The batch of environments.
-        policy: The policy.
+        policy: The policy. Must be a PyTorch nn module.
         seeds: The environments are seeded once at the start of the rollout. If provided, this argument
             specifies the seeds for each of the environments.
         return_observations: Whether to include all observations in the returned rollout data. Observations
@@ -116,6 +116,7 @@ def rollout(
     Returns:
         The dictionary described above.
     """
+    assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
     device = get_device_from_parameters(policy)
 
     # Reset the policy and environments.
@@ -194,6 +195,7 @@ def rollout(
         "reward": torch.stack(all_rewards, dim=1),
         "success": torch.stack(all_successes, dim=1),
         "done": torch.stack(all_dones, dim=1),
+        "observation": None,
     }
     if return_observations:
         stacked_observations = {}
@@ -231,6 +233,7 @@ def eval_policy(
     Returns:
         Dictionary with metrics and data regarding the rollouts.
     """
+    assert isinstance(policy, Policy)
     start = time.time()
     policy.eval()
 
@@ -265,6 +268,7 @@ def eval_policy(
         episode_data: dict | None = None
 
     progbar = trange(n_batches, desc="Stepping through eval batches", disable=not enable_progbar)
+    start_seed = start_seed or 0
     for batch_ix in progbar:
         # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
         # step.
@@ -275,7 +279,7 @@ def eval_policy(
         rollout_data = rollout(
             env,
             policy,
-            seeds=seeds,
+            seeds=list(seeds),
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
             enable_progbar=enable_inner_progbar,
@@ -285,7 +289,10 @@ def eval_policy(
         # this won't be included).
         n_steps = rollout_data["done"].shape[1]
         # Note: this relies on a property of argmax: that it returns the first occurrence as a tiebreaker.
-        done_indices = torch.argmax(rollout_data["done"].to(int), axis=1)  # (batch_size, rollout_steps)
+        done_indices = torch.argmax(
+            rollout_data["done"].to(int), axis=1
+        )  # (batch_size, rollout_steps) TODO: can't find any docs for the axis arg.
+
         # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
         # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
         mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
@@ -298,6 +305,7 @@ def eval_policy(
         all_successes.extend(batch_successes.tolist())
         all_seeds.extend(seeds)
 
+        # FIXME: episode_data is either None or it doesn't exist
         if return_episode_data:
             this_episode_data = _compile_episode_data(
                 rollout_data,
@@ -342,11 +350,13 @@ def eval_policy(
         # Maybe render video for visualization.
         if max_episodes_rendered > 0 and len(ep_frames) > 0:
             batch_stacked_frames = np.stack(ep_frames, axis=1)  # (b, t, *)
+            assert isinstance(videos_dir, Path)
             for stacked_frames, done_index in zip(
                 batch_stacked_frames, done_indices.flatten().tolist(), strict=False
             ):
                 if n_episodes_rendered >= max_episodes_rendered:
                     break
+
                 videos_dir.mkdir(parents=True, exist_ok=True)
                 video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
                 video_paths.append(str(video_path))
@@ -535,6 +545,8 @@ def main(
     else:
         # Note: We need the dataset stats to pass to the policy's normalization modules.
         policy = make_policy(hydra_cfg=hydra_cfg, dataset_stats=make_dataset(hydra_cfg).stats)
+
+    assert isinstance(policy, nn.Module)
     policy.eval()
 
     with torch.no_grad(), torch.autocast(device_type=device.type) if hydra_cfg.use_amp else nullcontext():
@@ -623,7 +635,7 @@ if __name__ == "__main__":
             )
 
         main(
-            pretrained_policy_path=pretrained_policy_path,
+            pretrained_policy_path=str(pretrained_policy_path),
             out_dir=args.out_dir,
             config_overrides=args.overrides,
         )
