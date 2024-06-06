@@ -10,16 +10,6 @@ to_pil = ToPILImage()
 
 
 def main(cfg, output_dir=Path("outputs/image_transforms")):
-    """
-    Function to apply image transforms from a configuration and save the transformed images.
-
-    Args:
-        cfg (object): Configuration object containing the image transform settings and dataset_repo_id.
-        output_dir (str or Path, optional): Output directory to save the transformed images. Defaults to "outputs/image_transforms".
-
-    Returns:
-        None
-    """
 
     dataset = LeRobotDataset(cfg.dataset_repo_id, transform=None)
 
