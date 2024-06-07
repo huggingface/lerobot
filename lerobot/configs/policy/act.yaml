@@ -24,12 +24,15 @@ training:
   grad_clip_norm: 10
   online_steps_between_rollouts: 1
 
+  # Learn to predict actions starting from the "current" timestep
   delta_timestamps:
     action: "[i / ${fps} for i in range(${policy.chunk_size})]"
 
 eval:
   n_episodes: 50
   batch_size: 50
+  # When rolling out in a real-time environment, set this to the minimum inference latency you expect to have.
+  min_observation_action_latency: 0
 
 # See `configuration_act.py` for more details.
 policy:

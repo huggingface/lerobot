@@ -119,18 +119,19 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
             action, self._ensembled_actions = self._ensembled_actions[:, 0], self._ensembled_actions[:, 1:]
             return action
 
-        # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
-        # querying the policy.
-        if len(self._action_queue) == 0:
-            actions = self.model(batch)[0][:, : self.config.n_action_steps]
+        # # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
+        # # querying the policy.
+        # if len(self._action_queue) == 0:
+        actions = self.model(batch)[0][:, : self.config.n_action_steps]
 
-            # TODO(rcadene): make _forward return output dictionary?
-            actions = self.unnormalize_outputs({"action": actions})["action"]
+        # TODO(rcadene): make _forward return output dictionary?
+        actions = self.unnormalize_outputs({"action": actions})["action"]
+        return actions
 
-            # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
-            # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
-            self._action_queue.extend(actions.transpose(0, 1))
-        return self._action_queue.popleft()
+        # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
+        # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
+        # self._action_queue.extend(actions.transpose(0, 1))
+        # return self._action_queue.popleft()
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""

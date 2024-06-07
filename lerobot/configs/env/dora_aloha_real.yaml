@@ -8,6 +8,9 @@ env:
   state_dim: 14
   action_dim: 14
   fps: ${fps}
+  # This environment runs actions and observations on the same clock cycle. Therefore the minimum latency
+  # that a policy would have to account for is one clock cycle.
+  min_observation_action_latency: 1 / ${fps}
   episode_length: 400
   gym:
     fps: ${fps}
