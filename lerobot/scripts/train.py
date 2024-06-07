@@ -103,13 +103,14 @@ def update_policy(
     grad_scaler: GradScaler,
     lr_scheduler=None,
     use_amp: bool = False,
+    step: int = 0
 ):
     """Returns a dictionary of items for logging."""
     start_time = time.perf_counter()
     device = get_device_from_parameters(policy)
     policy.train()
     with torch.autocast(device_type=device.type) if use_amp else nullcontext():
-        output_dict = policy.forward(batch)
+        output_dict = policy.forward(batch, step)
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
         loss = output_dict["loss"]
     grad_scaler.scale(loss).backward()
@@ -445,7 +446,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         sampler = EpisodeAwareSampler(
             offline_dataset.episode_data_index,
             drop_n_last_frames=cfg.training.drop_n_last_frames,
-            shuffle=True,
+            shuffle=False, # TODO(now)
         )
     else:
         shuffle = False  # TODO(now)
@@ -484,6 +485,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             grad_scaler=grad_scaler,
             lr_scheduler=lr_scheduler,
             use_amp=cfg.use_amp,
+            step=step
         )
 
         train_info["dataloading_s"] = dataloading_s
