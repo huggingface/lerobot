@@ -255,6 +255,7 @@ class VQBeTModel(nn.Module):
         self.rgb_encoder = VQBeTRgbEncoder(config)
 
         # This action query token is used as a prompt for querying action chunks. Please refer to "A_Q" in the image above.
+        # Note: During the forward pass, this token is repeated as many times as needed. The authors also experimented with initializing the necessary number of tokens independently and observed inferior results.
         self._action_token = nn.Parameter(torch.randn(1, 1, self.config.gpt_input_dim))
 
         # To input state and observation features into GPT layers, we first project the features to fit the shape of input size of GPT.
@@ -315,6 +316,8 @@ class VQBeTModel(nn.Module):
         # get action features (pass through GPT)
         features = self.policy(input_tokens)
         # len(self.config.input_shapes) is the number of different observation modes. this line gets the index of action prompt tokens.
+        # Behavior Transformer (BeT), and VQ-BeT are both sequence-to-sequence prediction models, mapping sequential observation to sequential action (please refer to section 2.2 in BeT paper https://arxiv.org/pdf/2206.11251).
+        # Thus, it predict historical action sequence, in addition to current and future actions (predicting future actions : optional).
         historical_act_pred_index = np.arange(0, n_obs_steps) * (len(self.config.input_shapes)+1) + len(self.config.input_shapes)
 
         # only extract the output tokens at the position of action query
@@ -341,9 +344,7 @@ class VQBeTHead(nn.Module):
 
         self.map_to_cbet_preds_bin: outputs probability of each code (for each layer).
             The input dimension of `self.map_to_cbet_preds_bin` is same with the output of GPT, 
-            and the output dimension of `self.map_to_cbet_preds_bin` is `self.config.vqvae_groups * self.config.vqvae_n_embed`, where 
-                `self.config.vqvae_groups` is number of RVQ layers, and
-                `self.config.vqvae_n_embed` is codebook size of RVQ.
+            and the output dimension of `self.map_to_cbet_preds_bin` is `self.config.vqvae_groups * self.config.vqvae_n_embed`.
             if the agent select the code sequentially, we use self.map_to_cbet_preds_primary_bin and self.map_to_cbet_preds_secondary_bin instead of self._map_to_cbet_preds_bin.
 
         self.map_to_cbet_preds_offset: output the predicted offsets for all the codes in all the layers. 
