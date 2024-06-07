@@ -75,7 +75,7 @@ class RandomSubsetApply(Transform):
 
 
 class RangeRandomSharpness(Transform):
-    """Similar to RandomAdjustSharpness but with p=1 and a sharpness_factor sampled randomly
+    """Similar to v2.RandomAdjustSharpness but with p=1 and a sharpness_factor sampled randomly
     each time in [range_min, range_max].
 
     If the input is a :class:`torch.Tensor`,

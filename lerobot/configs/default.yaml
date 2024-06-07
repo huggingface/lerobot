@@ -59,14 +59,23 @@ wandb:
   notes: ""
 
 image_transforms:
-  # brigthness, contrast, saturation and hue are instances of torchvision Colorjitter, sharpness is an instance of custom class
-  enable: true
-  # A subset of these transforms will be applied for each batch. This is the maximum size of that subset.
+  # These transforms are all using standard torchvision.transforms.v2
+  # You can find out how these transformations affect images here:
+  # https://pytorch.org/vision/0.18/auto_examples/transforms/plot_transforms_illustrations.html
+  # We use a custom RandomSubsetApply container to sample them.
+  # For each transform, the following parameters are available:
+  #   weight: This represents the multinomial probability (with no replacement)
+  #           used for sampling the transform. If the sum of the weights is not 1,
+  #           they will be normalized.
+  #   min/max: Lower & upper bound respectively used for sampling the transform's parameter
+  #           (following uniform distribution) when it's applied.
+  enable: false
+  # This is the number of transforms (sampled from these below) that will be applied to each frame.
+  # It's an integer in the interval [0, number of available transforms].
   max_num_transforms: 3
-  # Torchvision suggest applying the transforms in the following order : brightness, contrast, saturation, hue
-  # sharpness can be applied at any time before or after (we choose after).
+  # By default, transforms are applied in Torchvision's suggested order (shown below).
+  # Set this to True to apply them in a random order.
   random_order: false
-  # Randomply samples transform parameters from the range [min, max]. The weight is used to determine the relative probability of applying the transform.
   brightness:
     weight: 1
     min: 0.8
@@ -79,7 +88,6 @@ image_transforms:
     weight: 1
     min: 0.5
     max: 1.5
-  # hue is a rotation in degrees. The maximum range is [-0.5, 0.5] but we use [-0.05, 0.05] to avoid extreme unnecessary changes.
   hue:
     weight: 1
     min: -0.05
