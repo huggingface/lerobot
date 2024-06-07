@@ -331,16 +331,15 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
                 continue
             batch_ = torch.load("/tmp/batch.pth")
             print(f"STEP {step}")
-            assert torch.equal(batch['index'], batch_['index'])
-            assert torch.equal(batch['episode_index'], batch_['episode_index'])
+            assert torch.equal(batch["index"], batch_["index"])
+            assert torch.equal(batch["episode_index"], batch_["episode_index"])
             if not torch.equal(batch["observation.image"], batch_["observation.image"]):
                 import cv2
+
                 for b, fn in [(batch, "outputs/img.png"), (batch_, "outputs/img_.png")]:
                     cv2.imwrite(
                         fn,
-                        (b["observation.image"][0, 0].permute(1, 2, 0).cpu().numpy() * 255).astype(
-                            np.uint8
-                        ),
+                        (b["observation.image"][0, 0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8),
                     )
                 assert False
             assert torch.equal(batch["observation.state"], batch_["observation.state"])
