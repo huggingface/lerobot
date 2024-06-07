@@ -314,7 +314,8 @@ class VQBeTModel(nn.Module):
         
         # get action features (pass through GPT)
         features = self.policy(input_tokens)
-        historical_act_pred_index = np.arange(0, n_obs_steps) * (self.config.gpt_num_obs_mode+1) + self.config.gpt_num_obs_mode
+        # len(self.config.input_shapes) is the number of different observation modes. this line gets the index of action prompt tokens.
+        historical_act_pred_index = np.arange(0, n_obs_steps) * (len(self.config.input_shapes)+1) + len(self.config.input_shapes)
 
         # only extract the output tokens at the position of action query
         features = torch.cat([

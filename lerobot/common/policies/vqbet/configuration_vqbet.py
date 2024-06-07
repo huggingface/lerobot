@@ -51,7 +51,6 @@ class VQBeTConfig:
         gpt_n_layer: Number of layers of GPT
         gpt_n_head: Number of headers of GPT
         gpt_hidden_dim: Size of hidden dimensions of GPT
-        gpt_num_obs_mode: Number of different observation modes. (e.g., PushT env: {state, image observation}, thus 2.)
         dropout: Dropout rate for GPT
         mlp_hidden_dim: Size of hidden dimensions of offset header / bin prediction headers parts of VQ-BeT
         offset_loss_weight:  A constant that is multiplied to the offset loss
@@ -109,7 +108,6 @@ class VQBeTConfig:
     gpt_n_layer: int = 8
     gpt_n_head: int = 8
     gpt_hidden_dim: int = 512
-    gpt_num_obs_mode: int = 2
     dropout: float = 0.1
     mlp_hidden_dim: int = 1024
     offset_loss_weight: float = 10000.
