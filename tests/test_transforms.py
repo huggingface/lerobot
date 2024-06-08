@@ -1,20 +1,14 @@
-from pathlib import Path
-
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 import numpy as np
 import pytest
 import torch
-from omegaconf import OmegaConf
 from PIL import Image
 from torchvision.transforms import v2
-from torchvision.transforms.v2 import functional as F  # noqa: N812
 
-from lerobot.common.datasets.transforms import RandomSubsetApply, RangeRandomSharpness, get_image_transforms
+from lerobot.common.datasets.transforms import SharpnessJitter, get_image_transforms
 from lerobot.common.utils.utils import seeded_context
 
-
-# test_make_image_transforms 
-# - 
+# test_make_image_transforms
+# -
 
 # test backward compatibility torchvision
 # - save artifacts
@@ -38,52 +32,60 @@ def img():
     img_chw = torch.from_numpy(np.array(Image.open(path).convert("RGB"))).permute(2, 0, 1)
     return img_chw
 
+
 def test_get_image_transforms_brightness(img):
     brightness_min_max = (0.5, 0.5)
-    tf_actual = get_image_transforms(brightness_weight=1., brightness_min_max=brightness_min_max)
+    tf_actual = get_image_transforms(brightness_weight=1.0, brightness_min_max=brightness_min_max)
     tf_expected = v2.ColorJitter(brightness=brightness_min_max)
     torch.testing.assert_close(tf_actual(img), tf_expected(img))
 
+
 def test_get_image_transforms_contrast(img):
     contrast_min_max = (0.5, 0.5)
-    tf_actual = get_image_transforms(contrast_weight=1., contrast_min_max=contrast_min_max)
+    tf_actual = get_image_transforms(contrast_weight=1.0, contrast_min_max=contrast_min_max)
     tf_expected = v2.ColorJitter(contrast=contrast_min_max)
     torch.testing.assert_close(tf_actual(img), tf_expected(img))
 
+
 def test_get_image_transforms_saturation(img):
     saturation_min_max = (0.5, 0.5)
-    tf_actual = get_image_transforms(saturation_weight=1., saturation_min_max=saturation_min_max)
+    tf_actual = get_image_transforms(saturation_weight=1.0, saturation_min_max=saturation_min_max)
     tf_expected = v2.ColorJitter(saturation=saturation_min_max)
     torch.testing.assert_close(tf_actual(img), tf_expected(img))
 
+
 def test_get_image_transforms_hue(img):
     hue_min_max = (0.5, 0.5)
-    tf_actual = get_image_transforms(hue_weight=1., hue_min_max=hue_min_max)
+    tf_actual = get_image_transforms(hue_weight=1.0, hue_min_max=hue_min_max)
     tf_expected = v2.ColorJitter(hue=hue_min_max)
     torch.testing.assert_close(tf_actual(img), tf_expected(img))
 
+
 def test_get_image_transforms_sharpness(img):
     sharpness_min_max = (0.5, 0.5)
-    tf_actual = get_image_transforms(sharpness_weight=1., sharpness_min_max=sharpness_min_max)
-    tf_expected = RangeRandomSharpness(**sharpness_min_max)
+    tf_actual = get_image_transforms(sharpness_weight=1.0, sharpness_min_max=sharpness_min_max)
+    tf_expected = SharpnessJitter(sharpness=sharpness_min_max)
     torch.testing.assert_close(tf_actual(img), tf_expected(img))
+
 
 def test_get_image_transforms_max_num_transforms(img):
     tf_actual = get_image_transforms(
-        saturation_min_max=(0.5, 0.5),
-        constrast_min_max=(0.5, 0.5),
+        brightness_min_max=(0.5, 0.5),
+        contrast_min_max=(0.5, 0.5),
         saturation_min_max=(0.5, 0.5),
         hue_min_max=(0.5, 0.5),
         sharpness_min_max=(0.5, 0.5),
         random_order=False,
     )
-    tf_expected = v2.Compose([
-        v2.ColorJitter(brightness=(0.5, 0.5)),
-        v2.ColorJitter(contrast=(0.5, 0.5)),
-        v2.ColorJitter(saturation=(0.5, 0.5)),
-        v2.ColorJitter(hue=(0.5, 0.5)),
-        RangeRandomSharpness(sharpness=(0.5, 0.5)),
-    ])
+    tf_expected = v2.Compose(
+        [
+            v2.ColorJitter(brightness=(0.5, 0.5)),
+            v2.ColorJitter(contrast=(0.5, 0.5)),
+            v2.ColorJitter(saturation=(0.5, 0.5)),
+            v2.ColorJitter(hue=(0.5, 0.5)),
+            SharpnessJitter(sharpness=(0.5, 0.5)),
+        ]
+    )
     torch.testing.assert_close(tf_actual(img), tf_expected(img))
 
 
@@ -92,23 +94,23 @@ def test_get_image_transforms_random_order(img):
     with seeded_context(1337):
         for _ in range(20):
             tf = get_image_transforms(
-                saturation_min_max=(0.5, 0.5),
-                constrast_min_max=(0.5, 0.5),
+                brightness_min_max=(0.5, 0.5),
+                contrast_min_max=(0.5, 0.5),
                 saturation_min_max=(0.5, 0.5),
                 hue_min_max=(0.5, 0.5),
                 sharpness_min_max=(0.5, 0.5),
-                random_order=False,
+                random_order=True,
             )
             out_imgs.append(tf(img))
-    
-    for i in range(1,10):
-        with pytest.raises(ValueError):
-            torch.testing.assert_close(out_imgs[0], out_imgs[i])
 
+    for i in range(1, 20):
+        with pytest.raises(AssertionError):
+            torch.testing.assert_close(out_imgs[0], out_imgs[i])
 
 
 def test_backward_compatibility_torchvision():
     pass
+
 
 def test_backward_compatibility_default_yaml():
     pass

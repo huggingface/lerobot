@@ -1,11 +1,9 @@
 from pathlib import Path
 
-import torch
 from torchvision.transforms import v2
-from safetensors.torch import save_file
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.transforms import RangeRandomSharpness
+from lerobot.common.datasets.transforms import SharpnessJitter
 from lerobot.common.utils.utils import seeded_context
 
 DEFAULT_CONFIG_PATH = "lerobot/configs/default.yaml"
@@ -29,7 +27,7 @@ def main(repo_id):
         "contrast": v2.ColorJitter(contrast=(0.0, 2.0)),
         "saturation": v2.ColorJitter(saturation=(0.0, 2.0)),
         "hue": v2.ColorJitter(hue=(-0.5, 0.5)),
-        "sharpness": RangeRandomSharpness(0.0, 2.0),
+        "sharpness": SharpnessJitter(0.0, 2.0),
     }
 
     # frames = {"original_frame": original_frame}
@@ -41,6 +39,7 @@ def main(repo_id):
             to_pil(transformed_frame).save(output_dir / f"{SEED}_{name}.png", quality=100)
 
     # save_file(frames, output_dir / f"transformed_frames_{SEED}.safetensors")
+
 
 if __name__ == "__main__":
     repo_id = "lerobot/aloha_mobile_shrimp"

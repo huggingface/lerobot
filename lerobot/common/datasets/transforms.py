@@ -1,3 +1,4 @@
+import collections
 from typing import Any, Callable, Dict, Sequence
 
 import torch
@@ -74,51 +75,71 @@ class RandomSubsetApply(Transform):
         )
 
 
-class RangeRandomSharpness(Transform):
-    """Similar to v2.RandomAdjustSharpness but with p=1 and a sharpness_factor sampled randomly
-    each time in [range_min, range_max].
+class SharpnessJitter(Transform):
+    """Randomly change the sharpness of an image or video.
+    Similar to a v2.RandomAdjustSharpness with p=1 and a sharpness_factor sampled randomly.
 
     If the input is a :class:`torch.Tensor`,
     it is expected to have [..., 1 or 3, H, W] shape, where ... means an arbitrary number of leading dimensions.
+
+    Args:
+        sharpness (float or tuple of float (min, max)): How much to jitter sharpness.
+            sharpness_factor is chosen uniformly from [max(0, 1 - sharpness), 1 + sharpness]
+            or the given [min, max]. Should be non negative numbers.
     """
 
-    def __init__(self, range_min: float, range_max) -> None:
+    def __init__(self, sharpness: float | Sequence[float]) -> None:
         super().__init__()
-        self.range_min, self.range_max = self._check_input(range_min, range_max)
+        self.sharpness = self._check_input(sharpness)
 
-    def _check_input(self, range_min, range_max):
-        if range_min < 0:
-            raise ValueError("range_min must be non negative.")
-        if range_min > range_max:
-            raise ValueError("range_max must greater or equal to range_min")
-        return range_min, range_max
+    def _check_input(self, sharpness):
+        if isinstance(sharpness, (int, float)):
+            if sharpness < 0:
+                raise ValueError("If sharpness is a single number, it must be non negative.")
+            sharpness = [1.0 - sharpness, 1.0 + sharpness]
+            sharpness[0] = max(sharpness[0], 0.0)
+        elif isinstance(sharpness, collections.abc.Sequence) and len(sharpness) == 2:
+            sharpness = [float(v) for v in sharpness]
+        else:
+            raise TypeError(f"{sharpness=} should be a single number or a sequence with length 2.")
+
+        if not 0.0 <= sharpness[0] <= sharpness[1]:
+            raise ValueError(f"sharpnesss values should be between (0., inf), but got {sharpness}.")
+
+        return float(sharpness[0]), float(sharpness[1])
+
+    def _generate_value(self, left: float, right: float) -> float:
+        return torch.empty(1).uniform_(left, right).item()
 
     def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        sharpness_factor = self.range_min + (self.range_max - self.range_min) * torch.rand(1).item()
+        sharpness_factor = self._generate_value(self.sharpness[0], self.sharpness[1])
         return self._call_kernel(F.adjust_sharpness, inpt, sharpness_factor=sharpness_factor)
 
 
 def get_image_transforms(
-        brightness_weight: float = 1.0,
-        brightness_min_max: tuple[float, float] | None = None,
-        contrast_weight: float = 1.0,
-        contrast_min_max: tuple[float, float] | None = None,
-        saturation_weight: float = 1.0,
-        saturation_min_max: tuple[float, float] | None = None,
-        hue_weight: float = 1.0,
-        hue_min_max: tuple[float, float] | None = None,
-        sharpness_weight: float = 1.0,
-        sharpness_min_max: tuple[float, float] | None = None,
-        max_num_transforms: int | None = None,
-        random_order: bool = False,
-    ):
-    
+    brightness_weight: float = 1.0,
+    brightness_min_max: tuple[float, float] | None = None,
+    contrast_weight: float = 1.0,
+    contrast_min_max: tuple[float, float] | None = None,
+    saturation_weight: float = 1.0,
+    saturation_min_max: tuple[float, float] | None = None,
+    hue_weight: float = 1.0,
+    hue_min_max: tuple[float, float] | None = None,
+    sharpness_weight: float = 1.0,
+    sharpness_min_max: tuple[float, float] | None = None,
+    max_num_transforms: int | None = None,
+    random_order: bool = False,
+):
     def check_value_error(name, weight, min_max):
         if min_max is not None:
             if len(min_max) != 2:
-                raise ValueError(f"`{name}_min_max` is expected to be a tuple of 2 dimensions, but {min_max} provided.")
-            if weight < 0.:
-                raise ValueError(f"`{name}_weight` is expected to be 0 or positive, but is negative ({weight}).")
+                raise ValueError(
+                    f"`{name}_min_max` is expected to be a tuple of 2 dimensions, but {min_max} provided."
+                )
+            if weight < 0.0:
+                raise ValueError(
+                    f"`{name}_weight` is expected to be 0 or positive, but is negative ({weight})."
+                )
 
     check_value_error("brightness", brightness_weight, brightness_min_max)
     check_value_error("contrast", contrast_weight, contrast_min_max)
@@ -142,16 +163,13 @@ def get_image_transforms(
         transforms.append(v2.ColorJitter(hue=hue_min_max))
     if sharpness_min_max is not None:
         weights.append(sharpness_weight)
-        transforms.append(RangeRandomSharpness(**sharpness_min_max))
-    
-    if max_num_transforms is None:
-        n_subset = len(transforms)
-    else:
-        n_subset = min(len(transforms), max_num_transforms)
+        transforms.append(SharpnessJitter(sharpness=sharpness_min_max))
 
-    final_transforms = RandomSubsetApply(
-        transforms, p=weights, n_subset=n_subset, random_order=random_order
-    )
+    n_subset = len(transforms)
+    if max_num_transforms is not None:
+        n_subset = min(n_subset, max_num_transforms)
+
+    final_transforms = RandomSubsetApply(transforms, p=weights, n_subset=n_subset, random_order=random_order)
 
     # TODO(rcadene, aliberts): add v2.ToDtype float16?
     return final_transforms
