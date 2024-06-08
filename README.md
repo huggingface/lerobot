@@ -172,7 +172,7 @@ dataset attributes:
   │  ...
   ├ info: a dictionary of metadata on the dataset
   │  ├ fps: float - frame per second the dataset is recorded/synchronized to
-  │  └ video: bool - are there video in the dataset
+  │  └ video: bool - indicates if frames are encoded in mp4 video files to save space or stored as png files
   ├ videos_dir: path to where the videos are stored/accessed
   └ video_frame_keys: List of string: the video features of the hf_dataset
 ```
