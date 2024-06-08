@@ -147,7 +147,7 @@ A dataset in `LeRobotDataset` format is very simple to use. It can be loaded fro
 
 A specificity of `LeRobotDataset` is that we can retrieve several frames for one sample query. By setting `delta_timestamps` to a list of delta timestamps, e.g. `delta_timestamps = {"observation.image": [-1, -0.5, -0.2, 0]}`  one can retrieve, for each query, 4 images including one at -1 second before the current time step, the two others at -0.5 second and -0.2, and the final one at the current time step (0 second). See example [1_load_lerobot_dataset.py](examples/1_load_lerobot_dataset.py) for more details on `delta_timestamps`.
 
-Under the hood, the `LeRobotDataset` format makes use of several ways to serialize data which can be useful to understand if you plan to work more closely with this format. We tried to make a flexible yet simple dataset format that would cover most type of features and specificities present in RL and robotics.
+Under the hood, the `LeRobotDataset` format makes use of several ways to serialize data which can be useful to understand if you plan to work more closely with this format. We tried to make a flexible yet simple dataset format that would cover most type of features and specificities present in reinforcement learning and robotics, in simulation and in real-world, with a focus on cameras and robot states.
 
 Here are the important details and internal structure organization of a typical `LeRobotDataset` instantiated with `dataset = LeRobotDataset("lerobot/aloha_static_coffee")`. The exact features will change from dataset to dataset but not the main aspects:
 
