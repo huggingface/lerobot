@@ -39,7 +39,9 @@ revision = args.revision
 
 out_data = DATA_DIR / repo_id
 
+# During data collection, frames are stored as png images in `images_dir`
 images_dir = out_data / "images"
+# After data collection, png images of each episode are encoded into a mp4 file stored in `videos_dir` 
 videos_dir = out_data / "videos"
 meta_data_dir = out_data / "meta_data"
 
