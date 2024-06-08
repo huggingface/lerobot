@@ -143,7 +143,7 @@ Our script can also visualize datasets stored on a distant server. See `python l
 
 ### The `LeRobotDataset` format
 
-A dataset in `LeRobotDataset` format is very simple to use. It can be loaded from a repository on the Hugging Face hub or a local folder simply with e.g. `dataset = LeRobotDataset("lerobot/aloha_static_coffee")` and can be indexed into like any Hugging Face dataset. For instance `dataset[0]` will retrieve a sample of the dataset observations and actions in pytorch tensos format ready to be fed to a model.
+A dataset in `LeRobotDataset` format is very simple to use. It can be loaded from a repository on the Hugging Face hub or a local folder simply with e.g. `dataset = LeRobotDataset("lerobot/aloha_static_coffee")` and can be indexed into like any Hugging Face and Pytorch dataset. For instance `dataset[0]` will retrieve a sample of the dataset observations and actions in pytorch tensors format ready to be fed to a model.
 
 A specificity of `LeRobotDataset` is that we can retrieve several frames for one sample query. By setting `delta_timestamps` to to a list of delta timestamps, e.g. `delta_timestamps = {"observation.image": [-1, -0.5, -0.20, 0]}`  one can retrieve, for each query, 4 images before the current time frame. See example [1_load_lerobot_dataset.py](examples/1_load_lerobot_dataset.py) for more details on `delta_timestamps`.
 
