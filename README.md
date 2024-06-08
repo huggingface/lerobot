@@ -160,7 +160,7 @@ dataset attributes:
   │  ... (more observations)
   │  ├ action: List of float32
   │  ├ episode_index: int64: index of the episode for this sample
-  │  ├ frame_index: int64: index of the frame for this sample in the episode
+  │  ├ frame_index: int64: index of the frame for this sample in the episode ; starts at 0 for each episode
   │  ├ timestamp: float32: timestamp in the episode
   │  ├ next.done: bool: indicates the end of en episode ; True for the last frame in each episode
   │  └ index: int64: general index in the whole dataset
