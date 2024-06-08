@@ -164,7 +164,7 @@ dataset attributes:
   │  ├ timestamp: float32: timestamp in the episode
   │  ├ next.done: bool: indicates the end of en episode ; True for the last frame in each episode
   │  └ index: int64: general index in the whole dataset
-  ├ episode_data_index: contain 2 tensors with the beginning and end indices of each episode
+  ├ episode_data_index: contains 2 tensors with the start and end indices of each episode
   │  ├ from: 1D int64 tensor of first frame index for each episode: shape (num episodes,) start with 0
   │  └ to: 1D int64 tensor of last frame index for each episode: shape (num episodes,)
   ├ stats: a dictionary of statistics (max, mean, min, std) for each feature in the dataset, for instance
