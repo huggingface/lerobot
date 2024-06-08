@@ -631,7 +631,7 @@ class VQBeTScheduler(nn.Module):
             self.lr_scheduler.step()
 
 class VQBeTRgbEncoder(nn.Module):
-    """Encoder an RGB image into a 1D feature vector.
+    """Encode an RGB image into a 1D feature vector.
 
     Includes the ability to normalize and crop the image first.
 
