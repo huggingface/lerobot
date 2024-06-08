@@ -179,7 +179,7 @@ dataset attributes:
 
 A `LeRobotDataset` is serialised using several widespread file formats for each of its parts, namely:
 - hf_dataset stored using Hugging Face datasets library serialization to parquet
-- videos are stored in mp4 format
+- videos are stored in mp4 format to save space or png files
 - episode_data_index saved using `safetensor` tensor serializtion format
 - stats saved using `safetensor` tensor serializtion format
 - info are saved using JSON
