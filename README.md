@@ -162,7 +162,7 @@ dataset attributes:
   │  ├ episode_index: int64: index of the episode for this sample
   │  ├ frame_index: int64: index of the frame for this sample in the episode
   │  ├ timestamp: float32: timestamp in the episode
-  │  ├ next.done: bool: True for the last frame in each episode
+  │  ├ next.done: bool: indicates the end of en episode ; True for the last frame in each episode
   │  └ index: int64: general index in the whole dataset
   ├ episode_data_index: contain 2 tensors with the beginning and end indices of each episode
   │  ├ from: 1D int64 tensor of first frame index for each episode: shape (num episodes,) start with 0
