@@ -174,7 +174,7 @@ dataset attributes:
   │  ├ fps: float - frame per second the dataset is recorded/synchronized to
   │  └ video: bool - indicates if frames are encoded in mp4 video files to save space or stored as png files
   ├ videos_dir: path to where the mp4 videos or png images are stored/accessed
-  └ video_frame_keys: List of string: the video features of the hf_dataset
+  └ camera_keys: List of string: the keys to access camera features in the item returned by the dataset (e.g. `["observation.images.cam_high", ...]`)
 ```
 
 A `LeRobotDataset` is serialised using several widespread file formats for each of its parts, namely:
