@@ -2321,7 +2321,6 @@ class GPT(nn.Module):
         This long function is unfortunately doing something very simple and is being very defensive:
         We are separating out all parameters of the model into two buckets: those that will experience
         weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
-        We are then returning the PyTorch optimizer object.
         """
 
         # separate out all parameters to those that will and won't experience regularizing weight decay
@@ -2355,24 +2354,6 @@ class GPT(nn.Module):
             str(param_dict.keys() - union_params),
         )
 
-        # create the pytorch optimizer object
-        # optim_groups = [
-        #     {
-        #         "params": [param_dict[pn] for pn in sorted(list(decay))],
-        #         "weight_decay": weight_decay,
-        #     },
-        #     {
-        #         "params": [param_dict[pn] for pn in sorted(list(no_decay))],
-        #         "weight_decay": 0.0,
-        #     },
-        # ]
         decay = [param_dict[pn] for pn in sorted(list(decay))]
         no_decay = [param_dict[pn] for pn in sorted(list(no_decay))]
         return decay, no_decay
-        # if optimizer=="Adamw":
-        #     optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas)
-        # elif optimizer=="Adam":
-        #     optimizer = torch.optim.Adam(optim_groups, lr=learning_rate, betas=betas, eps=eps)
-        # else:
-        #     raise NotImplementedError
-        # return optimizer
