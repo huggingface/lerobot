@@ -1,4 +1,8 @@
 # ruff: noqa
+"""From Alexander Koch low_cost_robot codebase at https://github.com/AlexanderKoch-Koch/low_cost_robot
+Dynamixel class to control the dynamixel servos
+"""
+
 from __future__ import annotations
 
 import enum

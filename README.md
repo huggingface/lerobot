@@ -127,12 +127,20 @@ wandb login
 
 Check out [example 1](./examples/1_load_lerobot_dataset.py) that illustrates how to use our dataset class which automatically download data from the Hugging Face hub.
 
-You can also locally visualize episodes from a dataset by executing our script from the command line:
+You can also locally visualize episodes from a dataset on the hub by executing our script from the command line:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
     --repo-id lerobot/pusht \
     --episode-index 0
 ```
+
+or from a dataset in a local folder with the root `DATA_DIR` environment variable
+```bash
+DATA_DIR='./my_local_data_dir' python lerobot/scripts/visualize_dataset.py \
+    --repo-id lerobot/pusht \
+    --episode-index 0
+```
+
 
 It will open `rerun.io` and display the camera streams, robot states and actions, like this:
 
@@ -184,6 +192,7 @@ A `LeRobotDataset` is serialised using several widespread file formats for each 
 - stats saved using `safetensor` tensor serializtion format
 - info are saved using JSON
 
+Dataset can uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can set the `DATA_DIR` environment variable to you root dataset folder as illustrated in the above section on dataset visualization.
 
 ### Evaluate a pretrained policy
 

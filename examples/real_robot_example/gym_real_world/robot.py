@@ -1,10 +1,15 @@
 # ruff: noqa
+"""From Alexander Koch low_cost_robot codebase at https://github.com/AlexanderKoch-Koch/low_cost_robot
+Class to control the robot using dynamixel servos.
+"""
+
 from enum import Enum, auto
 from typing import Union
 
 import numpy as np
-from dynamixel import Dynamixel, OperatingMode, ReadAttribute
 from dynamixel_sdk import DXL_HIBYTE, DXL_HIWORD, DXL_LOBYTE, DXL_LOWORD, GroupSyncRead, GroupSyncWrite
+
+from .dynamixel import Dynamixel, OperatingMode, ReadAttribute
 
 
 class MotorControlType(Enum):

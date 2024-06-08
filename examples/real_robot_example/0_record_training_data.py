@@ -3,7 +3,7 @@ import copy
 import os
 import time
 
-import gym_real_env  # noqa: F401
+import gym_real_world  # noqa: F401
 import gymnasium as gym
 import numpy as np
 import torch
@@ -21,12 +21,22 @@ from lerobot.scripts.push_dataset_to_hub import push_meta_data_to_hub, push_vide
 
 # parse the repo_id name via command line
 parser = argparse.ArgumentParser()
-parser.add_argument("--repo-id", type=str, default="blue_red_sort")
+parser.add_argument("--repo-id", type=str, default="thomwolf/blue_red_sort")
 parser.add_argument("--num-episodes", type=int, default=2)
 parser.add_argument("--num-frames", type=int, default=400)
 parser.add_argument("--num-workers", type=int, default=16)
 parser.add_argument("--keep-last", action="store_true")
 parser.add_argument("--push-to-hub", action="store_true")
+parser.add_argument(
+    "--fps",
+    type=int,
+    default=30,
+    help="Frames per second of the recording."
+    "If we are not able to record at this fps, we will adjust the fps in the metadata.",
+)
+parser.add_argument(
+    "--tolerance", type=float, default=0.01, help="Tolerance in seconds for the recording time."
+)
 parser.add_argument(
     "--revision", type=str, default=CODEBASE_VERSION, help="Codebase version used to generate the dataset."
 )
@@ -36,12 +46,14 @@ repo_id = args.repo_id
 num_episodes = args.num_episodes
 num_frames = args.num_frames
 revision = args.revision
+fps = args.fps
+tolerance = args.tolerance
 
 out_data = DATA_DIR / repo_id
 
 # During data collection, frames are stored as png images in `images_dir`
 images_dir = out_data / "images"
-# After data collection, png images of each episode are encoded into a mp4 file stored in `videos_dir` 
+# After data collection, png images of each episode are encoded into a mp4 file stored in `videos_dir`
 videos_dir = out_data / "videos"
 meta_data_dir = out_data / "meta_data"
 
@@ -53,8 +65,8 @@ if not os.path.exists(videos_dir):
     os.makedirs(videos_dir, exist_ok=True)
 
 if __name__ == "__main__":
-    # Create the gym environment - check the kwargs in gym_real_env/src/env.py
-    gym_handle = "gym_real_env/RealEnv-v0"
+    # Create the gym environment - check the kwargs in gym_real_world/gym_environment.py
+    gym_handle = "gym_real_world/RealEnv-v0"
     env = gym.make(gym_handle, disable_env_checker=True, record=True)
 
     ep_dicts = []
@@ -62,9 +74,10 @@ if __name__ == "__main__":
     ep_fps = []
     id_from = 0
     id_to = 0
-    os.system('spd-say "env created"')
+    os.system('spd-say "gym environment created"')
 
-    for ep_idx in range(num_episodes):
+    ep_idx = 0
+    while ep_idx < num_episodes:
         # bring the follower to the leader and start camera
         env.reset()
 
@@ -84,48 +97,71 @@ if __name__ == "__main__":
             # store data
             for key in observation:
                 obs_replay[key].append(copy.deepcopy(observation[key]))
-            timestamps.append(time.time() - starting_time)
+
+            recording_time = time.time() - starting_time
+            timestamps.append(recording_time)
+
+            # Check if we are able to keep up with the desired fps
+            if recording_time > num_frames / fps + tolerance:
+                print(
+                    f"Error: recording time {recording_time:.2f} is greater than expected {num_frames / fps:.2f}"
+                    f" + tolerance {tolerance:.2f}"
+                    f" at frame {len(timestamps)}"
+                    f" in episode {ep_idx}."
+                    f"Dropping the rest of the episode."
+                )
+                break
+
+            # wait the right amount of time to stay at the desired fps
+            time.sleep(max(0, 1 / fps - (time.time() - starting_time)))
+
             # if cv2.waitKey(1) & 0xFF == ord('q'):
             #     break
 
         os.system('spd-say "stop"')
 
-        ep_dict = {}
-        # store images in png and create the video
-        for img_key in env.cameras:
-            save_images_concurrently(
-                obs_replay[f"images.{img_key}"],
-                images_dir / f"{img_key}_episode_{ep_idx:06d}",
-                args.num_workers,
+        if len(timestamps) == num_frames:
+            os.system(f'spd-say "saving episode {ep_idx}"')
+            ep_dict = {}
+            # store images in png and create the video
+            for img_key in env.cameras:
+                save_images_concurrently(
+                    obs_replay[f"images.{img_key}"],
+                    images_dir / f"{img_key}_episode_{ep_idx:06d}",
+                    args.num_workers,
+                )
+                # for i in tqdm(range(num_frames)):
+                #     cv2.imwrite(str(images_dir / f"{img_key}_episode_{ep_idx:06d}" / f"frame_{i:06d}.png"),
+                #                 obs_replay[i]['pixels'][img_key])
+                fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
+                # store the reference to the video frame
+                ep_dict[img_key] = [{"path": f"videos/{fname}", "timestamp": tstp} for tstp in timestamps]
+                # shutil.rmtree(tmp_imgs_dir)
+
+            state = torch.tensor(np.array(obs_replay["agent_pos"]))
+            action = torch.tensor(np.array(obs_replay["leader_pos"]))
+            next_done = torch.zeros(num_frames, dtype=torch.bool)
+            next_done[-1] = True
+
+            ep_dict["observation.state"] = state
+            ep_dict["action"] = action
+            ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int64)
+            ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
+            ep_dict["timestamp"] = torch.tensor(timestamps)
+            ep_dict["next.done"] = next_done
+            ep_fps.append(num_frames / timestamps[-1])
+            ep_dicts.append(ep_dict)
+            print(f"Episode {ep_idx} done, fps: {ep_fps[-1]:.2f}")
+
+            episode_data_index["from"].append(id_from)
+            episode_data_index["to"].append(
+                id_from + num_frames if args.keep_last else id_from + num_frames - 1
             )
-            # for i in tqdm(range(num_frames)):
-            #     cv2.imwrite(str(images_dir / f"{img_key}_episode_{ep_idx:06d}" / f"frame_{i:06d}.png"),
-            #                 obs_replay[i]['pixels'][img_key])
-            fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
-            # store the reference to the video frame
-            ep_dict[img_key] = [{"path": f"videos/{fname}", "timestamp": tstp} for tstp in timestamps]
-            # shutil.rmtree(tmp_imgs_dir)
 
-        state = torch.tensor(np.array(obs_replay["agent_pos"]))
-        action = torch.tensor(np.array(obs_replay["leader_pos"]))
-        next_done = torch.zeros(num_frames, dtype=torch.bool)
-        next_done[-1] = True
+            id_to = id_from + num_frames if args.keep_last else id_from + num_frames - 1
+            id_from = id_to
 
-        ep_dict["observation.state"] = state
-        ep_dict["action"] = action
-        ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int64)
-        ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
-        ep_dict["timestamp"] = torch.tensor(timestamps)
-        ep_dict["next.done"] = next_done
-        ep_fps.append(num_frames / timestamps[-1])
-        ep_dicts.append(ep_dict)
-        print(f"Episode {ep_idx} done, fps: {ep_fps[-1]:.2f}")
-
-        episode_data_index["from"].append(id_from)
-        episode_data_index["to"].append(id_from + num_frames if args.keep_last else id_from + num_frames - 1)
-
-        id_to = id_from + num_frames if args.keep_last else id_from + num_frames - 1
-        id_from = id_to
+            ep_idx += 1
 
     env.close()
 
