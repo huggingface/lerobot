@@ -21,12 +21,12 @@ from lerobot.scripts.push_dataset_to_hub import push_meta_data_to_hub, push_vide
 
 # parse the repo_id name via command line
 parser = argparse.ArgumentParser()
-parser.add_argument("--repo_id", type=str, default="blue_red_sort")
-parser.add_argument("--num_episodes", type=int, default=2)
-parser.add_argument("--num_frames", type=int, default=400)
-parser.add_argument("--num_workers", type=int, default=16)
-parser.add_argument("--keep_last", action="store_true")
-parser.add_argument("--push_to_hub", action="store_true")
+parser.add_argument("--repo-id", type=str, default="blue_red_sort")
+parser.add_argument("--num-episodes", type=int, default=2)
+parser.add_argument("--num-frames", type=int, default=400)
+parser.add_argument("--num-workers", type=int, default=16)
+parser.add_argument("--keep-last", action="store_true")
+parser.add_argument("--push-to-hub", action="store_true")
 parser.add_argument(
     "--revision", type=str, default=CODEBASE_VERSION, help="Codebase version used to generate the dataset."
 )
