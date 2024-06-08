@@ -168,7 +168,7 @@ dataset attributes:
   │  ├ from: 1D int64 tensor of first frame index for each episode: shape (num episodes,) starts with 0
   │  └ to: 1D int64 tensor of last frame index for each episode: shape (num episodes,)
   ├ stats: a dictionary of statistics (max, mean, min, std) for each feature in the dataset, for instance
-  │  ├ observation.images.cam_high: {'max': tensor of same shape as the observation.images.cam_high feature, ...}
+  │  ├ observation.images.cam_high: {'max': tensor with same number of dimensions (e.g. `(c, 1, 1)` for images, `(c,)` for states), etc.}
   │  ...
   ├ info: a dictionary of metadata on the dataset
   │  ├ fps: float - frame per second the dataset is recorded/synchronized to
