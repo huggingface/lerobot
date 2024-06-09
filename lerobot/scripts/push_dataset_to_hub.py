@@ -97,7 +97,9 @@ def get_from_raw_to_lerobot_format_fn(raw_format: str):
     return from_raw_to_lerobot_format
 
 
-def save_meta_data(info: dict[str, Any], stats: dict, episode_data_index, meta_data_dir: Path):
+def save_meta_data(
+    info: dict[str, Any], stats: dict, episode_data_index: dict[str, list], meta_data_dir: Path
+):
     meta_data_dir.mkdir(parents=True, exist_ok=True)
 
     # save info
