@@ -56,7 +56,7 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
         )
 
     # A soft check to warn if the environment matches the dataset. Don't check if we are using a real world env (dora).
-    if cfg.env.name != "dora":
+    if not cfg.env.real_world:
         if isinstance(cfg.dataset_repo_id, str):
             dataset_repo_ids = [cfg.dataset_repo_id]  # single dataset
         else:

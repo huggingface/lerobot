@@ -3,11 +3,10 @@
 fps: 30
 
 env:
-  name: dora
-  task: DoraKoch-v0
+  name: real_world
+  task: RealEnv-v0
   state_dim: 6
   action_dim: 6
   fps: ${fps}
-  episode_length: 400
-  gym:
-    fps: ${fps}
+  episode_length: 200
+  real_world: true

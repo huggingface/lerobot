@@ -9,5 +9,6 @@ env:
   action_dim: 14
   fps: ${fps}
   episode_length: 400
+  real_world: true
   gym:
     fps: ${fps}

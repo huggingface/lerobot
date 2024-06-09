@@ -406,7 +406,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
         step += 1
 
-    eval_env.close()
+    if cfg.training.eval_freq > 0:
+        eval_env.close()
     logging.info("End of training")
 
 

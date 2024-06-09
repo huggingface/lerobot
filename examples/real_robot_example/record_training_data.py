@@ -1,7 +1,11 @@
+"""This script demonstrates how to record a LeRobot dataset of training data
+using a very simple gym environment (see in examples/real_robot_example/gym_real_world/gym_environment.py).
+
+"""
+
 import argparse
 import copy
 import os
-import time
 
 import gym_real_world  # noqa: F401
 import gymnasium as gym
@@ -27,15 +31,12 @@ parser.add_argument("--num-frames", type=int, default=400)
 parser.add_argument("--num-workers", type=int, default=16)
 parser.add_argument("--keep-last", action="store_true")
 parser.add_argument("--push-to-hub", action="store_true")
+parser.add_argument("--fps", type=int, default=30, help="Frames per second of the recording.")
 parser.add_argument(
-    "--fps",
-    type=int,
-    default=30,
-    help="Frames per second of the recording."
-    "If we are not able to record at this fps, we will adjust the fps in the metadata.",
-)
-parser.add_argument(
-    "--tolerance", type=float, default=0.01, help="Tolerance in seconds for the recording time."
+    "--fps_tolerance",
+    type=float,
+    default=0.1,
+    help="Tolerance in fps for the recording before dropping episodes.",
 )
 parser.add_argument(
     "--revision", type=str, default=CODEBASE_VERSION, help="Codebase version used to generate the dataset."
@@ -47,7 +48,7 @@ num_episodes = args.num_episodes
 num_frames = args.num_frames
 revision = args.revision
 fps = args.fps
-tolerance = args.tolerance
+fps_tolerance = args.fps_tolerance
 
 out_data = DATA_DIR / repo_id
 
@@ -67,7 +68,7 @@ if not os.path.exists(videos_dir):
 if __name__ == "__main__":
     # Create the gym environment - check the kwargs in gym_real_world/gym_environment.py
     gym_handle = "gym_real_world/RealEnv-v0"
-    env = gym.make(gym_handle, disable_env_checker=True, record=True)
+    env = gym.make(gym_handle, disable_env_checker=True, record=True, fps=fps, fps_tolerance=fps_tolerance)
 
     ep_dicts = []
     episode_data_index = {"from": [], "to": []}
@@ -84,59 +85,46 @@ if __name__ == "__main__":
         os.system(f'spd-say "go {ep_idx}"')
         # init buffers
         obs_replay = {k: [] for k in env.observation_space}
-        timestamps = []
 
-        starting_time = time.time()
+        drop_episode = False
+        timestamps = []
         for _ in tqdm(range(num_frames)):
             # Apply the next action
-            observation, _, _, _, _ = env.step(action=None)
+            observation, _, _, _, info = env.step(action=None)
             # images_stacked = np.hstack(list(observation['pixels'].values()))
             # images_stacked = cv2.cvtColor(images_stacked, cv2.COLOR_RGB2BGR)
             # cv2.imshow('frame', images_stacked)
 
+            if info["fps_error"]:
+                os.system(f'spd-say "Error fps too low, dropping episode {ep_idx}"')
+                drop_episode = True
+                break
+
             # store data
             for key in observation:
                 obs_replay[key].append(copy.deepcopy(observation[key]))
-
-            recording_time = time.time() - starting_time
-            timestamps.append(recording_time)
-
-            # Check if we are able to keep up with the desired fps
-            if recording_time > num_frames / fps + tolerance:
-                print(
-                    f"Error: recording time {recording_time:.2f} is greater than expected {num_frames / fps:.2f}"
-                    f" + tolerance {tolerance:.2f}"
-                    f" at frame {len(timestamps)}"
-                    f" in episode {ep_idx}."
-                    f"Dropping the rest of the episode."
-                )
-                break
-
-            # wait the right amount of time to stay at the desired fps
-            time.sleep(max(0, 1 / fps - (time.time() - starting_time)))
+            timestamps.append(info["timestamp"])
 
             # if cv2.waitKey(1) & 0xFF == ord('q'):
             #     break
 
         os.system('spd-say "stop"')
 
-        if len(timestamps) == num_frames:
+        if not drop_episode:
             os.system(f'spd-say "saving episode {ep_idx}"')
             ep_dict = {}
             # store images in png and create the video
             for img_key in env.cameras:
                 save_images_concurrently(
-                    obs_replay[f"images.{img_key}"],
+                    obs_replay[img_key],
                     images_dir / f"{img_key}_episode_{ep_idx:06d}",
                     args.num_workers,
                 )
-                # for i in tqdm(range(num_frames)):
-                #     cv2.imwrite(str(images_dir / f"{img_key}_episode_{ep_idx:06d}" / f"frame_{i:06d}.png"),
-                #                 obs_replay[i]['pixels'][img_key])
                 fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
                 # store the reference to the video frame
-                ep_dict[img_key] = [{"path": f"videos/{fname}", "timestamp": tstp} for tstp in timestamps]
-                # shutil.rmtree(tmp_imgs_dir)
+                ep_dict[f"observation.{img_key}"] = [
+                    {"path": f"videos/{fname}", "timestamp": tstp} for tstp in timestamps
+                ]
 
             state = torch.tensor(np.array(obs_replay["agent_pos"]))
             action = torch.tensor(np.array(obs_replay["leader_pos"]))
@@ -198,8 +186,6 @@ if __name__ == "__main__":
     features["timestamp"] = Value(dtype="float32", id=None)
     features["next.done"] = Value(dtype="bool", id=None)
     features["index"] = Value(dtype="int64", id=None)
-    # TODO(rcadene): add success
-    # features["next.success"] = Value(dtype='bool', id=None)
 
     hf_dataset = Dataset.from_dict(data_dict, features=Features(features))
     hf_dataset.set_transform(hf_transform_to_torch)

@@ -27,9 +27,9 @@ Follow these steps:
 
 ## 0 - record examples
 
-Run the `0_record_training_data.py` example, selecting the duration and number of episodes you want to record, e.g.
+Run the `record_training_data.py` example, selecting the duration and number of episodes you want to record, e.g.
 ```
-DATA_DIR='./data' python 0_record_training_data.py \
+DATA_DIR='./data' python record_training_data.py \
 --repo-id=thomwolf/blue_red_sort \
 --num-episodes=50 \
 --num-frames=400
@@ -44,15 +44,34 @@ TODO:
 
 Use the standard dataset visualization script pointing it to the right folder:
 ```
-DATA_DIR='./data' python visualize_dataset.py python lerobot/scripts/visualize_dataset.py \
+DATA_DIR='./data' python ../../lerobot/scripts/visualize_dataset.py \
     --repo-id thomwolf/blue_red_sort \
     --episode-index 0
 ```
 
-## (soon) Train a policy
+## 2 - Train a policy
 
-Run `1_train_real_policy.py` example
+From the example directory let's run this command to train a model using ACT
 
-## (soon) Evaluate the policy in the real world
+```
+DATA_DIR='./data' python ../../lerobot/scripts/train.py \
+    device=cuda \
+    hydra.searchpath=[file://./train_config/] \
+    hydra.run.dir=./outputs/train/blue_red_sort \
+    dataset_repo_id=thomwolf/blue_red_sort \
+    env=gym_real_world \
+    policy=act_real_world \
+    wandb.enable=false
+```
 
-Run `2_evaluate_real_policy.py` example
+## 3 - Evaluate the policy in the real world
+
+From the example directory let's run this command to evaluate our policy.
+The configuration for running the policy is in the checkpoint of the model.
+You can override parameters as follow:
+
+```
+python run_policy.py \
+    -p ./outputs/train/blue_red_sort/checkpoints/last/pretrained_model/
+    env.episode_length=1000
+```

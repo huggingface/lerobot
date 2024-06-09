@@ -164,7 +164,7 @@ def rollout(
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available of none of the envs finished.
         if "final_info" in info:
-            successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
+            successes = [i["is_success"] if i is not None else False for i in info["final_info"]]
         else:
             successes = [False] * env.num_envs
 

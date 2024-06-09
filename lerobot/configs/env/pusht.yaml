@@ -10,6 +10,7 @@ env:
   action_dim: 2
   fps: ${fps}
   episode_length: 300
+  real_world: false
   gym:
     obs_type: pixels_agent_pos
     render_mode: rgb_array

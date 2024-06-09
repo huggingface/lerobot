@@ -29,10 +29,12 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     # map to expected inputs for the policy
     return_observations = {}
 
-    if isinstance(observations["pixels"], dict):
+    if "pixels" in observations and isinstance(observations["pixels"], dict):
         imgs = {f"observation.images.{key}": img for key, img in observations["pixels"].items()}
-    else:
+    elif "pixels" in observations and isinstance(observations["pixels"], np.ndarray):
         imgs = {"observation.image": observations["pixels"]}
+    else:
+        imgs = {f"observation.{key}": img for key, img in observations.items() if "images" in key}
 
     for imgkey, img in imgs.items():
         img = torch.from_numpy(img)
