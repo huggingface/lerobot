@@ -14,110 +14,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-This file contains all obsolete download scripts. They are centralized here to not have to load
-useless dependencies when using datasets.
+This file contains download scripts for raw datasets.
 """
 
-import io
 import logging
-import shutil
 from pathlib import Path
 
-import tqdm
 from huggingface_hub import snapshot_download
 
 
-def download_raw(raw_dir, dataset_id):
-    if "aloha" in dataset_id or "image" in dataset_id:
-        download_hub(raw_dir, dataset_id)
-    elif "pusht" in dataset_id:
-        download_pusht(raw_dir)
-    elif "xarm" in dataset_id:
-        download_xarm(raw_dir)
-    elif "umi" in dataset_id:
-        download_umi(raw_dir)
-    else:
-        raise ValueError(dataset_id)
-
-
-def download_and_extract_zip(url: str, destination_folder: Path) -> bool:
-    import zipfile
-
-    import requests
-
-    print(f"downloading from {url}")
-    response = requests.get(url, stream=True)
-    if response.status_code == 200:
-        total_size = int(response.headers.get("content-length", 0))
-        progress_bar = tqdm.tqdm(total=total_size, unit="B", unit_scale=True)
-
-        zip_file = io.BytesIO()
-        for chunk in response.iter_content(chunk_size=1024):
-            if chunk:
-                zip_file.write(chunk)
-                progress_bar.update(len(chunk))
-
-        progress_bar.close()
-
-        zip_file.seek(0)
-
-        with zipfile.ZipFile(zip_file, "r") as zip_ref:
-            zip_ref.extractall(destination_folder)
-
-
-def download_pusht(raw_dir: str):
-    pusht_url = "https://diffusion-policy.cs.columbia.edu/data/training/pusht.zip"
-
-    raw_dir = Path(raw_dir)
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    download_and_extract_zip(pusht_url, raw_dir)
-    # file is created inside a useful "pusht" directory, so we move it out and delete the dir
-    zarr_path = raw_dir / "pusht_cchi_v7_replay.zarr"
-    shutil.move(raw_dir / "pusht" / "pusht_cchi_v7_replay.zarr", zarr_path)
-    shutil.rmtree(raw_dir / "pusht")
-
-
-def download_xarm(raw_dir: Path):
-    """Download all xarm datasets at once"""
-    import zipfile
-
-    import gdown
-
-    raw_dir = Path(raw_dir)
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    # from https://github.com/fyhMer/fowm/blob/main/scripts/download_datasets.py
-    url = "https://drive.google.com/uc?id=1nhxpykGtPDhmQKm-_B8zBSywVRdgeVya"
-    zip_path = raw_dir / "data.zip"
-    gdown.download(url, str(zip_path), quiet=False)
-    print("Extracting...")
-    with zipfile.ZipFile(str(zip_path), "r") as zip_f:
-        for pkl_path in zip_f.namelist():
-            if pkl_path.startswith("data/xarm") and pkl_path.endswith(".pkl"):
-                zip_f.extract(member=pkl_path)
-                # move to corresponding raw directory
-                extract_dir = pkl_path.replace("/buffer.pkl", "")
-                raw_pkl_path = raw_dir / "buffer.pkl"
-                shutil.move(pkl_path, raw_pkl_path)
-                shutil.rmtree(extract_dir)
-    zip_path.unlink()
-
-
-def download_hub(raw_dir: Path, dataset_id: str):
+def download_raw(raw_dir: Path, dataset_id: str):
     raw_dir = Path(raw_dir)
     raw_dir.mkdir(parents=True, exist_ok=True)
 
     logging.info(f"Start downloading from huggingface.co/cadene for {dataset_id}")
     snapshot_download(f"cadene/{dataset_id}_raw", repo_type="dataset", local_dir=raw_dir)
     logging.info(f"Finish downloading from huggingface.co/cadene for {dataset_id}")
-
-
-def download_umi(raw_dir: Path):
-    url_cup_in_the_wild = "https://real.stanford.edu/umi/data/zarr_datasets/cup_in_the_wild.zarr.zip"
-    zarr_path = raw_dir / "cup_in_the_wild.zarr"
-
-    raw_dir = Path(raw_dir)
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    download_and_extract_zip(url_cup_in_the_wild, zarr_path)
 
 
 if __name__ == "__main__":
