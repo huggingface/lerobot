@@ -106,6 +106,7 @@ def visualize_dataset(
     ws_port: int = 9087,
     save: bool = False,
     output_dir: Path | None = None,
+    root: Path | None = None,
 ) -> Path | None:
     if save:
         assert (
@@ -113,7 +114,7 @@ def visualize_dataset(
         ), "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
 
     logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id)
+    dataset = LeRobotDataset(repo_id, root=root)
 
     logging.info("Loading dataloader")
     episode_sampler = EpisodeSampler(dataset, episode_index)
@@ -254,6 +255,12 @@ def main():
         "--output-dir",
         type=str,
         help="Directory path to write a .rrd file when `--save 1` is set.",
+    )
+
+    parser.add_argument(
+        "--root",
+        type=str,
+        help="Root directory for a dataset stored on a local machine.",
     )
 
     args = parser.parse_args()
