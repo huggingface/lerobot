@@ -42,8 +42,8 @@ class RandomSubsetApply(Transform):
             n_subset = len(transforms)
         elif not isinstance(n_subset, int):
             raise TypeError("n_subset should be an int or None")
-        elif not (0 <= n_subset <= len(transforms)):
-            raise ValueError(f"n_subset should be in the interval [0, {len(transforms)}]")
+        elif not (1 <= n_subset <= len(transforms)):
+            raise ValueError(f"n_subset should be in the interval [1, {len(transforms)}]")
 
         self.transforms = transforms
         total = sum(p)
@@ -130,7 +130,7 @@ def get_image_transforms(
     max_num_transforms: int | None = None,
     random_order: bool = False,
 ):
-    def check_value_error(name, weight, min_max):
+    def check_value(name, weight, min_max):
         if min_max is not None:
             if len(min_max) != 2:
                 raise ValueError(
@@ -141,27 +141,27 @@ def get_image_transforms(
                     f"`{name}_weight` is expected to be 0 or positive, but is negative ({weight})."
                 )
 
-    check_value_error("brightness", brightness_weight, brightness_min_max)
-    check_value_error("contrast", contrast_weight, contrast_min_max)
-    check_value_error("saturation", saturation_weight, saturation_min_max)
-    check_value_error("hue", hue_weight, hue_min_max)
-    check_value_error("sharpness", sharpness_weight, sharpness_min_max)
+    check_value("brightness", brightness_weight, brightness_min_max)
+    check_value("contrast", contrast_weight, contrast_min_max)
+    check_value("saturation", saturation_weight, saturation_min_max)
+    check_value("hue", hue_weight, hue_min_max)
+    check_value("sharpness", sharpness_weight, sharpness_min_max)
 
     weights = []
     transforms = []
-    if brightness_min_max is not None:
+    if brightness_min_max is not None and brightness_weight > 0.0:
         weights.append(brightness_weight)
         transforms.append(v2.ColorJitter(brightness=brightness_min_max))
-    if contrast_min_max is not None:
+    if contrast_min_max is not None and contrast_weight > 0.0:
         weights.append(contrast_weight)
         transforms.append(v2.ColorJitter(contrast=contrast_min_max))
-    if saturation_min_max is not None:
+    if saturation_min_max is not None and saturation_weight > 0.0:
         weights.append(saturation_weight)
         transforms.append(v2.ColorJitter(saturation=saturation_min_max))
-    if hue_min_max is not None:
+    if hue_min_max is not None and hue_weight > 0.0:
         weights.append(hue_weight)
         transforms.append(v2.ColorJitter(hue=hue_min_max))
-    if sharpness_min_max is not None:
+    if sharpness_min_max is not None and sharpness_weight > 0.0:
         weights.append(sharpness_weight)
         transforms.append(SharpnessJitter(sharpness=sharpness_min_max))
 
@@ -169,7 +169,8 @@ def get_image_transforms(
     if max_num_transforms is not None:
         n_subset = min(n_subset, max_num_transforms)
 
-    final_transforms = RandomSubsetApply(transforms, p=weights, n_subset=n_subset, random_order=random_order)
-
-    # TODO(rcadene, aliberts): add v2.ToDtype float16?
-    return final_transforms
+    if n_subset == 0:
+        return v2.Identity()
+    else:
+        # TODO(rcadene, aliberts): add v2.ToDtype float16?
+        return RandomSubsetApply(transforms, p=weights, n_subset=n_subset, random_order=random_order)

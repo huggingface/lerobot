@@ -17,12 +17,6 @@ from lerobot.common.utils.utils import seeded_context
 # - save artifacts
 
 
-def test_get_image_transforms_no_transform():
-    get_image_transforms()
-    get_image_transforms(sharpness_weight=0.0)
-    get_image_transforms(max_num_transforms=0)
-
-
 @pytest.fixture
 def img():
     # dataset = LeRobotDataset("lerobot/pusht")
@@ -31,6 +25,29 @@ def img():
     path = "tests/data/save_image_transforms/original_frame.png"
     img_chw = torch.from_numpy(np.array(Image.open(path).convert("RGB"))).permute(2, 0, 1)
     return img_chw
+
+
+@pytest.fixture
+def kwargs():
+    return {
+        "brightness_weight": 0.0,
+        "brightness_min_max": (0.5, 0.5),
+        "contrast_weight": 0.0,
+        "contrast_min_max": (0.5, 0.5),
+        "saturation_weight": 0.0,
+        "saturation_min_max": (0.5, 0.5),
+        "hue_weight": 0.0,
+        "hue_min_max": (0.5, 0.5),
+        "sharpness_weight": 0.0,
+        "sharpness_min_max": (0.5, 0.5),
+        "max_num_transforms": 3,
+        "random_order": False,
+    }
+
+
+def test_get_image_transforms_no_transform(img):
+    tf_actual = get_image_transforms(brightness_min_max=(0.5, 0.5), max_num_transforms=0)
+    torch.testing.assert_close(tf_actual(img), img)
 
 
 def test_get_image_transforms_brightness(img):
