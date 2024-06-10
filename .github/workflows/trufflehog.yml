@@ -1,7 +1,6 @@
 on:
   push:
 
-# test leak, again: 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
 name: Secret Leaks
 
 permissions:
