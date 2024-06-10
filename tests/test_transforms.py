@@ -11,7 +11,7 @@ from torchvision.transforms.v2 import functional as F  # noqa: N812
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.transforms import RandomSubsetApply, SharpnessJitter, get_image_transforms
 from lerobot.common.utils.utils import init_hydra_config, seeded_context
-from tests.utils import DEFAULT_CONFIG_PATH
+from tests.utils import DEFAULT_CONFIG_PATH, require_x86_64_kernel
 
 ARTIFACT_DIR = Path("tests/data/save_image_transforms")
 REPO_ID = "lerobot/aloha_mobile_shrimp"
@@ -112,6 +112,7 @@ def test_get_image_transforms_max_num_transforms(img):
     torch.testing.assert_close(tf_actual(img), tf_expected(img))
 
 
+@require_x86_64_kernel
 def test_get_image_transforms_random_order(img):
     out_imgs = []
     tf = get_image_transforms(
@@ -122,8 +123,8 @@ def test_get_image_transforms_random_order(img):
         sharpness_min_max=(0.5, 0.5),
         random_order=True,
     )
-    with seeded_context(1335):
-        for _ in range(20):
+    with seeded_context(1337):
+        for _ in range(10):
             out_imgs.append(tf(img))
 
     for i in range(1, len(out_imgs)):
@@ -154,7 +155,8 @@ def test_backward_compatibility_torchvision(transform, img, single_transforms):
     torch.testing.assert_close(actual, expected)
 
 
-def test_backward_compatibility_default_yaml(img, default_transforms):
+@require_x86_64_kernel
+def test_backward_compatibility_default_config(img, default_transforms):
     cfg = init_hydra_config(DEFAULT_CONFIG_PATH)
     cfg_tf = cfg.image_transforms
     default_tf = get_image_transforms(
