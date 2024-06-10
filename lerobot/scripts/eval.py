@@ -268,18 +268,22 @@ def eval_policy(
         episode_data: dict | None = None
 
     progbar = trange(n_batches, desc="Stepping through eval batches", disable=not enable_progbar)
-    start_seed = start_seed or 0
     for batch_ix in progbar:
         # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
         # step.
         if max_episodes_rendered > 0:
             ep_frames: list[np.ndarray] = []
 
-        seeds = range(start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs))
+        if start_seed is None:
+            seeds = None
+        else:
+            seeds = range(
+                start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
+            )
         rollout_data = rollout(
             env,
             policy,
-            seeds=list(seeds),
+            seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
             enable_progbar=enable_inner_progbar,
