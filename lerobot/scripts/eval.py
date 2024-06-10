@@ -99,7 +99,7 @@ def rollout(
         "reward": A (batch, sequence) tensor of rewards received for applying the actions.
         "success": A (batch, sequence) tensor of success conditions (the only time this can be True is upon
             environment termination/truncation).
-        "don": A (batch, sequence) tensor of **cumulative** done conditions. For any given batch element,
+        "done": A (batch, sequence) tensor of **cumulative** done conditions. For any given batch element,
             the first True is followed by True's all the way till the end. This can be used for masking
             extraneous elements from the sequences above.
 
@@ -195,7 +195,6 @@ def rollout(
         "reward": torch.stack(all_rewards, dim=1),
         "success": torch.stack(all_successes, dim=1),
         "done": torch.stack(all_dones, dim=1),
-        "observation": None,
     }
     if return_observations:
         stacked_observations = {}
