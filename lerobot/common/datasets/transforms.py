@@ -13,11 +13,11 @@ class RandomSubsetApply(Transform):
 
     Args:
         transforms (sequence or torch.nn.Module): list of transformations
-        p (list of floats or None, optional): probability of each transform being picked.
-            If ``p`` doesn't sum to 1, it is automatically normalized. If ``None``
-            (default), all transforms have the same probability.
+        p (list of floats or None, optional): represents the multinomial probabilities
+            (with no replacement) used for sampling the transform. If the sum of the weights is not 1, they
+            will be normalized. If ``None`` (default), all transforms have the same probability.
         n_subset (int or None): number of transformations to apply. If ``None``,
-            all transforms are applied.
+            all transforms are applied. Must be in [1, len(transforms)].
         random_order (bool): apply transformations in a random order
     """
 
