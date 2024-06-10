@@ -29,8 +29,8 @@ def _find_and_replace(text: str, finds_and_replaces: list[tuple[str, str]]) -> s
     return text
 
 
-def _run_script(path):
-    subprocess.run([sys.executable, path], check=True)
+def _run_script(path, args=None):
+    subprocess.run([sys.executable, path] + args if args is not None else [], check=True)
 
 
 def _read_file(path):
@@ -126,3 +126,22 @@ def test_examples_basic2_basic3_advanced1():
     # Restore stdout to its original state
     sys.stdout = sys.__stdout__
     assert "Average loss on validation set" in printed_output
+
+
+def test_real_world_recording():
+    path = "examples/real_robot_example/record_training_data.py"
+    _run_script(
+        path,
+        [
+            "--data_dir",
+            "outputs/examples",
+            "--repo-id",
+            "real_world_debug",
+            "--num-episodes",
+            "2",
+            "--num-frames",
+            "10",
+            "--mock-robot",
+        ],
+    )
+    assert Path("outputs/examples/real_world_debug/video/episode_0.mp4").exists()

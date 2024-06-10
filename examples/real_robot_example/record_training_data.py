@@ -6,12 +6,14 @@ using a very simple gym environment (see in examples/real_robot_example/gym_real
 import argparse
 import copy
 import os
+from pathlib import Path
 
 import gym_real_world  # noqa: F401
 import gymnasium as gym
 import numpy as np
 import torch
 from datasets import Dataset, Features, Sequence, Value
+from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from lerobot.common.datasets.compute_stats import compute_stats
@@ -30,17 +32,20 @@ parser.add_argument("--num-episodes", type=int, default=2)
 parser.add_argument("--num-frames", type=int, default=400)
 parser.add_argument("--num-workers", type=int, default=16)
 parser.add_argument("--keep-last", action="store_true")
+parser.add_argument("--data_dir", type=str, default=None)
 parser.add_argument("--push-to-hub", action="store_true")
 parser.add_argument("--fps", type=int, default=30, help="Frames per second of the recording.")
 parser.add_argument(
     "--fps_tolerance",
     type=float,
-    default=0.1,
+    default=0.5,
     help="Tolerance in fps for the recording before dropping episodes.",
 )
 parser.add_argument(
     "--revision", type=str, default=CODEBASE_VERSION, help="Codebase version used to generate the dataset."
 )
+parser.add_argument("--gym-config", type=str, default=None, help="Path to the gym config file.")
+parser.add_argument("--mock_robot", action="store_true")
 args = parser.parse_args()
 
 repo_id = args.repo_id
@@ -50,7 +55,7 @@ revision = args.revision
 fps = args.fps
 fps_tolerance = args.fps_tolerance
 
-out_data = DATA_DIR / repo_id
+out_data = DATA_DIR / repo_id if args.data_dir is None else Path(args.data_dir)
 
 # During data collection, frames are stored as png images in `images_dir`
 images_dir = out_data / "images"
@@ -58,6 +63,9 @@ images_dir = out_data / "images"
 videos_dir = out_data / "videos"
 meta_data_dir = out_data / "meta_data"
 
+gym_config = None
+if args.config is not None:
+    gym_config = OmegaConf.load(args.config)
 
 # Create image and video directories
 if not os.path.exists(images_dir):
@@ -68,7 +76,12 @@ if not os.path.exists(videos_dir):
 if __name__ == "__main__":
     # Create the gym environment - check the kwargs in gym_real_world/gym_environment.py
     gym_handle = "gym_real_world/RealEnv-v0"
-    env = gym.make(gym_handle, disable_env_checker=True, record=True, fps=fps, fps_tolerance=fps_tolerance)
+    gym_kwargs = {}
+    if gym_config is not None:
+        gym_kwargs = OmegaConf.to_container(gym_config.gym_kwargs)
+    env = gym.make(
+        gym_handle, disable_env_checker=True, record=True, fps=fps, fps_tolerance=fps_tolerance, mock=True
+    )
 
     ep_dicts = []
     episode_data_index = {"from": [], "to": []}

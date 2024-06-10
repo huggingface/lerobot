@@ -12,8 +12,8 @@ env:
   real_world: true
   gym:
     cameras_shapes:
-        images.high: [480, 640, 3]
-        images.low: [480, 640, 3]
+        images.top: [480, 640, 3]
+        images.front: [480, 640, 3]
     cameras_ports:
-        images.high: /dev/video6
-        images.low: /dev/video0
+        images.top: /dev/video6
+        images.front: /dev/video0

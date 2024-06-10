@@ -1,5 +1,6 @@
 # Using `lerobot`  on a real world arm
 
+
 In this example, we'll be using `lerobot` on a real world arm to:
 - record a dataset in the `lerobot` format
 - (soon) train a policy on it
@@ -25,7 +26,9 @@ Follow these steps:
 - install `lerobot`
 - install the Dynamixel-sdk: ` pip install dynamixel-sdk`
 
-## 0 - record examples
+## Usage
+
+### 0 - record examples
 
 Run the `record_training_data.py` example, selecting the duration and number of episodes you want to record, e.g.
 ```
@@ -40,7 +43,7 @@ TODO:
 - being able to drop episodes
 - checking uploading to the hub
 
-## 1 - visualize the dataset
+### 1 - visualize the dataset
 
 Use the standard dataset visualization script pointing it to the right folder:
 ```
@@ -49,7 +52,7 @@ DATA_DIR='./data' python ../../lerobot/scripts/visualize_dataset.py \
     --episode-index 0
 ```
 
-## 2 - Train a policy
+### 2 - Train a policy
 
 From the example directory let's run this command to train a model using ACT
 
@@ -64,7 +67,7 @@ DATA_DIR='./data' python ../../lerobot/scripts/train.py \
     wandb.enable=false
 ```
 
-## 3 - Evaluate the policy in the real world
+### 3 - Evaluate the policy in the real world
 
 From the example directory let's run this command to evaluate our policy.
 The configuration for running the policy is in the checkpoint of the model.
@@ -74,4 +77,13 @@ You can override parameters as follow:
 python run_policy.py \
     -p ./outputs/train/blue_red_sort/checkpoints/last/pretrained_model/
     env.episode_length=1000
+```
+
+
+## Convert a hdf5 dataset recorded with the original ACT repo
+
+You can convert a dataset from the raw data format of HDF5 files like in: https://github.com/tonyzhaozh/act with the following command:
+
+```
+python ./lerobot/scripts/push_dataset_to_hub.py
 ```

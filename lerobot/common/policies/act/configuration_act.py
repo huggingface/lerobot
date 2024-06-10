@@ -129,7 +129,9 @@ class ACTConfig:
     # Note: Although the original ACT implementation has 7 for `n_decoder_layers`, there is a bug in the code
     # that means only the first layer is used. Here we match the original implementation by setting this to 1.
     # See this issue https://github.com/tonyzhaozh/act/issues/25#issue-2258740521.
+    # As a consequence we also remove the final, unused layer normalization, by default
     n_decoder_layers: int = 1
+    decoder_norm: bool = False
     # VAE.
     use_vae: bool = True
     latent_dim: int = 32

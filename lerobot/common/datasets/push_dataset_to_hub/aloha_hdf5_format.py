@@ -43,9 +43,6 @@ def get_cameras(hdf5_data):
 
 
 def check_format(raw_dir) -> bool:
-    # only frames from simulation are uncompressed
-    compressed_images = "sim" not in raw_dir.name
-
     hdf5_paths = list(raw_dir.glob("episode_*.hdf5"))
     assert len(hdf5_paths) != 0
     for hdf5_path in hdf5_paths:
@@ -62,17 +59,15 @@ def check_format(raw_dir) -> bool:
             for camera in get_cameras(data):
                 assert num_frames == data[f"/observations/images/{camera}"].shape[0]
 
-                if compressed_images:
-                    assert data[f"/observations/images/{camera}"].ndim == 2
-                else:
-                    assert data[f"/observations/images/{camera}"].ndim == 4
+                # ndim 2 when image are compressed and 4 when uncompressed
+                assert data[f"/observations/images/{camera}"].ndim in [2, 4]
+                if data[f"/observations/images/{camera}"].ndim == 4:
                     b, h, w, c = data[f"/observations/images/{camera}"].shape
                     assert c < h and c < w, f"Expect (h,w,c) image format but ({h=},{w=},{c=}) provided."
 
 
 def load_from_raw(raw_dir, out_dir, fps, video, debug):
     # only frames from simulation are uncompressed
-    compressed_images = "sim" not in raw_dir.name
 
     hdf5_files = list(raw_dir.glob("*.hdf5"))
     ep_dicts = []
@@ -99,7 +94,7 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
             for camera in get_cameras(ep):
                 img_key = f"observation.images.{camera}"
 
-                if compressed_images:
+                if ep[f"/observations/images/{camera}"].ndim == 2:
                     import cv2
 
                     # load one compressed image after the other in RAM and uncompress

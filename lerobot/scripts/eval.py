@@ -44,6 +44,7 @@ https://huggingface.co/lerobot/diffusion_pusht/tree/main.
 import argparse
 import json
 import logging
+import os
 import threading
 import time
 from contextlib import nullcontext
@@ -164,7 +165,10 @@ def rollout(
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available of none of the envs finished.
         if "final_info" in info:
-            successes = [i["is_success"] if i is not None else False for i in info["final_info"]]
+            successes = [
+                i["is_success"] if (i is not None and "is_success" in i) else False
+                for i in info["final_info"]
+            ]
         else:
             successes = [False] * env.num_envs
 
@@ -516,6 +520,7 @@ def eval(
     out_dir = (
         f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
     )
+    os.makedirs(out_dir, exist_ok=True)
 
     if out_dir is None:
         raise NotImplementedError()
@@ -545,7 +550,7 @@ def eval(
             env,
             policy,
             hydra_cfg.eval.n_episodes,
-            max_episodes_rendered=10,
+            max_episodes_rendered=hydra_cfg.eval.max_episodes_rendered,
             video_dir=Path(out_dir) / "eval",
             start_seed=hydra_cfg.seed,
             enable_progbar=True,

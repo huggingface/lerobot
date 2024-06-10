@@ -315,8 +315,14 @@ class ACT(nn.Module):
             pos_embed = self.vae_encoder_pos_enc.clone().detach()  # (1, S+2, D)
 
             # Forward pass through VAE encoder to get the latent PDF parameters.
+            cls_joint_is_pad = torch.full((batch_size, 2), False).to(
+                batch["observation.state"].device
+            )  # False: not a padding
+            key_padding_mask = torch.cat([cls_joint_is_pad, batch["action_is_pad"]], axis=1)  # (bs, seq+1)
             cls_token_out = self.vae_encoder(
-                vae_encoder_input.permute(1, 0, 2), pos_embed=pos_embed.permute(1, 0, 2)
+                vae_encoder_input.permute(1, 0, 2),
+                pos_embed=pos_embed.permute(1, 0, 2),
+                key_padding_mask=key_padding_mask,
             )[0]  # select the class token, with shape (B, D)
             latent_pdf_params = self.vae_encoder_latent_output_proj(cls_token_out)
             mu = latent_pdf_params[:, : self.config.latent_dim]
@@ -402,9 +408,11 @@ class ACTEncoder(nn.Module):
         self.layers = nn.ModuleList([ACTEncoderLayer(config) for _ in range(config.n_encoder_layers)])
         self.norm = nn.LayerNorm(config.dim_model) if config.pre_norm else nn.Identity()
 
-    def forward(self, x: Tensor, pos_embed: Tensor | None = None) -> Tensor:
+    def forward(
+        self, x: Tensor, pos_embed: Tensor | None = None, key_padding_mask: Tensor | None = None
+    ) -> Tensor:
         for layer in self.layers:
-            x = layer(x, pos_embed=pos_embed)
+            x = layer(x, pos_embed=pos_embed, key_padding_mask=key_padding_mask)
         x = self.norm(x)
         return x
 
@@ -427,12 +435,14 @@ class ACTEncoderLayer(nn.Module):
         self.activation = get_activation_fn(config.feedforward_activation)
         self.pre_norm = config.pre_norm
 
-    def forward(self, x, pos_embed: Tensor | None = None) -> Tensor:
+    def forward(self, x, pos_embed: Tensor | None = None, key_padding_mask: Tensor | None = None) -> Tensor:
         skip = x
         if self.pre_norm:
             x = self.norm1(x)
         q = k = x if pos_embed is None else x + pos_embed
-        x = self.self_attn(q, k, value=x)[0]  # select just the output, not the attention weights
+        x = self.self_attn(q, k, value=x, key_padding_mask=key_padding_mask)[
+            0
+        ]  # select just the output, not the attention weights
         x = skip + self.dropout1(x)
         if self.pre_norm:
             skip = x
@@ -452,7 +462,10 @@ class ACTDecoder(nn.Module):
         """Convenience module for running multiple decoder layers followed by normalization."""
         super().__init__()
         self.layers = nn.ModuleList([ACTDecoderLayer(config) for _ in range(config.n_decoder_layers)])
-        self.norm = nn.LayerNorm(config.dim_model)
+        if config.decoder_norm:
+            self.norm = nn.LayerNorm(config.dim_model)
+        else:
+            self.norm = nn.Identity()
 
     def forward(
         self,
@@ -465,8 +478,7 @@ class ACTDecoder(nn.Module):
             x = layer(
                 x, encoder_out, decoder_pos_embed=decoder_pos_embed, encoder_pos_embed=encoder_pos_embed
             )
-        if self.norm is not None:
-            x = self.norm(x)
+        x = self.norm(x)
         return x
 
 

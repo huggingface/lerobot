@@ -50,6 +50,8 @@ eval:
   batch_size: 1
   # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
   use_async_envs: false
+  # Specify the number of episodes to render during evaluation.
+  max_episodes_rendered: 10
 
 wandb:
   enable: false
