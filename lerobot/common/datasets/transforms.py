@@ -78,6 +78,8 @@ class RandomSubsetApply(Transform):
 class SharpnessJitter(Transform):
     """Randomly change the sharpness of an image or video.
     Similar to a v2.RandomAdjustSharpness with p=1 and a sharpness_factor sampled randomly.
+    A sharpness_factor of 0 gives a blurred image, 1 gives the original image while 2 increases the sharpness
+    by a factor of 2.
 
     If the input is a :class:`torch.Tensor`,
     it is expected to have [..., 1 or 3, H, W] shape, where ... means an arbitrary number of leading dimensions.
