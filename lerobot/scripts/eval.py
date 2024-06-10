@@ -61,7 +61,7 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.utils._errors import RepositoryNotFoundError
 from huggingface_hub.utils._validators import HFValidationError
 from PIL import Image as PILImage
-from torch import Tensor
+from torch import Tensor, nn
 from tqdm import trange
 
 from lerobot.common.datasets.factory import make_dataset
@@ -99,13 +99,13 @@ def rollout(
         "reward": A (batch, sequence) tensor of rewards received for applying the actions.
         "success": A (batch, sequence) tensor of success conditions (the only time this can be True is upon
             environment termination/truncation).
-        "don": A (batch, sequence) tensor of **cumulative** done conditions. For any given batch element,
+        "done": A (batch, sequence) tensor of **cumulative** done conditions. For any given batch element,
             the first True is followed by True's all the way till the end. This can be used for masking
             extraneous elements from the sequences above.
 
     Args:
         env: The batch of environments.
-        policy: The policy.
+        policy: The policy. Must be a PyTorch nn module.
         seeds: The environments are seeded once at the start of the rollout. If provided, this argument
             specifies the seeds for each of the environments.
         return_observations: Whether to include all observations in the returned rollout data. Observations
@@ -116,6 +116,7 @@ def rollout(
     Returns:
         The dictionary described above.
     """
+    assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
     device = get_device_from_parameters(policy)
 
     # Reset the policy and environments.
@@ -231,6 +232,10 @@ def eval_policy(
     Returns:
         Dictionary with metrics and data regarding the rollouts.
     """
+    if max_episodes_rendered > 0 and not videos_dir:
+        raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
+
+    assert isinstance(policy, Policy)
     start = time.time()
     policy.eval()
 
@@ -271,11 +276,16 @@ def eval_policy(
         if max_episodes_rendered > 0:
             ep_frames: list[np.ndarray] = []
 
-        seeds = range(start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs))
+        if start_seed is None:
+            seeds = None
+        else:
+            seeds = range(
+                start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
+            )
         rollout_data = rollout(
             env,
             policy,
-            seeds=seeds,
+            seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
             enable_progbar=enable_inner_progbar,
@@ -285,7 +295,8 @@ def eval_policy(
         # this won't be included).
         n_steps = rollout_data["done"].shape[1]
         # Note: this relies on a property of argmax: that it returns the first occurrence as a tiebreaker.
-        done_indices = torch.argmax(rollout_data["done"].to(int), axis=1)  # (batch_size, rollout_steps)
+        done_indices = torch.argmax(rollout_data["done"].to(int), dim=1)
+
         # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
         # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
         mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
@@ -296,8 +307,12 @@ def eval_policy(
         max_rewards.extend(batch_max_rewards.tolist())
         batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
         all_successes.extend(batch_successes.tolist())
-        all_seeds.extend(seeds)
+        if seeds:
+            all_seeds.extend(seeds)
+        else:
+            all_seeds.append(None)
 
+        # FIXME: episode_data is either None or it doesn't exist
         if return_episode_data:
             this_episode_data = _compile_episode_data(
                 rollout_data,
@@ -347,6 +362,7 @@ def eval_policy(
             ):
                 if n_episodes_rendered >= max_episodes_rendered:
                     break
+
                 videos_dir.mkdir(parents=True, exist_ok=True)
                 video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
                 video_paths.append(str(video_path))
@@ -504,16 +520,17 @@ def _compile_episode_data(
 
 
 def main(
-    pretrained_policy_path: str | None = None,
+    pretrained_policy_path: Path | None = None,
     hydra_cfg_path: str | None = None,
     out_dir: str | None = None,
     config_overrides: list[str] | None = None,
 ):
     assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
-    if hydra_cfg_path is None:
-        hydra_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", config_overrides)
+    if pretrained_policy_path is not None:
+        hydra_cfg = init_hydra_config(str(pretrained_policy_path / "config.yaml"), config_overrides)
     else:
         hydra_cfg = init_hydra_config(hydra_cfg_path, config_overrides)
+
     if out_dir is None:
         out_dir = f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
 
@@ -531,10 +548,12 @@ def main(
 
     logging.info("Making policy.")
     if hydra_cfg_path is None:
-        policy = make_policy(hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
+        policy = make_policy(hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=str(pretrained_policy_path))
     else:
         # Note: We need the dataset stats to pass to the policy's normalization modules.
         policy = make_policy(hydra_cfg=hydra_cfg, dataset_stats=make_dataset(hydra_cfg).stats)
+
+    assert isinstance(policy, nn.Module)
     policy.eval()
 
     with torch.no_grad(), torch.autocast(device_type=device.type) if hydra_cfg.use_amp else nullcontext():
