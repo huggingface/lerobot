@@ -15,10 +15,10 @@ to_pil = ToPILImage()
 output_dir = Path("outputs/image_transforms")
 output_dir.mkdir(parents=True, exist_ok=True)
 
-repo_id = "lerobot/aloha_static_tape"
+dataset_repo_id = "lerobot/aloha_static_tape"
 
 # Create a LeRobotDataset with no transformations
-dataset = LeRobotDataset(repo_id, image_transforms=None)
+dataset = LeRobotDataset(dataset_repo_id, image_transforms=None)
 
 # Get the index of the first observation in the first episode
 first_idx = dataset.episode_data_index["from"][0].item()
@@ -41,7 +41,7 @@ transforms = v2.Compose(
 )
 
 # Create another LeRobotDataset with the defined transformations
-transformed_dataset = LeRobotDataset(repo_id, image_transforms=transforms)
+transformed_dataset = LeRobotDataset(dataset_repo_id, image_transforms=transforms)
 
 # Get a frame from the transformed dataset
 transformed_frame = transformed_dataset[first_idx][transformed_dataset.camera_keys[0]]
