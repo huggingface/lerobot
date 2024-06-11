@@ -21,7 +21,7 @@ from safetensors.torch import save_file
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.transforms import get_image_transforms
 from lerobot.common.utils.utils import init_hydra_config, seeded_context
-from tests.test_image_transforms import ARTIFACT_DIR, REPO_ID
+from tests.test_image_transforms import ARTIFACT_DIR, DATASET_REPO_ID
 from tests.utils import DEFAULT_CONFIG_PATH
 
 
@@ -50,28 +50,30 @@ def save_default_config_transform(original_frame: torch.Tensor, output_dir: Path
 
 
 def save_single_transforms(original_frame: torch.Tensor, output_dir: Path):
-    transforms = [
-        "brightness",
-        "contrast",
-        "saturation",
-        "hue",
-        "sharpness",
-    ]
+    transforms = {
+        "brightness": [(0.5, 0.5), (2.0, 2.0)],
+        "contrast": [(0.5, 0.5), (2.0, 2.0)],
+        "saturation": [(0.5, 0.5), (2.0, 2.0)],
+        "hue": [(-0.25, -0.25), (0.25, 0.25)],
+        "sharpness": [(0.5, 0.5), (2.0, 2.0)],
+    }
 
     frames = {"original_frame": original_frame}
-    for transform in transforms:
-        kwargs = {
-            f"{transform}_weight": 1.0,
-            f"{transform}_min_max": (0.5, 0.5),
-        }
-        tf = get_image_transforms(**kwargs)
-        frames[transform] = tf(original_frame)
+    for transform, values in transforms.items():
+        for min_max in values:
+            kwargs = {
+                f"{transform}_weight": 1.0,
+                f"{transform}_min_max": min_max,
+            }
+            tf = get_image_transforms(**kwargs)
+            key = f"{transform}_{min_max[0]}_{min_max[1]}"
+            frames[key] = tf(original_frame)
 
     save_file(frames, output_dir / "single_transforms.safetensors")
 
 
 def main():
-    dataset = LeRobotDataset(REPO_ID, image_transforms=None)
+    dataset = LeRobotDataset(DATASET_REPO_ID, image_transforms=None)
     output_dir = Path(ARTIFACT_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
     original_frame = dataset[0][dataset.camera_keys[0]]

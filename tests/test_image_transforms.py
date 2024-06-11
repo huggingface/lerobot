@@ -148,26 +148,26 @@ def test_get_image_transforms_random_order(img):
 
 
 @pytest.mark.parametrize(
-    "transform",
+    "transform, min_max_values",
     [
-        "brightness",
-        "contrast",
-        "saturation",
-        "hue",
-        "sharpness",
+        ("brightness", [(0.5, 0.5), (2.0, 2.0)]),
+        ("contrast", [(0.5, 0.5), (2.0, 2.0)]),
+        ("saturation", [(0.5, 0.5), (2.0, 2.0)]),
+        ("hue", [(-0.25, -0.25), (0.25, 0.25)]),
+        ("sharpness", [(0.5, 0.5), (2.0, 2.0)]),
     ],
 )
-def test_backward_compatibility_torchvision(transform, img, single_transforms):
-    kwargs = {
-        f"{transform}_weight": 1.0,
-        f"{transform}_min_max": (0.5, 0.5),
-    }
-    tf = get_image_transforms(**kwargs)
-    actual = tf(img)
-
-    expected = single_transforms[transform]
-
-    torch.testing.assert_close(actual, expected)
+def test_backward_compatibility_torchvision(transform, min_max_values, img, single_transforms):
+    for min_max in min_max_values:
+        kwargs = {
+            f"{transform}_weight": 1.0,
+            f"{transform}_min_max": min_max,
+        }
+        tf = get_image_transforms(**kwargs)
+        actual = tf(img)
+        key = f"{transform}_{min_max[0]}_{min_max[1]}"
+        expected = single_transforms[key]
+        torch.testing.assert_close(actual, expected)
 
 
 @require_x86_64_kernel
