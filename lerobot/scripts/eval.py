@@ -78,8 +78,6 @@ from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 
-LATENCY = True
-
 
 def rollout(
     env: gym.vector.VectorEnv,
@@ -87,14 +85,13 @@ def rollout(
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
+    do_simulate_latency: bool = False,
     enable_progbar: bool = False,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
     Note that all environments in the batch are run until the last environment is done. This means some
     data will probably need to be discarded (for environments that aren't the first one to be done).
-
-    This function can simulate real world latency. See the inline comments for how it works.
 
     The return dictionary contains:
         (optional) "observation": A a dictionary of (batch, sequence + 1, *) tensors mapped to observation
@@ -119,6 +116,8 @@ def rollout(
             are returned optionally because they typically take more memory to cache. Defaults to False.
         render_callback: Optional rendering callback to be used after the environments are reset, and after
             every step.
+        do_simulate_latency: Whether to simulate latency between observation and action execution. See inline
+            documentation for more details.
         enable_progbar: Enable a progress bar over rollout steps.
     Returns:
         The dictionary described above.
@@ -163,7 +162,7 @@ def rollout(
         # If we are simulating latency, we need to decide if we are even allowed to query the policy.
         # We are assuming that the policy can't process the current observation if it is still working
         # on a previous one.
-        if LATENCY and (pending_count := sum(item[-1] > 0 for item in action_queue)) > 0:
+        if do_simulate_latency and (pending_count := sum(item[-1] > 0 for item in action_queue)) > 0:
             # At least 1 of the items in the queue is (supposedly) still waiting to be processed!
             n_dropped_cycles += 1
             is_dropped_cycle = True
@@ -187,7 +186,7 @@ def rollout(
 
         policy_latency = time.perf_counter() - start_policy_time
 
-        if LATENCY:
+        if do_simulate_latency:
             # Note: We use this for the rendering frame rate, but also the clock frequency discussed below.
             fps = env.unwrapped.metadata["render_fps"]
             # Make some assumptions about the setup we are simulating:
@@ -283,7 +282,7 @@ def rollout(
             einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
         )
         progbar_postfix = {"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"}
-        if LATENCY:
+        if do_simulate_latency:
             progbar_postfix.update({"n_dropped_cycles": n_dropped_cycles})
         progbar.set_postfix(progbar_postfix)
         progbar.update()
@@ -326,6 +325,7 @@ def eval_policy(
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
+    do_simulate_latency: bool = False,
     enable_progbar: bool = False,
     enable_inner_progbar: bool = False,
 ) -> dict:
@@ -340,6 +340,8 @@ def eval_policy(
             the "episodes" key of the returned dictionary.
         start_seed: The first seed to use for the first individual rollout. For all subsequent rollouts the
             seed is incremented by 1. If not provided, the environments are not manually seeded.
+        do_simulate_latency: Whether to simulate latency between observation and action execution. See inline
+            documentation in `rollout` for more details.
         enable_progbar: Enable progress bar over batches.
         enable_inner_progbar: Enable progress bar over steps in each batch.
     Returns:
@@ -411,6 +413,7 @@ def eval_policy(
             seeds=seeds,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
+            do_simulate_latency=do_simulate_latency,
             enable_progbar=enable_inner_progbar,
         )
 
@@ -678,6 +681,7 @@ def main(
             max_episodes_rendered=10,
             videos_dir=Path(out_dir) / "videos",
             start_seed=hydra_cfg.seed,
+            do_simulate_latency=hydra_cfg.do_simulate_latency,
             enable_progbar=True,
             enable_inner_progbar=True,
         )

@@ -50,6 +50,8 @@ eval:
   batch_size: 1
   # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
   use_async_envs: false
+  # See inline documentation in `lerobot.scripts.eval::rollout` for more information.
+  do_simulate_latency: false
 
 wandb:
   enable: false
