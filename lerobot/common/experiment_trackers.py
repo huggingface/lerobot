@@ -87,7 +87,7 @@ class WandB:
 
 
 def experiment_tracker_factory(cfg: DictConfig) -> ExperimentTracker | None:
-    if cfg.get("wandb") == "wandb":
+    if cfg.get("wandb"):
         return WandB()
     else:
         return None
