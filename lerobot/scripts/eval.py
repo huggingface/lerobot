@@ -54,6 +54,7 @@ from datetime import datetime as dt
 from pathlib import Path
 from typing import Callable
 
+import cv2
 import einops
 import gymnasium as gym
 import numpy as np
@@ -92,6 +93,8 @@ def rollout(
 
     Note that all environments in the batch are run until the last environment is done. This means some
     data will probably need to be discarded (for environments that aren't the first one to be done).
+
+    This function can simulate real world latency. See the inline comments for how it works.
 
     The return dictionary contains:
         (optional) "observation": A a dictionary of (batch, sequence + 1, *) tensors mapped to observation
@@ -153,21 +156,34 @@ def rollout(
     # the policy was not done with inference on time.
     n_dropped_cycles = 0
     while not np.all(done):
+        is_dropped_cycle = False  # whether the action was dropped for this step because of latency
+
         start_policy_time = time.perf_counter()
 
-        # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-        observation = preprocess_observation(gym_observation)
-        if return_observations:
-            all_observations.append(deepcopy(observation))
+        # If we are simulating latency, we need to decide if we are even allowed to query the policy.
+        # We are assuming that the policy can't process the current observation if it is still working
+        # on a previous one.
+        if LATENCY and (pending_count := sum(item[-1] > 0 for item in action_queue)) > 0:
+            # At least 1 of the items in the queue is (supposedly) still waiting to be processed!
+            n_dropped_cycles += 1
+            is_dropped_cycle = True
+            # In fact, we should hope that ONLY 1 item has a positive value (otherwise it means we
+            # have supposedly allowed the policy to run concurrently for different steps).
+            assert pending_count == 1
+        else:
+            # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
+            observation = preprocess_observation(gym_observation)
+            if return_observations:
+                all_observations.append(deepcopy(observation))
 
-        observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
+            observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
 
-        with torch.inference_mode():
-            action = policy.select_action(observation)
+            with torch.inference_mode():
+                action = policy.select_action(observation)
 
-        # Convert to CPU / numpy.
-        action = action.to("cpu").numpy()
-        assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
+            # Convert to CPU / numpy.
+            action = action.to("cpu").numpy()
+            assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
         policy_latency = time.perf_counter() - start_policy_time
 
@@ -179,11 +195,12 @@ def rollout(
             #    any action that is chosen based on an observation can't be executed till the next rising
             #    edge. This means we have at least one clock cycle of delay (but it could be more if
             #    inference takes longer than a clock cycle).
-            # 2. Suppose that we do NOT have parallelism for processing multiple step's worth of observations
-            #    at once. The policy can only take in a new observation once it is done processing the last
-            #    one. If a policy is busy when an observation comes in, we miss the opportunity to process it.
-            # 3. If we miss computing an action for a clock cycle (maybe there was high inference latency), we
-            #    adopt the strategy of repeating the most recently executed action.
+            # 2. If an action is not available on the rising edge of the clock (maybe the policy is still
+            #    processing), we adopt the strategy of repeating the most recently executed action.
+            # 3. Further to point 2, if the policy is still processing a previous observation on the rising
+            #    edge of the clock (ie when a new observation comes in), it cannot handled the current/new
+            #    observation. In other words, we can only one instance of the policy (this is in light of
+            #    policies in LeRobot generally being stateful within a rollout).
             # To be clear, we aren't actually simulating these phenomena explicitly (none of this code runs
             # asynchronously). We are fudging the simulation by measuring inference time and delaying the
             # application of actions by some number of environment steps.
@@ -195,23 +212,14 @@ def rollout(
                 action_queue.append((action, -1))  # -1 indicating we already have the action ready to go
                 first_step_done_for_latency_logic = True
                 continue
-            else:
+            elif not is_dropped_cycle:
                 # Figure out how many cycles the action should be delayed by: floor(policy_latency / period).
                 # For example, if n_delay_cycles == 3, it means that it will supposedly take between 2 and 3
                 # clock cycles to predict the action based on the current observation. To account for this,
                 # we'll end up using it in a future loop iteration (3 iterations into the future to be
                 # precise).
                 n_delay_cycles = int(math.ceil(policy_latency * fps))
-                # First, we need to decide if we are even allowed to use the action. Assumption #2 from
-                # above says that the policy can't process the current observation if it is still working
-                # on a previous one (in reality we DID process it, but we may have to discard the result).
-                if (pending_count := sum(item[-1] > 0 for item in action_queue)) > 0:
-                    # At least 1 of the items in the queue is (supposedly) still waiting to be processed!
-                    n_dropped_cycles += 1
-                    # In fact, we should hope that ONLY 1 item has a positive value (otherwise it means we
-                    # have supposedly allowed the policy to run concurrently for different steps).
-                    assert pending_count == 1
-                elif n_delay_cycles == len(action_queue):
+                if n_delay_cycles == len(action_queue):
                     # In this case, we just append onto the queue. For example, consider that we currently
                     # have a queue:
                     # [
@@ -254,7 +262,7 @@ def rollout(
         # Apply the next action.
         gym_observation, reward, terminated, truncated, info = env.step(action)
         if render_callback is not None:
-            render_callback(env)
+            render_callback(env, is_dropped_cycle)
 
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available of none of the envs finished.
@@ -301,6 +309,15 @@ def rollout(
     return ret
 
 
+def _cv2_putText_by_top_left(text_top_left: tuple[int, int], **kwargs):  # noqa: N802
+    """A wrapper around cv2.putText that lets one place it by the top-left coord."""
+    text_size, _ = cv2.getTextSize(
+        kwargs["text"], kwargs["fontFace"], kwargs["fontScale"], kwargs["thickness"]
+    )
+    text_bottom_left = (text_top_left[0], min(text_top_left[1] + text_size[1], kwargs["img"].shape[0]))
+    cv2.putText(org=text_bottom_left, **kwargs)
+
+
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: torch.nn.Module,
@@ -344,16 +361,35 @@ def eval_policy(
     n_episodes_rendered = 0  # for saving the correct number of videos
 
     # Callback for visualization.
-    def render_frame(env: gym.vector.VectorEnv):
+    def render_frame(env: gym.vector.VectorEnv, is_dropped_cycle: bool = False):
         # noqa: B023
         if n_episodes_rendered >= max_episodes_rendered:
             return
         n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
         if isinstance(env, gym.vector.SyncVectorEnv):
-            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
+            img_batch = np.stack([env.envs[i].render() for i in range(n_to_render_now)])  # noqa: B023
         elif isinstance(env, gym.vector.AsyncVectorEnv):
             # Here we must render all frames and discard any we don't need.
-            ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
+            img_batch = np.stack(env.call("render")[:n_to_render_now])
+        if is_dropped_cycle:
+            # put a red border around the frame and some text to make it obvious that an action was dropped
+            # (see latency related documentation in `rollout`)
+            border_size = max(1, min(img_batch.shape[1:3]) // 40)
+            img_batch[:, :border_size] = [255, 0, 0]
+            img_batch[:, :, :border_size] = [255, 0, 0]
+            img_batch[:, -border_size:] = [255, 0, 0]
+            img_batch[:, :, -border_size:] = [255, 0, 0]
+            for img in img_batch:
+                _cv2_putText_by_top_left(
+                    text_top_left=(int(1.5 * border_size), int(1.5 * border_size)),
+                    img=img,
+                    text="Dropped cycle!",
+                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                    fontScale=0.8,
+                    thickness=1,
+                    color=(255, 0, 0),
+                )
+        ep_frames.append(img_batch)
 
     if max_episodes_rendered > 0:
         video_paths: list[str] = []
