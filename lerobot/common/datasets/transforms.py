@@ -78,6 +78,10 @@ class RandomSubsetApply(Transform):
 class SharpnessJitter(Transform):
     """Randomly change the sharpness of an image or video.
     Similar to a v2.RandomAdjustSharpness with p=1 and a sharpness_factor sampled randomly.
+    While v2.RandomAdjustSharpness applies — with a given probability — a fixed sharpness_factor to an image,
+    SharpnessJitter applies a random sharpness_factor each time. This is to have a more diverse set of
+    augmentations as a result.
+
     A sharpness_factor of 0 gives a blurred image, 1 gives the original image while 2 increases the sharpness
     by a factor of 2.
 
