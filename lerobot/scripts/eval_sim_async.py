@@ -82,7 +82,7 @@ def rollout(env: gym.vector.VectorEnv, policy: Policy, seed: int | None = None):
         start = time.time()
         # If we have less than some number of actions left in the queue, we need to start working on producing
         # the next chunk.
-        if len(actions_queue) < 25 and not thread.is_alive():
+        if len(actions_queue) < 2 and not thread.is_alive():
             thread = threading.Thread(target=run_policy)
             thread.start()
         # # Process the observation that we have right now to decide an action.

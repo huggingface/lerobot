@@ -2,6 +2,7 @@
 
 fps: 10
 
+
 env:
   name: pusht
   task: PushT-v0
