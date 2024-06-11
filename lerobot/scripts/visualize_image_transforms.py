@@ -92,6 +92,9 @@ def save_config_all_transforms(cfg, original_frame, output_dir):
         transformed_frame = tf(original_frame)
         to_pil(transformed_frame).save(output_dir_all / f"{i}.png", quality=100)
 
+    print("Combined transforms examples saved to:")
+    print(f"    {output_dir_all}")
+
 
 def save_config_single_transforms(cfg, original_frame, output_dir):
     transforms = [
@@ -101,6 +104,7 @@ def save_config_single_transforms(cfg, original_frame, output_dir):
         "hue",
         "sharpness",
     ]
+    print("Individual transforms examples saved to:")
     for transform in transforms:
         kwargs = {
             f"{transform}_weight": cfg[f"{transform}"].weight,
@@ -114,6 +118,8 @@ def save_config_single_transforms(cfg, original_frame, output_dir):
             transformed_frame = tf(original_frame)
             to_pil(transformed_frame).save(output_dir_single / f"{i}.png", quality=100)
 
+        print(f"    {output_dir_single}")
+
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../configs")
 def visualize_transforms(cfg):
@@ -125,6 +131,8 @@ def visualize_transforms(cfg):
     # Get 1st frame from 1st camera of 1st episode
     original_frame = dataset[0][dataset.camera_keys[0]]
     to_pil(original_frame).save(output_dir / "original_frame.png", quality=100)
+    print("\nOriginal frame saved to:")
+    print(f"    {output_dir / 'original_frame.png'}.")
 
     save_config_all_transforms(cfg.training.image_transforms, original_frame, output_dir)
     save_config_single_transforms(cfg.training.image_transforms, original_frame, output_dir)
