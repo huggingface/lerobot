@@ -74,7 +74,20 @@ Origianl source: https://github.com/lucidrains/vector-quantize-pytorch
 
 class ResidualVQ(nn.Module):
     
-    """Follows Algorithm 1. in https://arxiv.org/pdf/2107.03312.pdf"""
+    """
+    Residual VQ is composed of multiple VectorQuantize layers.
+
+    Follows Algorithm 1. in https://arxiv.org/pdf/2107.03312.pdf
+        "Residual Vector Quantizer (a.k.a. multi-stage vector quantizer [36]) cascades Nq layers of VQ as follows. The unquantized input vector is 
+        passed through a first VQ and quantization residuals are computed. The residuals are then iteratively quantized by a sequence of additional 
+        Nq -1 vector quantizers, as described in Algorithm 1."
+
+    
+    self.project_in: function for projecting input to codebook dimension
+    self.project_out: function for projecting codebook dimension to output dimension
+    self.layers: nn.ModuleList of VectorQuantize layers that contains Nq layers of VQ as described in the paper.
+    self.freeze_codebook: buffer to save an indicator whether the codebook is frozen or not. VQ-BeT will check this to determine whether to update the codebook or not.
+    """
 
     def __init__(
         self,
@@ -143,6 +156,7 @@ class ResidualVQ(nn.Module):
         return codebooks
 
     def get_codebook_vector_from_indices(self, indices):
+        # this function will return the codes from all codebooks across layers corresponding to the indices
         batch, quantize_dim = indices.shape[0], indices.shape[-1]
 
         # may also receive indices in the shape of 'b h w q' (accept_image_fmap)
@@ -185,6 +199,11 @@ class ResidualVQ(nn.Module):
     def forward(
         self, x, indices=None, return_all_codes=False, sample_codebook_temp=None
     ):
+        """
+        For given input tensor x, this function will return the quantized output, the indices of the quantized output, and the loss.
+        First, the input tensor x is projected to the codebook dimension. Then, the input tensor x is passed through Nq layers of VectorQuantize. 
+        The residual value of each layer is fed to the next layer.
+        """
         num_quant, quant_dropout_multiple_of, return_loss, device = (
             self.num_quantizers,
             self.quantize_dropout_multiple_of,
