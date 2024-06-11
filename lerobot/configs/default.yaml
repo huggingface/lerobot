@@ -54,9 +54,10 @@ training:
   #           they will be normalized.
   #   min_max: Lower & upper bound respectively used for sampling the transform's parameter
   #           (following uniform distribution) when it's applied.
+    # Set this flag to `true` to enable transforms during training
     enable: false
-    # This is the number of transforms (sampled from these below) that will be applied to each frame.
-    # It's an integer in the interval [0, number of available transforms].
+    # This is the maximum number of transforms (sampled from these below) that will be applied to each frame.
+    # It's an integer in the interval [1, number of available transforms].
     max_num_transforms: 3
     # By default, transforms are applied in Torchvision's suggested order (shown below).
     # Set this to True to apply them in a random order.
