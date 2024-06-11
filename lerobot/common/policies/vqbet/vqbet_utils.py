@@ -16,57 +16,59 @@ from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 """
 This file is part of a VQ-BeT that utilizes code from the following repositories:
 
-    The Vector Quantize PyTorch code is licensed under the MIT License:
-    Origianl source: https://github.com/lucidrains/vector-quantize-pytorch
-
-    MIT License
-
-    Copyright (c) 2020 Phil Wang
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
-
+    - The Vector Quantization part is an adaptation of Phil Wang's vector-quantize-pytorch implementation in PyTorch.
+        Origianl source: https://github.com/lucidrains/vector-quantize-pytorch
     
 
-    The nanoGPT part is an adaptation of Andrej Karpathy's nanoGPT implementation in PyTorch.
-    Original source: https://github.com/karpathy/nanoGPT
+    - The nanoGPT part is an adaptation of Andrej Karpathy's nanoGPT implementation in PyTorch.
+        Original source: https://github.com/karpathy/nanoGPT
 
-    MIT License
+"""
 
-    Copyright (c) 2022 Andrej Karpathy
 
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
+"""
+Vector Quantization part
 
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
+From this point on, the code is an adaptation of the original code from the vector-quantize-pytorch repository.
+Origianl source: https://github.com/lucidrains/vector-quantize-pytorch
 
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
+    - The vector-quantize-pytorch code is licensed under the MIT License:
+
+        MIT License
+
+        Copyright (c) 2020 Phil Wang
+
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction, including without limitation the rights
+        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+        copies of the Software, and to permit persons to whom the Software is
+        furnished to do so, subject to the following conditions:
+
+        The above copyright notice and this permission notice shall be included in all
+        copies or substantial portions of the Software.
+
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+        SOFTWARE.
+
+    - We've made some changes to the original code to adapt it to our needs.
+
+        class ResidualVQ(nn.Module):
+            - added `self.register_buffer('freeze_codebook', torch.tensor(False))` to the __init__ method:
+                This enables the user to save an indicator whether the codebook is frozen or not.
+            - changed the name of function `get_codes_from_indices` → `get_codebook_vector_from_indices`:
+                This is to make the function name more descriptive.
+
+        class VectorQuantize(nn.Module):
+            - removed the `use_cosine_sim` and `layernorm_after_project_in` parameters from the __init__ method:
+                These parameters are not used in the code.
+            - changed the name of function `get_codes_from_indices` → `get_codebook_vector_from_indices`:
+                This is to make the function name more descriptive.
         
 """
 
@@ -932,8 +934,6 @@ def batched_embedding(indices, embeds):
     return embeds.gather(2, indices)
 
 
-# regularization losses
-
 
 def orthogonal_loss_fn(t):
     # eq (2) from https://arxiv.org/abs/2112.00384
@@ -1256,6 +1256,52 @@ class EuclideanCodebook(nn.Module):
         return quantize, embed_ind, dist
 
 
+
+"""
+nanoGPT code
+
+From this point on, the code is an adaptation of the original code from the nanoGPT repository.
+Original source: https://github.com/karpathy/nanoGPT
+
+    - The nanoGPT code is licensed under the MIT License:
+
+    MIT License
+
+    Copyright (c) 2022 Andrej Karpathy
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+    - We've made some changes to the original code to adapt it to our needs.
+
+        Changed variable names:
+            - n_head -> gpt_n_head
+            - n_embd -> gpt_hidden_dim
+            - block_size -> gpt_block_size
+            - n_layer -> gpt_n_layer
+        
+        
+        class GPT(nn.Module):
+            - removed unused functions `def generate`, `def estimate_mfu`, and `def from_pretrained`
+            - changed the `configure_optimizers` to `def configure_parameters` and made it to return only the parameters of the model: we use an external optimizer in our training loop.
+            - in the function `forward`, we removed target loss calculation parts, since it will be calculated in the training loop (after passing through bin prediction and offset prediction heads).
+        
+"""
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
