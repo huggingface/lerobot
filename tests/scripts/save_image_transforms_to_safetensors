@@ -6,7 +6,7 @@ from safetensors.torch import save_file
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.transforms import get_image_transforms
 from lerobot.common.utils.utils import init_hydra_config, seeded_context
-from tests.test_transforms import ARTIFACT_DIR, REPO_ID
+from tests.test_image_transforms import ARTIFACT_DIR, REPO_ID
 from tests.utils import DEFAULT_CONFIG_PATH
 
 
