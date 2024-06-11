@@ -1,17 +1,15 @@
-from typing import Callable
 from functools import partial
-from random import randrange
-import math
 from math import ceil
-from einops import rearrange, repeat, reduce, pack, unpack
-import torch
-import torch.nn.functional as F
-from torch import nn, einsum
-import torch.distributed as distributed
-from torch.optim import Optimizer
-from torch.cuda.amp import autocast
+from random import randrange
+from typing import Callable
 
-from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
+import torch
+import torch.distributed as distributed
+import torch.nn.functional as F  # noqa: N812
+from einops import pack, rearrange, reduce, repeat, unpack
+from torch import einsum, nn
+from torch.cuda.amp import autocast
+from torch.optim import Optimizer
 
 """
 This file is a part for Residual Vector Quantization that utilizes code from the following repository:
@@ -395,22 +393,22 @@ class VectorQuantize(nn.Module):
                 distributed.is_initialized() and distributed.get_world_size() > 1
             )
 
-        codebook_kwargs = dict(
-            dim=codebook_dim,
-            num_codebooks=heads if separate_codebook_per_head else 1,
-            codebook_size=codebook_size,
-            kmeans_init=kmeans_init,
-            kmeans_iters=kmeans_iters,
-            sync_kmeans=sync_kmeans,
-            decay=decay,
-            eps=eps,
-            threshold_ema_dead_code=threshold_ema_dead_code,
-            use_ddp=sync_codebook,
-            learnable_codebook=has_codebook_orthogonal_loss or learnable_codebook,
-            sample_codebook_temp=sample_codebook_temp,
-            gumbel_sample=gumbel_sample_fn,
-            ema_update=ema_update,
-        )
+        codebook_kwargs = {
+            "dim": codebook_dim,
+            "num_codebooks": heads if separate_codebook_per_head else 1,
+            "codebook_size": codebook_size,
+            "kmeans_init": kmeans_init,
+            "kmeans_iters": kmeans_iters,
+            "sync_kmeans": sync_kmeans,
+            "decay": decay,
+            "eps": eps,
+            "threshold_ema_dead_code": threshold_ema_dead_code,
+            "use_ddp": sync_codebook,
+            "learnable_codebook": has_codebook_orthogonal_loss or learnable_codebook,
+            "sample_codebook_temp": sample_codebook_temp,
+            "gumbel_sample": gumbel_sample_fn,
+            "ema_update": ema_update,
+        }
 
         if affine_param:
             codebook_kwargs = dict(
@@ -485,7 +483,7 @@ class VectorQuantize(nn.Module):
             assert mask is None
             x = rearrange(x, "b d -> b 1 d")
 
-        shape, device, heads, is_multiheaded, codebook_size, return_loss = (
+        shape, device, heads, is_multiheaded, _codebook_size, return_loss = (
             x.shape,
             x.device,
             self.heads,
@@ -522,11 +520,11 @@ class VectorQuantize(nn.Module):
 
         # codebook forward kwargs
 
-        codebook_forward_kwargs = dict(
-            sample_codebook_temp=sample_codebook_temp,
-            mask=mask,
-            freeze_codebook=freeze_codebook,
-        )
+        codebook_forward_kwargs = {
+            "sample_codebook_temp": sample_codebook_temp,
+            "mask": mask,
+            "freeze_codebook": freeze_codebook,
+        }
 
         # quantize
 
@@ -903,7 +901,7 @@ def kmeans(
     sample_fn=batched_sample_vectors,
     all_reduce_fn=noop,
 ):
-    num_codebooks, dim, dtype, device = (
+    num_codebooks, dim, dtype, _device = (
         samples.shape[0],
         samples.shape[-1],
         samples.dtype,
@@ -1150,7 +1148,7 @@ class EuclideanCodebook(nn.Module):
 
     def replace(self, batch_samples, batch_mask):
         for ind, (samples, mask) in enumerate(
-            zip(batch_samples.unbind(dim=0), batch_mask.unbind(dim=0))
+            zip(batch_samples.unbind(dim=0), batch_mask.unbind(dim=0), strict=False)
         ):
             if not torch.any(mask):
                 continue
@@ -1187,7 +1185,6 @@ class EuclideanCodebook(nn.Module):
         if needs_codebook_dim:
             x = rearrange(x, "... -> 1 ...")
 
-        dtype = x.dtype
         flatten, ps = pack_one(x, "h * d")
 
         if (mask is not None):
@@ -1253,9 +1250,7 @@ class EuclideanCodebook(nn.Module):
             self.expire_codes_(x)
 
         if needs_codebook_dim:
-            quantize, embed_ind = map(
-                lambda t: rearrange(t, "1 ... -> ..."), (quantize, embed_ind)
-            )
+            quantize, embed_ind = (rearrange(t, "1 ... -> ...") for t in (quantize, embed_ind))
 
         dist = unpack_one(dist, ps, "h * d")
 

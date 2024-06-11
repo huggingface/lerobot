@@ -1,18 +1,21 @@
+import math
 from collections import deque
 from typing import Callable, List
 
 import einops
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 import torchvision
+from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 
-from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
-from huggingface_hub import PyTorchModelHubMixin
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.utils import get_device_from_parameters, populate_queues
+from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.common.policies.vqbet.vqvae_utils import ResidualVQ
+
+# ruff: noqa: N806
 
 class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
     """
@@ -485,7 +488,7 @@ class VQBeTHead(nn.Module):
         sampled_centers = pred["sampled_centers"]
         decoded_action = pred["decoded_action"]
         NT = predicted_action.shape[0] * predicted_action.shape[1]
-        T = predicted_action.shape[1]
+
         cbet_logits = pred["cbet_logits"]
 
         predicted_action = einops.rearrange(
@@ -1054,13 +1057,13 @@ class GPT(nn.Module):
         self.config = config
 
         self.transformer = nn.ModuleDict(
-            dict(
-                wte=nn.Linear(config.gpt_input_dim, config.gpt_hidden_dim),
-                wpe=nn.Embedding(config.gpt_block_size, config.gpt_hidden_dim),
-                drop=nn.Dropout(config.dropout),
-                h=nn.ModuleList([Block(config) for _ in range(config.gpt_n_layer)]),
-                ln_f=nn.LayerNorm(config.gpt_hidden_dim),
-            )
+            {
+                "wte": nn.Linear(config.gpt_input_dim, config.gpt_hidden_dim),
+                "wpe": nn.Embedding(config.gpt_block_size, config.gpt_hidden_dim),
+                "drop": nn.Dropout(config.dropout),
+                "h": nn.ModuleList([Block(config) for _ in range(config.gpt_n_layer)]),
+                "ln_f": nn.LayerNorm(config.gpt_hidden_dim),
+            }
         )
         self.lm_head = nn.Linear(config.gpt_hidden_dim, config.gpt_output_dim, bias=False)
         # init all weights, and apply a special scaled init to the residual projections, per GPT-2 paper
@@ -1137,7 +1140,7 @@ class GPT(nn.Module):
         whitelist_weight_modules = (torch.nn.Linear,)
         blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
         for mn, m in self.named_modules():
-            for pn, p in m.named_parameters():
+            for pn, _p in m.named_parameters():
                 fpn = "%s.%s" % (mn, pn) if mn else pn  # full param name
                 if pn.endswith("bias"):
                     # all biases will not be decayed
@@ -1150,7 +1153,7 @@ class GPT(nn.Module):
                     no_decay.add(fpn)
 
         # validate that we considered every parameter
-        param_dict = {pn: p for pn, p in self.named_parameters()}
+        param_dict = dict(self.named_parameters())
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert (
@@ -1162,7 +1165,7 @@ class GPT(nn.Module):
             str(param_dict.keys() - union_params),
         )
 
-        decay = [param_dict[pn] for pn in sorted(list(decay))]
-        no_decay = [param_dict[pn] for pn in sorted(list(no_decay))]
+        decay = [param_dict[pn] for pn in sorted(decay)]
+        no_decay = [param_dict[pn] for pn in sorted(no_decay)]
         # return the parameters that require weight decay, and the parameters that don't separately.
         return decay, no_decay
