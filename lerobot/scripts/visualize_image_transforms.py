@@ -13,49 +13,122 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+""" Visualize effects of image transforms for a given configuration.
+
+This script will generate examples of transformed images as they are output by LeRobot dataset.
+Additionally, each individual transform can be visualized separately as well as examples of combined transforms
+
+
+--- Usage Examples ---
+
+Increase hue jitter
+```
+DATA_DIR=tests/data python lerobot/scripts/visualize_image_transforms.py \
+    dataset_repo_id=lerobot/aloha_mobile_shrimp \
+    training.image_transforms.hue.min_max=[-0.25,0.25]
+```
+
+Increase brightness & brightness weight
+```
+DATA_DIR=tests/data python lerobot/scripts/visualize_image_transforms.py \
+    dataset_repo_id=lerobot/aloha_mobile_shrimp \
+    training.image_transforms.brightness.weight=10.0 \
+    training.image_transforms.brightness.min_max=[1.0,2.0]
+```
+
+Blur images and disable saturation & hue
+```
+DATA_DIR=tests/data python lerobot/scripts/visualize_image_transforms.py \
+    dataset_repo_id=lerobot/aloha_mobile_shrimp \
+    training.image_transforms.sharpness.weight=10.0 \
+    training.image_transforms.sharpness.min_max=[0.0,1.0] \
+    training.image_transforms.saturation.weight=0.0 \
+    training.image_transforms.hue.weight=0.0
+```
+
+Use all transforms with random order
+```
+DATA_DIR=tests/data python lerobot/scripts/visualize_image_transforms.py \
+    dataset_repo_id=lerobot/aloha_mobile_shrimp \
+    training.image_transforms.max_num_transforms=5 \
+    training.image_transforms.random_order=true
+```
+
+"""
+
 from pathlib import Path
 
 import hydra
 from torchvision.transforms import ToPILImage
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.transforms import make_image_transforms
+from lerobot.common.datasets.transforms import get_image_transforms
 
+OUTPUT_DIR = Path("outputs/image_transforms")
+N_EXAMPLES = 5
 to_pil = ToPILImage()
 
 
-def main(cfg, output_dir=Path("outputs/image_transforms")):
-    dataset = LeRobotDataset(cfg.dataset_repo_id, image_transforms=None)
+def save_config_all_transforms(cfg, original_frame, output_dir):
+    tf = get_image_transforms(
+        brightness_weight=cfg.brightness.weight,
+        brightness_min_max=cfg.brightness.min_max,
+        contrast_weight=cfg.contrast.weight,
+        contrast_min_max=cfg.contrast.min_max,
+        saturation_weight=cfg.saturation.weight,
+        saturation_min_max=cfg.saturation.min_max,
+        hue_weight=cfg.hue.weight,
+        hue_min_max=cfg.hue.min_max,
+        sharpness_weight=cfg.sharpness.weight,
+        sharpness_min_max=cfg.sharpness.min_max,
+        max_num_transforms=cfg.max_num_transforms,
+        random_order=cfg.random_order,
+    )
 
-    output_dir = Path(output_dir) / Path(cfg.dataset_repo_id.split("/")[-1])
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir_all = output_dir / "all"
+    output_dir_all.mkdir(parents=True, exist_ok=True)
 
-    # Get first frame of 1st episode
-    first_idx = dataset.episode_data_index["from"][0].item()
-    frame = dataset[first_idx][dataset.camera_keys[0]]
-    to_pil(frame).save(output_dir / "original_frame.png", quality=100)
+    for i in range(1, N_EXAMPLES + 1):
+        transformed_frame = tf(original_frame)
+        to_pil(transformed_frame).save(output_dir_all / f"{i}.png", quality=100)
 
-    transforms = ["brightness", "contrast", "saturation", "hue", "sharpness"]
 
-    # Apply each single transformation
-    for transform_name in transforms:
-        for t in transforms:
-            if t == transform_name:
-                cfg.training.image_transforms[t].weight = 1
-            else:
-                cfg.training.image_transforms[t].weight = 0
+def save_config_single_transforms(cfg, original_frame, output_dir):
+    transforms = [
+        "brightness",
+        "contrast",
+        "saturation",
+        "hue",
+        "sharpness",
+    ]
+    for transform in transforms:
+        kwargs = {
+            f"{transform}_weight": cfg[f"{transform}"].weight,
+            f"{transform}_min_max": cfg[f"{transform}"].min_max,
+        }
+        tf = get_image_transforms(**kwargs)
+        output_dir_single = output_dir / f"{transform}"
+        output_dir_single.mkdir(parents=True, exist_ok=True)
 
-        transform = make_image_transforms(cfg.training.image_transforms)
-        img = transform(frame)
-        to_pil(img).save(output_dir / f"{transform_name}.png", quality=100)
+        for i in range(1, N_EXAMPLES + 1):
+            transformed_frame = tf(original_frame)
+            to_pil(transformed_frame).save(output_dir_single / f"{i}.png", quality=100)
 
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../configs")
-def visualize_transforms_cli(cfg: dict):
-    main(
-        cfg,
-    )
+def visualize_transforms(cfg):
+    dataset = LeRobotDataset(cfg.dataset_repo_id)
+
+    output_dir = Path(OUTPUT_DIR) / cfg.dataset_repo_id.split("/")[-1]
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get 1st frame from 1st camera of 1st episode
+    original_frame = dataset[0][dataset.camera_keys[0]]
+    to_pil(original_frame).save(output_dir / "original_frame.png", quality=100)
+
+    save_config_all_transforms(cfg.training.image_transforms, original_frame, output_dir)
+    save_config_single_transforms(cfg.training.image_transforms, original_frame, output_dir)
 
 
 if __name__ == "__main__":
-    visualize_transforms_cli()
+    visualize_transforms()
