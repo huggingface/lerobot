@@ -28,7 +28,7 @@ from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from lerobot.common.experiment_trackers import ExperimentTracker, WandB
+from lerobot.common.experiment_trackers import experiment_tracker_factory
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
 
@@ -73,7 +73,6 @@ class Logger:
         self,
         cfg: DictConfig,
         log_dir: str,
-        experiment_tracker: ExperimentTracker | None = None,
         job_name: str | None = None,
     ):
         """
@@ -83,10 +82,7 @@ class Logger:
         """
         self._cfg = cfg
         self.log_dir = Path(log_dir)
-        if experiment_tracker is None:
-            self._experiment_tracker = WandB()
-        else:
-            self._experiment_tracker = experiment_tracker
+        self._experiment_tracker = experiment_tracker_factory(cfg)
 
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoints_dir = self.get_checkpoints_dir(log_dir)
@@ -96,13 +92,10 @@ class Logger:
         # Set up WandB.
         self._group = cfg_to_group(cfg)
 
-        project = cfg.get("wandb", {}).get("project") or cfg.get("experiment_tracker", {}).get("project")
-
-        entity = cfg.get("wandb", {}).get("entity") or cfg.get("experiment_tracker", {}).get("entity")
-
-        enable_tracking = cfg.get("wandb", {}).get("enable", False) or cfg.get("experiment_tracker", {}).get(
-            "enable", False
-        )
+        self._tracker_name = self._experiment_tracker.tracker_name if self._experiment_tracker else None
+        project = cfg.get(self._tracker_name).get("project") if self._tracker_name else None
+        entity = cfg.get(self._tracker_name).get("entity") if self._tracker_name else None
+        enable_tracking = cfg.get(self._tracker_name).get("enable", False) if self._tracker_name else False
 
         run_offline = not enable_tracking or not project
         if run_offline:
@@ -165,7 +158,8 @@ class Logger:
         policy.save_pretrained(save_dir)
         # Also save the full Hydra config for the env configuration.
         OmegaConf.save(self._cfg, save_dir / "config.yaml")
-        disable_artifact = self._cfg.wandb.disable_artifact or self._cfg.experiment_tracker.disable_artifact
+
+        disable_artifact = self._cfg.get(self._tracker_name).disable_artifact if self._tracker_name else False
         if self._experiment_tracker and artifact_name and not disable_artifact:
             # note wandb artifact does not accept ":" or "/" in its name
             self._experiment_tracker.log_model(save_dir, model_name=artifact_name)

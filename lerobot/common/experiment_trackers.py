@@ -1,10 +1,11 @@
 import os
+import re
+from glob import glob
 from pathlib import Path
 from typing import Any, Protocol
-from glob import glob
-import re
 
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
+from omegaconf import DictConfig
 
 
 def get_wandb_run_id_from_filesystem(checkpoint_dir: Path) -> str:
@@ -83,3 +84,10 @@ class WandB:
     @property
     def tracker_name(self) -> str:
         return "wandb"
+
+
+def experiment_tracker_factory(cfg: DictConfig) -> ExperimentTracker | None:
+    if cfg.get("wandb") == "wandb":
+        return WandB()
+    else:
+        return None
