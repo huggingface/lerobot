@@ -13,8 +13,8 @@ from lerobot.common.datasets.transforms import RandomSubsetApply, SharpnessJitte
 from lerobot.common.utils.utils import init_hydra_config, seeded_context
 from tests.utils import DEFAULT_CONFIG_PATH, require_x86_64_kernel
 
-ARTIFACT_DIR = Path("tests/data/save_image_transforms")
-REPO_ID = "lerobot/aloha_mobile_shrimp"
+ARTIFACT_DIR = Path("tests/data/save_image_transforms_to_safetensors")
+DATASET_REPO_ID = "lerobot/aloha_mobile_shrimp"
 
 
 def load_png_to_tensor(path: Path):
@@ -23,7 +23,7 @@ def load_png_to_tensor(path: Path):
 
 @pytest.fixture
 def img():
-    dataset = LeRobotDataset(REPO_ID)
+    dataset = LeRobotDataset(DATASET_REPO_ID)
     return dataset[0][dataset.camera_keys[0]]
 
 
