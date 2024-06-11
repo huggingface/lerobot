@@ -269,7 +269,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         )
 
     # log metrics to terminal and wandb
-    logger = Logger(cfg, out_dir, wandb_job_name=job_name)
+    logger = Logger(cfg, out_dir, job_name=job_name)
 
     if cfg.training.online_steps > 0:
         raise NotImplementedError("Online training is not implemented yet.")
