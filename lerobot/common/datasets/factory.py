@@ -73,7 +73,7 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
     resolve_delta_timestamps(cfg)
 
     image_transforms = None
-    if cfg.image_transforms.enable:
+    if cfg.training.image_transforms.enable:
         image_transforms = get_image_transforms(
             brightness_weight=cfg.brightness.weight,
             brightness_min_max=cfg.brightness.min_max,

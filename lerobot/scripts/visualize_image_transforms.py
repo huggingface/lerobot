@@ -26,11 +26,11 @@ def main(cfg, output_dir=Path("outputs/image_transforms")):
     for transform_name in transforms:
         for t in transforms:
             if t == transform_name:
-                cfg.image_transforms[t].weight = 1
+                cfg.training.image_transforms[t].weight = 1
             else:
-                cfg.image_transforms[t].weight = 0
+                cfg.training.image_transforms[t].weight = 0
 
-        transform = make_image_transforms(cfg.image_transforms)
+        transform = make_image_transforms(cfg.training.image_transforms)
         img = transform(frame)
         to_pil(img).save(output_dir / f"{transform_name}.png", quality=100)
 

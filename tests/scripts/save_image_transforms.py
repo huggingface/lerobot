@@ -12,7 +12,7 @@ from tests.utils import DEFAULT_CONFIG_PATH
 
 def save_default_config_transform(original_frame: torch.Tensor, output_dir: Path):
     cfg = init_hydra_config(DEFAULT_CONFIG_PATH)
-    cfg_tf = cfg.image_transforms
+    cfg_tf = cfg.training.image_transforms
     default_tf = get_image_transforms(
         brightness_weight=cfg_tf.brightness.weight,
         brightness_min_max=cfg_tf.brightness.min_max,
