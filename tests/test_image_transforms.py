@@ -56,38 +56,38 @@ def test_get_image_transforms_no_transform(img):
     torch.testing.assert_close(tf_actual(img), img)
 
 
-def test_get_image_transforms_brightness(img):
-    brightness_min_max = (0.5, 0.5)
-    tf_actual = get_image_transforms(brightness_weight=1.0, brightness_min_max=brightness_min_max)
-    tf_expected = v2.ColorJitter(brightness=brightness_min_max)
+@pytest.mark.parametrize("min_max", [(0.5, 0.5), (2.0, 2.0)])
+def test_get_image_transforms_brightness(img, min_max):
+    tf_actual = get_image_transforms(brightness_weight=1.0, brightness_min_max=min_max)
+    tf_expected = v2.ColorJitter(brightness=min_max)
     torch.testing.assert_close(tf_actual(img), tf_expected(img))
 
 
-def test_get_image_transforms_contrast(img):
-    contrast_min_max = (0.5, 0.5)
-    tf_actual = get_image_transforms(contrast_weight=1.0, contrast_min_max=contrast_min_max)
-    tf_expected = v2.ColorJitter(contrast=contrast_min_max)
+@pytest.mark.parametrize("min_max", [(0.5, 0.5), (2.0, 2.0)])
+def test_get_image_transforms_contrast(img, min_max):
+    tf_actual = get_image_transforms(contrast_weight=1.0, contrast_min_max=min_max)
+    tf_expected = v2.ColorJitter(contrast=min_max)
     torch.testing.assert_close(tf_actual(img), tf_expected(img))
 
 
-def test_get_image_transforms_saturation(img):
-    saturation_min_max = (0.5, 0.5)
-    tf_actual = get_image_transforms(saturation_weight=1.0, saturation_min_max=saturation_min_max)
-    tf_expected = v2.ColorJitter(saturation=saturation_min_max)
+@pytest.mark.parametrize("min_max", [(0.5, 0.5), (2.0, 2.0)])
+def test_get_image_transforms_saturation(img, min_max):
+    tf_actual = get_image_transforms(saturation_weight=1.0, saturation_min_max=min_max)
+    tf_expected = v2.ColorJitter(saturation=min_max)
     torch.testing.assert_close(tf_actual(img), tf_expected(img))
 
 
-def test_get_image_transforms_hue(img):
-    hue_min_max = (0.5, 0.5)
-    tf_actual = get_image_transforms(hue_weight=1.0, hue_min_max=hue_min_max)
-    tf_expected = v2.ColorJitter(hue=hue_min_max)
+@pytest.mark.parametrize("min_max", [(-0.25, -0.25), (0.25, 0.25)])
+def test_get_image_transforms_hue(img, min_max):
+    tf_actual = get_image_transforms(hue_weight=1.0, hue_min_max=min_max)
+    tf_expected = v2.ColorJitter(hue=min_max)
     torch.testing.assert_close(tf_actual(img), tf_expected(img))
 
 
-def test_get_image_transforms_sharpness(img):
-    sharpness_min_max = (0.5, 0.5)
-    tf_actual = get_image_transforms(sharpness_weight=1.0, sharpness_min_max=sharpness_min_max)
-    tf_expected = SharpnessJitter(sharpness=sharpness_min_max)
+@pytest.mark.parametrize("min_max", [(0.5, 0.5), (2.0, 2.0)])
+def test_get_image_transforms_sharpness(img, min_max):
+    tf_actual = get_image_transforms(sharpness_weight=1.0, sharpness_min_max=min_max)
+    tf_expected = SharpnessJitter(sharpness=min_max)
     torch.testing.assert_close(tf_actual(img), tf_expected(img))
 
 
