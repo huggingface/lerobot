@@ -237,9 +237,12 @@ def test_push_dataset_to_hub_invalid_repo_id():
 def test_push_dataset_to_hub_out_dir_force_override_false(tmpdir):
     tmpdir = Path(tmpdir)
     out_dir = tmpdir / "out"
+    raw_dir = tmpdir / "raw"
+    # mkdir to skip download
+    raw_dir.mkdir(parents=True, exist_ok=True)
     with pytest.raises(ValueError):
         push_dataset_to_hub(
-            raw_dir=Path("raw"),
+            raw_dir=raw_dir,
             raw_format="some_format",
             repo_id="user/dataset",
             local_dir=out_dir,
