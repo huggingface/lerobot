@@ -46,7 +46,7 @@ test-act-ete-train:
 		policy.n_action_steps=20 \
 		policy.chunk_size=20 \
 		training.batch_size=2 \
-    	training.image_transforms.enable=true \
+    	        training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/act/
 
 test-act-ete-eval:
@@ -74,7 +74,7 @@ test-act-ete-train-amp:
 		policy.chunk_size=20 \
 		training.batch_size=2 \
 		hydra.run.dir=tests/outputs/act_amp/ \
-    	training.image_transforms.enable=true \
+    	        training.image_transforms.enable=true \
 		use_amp=true
 
 test-act-ete-eval-amp:
@@ -102,7 +102,7 @@ test-diffusion-ete-train:
 		training.save_checkpoint=true \
 		training.save_freq=2 \
 		training.batch_size=2 \
-    	training.image_transforms.enable=true \
+    	        training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/diffusion/
 
 test-diffusion-ete-eval:
@@ -130,7 +130,7 @@ test-tdmpc-ete-train:
 		training.save_checkpoint=true \
 		training.save_freq=2 \
 		training.batch_size=2 \
-    	training.image_transforms.enable=true \
+    	        training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/tdmpc/
 
 test-tdmpc-ete-eval:
