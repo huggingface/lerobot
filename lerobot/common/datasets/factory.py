@@ -75,18 +75,18 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
     image_transforms = None
     if cfg.training.image_transforms.enable:
         image_transforms = get_image_transforms(
-            brightness_weight=cfg.brightness.weight,
-            brightness_min_max=cfg.brightness.min_max,
-            contrast_weight=cfg.contrast.weight,
-            contrast_min_max=cfg.contrast.min_max,
-            saturation_weight=cfg.saturation.weight,
-            saturation_min_max=cfg.saturation.min_max,
-            hue_weight=cfg.hue.weight,
-            hue_min_max=cfg.hue.min_max,
-            sharpness_weight=cfg.sharpness.weight,
-            sharpness_min_max=cfg.sharpness.min_max,
-            max_num_transforms=cfg.max_num_transforms,
-            random_order=cfg.random_order,
+            brightness_weight=cfg.training.image_transforms.brightness.weight,
+            brightness_min_max=cfg.training.image_transforms.brightness.min_max,
+            contrast_weight=cfg.training.image_transforms.contrast.weight,
+            contrast_min_max=cfg.training.image_transforms.contrast.min_max,
+            saturation_weight=cfg.training.image_transforms.saturation.weight,
+            saturation_min_max=cfg.training.image_transforms.saturation.min_max,
+            hue_weight=cfg.training.image_transforms.hue.weight,
+            hue_min_max=cfg.training.image_transforms.hue.min_max,
+            sharpness_weight=cfg.training.image_transforms.sharpness.weight,
+            sharpness_min_max=cfg.training.image_transforms.sharpness.min_max,
+            max_num_transforms=cfg.training.image_transforms.max_num_transforms,
+            random_order=cfg.training.image_transforms.random_order,
         )
 
     if isinstance(cfg.dataset_repo_id, str):
