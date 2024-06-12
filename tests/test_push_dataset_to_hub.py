@@ -308,7 +308,7 @@ def test_push_dataset_to_hub_format(tmpdir, raw_format, repo_id):
         ("dora_parquet", "cadene/wrist_gripper"),
     ],
 )
-@pytest.skip(
+@pytest.mark.skip(
     "Not compatible with our CI since it downloads raw datasets. Uncomment to test backward compatibility locally."
 )
 def test_push_dataset_to_hub_pusht_backward_compatibility(tmpdir, raw_format, repo_id):
