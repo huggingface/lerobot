@@ -32,7 +32,6 @@ import torchvision
 from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
-from torchvision.ops.misc import FrozenBatchNorm2d
 
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
@@ -75,7 +74,9 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
 
         self.model = ACT(config)
 
-        self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+        self.expected_image_keys = [
+            k for k in sorted(config.input_shapes) if k.startswith("observation.image")
+        ]
 
         self.reset()
 
@@ -135,7 +136,9 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
-        batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+        batch["observation.images"] = torch.stack(
+            [batch[k] for k in sorted(self.expected_image_keys)], dim=-4
+        )
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
@@ -228,13 +231,18 @@ class ACT(nn.Module):
         # Backbone for image feature extraction.
         backbone_model = getattr(torchvision.models, config.vision_backbone)(
             replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
-            weights=config.pretrained_backbone_weights,
-            norm_layer=FrozenBatchNorm2d,
+            weights="DEFAULT",  # config.pretrained_backbone_weights,
+            # norm_layer=FrozenBatchNorm2d,
         )
         # Note: The assumption here is that we are using a ResNet model (and hence layer4 is the final feature
         # map).
         # Note: The forward method of this returns a dict: {"feature_map": output}.
-        self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
+
+        # TODO thom fix this
+        # self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
+        self.backbone = IntermediateLayerGetter(
+            backbone_model, return_layers={"layer1": "0", "layer2": "1", "layer3": "2", "layer4": "3"}
+        )
 
         # Transformer (acts as VAE decoder when training with the variational objective).
         self.encoder = ACTEncoder(config)
@@ -294,7 +302,7 @@ class ACT(nn.Module):
         batch_size = batch["observation.images"].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
-        if self.config.use_vae and "action" in batch:
+        if False:  ###### TODO(thom) remove this self.config.use_vae and "action" in batch:
             # Prepare the input to the VAE encoder: [cls, *joint_space_configuration, *action_sequence].
             cls_embed = einops.repeat(
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size
@@ -346,7 +354,9 @@ class ACT(nn.Module):
         images = batch["observation.images"]
 
         for cam_index in range(images.shape[-4]):
-            cam_features = self.backbone(images[:, cam_index])["feature_map"]
+            torch.backends.cudnn.deterministic = True
+            cam_features = self.backbone(images[:, cam_index])
+            cam_features = cam_features[3]
             # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use buffer
             cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
             cam_features = self.encoder_img_feat_input_proj(cam_features)  # (B, C, h, w)

@@ -140,14 +140,14 @@ class Normalize(nn.Module):
                 std = buffer["std"]
                 assert not torch.isinf(mean).any(), _no_stats_error_str("mean")
                 assert not torch.isinf(std).any(), _no_stats_error_str("std")
-                batch[key] = (batch[key] - mean) / (std + 1e-8)
+                batch[key].sub_(mean).div_(std)
             elif mode == "min_max":
                 min = buffer["min"]
                 max = buffer["max"]
                 assert not torch.isinf(min).any(), _no_stats_error_str("min")
                 assert not torch.isinf(max).any(), _no_stats_error_str("max")
                 # normalize to [0,1]
-                batch[key] = (batch[key] - min) / (max - min + 1e-8)
+                batch[key] = (batch[key] - min) / (max - min)
                 # normalize to [-1, 1]
                 batch[key] = batch[key] * 2 - 1
             else:
