@@ -20,6 +20,7 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.push_dataset_to_hub.utils import save_images_concurrently
 from lerobot.common.datasets.video_utils import encode_video_frames
 from lerobot.scripts.push_dataset_to_hub import push_dataset_to_hub
+from tests.utils import require_package_arg
 
 
 def _mock_download_raw_pusht(raw_dir, num_frames=4, num_episodes=3):
@@ -250,18 +251,19 @@ def test_push_dataset_to_hub_out_dir_force_override_false(tmpdir):
         )
 
 
+@patch("lerobot.scripts.push_dataset_to_hub.download_raw", _mock_download_raw)
 @pytest.mark.parametrize(
-    "raw_format, repo_id",
+    "required_packages, raw_format, repo_id",
     [
-        ("pusht_zarr", "lerobot/pusht"),
-        ("xarm_pkl", "lerobot/xarm_lift_medium"),
-        ("aloha_hdf5", "lerobot/aloha_sim_insertion_scripted"),
-        ("umi_zarr", "lerobot/umi_cup_in_the_wild"),
-        ("dora_parquet", "cadene/wrist_gripper"),
+        (["gym-pusht"], "pusht_zarr", "lerobot/pusht"),
+        (None, "xarm_pkl", "lerobot/xarm_lift_medium"),
+        (None, "aloha_hdf5", "lerobot/aloha_sim_insertion_scripted"),
+        (["imagecodecs"], "umi_zarr", "lerobot/umi_cup_in_the_wild"),
+        (None, "dora_parquet", "cadene/wrist_gripper"),
     ],
 )
-@patch("lerobot.scripts.push_dataset_to_hub.download_raw", _mock_download_raw)
-def test_push_dataset_to_hub_format(tmpdir, raw_format, repo_id):
+@require_package_arg
+def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_id):
     num_episodes = 3
     tmpdir = Path(tmpdir)
 
