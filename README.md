@@ -233,9 +233,8 @@ Then point to your raw dataset folder (e.g. `data/aloha_static_pingpong_test_raw
 python lerobot/scripts/push_dataset_to_hub.py \
 --raw-dir data/aloha_static_pingpong_test_raw \
 --out-dir data \
---dataset-id aloha_static_pingpong_test \
---raw-format aloha_hdf5 \
---community-id lerobot
+--repo-id lerobot/aloha_static_pingpong_test \
+--raw-format aloha_hdf5
 ```
 
 See `python lerobot/scripts/push_dataset_to_hub.py --help` for more instructions.

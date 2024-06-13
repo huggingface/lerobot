@@ -145,7 +145,7 @@ def push_dataset_to_hub(
     # Check repo_id is well formated
     if len(repo_id.split("/")) != 2:
         raise ValueError(
-            f"`repo_id` is expected to contain a community or user id `/` the name of the dataset (e.g. 'lerobot/pusht'), but contains '{repo_id}'."
+            f"`repo_id` is expected to contain a community or user id `/` the name of the dataset (e.g. 'lerobot/pusht'), but instead contains '{repo_id}'."
         )
 
     # Robustify when `local_dir` is str instead of Path
