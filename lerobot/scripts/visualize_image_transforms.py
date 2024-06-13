@@ -106,6 +106,7 @@ def save_config_single_transforms(cfg, original_frame, output_dir):
     ]
     print("Individual transforms examples saved to:")
     for transform in transforms:
+        # Apply one transformation with random value in min_max range
         kwargs = {
             f"{transform}_weight": cfg[f"{transform}"].weight,
             f"{transform}_min_max": cfg[f"{transform}"].min_max,
