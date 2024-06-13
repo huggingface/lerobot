@@ -10,6 +10,7 @@ on:
       - "examples/**"
       - ".github/**"
       - "poetry.lock"
+      - "Makefile"
   push:
     branches:
       - main
@@ -19,6 +20,7 @@ on:
       - "examples/**"
       - ".github/**"
       - "poetry.lock"
+      - "Makefile"
 
 jobs:
   pytest:
