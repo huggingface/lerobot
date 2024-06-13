@@ -142,31 +142,46 @@ def push_dataset_to_hub(
     cache_dir: Path = Path("/tmp"),
     tests_data_dir: Path | None = None,
 ):
+    # Robustify when `raw_dir` is str instead of Path
+    raw_dir = Path(raw_dir)
+
+    if not raw_dir.exists():
+        raise NotADirectoryError(
+            f"{raw_dir} does not exists. Check your paths or run this command to download an existing raw dataset on the hub:"
+            f"python lerobot/common/datasets/push_dataset_to_hub/_download_raw.py --raw-dir your/raw/dir --repo-id your/repo/id_raw"
+        )
+
     # Check repo_id is well formated
     if len(repo_id.split("/")) != 2:
         raise ValueError(
             f"`repo_id` is expected to contain a community or user id `/` the name of the dataset (e.g. 'lerobot/pusht'), but instead contains '{repo_id}'."
         )
+    user_id, dataset_id = repo_id.split("/")
 
-    # Robustify when `local_dir` is str instead of Path
-    if local_dir is not None:
+    if local_dir:
+        # Robustify when `local_dir` is str instead of Path
         local_dir = Path(local_dir)
 
-    # Send warning if local_dir isn't well formated
-    if local_dir is not None:
-        user_id, dataset_id = repo_id.split("/")
+        # Send warning if local_dir isn't well formated
         if local_dir.parts[-2] != user_id or local_dir.parts[-1] != dataset_id:
             warnings.warn(
-                f"`local_dir` is expected to contain a community or user id `/` the name of the dataset that match the `repo_id` (e.g. 'data/lerobot/pusht'), but is {local_dir}.",
+                f"`local_dir` ({local_dir}) doesn't contain a community or user id `/` the name of the dataset that match the `repo_id` (e.g. 'data/lerobot/pusht'). Following this naming convention is advised, but not mandatory.",
                 stacklevel=1,
             )
 
-    # Check we don't override an existing `local_dir` by mistake
-    if local_dir is not None and local_dir.exists():
-        if force_override:
-            shutil.rmtree(local_dir)
-        else:
-            raise ValueError(f"`local_dir` already exists ({local_dir}). Use `--force-override 1`.")
+        # Check we don't override an existing `local_dir` by mistake
+        if local_dir.exists():
+            if force_override:
+                shutil.rmtree(local_dir)
+            else:
+                raise ValueError(f"`local_dir` already exists ({local_dir}). Use `--force-override 1`.")
+
+        meta_data_dir = local_dir / "meta_data"
+        videos_dir = local_dir / "videos"
+    else:
+        # Temporary directory used to store images, videos, meta_data
+        meta_data_dir = Path(cache_dir) / "meta_data"
+        videos_dir = Path(cache_dir) / "videos"
 
     # Download the raw dataset if available
     if not raw_dir.exists():
@@ -176,14 +191,6 @@ def push_dataset_to_hub(
         # TODO(rcadene, adilzouitine): implement auto_find_raw_format
         raise NotImplementedError()
         # raw_format = auto_find_raw_format(raw_dir)
-
-    if local_dir:
-        meta_data_dir = local_dir / "meta_data"
-        videos_dir = local_dir / "videos"
-    else:
-        # Temporary directory used to store images, videos, meta_data
-        meta_data_dir = Path(cache_dir) / "meta_data"
-        videos_dir = Path(cache_dir) / "videos"
 
     # convert dataset from original raw format to LeRobot format
     from_raw_to_lerobot_format = get_from_raw_to_lerobot_format_fn(raw_format)

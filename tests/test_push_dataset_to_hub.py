@@ -10,7 +10,6 @@ DATA_DIR=tests/data python -m pytest --run-skipped tests/test_push_dataset_to_hu
 """
 
 from pathlib import Path
-from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -215,19 +214,19 @@ def _mock_download_raw_dora(raw_dir, num_frames=6, num_episodes=3, fps=30):
         encode_video_frames(tmp_imgs_dir, video_path, fps)
 
 
-def _mock_download_raw(raw_dir, dataset_id):
-    if "wrist_gripper" in dataset_id:
+def _mock_download_raw(raw_dir, repo_id):
+    if "wrist_gripper" in repo_id:
         _mock_download_raw_dora(raw_dir)
-    elif "aloha" in dataset_id:
+    elif "aloha" in repo_id:
         _mock_download_raw_aloha(raw_dir)
-    elif "pusht" in dataset_id:
+    elif "pusht" in repo_id:
         _mock_download_raw_pusht(raw_dir)
-    elif "xarm" in dataset_id:
+    elif "xarm" in repo_id:
         _mock_download_raw_xarm(raw_dir)
-    elif "umi" in dataset_id:
+    elif "umi" in repo_id:
         _mock_download_raw_umi(raw_dir)
     else:
-        raise ValueError(dataset_id)
+        raise ValueError(repo_id)
 
 
 def test_push_dataset_to_hub_invalid_repo_id():
@@ -267,9 +266,9 @@ def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_
     num_episodes = 3
     tmpdir = Path(tmpdir)
 
-    _, dataset_id = repo_id.split("/")
+    raw_dir = tmpdir / f"{repo_id}_raw"
+    _mock_download_raw(raw_dir, repo_id)
 
-    raw_dir = tmpdir / f"{dataset_id}_raw"
     local_dir = tmpdir / repo_id
 
     lerobot_dataset = push_dataset_to_hub(
@@ -314,7 +313,7 @@ def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_
     ],
 )
 @pytest.mark.skip(
-    "Not compatible with our CI since it downloads raw datasets. Uncomment to test backward compatibility locally."
+    "Not compatible with our CI since it downloads raw datasets. Run with `DATA_DIR=tests/data python -m pytest --run-skipped tests/test_push_dataset_to_hub.py::test_push_dataset_to_hub_pusht_backward_compatibility`"
 )
 def test_push_dataset_to_hub_pusht_backward_compatibility(tmpdir, raw_format, repo_id):
     _, dataset_id = repo_id.split("/")
