@@ -106,6 +106,7 @@ def save_config_single_transforms(cfg, original_frame, output_dir):
     ]
     print("Individual transforms examples saved to:")
     for transform in transforms:
+        # Apply one transformation with random value in min_max range
         kwargs = {
             f"{transform}_weight": cfg[f"{transform}"].weight,
             f"{transform}_min_max": cfg[f"{transform}"].min_max,
@@ -117,6 +118,25 @@ def save_config_single_transforms(cfg, original_frame, output_dir):
         for i in range(1, N_EXAMPLES + 1):
             transformed_frame = tf(original_frame)
             to_pil(transformed_frame).save(output_dir_single / f"{i}.png", quality=100)
+
+        # Apply min transformation
+        min_value, max_value = cfg[f"{transform}"].min_max
+        kwargs = {
+            f"{transform}_weight": cfg[f"{transform}"].weight,
+            f"{transform}_min_max": (min_value, min_value),
+        }
+        tf = get_image_transforms(**kwargs)
+        transformed_frame = tf(original_frame)
+        to_pil(transformed_frame).save(output_dir_single / "min.png", quality=100)
+
+        # Apply max transformation
+        kwargs = {
+            f"{transform}_weight": cfg[f"{transform}"].weight,
+            f"{transform}_min_max": (max_value, max_value),
+        }
+        tf = get_image_transforms(**kwargs)
+        transformed_frame = tf(original_frame)
+        to_pil(transformed_frame).save(output_dir_single / "max.png", quality=100)
 
         print(f"    {output_dir_single}")
 
