@@ -126,7 +126,7 @@ def save_config_single_transforms(cfg, original_frame, output_dir):
         }
         tf = get_image_transforms(**kwargs)
         transformed_frame = tf(original_frame)
-        to_pil(transformed_frame).save(output_dir_single / f"{i}_min.png", quality=100)
+        to_pil(transformed_frame).save(output_dir_single / f"min.png", quality=100)
 
         # Apply max transformation
         kwargs = {
@@ -135,7 +135,7 @@ def save_config_single_transforms(cfg, original_frame, output_dir):
         }
         tf = get_image_transforms(**kwargs)
         transformed_frame = tf(original_frame)
-        to_pil(transformed_frame).save(output_dir_single / f"{i}_max.png", quality=100)
+        to_pil(transformed_frame).save(output_dir_single / f"max.png", quality=100)
 
         print(f"    {output_dir_single}")
 
