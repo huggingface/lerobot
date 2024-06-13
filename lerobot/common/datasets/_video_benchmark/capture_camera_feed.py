@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Capture video feed from a camera as raw images."""
+
 import argparse
 import datetime as dt
 from pathlib import Path
@@ -46,7 +47,7 @@ def display_and_save_video_stream(output_dir: Path, fps: int, width: int, height
             break
 
         cv2.imshow("Video Stream", frame)
-        cv2.imwrite(capture_dir / f"frame_{frame_index:06d}.png", frame)
+        cv2.imwrite(str(capture_dir / f"frame_{frame_index:06d}.png"), frame)
         frame_index += 1
 
         # Break the loop on 'q' key press
