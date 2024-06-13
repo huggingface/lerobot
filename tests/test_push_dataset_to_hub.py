@@ -250,7 +250,6 @@ def test_push_dataset_to_hub_out_dir_force_override_false(tmpdir):
         )
 
 
-@patch("lerobot.scripts.push_dataset_to_hub.download_raw", _mock_download_raw)
 @pytest.mark.parametrize(
     "required_packages, raw_format, repo_id",
     [
