@@ -17,7 +17,6 @@
 Contains utilities to process raw data format from dora-record
 """
 
-import logging
 import re
 from pathlib import Path
 
@@ -26,10 +25,10 @@ import torch
 from datasets import Dataset, Features, Image, Sequence, Value
 
 from lerobot.common.datasets.utils import (
+    calculate_episode_data_index,
     hf_transform_to_torch,
 )
 from lerobot.common.datasets.video_utils import VideoFrame
-from lerobot.common.utils.utils import init_logging
 
 
 def check_format(raw_dir) -> bool:
@@ -41,7 +40,7 @@ def check_format(raw_dir) -> bool:
     return True
 
 
-def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
+def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episodes: list[int] | None = None):
     # Load data stream that will be used as reference for the timestamps synchronization
     reference_files = list(raw_dir.glob("observation.images.cam_*.parquet"))
     if len(reference_files) == 0:
@@ -122,8 +121,7 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
         raise ValueError(f"Episodes indices go from {ep_ids} instead of {expected_ep_ids}")
 
     # Create symlink to raw videos directory (that needs to be absolute not relative)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    videos_dir = out_dir / "videos"
+    videos_dir.parent.mkdir(parents=True, exist_ok=True)
     videos_dir.symlink_to((raw_dir / "videos").absolute())
 
     # sanity check the video paths are well formated
@@ -156,16 +154,7 @@ def load_from_raw(raw_dir: Path, out_dir: Path, fps: int):
         else:
             raise ValueError(key)
 
-    # Get the episode index containing for each unique episode index
-    first_ep_index_df = df.groupby("episode_index").agg(start_index=("index", "first")).reset_index()
-    from_ = first_ep_index_df["start_index"].tolist()
-    to_ = from_[1:] + [len(df)]
-    episode_data_index = {
-        "from": from_,
-        "to": to_,
-    }
-
-    return data_dict, episode_data_index
+    return data_dict
 
 
 def to_hf_dataset(data_dict, video) -> Dataset:
@@ -203,12 +192,13 @@ def to_hf_dataset(data_dict, video) -> Dataset:
     return hf_dataset
 
 
-def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=True, debug=False):
-    init_logging()
-
-    if debug:
-        logging.warning("debug=True not implemented. Falling back to debug=False.")
-
+def from_raw_to_lerobot_format(
+    raw_dir: Path,
+    videos_dir: Path,
+    fps: int | None = None,
+    video: bool = True,
+    episodes: list[int] | None = None,
+):
     # sanity check
     check_format(raw_dir)
 
@@ -220,9 +210,9 @@ def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=Tru
     if not video:
         raise NotImplementedError()
 
-    data_df, episode_data_index = load_from_raw(raw_dir, out_dir, fps)
+    data_df = load_from_raw(raw_dir, videos_dir, fps, episodes)
     hf_dataset = to_hf_dataset(data_df, video)
-
+    episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
         "fps": fps,
         "video": video,
