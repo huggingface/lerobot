@@ -142,21 +142,20 @@ def push_dataset_to_hub(
     cache_dir: Path = Path("/tmp"),
     tests_data_dir: Path | None = None,
 ):
-    # Robustify when `raw_dir` is str instead of Path
-    raw_dir = Path(raw_dir)
-
-    if not raw_dir.exists():
-        raise NotADirectoryError(
-            f"{raw_dir} does not exists. Check your paths or run this command to download an existing raw dataset on the hub:"
-            f"python lerobot/common/datasets/push_dataset_to_hub/_download_raw.py --raw-dir your/raw/dir --repo-id your/repo/id_raw"
-        )
-
     # Check repo_id is well formated
     if len(repo_id.split("/")) != 2:
         raise ValueError(
             f"`repo_id` is expected to contain a community or user id `/` the name of the dataset (e.g. 'lerobot/pusht'), but instead contains '{repo_id}'."
         )
     user_id, dataset_id = repo_id.split("/")
+
+    # Robustify when `raw_dir` is str instead of Path
+    raw_dir = Path(raw_dir)
+    if not raw_dir.exists():
+        raise NotADirectoryError(
+            f"{raw_dir} does not exists. Check your paths or run this command to download an existing raw dataset on the hub:"
+            f"python lerobot/common/datasets/push_dataset_to_hub/_download_raw.py --raw-dir your/raw/dir --repo-id your/repo/id_raw"
+        )
 
     if local_dir:
         # Robustify when `local_dir` is str instead of Path

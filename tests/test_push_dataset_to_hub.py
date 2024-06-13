@@ -229,9 +229,9 @@ def _mock_download_raw(raw_dir, repo_id):
         raise ValueError(repo_id)
 
 
-def test_push_dataset_to_hub_invalid_repo_id():
+def test_push_dataset_to_hub_invalid_repo_id(tmpdir):
     with pytest.raises(ValueError):
-        push_dataset_to_hub(Path("raw"), "raw_format", "invalid_repo_id")
+        push_dataset_to_hub(Path(tmpdir), "raw_format", "invalid_repo_id")
 
 
 def test_push_dataset_to_hub_out_dir_force_override_false(tmpdir):
