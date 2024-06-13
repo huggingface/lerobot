@@ -13,6 +13,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Assess the performance of video decoding in various configurations.
+
+This script will run different video decoding benchmarks where one parameter varies at a time.
+These parameters and theirs values are specified in the BENCHMARKS dict.
+
+All of these benchmarks are evaluated within different timestamps modes corresponding to different frame-loading scenarios:
+    - `1_frame`: 1 single frame is loaded.
+    - `2_frames`: 2 consecutive frames are loaded.
+    - `2_frames_4_space`: 2 frames separated by 4 frames are loaded.
+    - `6_frames`: 6 frames are loaded.
+
+These benchmarks are run on the first episode of each dataset specified in DATASET_REPO_IDS.
+Note: These datasets need to be image datasets, not video datasets.
+"""
+
 import json
 import random
 import shutil
@@ -29,6 +44,23 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.video_utils import (
     decode_video_frames_torchvision,
 )
+
+OUTPUT_DIR = Path("tmp/run_video_benchmark")
+DRY_RUN = False
+
+DATASET_REPO_IDS = ["lerobot/pusht_image", "aliberts/aloha_mobile_shrimp_image"]
+TIMESTAMPS_MODES = [
+    "1_frame",
+    "2_frames",
+    "2_frames_4_space",
+    "6_frames",
+]
+BENCHMARKS = {
+    "pix_fmt": ["yuv420p", "yuv444p"],
+    "g": [1, 2, 3, 4, 5, 6, 10, 15, 20, 40, 100, None],
+    "crf": [0, 5, 10, 15, 20, None, 25, 30, 40, 50],
+    "backend": ["pyav", "video_reader"],
+}
 
 
 def get_directory_size(directory):
@@ -56,6 +88,10 @@ def run_video_benchmark(
 
     # TODO(rcadene): rewrite with hardcoding of original images and episodes
     dataset = LeRobotDataset(repo_id)
+    if dataset.video:
+        raise ValueError(
+            f"Use only image dataset for running this benchmark. Video dataset provided: {repo_id}"
+        )
 
     # Get fps
     fps = dataset.fps
@@ -306,30 +342,16 @@ def best_study(repo_ids: list, bench_dir: Path, timestamps_mode: str, dry_run: b
 
 
 def main():
-    out_dir = Path("tmp/run_video_benchmark")
-    dry_run = False
-    repo_ids = ["lerobot/pusht_image", "aliberts/aloha_mobile_shrimp_image"]
-    timestamps_modes = [
-        "1_frame",
-        "2_frames",
-        "2_frames_4_space",
-        "6_frames",
-    ]
-    for timestamps_mode in timestamps_modes:
-        bench_dir = out_dir / timestamps_mode
+    for timestamps_mode in TIMESTAMPS_MODES:
+        bench_dir = OUTPUT_DIR / timestamps_mode
 
         print(f"### `{timestamps_mode}`")
         print()
 
-        one_variable_study("pix_fmt", ["yuv420p", "yuv444p"], repo_ids, bench_dir, timestamps_mode, dry_run)
-        one_variable_study(
-            "g", [1, 2, 3, 4, 5, 6, 10, 15, 20, 40, 100, None], repo_ids, bench_dir, timestamps_mode, dry_run
-        )
-        one_variable_study(
-            "crf", [0, 5, 10, 15, 20, None, 25, 30, 40, 50], repo_ids, bench_dir, timestamps_mode, dry_run
-        )
-        one_variable_study("backend", ["pyav", "video_reader"], repo_ids, bench_dir, timestamps_mode, dry_run)
-        best_study(repo_ids, bench_dir, timestamps_mode, dry_run)
+        for name, values in BENCHMARKS.items():
+            one_variable_study(name, values, DATASET_REPO_IDS, bench_dir, timestamps_mode, DRY_RUN)
+
+        best_study(DATASET_REPO_IDS, bench_dir, timestamps_mode, DRY_RUN)
 
 
 if __name__ == "__main__":
