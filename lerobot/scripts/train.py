@@ -24,6 +24,7 @@ import torch
 from deepdiff import DeepDiff
 from omegaconf import DictConfig, OmegaConf
 from termcolor import colored
+from torch import nn
 from torch.cuda.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
@@ -150,6 +151,7 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
     grad_norm = info["grad_norm"]
     lr = info["lr"]
     update_s = info["update_s"]
+    dataloading_s = info["dataloading_s"]
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
@@ -170,6 +172,7 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
         f"lr:{lr:0.1e}",
         # in seconds
         f"updt_s:{update_s:.3f}",
+        f"data_s:{dataloading_s:.3f}",  # if not ~0, you are bottlenecked by cpu or io
     ]
     logging.info(" ".join(log_items))
 
@@ -290,6 +293,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
+    eval_env = None
     if cfg.training.eval_freq > 0:
         logging.info("make_env")
         eval_env = make_env(cfg)
@@ -300,7 +304,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         dataset_stats=offline_dataset.stats if not cfg.resume else None,
         pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
     )
-
+    assert isinstance(policy, nn.Module)
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
@@ -325,14 +329,18 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     # Note: this helper will be used in offline and online training loops.
     def evaluate_and_checkpoint_if_needed(step):
+        _num_digits = max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
+        step_identifier = f"{step:0{_num_digits}d}"
+
         if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
+                assert eval_env is not None
                 eval_info = eval_policy(
                     eval_env,
                     policy,
                     cfg.eval.n_episodes,
-                    video_dir=Path(out_dir) / "eval",
+                    videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
                 )
@@ -350,9 +358,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 policy,
                 optimizer,
                 lr_scheduler,
-                identifier=str(step).zfill(
-                    max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
-                ),
+                identifier=step_identifier,
             )
             logging.info("Resume training")
 
@@ -382,7 +388,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     for _ in range(step, cfg.training.offline_steps):
         if step == 0:
             logging.info("Start offline training on a fixed dataset")
+
+        start_time = time.perf_counter()
         batch = next(dl_iter)
+        dataloading_s = time.perf_counter() - start_time
 
         for key in batch:
             batch[key] = batch[key].to(device, non_blocking=True)
@@ -397,6 +406,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             use_amp=cfg.use_amp,
         )
 
+        train_info["dataloading_s"] = dataloading_s
+
         if step % cfg.training.log_freq == 0:
             log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline=True)
 
@@ -406,7 +417,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
         step += 1
 
-    eval_env.close()
+    if eval_env:
+        eval_env.close()
     logging.info("End of training")
 
 
