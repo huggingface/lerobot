@@ -27,6 +27,7 @@ from PIL import Image as PILImage
 
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, save_images_concurrently
 from lerobot.common.datasets.utils import (
+    calculate_episode_data_index,
     hf_transform_to_torch,
 )
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
@@ -54,37 +55,42 @@ def check_format(raw_dir):
         assert all(len(nested_dict[subkey]) == expected_len for subkey in subkeys if subkey in nested_dict)
 
 
-def load_from_raw(raw_dir, out_dir, fps, video, debug):
+def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episodes: list[int] | None = None):
     pkl_path = raw_dir / "buffer.pkl"
 
     with open(pkl_path, "rb") as f:
         pkl_data = pickle.load(f)
 
-    ep_dicts = []
-    episode_data_index = {"from": [], "to": []}
-
-    id_from = 0
-    id_to = 0
-    ep_idx = 0
-    total_frames = pkl_data["actions"].shape[0]
-    for i in tqdm.tqdm(range(total_frames)):
-        id_to += 1
-
-        if not pkl_data["dones"][i]:
+    # load data indices from which each episode starts and ends
+    from_ids, to_ids = [], []
+    from_idx, to_idx = 0, 0
+    for done in pkl_data["dones"]:
+        to_idx += 1
+        if not done:
             continue
+        from_ids.append(from_idx)
+        to_ids.append(to_idx)
+        from_idx = to_idx
 
-        num_frames = id_to - id_from
+    num_episodes = len(from_ids)
 
-        image = torch.tensor(pkl_data["observations"]["rgb"][id_from:id_to])
+    ep_dicts = []
+    ep_ids = episodes if episodes else range(num_episodes)
+    for ep_idx, selected_ep_idx in tqdm.tqdm(enumerate(ep_ids)):
+        from_idx = from_ids[selected_ep_idx]
+        to_idx = to_ids[selected_ep_idx]
+        num_frames = to_idx - from_idx
+
+        image = torch.tensor(pkl_data["observations"]["rgb"][from_idx:to_idx])
         image = einops.rearrange(image, "b c h w -> b h w c")
-        state = torch.tensor(pkl_data["observations"]["state"][id_from:id_to])
-        action = torch.tensor(pkl_data["actions"][id_from:id_to])
+        state = torch.tensor(pkl_data["observations"]["state"][from_idx:to_idx])
+        action = torch.tensor(pkl_data["actions"][from_idx:to_idx])
         # TODO(rcadene): we have a missing last frame which is the observation when the env is done
         # it is critical to have this frame for tdmpc to predict a "done observation/state"
-        # next_image = torch.tensor(pkl_data["next_observations"]["rgb"][id_from:id_to])
-        # next_state = torch.tensor(pkl_data["next_observations"]["state"][id_from:id_to])
-        next_reward = torch.tensor(pkl_data["rewards"][id_from:id_to])
-        next_done = torch.tensor(pkl_data["dones"][id_from:id_to])
+        # next_image = torch.tensor(pkl_data["next_observations"]["rgb"][from_idx:to_idx])
+        # next_state = torch.tensor(pkl_data["next_observations"]["state"][from_idx:to_idx])
+        next_reward = torch.tensor(pkl_data["rewards"][from_idx:to_idx])
+        next_done = torch.tensor(pkl_data["dones"][from_idx:to_idx])
 
         ep_dict = {}
 
@@ -92,12 +98,12 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
         img_key = "observation.image"
         if video:
             # save png images in temporary directory
-            tmp_imgs_dir = out_dir / "tmp_images"
+            tmp_imgs_dir = videos_dir / "tmp_images"
             save_images_concurrently(imgs_array, tmp_imgs_dir)
 
             # encode images to a mp4 video
             fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
-            video_path = out_dir / "videos" / fname
+            video_path = videos_dir / fname
             encode_video_frames(tmp_imgs_dir, video_path, fps)
 
             # clean temporary images directory
@@ -119,18 +125,11 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
         ep_dict["next.done"] = next_done
         ep_dicts.append(ep_dict)
 
-        episode_data_index["from"].append(id_from)
-        episode_data_index["to"].append(id_from + num_frames)
-
-        id_from = id_to
-        ep_idx += 1
-
-        # process first episode only
-        if debug:
-            break
-
     data_dict = concatenate_episodes(ep_dicts)
-    return data_dict, episode_data_index
+
+    total_frames = data_dict["frame_index"].shape[0]
+    data_dict["index"] = torch.arange(0, total_frames, 1)
+    return data_dict
 
 
 def to_hf_dataset(data_dict, video):
@@ -161,16 +160,22 @@ def to_hf_dataset(data_dict, video):
     return hf_dataset
 
 
-def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=True, debug=False):
+def from_raw_to_lerobot_format(
+    raw_dir: Path,
+    videos_dir: Path,
+    fps: int | None = None,
+    video: bool = True,
+    episodes: list[int] | None = None,
+):
     # sanity check
     check_format(raw_dir)
 
     if fps is None:
         fps = 15
 
-    data_dict, episode_data_index = load_from_raw(raw_dir, out_dir, fps, video, debug)
+    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes)
     hf_dataset = to_hf_dataset(data_dict, video)
-
+    episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
         "fps": fps,
         "video": video,
