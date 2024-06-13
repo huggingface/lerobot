@@ -1250,7 +1250,8 @@ class EuclideanCodebook(nn.Module):
             self.expire_codes_(x)
 
         if needs_codebook_dim:
-            quantize, embed_ind = (rearrange(t, "1 ... -> ...") for t in (quantize, embed_ind))
+            quantize, embed_ind = tuple(rearrange(t, "1 ... -> ...") for t in (quantize, embed_ind))
+            # quantize, embed_ind = (rearrange(t, "1 ... -> ...") for t in (quantize, embed_ind))
 
         dist = unpack_one(dist, ps, "h * d")
 
