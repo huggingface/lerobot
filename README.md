@@ -228,13 +228,13 @@ To add a dataset to the hub, you need to login using a write-access token, which
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-Then move your dataset folder in `data` directory (e.g. `data/aloha_static_pingpong_test`), and push your dataset to the hub with:
+Then point to your raw dataset folder (e.g. `data/aloha_static_pingpong_test_raw`), and push your dataset to the hub with:
 ```bash
 python lerobot/scripts/push_dataset_to_hub.py \
---data-dir data \
---dataset-id aloha_static_pingpong_test \
---raw-format aloha_hdf5 \
---community-id lerobot
+--raw-dir data/aloha_static_pingpong_test_raw \
+--out-dir data \
+--repo-id lerobot/aloha_static_pingpong_test \
+--raw-format aloha_hdf5
 ```
 
 See `python lerobot/scripts/push_dataset_to_hub.py --help` for more instructions.
