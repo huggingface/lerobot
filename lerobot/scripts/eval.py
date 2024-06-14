@@ -197,7 +197,6 @@ def rollout(
             else:
                 next_action = action.copy()
                 is_dropped_cycle = True
-            next_action = action_sequence[1] if len(action_sequence) > 1 else action.copy()
         else:
             # When simulating latency, all steps after  the first must use the `next_action` from the previous
             # step.
