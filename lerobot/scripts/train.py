@@ -44,27 +44,13 @@ from lerobot.common.utils.utils import (
 )
 from lerobot.scripts.eval import eval_policy
 
-################## TODO remove this part
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-torch.use_deterministic_algorithms(True)
-##################
-
 
 def make_optimizer_and_scheduler(cfg, policy):
     if cfg.policy.name == "act":
         optimizer_params_dicts = [
+            {"params": [p for n, p in policy.named_parameters() if "backbone" not in n and p.requires_grad]},
             {
-                "params": [
-                    p
-                    for n, p in policy.named_parameters()
-                    if not n.startswith("backbone") and p.requires_grad
-                ]
-            },
-            {
-                "params": [
-                    p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad
-                ],
+                "params": [p for n, p in policy.named_parameters() if "backbone" in n and p.requires_grad],
                 "lr": cfg.training.lr_backbone,
             },
         ]
@@ -107,57 +93,63 @@ def update_policy(
     use_amp: bool = False,
 ):
     """Returns a dictionary of items for logging."""
+    ################## TODO remove this part
+    torch.backends.cudnn.deterministic = True
+    # torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cuda.matmul.allow_tf32 = True
+    ##################
     start_time = time.perf_counter()
     device = get_device_from_parameters(policy)
     policy.train()
 
-    ################## TODO remove this part
-    pretrained_policy_name_or_path = (
-        "/home/thomwolf/Documents/Github/ACT/checkpoints/blue_red_sort_raw/initial_state"
-    )
-    from lerobot.common.policies.act.modeling_act import ACTPolicy
+    # ################## TODO remove this part
+    # pretrained_policy_name_or_path = (
+    #     "/home/thomwolf/Documents/Github/ACT/checkpoints/blue_red_sort_raw/initial_state"
+    # )
+    # from lerobot.common.policies.act.modeling_act import ACTPolicy
 
-    policy_cls = ACTPolicy
-    policy_cfg = policy.config
-    policy = policy_cls(policy_cfg)
-    policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
-    policy.to(device)
+    # policy_cls = ACTPolicy
+    # policy_cfg = policy.config
+    # policy = policy_cls(policy_cfg)
+    # policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
+    # policy.to(device)
 
-    policy.eval()  # No dropout
-    ##################
+    # policy.eval()  # No dropout
+    # ##################
 
     with torch.autocast(device_type=device.type) if use_amp else nullcontext():
-        ########################### TODO remove this part
-        batch = torch.load("/home/thomwolf/Documents/Github/ACT/batch_save_converted.pt", map_location=device)
+        # ########################### TODO remove this part
+        # batch = torch.load("/home/thomwolf/Documents/Github/ACT/batch_save_converted.pt", map_location=device)
 
-        # print some stats
-        def model_stats(model):
-            na = [n for n, a in model.named_parameters() if "normalize_" not in n]
-            me = [a.mean().item() for n, a in model.named_parameters() if "normalize_" not in n]
-            print(na[me.index(min(me))], min(me))
-            print(sum(me))
-            mi = [a.min().item() for n, a in model.named_parameters() if "normalize_" not in n]
-            print(na[mi.index(min(mi))], min(mi))
-            print(sum(mi))
-            ma = [a.max().item() for n, a in model.named_parameters() if "normalize_" not in n]
-            print(na[ma.index(max(ma))], max(ma))
-            print(sum(ma))
+        # # print some stats
+        # def model_stats(model):
+        #     na = [n for n, a in model.named_parameters() if "normalize_" not in n]
+        #     me = [a.mean().item() for n, a in model.named_parameters() if "normalize_" not in n]
+        #     print(na[me.index(min(me))], min(me))
+        #     print(sum(me))
+        #     mi = [a.min().item() for n, a in model.named_parameters() if "normalize_" not in n]
+        #     print(na[mi.index(min(mi))], min(mi))
+        #     print(sum(mi))
+        #     ma = [a.max().item() for n, a in model.named_parameters() if "normalize_" not in n]
+        #     print(na[ma.index(max(ma))], max(ma))
+        #     print(sum(ma))
 
-        model_stats(policy)
+        # model_stats(policy)
 
-        def batch_stats(data):
-            print(min(d.min() for d in data))
-            print(max(d.max() for d in data))
+        # def batch_stats(data):
+        #     print(min(d.min() for d in data))
+        #     print(max(d.max() for d in data))
 
-        data = (
-            batch["observation.images.front"],
-            batch["observation.images.top"],
-            batch["observation.state"],
-            batch["action"],
-        )
-        batch_stats(data)
+        # data = (
+        #     batch["observation.images.front"],
+        #     batch["observation.images.top"],
+        #     batch["observation.state"],
+        #     batch["action"],
+        # )
+        # batch_stats(data)
 
-        ###########################
+        # ###########################
 
         output_dict = policy.forward(batch)
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)

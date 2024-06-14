@@ -238,11 +238,10 @@ class ACT(nn.Module):
         # map).
         # Note: The forward method of this returns a dict: {"feature_map": output}.
 
-        # TODO thom fix this
-        # self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
-        self.backbone = IntermediateLayerGetter(
-            backbone_model, return_layers={"layer1": "0", "layer2": "1", "layer3": "2", "layer4": "3"}
-        )
+        self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
+        # self.backbone = IntermediateLayerGetter(
+        #     backbone_model, return_layers={"layer1": "0", "layer2": "1", "layer3": "2", "layer4": "3"}
+        # )
 
         # Transformer (acts as VAE decoder when training with the variational objective).
         self.encoder = ACTEncoder(config)
@@ -302,7 +301,7 @@ class ACT(nn.Module):
         batch_size = batch["observation.images"].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
-        if False:  ###### TODO(thom) remove this self.config.use_vae and "action" in batch:
+        if self.config.use_vae and "action" in batch:
             # Prepare the input to the VAE encoder: [cls, *joint_space_configuration, *action_sequence].
             cls_embed = einops.repeat(
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size
@@ -356,7 +355,7 @@ class ACT(nn.Module):
         for cam_index in range(images.shape[-4]):
             torch.backends.cudnn.deterministic = True
             cam_features = self.backbone(images[:, cam_index])
-            cam_features = cam_features[3]
+            cam_features = cam_features["feature_map"]
             # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use buffer
             cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
             cam_features = self.encoder_img_feat_input_proj(cam_features)  # (B, C, h, w)

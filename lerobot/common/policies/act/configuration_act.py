@@ -131,7 +131,7 @@ class ACTConfig:
     # See this issue https://github.com/tonyzhaozh/act/issues/25#issue-2258740521.
     # As a consequence we also remove the final, unused layer normalization, by default
     n_decoder_layers: int = 1
-    decoder_norm: bool = False
+    decoder_norm: bool = True
     # VAE.
     use_vae: bool = True
     latent_dim: int = 32

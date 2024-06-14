@@ -48,6 +48,7 @@ training:
 eval:
   n_episodes: 1
   batch_size: 1
+  max_episodes_rendered: 0
 
 # See `configuration_act.py` for more details.
 policy:
