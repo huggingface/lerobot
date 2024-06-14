@@ -261,7 +261,8 @@ class PolicyRolloutWrapper:
                 timeout_ = None if timeout is None else timeout - (time.perf_counter() - start) - 1e-3
                 self._future.result(timeout=timeout_)
             except TimeoutError:
-                logging.warning("Your inference is begining to fall behind your rollout loop!")
+                if ret is None:
+                    logging.warning("Your inference is begining to fall behind your rollout loop!")
                 return ret
 
         # Start the inference job.
