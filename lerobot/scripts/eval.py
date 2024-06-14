@@ -192,16 +192,21 @@ def rollout(
             action = action_sequence[0]
             # We also need to store the next action. If the next action is not available, we adopt the
             # strategy of repeating the current action.
+            if len(action_sequence) > 1:
+                next_action = action_sequence[1].copy()
+            else:
+                next_action = action.copy()
+                is_dropped_cycle = True
             next_action = action_sequence[1] if len(action_sequence) > 1 else action.copy()
         else:
             # When simulating latency, all steps after  the first must use the `next_action` from the previous
             # step.
             action = next_action.copy()
-            next_action = (
-                action_sequence[1]
-                if action_sequence is not None and len(action_sequence) > 1
-                else action.copy()
-            )
+            if action_sequence is not None and len(action_sequence) > 1:
+                next_action = action_sequence[1].copy()
+            else:
+                next_action = action.copy()
+                is_dropped_cycle = True
 
         observation, reward, terminated, truncated, info = env.step(action)
 
@@ -658,8 +663,8 @@ def main(
             start_seed=hydra_cfg.seed,
             do_simulate_latency=hydra_cfg.eval.do_simulate_latency,
             n_action_buffer=hydra_cfg.eval.n_action_buffer,
-            enable_progbar=False,
-            enable_inner_progbar=False,
+            enable_progbar=True,
+            enable_inner_progbar=True,
         )
     print(info["aggregated"])
 

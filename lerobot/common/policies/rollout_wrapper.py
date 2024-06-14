@@ -251,7 +251,6 @@ class PolicyRolloutWrapper:
         want_to_run_inference = ret is None or (ret is not None and ret.shape[0] - 1 <= self.n_action_buffer)
         # Return an action right away if we know we don't want to run inference.
         if not want_to_run_inference:
-            print("CACHE")
             return ret
 
         # We can't run inference if a previous inference is already running.
@@ -262,20 +261,9 @@ class PolicyRolloutWrapper:
                 timeout_ = None if timeout is None else timeout - (time.perf_counter() - start) - 1e-3
                 self._future.result(timeout=timeout_)
             except TimeoutError:
-                if ret is None:
-                    # TODO(now): Decide if error or return
-                    # raise RuntimeError(
-                    #     "Inference is too slow to keep up with the rollout! There were no cached actions "
-                    #     "matching the requested timestamps and a previous inference run was still in progress."
-                    # ) from e
-                    logging.warning("Your inference is begining to fall behind your rollout loop!")
-                    return None
-                else:
-                    logging.warning("Your inference is begining to fall behind your rollout loop!")
-                    print("CACHE")
-                    return ret
+                logging.warning("Your inference is begining to fall behind your rollout loop!")
+                return ret
 
-        print("INFERENCE")
         # Start the inference job.
         self._future = self._threadpool_executor.submit(
             self.run_inference,
