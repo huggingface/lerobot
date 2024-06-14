@@ -10,6 +10,7 @@ on:
       - "examples/**"
       - ".github/**"
       - "poetry.lock"
+      - "Makefile"
   push:
     branches:
       - main
@@ -19,6 +20,7 @@ on:
       - "examples/**"
       - ".github/**"
       - "poetry.lock"
+      - "Makefile"
 
 jobs:
   pytest:
@@ -32,8 +34,8 @@ jobs:
         with:
           lfs: true  # Ensure LFS files are pulled
 
-      - name: Install EGL
-        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
+      - name: Install apt dependencies
+        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev ffmpeg
 
       - name: Install poetry
         run: |
@@ -70,6 +72,9 @@ jobs:
         with:
           lfs: true  # Ensure LFS files are pulled
 
+      - name: Install apt dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Install poetry
         run: |
           pipx install poetry && poetry config virtualenvs.in-project true
@@ -104,7 +109,7 @@ jobs:
         with:
           lfs: true  # Ensure LFS files are pulled
 
-      - name: Install EGL
+      - name: Install apt dependencies
         run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
 
       - name: Install poetry

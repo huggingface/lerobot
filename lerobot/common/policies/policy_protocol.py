@@ -57,7 +57,7 @@ class Policy(Protocol):
         other items should be logging-friendly, native Python types.
         """
 
-    def select_action(self, batch: dict[str, Tensor]):
+    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Return one action to run in the environment (potentially in batch mode).
 
         When the model uses a history of observations, or outputs a sequence of actions, this method deals

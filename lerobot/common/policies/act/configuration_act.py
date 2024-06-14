@@ -26,11 +26,10 @@ class ACTConfig:
     Those are: `input_shapes` and 'output_shapes`.
 
     Notes on the inputs and outputs:
-        - "observation.state" is required as an input key.
         - At least one key starting with "observation.image is required as an input.
-        - If there are multiple keys beginning with "observation.image" they are treated as multiple camera
-          views.
-          Right now we only support all images having the same shape.
+        - If there are multiple keys beginning with "observation.images." they are treated as multiple camera
+          views. Right now we only support all images having the same shape.
+        - May optionally work without an "observation.state" key for the proprioceptive robot state.
         - "action" is required as an output key.
 
     Args:
