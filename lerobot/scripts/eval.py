@@ -52,6 +52,7 @@ from datetime import datetime as dt
 from pathlib import Path
 from typing import Callable
 
+import cv2
 import einops
 import gymnasium as gym
 import numpy as np
@@ -71,7 +72,7 @@ from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.logger import log_output_dir
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import Policy
-from lerobot.common.policies.utils import get_device_from_parameters
+from lerobot.common.policies.rollout_wrapper import PolicyRolloutWrapper
 from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 
@@ -82,6 +83,8 @@ def rollout(
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
+    do_simulate_latency: bool = False,
+    n_action_buffer: int = 0,
     enable_progbar: bool = False,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
@@ -112,15 +115,30 @@ def rollout(
             are returned optionally because they typically take more memory to cache. Defaults to False.
         render_callback: Optional rendering callback to be used after the environments are reset, and after
             every step.
+        do_simulate_latency: Whether to simulate latency between observation and action execution. Here, we
+            choose to simulate a specific setting where the observation and action happen on the same clock,
+            cycle. Therefore, any action chosen on the basis of an action needs to wait till at least the
+            next clock cycle.
+        n_action_buffer: Controls pre-emptive inference which is useful for rolling out in real-time (or
+            when simulating latency). See PolicyRolloutWrapper for more details.
         enable_progbar: Enable a progress bar over rollout steps.
     Returns:
         The dictionary described above.
     """
     assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
-    device = get_device_from_parameters(policy)
+    fps = env.unwrapped.metadata["render_fps"]
+    policy_rollout_wrapper = PolicyRolloutWrapper(policy, fps=fps, n_action_buffer=n_action_buffer)
 
     # Reset the policy and environments.
-    policy.reset()
+    policy_rollout_wrapper.reset()
+
+    # For simulating latency, when calling the rollout wrapper we need to provide a timeout of 1 / fps minus a
+    # small margin to allow time to actually send the action to the controller (for now this is hard-coded as
+    # 1 ms).
+    base_timeout = 1 / fps
+    timeout_margin = 1e-3
+    if do_simulate_latency:
+        assert timeout_margin < base_timeout, "FPS is too high for simulating latency. See inline notes."
 
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
@@ -136,6 +154,7 @@ def rollout(
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
     max_steps = env.call("_max_episode_steps")[0]
+    is_dropped_cycle = False  # track whether the policy failed to return an action
     progbar = trange(
         max_steps,
         desc=f"Running rollout with at most {max_steps} steps",
@@ -148,19 +167,46 @@ def rollout(
         if return_observations:
             all_observations.append(deepcopy(observation))
 
-        observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
-
+        # Provide the policy with the observation and get the most current action sequence. If simulating
+        # latency, don't provide a timeout on the first step. We will pretend the environment is static
+        # to begin with.
         with torch.inference_mode():
-            action = policy.select_action(observation)
+            action_sequence = policy_rollout_wrapper.provide_observation_get_actions(
+                observation,
+                observation_timestamp=step / fps,
+                first_action_timestamp=step / fps,
+                strict_observation_timestamps=step > 0,
+                timeout=None if step == 0 or not do_simulate_latency else base_timeout - timeout_margin,
+            )
+            if action_sequence is not None:
+                action_sequence = action_sequence.numpy()
 
-        # Convert to CPU / numpy.
-        action = action.to("cpu").numpy()
-        assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
+        # Apply the action.
+        if not do_simulate_latency:
+            # When not simulating latency, the action is just the first one from the action sequence (which is
+            # guaranteed to not be None).
+            action = action_sequence[0]
+        elif step == 0:
+            # When simulating latency, on the first step we should just use the first action. We are
+            # guaranteed that action_sequence is not None.
+            action = action_sequence[0]
+            # We also need to store the next action. If the next action is not available, we adopt the
+            # strategy of repeating the current action.
+            next_action = action_sequence[1] if len(action_sequence) > 1 else action.copy()
+        else:
+            # When simulating latency, all steps after  the first must use the `next_action` from the previous
+            # step.
+            action = next_action.copy()
+            next_action = (
+                action_sequence[1]
+                if action_sequence is not None and len(action_sequence) > 1
+                else action.copy()
+            )
 
-        # Apply the next action.
         observation, reward, terminated, truncated, info = env.step(action)
+
         if render_callback is not None:
-            render_callback(env)
+            render_callback(env, is_dropped_cycle, action_sequence)  # TODO(now): revert PushT points
 
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available of none of the envs finished.
@@ -177,6 +223,7 @@ def rollout(
         all_dones.append(torch.from_numpy(done))
         all_successes.append(torch.tensor(successes))
 
+        is_dropped_cycle = False
         step += 1
         running_success_rate = (
             einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
@@ -205,6 +252,15 @@ def rollout(
     return ret
 
 
+def _cv2_putText_by_top_left(text_top_left: tuple[int, int], **kwargs):  # noqa: N802
+    """A wrapper around cv2.putText that lets one place it by the top-left coord."""
+    text_size, _ = cv2.getTextSize(
+        kwargs["text"], kwargs["fontFace"], kwargs["fontScale"], kwargs["thickness"]
+    )
+    text_bottom_left = (text_top_left[0], min(text_top_left[1] + text_size[1], kwargs["img"].shape[0]))
+    cv2.putText(org=text_bottom_left, **kwargs)
+
+
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: torch.nn.Module,
@@ -213,6 +269,8 @@ def eval_policy(
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
+    do_simulate_latency: bool = False,
+    n_action_buffer: int = 0,
     enable_progbar: bool = False,
     enable_inner_progbar: bool = False,
 ) -> dict:
@@ -227,6 +285,10 @@ def eval_policy(
             the "episodes" key of the returned dictionary.
         start_seed: The first seed to use for the first individual rollout. For all subsequent rollouts the
             seed is incremented by 1. If not provided, the environments are not manually seeded.
+        do_simulate_latency: Whether to simulate latency between observation and action execution. See inline
+            documentation in `rollout` for more details.
+        n_action_buffer: Controls pre-emptive inference which is useful for rolling out in real-time (or
+            when simulating latency). See PolicyRolloutWrapper for more details.
         enable_progbar: Enable progress bar over batches.
         enable_inner_progbar: Enable progress bar over steps in each batch.
     Returns:
@@ -252,16 +314,44 @@ def eval_policy(
     n_episodes_rendered = 0  # for saving the correct number of videos
 
     # Callback for visualization.
-    def render_frame(env: gym.vector.VectorEnv):
+    def render_frame(
+        env: gym.vector.VectorEnv, is_dropped_cycle: bool = False, pusht_action_seq: np.ndarray | None = None
+    ):
         # noqa: B023
         if n_episodes_rendered >= max_episodes_rendered:
             return
         n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
         if isinstance(env, gym.vector.SyncVectorEnv):
-            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
+            img_batch = np.stack([env.envs[i].render() for i in range(n_to_render_now)])  # noqa: B023
         elif isinstance(env, gym.vector.AsyncVectorEnv):
             # Here we must render all frames and discard any we don't need.
-            ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
+            img_batch = np.stack(env.call("render")[:n_to_render_now])
+        if is_dropped_cycle:
+            # put a red border around the frame and some text to make it obvious that an action was dropped
+            # (see latency related documentation in `rollout`)
+            border_size = max(1, min(img_batch.shape[1:3]) // 40)
+            img_batch[:, :border_size] = [255, 0, 0]
+            img_batch[:, :, :border_size] = [255, 0, 0]
+            img_batch[:, -border_size:] = [255, 0, 0]
+            img_batch[:, :, -border_size:] = [255, 0, 0]
+            for img in img_batch:
+                _cv2_putText_by_top_left(
+                    text_top_left=(int(1.5 * border_size), int(1.5 * border_size)),
+                    img=img,
+                    text="Dropped cycle!",
+                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                    fontScale=0.8,
+                    thickness=1,
+                    color=(255, 0, 0),
+                )
+        if pusht_action_seq is not None:
+            for i, img in enumerate(img_batch):
+                actions = pusht_action_seq[:, i] / 512 * img.shape[:2]  # (horizon, 2)
+                actions = np.round(actions).astype(int)
+                for action in actions:
+                    cv2.circle(img, tuple(action), radius=3, color=(255, 0, 255), thickness=1)
+
+        ep_frames.append(img_batch)
 
     if max_episodes_rendered > 0:
         video_paths: list[str] = []
@@ -288,6 +378,8 @@ def eval_policy(
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
+            do_simulate_latency=do_simulate_latency,
+            n_action_buffer=n_action_buffer,
             enable_progbar=enable_inner_progbar,
         )
 
@@ -564,8 +656,10 @@ def main(
             max_episodes_rendered=10,
             videos_dir=Path(out_dir) / "videos",
             start_seed=hydra_cfg.seed,
-            enable_progbar=True,
-            enable_inner_progbar=True,
+            do_simulate_latency=hydra_cfg.eval.do_simulate_latency,
+            n_action_buffer=hydra_cfg.eval.n_action_buffer,
+            enable_progbar=False,
+            enable_inner_progbar=False,
         )
     print(info["aggregated"])
 

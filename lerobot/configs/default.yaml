@@ -84,6 +84,8 @@ eval:
   batch_size: 1
   # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
   use_async_envs: false
+  n_action_buffer: 0
+  do_simulate_latency: false
 
 wandb:
   enable: false
