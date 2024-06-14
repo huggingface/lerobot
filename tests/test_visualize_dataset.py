@@ -27,9 +27,10 @@ from lerobot.scripts.visualize_dataset import visualize_dataset
 def test_visualize_dataset(tmpdir, repo_id):
     rrd_path = visualize_dataset(
         repo_id,
-        episode_indices=[0],
+        episode_index=0,
+        batch_size=32,
+        save=True,
         output_dir=tmpdir,
-        serve=False,
     )
     assert rrd_path.exists()
 
