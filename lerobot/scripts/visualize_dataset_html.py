@@ -550,12 +550,6 @@ def main():
         help="Episode indices to visualize (e.g. `0 1 5 6` to load episodes of index 0, 1, 5 and 6). By default loads all episodes.",
     )
     parser.add_argument(
-        "--root",
-        type=Path,
-        default=None,
-        help="Root directory for a dataset stored locally (e.g. `--root data`). By default, the dataset will be loaded from hugging face cache folder, or downloaded from the hub if available.",
-    )
-    parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -613,7 +607,7 @@ def main():
     )
     parser.add_argument(
         "--device",
-        type=int,
+        type=str,
         default="cuda",
         help="Device used to run inference.",
     )
