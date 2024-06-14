@@ -58,18 +58,19 @@ import logging
 import os
 import shutil
 import socketserver
+import warnings
 from pathlib import Path
 
 import torch
 import tqdm
-import yaml
 from bs4 import BeautifulSoup
 from huggingface_hub import snapshot_download
 from safetensors.torch import load_file, save_file
 
+from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.policies.act.modeling_act import ACTPolicy
-from lerobot.common.utils.utils import init_logging
+from lerobot.common.policies.factory import make_policy
+from lerobot.common.utils.utils import init_hydra_config, init_logging
 
 
 class EpisodeSampler(torch.utils.data.Sampler):
@@ -154,11 +155,11 @@ def write_episode_data_csv(output_dir, file_name, episode_index, dataset, infere
         dim_action = len(dataset.hf_dataset["action"][0])
         header += [f"action_{i}" for i in range(dim_action)]
     if has_inference:
-        assert "actions" in inference_results
-        assert "loss" in inference_results
-        dim_pred_action = inference_results["actions"].shape[2]
-        header += [f"pred_action_{i}" for i in range(dim_pred_action)]
-        header += ["loss"]
+        if "actions" in inference_results:
+            dim_pred_action = inference_results["actions"].shape[2]
+            header += [f"pred_action_{i}" for i in range(dim_pred_action)]
+        if "loss" in inference_results:
+            header += ["loss"]
 
     columns = ["timestamp"]
     if has_state:
@@ -178,11 +179,14 @@ def write_episode_data_csv(output_dir, file_name, episode_index, dataset, infere
 
     if has_inference:
         num_frames = len(rows)
-        assert num_frames == inference_results["actions"].shape[0]
-        assert num_frames == inference_results["loss"].shape[0]
-        for i in range(num_frames):
-            rows[i] += inference_results["actions"][i, 0].tolist()
-            rows[i] += [inference_results["loss"][i].item()]
+        if "actions" in inference_results:
+            assert num_frames == inference_results["actions"].shape[0]
+            for i in range(num_frames):
+                rows[i] += inference_results["actions"][i, 0].tolist()
+        if "loss" in inference_results:
+            assert num_frames == inference_results["loss"].shape[0]
+            for i in range(num_frames):
+                rows[i] += [inference_results["loss"][i].item()]
 
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(output_dir / file_name, "w") as f:
@@ -379,7 +383,14 @@ def write_episodes_list_html(output_dir, file_name, ep_indices, ep_html_fnames, 
         f.write(soup.prettify())
 
 
-def run_inference(dataset, episode_index, policy, num_workers=4, batch_size=32, device="cuda"):
+def run_inference(
+    dataset, episode_index, policy, policy_method="select_action", num_workers=4, batch_size=32, device="cuda"
+):
+    if policy_method not in ["select_action", "forward"]:
+        raise ValueError(
+            f"`policy_method` is expected to be 'select_action' or 'forward', but '{policy_method}' is provided instead."
+        )
+
     policy.eval()
     policy.to(device)
 
@@ -392,14 +403,38 @@ def run_inference(dataset, episode_index, policy, num_workers=4, batch_size=32, 
         sampler=episode_sampler,
     )
 
+    warned_ndim_eq_0 = False
+    warned_ndim_gt_2 = False
+
     logging.info("Running inference")
     inference_results = {}
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
         batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
         with torch.inference_mode():
-            output_dict = policy.forward(batch)
+            if policy_method == "select_action":
+                output_dict = {"action": policy.select_action(batch)}
+            elif policy_method == "forward":
+                output_dict = policy.forward(batch)
 
         for key in output_dict:
+            if output_dict[key].ndim == 0:
+                if not warned_ndim_eq_0:
+                    warnings.warn(
+                        f"Ignore output key '{key}'. Its value is a scalar instead of a vector. It might have been aggregated over the batch dimension (e.g. `loss.mean()`).",
+                        stacklevel=1,
+                    )
+                    warned_ndim_eq_0 = True
+                continue
+
+            if output_dict[key].ndim > 2:
+                if not warned_ndim_gt_2:
+                    warnings.warn(
+                        f"Ignore output key '{key}'. Its value is a tensor of {output_dict[key].ndim} dimensions instead of a vector.",
+                        stacklevel=1,
+                    )
+                    warned_ndim_gt_2 = True
+                continue
+
             if key not in inference_results:
                 inference_results[key] = []
             inference_results[key].append(output_dict[key].to("cpu"))
@@ -419,8 +454,10 @@ def visualize_dataset_html(
     force_override: bool = True,
     policy_repo_id: str | None = None,
     policy_ckpt_path: Path | None = None,
+    policy_method: str = "select_action",
     batch_size: int = 32,
     num_workers: int = 4,
+    device: str = "cuda",
 ) -> Path | None:
     init_logging()
 
@@ -432,15 +469,17 @@ def visualize_dataset_html(
             pretrained_policy_path = Path(snapshot_download(policy_repo_id))
         elif policy_ckpt_path:
             pretrained_policy_path = Path(policy_ckpt_path)
-        policy = ACTPolicy.from_pretrained(pretrained_policy_path)
-        with open(pretrained_policy_path / "config.yaml") as f:
-            cfg = yaml.safe_load(f)
-        delta_timestamps = cfg["training"]["delta_timestamps"]
-    else:
-        delta_timestamps = None
 
-    logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps)
+        cfg = init_hydra_config(pretrained_policy_path / "config.yaml")
+        dataset = make_dataset(cfg)
+        policy = make_policy(cfg, pretrained_policy_path)
+
+        if policy_method == "select_action":
+            # Do not load previous observations or future actions, to simulate that the observations come from
+            # an environment.
+            dataset.delta_timestamps = None
+    else:
+        dataset = LeRobotDataset(repo_id)
 
     if not dataset.video:
         raise NotImplementedError(f"Image datasets ({dataset.video=}) are currently not supported.")
@@ -471,7 +510,9 @@ def visualize_dataset_html(
             if inference_results_path.exists():
                 inference_results = load_file(inference_results_path)
             else:
-                inference_results = run_inference(dataset, episode_index, policy, num_workers, batch_size)
+                inference_results = run_inference(
+                    dataset, episode_index, policy, policy_method, num_workers, batch_size, device
+                )
                 save_file(inference_results, inference_results_path)
 
         # write states and actions in a csv
@@ -509,8 +550,14 @@ def main():
         help="Episode indices to visualize (e.g. `0 1 5 6` to load episodes of index 0, 1, 5 and 6). By default loads all episodes.",
     )
     parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Root directory for a dataset stored locally (e.g. `--root data`). By default, the dataset will be loaded from hugging face cache folder, or downloaded from the hub if available.",
+    )
+    parser.add_argument(
         "--output-dir",
-        type=str,
+        type=Path,
         default=None,
         help="Directory path to write html files and kickoff a web server. By default write them to 'outputs/visualize_dataset/REPO_ID'.",
     )
@@ -543,7 +590,14 @@ def main():
         "--policy-ckpt-path",
         type=str,
         default=None,
-        help="Name of hugging face repositery containing a pretrained policy (e.g. `lerobot/diffusion_pusht` for https://huggingface.co/lerobot/diffusion_pusht).",
+        help="Path hugging face repositery containing a pretrained policy (e.g. `lerobot/diffusion_pusht` for https://huggingface.co/lerobot/diffusion_pusht).",
+    )
+    parser.add_argument(
+        "--policy-method",
+        type=str,
+        default="select_action",
+        choices=["select_action", "forward"],
+        help="Python method used to run the inference. It can be `forward` used during training to compute the loss, or `select_action` used during evaluation to output the sequence of actions.",
     )
     parser.add_argument(
         "--batch-size",
@@ -556,6 +610,12 @@ def main():
         type=int,
         default=4,
         help="Number of processes of Dataloader for loading the data.",
+    )
+    parser.add_argument(
+        "--device",
+        type=int,
+        default="cuda",
+        help="Device used to run inference.",
     )
 
     args = parser.parse_args()

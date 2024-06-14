@@ -108,8 +108,8 @@ def visualize_dataset(
     web_port: int = 9090,
     ws_port: int = 9087,
     save: bool = False,
-    output_dir: Path | None = None,
     root: Path | None = None,
+    output_dir: Path | None = None,
 ) -> Path | None:
     if save:
         assert (
@@ -255,15 +255,16 @@ def main():
         ),
     )
     parser.add_argument(
-        "--output-dir",
-        type=str,
-        help="Directory path to write a .rrd file when `--save 1` is set.",
-    )
-
-    parser.add_argument(
         "--root",
-        type=str,
-        help="Root directory for a dataset stored on a local machine.",
+        type=Path,
+        default=None,
+        help="Root directory for a dataset stored locally (e.g. `--root data`). By default, the dataset will be loaded from hugging face cache folder, or downloaded from the hub if available.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory path to write a .rrd file when `--save 1` is set.",
     )
 
     args = parser.parse_args()

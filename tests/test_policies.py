@@ -138,10 +138,11 @@ def test_policy(env_name, policy_name, extra_overrides):
     # Check that we run select_actions and get the appropriate output.
     env = make_env(cfg, n_envs=2)
 
+    batch_size = 2
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=0,
-        batch_size=2,
+        batch_size=batch_size,
         shuffle=True,
         pin_memory=DEVICE != "cpu",
         drop_last=True,
@@ -154,7 +155,10 @@ def test_policy(env_name, policy_name, extra_overrides):
         batch[key] = batch[key].to(DEVICE, non_blocking=True)
 
     # Test updating the policy
-    policy.forward(batch)
+    out = policy.forward(batch)
+    assert (
+        out["loss"].ndim == 1 and out["loss"].shape[0] == batch_size
+    ), "1 loss value per item in the batch is expected, but {out['loss'].shape} provided instead."
 
     # reset the policy and environment
     policy.reset()
@@ -185,7 +189,7 @@ def test_policy_defaults(policy_name: str):
 def test_save_and_load_pretrained(policy_name: str):
     policy_cls, _ = get_policy_and_config_classes(policy_name)
     policy: Policy = policy_cls()
-    save_dir = "/tmp/test_save_and_load_pretrained_{policy_cls.__name__}"
+    save_dir = f"/tmp/test_save_and_load_pretrained_{policy_cls.__name__}"
     policy.save_pretrained(save_dir)
     policy_ = policy_cls.from_pretrained(save_dir)
     assert all(torch.equal(p, p_) for p, p_ in zip(policy.parameters(), policy_.parameters(), strict=True))
