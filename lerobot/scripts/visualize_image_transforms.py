@@ -138,6 +138,16 @@ def save_config_single_transforms(cfg, original_frame, output_dir):
         transformed_frame = tf(original_frame)
         to_pil(transformed_frame).save(output_dir_single / "max.png", quality=100)
 
+        # Apply mean transformation
+        mean_value = (min_value + max_value) / 2
+        kwargs = {
+            f"{transform}_weight": cfg[f"{transform}"].weight,
+            f"{transform}_min_max": (mean_value, mean_value),
+        }
+        tf = get_image_transforms(**kwargs)
+        transformed_frame = tf(original_frame)
+        to_pil(transformed_frame).save(output_dir_single / "mean.png", quality=100)
+
         print(f"    {output_dir_single}")
 
 
