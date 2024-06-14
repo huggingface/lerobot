@@ -78,7 +78,7 @@ def from_raw_to_lerobot_format(
         raise NotImplementedError
 
     # sanity check
-    check_format(raw_dir, video, episodes)
+    check_format(raw_dir)
 
     if fps is None:
         fps = 30
