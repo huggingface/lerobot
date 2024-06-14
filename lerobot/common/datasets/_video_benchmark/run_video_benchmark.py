@@ -36,9 +36,10 @@ import time
 from pathlib import Path
 
 import einops
-import numpy
+import numpy as np
 import PIL
 import torch
+from skimage.metrics import mean_squared_error, peak_signal_noise_ratio, structural_similarity
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.video_utils import (
@@ -48,7 +49,12 @@ from lerobot.common.datasets.video_utils import (
 OUTPUT_DIR = Path("tmp/run_video_benchmark")
 DRY_RUN = False
 
-DATASET_REPO_IDS = ["lerobot/pusht_image", "aliberts/aloha_mobile_shrimp_image"]
+DATASET_REPO_IDS = [
+    "lerobot/pusht_image",
+    "aliberts/aloha_mobile_shrimp_image",
+    "aliberts/paris_street",
+    "aliberts/kitchen",
+]
 TIMESTAMPS_MODES = [
     "1_frame",
     "2_frames",
@@ -56,9 +62,9 @@ TIMESTAMPS_MODES = [
     "6_frames",
 ]
 BENCHMARKS = {
-    "pix_fmt": ["yuv420p", "yuv444p"],
-    "g": [1, 2, 3, 4, 5, 6, 10, 15, 20, 40, 100, None],
-    "crf": [0, 5, 10, 15, 20, None, 25, 30, 40, 50],
+    # "pix_fmt": ["yuv420p", "yuv444p"],
+    # "g": [1, 2, 3, 4, 5, 6, 10, 15, 20, 40, 100, None],
+    # "crf": [0, 5, 10, 15, 20, None, 25, 30, 40, 50],
     "backend": ["pyav", "video_reader"],
 }
 
@@ -153,12 +159,12 @@ def run_video_benchmark(
 
     # Estimate average loading time
 
-    def load_original_frames(imgs_dir, timestamps):
+    def load_original_frames(imgs_dir, timestamps) -> torch.Tensor:
         frames = []
         for ts in timestamps:
             idx = int(ts * fps)
             frame = PIL.Image.open(imgs_dir / f"frame_{idx:06d}.png")
-            frame = torch.from_numpy(numpy.array(frame))
+            frame = torch.from_numpy(np.array(frame))
             frame = frame.type(torch.float32) / 255
             frame = einops.rearrange(frame, "h w c -> c h w")
             frames.append(frame)
@@ -167,6 +173,9 @@ def run_video_benchmark(
     list_avg_load_time = []
     list_avg_load_time_from_images = []
     per_pixel_l2_errors = []
+    psnr_values = []
+    ssim_values = []
+    mse_values = []
 
     random.seed(seed)
 
@@ -199,11 +208,19 @@ def run_video_benchmark(
         avg_load_time_from_images = (time.monotonic() - start_time_s) / num_frames
         list_avg_load_time_from_images.append(avg_load_time_from_images)
 
-        # Estimate average L2 error between original frames and decoded frames
+        # Estimate reconstruction error between original frames and decoded frames with various metrics
         for i, ts in enumerate(timestamps):
             # are_close = torch.allclose(frames[i], original_frames[i], atol=0.02)
             num_pixels = original_frames[i].numel()
             per_pixel_l2_error = torch.norm(frames[i] - original_frames[i], p=2).item() / num_pixels
+            per_pixel_l2_errors.append(per_pixel_l2_error)
+
+            frame_np, original_frame_np = frames[i].numpy(), original_frames[i].numpy()
+            psnr_values.append(peak_signal_noise_ratio(original_frame_np, frame_np, data_range=1.0))
+            ssim_values.append(
+                structural_similarity(original_frame_np, frame_np, data_range=1.0, channel_axis=0)
+            )
+            mse_values.append(mean_squared_error(original_frame_np, frame_np))
 
             # save decoded frames
             if t == 0:
@@ -216,15 +233,18 @@ def run_video_benchmark(
                 original_frame = PIL.Image.open(imgs_dir / f"frame_{idx:06d}.png")
                 original_frame.save(output_dir / f"original_frame_{i:06d}.png")
 
-            per_pixel_l2_errors.append(per_pixel_l2_error)
-
-    avg_load_time = float(numpy.array(list_avg_load_time).mean())
-    avg_load_time_from_images = float(numpy.array(list_avg_load_time_from_images).mean())
-    avg_per_pixel_l2_error = float(numpy.array(per_pixel_l2_errors).mean())
+    image_size = tuple(dataset[0][dataset.camera_keys[0]].shape[-2:])
+    avg_load_time = float(np.array(list_avg_load_time).mean())
+    avg_load_time_from_images = float(np.array(list_avg_load_time_from_images).mean())
+    avg_per_pixel_l2_error = float(np.array(per_pixel_l2_errors).mean())
+    avg_psnr = float(np.mean(psnr_values))
+    avg_ssim = float(np.mean(ssim_values))
+    avg_mse = float(np.mean(mse_values))
 
     # Save benchmark info
 
     info = {
+        "image_size": image_size,
         "sum_original_frames_size_bytes": sum_original_frames_size_bytes,
         "video_size_bytes": video_size_bytes,
         "avg_load_time_from_images": avg_load_time_from_images,
@@ -232,6 +252,9 @@ def run_video_benchmark(
         "compression_factor": sum_original_frames_size_bytes / video_size_bytes,
         "load_time_factor": avg_load_time_from_images / avg_load_time,
         "avg_per_pixel_l2_error": avg_per_pixel_l2_error,
+        "avg_psnr": avg_psnr,
+        "avg_ssim": avg_ssim,
+        "avg_mse": avg_mse,
     }
 
     with open(output_dir / "info.json", "w") as f:
@@ -275,7 +298,17 @@ def one_variable_study(
     var_name: str, var_values: list, repo_ids: list, bench_dir: Path, timestamps_mode: str, dry_run: bool
 ):
     print(f"**`{var_name}`**")
-    headers = ["repo_id", var_name, "compression_factor", "load_time_factor", "avg_per_pixel_l2_error"]
+    headers = [
+        "repo_id",
+        "image_size",
+        var_name,
+        "compression_factor",
+        "load_time_factor",
+        "avg_per_pixel_l2_error",
+        "avg_psnr",
+        "avg_ssim",
+        "avg_mse",
+    ]
     rows = []
     base_cfg = {
         "repo_id": None,
@@ -298,13 +331,18 @@ def one_variable_study(
                     bench_dir / repo_id / f"torchvision_{var_name}_{val}", cfg, timestamps_mode
                 )
             info = load_info(bench_dir / repo_id / f"torchvision_{var_name}_{val}")
+            width, height = info["image_size"][0], info["image_size"][1]
             rows.append(
                 [
                     repo_id,
+                    f"{width} x {height}",
                     val,
                     info["compression_factor"],
                     info["load_time_factor"],
                     info["avg_per_pixel_l2_error"],
+                    info["avg_psnr"],
+                    info["avg_ssim"],
+                    info["avg_mse"],
                 ]
             )
     display_markdown_table(headers, rows)
@@ -313,7 +351,16 @@ def one_variable_study(
 def best_study(repo_ids: list, bench_dir: Path, timestamps_mode: str, dry_run: bool):
     """Change the config once you deciced what's best based on one-variable-studies"""
     print("**best**")
-    headers = ["repo_id", "compression_factor", "load_time_factor", "avg_per_pixel_l2_error"]
+    headers = [
+        "repo_id",
+        "image_size",
+        "compression_factor",
+        "load_time_factor",
+        "avg_per_pixel_l2_error",
+        "avg_psnr",
+        "avg_ssim",
+        "avg_mse",
+    ]
     rows = []
     for repo_id in repo_ids:
         cfg = {
@@ -330,9 +377,11 @@ def best_study(repo_ids: list, bench_dir: Path, timestamps_mode: str, dry_run: b
         if not dry_run:
             run_video_benchmark(bench_dir / repo_id / "torchvision_best", cfg, timestamps_mode)
         info = load_info(bench_dir / repo_id / "torchvision_best")
+        width, height = info["image_size"][0], info["image_size"][1]
         rows.append(
             [
                 repo_id,
+                f"{width} x {height}",
                 info["compression_factor"],
                 info["load_time_factor"],
                 info["avg_per_pixel_l2_error"],
@@ -351,7 +400,7 @@ def main():
         for name, values in BENCHMARKS.items():
             one_variable_study(name, values, DATASET_REPO_IDS, bench_dir, timestamps_mode, DRY_RUN)
 
-        best_study(DATASET_REPO_IDS, bench_dir, timestamps_mode, DRY_RUN)
+        # best_study(DATASET_REPO_IDS, bench_dir, timestamps_mode, DRY_RUN)
 
 
 if __name__ == "__main__":
