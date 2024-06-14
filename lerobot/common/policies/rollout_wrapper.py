@@ -77,10 +77,10 @@ class PolicyRolloutWrapper:
         with self._thread_lock:
             # Store a mapping from observation timestamp (the moment the observation was captured) to
             # observation batch.
-            self._observation_cache: dict[float, dict[str, Tensor]] = {}
+            self._observation_cache: dict[int, dict[str, Tensor]] = {}
             # Store a mapping from action timestamp (the moment the policy intends for the action to be)
             # executed.
-            self._action_cache: dict[float, Tensor] = {}
+            self._action_cache: dict[int, Tensor] = {}
 
     def _invalidate_obsolete_observations(self):
         """TODO(now)"""
