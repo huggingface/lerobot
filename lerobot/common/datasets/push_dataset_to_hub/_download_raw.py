@@ -36,6 +36,8 @@ def download_raw(raw_dir, dataset_id):
         download_xarm(raw_dir)
     elif "umi" in dataset_id:
         download_umi(raw_dir)
+    elif "bridgedatav2_scripted" in dataset_id:
+        download_bridgedatav2_scripted(raw_dir)
     else:
         raise ValueError(dataset_id)
 
@@ -75,6 +77,19 @@ def download_pusht(raw_dir: str):
     zarr_path = raw_dir / "pusht_cchi_v7_replay.zarr"
     shutil.move(raw_dir / "pusht" / "pusht_cchi_v7_replay.zarr", zarr_path)
     shutil.rmtree(raw_dir / "pusht")
+
+
+def download_bridgedatav2_scripted(raw_dir: str):
+    bridgedatav2_scripted_url = (
+        "https://rail.eecs.berkeley.edu/datasets/bridge_release/data/scripted_6_18.zip"
+    )
+
+    raw_dir = Path(raw_dir)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    download_and_extract_zip(bridgedatav2_scripted_url, raw_dir)
+    bridgedatav2_scripted_path = raw_dir / "bridgedatav2_scripted"
+    shutil.move(raw_dir / "scripted_6_18", bridgedatav2_scripted_path)
+    shutil.rmtree(raw_dir / "scripted_6_18")
 
 
 def download_xarm(raw_dir: Path):

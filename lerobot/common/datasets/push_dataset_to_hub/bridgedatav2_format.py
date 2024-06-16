@@ -22,10 +22,10 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import torch
 import tqdm
 from datasets import Dataset, Features, Image, Sequence, Value
-from PIL import Image as PILImage
 
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, save_images_concurrently
 from lerobot.common.datasets.utils import (
@@ -69,7 +69,7 @@ def load_actions(path):
         act_list = pickle.load(f)
     if isinstance(act_list[0], dict):
         act_list = [x["actions"] for x in act_list]
-    return act_list
+    return np.array(act_list)
 
 
 def load_state_timestamp(path):
@@ -97,6 +97,9 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
             latency_shift = date_time < datetime(2021, 7, 23)
 
         image_paths = list(ep_path.glob(os.path.join("images0", "*.jpg")))
+        image_paths = sorted(
+            image_paths, key=lambda name: int(str(name).split("im_")[1].split(".jpg")[0].zfill(5))
+        )
         num_frames = len(image_paths)
 
         done = torch.zeros(num_frames, dtype=torch.bool)
@@ -106,10 +109,12 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
         state, time_stamp = load_state_timestamp(ep_path)
         ep_dict = {}
         img_key = "observation.image"
-        imgs_array = [PILImage.open(x) for x in image_paths]
+        imgs_array = [str(x) for x in image_paths]
 
         if is_in_scripted_raw:
-            actions = [actions[0]] + actions  # duplicate first action to compensate for extra frame
+            actions = np.insert(
+                actions, 0, actions[0], axis=0
+            )  # duplicate first action to compensate for extra frame
         else:
             if latency_shift:
                 state = state[1:]
@@ -134,16 +139,12 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
         else:
             ep_dict[img_key] = imgs_array
 
-        ep_dict["action"] = actions
-        ep_dict["observation.state"] = state
+        ep_dict["action"] = torch.from_numpy(actions)
+        ep_dict["observation.state"] = torch.from_numpy(state)
         ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames)
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
-        ep_dict["timestamp"] = torch.tensor(time_stamp)
+        ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
         ep_dict["next.done"] = done
-
-        if len(actions) != len(state):
-            print(str(len(actions)) + " " + str(len(state)) + " " + str(num_frames))
-            print(ep_path)
 
         assert isinstance(ep_idx, int)
         ep_dicts.append(ep_dict)
@@ -169,9 +170,11 @@ def to_hf_dataset(data_dict, video) -> Dataset:
     else:
         features["observation.image"] = Image()
     features["observation.state"] = Sequence(
-        length=len(data_dict["observation.state"][0]), feature=Value(dtype="float32", id=None)
+        length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
     )
-    features["action"] = Sequence(length=len(data_dict["action"][0]), feature=Value(dtype="float32", id=None))
+    features["action"] = Sequence(
+        length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)
+    )
     features["episode_index"] = Value(dtype="int64", id=None)
     features["frame_index"] = Value(dtype="int64", id=None)
     features["timestamp"] = Value(dtype="float32", id=None)
@@ -188,7 +191,7 @@ def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=Tru
     check_format(raw_dir)
 
     if fps is None:
-        fps = 30
+        fps = 5
 
     data_dir, episode_data_index = load_from_raw(raw_dir, out_dir, fps, video, debug)
     hf_dataset = to_hf_dataset(data_dir, video)
@@ -197,3 +200,8 @@ def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=Tru
         "video": video,
     }
     return hf_dataset, episode_data_index, info
+
+
+if __name__ == "__main__":
+    dataset, _, _ = from_raw_to_lerobot_format(Path("./data"), Path("./out"), 5, False, True)
+    print(dataset)
