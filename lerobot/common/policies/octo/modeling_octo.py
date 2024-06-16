@@ -102,7 +102,7 @@ class OctoPolicy(nn.Module, PyTorchModelHubMixin):
         self._queues = {
             "observation.image": deque(maxlen=self.config.n_obs_steps),
             "observation.state": deque(maxlen=self.config.n_obs_steps),
-            "action": deque(maxlen=self.config.n_action_steps),
+            "action": deque(maxlen=self.config.horizon),
         }
 
     @torch.no_grad
@@ -113,15 +113,17 @@ class OctoPolicy(nn.Module, PyTorchModelHubMixin):
         underlying diffusion model. Here's how it works:
           - `n_obs_steps` steps worth of observations are cached (for the first steps, the observation is
             copied `n_obs_steps` times to fill the cache).
-          - The diffusion model generates `horizon` steps worth of actions.
-          - `n_action_steps` worth of actions are actually kept for execution, starting from the current step.
-        Schematically this looks like:
+          - The diffusion model generates `horizon` steps worth of actions starting from each observation step.
+          - `horizon` steps worth of actions from the last observation step are executed.
             ----------------------------------------------------------------------------------------------
-            (legend: o = n_obs_steps, h = horizon, a = n_action_steps)
-            |timestep            | n-o+1 | n-o+2 | ..... | n     | ..... | n+a-1 | n+a   | ..... |n-o+1+h|
-            |observation is used | YES   | YES   | YES   | NO    | NO    | NO    | NO    | NO    | NO    |
-            |action is generated | YES   | YES   | YES   | YES   | YES   | YES   | YES   | YES   | YES   |
-            |action is used      | NO    | NO    | NO    | YES   | YES   | YES   | NO    | NO    | NO    |
+            (legend: o = n_obs_steps, h = horizon)
+            |timestep              | n-o+1 | n-o+2 | ..... | n     | ..... | n+a-1 | n+a   | ..... |n-o+1+h|
+            |observation is used   | YES   | YES   | YES   | NO    | NO    | NO    | NO    | NO    | NO    |
+            |action 0 is generated | YES   | YES   | YES   | YES   | YES   | YES   | YES   | NO    | NO    |
+            |action 1 is generated |  NO   | YES   | YES   | YES   | YES   | YES   | YES   | YES   | NO    |
+            |        ...           | ..................................................................... |
+            |action n is generated | NO    | NO    | NO    | YES   | YES   | YES   | YES   | YES   | YES   |
+            |action is used        | NO    | NO    | NO    | YES   | YES   | YES   | YES   | YES   | YES   |
             ----------------------------------------------------------------------------------------------
         Note that this means we require: `n_action_steps < horizon - n_obs_steps + 1`. Also, note that
         "horizon" may not the best name to describe what the variable actually means, because this period is
@@ -198,14 +200,12 @@ class OctoModel(nn.Module):
     ---------------------------------------------------------------------------
     Token Type  |obs|obs|obs|obs|obs| ... |obs |rout|obs |obs | ... |obs |rout|
     ------------|---|---|---|---|---|-----|----|----|----|----|-----|----|----|
-                                                    |                        |
-                                                    V                        V
-                                                <r_embed_1>              <r_embed_2>
-                                                    |                        |
-                                                    --------> (Mean) <--------
-                                                                |
-                                                                V
-                        <noisy_sample>, <K_proj> --> (Action Diffusion Head) --> <noise_pred>
+                                                  |                         |
+                                                  V                         V
+                                              <r_embed_1>              <r_embed_2>
+                                                  |                        |
+                                                  V                        V
+                   <noisy_sample>, <K_proj> -->  ( Action  Diffusion  Head  ) --> <noise_pred>
 
     Note that this implementation does not (yet) include certain features from the original Octo implementation:
     1) Language and Goal Conditioning: The original Octo supports conditioning on language and goal images, which
