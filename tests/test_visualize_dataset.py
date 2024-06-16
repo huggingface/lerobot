@@ -13,6 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from pathlib import Path
+
 import pytest
 
 from lerobot.scripts.visualize_dataset import visualize_dataset
@@ -29,5 +31,22 @@ def test_visualize_dataset(tmpdir, repo_id):
         batch_size=32,
         save=True,
         output_dir=tmpdir,
+    )
+    assert rrd_path.exists()
+
+
+@pytest.mark.parametrize(
+    "repo_id",
+    ["lerobot/pusht"],
+)
+@pytest.mark.parametrize("root", [Path(__file__).parent / "data"])
+def test_visualize_local_dataset(tmpdir, repo_id, root):
+    rrd_path = visualize_dataset(
+        repo_id,
+        episode_index=0,
+        batch_size=32,
+        save=True,
+        output_dir=tmpdir,
+        root=root,
     )
     assert rrd_path.exists()
