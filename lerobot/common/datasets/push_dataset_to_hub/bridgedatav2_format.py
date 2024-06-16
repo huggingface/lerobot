@@ -213,10 +213,12 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
         state, time_stamp = load_state_timestamp(ep_path)
         ep_dict = {}
         img_key = "observation.image"
-        imgs_array = [PILImage.open(x) for x in image_paths]
+        imgs_array = [str(x) for x in image_paths]
 
         if is_in_scripted_raw:
-            actions = [actions[0]] + actions  # duplicate first action to compensate for extra frame
+            actions = np.insert(
+                actions, 0, actions[0], axis=0
+            )  # duplicate first action to compensate for extra frame
         else:
             if latency_shift:
                 state = state[1:]
@@ -241,16 +243,12 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
         else:
             ep_dict[img_key] = imgs_array
 
-        ep_dict["action"] = actions
-        ep_dict["observation.state"] = state
+        ep_dict["action"] = torch.from_numpy(actions)
+        ep_dict["observation.state"] = torch.from_numpy(state)
         ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames)
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
-        ep_dict["timestamp"] = torch.tensor(time_stamp)
+        ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
         ep_dict["next.done"] = done
-
-        if len(actions) != len(state):
-            print(str(len(actions)) + " " + str(len(state)) + " " + str(num_frames))
-            print(ep_path)
 
         assert isinstance(ep_idx, int)
         ep_dicts.append(ep_dict)
@@ -276,9 +274,11 @@ def to_hf_dataset(data_dict, video) -> Dataset:
     else:
         features["observation.image"] = Image()
     features["observation.state"] = Sequence(
-        length=len(data_dict["observation.state"][0]), feature=Value(dtype="float32", id=None)
+        length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
     )
-    features["action"] = Sequence(length=len(data_dict["action"][0]), feature=Value(dtype="float32", id=None))
+    features["action"] = Sequence(
+        length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)
+    )
     features["episode_index"] = Value(dtype="int64", id=None)
     features["frame_index"] = Value(dtype="int64", id=None)
     features["timestamp"] = Value(dtype="float32", id=None)
