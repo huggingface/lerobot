@@ -64,14 +64,14 @@
     </div>
 
     <!-- Controllers -->
-    <div class="flex gap-1 text-3xl">
+    <div class="flex gap-1 text-3xl flex-wrap">
       <button id="btn-play" class="-rotate-90" title="Play. Toggle with Space">🔽</button>
       <button id="btn-pause" class="hidden" title="Pause. Toggle with Space">⏸️</button>
       <button id="btn-backward" title="Jump backward 5 seconds">⏪</button>
       <button id="btn-forward" title="Jump forward 5 seconds">⏩</button>
       <button id="btn-rewind" title="Rewind from start">↩️</button>
       <div class="flex gap-2 items-center ml-4">
-        <input id="slider" max="100" min="0" step="1" type="range" value="0" />
+        <input id="slider" max="100" min="0" step="1" type="range" value="0" class="w-80"/>
         <div id="timer" class="font-mono text-sm border border-slate-500 rounded-lg px-1 py-0.5">0:00 / 0:00</div>
       </div>
     </div>
