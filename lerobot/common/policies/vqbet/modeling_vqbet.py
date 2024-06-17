@@ -9,6 +9,7 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
+from torch.optim.lr_scheduler import LambdaLR
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.utils import get_device_from_parameters, populate_queues
@@ -627,22 +628,26 @@ class VQBeTOptimizer(torch.optim.Adam):
 class VQBeTScheduler(nn.Module):
     def __init__(self, optimizer, cfg):
         super().__init__()
-        from diffusers.optimization import get_scheduler
-        self.n_vqvae_training_steps = cfg.training.n_vqvae_training_steps
-        self.optimizing_step = 0
+        n_vqvae_training_steps = cfg.training.n_vqvae_training_steps
 
-        self.lr_scheduler = get_scheduler(
-            cfg.training.lr_scheduler,
-            optimizer=optimizer,
-            num_warmup_steps=cfg.training.lr_warmup_steps,
-            num_training_steps=cfg.training.offline_steps,
-        )
+        num_warmup_steps=cfg.training.lr_warmup_steps
+        num_training_steps=cfg.training.offline_steps
+        num_cycles=0.5
 
+        def lr_lambda(current_step):
+            if current_step < n_vqvae_training_steps:
+                return float(1)
+            else:
+                current_step = current_step - n_vqvae_training_steps
+                if current_step < num_warmup_steps:
+                    return float(current_step) / float(max(1, num_warmup_steps))
+                progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+                return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
+
+        self.lr_scheduler = LambdaLR(optimizer, lr_lambda, -1)
 
     def step(self):
-        self.optimizing_step +=1
-        if self.optimizing_step >= self.n_vqvae_training_steps:
-            self.lr_scheduler.step()
+        self.lr_scheduler.step()
 
 class VQBeTRgbEncoder(nn.Module):
     """Encode an RGB image into a 1D feature vector.
