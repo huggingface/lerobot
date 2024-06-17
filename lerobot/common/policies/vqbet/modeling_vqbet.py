@@ -105,7 +105,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
             # loss: total loss of training RVQ
             # n_different_codes: how many of the total possible VQ codes are being used in single batch (how many of them have at least one encoder embedding as a nearest neighbor). This can be at most `vqvae_n_embed * number of layers of RVQ (=2)`.
             # n_different_combinations: how many different code combinations are being used out of all possible combinations in single batch. This can be at most `vqvae_n_embed ^ number of layers of RVQ (=2)` (hint consider the RVQ as a decision tree).
-            loss, n_different_codes, n_different_combinations, recon_l1_error = self.vqbet.discretize(self.config.n_vqvae_training_steps, batch['action'])
+            loss, n_different_codes, n_different_combinations, recon_l1_error = self.vqbet.action_head.discretize(self.config.n_vqvae_training_steps, batch['action'])
             return {"loss": loss, "n_different_codes": n_different_codes, "n_different_combinations": n_different_combinations, "recon_l1_error": recon_l1_error}
         # if Residual VQ is already trained, VQ-BeT trains its GPT and bin prediction head / offset prediction head parts.
         _, loss_dict = self.vqbet(batch, rollout=False)
@@ -273,8 +273,6 @@ class VQBeTModel(nn.Module):
                         ),
                     )
 
-    def discretize(self, n_vqvae_training_steps, actions):
-        return self.action_head.discretize(n_vqvae_training_steps, actions)
 
     def forward(self, batch: dict[str, Tensor], rollout: bool) -> Tensor:
         # Input validation.
@@ -372,7 +370,33 @@ class VQBeTHead(nn.Module):
         self._focal_loss_fn = FocalLoss(gamma=2.0)
 
     def discretize(self, n_vqvae_training_steps, actions):
-        loss, n_different_codes, n_different_combinations, recon_l1_error = pretrain_vqvae(self.vqvae_model, n_vqvae_training_steps, actions)
+        if self.vqvae_model.config.action_chunk_size == 1:
+            # not using action chunk
+            actions = actions.reshape(-1, 1, actions.shape[-1])
+        else:
+            # using action chunk
+            slices = []
+            slices.extend([actions[:, j:j+self.vqvae_model.config.action_chunk_size, :] for j in range(actions.shape[1]+1-self.vqvae_model.config.action_chunk_size)])
+            actions = torch.cat(slices, dim=0)
+
+
+        actions = actions.to(get_device_from_parameters(self.vqvae_model))
+
+        loss, metric = self.vqvae_model.vqvae_forward(
+            actions
+        )
+        n_different_codes = sum([len(torch.unique(metric[2][:, i])) for i in range(self.vqvae_model.vqvae_num_layers)])
+        n_different_combinations = len(torch.unique(metric[2], dim=0))
+        recon_l1_error= metric[0].detach().cpu().item()
+        self.vqvae_model.optimized_steps += 1
+        # if we updated RVQ more than `n_vqvae_training_steps` steps, we freeze the RVQ part.
+        if self.vqvae_model.optimized_steps >= n_vqvae_training_steps:
+            self.vqvae_model.discretized = torch.tensor(True)
+            self.vqvae_model.vq_layer.freeze_codebook = torch.tensor(True)
+            print("Finished discretizing action data!")
+            self.vqvae_model.eval()
+            for param in self.vqvae_model.vq_layer.parameters():
+                param.requires_grad = False
         return loss, n_different_codes, n_different_combinations, recon_l1_error
 
     def forward(self, x, **kwargs):
@@ -832,35 +856,6 @@ class VqVae(nn.Module):
 
 
 
-def pretrain_vqvae(vqvae_model, n_vqvae_training_steps, actions):
-    if vqvae_model.config.action_chunk_size == 1:
-        # not using action chunk
-        actions = actions.reshape(-1, 1, actions.shape[-1])
-    else:
-        # using action chunk
-        slices = []
-        slices.extend([actions[:, j:j+vqvae_model.config.action_chunk_size, :] for j in range(actions.shape[1]+1-vqvae_model.config.action_chunk_size)])
-        actions = torch.cat(slices, dim=0)
-
-
-    actions = actions.to(get_device_from_parameters(vqvae_model))
-
-    loss, metric = vqvae_model.vqvae_forward(
-        actions
-    )
-    n_different_codes = sum([len(torch.unique(metric[2][:, i])) for i in range(vqvae_model.vqvae_num_layers)])
-    n_different_combinations = len(torch.unique(metric[2], dim=0))
-    recon_l1_error= metric[0].detach().cpu().item()
-    vqvae_model.optimized_steps += 1
-    # if we updated RVQ more than `n_vqvae_training_steps` steps, we freeze the RVQ part.
-    if vqvae_model.optimized_steps >= n_vqvae_training_steps:
-        vqvae_model.discretized = torch.tensor(True)
-        vqvae_model.vq_layer.freeze_codebook = torch.tensor(True)
-        print("Finished discretizing action data!")
-        vqvae_model.eval()
-        for param in vqvae_model.vq_layer.parameters():
-            param.requires_grad = False
-    return loss, n_different_codes, n_different_combinations, recon_l1_error
 
 
 class FocalLoss(nn.Module):
