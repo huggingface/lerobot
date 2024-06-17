@@ -127,12 +127,20 @@ wandb login
 
 Check out [example 1](./examples/1_load_lerobot_dataset.py) that illustrates how to use our dataset class which automatically download data from the Hugging Face hub.
 
-You can also locally visualize episodes from a dataset by executing our script from the command line:
+You can also locally visualize episodes from a dataset on the hub by executing our script from the command line:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
     --repo-id lerobot/pusht \
     --episode-index 0
 ```
+
+or from a dataset in a local folder with the root `DATA_DIR` environment variable
+```bash
+DATA_DIR='./my_local_data_dir' python lerobot/scripts/visualize_dataset.py \
+    --repo-id lerobot/pusht \
+    --episode-index 0
+```
+
 
 It will open `rerun.io` and display the camera streams, robot states and actions, like this:
 
@@ -140,6 +148,51 @@ https://github-production-user-asset-6210df.s3.amazonaws.com/4681518/328035972-f
 
 
 Our script can also visualize datasets stored on a distant server. See `python lerobot/scripts/visualize_dataset.py --help` for more instructions.
+
+### The `LeRobotDataset` format
+
+A dataset in `LeRobotDataset` format is very simple to use. It can be loaded from a repository on the Hugging Face hub or a local folder simply with e.g. `dataset = LeRobotDataset("lerobot/aloha_static_coffee")` and can be indexed into like any Hugging Face and Pytorch dataset. For instance `dataset[0]` will retrieve a sample of the dataset observations and actions in pytorch tensors format ready to be fed to a model.
+
+A specificity of `LeRobotDataset` is that we can retrieve several frames for one sample query. By setting `delta_timestamps` to a list of delta timestamps, e.g. `delta_timestamps = {"observation.image": [-1, -0.5, -0.2, 0]}`  one can retrieve, for each query, 4 images including one at -1 second before the current time step, the two others at -0.5 second and -0.2, and the final one at the current time step (0 second). See example [1_load_lerobot_dataset.py](examples/1_load_lerobot_dataset.py) for more details on `delta_timestamps`.
+
+Under the hood, the `LeRobotDataset` format makes use of several ways to serialize data which can be useful to understand if you plan to work more closely with this format. We tried to make a flexible yet simple dataset format that would cover most type of features and specificities present in reinforcement learning and robotics, in simulation and in real-world, with a focus on cameras and robot states.
+
+Here are the important details and internal structure organization of a typical `LeRobotDataset` instantiated with `dataset = LeRobotDataset("lerobot/aloha_static_coffee")`. The exact features will change from dataset to dataset but not the main aspects:
+
+```
+dataset attributes:
+  ├ hf_dataset: a Hugging Face dataset (backed by Arrow/parquet). Typical features example:
+  │  ├ observation.images.cam_high: VideoFrame
+  │  │   VideoFrame = {'path': path to a mp4 video, 'timestamp': float32 timestamp in the video}
+  │  ├ observation.state: List of float32: position of an arm joints (for instance)
+  │  ... (more observations)
+  │  ├ action: List of float32
+  │  ├ episode_index: int64: index of the episode for this sample
+  │  ├ frame_index: int64: index of the frame for this sample in the episode ; starts at 0 for each episode
+  │  ├ timestamp: float32: timestamp in the episode
+  │  ├ next.done: bool: indicates the end of en episode ; True for the last frame in each episode
+  │  └ index: int64: general index in the whole dataset
+  ├ episode_data_index: contains 2 tensors with the start and end indices of each episode
+  │  ├ from: 1D int64 tensor of first frame index for each episode: shape (num episodes,) starts with 0
+  │  └ to: 1D int64 tensor of last frame index for each episode: shape (num episodes,)
+  ├ stats: a dictionary of statistics (max, mean, min, std) for each feature in the dataset, for instance
+  │  ├ observation.images.cam_high: {'max': tensor with same number of dimensions (e.g. `(c, 1, 1)` for images, `(c,)` for states), etc.}
+  │  ...
+  ├ info: a dictionary of metadata on the dataset
+  │  ├ fps: float - frame per second the dataset is recorded/synchronized to
+  │  └ video: bool - indicates if frames are encoded in mp4 video files to save space or stored as png files
+  ├ videos_dir: path to where the mp4 videos or png images are stored/accessed
+  └ camera_keys: List of string: the keys to access camera features in the item returned by the dataset (e.g. `["observation.images.cam_high", ...]`)
+```
+
+A `LeRobotDataset` is serialised using several widespread file formats for each of its parts, namely:
+- hf_dataset stored using Hugging Face datasets library serialization to parquet
+- videos are stored in mp4 format to save space or png files
+- episode_data_index saved using `safetensor` tensor serializtion format
+- stats saved using `safetensor` tensor serializtion format
+- info are saved using JSON
+
+Dataset can uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can set the `DATA_DIR` environment variable to you root dataset folder as illustrated in the above section on dataset visualization.
 
 ### Evaluate a pretrained policy
 
@@ -228,7 +281,7 @@ To add a dataset to the hub, you need to login using a write-access token, which
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-Then point to your raw dataset folder (e.g. `data/aloha_static_pingpong_test_raw`), and push your dataset to the hub with:
+Then move your dataset folder in `data` directory (e.g. `data/aloha_static_pingpong_test`), and push your dataset to the hub with:
 ```bash
 python lerobot/scripts/push_dataset_to_hub.py \
 --raw-dir data/aloha_static_pingpong_test_raw \
