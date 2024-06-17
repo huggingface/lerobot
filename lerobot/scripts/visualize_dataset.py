@@ -53,71 +53,52 @@ python lerobot/scripts/visualize_dataset.py \
 """
 
 import argparse
-import http.server
 import logging
-import os
 import shutil
-import socketserver
+import webbrowser
+from typing import List
 from pathlib import Path
 
 import tqdm
-from bs4 import BeautifulSoup
+from flask import Flask, render_template, url_for, redirect
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.utils.utils import init_logging
 
 
-class NoCacheHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
-    def end_headers(self):
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
-        super().end_headers()
+def run_server(dataset: LeRobotDataset, episode_indices: List[int], port: str, open: bool, static_folder: Path, template_folder: Path):
+    app = Flask(__name__, static_folder=static_folder.resolve(), template_folder=template_folder.resolve())
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0 # specifying not to cache
+
+    @app.route('/')
+    def index():
+        # home page redirects to the first episode page
+        first_episode_id = episode_indices[0]
+        return redirect(url_for('show_episode', episode_id=first_episode_id))
+
+    @app.route('/episode_<int:episode_id>')
+    def show_episode(episode_id):
+        dataset_info = {
+            "repo_id": dataset.repo_id,
+            'num_samples': dataset.num_samples,
+            'num_episodes': dataset.num_episodes,
+            'fps': dataset.fps,
+        }
+        video_paths = get_episode_video_paths(dataset, episode_id)
+        videos_info = [{"url": url_for('static', filename=video_path), "filename": Path(video_path).name} for video_path in video_paths]
+        ep_csv_url = url_for('static', filename=get_ep_csv_fname(episode_id))
+        return render_template('visualize_dataset_template.html', episode_id=episode_id, episode_indices=episode_indices, dataset_info=dataset_info, videos_info=videos_info, ep_csv_url=ep_csv_url)
+
+    if open:
+        webbrowser.open_new_tab(f"http://127.0.0.1:{port}")
+    app.run(port=port)
 
 
-def run_server(path, port):
-    # Change directory to serve 'index.html` as front page
-    os.chdir(path)
+def get_ep_csv_fname(episode_id: int):
+    ep_csv_fname = f"episode_{episode_id}.csv"
+    return ep_csv_fname
 
-    with socketserver.TCPServer(("", port), NoCacheHTTPRequestHandler) as httpd:
-        logging.info(f"Serving HTTP on 0.0.0.0 port {port} (http://0.0.0.0:{port}/) ...")
-        httpd.serve_forever()
-
-
-def create_html_page(page_title: str):
-    """Create a html page with beautiful soop with default doctype, meta, header and title."""
-    soup = BeautifulSoup("", "html.parser")
-
-    doctype = soup.new_tag("!DOCTYPE html")
-    soup.append(doctype)
-
-    html = soup.new_tag("html", lang="en")
-    soup.append(html)
-
-    head = soup.new_tag("head")
-    html.append(head)
-
-    meta_charset = soup.new_tag("meta", charset="UTF-8")
-    head.append(meta_charset)
-
-    meta_viewport = soup.new_tag(
-        "meta", attrs={"name": "viewport", "content": "width=device-width, initial-scale=1.0"}
-    )
-    head.append(meta_viewport)
-
-    title = soup.new_tag("title")
-    title.string = page_title
-    head.append(title)
-
-    body = soup.new_tag("body")
-    html.append(body)
-
-    main_div = soup.new_tag("div")
-    body.append(main_div)
-    return soup, body
-
-
-def write_episode_data_csv(output_dir, file_name, episode_index, dataset):
+def write_episode_data_csv(output_dir: Path, file_name: str, episode_index: int, dataset: LeRobotDataset):
     """Write a csv file containg timeseries data of an episode (e.g. state and action).
     This file will be loaded by Dygraph javascript to plot data in real time."""
     from_idx = dataset.episode_data_index["from"][episode_index]
@@ -159,182 +140,10 @@ def write_episode_data_csv(output_dir, file_name, episode_index, dataset):
             f.write(",".join(row_str) + "\n")
 
 
-def write_episode_data_js(output_dir, file_name, ep_csv_fname, dataset):
-    """Write a javascript file containing logic to synchronize camera feeds and timeseries."""
-    s = ""
-    s += "document.addEventListener('DOMContentLoaded', function () {\n"
-    for i, key in enumerate(dataset.video_frame_keys):
-        s += f"  const video{i} = document.getElementById('video_{key}');\n"
-    s += "  const slider = document.getElementById('videoControl');\n"
-    s += "  const playButton = document.getElementById('playButton');\n"
-    s += f"  const dygraph = new Dygraph(document.getElementById('graph'), '{ep_csv_fname}', " + "{\n"
-    s += "    pixelsPerPoint: 0.01,\n"
-    s += "    legend: 'always',\n"
-    s += "    labelsDiv: document.getElementById('labels'),\n"
-    s += "    labelsSeparateLines: true,\n"
-    s += "    labelsKMB: true\n"
-    s += "  });\n"
-    s += "\n"
-    s += "  // Function to play both videos\n"
-    s += "  playButton.addEventListener('click', function () {\n"
-    for i in range(len(dataset.video_frame_keys)):
-        s += f"    video{i}.play();\n"
-    s += "    // playButton.disabled = true; // Optional: disable button after playing\n"
-    s += "  });\n"
-    s += "\n"
-    s += "  // Update the video time when the slider value changes\n"
-    s += "  slider.addEventListener('input', function () {\n"
-    s += "    const sliderValue = slider.value;\n"
-    for i in range(len(dataset.video_frame_keys)):
-        s += f"    const time{i} = (video{i}.duration * sliderValue) / 100;\n"
-    for i in range(len(dataset.video_frame_keys)):
-        s += f"    video{i}.currentTime = time{i};\n"
-    s += "  });\n"
-    s += "\n"
-    s += "  // Synchronize slider with the video's current time\n"
-    s += "  const syncSlider = (video) => {\n"
-    s += "    video.addEventListener('timeupdate', function () {\n"
-    s += "      if (video.duration) {\n"
-    s += "        const pc = (100 / video.duration) * video.currentTime;\n"
-    s += "        slider.value = pc;\n"
-    s += "        const index = Math.floor(pc * dygraph.numRows() / 100);\n"
-    s += "        dygraph.setSelection(index, undefined, true, true);\n"
-    s += "      }\n"
-    s += "    });\n"
-    s += "  };\n"
-    s += "\n"
-    for i in range(len(dataset.video_frame_keys)):
-        s += f"  syncSlider(video{i});\n"
-    s += "\n"
-    s += "});\n"
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    with open(output_dir / file_name, "w", encoding="utf-8") as f:
-        f.write(s)
-
-
-def write_episode_data_html(output_dir, file_name, js_fname, ep_index, dataset):
-    """Write an html file containg video feeds and timeseries associated to an episode."""
-    soup, body = create_html_page("")
-
-    # Add videos from camera feeds
-
-    videos_control_div = soup.new_tag("div")
-    body.append(videos_control_div)
-
-    videos_div = soup.new_tag("div")
-    videos_control_div.append(videos_div)
-
-    def create_video(id, src):
-        video = soup.new_tag("video", id=id, width="320", height="240", controls="")
-        source = soup.new_tag("source", src=src, type="video/mp4")
-        video.string = "Your browser does not support the video tag."
-        video.append(source)
-        return video
-
+def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> List[str]:
     # get first frame of episode (hack to get video_path of the episode)
     first_frame_idx = dataset.episode_data_index["from"][ep_index].item()
-
-    for key in dataset.video_frame_keys:
-        # Example of video_path: 'videos/observation.image_episode_000004.mp4'
-        video_path = dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"]
-        videos_div.append(create_video(f"video_{key}", video_path))
-
-    # Add controls for videos and graph
-
-    control_div = soup.new_tag("div")
-    videos_control_div.append(control_div)
-
-    button_div = soup.new_tag("div")
-    control_div.append(button_div)
-
-    button = soup.new_tag("button", id="playButton")
-    button.string = "Play Videos"
-    button_div.append(button)
-
-    slider_div = soup.new_tag("div")
-    control_div.append(slider_div)
-
-    slider = soup.new_tag("input", type="range", id="videoControl", min="0", max="100", value="0", step="1")
-    control_div.append(slider)
-
-    # Add graph of states/actions, and its labels
-
-    graph_labels_div = soup.new_tag("div", style="display: flex;")
-    body.append(graph_labels_div)
-
-    graph_div = soup.new_tag("div", id="graph", style="flex: 1; width: 85%")
-    graph_labels_div.append(graph_div)
-
-    labels_div = soup.new_tag("div", id="labels", style="flex: 1; width: 15%")
-    graph_labels_div.append(labels_div)
-
-    # add dygraph library
-    script = soup.new_tag("script", type="text/javascript", src=js_fname)
-    body.append(script)
-
-    script_dygraph = soup.new_tag(
-        "script",
-        type="text/javascript",
-        src="https://cdn.jsdelivr.net/npm/dygraphs@2.1.0/dist/dygraph.min.js",
-    )
-    body.append(script_dygraph)
-
-    link_dygraph = soup.new_tag(
-        "link", rel="stylesheet", href="https://cdn.jsdelivr.net/npm/dygraphs@2.1.0/dist/dygraph.min.css"
-    )
-    body.append(link_dygraph)
-
-    # Write as a html file
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    with open(output_dir / file_name, "w", encoding="utf-8") as f:
-        f.write(soup.prettify())
-
-
-def write_episodes_list_html(output_dir, file_name, ep_indices, ep_html_fnames, dataset):
-    """Write an html file containing information related to the dataset and a list of links to
-    html pages of episodes."""
-    soup, body = create_html_page("TODO")
-
-    h3 = soup.new_tag("h3")
-    h3.string = "TODO"
-    body.append(h3)
-
-    ul_info = soup.new_tag("ul")
-    body.append(ul_info)
-
-    li_info = soup.new_tag("li")
-    li_info.string = f"Number of samples/frames: {dataset.num_samples}"
-    ul_info.append(li_info)
-
-    li_info = soup.new_tag("li")
-    li_info.string = f"Number of episodes: {dataset.num_episodes}"
-    ul_info.append(li_info)
-
-    li_info = soup.new_tag("li")
-    li_info.string = f"Frames per second: {dataset.fps}"
-    ul_info.append(li_info)
-
-    # li_info = soup.new_tag("li")
-    # li_info.string = f"Size: {format_big_number(dataset.hf_dataset.info.size_in_bytes)}B"
-    # ul_info.append(li_info)
-
-    ul = soup.new_tag("ul")
-    body.append(ul)
-
-    for ep_idx, ep_html_fname in zip(ep_indices, ep_html_fnames, strict=False):
-        li = soup.new_tag("li")
-        ul.append(li)
-
-        a = soup.new_tag("a", href=ep_html_fname)
-        a.string = f"Episode number {ep_idx}"
-
-        li.append(a)
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    with open(output_dir / file_name, "w", encoding="utf-8") as f:
-        f.write(soup.prettify())
+    return [dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"] for key in dataset.video_frame_keys]
 
 
 def visualize_dataset(
@@ -342,6 +151,7 @@ def visualize_dataset(
     episode_indices: list[int] = None,
     output_dir: Path | None = None,
     serve: bool = True,
+    open: bool = True,
     port: int = 9090,
 ) -> Path | None:
     init_logging()
@@ -362,31 +172,23 @@ def visualize_dataset(
 
     # Create a simlink from the dataset video folder containg mp4 files to the output directory
     # so that the http server can get access to the mp4 files.
-    ln_videos_dir = output_dir / "videos"
+    static_dir = output_dir / 'static'
+    static_dir.mkdir(parents=True, exist_ok=True)
+    ln_videos_dir = static_dir / 'videos'
     ln_videos_dir.symlink_to(dataset.videos_dir.resolve())
+
+    template_dir = Path(__file__).resolve().parent
 
     if episode_indices is None:
         episode_indices = list(range(dataset.num_episodes))
 
-    logging.info("Writing html")
-    ep_html_fnames = []
+    logging.info("Writing sensor data CSV files")
     for episode_idx in tqdm.tqdm(episode_indices):
         # write states and actions in a csv
-        ep_csv_fname = f"episode_{episode_idx}.csv"
-        write_episode_data_csv(output_dir, ep_csv_fname, episode_idx, dataset)
-
-        js_fname = f"episode_{episode_idx}.js"
-        write_episode_data_js(output_dir, js_fname, ep_csv_fname, dataset)
-
-        # write a html page to view videos and timeseries
-        ep_html_fname = f"episode_{episode_idx}.html"
-        write_episode_data_html(output_dir, ep_html_fname, js_fname, episode_idx, dataset)
-        ep_html_fnames.append(ep_html_fname)
-
-    write_episodes_list_html(output_dir, "index.html", episode_indices, ep_html_fnames, dataset)
+        write_episode_data_csv(static_dir, get_ep_csv_fname(episode_idx), episode_idx, dataset)
 
     if serve:
-        run_server(output_dir, port)
+        run_server(dataset, episode_indices, port, open, static_dir, template_dir)
 
 
 def main():
@@ -416,6 +218,12 @@ def main():
         type=int,
         default=1,
         help="Launch web server.",
+    )
+    parser.add_argument(
+        "--open",
+        type=int,
+        default=1,
+        help="Launch web browser.",
     )
     parser.add_argument(
         "--port",
