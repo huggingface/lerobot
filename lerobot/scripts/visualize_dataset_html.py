@@ -312,7 +312,7 @@ def visualize_dataset_html(
     if episodes is None:
         episodes = list(range(dataset.num_episodes))
 
-    logging.info("Writing html")
+    logging.info("Writing CSV files")
     for episode_index in tqdm.tqdm(episodes):
         inference_results = None
         if has_policy:
