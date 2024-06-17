@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.jsdelivr.net/npm/dygraphs@2.1.0/dist/dygraph.min.js" type="text/javascript"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <title>{{ dataset_info.repo_id }} episode {{ episode_id }}</title>
+</head>
+
+<body class="flex max-h-screen bg-slate-950 text-gray-200">
+  <!-- Sidebar -->
+  <div id="sidebar" class="w-60 bg-slate-900 p-5 break-words max-h-screen overflow-y-auto">
+    <h1 class="mb-4 text-xl font-semibold">{{ dataset_info.repo_id }}</h1>
+
+    <ul>
+      <li>
+        Number of samples/frames: {{ dataset_info.num_samples }}
+      </li>
+      <li>
+        Number of episodes: {{ dataset_info.num_episodes }}
+      </li>
+      <li>
+        Frames per second: {{ dataset_info.fps }}
+      </li>
+    </ul>
+
+    <p>Episodes:</p>
+    <ul class="ml-2">
+      {% for episode in episodes %}
+      <li class="font-mono text-sm mt-0.5">
+        <a href="episode_{{ episode }}" class="underline">
+          Episode {{ episode }}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+
+  </div>
+
+  <!-- Toggle sidebar button -->
+  <button class="flex items-center opacity-50 hover:opacity-100 mx-1" onclick="toggleSidebar()" title="Toggle sidebar">
+    <div class="bg-slate-500 w-2 h-10 rounded-full"></div>
+  </button>
+
+  <!-- Content -->
+  <div class="flex-1 max-h-screen flex flex-col gap-4 overflow-y-auto">
+    <h1 class="text-xl font-bold mt-4 font-mono">
+      Episode {{ episode_id }}
+    </h1>
+
+    <!-- Videos -->
+    <div class="flex flex-wrap gap-1">
+      {% for video_info in videos_info %}
+      <div class="max-w-96">
+        <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
+        <video type="video/mp4" class="min-w-64">
+          <source src="{{ video_info.url }}">
+          Your browser does not support the video tag.
+        </video>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Controllers -->
+    <div class="flex gap-1 text-3xl">
+      <button id="btn-play" class="-rotate-90">🔽</button>
+      <button id="btn-pause" class="hidden">⏸️</button>
+      <button id="btn-backward" title="jump backward 5 seconds">⏪</button>
+      <button id="btn-forward" title="jump forward 5 seconds">⏩</button>
+      <button id="btn-rewind" title="rewind from start">↩️</button>
+      <div class="flex gap-2 items-center ml-4">
+        <input id="slider" max="100" min="0" step="1" type="range" value="0" />
+        <div id="timer" class="font-mono text-sm border border-slate-500 rounded-lg px-1 py-0.5">0:00 / 0:00</div>
+      </div>
+    </div>
+
+    <!-- Graph -->
+    <div class="flex gap-2">
+      <div id="graph" class="flex-1 w-[85%]">
+      </div>
+      <div id="labels" class="flex-1 w-[15%]">
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const videos = document.querySelectorAll('video');
+      const video = videos[0];
+      const timer = document.getElementById('timer');
+
+      // controllers
+      const slider = document.getElementById('slider');
+      const btnPlay = document.getElementById('btn-play');
+      const btnPause = document.getElementById('btn-pause');
+      const btnBackward = document.getElementById('btn-backward');
+      const btnForward = document.getElementById('btn-forward');
+      const btnRewind = document.getElementById('btn-rewind');
+
+      const generateDarkModeColor = () => {
+        // Function to generate a random number within a given range
+        const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+        // Generate hue, saturation, and lightness
+        const hue = randomInt(0, 360); // Hue from 0 to 360
+        const saturation = randomInt(60, 100); // High saturation for vivid colors
+        const lightness = randomInt(50, 75); // Lightness adjusted for visibility on dark backgrounds
+        // Return the HSL color string
+        return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+      }
+
+      const dygraph = new Dygraph(document.getElementById('graph'), '{{ ep_csv_url }}', {
+        pixelsPerPoint: 0.01,
+        legend: 'always',
+        labelsDiv: document.getElementById('labels'),
+        labelsSeparateLines: true,
+        labelsKMB: true,
+        colors: Array.from({
+          length: 100
+        }, generateDarkModeColor), // custom color palette
+      });
+
+      video.addEventListener('loadedmetadata', () => (timer.textContent = formatTime(0) + ' / ' + formatTime(video
+        .duration)));
+      video.addEventListener('timeupdate', () => (timer.textContent = formatTime(video.currentTime) + ' / ' +
+        formatTime(video.duration)));
+      const formatTime = (time) => {
+        var hours = Math.floor(time / 3600);
+        var minutes = Math.floor((time % 3600) / 60);
+        var seconds = Math.floor(time % 60);
+        return (hours > 0 ? hours + ':' : '') + (minutes < 10 ? '0' + minutes : minutes) + ':' + (seconds < 10 ?
+          '0' + seconds : seconds);
+      }
+
+      btnPlay.addEventListener('click', () => {
+        videos.forEach(video => video.play());
+        btnPlay.classList.toggle('hidden');
+        btnPause.classList.toggle('hidden');
+      });
+
+      btnPause.addEventListener('click', () => {
+        videos.forEach(video => video.pause());
+        btnPlay.classList.toggle('hidden');
+        btnPause.classList.toggle('hidden');
+      });
+
+      btnRewind.addEventListener('click', () => {
+        videos.forEach(video => (video.currentTime = 0.0));
+      });
+
+      btnBackward.addEventListener('click', () => {
+        videos.forEach(video => (video.currentTime -= 5));
+      });
+
+      btnForward.addEventListener('click', () => {
+        videos.forEach(video => (video.currentTime += 5));
+      });
+
+      videos.forEach(video => {
+        video.addEventListener('ended', () => {
+          btnPlay.classList.remove('hidden');
+          btnPause.classList.add('hidden');
+        });
+      });
+
+      // Update the video time when the slider value changes
+      slider.addEventListener('input', function () {
+        const sliderValue = slider.value;
+        videos.forEach(video => {
+          const time = (video.duration * sliderValue) / 100;
+          video.currentTime = time;
+        });
+      });
+
+      // Synchronize slider with the video's current time
+      const syncSlider = (video) => {
+        video.addEventListener('timeupdate', function () {
+          if (video.duration) {
+            const pc = (100 / video.duration) * video.currentTime;
+            slider.value = pc;
+            const index = Math.floor(pc * dygraph.numRows() / 100);
+            dygraph.setSelection(index, undefined, true, true);
+          }
+        });
+      };
+      videos.forEach(video => syncSlider(video));
+    });
+
+    const toggleSidebar = () => (document.getElementById('sidebar').classList.toggle('hidden'));
+  </script>
+</body>
+
+</html>
