@@ -103,8 +103,8 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
         # VQ-BeT discretizes action using VQ-VAE before training BeT (please refer to section 3.2 in the VQ-BeT paper https://arxiv.org/pdf/2403.03181)
         if not self.vqbet.action_head.vqvae_model.discretized.item():
             # loss: total loss of training RVQ
-            # n_different_codes: how many of total possible codes are being used (max: vqvae_n_embed).
-            # n_different_combinations: how many different code combinations you are using out of all possible code combinations (max: vqvae_n_embed ^ 2). (we use fixed number of layers of RVQ (=2))
+            # n_different_codes: how many of the total possible VQ codes are being used in single batch (how many of them have at least one encoder embedding as a nearest neighbor). This can be at most `vqvae_n_embed * number of layers of RVQ (=2)`.
+            # n_different_combinations: how many different code combinations are being used out of all possible combinations in single batch. This can be at most `vqvae_n_embed ^ number of layers of RVQ (=2)` (hint consider the RVQ as a decision tree).
             loss, n_different_codes, n_different_combinations, recon_l1_error = self.vqbet.discretize(self.config.n_vqvae_training_steps, batch['action'])
             return {"loss": loss, "n_different_codes": n_different_codes, "n_different_combinations": n_different_combinations, "recon_l1_error": recon_l1_error}
         # if Residual VQ is already trained, VQ-BeT trains its GPT and bin prediction head / offset prediction head parts.
@@ -849,7 +849,7 @@ def pretrain_vqvae(vqvae_model, n_vqvae_training_steps, actions):
     loss, metric = vqvae_model.vqvae_forward(
         actions
     )
-    n_different_codes = len(torch.unique(metric[2]))
+    n_different_codes = sum([len(torch.unique(metric[2][:, i])) for i in range(vqvae_model.vqvae_num_layers)])
     n_different_combinations = len(torch.unique(metric[2], dim=0))
     recon_l1_error= metric[0].detach().cpu().item()
     vqvae_model.optimized_steps += 1
