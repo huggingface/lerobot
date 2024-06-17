@@ -296,6 +296,7 @@ def test_normalize(insert_temporal_dim):
             ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
         ),
         ("aloha", "act", ["policy.n_action_steps=10"]),
+        ("aloha", "act_1000_actions", []),
         ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"]),
         ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"]),
     ],
