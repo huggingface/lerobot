@@ -50,8 +50,6 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
         )
 
 
-        # queues are populated during rollout of the policy, they contain the n latest observations and actions
-        self._queues = None
 
         self.vqbet = VQBeTModel(config)
 
@@ -60,6 +58,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
     def reset(self):
         """
         Clear observation and action queues. Should be called on `env.reset()`
+        queues are populated during rollout of the policy, they contain the n latest observations and actions
         """
         self._queues = {
             "observation.image": deque(maxlen=self.config.n_obs_steps),
