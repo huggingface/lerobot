@@ -41,7 +41,6 @@ class VQBeTConfig:
             The group sizes are set to be about 16 (to be precise, feature_dim // 16).
         spatial_softmax_num_keypoints: Number of keypoints for SpatialSoftmax.
         n_vqvae_training_steps: Number of optimization steps for training Residual VQ.
-        vqvae_groups: Number of layers in Residual VQ.
         vqvae_n_embed: Number of embedding vectors in the RVQ dictionary (each layer).
         vqvae_embedding_dim: Dimension of each embedding vector in the RVQ dictionary.
         vqvae_enc_hidden_dim: Size of hidden dimensions of Encoder / Decoder part of Residaul VQ-VAE
@@ -97,7 +96,6 @@ class VQBeTConfig:
     spatial_softmax_num_keypoints: int = 32
     # VQ-VAE
     n_vqvae_training_steps: int = 3000
-    vqvae_groups: int = 2
     vqvae_n_embed: int = 16
     vqvae_embedding_dim: int = 256
     vqvae_enc_hidden_dim: int = 128

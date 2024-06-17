@@ -104,7 +104,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
         if not self.vqbet.action_head.vqvae_model.discretized.item():
             # loss: total loss of training RVQ
             # n_different_codes: how many of total possible codes are being used (max: vqvae_n_embed).
-            # n_different_combinations: how many different code combinations you are using out of all possible code combinations (max: vqvae_n_embed ^ vqvae_groups).
+            # n_different_combinations: how many different code combinations you are using out of all possible code combinations (max: vqvae_n_embed ^ 2). (we use fixed number of layers of RVQ (=2))
             loss, n_different_codes, n_different_combinations, recon_l1_error = self.vqbet.discretize(self.config.n_vqvae_training_steps, batch['action'])
             return {"loss": loss, "n_different_codes": n_different_codes, "n_different_combinations": n_different_combinations, "recon_l1_error": recon_l1_error}
         # if Residual VQ is already trained, VQ-BeT trains its GPT and bin prediction head / offset prediction head parts.
@@ -336,17 +336,18 @@ class VQBeTHead(nn.Module):
 
         self.map_to_cbet_preds_bin: outputs probability of each code (for each layer).
             The input dimension of `self.map_to_cbet_preds_bin` is same with the output of GPT, 
-            and the output dimension of `self.map_to_cbet_preds_bin` is `self.config.vqvae_groups * self.config.vqvae_n_embed`.
+            and the output dimension of `self.map_to_cbet_preds_bin` is `self.vqvae_model.vqvae_num_layers (=fixed as 2) * self.config.vqvae_n_embed`.
             if the agent select the code sequentially, we use self.map_to_cbet_preds_primary_bin and self.map_to_cbet_preds_secondary_bin instead of self._map_to_cbet_preds_bin.
 
         self.map_to_cbet_preds_offset: output the predicted offsets for all the codes in all the layers. 
             The input dimension of ` self.map_to_cbet_preds_offset` is same with the output of GPT, 
-            and the output dimension of ` self.map_to_cbet_preds_offset` is `self.config.vqvae_groups * self.config.vqvae_n_embed * config.action_chunk_size * config.output_shapes["action"][0]`
+            and the output dimension of ` self.map_to_cbet_preds_offset` is `self.vqvae_model.vqvae_num_layers (=fixed as 2) * self.config.vqvae_n_embed * config.action_chunk_size * config.output_shapes["action"][0]`.
         """
 
         super().__init__()
         self.config = config
-
+        # init vqvae
+        self.vqvae_model = VqVae(config)
         if config.sequentially_select:
             self.map_to_cbet_preds_primary_bin = MLP(
                 in_channels=config.gpt_output_dim,
@@ -359,16 +360,14 @@ class VQBeTHead(nn.Module):
         else:
             self.map_to_cbet_preds_bin = MLP(
                 in_channels=config.gpt_output_dim,
-                hidden_channels=[self.config.vqvae_groups * self.config.vqvae_n_embed],
+                hidden_channels=[self.vqvae_model.vqvae_num_layers * self.config.vqvae_n_embed],
             )
         self.map_to_cbet_preds_offset = MLP(
             in_channels=config.gpt_output_dim,
             hidden_channels=[
-                self.config.vqvae_groups * self.config.vqvae_n_embed * config.action_chunk_size * config.output_shapes["action"][0],
+                self.vqvae_model.vqvae_num_layers * self.config.vqvae_n_embed * config.action_chunk_size * config.output_shapes["action"][0],
             ],
         )
-        # init vqvae
-        self.vqvae_model = VqVae(config)
         # loss
         self._focal_loss_fn = FocalLoss(gamma=2.0)
 
@@ -386,7 +385,7 @@ class VQBeTHead(nn.Module):
         # sample offsets
         cbet_offsets = self.map_to_cbet_preds_offset(x)
         cbet_offsets = einops.rearrange(
-            cbet_offsets, "(NT) (G C WA) -> (NT) G C WA", G=self.config.vqvae_groups, C=self.config.vqvae_n_embed
+            cbet_offsets, "(NT) (G C WA) -> (NT) G C WA", G=self.vqvae_model.vqvae_num_layers, C=self.config.vqvae_n_embed
         )
         # if self.config.sequentially_select is True, bin prediction head first sample the primary code, and then sample secondary code
         if self.config.sequentially_select:
@@ -421,7 +420,7 @@ class VQBeTHead(nn.Module):
         else:
             cbet_logits = self.map_to_cbet_preds_bin(x)
             cbet_logits = einops.rearrange(
-                cbet_logits, "(NT) (G C) -> (NT) G C", G=self.config.vqvae_groups
+                cbet_logits, "(NT) (G C) -> (NT) G C", G=self.vqvae_model.vqvae_num_layers
             )
             cbet_probs = torch.softmax(cbet_logits / self.config.bet_softmax_temperature, dim=-1)
             NT, G, choices = cbet_probs.shape
@@ -434,7 +433,7 @@ class VQBeTHead(nn.Module):
         device = get_device_from_parameters(self)
         indices = (
             torch.arange(NT, device=device).unsqueeze(1),
-            torch.arange(self.config.vqvae_groups, device=device).unsqueeze(0),
+            torch.arange(self.vqvae_model.vqvae_num_layers, device=device).unsqueeze(0),
             sampled_centers,
         )
         # Use advanced indexing to sample the values (Extract the only offsets corresponding to the sampled codes.)
@@ -512,10 +511,10 @@ class VQBeTHead(nn.Module):
             cbet_logits[:, 0, :],
             action_bins[:, 0],
         )
-        # calculate secondary code prediction loss (if there are more than 2 layers in RVQ, then this part will calculate all the loss for remaining layers together)
+        # calculate secondary code prediction loss
         cbet_loss2 = self._focal_loss_fn(
-            cbet_logits[:, 1:, :],
-            action_bins[:, 1:],
+            cbet_logits[:, 1, :],
+            action_bins[:, 1],
         )
         # add all the prediction loss
         cbet_loss = cbet_loss1 * self.config.primary_code_loss_weight + cbet_loss2 * self.config.secondary_code_loss_weight
@@ -756,10 +755,11 @@ class VqVae(nn.Module):
         # 'discretized' indicates whether the Residual VQ part is trained or not. (After finishing the training, we set discretized=True)
         self.register_buffer('discretized', torch.tensor(False))
         self.optimized_steps = 0
+        self.vqvae_num_layers = 2 # we use the fixed number of layers for Residual VQ across all environments.
 
         self.vq_layer = ResidualVQ(
             dim=config.vqvae_embedding_dim,
-            num_quantizers=config.vqvae_groups,
+            num_quantizers=self.vqvae_num_layers,
             codebook_size=config.vqvae_n_embed,
         )
 

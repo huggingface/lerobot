@@ -85,7 +85,6 @@ policy:
   spatial_softmax_num_keypoints: 32
   # VQ-VAE
   n_vqvae_training_steps: ${training.n_vqvae_training_steps}
-  vqvae_groups: 2
   vqvae_n_embed: 16
   vqvae_embedding_dim: 256
   vqvae_enc_hidden_dim: 128
