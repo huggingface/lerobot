@@ -65,11 +65,11 @@
 
     <!-- Controllers -->
     <div class="flex gap-1 text-3xl">
-      <button id="btn-play" class="-rotate-90">🔽</button>
-      <button id="btn-pause" class="hidden">⏸️</button>
-      <button id="btn-backward" title="jump backward 5 seconds">⏪</button>
-      <button id="btn-forward" title="jump forward 5 seconds">⏩</button>
-      <button id="btn-rewind" title="rewind from start">↩️</button>
+      <button id="btn-play" class="-rotate-90" title="Play. Toggle with Space">🔽</button>
+      <button id="btn-pause" class="hidden" title="Pause. Toggle with Space">⏸️</button>
+      <button id="btn-backward" title="Jump backward 5 seconds">⏪</button>
+      <button id="btn-forward" title="Jump forward 5 seconds">⏩</button>
+      <button id="btn-rewind" title="Rewind from start">↩️</button>
       <div class="flex gap-2 items-center ml-4">
         <input id="slider" max="100" min="0" step="1" type="range" value="0" />
         <div id="timer" class="font-mono text-sm border border-slate-500 rounded-lg px-1 py-0.5">0:00 / 0:00</div>
@@ -185,6 +185,14 @@
         });
       };
       videos.forEach(video => syncSlider(video));
+
+      // hit "Space" to play/pause
+      window.addEventListener('keydown', e => {
+        if (e.keyCode === 32 || e.key === ' ') {
+          e.preventDefault();
+          btnPause.classList.contains("hidden") ? btnPlay.click() : btnPause.click();
+        }
+      });
     });
 
     const toggleSidebar = () => (document.getElementById('sidebar').classList.toggle('hidden'));
