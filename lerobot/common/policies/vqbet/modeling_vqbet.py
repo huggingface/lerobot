@@ -603,7 +603,6 @@ class VQBeTOptimizer(torch.optim.Adam):
 class VQBeTScheduler(nn.Module):
     def __init__(self, optimizer, cfg):
         super().__init__()
-        # VQ-BeT use scheduler only for rgb encoder. Since we took rgb encoder part from diffusion policy, we also follow the same scheduler from it.
         from diffusers.optimization import get_scheduler
         self.n_vqvae_training_steps = cfg.training.n_vqvae_training_steps
         self.optimizing_step = 0
