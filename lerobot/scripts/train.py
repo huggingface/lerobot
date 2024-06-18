@@ -88,8 +88,9 @@ def make_optimizer_and_scheduler(cfg, policy):
         lr_scheduler = None
     elif cfg.policy.name == "vqbet":
         from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTOptimizer, VQBeTScheduler
-        optimizer =  VQBeTOptimizer(policy, cfg)
-        lr_scheduler =  VQBeTScheduler(optimizer, cfg)
+
+        optimizer = VQBeTOptimizer(policy, cfg)
+        lr_scheduler = VQBeTScheduler(optimizer, cfg)
     else:
         raise NotImplementedError()
 

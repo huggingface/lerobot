@@ -16,7 +16,7 @@ This file is a part for Residual Vector Quantization that utilizes code from the
 
     - Phil Wang's vector-quantize-pytorch implementation in PyTorch.
         Origianl source: https://github.com/lucidrains/vector-quantize-pytorch
-    
+
     - The vector-quantize-pytorch code is licensed under the MIT License:
 
         MIT License
@@ -54,20 +54,20 @@ This file is a part for Residual Vector Quantization that utilizes code from the
                 These parameters are not used in the code.
             - changed the name of function `get_codes_from_indices` → `get_codebook_vector_from_indices`:
                 This is to make the function name more descriptive.
-        
+
 """
 
+
 class ResidualVQ(nn.Module):
-    
     """
     Residual VQ is composed of multiple VectorQuantize layers.
 
     Follows Algorithm 1. in https://arxiv.org/pdf/2107.03312.pdf
-        "Residual Vector Quantizer (a.k.a. multi-stage vector quantizer [36]) cascades Nq layers of VQ as follows. The unquantized input vector is 
-        passed through a first VQ and quantization residuals are computed. The residuals are then iteratively quantized by a sequence of additional 
+        "Residual Vector Quantizer (a.k.a. multi-stage vector quantizer [36]) cascades Nq layers of VQ as follows. The unquantized input vector is
+        passed through a first VQ and quantization residuals are computed. The residuals are then iteratively quantized by a sequence of additional
         Nq -1 vector quantizers, as described in Algorithm 1."
 
-    
+
     self.project_in: function for projecting input to codebook dimension
     self.project_out: function for projecting codebook dimension to output dimension
     self.layers: nn.ModuleList of VectorQuantize layers that contains Nq layers of VQ as described in the paper.
@@ -86,7 +86,7 @@ class ResidualVQ(nn.Module):
         quantize_dropout_cutoff_index=0,
         quantize_dropout_multiple_of=1,
         accept_image_fmap=False,
-        **kwargs
+        **kwargs,
     ):
         super().__init__()
         assert heads == 1, "residual vq is not compatible with multi-headed codes"
@@ -94,12 +94,8 @@ class ResidualVQ(nn.Module):
         codebook_input_dim = codebook_dim * heads
 
         requires_projection = codebook_input_dim != dim
-        self.project_in = (
-            nn.Linear(dim, codebook_input_dim) if requires_projection else nn.Identity()
-        )
-        self.project_out = (
-            nn.Linear(codebook_input_dim, dim) if requires_projection else nn.Identity()
-        )
+        self.project_in = nn.Linear(dim, codebook_input_dim) if requires_projection else nn.Identity()
+        self.project_out = nn.Linear(codebook_input_dim, dim) if requires_projection else nn.Identity()
 
         self.num_quantizers = num_quantizers
 
@@ -107,10 +103,7 @@ class ResidualVQ(nn.Module):
         self.layers = nn.ModuleList(
             [
                 VectorQuantize(
-                    dim=codebook_dim,
-                    codebook_dim=codebook_dim,
-                    accept_image_fmap=accept_image_fmap,
-                    **kwargs
+                    dim=codebook_dim, codebook_dim=codebook_dim, accept_image_fmap=accept_image_fmap, **kwargs
                 )
                 for _ in range(num_quantizers)
             ]
@@ -120,7 +113,7 @@ class ResidualVQ(nn.Module):
 
         assert quantize_dropout_cutoff_index >= 0
 
-        self.register_buffer('freeze_codebook', torch.tensor(False))
+        self.register_buffer("freeze_codebook", torch.tensor(False))
         self.quantize_dropout_cutoff_index = quantize_dropout_cutoff_index
         self.quantize_dropout_multiple_of = quantize_dropout_multiple_of  # encodec paper proposes structured dropout, believe this was set to 4
 
@@ -181,12 +174,10 @@ class ResidualVQ(nn.Module):
 
         return all_codes
 
-    def forward(
-        self, x, indices=None, return_all_codes=False, sample_codebook_temp=None
-    ):
+    def forward(self, x, indices=None, return_all_codes=False, sample_codebook_temp=None):
         """
         For given input tensor x, this function will return the quantized output, the indices of the quantized output, and the loss.
-        First, the input tensor x is projected to the codebook dimension. Then, the input tensor x is passed through Nq layers of VectorQuantize. 
+        First, the input tensor x is projected to the codebook dimension. Then, the input tensor x is passed through Nq layers of VectorQuantize.
         The residual value of each layer is fed to the next layer.
         """
         num_quant, quant_dropout_multiple_of, return_loss, device = (
@@ -212,41 +203,29 @@ class ResidualVQ(nn.Module):
             ), "some of the residual vq indices were dropped out. please use indices derived when the module is in eval mode to derive cross entropy loss"
             ce_losses = []
 
-        should_quantize_dropout = (
-            self.training and self.quantize_dropout and not return_loss
-        )
+        should_quantize_dropout = self.training and self.quantize_dropout and not return_loss
 
         # sample a layer index at which to dropout further residual quantization
         # also prepare null indices and loss
 
         if should_quantize_dropout:
-            rand_quantize_dropout_index = randrange(
-                self.quantize_dropout_cutoff_index, num_quant
-            )
+            rand_quantize_dropout_index = randrange(self.quantize_dropout_cutoff_index, num_quant)
 
             if quant_dropout_multiple_of != 1:
                 rand_quantize_dropout_index = (
-                    ceil((rand_quantize_dropout_index + 1) / quant_dropout_multiple_of) * quant_dropout_multiple_of
+                    ceil((rand_quantize_dropout_index + 1) / quant_dropout_multiple_of)
+                    * quant_dropout_multiple_of
                     - 1
                 )
 
-            null_indices_shape = (
-                (x.shape[0], *x.shape[-2:])
-                if self.accept_image_fmap
-                else tuple(x.shape[:2])
-            )
-            null_indices = torch.full(
-                null_indices_shape, -1.0, device=device, dtype=torch.long
-            )
+            null_indices_shape = (x.shape[0], *x.shape[-2:]) if self.accept_image_fmap else tuple(x.shape[:2])
+            null_indices = torch.full(null_indices_shape, -1.0, device=device, dtype=torch.long)
             null_loss = torch.full((1,), 0.0, device=device, dtype=x.dtype)
 
         # go through the layers
 
         for quantizer_index, layer in enumerate(self.layers):
-            if (
-                should_quantize_dropout
-                and quantizer_index > rand_quantize_dropout_index
-            ):
+            if should_quantize_dropout and quantizer_index > rand_quantize_dropout_index:
                 all_indices.append(null_indices)
                 all_losses.append(null_loss)
                 continue
@@ -259,7 +238,7 @@ class ResidualVQ(nn.Module):
                 residual,
                 indices=layer_indices,
                 sample_codebook_temp=sample_codebook_temp,
-                freeze_codebook = self.freeze_codebook
+                freeze_codebook=self.freeze_codebook,
             )
 
             residual = residual - quantized.detach()
@@ -286,9 +265,7 @@ class ResidualVQ(nn.Module):
 
         # stack all losses and indices
 
-        all_losses, all_indices = map(
-            partial(torch.stack, dim=-1), (all_losses, all_indices)
-        )
+        all_losses, all_indices = map(partial(torch.stack, dim=-1), (all_losses, all_indices))
 
         ret = (quantized_out, all_indices, all_losses)
 
@@ -300,8 +277,6 @@ class ResidualVQ(nn.Module):
             ret = (*ret, all_codes)
 
         return ret
-
-
 
 
 class VectorQuantize(nn.Module):
@@ -350,12 +325,8 @@ class VectorQuantize(nn.Module):
         codebook_input_dim = codebook_dim * heads
 
         requires_projection = codebook_input_dim != dim
-        self.project_in = (
-            nn.Linear(dim, codebook_input_dim) if requires_projection else nn.Identity()
-        )
-        self.project_out = (
-            nn.Linear(codebook_input_dim, dim) if requires_projection else nn.Identity()
-        )
+        self.project_in = nn.Linear(dim, codebook_input_dim) if requires_projection else nn.Identity()
+        self.project_out = nn.Linear(codebook_input_dim, dim) if requires_projection else nn.Identity()
 
         self.eps = eps
         self.commitment_weight = commitment_weight
@@ -369,17 +340,12 @@ class VectorQuantize(nn.Module):
         self.orthogonal_reg_active_codes_only = orthogonal_reg_active_codes_only
         self.orthogonal_reg_max_codes = orthogonal_reg_max_codes
 
-        assert not (
-            ema_update and learnable_codebook
-        ), "learnable codebook not compatible with EMA update"
+        assert not (ema_update and learnable_codebook), "learnable codebook not compatible with EMA update"
 
         assert 0 <= sync_update_v <= 1.0
-        assert not (
-            sync_update_v > 0.0 and not learnable_codebook
-        ), "learnable codebook must be turned on"
+        assert not (sync_update_v > 0.0 and not learnable_codebook), "learnable codebook must be turned on"
 
         self.sync_update_v = sync_update_v
-
 
         gumbel_sample_fn = partial(
             gumbel_sample,
@@ -389,9 +355,7 @@ class VectorQuantize(nn.Module):
         )
 
         if sync_codebook is None:
-            sync_codebook = (
-                distributed.is_initialized() and distributed.get_world_size() > 1
-            )
+            sync_codebook = distributed.is_initialized() and distributed.get_world_size() > 1
 
         codebook_kwargs = {
             "dim": codebook_dim,
@@ -493,7 +457,7 @@ class VectorQuantize(nn.Module):
         )
 
         need_transpose = not self.channel_last and not self.accept_image_fmap
-        should_inplace_optimize = (self.in_place_codebook_optimizer is not None)
+        should_inplace_optimize = self.in_place_codebook_optimizer is not None
 
         # rearrange inputs
 
@@ -533,7 +497,7 @@ class VectorQuantize(nn.Module):
         # one step in-place update
 
         if should_inplace_optimize and self.training and not freeze_codebook:
-            if (mask is not None):
+            if mask is not None:
                 loss = F.mse_loss(quantize, x.detach(), reduction="none")
 
                 loss_mask = mask
@@ -556,17 +520,11 @@ class VectorQuantize(nn.Module):
 
             # quantize again
 
-            quantize, embed_ind, distances = self._codebook(
-                x, **codebook_forward_kwargs
-            )
+            quantize, embed_ind, distances = self._codebook(x, **codebook_forward_kwargs)
 
         if self.training:
             # determine code to use for commitment loss
-            maybe_detach = (
-                torch.detach
-                if not self.learnable_codebook or freeze_codebook
-                else identity
-            )
+            maybe_detach = torch.detach if not self.learnable_codebook or freeze_codebook else identity
 
             commit_quantize = maybe_detach(quantize)
 
@@ -576,9 +534,7 @@ class VectorQuantize(nn.Module):
 
             if self.sync_update_v > 0.0:
                 # (21) in https://minyoungg.github.io/vqtorch/assets/draft_050523.pdf
-                quantize = quantize + self.sync_update_v * (
-                    quantize - quantize.detach()
-                )
+                quantize = quantize + self.sync_update_v * (quantize - quantize.detach())
 
         # function for calculating cross entropy loss to distance matrix
         # used for (1) naturalspeech2 training residual vq latents to be close to the correct codes and (2) cross-entropy based commitment loss
@@ -611,9 +567,7 @@ class VectorQuantize(nn.Module):
                 embed_ind = rearrange(embed_ind, "1 (b h) n -> b n h", h=heads)
 
         if self.accept_image_fmap:
-            embed_ind = rearrange(
-                embed_ind, "b (h w) ... -> b h w ...", h=height, w=width
-            )
+            embed_ind = rearrange(embed_ind, "b (h w) ... -> b h w ...", h=height, w=width)
 
         if only_one:
             embed_ind = rearrange(embed_ind, "b 1 -> b")
@@ -625,7 +579,7 @@ class VectorQuantize(nn.Module):
         if self.training:
             if self.commitment_weight > 0:
                 if self.commitment_use_cross_entropy_loss:
-                    if (mask is not None):
+                    if mask is not None:
                         ce_loss_mask = mask
                         if is_multiheaded:
                             ce_loss_mask = repeat(ce_loss_mask, "b n -> b n h", h=heads)
@@ -634,7 +588,7 @@ class VectorQuantize(nn.Module):
 
                     commit_loss = calculate_ce_loss(embed_ind)
                 else:
-                    if (mask is not None):
+                    if mask is not None:
                         # with variable lengthed sequences
                         commit_loss = F.mse_loss(commit_quantize, x, reduction="none")
 
@@ -667,13 +621,8 @@ class VectorQuantize(nn.Module):
 
                 num_codes = codebook.shape[-2]
 
-                if (
-                    (self.orthogonal_reg_max_codes is not None)
-                    and num_codes > self.orthogonal_reg_max_codes
-                ):
-                    rand_ids = torch.randperm(num_codes, device=device)[
-                        : self.orthogonal_reg_max_codes
-                    ]
+                if (self.orthogonal_reg_max_codes is not None) and num_codes > self.orthogonal_reg_max_codes:
+                    rand_ids = torch.randperm(num_codes, device=device)[: self.orthogonal_reg_max_codes]
                     codebook = codebook[:, rand_ids]
 
                 orthogonal_reg_loss = orthogonal_loss_fn(codebook)
@@ -704,13 +653,10 @@ class VectorQuantize(nn.Module):
 
         # if masking, only return quantized for where mask has True
 
-        if (mask is not None):
-            quantize = torch.where(
-                rearrange(mask, "... -> ... 1"), quantize, orig_input
-            )
+        if mask is not None:
+            quantize = torch.where(rearrange(mask, "... -> ... 1"), quantize, orig_input)
 
         return quantize, embed_ind, loss
-
 
 
 def noop(*args, **kwargs):
@@ -719,6 +665,7 @@ def noop(*args, **kwargs):
 
 def identity(t):
     return t
+
 
 def cdist(x, y):
     x2 = reduce(x**2, "b n d -> b n", "sum")
@@ -817,9 +764,7 @@ def sample_vectors(samples, num):
 
 
 def batched_sample_vectors(samples, num):
-    return torch.stack(
-        [sample_vectors(sample, num) for sample in samples.unbind(dim=0)], dim=0
-    )
+    return torch.stack([sample_vectors(sample, num) for sample in samples.unbind(dim=0)], dim=0)
 
 
 def pad_shape(shape, size, dim=0):
@@ -870,9 +815,7 @@ def sample_vectors_distributed(local_samples, num):
     all_num_samples = all_gather_sizes(local_samples, dim=0)
 
     if rank == 0:
-        samples_per_rank = sample_multinomial(
-            num, all_num_samples / all_num_samples.sum()
-        )
+        samples_per_rank = sample_multinomial(num, all_num_samples / all_num_samples.sum())
     else:
         samples_per_rank = torch.empty_like(all_num_samples)
 
@@ -938,14 +881,12 @@ def batched_embedding(indices, embeds):
     return embeds.gather(2, indices)
 
 
-
 def orthogonal_loss_fn(t):
     # eq (2) from https://arxiv.org/abs/2112.00384
     h, n = t.shape[:2]
     normed_codes = F.normalize(t, p=2, dim=-1)
     cosine_sim = einsum("h i d, h j d -> h i j", normed_codes, normed_codes)
     return (cosine_sim**2).sum() / (h * n**2) - (1 / n)
-
 
 
 class EuclideanCodebook(nn.Module):
@@ -986,7 +927,9 @@ class EuclideanCodebook(nn.Module):
         self.kmeans_iters = kmeans_iters
         self.eps = eps
         self.threshold_ema_dead_code = threshold_ema_dead_code
-        self.reset_cluster_size = reset_cluster_size if (reset_cluster_size is not None) else threshold_ema_dead_code
+        self.reset_cluster_size = (
+            reset_cluster_size if (reset_cluster_size is not None) else threshold_ema_dead_code
+        )
 
         assert callable(gumbel_sample)
         self.gumbel_sample = gumbel_sample
@@ -996,14 +939,8 @@ class EuclideanCodebook(nn.Module):
             use_ddp and num_codebooks > 1 and kmeans_init
         ), "kmeans init is not compatible with multiple codebooks in distributed environment for now"
 
-        self.sample_fn = (
-            sample_vectors_distributed
-            if use_ddp and sync_kmeans
-            else batched_sample_vectors
-        )
-        self.kmeans_all_reduce_fn = (
-            distributed.all_reduce if use_ddp and sync_kmeans else noop
-        )
+        self.sample_fn = sample_vectors_distributed if use_ddp and sync_kmeans else batched_sample_vectors
+        self.kmeans_all_reduce_fn = distributed.all_reduce if use_ddp and sync_kmeans else noop
         self.all_reduce_fn = distributed.all_reduce if use_ddp else noop
 
         self.register_buffer("initted", torch.Tensor([not kmeans_init]))
@@ -1040,7 +977,7 @@ class EuclideanCodebook(nn.Module):
         if self.initted:
             return
 
-        if (mask is not None):
+        if mask is not None:
             c = data.shape[0]
             data = rearrange(data[mask], "(c n) d -> c n d", c=c)
 
@@ -1102,7 +1039,7 @@ class EuclideanCodebook(nn.Module):
 
         data = rearrange(data, "h ... d -> h (...) d")
 
-        if (mask is not None):
+        if mask is not None:
             c = data.shape[0]
             data = rearrange(data[mask], "(c n) d -> c n d", c=c)
 
@@ -1142,9 +1079,7 @@ class EuclideanCodebook(nn.Module):
         distributed.all_reduce(variance_numer)
         batch_variance = variance_numer / num_vectors
 
-        self.update_with_decay(
-            "batch_variance", batch_variance, self.affine_param_batch_decay
-        )
+        self.update_with_decay("batch_variance", batch_variance, self.affine_param_batch_decay)
 
     def replace(self, batch_samples, batch_mask):
         for ind, (samples, mask) in enumerate(
@@ -1153,9 +1088,7 @@ class EuclideanCodebook(nn.Module):
             if not torch.any(mask):
                 continue
 
-            sampled = self.sample_fn(
-                rearrange(samples, "... -> 1 ..."), mask.sum().item()
-            )
+            sampled = self.sample_fn(rearrange(samples, "... -> 1 ..."), mask.sum().item())
             sampled = rearrange(sampled, "1 ... -> ...")
 
             self.embed.data[ind][mask] = sampled
@@ -1178,7 +1111,9 @@ class EuclideanCodebook(nn.Module):
     @autocast(enabled=False)
     def forward(self, x, sample_codebook_temp=None, mask=None, freeze_codebook=False):
         needs_codebook_dim = x.ndim < 4
-        sample_codebook_temp = sample_codebook_temp if (sample_codebook_temp is not None) else self.sample_codebook_temp
+        sample_codebook_temp = (
+            sample_codebook_temp if (sample_codebook_temp is not None) else self.sample_codebook_temp
+        )
 
         x = x.float()
 
@@ -1187,7 +1122,7 @@ class EuclideanCodebook(nn.Module):
 
         flatten, ps = pack_one(x, "h * d")
 
-        if (mask is not None):
+        if mask is not None:
             mask = repeat(
                 mask,
                 "b n -> c (b h n)",
@@ -1205,9 +1140,7 @@ class EuclideanCodebook(nn.Module):
         if self.affine_param:
             codebook_std = self.codebook_variance.clamp(min=1e-5).sqrt()
             batch_std = self.batch_variance.clamp(min=1e-5).sqrt()
-            embed = (embed - self.codebook_mean) * (
-                batch_std / codebook_std
-            ) + self.batch_mean
+            embed = (embed - self.codebook_mean) * (batch_std / codebook_std) + self.batch_mean
 
         dist = -cdist(flatten, embed)
 
@@ -1225,11 +1158,9 @@ class EuclideanCodebook(nn.Module):
 
         if self.training and self.ema_update and not freeze_codebook:
             if self.affine_param:
-                flatten = (flatten - self.batch_mean) * (
-                    codebook_std / batch_std
-                ) + self.codebook_mean
+                flatten = (flatten - self.batch_mean) * (codebook_std / batch_std) + self.codebook_mean
 
-            if (mask is not None):
+            if mask is not None:
                 embed_onehot[~mask] = 0.0
 
             cluster_size = embed_onehot.sum(dim=1)
@@ -1255,5 +1186,3 @@ class EuclideanCodebook(nn.Module):
         dist = unpack_one(dist, ps, "h * d")
 
         return quantize, embed_ind, dist
-
-

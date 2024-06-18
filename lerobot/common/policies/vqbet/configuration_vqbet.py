@@ -63,7 +63,7 @@ class VQBeTConfig:
         primary_code_loss_weight: A constant that is multiplied to the primary code prediction loss
         secondary_code_loss_weight: A constant that is multiplied to the secondary code prediction loss
         bet_softmax_temperature: Sampling temperature of code for rollout with VQ-BeT
-        sequentially_select: Whether select code of primary / secondary as sequentially (pick primary code, 
+        sequentially_select: Whether select code of primary / secondary as sequentially (pick primary code,
             and then select secodnary code), or at the same time.
     """
 
@@ -115,7 +115,7 @@ class VQBeTConfig:
     gpt_hidden_dim: int = 512
     dropout: float = 0.1
     mlp_hidden_dim: int = 1024
-    offset_loss_weight: float = 10000.
+    offset_loss_weight: float = 10000.0
     primary_code_loss_weight: float = 5.0
     secondary_code_loss_weight: float = 0.5
     bet_softmax_temperature: float = 0.1
