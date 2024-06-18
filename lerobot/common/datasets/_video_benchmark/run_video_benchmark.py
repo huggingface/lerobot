@@ -22,7 +22,7 @@ All of these benchmarks are evaluated within different timestamps modes correspo
     - `1_frame`: 1 single frame is loaded.
     - `2_frames`: 2 consecutive frames are loaded.
     - `2_frames_4_space`: 2 frames separated by 4 frames are loaded.
-    - `6_frames`: 6 frames are loaded.
+    - `6_frames`: 6 consecutive frames are loaded.
 
 These benchmarks are run on the first episode of each dataset specified in DATASET_REPO_IDS.
 Note: These datasets need to be image datasets, not video datasets.
