@@ -314,10 +314,17 @@ class ACT(nn.Module):
             # Note: detach() shouldn't be necessary but leaving it the same as the original code just in case.
             pos_embed = self.vae_encoder_pos_enc.clone().detach()  # (1, S+2, D)
 
-            cls_joint_is_pad = torch.full((batch_size, 2), False).to(
-                batch["observation.state"].device
-            )  # False: not a padding
-            key_padding_mask = torch.cat([cls_joint_is_pad, batch["action_is_pad"]], axis=1)  # (bs, seq+1)
+            # Prepare key padding mask for the transformer encoder. We have 1 or 2 extra tokens at the start of the
+            # sequence depending whether we use the input states or not (cls and robot state)
+            # False means not a padding token.
+            cls_joint_is_pad = torch.full(
+                (batch_size, 2 if self.use_input_state else 1),
+                False,
+                device=batch["observation.state"].device,
+            )
+            key_padding_mask = torch.cat(
+                [cls_joint_is_pad, batch["action_is_pad"]], axis=1
+            )  # (bs, seq+1 or 2)
 
             # Forward pass through VAE encoder to get the latent PDF parameters.
             cls_token_out = self.vae_encoder(
@@ -441,9 +448,8 @@ class ACTEncoderLayer(nn.Module):
         if self.pre_norm:
             x = self.norm1(x)
         q = k = x if pos_embed is None else x + pos_embed
-        x = self.self_attn(q, k, value=x, key_padding_mask=key_padding_mask)[
-            0
-        ]  # select just the output, not the attention weights
+        x = self.self_attn(q, k, value=x, key_padding_mask=key_padding_mask)
+        x = x[0]  # note: [0] to select just the output, not the attention weights
         x = skip + self.dropout1(x)
         if self.pre_norm:
             skip = x
