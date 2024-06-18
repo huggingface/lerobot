@@ -262,7 +262,7 @@ class VQBeTModel(nn.Module):
         self.num_images = len([k for k in config.input_shapes if k.startswith("observation.image")])
         # This action query token is used as a prompt for querying action chunks. Please refer to "A_Q" in the image above.
         # Note: During the forward pass, this token is repeated as many times as needed. The authors also experimented with initializing the necessary number of tokens independently and observed inferior results.
-        self._action_token = nn.Parameter(torch.randn(1, 1, self.config.gpt_input_dim))
+        self.action_token = nn.Parameter(torch.randn(1, 1, self.config.gpt_input_dim))
 
         # To input state and observation features into GPT layers, we first project the features to fit the shape of input size of GPT.
         self.state_projector = MLP(
@@ -307,13 +307,13 @@ class VQBeTModel(nn.Module):
         input_tokens.append(
             self.state_projector(batch["observation.state"])
         )  # (batch, obs_step, projection dims)
-        input_tokens.append(einops.repeat(self._action_token, "1 1 d -> b n d", b=batch_size, n=n_obs_steps))
+        input_tokens.append(einops.repeat(self.action_token, "1 1 d -> b n d", b=batch_size, n=n_obs_steps))
         # Interleave tokens by stacking and rearranging.
         input_tokens = torch.stack(input_tokens, dim=2)
         input_tokens = einops.rearrange(input_tokens, "b n t d -> b (n t) d")
 
         len_additional_action_token = self.config.n_action_pred_token - 1
-        future_action_tokens = self._action_token.repeat(batch_size, len_additional_action_token, 1)
+        future_action_tokens = self.action_token.repeat(batch_size, len_additional_action_token, 1)
 
         # add additional action query tokens for predicting future action chunks
         input_tokens = torch.cat([input_tokens, future_action_tokens], dim=1)
@@ -332,17 +332,17 @@ class VQBeTModel(nn.Module):
             [features[:, historical_act_pred_index], features[:, -len_additional_action_token:]], dim=1
         )
         # pass through action head
-        pred_action = self.action_head(features)
+        action_head_output = self.action_head(features)
         # if rollout, VQ-BeT don't calculate loss
         if rollout:
-            return pred_action["predicted_action"][:, n_obs_steps - 1, :].reshape(
+            return action_head_output["predicted_action"][:, n_obs_steps - 1, :].reshape(
                 batch_size, self.config.action_chunk_size, -1
             )
         # else, it calculate overall loss (bin prediction loss, and offset loss)
         else:
             output = batch["action"][:, self.select_target_actions_indices]
-            loss = self.action_head.loss_fn(pred_action, output, reduction="mean")
-            return pred_action, loss
+            loss = self.action_head.loss_fn(action_head_output, output, reduction="mean")
+            return action_head_output, loss
 
 
 class VQBeTHead(nn.Module):
@@ -392,7 +392,7 @@ class VQBeTHead(nn.Module):
 
     def discretize(self, n_vqvae_training_steps, actions):
         if self.vqvae_model.config.action_chunk_size == 1:
-            # not using action chunk
+            # even though this code is not using action chunk, it maintains a dummy dimension for action chunk (batch, action_chunk_size = 1, action_dim)
             actions = actions.reshape(-1, 1, actions.shape[-1])
         else:
             # using action chunk
@@ -403,6 +403,7 @@ class VQBeTHead(nn.Module):
                     for j in range(actions.shape[1] + 1 - self.vqvae_model.config.action_chunk_size)
                 ]
             )
+            # dimensions : (batch, action_chunk_size, action_dim)
             actions = torch.cat(slices, dim=0)
 
         actions = actions.to(get_device_from_parameters(self.vqvae_model))
@@ -607,7 +608,7 @@ class VQBeTOptimizer(torch.optim.Adam):
             + list(policy.vqbet.rgb_encoder.parameters())
             + list(policy.vqbet.state_projector.parameters())
             + list(policy.vqbet.rgb_feature_projector.parameters())
-            + [policy.vqbet._action_token]
+            + [policy.vqbet.action_token]
             + list(policy.vqbet.action_head.map_to_cbet_preds_offset.parameters())
         )
 
@@ -848,7 +849,7 @@ class VqVae(nn.Module):
             return einops.rearrange(output, "N (T A) -> N T A", A=self.config.output_shapes["action"][0])
 
     def get_code(self, state):
-        # in phase 2 of VQ-BeT training, we need a `GT code` to calculate the Focal loss for code prediction head.
+        # in phase 2 of VQ-BeT training, we need a `actual labels of action data` to calculate the Focal loss for code prediction head. (please refer to section 3.3 in the paper https://arxiv.org/pdf/2403.03181)
         # this function outputs the `GT code` of given action using frozen encoder and quantization layers. (please refer to Figure 2. in the paper https://arxiv.org/pdf/2403.03181)
         state = einops.rearrange(state, "N T A -> N (T A)")
         with torch.no_grad():
