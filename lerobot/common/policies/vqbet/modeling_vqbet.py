@@ -54,6 +54,8 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
 
         self.vqbet = VQBeTModel(config)
 
+        self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+
         self.reset()
 
     def reset(self):
@@ -62,7 +64,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
         queues are populated during rollout of the policy, they contain the n latest observations and actions
         """
         self._queues = {
-            "observation.image": deque(maxlen=self.config.n_obs_steps),
+            "observation.images": deque(maxlen=self.config.n_obs_steps),
             "observation.state": deque(maxlen=self.config.n_obs_steps),
             "action": deque(maxlen=self.config.action_chunk_size),
         }
@@ -78,15 +80,14 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
 
 
         batch = self.normalize_inputs(batch)
+        batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+        # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
 
         assert self.vqbet.action_head.vqvae_model.discretized.item(), "To evaluate in the environment, your VQ-BeT model should contain a pretrained Residual VQ."
-        assert "observation.image" in batch
-        assert "observation.state" in batch
 
         if len(self._queues["action"]) == 0:
-
-            batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch}
+            batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
             actions = self.vqbet(batch, rollout=True)[:, : self.config.action_chunk_size]
 
             # the dimension of returned action is (batch_size, action_chunk_size, action_dim)
@@ -100,6 +101,7 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
+        batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
         batch = self.normalize_targets(batch)
         # VQ-BeT discretizes action using VQ-VAE before training BeT (please refer to section 3.2 in the VQ-BeT paper https://arxiv.org/pdf/2403.03181)
         if not self.vqbet.action_head.vqvae_model.discretized.item():
@@ -246,7 +248,7 @@ class VQBeTModel(nn.Module):
         self.config = config
 
         self.rgb_encoder = VQBeTRgbEncoder(config)
-
+        self.num_images = len([k for k in config.input_shapes if k.startswith("observation.image")])
         # This action query token is used as a prompt for querying action chunks. Please refer to "A_Q" in the image above.
         # Note: During the forward pass, this token is repeated as many times as needed. The authors also experimented with initializing the necessary number of tokens independently and observed inferior results.
         self._action_token = nn.Parameter(torch.randn(1, 1, self.config.gpt_input_dim))
@@ -277,24 +279,25 @@ class VQBeTModel(nn.Module):
 
     def forward(self, batch: dict[str, Tensor], rollout: bool) -> Tensor:
         # Input validation.
-        assert set(batch).issuperset({"observation.state", "observation.image"})
+        assert set(batch).issuperset({"observation.state", "observation.images"})
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
         assert n_obs_steps == self.config.n_obs_steps
 
         # Extract image feature (first combine batch and sequence dims).
-        img_features = self.rgb_encoder(einops.rearrange(batch["observation.image"], "b n ... -> (b n) ..."))
+        img_features = self.rgb_encoder(einops.rearrange(batch["observation.images"], "b s n ... -> (b s n) ..."))
         # Separate batch and sequence dims.
-        img_features = einops.rearrange(img_features, "(b n) ... -> b n ...", b=batch_size)
+        img_features = einops.rearrange(img_features, "(b s n) ... -> b s n ...", b=batch_size, s=n_obs_steps, n=self.num_images)
 
         # Arrange prior and current observation step tokens as shown in the class docstring.
         # First project features to token dimension.
-        rgb_tokens = self.rgb_feature_projector(img_features)  # (batch, obs_step, d)
-        state_tokens = self.state_projector(batch["observation.state"])  # (batch, obs_step, d)
-        history_action_tokens = einops.repeat(
+        rgb_tokens = self.rgb_feature_projector(img_features)  # (batch, obs_step, number of different cameras, projection dims)
+        input_tokens = [rgb_tokens[:, :, i] for i in range(rgb_tokens.size(2))]
+        input_tokens.append(self.state_projector(batch["observation.state"]))  # (batch, obs_step, projection dims)
+        input_tokens.append(einops.repeat(
             self._action_token, "1 1 d -> b n d", b=batch_size, n=n_obs_steps
-        )
+        ))
         # Interleave tokens by stacking and rearranging.
-        input_tokens = torch.stack([rgb_tokens, state_tokens, history_action_tokens], dim=2)
+        input_tokens = torch.stack(input_tokens, dim=2)
         input_tokens = einops.rearrange(input_tokens, "b n t d -> b (n t) d")
 
         len_additional_action_token = self.config.n_action_pred_token-1
