@@ -315,24 +315,26 @@ def test_normalize(insert_temporal_dim):
 
 
 @pytest.mark.parametrize(
-    "env_name, policy_name, extra_overrides",
+    "env_name, policy_name, extra_overrides, file_name_extra",
     [
-        ("xarm", "tdmpc", []),
+        ("xarm", "tdmpc", [], ""),
         (
             "pusht",
             "diffusion",
             ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
+            "",
         ),
-        ("aloha", "act", ["policy.n_action_steps=10"]),
-        ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"]),
-        ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"]),
+        ("aloha", "act", ["policy.n_action_steps=10"], ""),
+        ("aloha", "act", ["policy.n_action_steps=1000", "policy.chunk_size=1000"], "_1000_steps"),
+        ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"], ""),
+        ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"], ""),
     ],
 )
 # As artifacts have been generated on an x86_64 kernel, this test won't
 # pass if it's run on another platform due to floating point errors
 @require_x86_64_kernel
 @require_cpu
-def test_backward_compatibility(env_name, policy_name, extra_overrides):
+def test_backward_compatibility(env_name, policy_name, extra_overrides, file_name_extra):
     """
     NOTE: If this test does not pass, and you have intentionally changed something in the policy:
         1. Inspect the differences in policy outputs and make sure you can account for them. Your PR should
@@ -344,7 +346,9 @@ def test_backward_compatibility(env_name, policy_name, extra_overrides):
         5. Remember to restore `tests/scripts/save_policy_to_safetensors.py` to its original state.
         6. Remember to stage and commit the resulting changes to `tests/data`.
     """
-    env_policy_dir = Path("tests/data/save_policy_to_safetensors") / f"{env_name}_{policy_name}"
+    env_policy_dir = (
+        Path("tests/data/save_policy_to_safetensors") / f"{env_name}_{policy_name}{file_name_extra}"
+    )
     saved_output_dict = load_file(env_policy_dir / "output_dict.safetensors")
     saved_grad_stats = load_file(env_policy_dir / "grad_stats.safetensors")
     saved_param_stats = load_file(env_policy_dir / "param_stats.safetensors")
