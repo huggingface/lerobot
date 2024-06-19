@@ -218,6 +218,35 @@ def log_eval_info(logger, info, step, cfg, dataset, is_offline):
     logger.log_dict(info, step, mode="eval")
 
 
+def log_validation_info(logger, info, step, cfg, dataset, is_offline):
+    # A sample is an (observation,action) pair, where observation and action
+    # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
+    num_samples = (step + 1) * cfg.training.batch_size
+    avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
+    num_episodes = num_samples / avg_samples_per_ep
+    num_epochs = num_samples / dataset.num_samples
+    log_items = [
+        f"step:{format_big_number(step)}",
+        # number of samples seen during training
+        f"smpl:{format_big_number(num_samples)}",
+        # number of episodes seen during training
+        f"ep:{format_big_number(num_episodes)}",
+        # number of time all unique samples are seen
+        f"epch:{num_epochs:.2f}",
+        f"val_loss:{info['val_loss']:.3f}",
+    ]
+
+    logging.info(" ".join(log_items))
+
+    info["step"] = step
+    info["num_samples"] = num_samples
+    info["num_episodes"] = num_episodes
+    info["num_epochs"] = num_epochs
+    info["is_offline"] = is_offline
+
+    logger.log_dict(info, step, mode="validation")
+
+
 def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
     if out_dir is None:
         raise NotImplementedError()
@@ -281,8 +310,21 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    logging.info("make_dataset")
-    offline_dataset = make_dataset(cfg)
+    logging.info("make_dataset(s)")
+
+    if cfg.training.validation_freq > 0:
+        # split dataset into train and validation
+        split_ratio = cfg.training.validation_split_ratio
+        assert 0 < split_ratio < 1, "validation_split_ratio should be in (0, 1)"
+
+        offline_dataset = make_dataset(cfg, split=f"train[:{round((1-split_ratio)*100)}%]")
+        offline_val_dataset = make_dataset(cfg, split=f"train[{round((1-split_ratio)*100)}%:]")
+        logging.info(
+            f"using {len(offline_dataset)} episodes for training and {len(offline_val_dataset)} episodes for validation"
+        )
+
+    else:
+        offline_dataset = make_dataset(cfg, split="train")
     if isinstance(offline_dataset, MultiLeRobotDataset):
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
@@ -329,6 +371,24 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     def evaluate_and_checkpoint_if_needed(step):
         _num_digits = max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
         step_identifier = f"{step:0{_num_digits}d}"
+
+        if cfg.training.validation_freq > 0 and step % cfg.training.validation_freq == 0:
+            # Run validation loop
+            with torch.inference_mode():
+                policy.eval()
+                loss_cumsum = 0
+                for batch in val_dataloader:
+                    batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+                    output_dict = policy.forward(batch)
+
+                    loss_cumsum += output_dict["loss"].item()
+
+            # Calculate the average loss over the validation set.
+            average_loss = loss_cumsum / len(val_dataloader)
+            info = {"val_loss": average_loss}
+
+            log_validation_info(logger, info, step, cfg, offline_dataset, is_offline=True)
+            policy.train()
 
         if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
@@ -380,6 +440,16 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         drop_last=False,
     )
     dl_iter = cycle(dataloader)
+
+    if cfg.training.validation_freq > 0:
+        val_dataloader = torch.utils.data.DataLoader(
+            offline_val_dataset,
+            num_workers=cfg.training.num_workers,
+            batch_size=cfg.training.batch_size,
+            shuffle=False,
+            pin_memory=device.type != "cpu",
+            drop_last=False,
+        )
 
     policy.train()
     for _ in range(step, cfg.training.offline_steps):

@@ -228,7 +228,7 @@ class Logger:
         return training_state["step"]
 
     def log_dict(self, d, step, mode="train"):
-        assert mode in {"train", "eval"}
+        assert mode in {"train", "eval", "validation"}
         # TODO(alexander-soare): Add local text log.
         if self._wandb is not None:
             for k, v in d.items():
