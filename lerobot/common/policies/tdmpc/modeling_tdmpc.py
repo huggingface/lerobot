@@ -134,7 +134,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         self._prev_mean: torch.Tensor | None = None
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]):
+    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
         batch = self.normalize_inputs(batch)
         batch["observation.image"] = batch[self.input_image_key]
@@ -322,29 +322,29 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         batch["observation.image"] = batch[self.input_image_key]
         batch = self.normalize_targets(batch)
 
-        import os
-        from time import sleep
+        # import os
+        # from time import sleep
 
-        while True:
-            if not os.path.exists("/tmp/mutex.txt"):
-                sleep(0.01)
-                continue
-            batch_ = torch.load("/tmp/batch.pth")
-            print(f"STEP {step}")
-            assert torch.equal(batch["index"], batch_["index"])
-            assert torch.equal(batch["episode_index"], batch_["episode_index"])
-            if not torch.equal(batch["observation.image"], batch_["observation.image"]):
-                import cv2
+        # while True:
+        #     if not os.path.exists("/tmp/mutex.txt"):
+        #         sleep(0.01)
+        #         continue
+        #     batch_ = torch.load("/tmp/batch.pth")
+        #     print(f"STEP {step}")
+        #     assert torch.equal(batch["index"], batch_["index"])
+        #     assert torch.equal(batch["episode_index"], batch_["episode_index"])
+        #     if not torch.equal(batch["observation.image"], batch_["observation.image"]):
+        #         import cv2
 
-                for b, fn in [(batch, "outputs/img.png"), (batch_, "outputs/img_.png")]:
-                    cv2.imwrite(
-                        fn,
-                        (b["observation.image"][0, 0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8),
-                    )
-                assert False
-            assert torch.equal(batch["observation.state"], batch_["observation.state"])
-            os.remove("/tmp/mutex.txt")
-            break
+        #         for b, fn in [(batch, "outputs/img.png"), (batch_, "outputs/img_.png")]:
+        #             cv2.imwrite(
+        #                 fn,
+        #                 (b["observation.image"][0, 0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8),
+        #             )
+        #         assert False
+        #     assert torch.equal(batch["observation.state"], batch_["observation.state"])
+        #     os.remove("/tmp/mutex.txt")
+        #     break
 
         info = {}
 

@@ -28,7 +28,9 @@ class DiffusionConfig:
 
     Notes on the inputs and outputs:
         - "observation.state" is required as an input key.
-        - A key starting with "observation.image is required as an input.
+        - At least one key starting with "observation.image is required as an input.
+        - If there are multiple keys beginning with "observation.image" they are treated as multiple camera
+          views. Right now we only support all images having the same shape.
         - "action" is required as an output key.
 
     Args:
@@ -153,22 +155,26 @@ class DiffusionConfig:
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
-        # There should only be one image key.
         image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
-        if len(image_keys) != 1:
-            raise ValueError(
-                f"{self.__class__.__name__} only handles one image for now. Got image keys {image_keys}."
-            )
-        image_key = next(iter(image_keys))
-        if self.crop_shape is not None and (
-            self.crop_shape[0] > self.input_shapes[image_key][1]
-            or self.crop_shape[1] > self.input_shapes[image_key][2]
-        ):
-            raise ValueError(
-                f"`crop_shape` should fit within `input_shapes[{image_key}]`. Got {self.crop_shape} "
-                f"for `crop_shape` and {self.input_shapes[image_key]} for "
-                "`input_shapes[{image_key}]`."
-            )
+        if self.crop_shape is not None:
+            for image_key in image_keys:
+                if (
+                    self.crop_shape[0] > self.input_shapes[image_key][1]
+                    or self.crop_shape[1] > self.input_shapes[image_key][2]
+                ):
+                    raise ValueError(
+                        f"`crop_shape` should fit within `input_shapes[{image_key}]`. Got {self.crop_shape} "
+                        f"for `crop_shape` and {self.input_shapes[image_key]} for "
+                        "`input_shapes[{image_key}]`."
+                    )
+        # Check that all input images have the same shape.
+        first_image_key = next(iter(image_keys))
+        for image_key in image_keys:
+            if self.input_shapes[image_key] != self.input_shapes[first_image_key]:
+                raise ValueError(
+                    f"`input_shapes[{image_key}]` does not match `input_shapes[{first_image_key}]`, but we "
+                    "expect all image shapes to match."
+                )
         supported_prediction_types = ["epsilon", "sample"]
         if self.prediction_type not in supported_prediction_types:
             raise ValueError(

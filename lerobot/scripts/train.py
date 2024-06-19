@@ -28,6 +28,7 @@ from datasets.utils import disable_progress_bars, enable_progress_bars
 from deepdiff import DeepDiff
 from omegaconf import DictConfig, OmegaConf
 from termcolor import colored
+from torch import nn
 from torch.cuda.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
@@ -56,12 +57,14 @@ def make_optimizer_and_scheduler(cfg, policy):
                 "params": [
                     p
                     for n, p in policy.named_parameters()
-                    if not n.startswith("backbone") and p.requires_grad
+                    if not n.startswith("model.backbone") and p.requires_grad
                 ]
             },
             {
                 "params": [
-                    p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad
+                    p
+                    for n, p in policy.named_parameters()
+                    if n.startswith("model.backbone") and p.requires_grad
                 ],
                 "lr": cfg.training.lr_backbone,
             },
@@ -373,6 +376,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
+    eval_env = None
     if cfg.training.eval_freq > 0:
         logging.info("make_env")
         eval_env = make_env(cfg)
@@ -383,7 +387,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         dataset_stats=offline_dataset.stats if not cfg.resume else None,
         pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
     )
-
+    assert isinstance(policy, nn.Module)
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
@@ -414,6 +418,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
+                assert eval_env is not None
                 eval_info = eval_policy(
                     eval_env,
                     policy,
@@ -570,7 +575,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             step += 1
             online_step += 1
 
-    eval_env.close()
+    if eval_env:
+        eval_env.close()
     logging.info("End of training")
 
 
