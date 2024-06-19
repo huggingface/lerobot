@@ -28,6 +28,7 @@ seed: ???
 # "dataset_index" into the returned item. The index mapping is made according to the order in which the
 # datsets are provided.
 dataset_repo_id: lerobot/pusht
+video_backend: pyav
 
 training:
   offline_steps: ???

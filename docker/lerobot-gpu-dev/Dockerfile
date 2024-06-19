@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.4.1-base-ubuntu22.04
+FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
 
 # Configure image
 ARG PYTHON_VERSION=3.10
@@ -10,9 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git git-lfs openssh-client \
     nano vim less util-linux \
     htop atop nvtop \
-    sed gawk grep curl wget \
+    sed gawk grep curl wget zip unzip \
     tcpdump sysstat screen tmux \
-    libglib2.0-0 libgl1-mesa-glx libegl1-mesa ffmpeg \
+    libglib2.0-0 libgl1-mesa-glx libegl1-mesa \
     python${PYTHON_VERSION} python${PYTHON_VERSION}-venv \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 

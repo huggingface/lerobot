@@ -27,7 +27,11 @@ from datasets.features.features import register_feature
 
 
 def load_from_videos(
-    item: dict[str, torch.Tensor], video_frame_keys: list[str], videos_dir: Path, tolerance_s: float
+    item: dict[str, torch.Tensor],
+    video_frame_keys: list[str],
+    videos_dir: Path,
+    tolerance_s: float,
+    backend: str = "pyav",
 ):
     """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
     in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a Segmentation Fault.
@@ -46,14 +50,14 @@ def load_from_videos(
                 raise NotImplementedError("All video paths are expected to be the same for now.")
             video_path = data_dir / paths[0]
 
-            frames = decode_video_frames_torchvision(video_path, timestamps, tolerance_s)
+            frames = decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
             item[key] = frames
         else:
             # load one frame
             timestamps = [item[key]["timestamp"]]
             video_path = data_dir / item[key]["path"]
 
-            frames = decode_video_frames_torchvision(video_path, timestamps, tolerance_s)
+            frames = decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
             item[key] = frames[0]
 
     return item
@@ -63,10 +67,22 @@ def decode_video_frames_torchvision(
     video_path: str,
     timestamps: list[float],
     tolerance_s: float,
-    device: str = "cpu",
+    backend: str = "pyav",
     log_loaded_timestamps: bool = False,
 ):
     """Loads frames associated to the requested timestamps of a video
+
+    The backend can be either "pyav" (default) or "video_reader".
+    "video_reader" requires installing torchvision from source, see:
+    https://github.com/pytorch/vision/blob/main/torchvision/csrc/io/decoder/gpu/README.rst
+    (note that you need to compile against ffmpeg<4.3)
+
+    While both use cpu, "video_reader" is faster than "pyav" but requires additional setup.
+    See our benchmark results for more info on performance:
+    https://github.com/huggingface/lerobot/pull/220
+
+    See torchvision doc for more info on these two backends:
+    https://pytorch.org/vision/0.18/index.html?highlight=backend#torchvision.set_video_backend
 
     Note: Video benefits from inter-frame compression. Instead of storing every frame individually,
     the encoder stores a reference frame (or a key frame) and subsequent frames as differences relative to
@@ -78,21 +94,9 @@ def decode_video_frames_torchvision(
 
     # set backend
     keyframes_only = False
-    if device == "cpu":
-        # explicitely use pyav
-        torchvision.set_video_backend("pyav")
+    torchvision.set_video_backend(backend)
+    if backend == "pyav":
         keyframes_only = True  # pyav doesnt support accuracte seek
-    elif device == "cuda":
-        # TODO(rcadene, aliberts): implement video decoding with GPU
-        # torchvision.set_video_backend("cuda")
-        # torchvision.set_video_backend("video_reader")
-        # requires installing torchvision from source, see: https://github.com/pytorch/vision/blob/main/torchvision/csrc/io/decoder/gpu/README.rst
-        # check possible bug: https://github.com/pytorch/vision/issues/7745
-        raise NotImplementedError(
-            "Video decoding on gpu with cuda is currently not supported. Use `device='cpu'`."
-        )
-    else:
-        raise ValueError(device)
 
     # set a video stream reader
     # TODO(rcadene): also load audio stream at the same time
@@ -120,7 +124,9 @@ def decode_video_frames_torchvision(
         if current_ts >= last_ts:
             break
 
-    reader.container.close()
+    if backend == "pyav":
+        reader.container.close()
+
     reader = None
 
     query_ts = torch.tensor(timestamps)
