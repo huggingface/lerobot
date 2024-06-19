@@ -13,6 +13,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+Contains utilities to process raw data format of png images files recorded with capture_camera_feed.py
+"""
+
 from pathlib import Path
 
 import torch
@@ -30,7 +34,11 @@ def check_format(raw_dir: Path) -> bool:
         raise ValueError
 
 
-def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episodes: list[int] | None = None):
+def load_from_raw(raw_dir: Path, fps: int, episodes: list[int] | None = None):
+    if episodes is not None:
+        # TODO(aliberts): add support for multi-episodes.
+        raise NotImplementedError()
+
     ep_dict = {}
     ep_idx = 0
 

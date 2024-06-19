@@ -188,7 +188,7 @@ def run_video_benchmark(
         elif timestamps_mode == "2_frames":
             timestamps = [ts - 1 / fps, ts]
         elif timestamps_mode == "2_frames_4_space":
-            timestamps = [ts - 4 / fps, ts]
+            timestamps = [ts - 5 / fps, ts]
         elif timestamps_mode == "6_frames":
             timestamps = [ts - i / fps for i in range(6)][::-1]
         else:

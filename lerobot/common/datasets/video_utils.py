@@ -77,6 +77,13 @@ def decode_video_frames_torchvision(
     https://github.com/pytorch/vision/blob/main/torchvision/csrc/io/decoder/gpu/README.rst
     (note that you need to compile against ffmpeg<4.3)
 
+    While both use cpu, "video_reader" is faster than "pyav" but requires additional setup.
+    See our benchmark results for more info on performance:
+    https://github.com/huggingface/lerobot/pull/220
+
+    See torchvision doc for more info on these two backends:
+    https://pytorch.org/vision/0.18/index.html?highlight=backend#torchvision.set_video_backend
+
     Note: Video benefits from inter-frame compression. Instead of storing every frame individually,
     the encoder stores a reference frame (or a key frame) and subsequent frames as differences relative to
     that key frame. As a consequence, to access a requested frame, we need to load the preceding key frame,
