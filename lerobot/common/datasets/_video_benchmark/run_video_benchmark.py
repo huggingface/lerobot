@@ -71,7 +71,7 @@ BENCHMARKS = {
 }
 
 
-def get_directory_size(directory):
+def get_directory_size(directory: Path):
     total_size = 0
     # Iterate over all files and subdirectories recursively
     for item in directory.rglob("*"):
@@ -79,6 +79,18 @@ def get_directory_size(directory):
             # Add the file size to the total
             total_size += item.stat().st_size
     return total_size
+
+
+def load_original_frames(imgs_dir: Path, timestamps: list[float], fps: int) -> torch.Tensor:
+    frames = []
+    for ts in timestamps:
+        idx = int(ts * fps)
+        frame = PIL.Image.open(imgs_dir / f"frame_{idx:06d}.png")
+        frame = torch.from_numpy(np.array(frame))
+        frame = frame.type(torch.float32) / 255
+        frame = einops.rearrange(frame, "h w c -> c h w")
+        frames.append(frame)
+    return frames
 
 
 def run_video_benchmark(
@@ -148,17 +160,6 @@ def run_video_benchmark(
 
     video_size_bytes = video_path.stat().st_size
 
-    def load_original_frames(imgs_dir, timestamps) -> torch.Tensor:
-        frames = []
-        for ts in timestamps:
-            idx = int(ts * fps)
-            frame = PIL.Image.open(imgs_dir / f"frame_{idx:06d}.png")
-            frame = torch.from_numpy(np.array(frame))
-            frame = frame.type(torch.float32) / 255
-            frame = einops.rearrange(frame, "h w c -> c h w")
-            frames.append(frame)
-        return frames
-
     list_avg_load_time = []
     list_avg_load_time_from_images = []
     per_pixel_l2_errors = []
@@ -170,20 +171,22 @@ def run_video_benchmark(
     random.seed(seed)
 
     for t in range(50):
-        ts = random.randint(fps, ep_num_images - fps) / fps
+        # Start at 5 to allow for 2_frames_4_space and 6_frames
+        idx = random.randint(5, ep_num_images - 1)
+        match timestamps_mode:
+            case "1_frame":
+                frame_indexes = [idx]
+            case "2_frames":
+                frame_indexes = [idx - 1, idx]
+            case "2_frames_4_space":
+                frame_indexes = [idx - 5, idx]
+            case "6_frames":
+                frame_indexes = [idx - i for i in range(6)][::-1]
+            case _:
+                raise ValueError(timestamps_mode)
 
-        if timestamps_mode == "1_frame":
-            timestamps = [ts]
-        elif timestamps_mode == "2_frames":
-            timestamps = [ts - 1 / fps, ts]
-        elif timestamps_mode == "2_frames_4_space":
-            timestamps = [ts - 5 / fps, ts]
-        elif timestamps_mode == "6_frames":
-            timestamps = [ts - i / fps for i in range(6)][::-1]
-        else:
-            raise ValueError(timestamps_mode)
-
-        num_frames = len(timestamps)
+        num_frames = len(frame_indexes)
+        timestamps = [idx / fps for idx in frame_indexes]
 
         with benchmark:
             frames = decode_video_frames_torchvision(
@@ -192,7 +195,7 @@ def run_video_benchmark(
         list_avg_load_time.append(benchmark.result / num_frames)
 
         with benchmark:
-            original_frames = load_original_frames(imgs_dir, timestamps)
+            original_frames = load_original_frames(imgs_dir, timestamps, fps)
         list_avg_load_time_from_images.append(benchmark.result / num_frames)
 
         # Estimate reconstruction error between original frames and decoded frames with various metrics
