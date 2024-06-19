@@ -53,12 +53,14 @@ def make_optimizer_and_scheduler(cfg, policy):
                 "params": [
                     p
                     for n, p in policy.named_parameters()
-                    if not n.startswith("backbone") and p.requires_grad
+                    if not n.startswith("model.backbone") and p.requires_grad
                 ]
             },
             {
                 "params": [
-                    p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad
+                    p
+                    for n, p in policy.named_parameters()
+                    if n.startswith("model.backbone") and p.requires_grad
                 ],
                 "lr": cfg.training.lr_backbone,
             },

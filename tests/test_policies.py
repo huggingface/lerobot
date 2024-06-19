@@ -30,6 +30,7 @@ from lerobot.common.policies.factory import get_policy_and_config_classes, make_
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import init_hydra_config
+from lerobot.scripts.train import make_optimizer_and_scheduler
 from tests.scripts.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_cpu, require_env, require_x86_64_kernel
 
@@ -172,6 +173,33 @@ def test_policy(env_name, policy_name, extra_overrides):
 
     # Test step through policy
     env.step(action)
+
+
+def test_act_backbone_lr():
+    """
+    Test that the ACT policy can be instantiated with a different learning rate for the backbone.
+    """
+    cfg = init_hydra_config(
+        DEFAULT_CONFIG_PATH,
+        overrides=[
+            "env=aloha",
+            "policy=act",
+            f"device={DEVICE}",
+            "training.lr_backbone=0.001",
+            "training.lr=0.01",
+        ],
+    )
+    assert cfg.training.lr == 0.01
+    assert cfg.training.lr_backbone == 0.001
+
+    dataset = make_dataset(cfg)
+    policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.stats)
+    optimizer, _ = make_optimizer_and_scheduler(cfg, policy)
+    assert len(optimizer.param_groups) == 2
+    assert optimizer.param_groups[0]["lr"] == cfg.training.lr
+    assert optimizer.param_groups[1]["lr"] == cfg.training.lr_backbone
+    assert len(optimizer.param_groups[0]["params"]) == 133
+    assert len(optimizer.param_groups[1]["params"]) == 20
 
 
 @pytest.mark.parametrize("policy_name", available_policies)
