@@ -70,6 +70,28 @@ BENCHMARKS = {
     "backend": ["pyav", "video_reader"],
 }
 
+OUTPUT_DIR = Path("tmp/run_video_benchmark")
+DRY_RUN = False
+
+DATASET_REPO_IDS = [
+    "lerobot/pusht_image",
+    "aliberts/aloha_mobile_shrimp_image",
+    "aliberts/paris_street",
+    "aliberts/kitchen",
+]
+TIMESTAMPS_MODES = [
+    "1_frame",
+    "2_frames",
+    "2_frames_4_space",
+    "6_frames",
+]
+BENCHMARKS = {
+    # "pix_fmt": ["yuv420p", "yuv444p"],
+    # "g": [1, 2, 3, 4, 5, 6, 10, 15, 20, 40, 100, None],
+    # "crf": [0, 5, 10, 15, 20, None, 25, 30, 40, 50],
+    "backend": ["pyav", "video_reader"],
+}
+
 
 def get_directory_size(directory: Path):
     total_size = 0
