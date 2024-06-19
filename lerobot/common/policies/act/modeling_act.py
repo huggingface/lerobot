@@ -353,7 +353,7 @@ class ACT(nn.Module):
         images = batch["observation.images"]
 
         for cam_index in range(images.shape[-4]):
-            torch.backends.cudnn.deterministic = True
+            # torch.backends.cudnn.deterministic = True
             cam_features = self.backbone(images[:, cam_index])
             cam_features = cam_features["feature_map"]
             # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use buffer

@@ -93,12 +93,12 @@ def update_policy(
     use_amp: bool = False,
 ):
     """Returns a dictionary of items for logging."""
-    ################## TODO remove this part
-    torch.backends.cudnn.deterministic = True
-    # torch.use_deterministic_algorithms(True)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cuda.matmul.allow_tf32 = True
-    ##################
+    # ################## TODO remove this part
+    # torch.backends.cudnn.deterministic = True
+    # # torch.use_deterministic_algorithms(True)
+    # torch.backends.cudnn.benchmark = False
+    # torch.backends.cuda.matmul.allow_tf32 = True
+    # ##################
     start_time = time.perf_counter()
     device = get_device_from_parameters(policy)
     policy.train()

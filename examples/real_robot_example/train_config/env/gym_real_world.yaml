@@ -1,15 +1,12 @@
 # @package _global_
-
 fps: 30
 
 env:
   name: real_world
   task: RealEnv-v0
+  real_world: true
   state_dim: 6
   action_dim: 6
-  fps: ${fps}
-  episode_length: 200
-  real_world: true
   gym:
     cameras_shapes:
         images.high: [480, 640, 3]
@@ -17,3 +14,8 @@ env:
     cameras_ports:
         images.high: /dev/video6
         images.low: /dev/video0
+    num_joints: 6
+    fps: 30
+    max_episode_steps: 200
+    fps_tolerance: 0.5
+    mock: false

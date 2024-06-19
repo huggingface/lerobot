@@ -129,6 +129,7 @@ class RealEnv(gym.Env):
         self._observation = {}
         self._terminated = False
         self.timestamps = []
+        self.observation_time = None
 
     def _get_obs(self):
         qpos = self.follower.read_position()

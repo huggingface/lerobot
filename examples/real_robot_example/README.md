@@ -35,7 +35,8 @@ Run the `record_training_data.py` example, selecting the duration and number of 
 DATA_DIR='./data' python record_training_data.py \
 --repo-id=thomwolf/blue_red_sort \
 --num-episodes=50 \
---num-frames=400
+--num-frames=400 \
+--gym-config=./train_config/env/gym_real_world.yaml
 ```
 
 TODO:
