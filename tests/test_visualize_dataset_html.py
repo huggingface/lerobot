@@ -38,10 +38,7 @@ def test_visualize_dataset_html(tmpdir, repo_id):
         output_dir=tmpdir,
         serve=False,
     )
-    assert (tmpdir / "index.html").exists()
-    assert (tmpdir / "episode_0.html").exists()
-    assert (tmpdir / "episode_0.csv").exists()
-    assert (tmpdir / "episode_0.js").exists()
+    assert (tmpdir / "static" / "episode_0.csv").exists()
 
 
 @pytest.mark.parametrize(
@@ -72,8 +69,5 @@ def test_visualize_dataset_policy_ckpt_path(tmpdir, repo_id, policy_method):
         policy_ckpt_path=tmpdir,
         policy_method=policy_method,
     )
-    assert (tmpdir / "index.html").exists()
-    assert (tmpdir / "episode_0.html").exists()
-    assert (tmpdir / "episode_0.csv").exists()
-    assert (tmpdir / "episode_0.js").exists()
+    assert (tmpdir / "static" / "episode_0.csv").exists()
     assert (tmpdir / "episode_0.safetensors").exists()
