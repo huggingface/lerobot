@@ -32,8 +32,6 @@ Note: These datasets need to be image datasets, not video datasets.
 
 import json
 import random
-import shutil
-import subprocess
 from pathlib import Path
 
 import einops
@@ -45,11 +43,13 @@ from skimage.metrics import mean_squared_error, peak_signal_noise_ratio, structu
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.video_utils import (
     decode_video_frames_torchvision,
+    encode_video_frames,
 )
 from lerobot.common.utils.benchmark import TimeBenchmark
 
-OUTPUT_DIR = Path("tmp/run_video_benchmark")
+OUTPUT_DIR = Path("outputs/video_benchmark")
 DRY_RUN = False
+NUM_SAMPLES = 2
 
 DATASET_REPO_IDS = [
     "lerobot/pusht_image",
@@ -64,41 +64,26 @@ TIMESTAMPS_MODES = [
     "6_frames",
 ]
 BENCHMARKS = {
-    # "pix_fmt": ["yuv420p", "yuv444p"],
-    # "g": [1, 2, 3, 4, 5, 6, 10, 15, 20, 40, 100, None],
-    # "crf": [0, 5, 10, 15, 20, None, 25, 30, 40, 50],
+    "pixel_format": ["yuv444p", "yuv420p"],
+    "codec": ["libx264"],  # TODO(aliberts): add "libaom-av1" (need to build ffmpeg with "--enable-libaom")
+    "gop_size": [1, 2, 3, 4, 5, 6, 10, 15, 20, 40, 100, None],
+    "crf": [0, 5, 10, 15, 20, None, 25, 30, 40, 50],
+}
+DECODING_BACKENDS = {
     "backend": ["pyav", "video_reader"],
 }
-
-OUTPUT_DIR = Path("tmp/run_video_benchmark")
-DRY_RUN = False
-
-DATASET_REPO_IDS = [
-    "lerobot/pusht_image",
-    "aliberts/aloha_mobile_shrimp_image",
-    "aliberts/paris_street",
-    "aliberts/kitchen",
-]
-TIMESTAMPS_MODES = [
-    "1_frame",
-    "2_frames",
-    "2_frames_4_space",
-    "6_frames",
-]
-BENCHMARKS = {
-    # "pix_fmt": ["yuv420p", "yuv444p"],
-    # "g": [1, 2, 3, 4, 5, 6, 10, 15, 20, 40, 100, None],
-    # "crf": [0, 5, 10, 15, 20, None, 25, 30, 40, 50],
-    "backend": ["pyav", "video_reader"],
+BASE_ENCODING = {
+    "pixel_format": "yuv444p",
+    "codec": "libx264",
+    "gop_size": 2,
+    "crf": None,
 }
 
 
-def get_directory_size(directory: Path):
+def get_directory_size(directory: Path) -> int:
     total_size = 0
-    # Iterate over all files and subdirectories recursively
     for item in directory.rglob("*"):
         if item.is_file():
-            # Add the file size to the total
             total_size += item.stat().st_size
     return total_size
 
@@ -115,70 +100,63 @@ def load_original_frames(imgs_dir: Path, timestamps: list[float], fps: int) -> t
     return frames
 
 
-def run_video_benchmark(
-    output_dir,
-    cfg,
-    timestamps_mode,
-    seed=1337,
-):
-    output_dir = Path(output_dir)
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    repo_id = cfg["repo_id"]
-
-    # TODO(rcadene): rewrite with hardcoding of original images and episodes
-    dataset = LeRobotDataset(repo_id)
-    if dataset.video:
-        raise ValueError(
-            f"Use only image dataset for running this benchmark. Video dataset provided: {repo_id}"
-        )
-
-    # Get fps
-    fps = dataset.fps
-
-    # we only load first episode
+def save_first_episode(dataset: LeRobotDataset, imgs_dir: Path) -> None:
+    imgs_dir.mkdir(parents=True, exist_ok=True)
     ep_num_images = dataset.episode_data_index["to"][0].item()
+    hf_dataset = dataset.hf_dataset.with_format(None)
 
-    # Save/Load image directory for the first episode
-    imgs_dir = Path(f"tmp/data/images/{repo_id}/observation.image_episode_000000")
-    if not imgs_dir.exists():
-        imgs_dir.mkdir(parents=True, exist_ok=True)
-        hf_dataset = dataset.hf_dataset.with_format(None)
-        img_keys = [key for key in hf_dataset.features if key.startswith("observation.image")]
-        imgs_dataset = hf_dataset.select_columns(img_keys[0])
+    # We only save images from the first camera
+    img_keys = [key for key in hf_dataset.features if key.startswith("observation.image")]
+    imgs_dataset = hf_dataset.select_columns(img_keys[0])
 
-        for i, item in enumerate(imgs_dataset):
-            img = item[img_keys[0]]
-            img.save(str(imgs_dir / f"frame_{i:06d}.png"), quality=100)
+    for i, item in enumerate(imgs_dataset):
+        img = item[img_keys[0]]
+        img.save(str(imgs_dir / f"frame_{i:06d}.png"), quality=100)
 
-            if i >= ep_num_images - 1:
-                break
+        if i >= ep_num_images - 1:
+            break
 
+
+def sample_timestamps(timestamps_mode: str, ep_num_images: int, fps: int):
+    # Start at 5 to allow for 2_frames_4_space and 6_frames
+    idx = random.randint(5, ep_num_images - 1)
+    match timestamps_mode:
+        case "1_frame":
+            frame_indexes = [idx]
+        case "2_frames":
+            frame_indexes = [idx - 1, idx]
+        case "2_frames_4_space":
+            frame_indexes = [idx - 5, idx]
+        case "6_frames":
+            frame_indexes = [idx - i for i in range(6)][::-1]
+        case _:
+            raise ValueError(timestamps_mode)
+
+    return [idx / fps for idx in frame_indexes]
+
+
+def run_video_benchmark(
+    dataset: LeRobotDataset,
+    output_dir: Path,
+    imgs_dir: Path,
+    encoding_cfg: dict,
+    seed: int = 1337,
+):
+    fps = dataset.fps
     sum_original_frames_size_bytes = get_directory_size(imgs_dir)
 
     # Encode images into video
     video_path = output_dir / "episode_0.mp4"
 
-    g = cfg.get("g")
-    crf = cfg.get("crf")
-    pix_fmt = cfg["pix_fmt"]
-
-    cmd = f"ffmpeg -r {fps} "
-    cmd += "-f image2 "
-    cmd += "-loglevel error "
-    cmd += f"-i {str(imgs_dir / 'frame_%06d.png')} "
-    cmd += "-vcodec libx264 "
-    if g is not None:
-        cmd += f"-g {g} "  # ensures at least 1 keyframe every 10 frames
-    # cmd += "-keyint_min 10 " set a minimum of 10 frames between 2 key frames
-    # cmd += "-sc_threshold 0 " disable scene change detection to lower the number of key frames
-    if crf is not None:
-        cmd += f"-crf {crf} "
-    cmd += f"-pix_fmt {pix_fmt} "
-    cmd += f"{str(video_path)}"
-    subprocess.run(cmd.split(" "), check=True)
+    encode_video_frames(
+        imgs_dir=imgs_dir,
+        video_path=video_path,
+        fps=fps,
+        video_codec=encoding_cfg["codec"],
+        pixel_format=encoding_cfg["pixel_format"],
+        group_of_pictures_size=encoding_cfg.get("gop_size"),
+        constant_rate_factor=encoding_cfg.get("crf"),
+    )
 
     video_size_bytes = video_path.stat().st_size
 
@@ -189,60 +167,49 @@ def run_video_benchmark(
     ssim_values = []
     mse_values = []
 
-    benchmark = TimeBenchmark()
+    time_benchmark = TimeBenchmark()
     random.seed(seed)
+    ep_num_images = dataset.episode_data_index["to"][0].item()
 
-    for t in range(50):
-        # Start at 5 to allow for 2_frames_4_space and 6_frames
-        idx = random.randint(5, ep_num_images - 1)
-        match timestamps_mode:
-            case "1_frame":
-                frame_indexes = [idx]
-            case "2_frames":
-                frame_indexes = [idx - 1, idx]
-            case "2_frames_4_space":
-                frame_indexes = [idx - 5, idx]
-            case "6_frames":
-                frame_indexes = [idx - i for i in range(6)][::-1]
-            case _:
-                raise ValueError(timestamps_mode)
+    for backend in DECODING_BACKENDS:
+        for timestamps_mode in TIMESTAMPS_MODES:
+            for t in range(NUM_SAMPLES):
+                timestamps = sample_timestamps(timestamps_mode, ep_num_images, fps)
+                num_frames = len(timestamps)
 
-        num_frames = len(frame_indexes)
-        timestamps = [idx / fps for idx in frame_indexes]
+                with time_benchmark:
+                    frames = decode_video_frames_torchvision(
+                        video_path, timestamps=timestamps, tolerance_s=1e-4, backend=backend
+                    )
+                list_avg_load_time.append(time_benchmark.result / num_frames)
 
-        with benchmark:
-            frames = decode_video_frames_torchvision(
-                video_path, timestamps=timestamps, tolerance_s=1e-4, backend=cfg["backend"]
-            )
-        list_avg_load_time.append(benchmark.result / num_frames)
+                with time_benchmark:
+                    original_frames = load_original_frames(imgs_dir, timestamps, fps)
+                list_avg_load_time_from_images.append(time_benchmark.result / num_frames)
 
-        with benchmark:
-            original_frames = load_original_frames(imgs_dir, timestamps, fps)
-        list_avg_load_time_from_images.append(benchmark.result / num_frames)
+                # Estimate reconstruction error between original frames and decoded frames with various metrics
+                for i, ts in enumerate(timestamps):
+                    num_pixels = original_frames[i].numel()
+                    per_pixel_l2_error = torch.norm(frames[i] - original_frames[i], p=2).item() / num_pixels
+                    per_pixel_l2_errors.append(per_pixel_l2_error)
 
-        # Estimate reconstruction error between original frames and decoded frames with various metrics
-        for i, ts in enumerate(timestamps):
-            num_pixels = original_frames[i].numel()
-            per_pixel_l2_error = torch.norm(frames[i] - original_frames[i], p=2).item() / num_pixels
-            per_pixel_l2_errors.append(per_pixel_l2_error)
+                    frame_np, original_frame_np = frames[i].numpy(), original_frames[i].numpy()
+                    psnr_values.append(peak_signal_noise_ratio(original_frame_np, frame_np, data_range=1.0))
+                    ssim_values.append(
+                        structural_similarity(original_frame_np, frame_np, data_range=1.0, channel_axis=0)
+                    )
+                    mse_values.append(mean_squared_error(original_frame_np, frame_np))
 
-            frame_np, original_frame_np = frames[i].numpy(), original_frames[i].numpy()
-            psnr_values.append(peak_signal_noise_ratio(original_frame_np, frame_np, data_range=1.0))
-            ssim_values.append(
-                structural_similarity(original_frame_np, frame_np, data_range=1.0, channel_axis=0)
-            )
-            mse_values.append(mean_squared_error(original_frame_np, frame_np))
+                    # save decoded frames
+                    if t == 0:
+                        frame_hwc = (frames[i].permute((1, 2, 0)) * 255).type(torch.uint8).cpu().numpy()
+                        PIL.Image.fromarray(frame_hwc).save(output_dir / f"frame_{i:06d}.png")
 
-            # save decoded frames
-            if t == 0:
-                frame_hwc = (frames[i].permute((1, 2, 0)) * 255).type(torch.uint8).cpu().numpy()
-                PIL.Image.fromarray(frame_hwc).save(output_dir / f"frame_{i:06d}.png")
-
-            # save original_frames
-            idx = int(ts * fps)
-            if t == 0:
-                original_frame = PIL.Image.open(imgs_dir / f"frame_{idx:06d}.png")
-                original_frame.save(output_dir / f"original_frame_{i:06d}.png")
+                    # save original_frames
+                    idx = int(ts * fps)
+                    if t == 0:
+                        original_frame = PIL.Image.open(imgs_dir / f"frame_{idx:06d}.png")
+                        original_frame.save(output_dir / f"original_frame_{i:06d}.png")
 
     image_size = tuple(dataset[0][dataset.camera_keys[0]].shape[-2:])
     avg_load_time = float(np.array(list_avg_load_time).mean())
@@ -305,114 +272,123 @@ def load_info(out_dir):
     return info
 
 
-def one_variable_study(
-    var_name: str, var_values: list, repo_ids: list, bench_dir: Path, timestamps_mode: str, dry_run: bool
-):
-    print(f"**`{var_name}`**")
-    headers = [
-        "repo_id",
-        "image_size",
-        var_name,
-        "compression_factor",
-        "load_time_factor",
-        "avg_load_time_ms",
-        "avg_per_pixel_l2_error",
-        "avg_psnr",
-        "avg_ssim",
-        "avg_mse",
-    ]
-    rows = []
-    base_cfg = {
-        "repo_id": None,
-        # video encoding
-        "g": 2,
-        "crf": None,
-        "pix_fmt": "yuv444p",
-        # video decoding
-        "backend": "pyav",
-    }
-    for repo_id in repo_ids:
-        for val in var_values:
-            cfg = base_cfg.copy()
-            cfg["repo_id"] = repo_id
-            cfg[var_name] = val
-            if not dry_run:
-                run_video_benchmark(
-                    bench_dir / repo_id / f"torchvision_{var_name}_{val}", cfg, timestamps_mode
-                )
-            info = load_info(bench_dir / repo_id / f"torchvision_{var_name}_{val}")
-            width, height = info["image_size"][0], info["image_size"][1]
-            rows.append(
-                [
-                    repo_id,
-                    f"{width} x {height}",
-                    val,
-                    info["compression_factor"],
-                    info["load_time_factor"],
-                    info["avg_load_time"] * 1e3,
-                    info["avg_per_pixel_l2_error"],
-                    info["avg_psnr"],
-                    info["avg_ssim"],
-                    info["avg_mse"],
-                ]
+# def one_variable_study(
+#     var_name: str, var_value: any, repo_id: str, dataset: LeRobotDataset, output_dir: Path
+# ):
+#     rows = []
+#     repo_dir = output_dir / repo_id
+#     study_dir = repo_dir / var_name
+#     encoding_cfg = BASE_ENCODING
+#     encoding_cfg[var_name] = var_value
+#     study_dir = repo_dir / var_name / str(var_value)
+#     run_video_benchmark(
+#         dataset,
+#         output_dir,
+#         imgs_dir,
+#         encoding_cfg,
+#     )
+#     info = load_info(study_dir)
+#     width, height = info["image_size"][0], info["image_size"][1]
+#     rows.append(
+#         [
+#             repo_id,
+#             f"{width} x {height}",
+#             var_value,
+#             backend,
+#             info["compression_factor"],
+#             info["load_time_factor"],
+#             info["avg_load_time"] * 1e3,
+#             info["avg_per_pixel_l2_error"],
+#             info["avg_psnr"],
+#             info["avg_ssim"],
+#             info["avg_mse"],
+#         ]
+#     )
+#     display_markdown_table(headers, rows)
+
+
+# def best_study(repo_ids: list, bench_dir: Path, timestamps_mode: str, dry_run: bool):
+#     """Change the config once you deciced what's best based on one-variable-studies"""
+#     print("**best**")
+#     headers = [
+#         "repo_id",
+#         "image_size",
+#         "compression_factor",
+#         "load_time_factor",
+#         "avg_load_time_ms",
+#         "avg_per_pixel_l2_error",
+#         "avg_psnr",
+#         "avg_ssim",
+#         "avg_mse",
+#     ]
+#     rows = []
+#     for repo_id in repo_ids:
+#         study_dir = bench_dir / repo_id / "best"
+#         if not dry_run:
+#             run_video_benchmark(study_dir, repo_id, BASE_ENCODING, timestamps_mode)
+#         info = load_info(study_dir)
+#         width, height = info["image_size"][0], info["image_size"][1]
+#         rows.append(
+#             [
+#                 repo_id,
+#                 f"{width} x {height}",
+#                 info["compression_factor"],
+#                 info["load_time_factor"],
+#                 info["avg_load_time"] * 1e3,
+#                 info["avg_per_pixel_l2_error"],
+#                 info["avg_psnr"],
+#                 info["avg_ssim"],
+#                 info["avg_mse"],
+#             ]
+#         )
+#     display_markdown_table(headers, rows)
+
+
+def main(output_dir: Path = OUTPUT_DIR):
+    # TODO(aliberts): args from argparse
+    # columns = [
+    #     "repo_id",
+    #     "image_size",
+    # ]
+    # columns += list(BENCHMARKS.keys())
+    # columns += [
+    #     "decoder",
+    #     "timestamps_mode",
+    #     "compression_factor",
+    #     "load_time_factor",
+    #     "avg_load_time_ms",
+    #     "avg_per_pixel_l2_error",
+    #     "avg_psnr",
+    #     "avg_ssim",
+    #     "avg_mse",
+    # ]
+    # benchmark_df = pd.DataFrame([], columns=columns)
+    for repo_id in DATASET_REPO_IDS:
+        repo_dir = output_dir / repo_id
+        repo_dir.mkdir(parents=True, exist_ok=True)
+
+        dataset = LeRobotDataset(repo_id)
+        if dataset.video:
+            raise ValueError(
+                f"Use only image dataset for running this benchmark. Video dataset provided: {repo_id}"
             )
-    display_markdown_table(headers, rows)
 
+        # We only use the first episode
+        imgs_dir = repo_dir / "images_episode_000000"
+        if not imgs_dir.exists():
+            save_first_episode(dataset, imgs_dir)
 
-def best_study(repo_ids: list, bench_dir: Path, timestamps_mode: str, dry_run: bool):
-    """Change the config once you deciced what's best based on one-variable-studies"""
-    print("**best**")
-    headers = [
-        "repo_id",
-        "image_size",
-        "compression_factor",
-        "load_time_factor",
-        "avg_load_time_ms",
-        "avg_per_pixel_l2_error",
-        "avg_psnr",
-        "avg_ssim",
-        "avg_mse",
-    ]
-    rows = []
-    for repo_id in repo_ids:
-        cfg = {
-            "repo_id": repo_id,
-            # video encoding
-            "g": 2,
-            "crf": None,
-            "pix_fmt": "yuv444p",
-            # video decoding
-            "backend": "video_reader",
-        }
-        if not dry_run:
-            run_video_benchmark(bench_dir / repo_id / "torchvision_best", cfg, timestamps_mode)
-        info = load_info(bench_dir / repo_id / "torchvision_best")
-        width, height = info["image_size"][0], info["image_size"][1]
-        rows.append(
-            [
-                repo_id,
-                f"{width} x {height}",
-                info["compression_factor"],
-                info["load_time_factor"],
-                info["avg_load_time"] * 1e3,
-                info["avg_per_pixel_l2_error"],
-                info["avg_psnr"],
-                info["avg_ssim"],
-                info["avg_mse"],
-            ]
-        )
-    display_markdown_table(headers, rows)
-
-
-def main():
-    for timestamps_mode in TIMESTAMPS_MODES:
-        bench_dir = OUTPUT_DIR / timestamps_mode
-
-        print(f"### `{timestamps_mode}`")
-        print()
-
-        for name, values in BENCHMARKS.items():
-            one_variable_study(name, values, DATASET_REPO_IDS, bench_dir, timestamps_mode, DRY_RUN)
+        for var_name, values in BENCHMARKS.items():
+            for value in values:
+                study_dir = repo_dir / var_name / value
+                encoding_cfg = BASE_ENCODING
+                encoding_cfg[var_name] = value
+                run_video_benchmark(
+                    dataset,
+                    study_dir,
+                    imgs_dir,
+                    encoding_cfg,
+                )
 
         # best_study(DATASET_REPO_IDS, bench_dir, timestamps_mode, DRY_RUN)
 

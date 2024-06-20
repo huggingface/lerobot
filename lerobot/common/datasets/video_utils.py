@@ -158,22 +158,40 @@ def decode_video_frames_torchvision(
     return closest_frames
 
 
-def encode_video_frames(imgs_dir: Path, video_path: Path, fps: int):
+def encode_video_frames(
+    imgs_dir: Path,
+    video_path: Path,
+    fps: int,
+    video_codec: str = "libx264",
+    pixel_format: str = "yuv444p",
+    group_of_pictures_size: int | None = 2,
+    constant_rate_factor: int | None = None,
+    log_level: str | None = None,
+) -> None:
     """More info on ffmpeg arguments tuning on `lerobot/common/datasets/_video_benchmark/README.md`"""
     video_path = Path(video_path)
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    ffmpeg_cmd = (
-        f"ffmpeg -r {fps} "
-        "-f image2 "
-        "-loglevel error "
-        f"-i {str(imgs_dir / 'frame_%06d.png')} "
-        "-vcodec libx264 "
-        "-g 2 "
-        "-pix_fmt yuv444p "
-        f"{str(video_path)}"
-    )
-    subprocess.run(ffmpeg_cmd.split(" "), check=True)
+    ffmpeg_args = {
+        "-f": "image2",
+        "-r": str(fps),
+        "-i": str(imgs_dir / "frame_%06d.png"),
+        "-vcodec": video_codec,
+        "-pix_fmt": pixel_format,
+    }
+
+    if group_of_pictures_size is not None:
+        ffmpeg_args["-g"] = str(group_of_pictures_size)
+
+    if constant_rate_factor is not None:
+        ffmpeg_args["-crf"] = str(constant_rate_factor)
+
+    if log_level is not None:
+        ffmpeg_args["-loglevel"] = str(log_level)
+
+    ffmpeg_args = [item for pair in ffmpeg_args.items() for item in pair]
+    ffmpeg_cmd = ["ffmpeg"] + ffmpeg_args + [str(video_path)]
+    subprocess.run(ffmpeg_cmd, check=True)
 
 
 @dataclass
