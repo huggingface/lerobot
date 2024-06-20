@@ -85,14 +85,6 @@ class EpisodeSampler(torch.utils.data.Sampler):
         return len(self.frame_ids)
 
 
-class NoCacheHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
-    def end_headers(self):
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
-        super().end_headers()
-
-
 def run_server(dataset: LeRobotDataset, episodes: List[int], port: str, static_folder: Path, template_folder: Path):
     app = Flask(__name__, static_folder=static_folder.resolve(), template_folder=template_folder.resolve())
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0 # specifying not to cache
