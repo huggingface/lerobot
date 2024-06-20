@@ -351,7 +351,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
 
-        if cfg.training.save_checkpoint and step % cfg.training.save_freq == 0:
+        if cfg.training.save_checkpoint and (
+            step % cfg.training.save_freq == 0
+            or step == cfg.training.offline_steps + cfg.training.online_steps
+        ):
             logging.info(f"Checkpoint policy after step {step}")
             # Note: Save with step as the identifier, and format it to have at least 6 digits but more if
             # needed (choose 6 as a minimum for consistency without being overkill).
