@@ -451,10 +451,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         sampler = EpisodeAwareSampler(
             offline_dataset.episode_data_index,
             drop_n_last_frames=cfg.training.drop_n_last_frames,
-            shuffle=False,  # TODO(now)
+            shuffle=True,
         )
     else:
-        shuffle = False  # TODO(now)
+        shuffle = True
         sampler = None
     dataloader = torch.utils.data.DataLoader(
         offline_dataset,
@@ -469,9 +469,9 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     dl_iter = cycle(dataloader)
 
     policy.train()
-    step = 0  # number of policy update (forward + backward + optim)
     is_offline = True
-    for offline_step in range(cfg.training.offline_steps):
+    offline_step = 0
+    for _ in range(step, cfg.training.offline_steps):
         if offline_step == 0:
             logging.info("Start offline training on a fixed dataset")
 
@@ -503,6 +503,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         evaluate_and_checkpoint_if_needed(step + 1)
 
         step += 1
+        offline_step += 1  # noqa: SIM113
 
     # create an env dedicated to online episodes collection from policy rollout
     online_training_env = make_env(cfg, n_envs=1)
@@ -531,7 +532,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     online_step = 0
     is_offline = False
-    for online_step in range(cfg.training.online_steps):
+    for _ in range(step, cfg.training.offline_steps + cfg.training.online_steps):
         if online_step == 0:
             logging.info("Start online training by interacting with environment")
 
@@ -541,9 +542,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 online_training_env,
                 policy,
                 n_episodes=1,
+                max_episodes_rendered=1,
+                videos_dir=Path("test"),
                 return_episode_data=True,
                 # TODO(now): Actually we shouldn't be seeding this every time!
-                start_seed=cfg.training.online_env_seed,
+                # start_seed=cfg.training.online_env_seed,
                 enable_progbar=False,
             )
 
@@ -558,12 +561,25 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
         policy.train()
         for _ in range(cfg.training.online_steps_between_rollouts):
+            start_time = time.perf_counter()
             batch = next(dl_iter)
+            dataloading_s = time.perf_counter() - start_time
 
             for key in batch:
                 batch[key] = batch[key].to(cfg.device, non_blocking=True)
 
-            train_info = update_policy(policy, batch, optimizer, cfg.training.grad_clip_norm, lr_scheduler)
+            train_info = update_policy(
+                policy,
+                batch,
+                optimizer,
+                cfg.training.grad_clip_norm,
+                grad_scaler=grad_scaler,
+                lr_scheduler=lr_scheduler,
+                use_amp=cfg.use_amp,
+                step=step,
+            )
+
+            train_info["dataloading_s"] = dataloading_s
 
             if step % cfg.training.log_freq == 0:
                 log_train_info(logger, train_info, step, cfg, online_dataset, is_offline)
@@ -574,6 +590,9 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
             step += 1
             online_step += 1
+
+            if online_step == cfg.training.online_steps:
+                break
 
     if eval_env:
         eval_env.close()
