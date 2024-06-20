@@ -1152,7 +1152,7 @@ test = ["pytest (>=8.1.0)", "pytest-cov (>=5.0.0)"]
 type = "git"
 url = "https://github.com/alexander-soare/gym-xarm.git"
 reference = "enable_push_task"
-resolved_reference = "71a4d6168c899f9a413ed36781ee4a33e26e7153"
+resolved_reference = "45f85850d96ca1211f749ada9e93bc1a281d68fc"
 
 [[package]]
 name = "gymnasium"

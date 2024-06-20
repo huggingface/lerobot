@@ -15,3 +15,4 @@ env:
     render_mode: rgb_array
     visualization_width: 384
     visualization_height: 384
+    movement_penalty_coeff: 0.05
