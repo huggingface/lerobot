@@ -60,6 +60,7 @@ pyav = ">=12.0.5"
 moviepy = ">=1.0.3"
 rerun-sdk = ">=0.15.1"
 deepdiff = ">=7.0.1"
+scikit-image = {version = "^0.23.2", optional = true}
 
 
 [tool.poetry.extras]
@@ -70,6 +71,7 @@ aloha = ["gym-aloha"]
 dev = ["pre-commit", "debugpy"]
 test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
+video_benchmark = ["scikit-image"]
 
 [tool.ruff]
 line-length = 110
