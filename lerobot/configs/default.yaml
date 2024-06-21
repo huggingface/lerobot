@@ -36,6 +36,8 @@ training:
   online_steps: ???
   online_steps_between_rollouts: ???
   online_sampling_ratio: 0.5
+  # TODO(now): Document this, and the train script will need to check that this is longer than the episode length
+  online_buffer_capacity: null
   # `online_env_seed` is used for environments for online training data rollouts.
   online_env_seed: ???
   eval_freq: ???

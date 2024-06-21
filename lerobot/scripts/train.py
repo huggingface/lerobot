@@ -26,7 +26,7 @@ import torch
 from datasets import concatenate_datasets
 from datasets.utils import disable_progress_bars, enable_progress_bars
 from deepdiff import DeepDiff
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 from termcolor import colored
 from torch import nn
 from torch.cuda.amp import GradScaler
@@ -227,13 +227,14 @@ def log_eval_info(logger, info, step, cfg, dataset, is_offline):
     logger.log_dict(info, step, mode="eval")
 
 
-def add_episodes_inplace(
+def update_online_buffer(
     online_dataset: LeRobotDataset,
     concat_dataset: torch.utils.data.ConcatDataset,
     sampler: torch.utils.data.WeightedRandomSampler,
     new_hf_dataset: datasets.Dataset,
     new_episode_data_index: dict[str, torch.Tensor],
     online_sampling_ratio: float,
+    buffer_capacity: float | None = None,
 ):
     """
     Modifies the online_dataset, concat_dataset, and sampler in place by integrating
@@ -252,6 +253,9 @@ def add_episodes_inplace(
             indices. They indicate the start index and end index of each episode in the dataset.
         online_sampling_ratio: The target percentage of samples that should come from the online dataset
             during sampling operations.
+        buffer_capacity: A maximum capacity (in units of frames) for the online dataset. The dataset is
+            treated like a queue where the first frames in are removed, if necessary, to make space for new
+            frames.
     """
     # Sanity check to make sure that new_hf_dataset starts from 0.
     assert new_hf_dataset["episode_index"][0].item() == 0
@@ -289,6 +293,11 @@ def add_episodes_inplace(
             for k in ["from", "to"]
         }
 
+        # if buffer_capacity is not None:
+        #     # Remove as many frames from the dataset as need to keep within the desired capacity.
+        #     breakpoint()
+        #     online_dataset.hf_dataset.drop_index
+
     # update the concatenated dataset length used during sampling
     concat_dataset.cumulative_sizes = concat_dataset.cumsum(concat_dataset.datasets)
 
@@ -312,6 +321,12 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         raise NotImplementedError()
 
     init_logging()
+
+    # Check if settings are compatible with online training.
+    if isinstance(cfg.dataset_repo_id, ListConfig):
+        raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
+    if cfg.training.dataset_use_cache and cfg.training.online_buffer_capacity is not None:
+        raise NotImplementedError("Dataset caching not implemented with online buffer capacity limit.")
 
     # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
     # to check for any differences between the provided config and the checkpoint's config.
@@ -512,7 +527,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     online_training_env = make_env(cfg, n_envs=1)
     # create an empty online dataset similar to offline dataset
     online_dataset = deepcopy(offline_dataset)
-    # TODO(now): Consolidate the reset.
+    # TODO(now): Consolidate the reset into one method.
     online_dataset.hf_dataset = {}
     online_dataset.episode_data_index = {}
     online_dataset.cache = {}
@@ -542,6 +557,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         if online_step == 0:
             logging.info("Start online training by interacting with environment")
 
+        start_time = time.perf_counter()
         policy.eval()
         with torch.no_grad():
             eval_info = eval_policy(
@@ -556,14 +572,16 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 enable_progbar=False,
             )
 
-        add_episodes_inplace(
+        update_online_buffer(
             online_dataset,
             concat_dataset,
             sampler,
             new_hf_dataset=eval_info["episodes"]["hf_dataset"],
             new_episode_data_index=eval_info["episodes"]["episode_data_index"],
             online_sampling_ratio=cfg.training.online_sampling_ratio,
+            buffer_capacity=cfg.training.online_buffer_capacity,
         )
+        online_rollout_s = time.perf_counter() - start_time
 
         policy.train()
         for _ in range(cfg.training.online_steps_between_rollouts):
@@ -586,6 +604,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             )
 
             train_info["dataloading_s"] = dataloading_s
+            train_info["online_rollout_s"] = online_rollout_s
 
             if step % cfg.training.log_freq == 0:
                 log_train_info(logger, train_info, step, cfg, online_dataset, is_offline)
