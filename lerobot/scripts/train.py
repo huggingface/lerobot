@@ -320,7 +320,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         offline_dataset = make_dataset(cfg, split=f"train[:{round((1-split_ratio)*100)}%]")
         offline_val_dataset = make_dataset(cfg, split=f"train[{round((1-split_ratio)*100)}%:]")
         logging.info(
-            f"using {len(offline_dataset)} episodes for training and {len(offline_val_dataset)} episodes for validation"
+            f"using {offline_dataset.num_episodes} episodes for training and {offline_val_dataset.num_episodes} episodes for validation"
         )
 
     else:
