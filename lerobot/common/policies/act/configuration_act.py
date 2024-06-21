@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 Tony Z. Zhao and The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 from dataclasses import dataclass, field
 
 
@@ -10,6 +25,13 @@ class ACTConfig:
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
     Those are: `input_shapes` and 'output_shapes`.
 
+    Notes on the inputs and outputs:
+        - At least one key starting with "observation.image is required as an input.
+        - If there are multiple keys beginning with "observation.images." they are treated as multiple camera
+          views. Right now we only support all images having the same shape.
+        - May optionally work without an "observation.state" key for the proprioceptive robot state.
+        - "action" is required as an output key.
+
     Args:
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
@@ -18,15 +40,15 @@ class ACTConfig:
             This should be no greater than the chunk size. For example, if the chunk size size 100, you may
             set this to 50. This would mean that the model predicts 100 steps worth of actions, runs 50 in the
             environment, and throws the other 50 out.
-        input_shapes: A dictionary defining the shapes of the input data for the policy.
-            The key represents the input data name, and the value is a list indicating the dimensions
-            of the corresponding data. For example, "observation.images.top" refers to an input from the
-            "top" camera with dimensions [3, 96, 96], indicating it has three color channels and 96x96 resolution.
-            Importantly, shapes doesn't include batch dimension or temporal dimension.
-        output_shapes: A dictionary defining the shapes of the output data for the policy.
-            The key represents the output data name, and the value is a list indicating the dimensions
-            of the corresponding data. For example, "action" refers to an output shape of [14], indicating
-            14-dimensional actions. Importantly, shapes doesn't include batch dimension or temporal dimension.
+        input_shapes: A dictionary defining the shapes of the input data for the policy. The key represents
+            the input data name, and the value is a list indicating the dimensions of the corresponding data.
+            For example, "observation.image" refers to an input from a camera with dimensions [3, 96, 96],
+            indicating it has three color channels and 96x96 resolution. Importantly, `input_shapes` doesn't
+            include batch dimension or temporal dimension.
+        output_shapes: A dictionary defining the shapes of the output data for the policy. The key represents
+            the output data name, and the value is a list indicating the dimensions of the corresponding data.
+            For example, "action" refers to an output shape of [14], indicating 14-dimensional actions.
+            Importantly, `output_shapes` doesn't include batch dimension or temporal dimension.
         input_normalization_modes: A dictionary with key representing the modality (e.g. "observation.state"),
             and the value specifies the normalization mode to apply. The two available modes are "mean_std"
             which subtracts the mean and divides by the standard deviation and "min_max" which rescale in a
@@ -51,8 +73,12 @@ class ACTConfig:
             documentation in the policy class).
         latent_dim: The VAE's latent dimension.
         n_vae_encoder_layers: The number of transformer layers to use for the VAE's encoder.
-        use_temporal_aggregation: Whether to blend the actions of multiple policy invocations for any given
-            environment step.
+        temporal_ensemble_momentum: Exponential moving average (EMA) momentum parameter (α) for ensembling
+            actions for a given time step over multiple policy invocations. Updates are calculated as:
+            x⁻ₙ = αx⁻ₙ₋₁ + (1-α)xₙ. Note that the ACT paper and original ACT code describes a different
+            parameter here: they refer to a weighting scheme wᵢ = exp(-m⋅i) and set m = 0.01. With our
+            formulation, this is equivalent to α = exp(-0.01) ≈ 0.99. When this parameter is provided, we
+            require `n_action_steps == 1` (since we need to query the policy every step anyway).
         dropout: Dropout to use in the transformer layers (see code for details).
         kl_weight: The weight to use for the KL-divergence component of the loss if the variational objective
             is enabled. Loss is then calculated as: `reconstruction_loss + kl_weight * kld_loss`.
@@ -100,6 +126,9 @@ class ACTConfig:
     dim_feedforward: int = 3200
     feedforward_activation: str = "relu"
     n_encoder_layers: int = 4
+    # Note: Although the original ACT implementation has 7 for `n_decoder_layers`, there is a bug in the code
+    # that means only the first layer is used. Here we match the original implementation by setting this to 1.
+    # See this issue https://github.com/tonyzhaozh/act/issues/25#issue-2258740521.
     n_decoder_layers: int = 1
     # VAE.
     use_vae: bool = True
@@ -107,7 +136,7 @@ class ACTConfig:
     n_vae_encoder_layers: int = 4
 
     # Inference.
-    use_temporal_aggregation: bool = False
+    temporal_ensemble_momentum: float | None = None
 
     # Training and loss computation.
     dropout: float = 0.1
@@ -119,8 +148,11 @@ class ACTConfig:
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
-        if self.use_temporal_aggregation:
-            raise NotImplementedError("Temporal aggregation is not yet implemented.")
+        if self.temporal_ensemble_momentum is not None and self.n_action_steps > 1:
+            raise NotImplementedError(
+                "`n_action_steps` must be 1 when using temporal ensembling. This is "
+                "because the policy needs to be queried every step to compute the ensembled action."
+            )
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
@@ -130,10 +162,3 @@ class ACTConfig:
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
             )
-        # Check that there is only one image.
-        # TODO(alexander-soare): generalize this to multiple images.
-        if (
-            sum(k.startswith("observation.images.") for k in self.input_shapes) != 1
-            or "observation.images.top" not in self.input_shapes
-        ):
-            raise ValueError('For now, only "observation.images.top" is accepted for an image input.')

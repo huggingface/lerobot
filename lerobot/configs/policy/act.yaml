@@ -3,13 +3,19 @@
 seed: 1000
 dataset_repo_id: lerobot/aloha_sim_insertion_human
 
+override_dataset_stats:
+  observation.images.top:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+
 training:
   offline_steps: 80000
   online_steps: 0
   eval_freq: 10000
   save_freq: 100000
   log_freq: 250
-  save_model: true
+  save_checkpoint: true
 
   batch_size: 8
   lr: 1e-5
@@ -17,12 +23,6 @@ training:
   weight_decay: 1e-4
   grad_clip_norm: 10
   online_steps_between_rollouts: 1
-
-  override_dataset_stats:
-    observation.images.top:
-      # stats from imagenet, since we use a pretrained vision model
-      mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
-      std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
 
   delta_timestamps:
     action: "[i / ${fps} for i in range(${policy.chunk_size})]"
@@ -66,6 +66,9 @@ policy:
   dim_feedforward: 3200
   feedforward_activation: relu
   n_encoder_layers: 4
+  # Note: Although the original ACT implementation has 7 for `n_decoder_layers`, there is a bug in the code
+  # that means only the first layer is used. Here we match the original implementation by setting this to 1.
+  # See this issue https://github.com/tonyzhaozh/act/issues/25#issue-2258740521.
   n_decoder_layers: 1
   # VAE.
   use_vae: true
@@ -73,7 +76,7 @@ policy:
   n_vae_encoder_layers: 4
 
   # Inference.
-  use_temporal_aggregation: false
+  temporal_ensemble_momentum: null
 
   # Training and loss computation.
   dropout: 0.1

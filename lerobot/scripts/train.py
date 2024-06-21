@@ -1,23 +1,45 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import logging
 import time
-from copy import deepcopy
+from contextlib import nullcontext
 from pathlib import Path
+from pprint import pformat
 
-import datasets
 import hydra
 import torch
-from datasets import concatenate_datasets
-from datasets.utils import disable_progress_bars, enable_progress_bars
+from deepdiff import DeepDiff
+from omegaconf import DictConfig, OmegaConf
+from termcolor import colored
+from torch import nn
+from torch.cuda.amp import GradScaler
 
-from lerobot.common.datasets.factory import make_dataset
+from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
+from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
+from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import PolicyWithUpdate
+from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.utils import (
     format_big_number,
     get_safe_torch_device,
+    init_hydra_config,
     init_logging,
     set_global_seed,
 )
@@ -31,12 +53,14 @@ def make_optimizer_and_scheduler(cfg, policy):
                 "params": [
                     p
                     for n, p in policy.named_parameters()
-                    if not n.startswith("backbone") and p.requires_grad
+                    if not n.startswith("model.backbone") and p.requires_grad
                 ]
             },
             {
                 "params": [
-                    p for n, p in policy.named_parameters() if n.startswith("backbone") and p.requires_grad
+                    p
+                    for n, p in policy.named_parameters()
+                    if n.startswith("model.backbone") and p.requires_grad
                 ],
                 "lr": cfg.training.lr_backbone,
             },
@@ -53,7 +77,6 @@ def make_optimizer_and_scheduler(cfg, policy):
             cfg.training.adam_eps,
             cfg.training.adam_weight_decay,
         )
-        assert cfg.training.online_steps == 0, "Diffusion Policy does not handle online training."
         from diffusers.optimization import get_scheduler
 
         lr_scheduler = get_scheduler(
@@ -71,20 +94,40 @@ def make_optimizer_and_scheduler(cfg, policy):
     return optimizer, lr_scheduler
 
 
-def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
-    start_time = time.time()
+def update_policy(
+    policy,
+    batch,
+    optimizer,
+    grad_clip_norm,
+    grad_scaler: GradScaler,
+    lr_scheduler=None,
+    use_amp: bool = False,
+):
+    """Returns a dictionary of items for logging."""
+    start_time = time.perf_counter()
+    device = get_device_from_parameters(policy)
     policy.train()
-    output_dict = policy.forward(batch)
-    # TODO(rcadene): policy.unnormalize_outputs(out_dict)
-    loss = output_dict["loss"]
-    loss.backward()
+    with torch.autocast(device_type=device.type) if use_amp else nullcontext():
+        output_dict = policy.forward(batch)
+        # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+        loss = output_dict["loss"]
+    grad_scaler.scale(loss).backward()
+
+    # Unscale the graident of the optimzer's assigned params in-place **prior to gradient clipping**.
+    grad_scaler.unscale_(optimizer)
+
     grad_norm = torch.nn.utils.clip_grad_norm_(
         policy.parameters(),
         grad_clip_norm,
         error_if_nonfinite=False,
     )
 
-    optimizer.step()
+    # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
+    # although it still skips optimizer.step() if the gradients contain infs or NaNs.
+    grad_scaler.step(optimizer)
+    # Updates the scale for next iteration.
+    grad_scaler.update()
+
     optimizer.zero_grad()
 
     if lr_scheduler is not None:
@@ -98,35 +141,19 @@ def update_policy(policy, batch, optimizer, grad_clip_norm, lr_scheduler=None):
         "loss": loss.item(),
         "grad_norm": float(grad_norm),
         "lr": optimizer.param_groups[0]["lr"],
-        "update_s": time.time() - start_time,
+        "update_s": time.perf_counter() - start_time,
+        **{k: v for k, v in output_dict.items() if k != "loss"},
     }
 
     return info
 
 
-@hydra.main(version_base="1.2", config_name="default", config_path="../configs")
-def train_cli(cfg: dict):
-    train(
-        cfg,
-        out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
-        job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
-    )
-
-
-def train_notebook(out_dir=None, job_name=None, config_name="default", config_path="../configs"):
-    from hydra import compose, initialize
-
-    hydra.core.global_hydra.GlobalHydra.instance().clear()
-    initialize(config_path=config_path)
-    cfg = compose(config_name=config_name)
-    train(cfg, out_dir=out_dir, job_name=job_name)
-
-
-def log_train_info(logger, info, step, cfg, dataset, is_offline):
+def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
     loss = info["loss"]
     grad_norm = info["grad_norm"]
     lr = info["lr"]
     update_s = info["update_s"]
+    dataloading_s = info["dataloading_s"]
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
@@ -147,6 +174,7 @@ def log_train_info(logger, info, step, cfg, dataset, is_offline):
         f"lr:{lr:0.1e}",
         # in seconds
         f"updt_s:{update_s:.3f}",
+        f"data_s:{dataloading_s:.3f}",  # if not ~0, you are bottlenecked by cpu or io
     ]
     logging.info(" ".join(log_items))
 
@@ -193,104 +221,7 @@ def log_eval_info(logger, info, step, cfg, dataset, is_offline):
     logger.log_dict(info, step, mode="eval")
 
 
-def calculate_online_sample_weight(n_off: int, n_on: int, pc_on: float):
-    """
-    Calculate the sampling weight to be assigned to samples so that a specified percentage of the batch comes from online dataset (on average).
-
-    Parameters:
-    - n_off (int): Number of offline samples, each with a sampling weight of 1.
-    - n_on (int): Number of online samples.
-    - pc_on (float): Desired percentage of online samples in decimal form (e.g., 50% as 0.5).
-
-    The total weight of offline samples is n_off * 1.0.
-    The total weight of offline samples is n_on * w.
-    The total combined weight of all samples is n_off + n_on * w.
-    The fraction of the weight that is online is n_on * w / (n_off + n_on * w).
-    We want this fraction to equal pc_on, so we set up the equation n_on * w / (n_off + n_on * w) = pc_on.
-    The solution is w = - (n_off * pc_on) / (n_on * (pc_on - 1))
-    """
-    assert 0.0 <= pc_on <= 1.0
-    return -(n_off * pc_on) / (n_on * (pc_on - 1))
-
-
-def add_episodes_inplace(
-    online_dataset: torch.utils.data.Dataset,
-    concat_dataset: torch.utils.data.ConcatDataset,
-    sampler: torch.utils.data.WeightedRandomSampler,
-    hf_dataset: datasets.Dataset,
-    episode_data_index: dict[str, torch.Tensor],
-    pc_online_samples: float,
-):
-    """
-    Modifies the online_dataset, concat_dataset, and sampler in place by integrating
-    new episodes from hf_dataset into the online_dataset, updating the concatenated
-    dataset's structure and adjusting the sampling strategy based on the specified
-    percentage of online samples.
-
-    Parameters:
-    - online_dataset (torch.utils.data.Dataset): The existing online dataset to be updated.
-    - concat_dataset (torch.utils.data.ConcatDataset): The concatenated dataset that combines
-      offline and online datasets, used for sampling purposes.
-    - sampler (torch.utils.data.WeightedRandomSampler): A sampler that will be updated to
-      reflect changes in the dataset sizes and specified sampling weights.
-    - hf_dataset (datasets.Dataset): A Hugging Face dataset containing the new episodes to be added.
-    - episode_data_index (dict): A dictionary containing two keys ("from" and "to") associated to dataset indices.
-      They indicate the start index and end index of each episode in the dataset.
-    - pc_online_samples (float): The target percentage of samples that should come from
-      the online dataset during sampling operations.
-
-    Raises:
-    - AssertionError: If the first episode_id or index in hf_dataset is not 0
-    """
-    first_episode_idx = hf_dataset.select_columns("episode_index")[0]["episode_index"].item()
-    last_episode_idx = hf_dataset.select_columns("episode_index")[-1]["episode_index"].item()
-    first_index = hf_dataset.select_columns("index")[0]["index"].item()
-    last_index = hf_dataset.select_columns("index")[-1]["index"].item()
-    # sanity check
-    assert first_episode_idx == 0, f"{first_episode_idx=} is not 0"
-    assert first_index == 0, f"{first_index=} is not 0"
-    assert first_index == episode_data_index["from"][first_episode_idx].item()
-    assert last_index == episode_data_index["to"][last_episode_idx].item() - 1
-
-    if len(online_dataset) == 0:
-        # initialize online dataset
-        online_dataset.hf_dataset = hf_dataset
-        online_dataset.episode_data_index = episode_data_index
-    else:
-        # get the starting indices of the new episodes and frames to be added
-        start_episode_idx = last_episode_idx + 1
-        start_index = last_index + 1
-
-        def shift_indices(episode_index, index):
-            # note: we dont shift "frame_index" since it represents the index of the frame in the episode it belongs to
-            example = {"episode_index": episode_index + start_episode_idx, "index": index + start_index}
-            return example
-
-        disable_progress_bars()  # map has a tqdm progress bar
-        hf_dataset = hf_dataset.map(shift_indices, input_columns=["episode_index", "index"])
-        enable_progress_bars()
-
-        episode_data_index["from"] += start_index
-        episode_data_index["to"] += start_index
-
-        # extend online dataset
-        online_dataset.hf_dataset = concatenate_datasets([online_dataset.hf_dataset, hf_dataset])
-
-    # update the concatenated dataset length used during sampling
-    concat_dataset.cumulative_sizes = concat_dataset.cumsum(concat_dataset.datasets)
-
-    # update the sampling weights for each frame so that online frames get sampled a certain percentage of times
-    len_online = len(online_dataset)
-    len_offline = len(concat_dataset) - len_online
-    weight_offline = 1.0
-    weight_online = calculate_online_sample_weight(len_offline, len_online, pc_online_samples)
-    sampler.weights = torch.tensor([weight_offline] * len_offline + [weight_online] * len(online_dataset))
-
-    # update the total number of samples used during sampling
-    sampler.num_samples = len(concat_dataset)
-
-
-def train(cfg: dict, out_dir=None, job_name=None):
+def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
     if out_dir is None:
         raise NotImplementedError()
     if job_name is None:
@@ -298,34 +229,96 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     init_logging()
 
-    if cfg.training.online_steps > 0 and cfg.eval.batch_size > 1:
-        logging.warning("eval.batch_size > 1 not supported for online training steps")
+    # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
+    # to check for any differences between the provided config and the checkpoint's config.
+    if cfg.resume:
+        if not Logger.get_last_checkpoint_dir(out_dir).exists():
+            raise RuntimeError(
+                "You have set resume=True, but there is no model checkpoint in "
+                f"{Logger.get_last_checkpoint_dir(out_dir)}"
+            )
+        checkpoint_cfg_path = str(Logger.get_last_pretrained_model_dir(out_dir) / "config.yaml")
+        logging.info(
+            colored(
+                "You have set resume=True, indicating that you wish to resume a run",
+                color="yellow",
+                attrs=["bold"],
+            )
+        )
+        # Get the configuration file from the last checkpoint.
+        checkpoint_cfg = init_hydra_config(checkpoint_cfg_path)
+        # Check for differences between the checkpoint configuration and provided configuration.
+        # Hack to resolve the delta_timestamps ahead of time in order to properly diff.
+        resolve_delta_timestamps(cfg)
+        diff = DeepDiff(OmegaConf.to_container(checkpoint_cfg), OmegaConf.to_container(cfg))
+        # Ignore the `resume` and parameters.
+        if "values_changed" in diff and "root['resume']" in diff["values_changed"]:
+            del diff["values_changed"]["root['resume']"]
+        # Log a warning about differences between the checkpoint configuration and the provided
+        # configuration.
+        if len(diff) > 0:
+            logging.warning(
+                "At least one difference was detected between the checkpoint configuration and "
+                f"the provided configuration: \n{pformat(diff)}\nNote that the checkpoint configuration "
+                "takes precedence.",
+            )
+        # Use the checkpoint config instead of the provided config (but keep `resume` parameter).
+        cfg = checkpoint_cfg
+        cfg.resume = True
+    elif Logger.get_last_checkpoint_dir(out_dir).exists():
+        raise RuntimeError(
+            f"The configured output directory {Logger.get_last_checkpoint_dir(out_dir)} already exists."
+        )
+
+    # log metrics to terminal and wandb
+    logger = Logger(cfg, out_dir, wandb_job_name=job_name)
+
+    if cfg.training.online_steps > 0:
+        raise NotImplementedError("Online training is not implemented yet.")
+
+    set_global_seed(cfg.seed)
 
     # Check device is available
-    get_safe_torch_device(cfg.device, log=True)
+    device = get_safe_torch_device(cfg.device, log=True)
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    set_global_seed(cfg.seed)
 
     logging.info("make_dataset")
     offline_dataset = make_dataset(cfg)
+    if isinstance(offline_dataset, MultiLeRobotDataset):
+        logging.info(
+            "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
+            f"{pformat(offline_dataset.repo_id_to_index , indent=2)}"
+        )
 
-    logging.info("make_env")
-    eval_env = make_env(cfg)
+    # Create environment used for evaluating checkpoints during training on simulation data.
+    # On real-world data, no need to create an environment as evaluations are done outside train.py,
+    # using the eval.py instead, with gym_dora environment and dora-rs.
+    eval_env = None
+    if cfg.training.eval_freq > 0:
+        logging.info("make_env")
+        eval_env = make_env(cfg)
 
     logging.info("make_policy")
-    policy = make_policy(hydra_cfg=cfg, dataset_stats=offline_dataset.stats)
-
+    policy = make_policy(
+        hydra_cfg=cfg,
+        dataset_stats=offline_dataset.stats if not cfg.resume else None,
+        pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
+    )
+    assert isinstance(policy, nn.Module)
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+    grad_scaler = GradScaler(enabled=cfg.use_amp)
+
+    step = 0  # number of policy updates (forward + backward + optim)
+
+    if cfg.resume:
+        step = logger.load_last_training_state(optimizer, lr_scheduler)
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
-
-    # log metrics to terminal and wandb
-    logger = Logger(out_dir, job_name, cfg)
 
     log_output_dir(out_dir)
     logging.info(f"{cfg.env.task=}")
@@ -338,61 +331,91 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
     # Note: this helper will be used in offline and online training loops.
     def evaluate_and_checkpoint_if_needed(step):
-        if step % cfg.training.eval_freq == 0:
+        _num_digits = max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
+        step_identifier = f"{step:0{_num_digits}d}"
+
+        if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
-            eval_info = eval_policy(
-                eval_env,
-                policy,
-                cfg.eval.n_episodes,
-                video_dir=Path(out_dir) / "eval",
-                max_episodes_rendered=4,
-                start_seed=cfg.seed,
-            )
-            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline)
+            with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
+                assert eval_env is not None
+                eval_info = eval_policy(
+                    eval_env,
+                    policy,
+                    cfg.eval.n_episodes,
+                    videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
+                    max_episodes_rendered=4,
+                    start_seed=cfg.seed,
+                )
+            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline=True)
             if cfg.wandb.enable:
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
 
-        if cfg.training.save_model and step % cfg.training.save_freq == 0:
+        if cfg.training.save_checkpoint and (
+            step % cfg.training.save_freq == 0
+            or step == cfg.training.offline_steps + cfg.training.online_steps
+        ):
             logging.info(f"Checkpoint policy after step {step}")
             # Note: Save with step as the identifier, and format it to have at least 6 digits but more if
             # needed (choose 6 as a minimum for consistency without being overkill).
-            logger.save_model(
+            logger.save_checkpont(
+                step,
                 policy,
-                identifier=str(step).zfill(
-                    max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
-                ),
+                optimizer,
+                lr_scheduler,
+                identifier=step_identifier,
             )
             logging.info("Resume training")
 
     # create dataloader for offline training
+    if cfg.training.get("drop_n_last_frames"):
+        shuffle = False
+        sampler = EpisodeAwareSampler(
+            offline_dataset.episode_data_index,
+            drop_n_last_frames=cfg.training.drop_n_last_frames,
+            shuffle=True,
+        )
+    else:
+        shuffle = True
+        sampler = None
     dataloader = torch.utils.data.DataLoader(
         offline_dataset,
-        num_workers=cfg.training.dataloader_num_workers,
+        num_workers=cfg.training.num_workers,
         persistent_workers=cfg.training.dataloader_persistent_workers,
         batch_size=cfg.training.batch_size,
-        shuffle=True,
-        pin_memory=cfg.device != "cpu",
+        shuffle=shuffle,
+        sampler=sampler,
+        pin_memory=device.type != "cpu",
         drop_last=False,
     )
     dl_iter = cycle(dataloader)
 
     policy.train()
-    step = 0  # number of policy update (forward + backward + optim)
-    is_offline = True
-    for offline_step in range(cfg.training.offline_steps):
-        if offline_step == 0:
+    for _ in range(step, cfg.training.offline_steps):
+        if step == 0:
             logging.info("Start offline training on a fixed dataset")
+
+        start_time = time.perf_counter()
         batch = next(dl_iter)
+        dataloading_s = time.perf_counter() - start_time
 
         for key in batch:
-            batch[key] = batch[key].to(cfg.device, non_blocking=True)
+            batch[key] = batch[key].to(device, non_blocking=True)
 
-        train_info = update_policy(policy, batch, optimizer, cfg.training.grad_clip_norm, lr_scheduler)
+        train_info = update_policy(
+            policy,
+            batch,
+            optimizer,
+            cfg.training.grad_clip_norm,
+            grad_scaler=grad_scaler,
+            lr_scheduler=lr_scheduler,
+            use_amp=cfg.use_amp,
+        )
 
-        # TODO(rcadene): is it ok if step_t=0 = 0 and not 1 as previously done?
+        train_info["dataloading_s"] = dataloading_s
+
         if step % cfg.training.log_freq == 0:
-            log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline)
+            log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline=True)
 
         # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
         # so we pass in step + 1.
@@ -400,79 +423,27 @@ def train(cfg: dict, out_dir=None, job_name=None):
 
         step += 1
 
-    # create an env dedicated to online episodes collection from policy rollout
-    online_training_env = make_env(cfg, n_envs=1)
-
-    # create an empty online dataset similar to offline dataset
-    online_dataset = deepcopy(offline_dataset)
-    online_dataset.hf_dataset = {}
-    online_dataset.episode_data_index = {}
-
-    # create dataloader for online training
-    concat_dataset = torch.utils.data.ConcatDataset([offline_dataset, online_dataset])
-    weights = [1.0] * len(concat_dataset)
-    sampler = torch.utils.data.WeightedRandomSampler(
-        weights, num_samples=len(concat_dataset), replacement=True
-    )
-    dataloader = torch.utils.data.DataLoader(
-        concat_dataset,
-        num_workers=cfg.training.dataloader_num_workers,
-        persistent_workers=cfg.training.dataloader_persistent_workers,
-        batch_size=cfg.training.batch_size,
-        sampler=sampler,
-        pin_memory=cfg.device != "cpu",
-        drop_last=False,
-    )
-    dl_iter = cycle(dataloader)
-
-    online_step = 0
-    is_offline = False
-    for env_step in range(cfg.training.online_steps):
-        if env_step == 0:
-            logging.info("Start online training by interacting with environment")
-
-        policy.eval()
-        with torch.no_grad():
-            eval_info = eval_policy(
-                online_training_env,
-                policy,
-                n_episodes=1,
-                return_episode_data=True,
-                start_seed=cfg.training.online_env_seed,
-                enable_progbar=True,
-            )
-
-        add_episodes_inplace(
-            online_dataset,
-            concat_dataset,
-            sampler,
-            hf_dataset=eval_info["episodes"]["hf_dataset"],
-            episode_data_index=eval_info["episodes"]["episode_data_index"],
-            pc_online_samples=cfg.training.online_sampling_ratio,
-        )
-
-        policy.train()
-        for _ in range(cfg.training.online_steps_between_rollouts):
-            batch = next(dl_iter)
-
-            for key in batch:
-                batch[key] = batch[key].to(cfg.device, non_blocking=True)
-
-            train_info = update_policy(policy, batch, optimizer, cfg.training.grad_clip_norm, lr_scheduler)
-
-            if step % cfg.training.log_freq == 0:
-                log_train_info(logger, train_info, step, cfg, online_dataset, is_offline)
-
-            # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
-            # so we pass in step + 1.
-            evaluate_and_checkpoint_if_needed(step + 1)
-
-            step += 1
-            online_step += 1
-
-    eval_env.close()
-    online_training_env.close()
+    if eval_env:
+        eval_env.close()
     logging.info("End of training")
+
+
+@hydra.main(version_base="1.2", config_name="default", config_path="../configs")
+def train_cli(cfg: dict):
+    train(
+        cfg,
+        out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
+        job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
+    )
+
+
+def train_notebook(out_dir=None, job_name=None, config_name="default", config_path="../configs"):
+    from hydra import compose, initialize
+
+    hydra.core.global_hydra.GlobalHydra.instance().clear()
+    initialize(config_path=config_path)
+    cfg = compose(config_name=config_name)
+    train(cfg, out_dir=out_dir, job_name=job_name)
 
 
 if __name__ == "__main__":
