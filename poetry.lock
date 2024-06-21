@@ -2083,6 +2083,21 @@ files = [
 dill = ">=0.3.8"
 
 [[package]]
+name = "natsort"
+version = "8.4.0"
+description = "Simple yet flexible natural sorting in Python."
+optional = true
+python-versions = ">=3.7"
+files = [
+    {file = "natsort-8.4.0-py3-none-any.whl", hash = "sha256:4732914fb471f56b5cce04d7bae6f164a592c7712e1c85f9ef585e197299521c"},
+    {file = "natsort-8.4.0.tar.gz", hash = "sha256:45312c4a0e5507593da193dedd04abb1469253b601ecaf63445ad80f0a1ea581"},
+]
+
+[package.extras]
+fast = ["fastnumbers (>=2.0.0)"]
+icu = ["PyICU (>=1.0.0)"]
+
+[[package]]
 name = "networkx"
 version = "3.3"
 description = "Python package for creating and manipulating graphs and networks"
@@ -2357,6 +2372,7 @@ description = "Nvidia JIT LTO Library"
 optional = false
 python-versions = ">=3"
 files = [
+    {file = "nvidia_nvjitlink_cu12-12.5.40-py3-none-manylinux2014_aarch64.whl", hash = "sha256:004186d5ea6a57758fd6d57052a123c73a4815adf365eb8dd6a85c9eaa7535ff"},
     {file = "nvidia_nvjitlink_cu12-12.5.40-py3-none-manylinux2014_x86_64.whl", hash = "sha256:d9714f27c1d0f0895cd8915c07a87a1d0029a0aa36acaf9156952ec2a8a12189"},
     {file = "nvidia_nvjitlink_cu12-12.5.40-py3-none-win_amd64.whl", hash = "sha256:c3401dc8543b52d3a8158007a0c1ab4e9c768fcbd24153a48c86972102197ddd"},
 ]
@@ -3002,6 +3018,43 @@ files = [
 diagrams = ["jinja2", "railroad-diagrams"]
 
 [[package]]
+name = "pyquaternion"
+version = "0.9.9"
+description = "A fully featured, pythonic library for representing and using quaternions."
+optional = true
+python-versions = "*"
+files = [
+    {file = "pyquaternion-0.9.9-py2-none-any.whl", hash = "sha256:d0eb69219ca99bfcbc25c1e2c4f82e58c61dce3e907e929f13c5f3615e4b6518"},
+    {file = "pyquaternion-0.9.9-py3-none-any.whl", hash = "sha256:e65f6e3f7b1fdf1a9e23f82434334a1ae84f14223eee835190cd2e841f8172ec"},
+    {file = "pyquaternion-0.9.9.tar.gz", hash = "sha256:b1f61af219cb2fe966b5fb79a192124f2e63a3f7a777ac3cadf2957b1a81bea8"},
+]
+
+[package.dependencies]
+numpy = "*"
+
+[package.extras]
+dev = ["mkdocs"]
+test = ["nose"]
+
+[[package]]
+name = "PyRep"
+version = "4.1.0.3"
+description = "Python CoppeliaSim wrapper"
+optional = true
+python-versions = "*"
+files = []
+develop = false
+
+[package.dependencies]
+cffi = ">=1.0.0"
+
+[package.source]
+type = "git"
+url = "https://github.com/eugeneteoh/PyRep.git"
+reference = "ee4137ed903ca293f68e519ce47edb03642724a3"
+resolved_reference = "ee4137ed903ca293f68e519ce47edb03642724a3"
+
+[[package]]
 name = "pysocks"
 version = "1.7.1"
 description = "A Python SOCKS client module. See https://github.com/Anorov/PySocks for more information."
@@ -3271,6 +3324,33 @@ typing-extensions = ">=4.5"
 
 [package.extras]
 tests = ["pytest (==7.1.2)"]
+
+[[package]]
+name = "rlbench"
+version = "1.2.0"
+description = "RLBench"
+optional = true
+python-versions = "*"
+files = []
+develop = false
+
+[package.dependencies]
+natsort = "*"
+numpy = "*"
+Pillow = "*"
+pyquaternion = "*"
+pyrep = {git = "https://github.com/eugeneteoh/PyRep.git", rev = "ee4137ed903ca293f68e519ce47edb03642724a3"}
+scipy = "*"
+
+[package.extras]
+dev = ["pytest"]
+gym = ["gymnasium (==1.0.0a2)"]
+
+[package.source]
+type = "git"
+url = "https://github.com/eugeneteoh/RLBench.git"
+reference = "gymnasium"
+resolved_reference = "65c4eebfbf20a22c7d57d033ce6969470554e97a"
 
 [[package]]
 name = "safetensors"
@@ -4299,6 +4379,7 @@ aloha = ["gym-aloha"]
 dev = ["debugpy", "pre-commit"]
 dora = ["gym-dora"]
 pusht = ["gym-pusht"]
+rlbench = ["rlbench"]
 test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
 video-benchmark = ["scikit-image"]
@@ -4307,4 +4388,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "61f99befbc2250fe59cb54119c3dbd3aa3c1dfe5d3d7790c6f7c4f90fe43112e"
+content-hash = "599aefe2d2897b008a3a4a780d710bb16b3c701d5ca9abc55e8c98c0023a0070"
