@@ -32,6 +32,7 @@ Note: These datasets need to be image datasets, not video datasets.
 
 import datetime as dt
 import random
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import einops
@@ -159,44 +160,65 @@ def benchmark_video_decoding(
     backend: str,
     ep_num_images: int,
     fps: int,
+    num_workers: int = 4,
     save_frames: bool = False,
 ) -> dict:
-    load_times_video_ms = []
-    load_times_images_ms = []
-    mse_values = []
-    psnr_values = []
-    ssim_values = []
-    # per_pixel_l2_errors = []
-
-    time_benchmark = TimeBenchmark()
-    for t in tqdm(range(NUM_SAMPLES), desc="samples", leave=False):
+    def process_sample(t):
+        time_benchmark = TimeBenchmark()
         timestamps = sample_timestamps(timestamps_mode, ep_num_images, fps)
         num_frames = len(timestamps)
+        result = {
+            "psnr_values": [],
+            "ssim_values": [],
+            "mse_values": [],
+        }
 
         with time_benchmark:
             frames = decode_video_frames_torchvision(
                 video_path, timestamps=timestamps, tolerance_s=1e-4, backend=backend
             )
-        load_times_video_ms.append(time_benchmark.result_ms / num_frames)
+        result["load_time_video_ms"] = time_benchmark.result_ms / num_frames
 
         with time_benchmark:
             original_frames = load_original_frames(imgs_dir, timestamps, fps)
-        load_times_images_ms.append(time_benchmark.result_ms / num_frames)
+        result["load_time_images_ms"] = time_benchmark.result_ms / num_frames
 
-        # Estimate reconstruction error between original frames and decoded frames with various metrics
         frames_np, original_frames_np = frames.numpy(), original_frames.numpy()
         for i in range(num_frames):
-            psnr_values.append(peak_signal_noise_ratio(original_frames_np[i], frames_np[i], data_range=1.0))
-            ssim_values.append(
+            result["psnr_values"].append(
+                peak_signal_noise_ratio(original_frames_np[i], frames_np[i], data_range=1.0)
+            )
+            result["ssim_values"].append(
                 structural_similarity(original_frames_np[i], frames_np[i], data_range=1.0, channel_axis=0)
             )
-            mse_values.append(mean_squared_error(original_frames_np[i], frames_np[i]))
+            result["mse_values"].append(
+                mean_squared_error(original_frames_np[i], frames_np[i]) for i in range(num_frames)
+            )
 
-            if save_frames and t == 0:
-                save_dir = video_path.parent / "saved" / timestamps_mode / backend
-                save_dir.mkdir(parents=True, exist_ok=True)
+        if save_frames and t == 0:
+            save_dir = video_path.parent / "saved" / timestamps_mode / backend
+            save_dir.mkdir(parents=True, exist_ok=True)
+            for i in range(num_frames):
                 frame_hwc = (frames[i].permute((1, 2, 0)) * 255).type(torch.uint8).cpu().numpy()
                 PIL.Image.fromarray(frame_hwc).save(save_dir / f"frame_{i:06d}.png")
+
+        return result
+
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        results = list(tqdm(executor.map(process_sample, range(NUM_SAMPLES)), desc="samples", leave=False))
+
+    load_times_video_ms = []
+    load_times_images_ms = []
+    mse_values = []
+    psnr_values = []
+    ssim_values = []
+
+    for result in results:
+        load_times_video_ms.append(result["load_time_video_ms"])
+        load_times_images_ms.append(result["load_time_images_ms"])
+        psnr_values.extend(result["psnr_values"])
+        ssim_values.extend(result["ssim_values"])
+        mse_values.extend(result["mse_values"])
 
     avg_load_time_video_ms = float(np.array(load_times_video_ms).mean())
     avg_load_time_images_ms = float(np.array(load_times_images_ms).mean())
@@ -217,6 +239,7 @@ def run_video_benchmark(
     video_path: Path,
     imgs_dir: Path,
     encoding_cfg: dict,
+    num_workers: int = 4,
     overwrite: bool = False,
     seed: int = 1337,
 ):
@@ -247,7 +270,7 @@ def run_video_benchmark(
     for timestamps_mode in tqdm(TIMESTAMPS_MODES, desc="timestamps modes", leave=False):
         for backend in tqdm(DECODING_BACKENDS, desc="backends", leave=False):
             benchmark_row = benchmark_video_decoding(
-                imgs_dir, video_path, timestamps_mode, backend, ep_num_images, fps
+                imgs_dir, video_path, timestamps_mode, backend, ep_num_images, fps, num_workers
             )
             benchmark_row.update(
                 **{
@@ -281,7 +304,9 @@ def main(output_dir: Path = OUTPUT_DIR):
                 video_path = output_dir / "videos" / repo_id / var_name / f"{value}.mp4"
                 encoding_cfg = BASE_ENCODING.copy()
                 encoding_cfg[var_name] = value
-                benchmark_table += run_video_benchmark(dataset, video_path, imgs_dir, encoding_cfg)
+                benchmark_table += run_video_benchmark(
+                    dataset, video_path, imgs_dir, encoding_cfg, num_workers=10
+                )
 
     columns_order = ["repo_id", "resolution", "num_pixels"]
     columns_order += list(BASE_ENCODING.keys())
