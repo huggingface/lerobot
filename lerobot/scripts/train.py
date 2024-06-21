@@ -532,7 +532,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     online_step = 0
     is_offline = False
-    for _ in range(step, cfg.training.offline_steps + cfg.training.online_steps):
+    while True:
+        if online_step == cfg.training.online_steps:
+            break
+
         if online_step == 0:
             logging.info("Start online training by interacting with environment")
 
@@ -590,9 +593,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
             step += 1
             online_step += 1
-
-            if online_step == cfg.training.online_steps:
-                break
 
     if eval_env:
         eval_env.close()
