@@ -4301,10 +4301,10 @@ dora = ["gym-dora"]
 pusht = ["gym-pusht"]
 test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
-video-benchmark = ["scikit-image"]
+video-benchmark = ["pandas", "scikit-image"]
 xarm = ["gym-xarm"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "ed832ae0fa8fe657e04ea6a18ae282a4b6c0d0e312797626a44e7b6c2d59df09"
+content-hash = "f004c65b46882feca5ccfa762e48f907c6572094a865af35e8aa2131358c913d"
