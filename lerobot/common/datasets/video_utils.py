@@ -166,7 +166,8 @@ def encode_video_frames(
     pixel_format: str = "yuv444p",
     group_of_pictures_size: int | None = 2,
     constant_rate_factor: int | None = None,
-    log_level: str | None = None,
+    log_level: str | None = "error",
+    overwrite: bool = False,
 ) -> None:
     """More info on ffmpeg arguments tuning on `lerobot/common/datasets/_video_benchmark/README.md`"""
     video_path = Path(video_path)
@@ -190,6 +191,9 @@ def encode_video_frames(
         ffmpeg_args["-loglevel"] = str(log_level)
 
     ffmpeg_args = [item for pair in ffmpeg_args.items() for item in pair]
+    if overwrite:
+        ffmpeg_args.append("-y")
+
     ffmpeg_cmd = ["ffmpeg"] + ffmpeg_args + [str(video_path)]
     subprocess.run(ffmpeg_cmd, check=True)
 
