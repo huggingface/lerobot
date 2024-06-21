@@ -48,8 +48,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         split: str = "train",
         image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
-        use_cache: bool = False,
         video_backend: str | None = None,
+        use_cache: bool = False,
     ):
         """
         Args:
@@ -139,7 +139,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return 1 / self.fps - 1e-4
 
     def __len__(self):
-        return self.num_samples // 8
+        return self.num_samples
 
     def __getitem__(self, idx):
         if self.cache is not None and idx in self.cache:

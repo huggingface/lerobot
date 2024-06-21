@@ -39,16 +39,17 @@ training:
   # `online_env_seed` is used for environments for online training data rollouts.
   online_env_seed: ???
   eval_freq: ???
-  save_freq: ???
   log_freq: 250
-  save_checkpoint: true
-  num_workers: 4
-  batch_size: ???
   # `dataset_use_cache` indicates whether to cache all dataset items as Tensors in RAM. Potentially useful for
   # faster data loading with datasets small enough to fit in memory. If you wish to use dataloader workers,
   # remember to set `dataloader_persistent_workers to True.
   dataset_use_cache: false
   dataloader_persistent_workers: false
+  save_checkpoint: true
+  # Checkpoint is saved every `save_freq` training iterations and after the last training step.
+  save_freq: ???
+  num_workers: 4
+  batch_size: ???
   image_transforms:
   # These transforms are all using standard torchvision.transforms.v2
   # You can find out how these transformations affect images here:
