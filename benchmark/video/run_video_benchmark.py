@@ -30,9 +30,12 @@ These benchmarks are run on the first episode of each dataset specified in DATAS
 Note: These datasets need to be image datasets, not video datasets.
 """
 
+import argparse
 import datetime as dt
 import random
-from concurrent.futures import ThreadPoolExecutor
+import shutil
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import einops
@@ -50,35 +53,23 @@ from lerobot.common.datasets.video_utils import (
 )
 from lerobot.common.utils.benchmark import TimeBenchmark
 
-OUTPUT_DIR = Path("outputs/video_benchmark")
-NUM_SAMPLES = 50
+BASE_ENCODING = OrderedDict(
+    [
+        ("vcodec", "libx264"),
+        ("pix_fmt", "yuv444p"),
+        ("g", 2),
+        ("crf", None),
+    ]
+)
 
-DATASET_REPO_IDS = [
-    "lerobot/pusht_image",
-    "aliberts/aloha_mobile_shrimp_image",
-    "aliberts/paris_street",
-    "aliberts/kitchen",
-]
-BENCHMARKS = {
-    "pixel_format": ["yuv444p", "yuv420p"],
-    "gop_size": [1, 2, 3, 4, 5, 6, 10, 15, 20, 40, 100, None],
-    "crf": [0, 5, 10, 15, 20, None, 25, 30, 40, 50],
-    # TODO(aliberts): add "libaom-av1" (need to build ffmpeg with "--enable-libaom")
-    # "codec": ["libx264", "libaom-av1"],
-}
-BASE_ENCODING = {
-    "pixel_format": "yuv444p",
-    "codec": "libx264",
-    "gop_size": 2,
-    "crf": None,
-}
-TIMESTAMPS_MODES = [
-    "1_frame",
-    "2_frames",
-    "2_frames_4_space",
-    "6_frames",
-]
-DECODING_BACKENDS = ["pyav", "video_reader"]
+
+def parse_int_or_none(value):
+    if value.lower() == "none":
+        return None
+    try:
+        return int(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"Invalid int or None: {value}") from e
 
 
 def check_datasets_formats(repo_ids: list) -> None:
@@ -110,8 +101,21 @@ def load_original_frames(imgs_dir: Path, timestamps: list[float], fps: int) -> t
     return torch.stack(frames)
 
 
-def save_first_episode(dataset: LeRobotDataset, output_dir: Path) -> Path:
-    imgs_dir = output_dir / "images" / dataset.repo_id
+def save_decoded_frames(
+    imgs_dir: Path, save_dir: Path, frames: torch.Tensor, timestamps: list[float], fps: int
+) -> None:
+    if save_dir.exists() and len(list(save_dir.glob("frame_*.png"))) == len(timestamps):
+        return
+
+    save_dir.mkdir(parents=True, exist_ok=True)
+    for i, ts in enumerate(timestamps):
+        idx = int(ts * fps)
+        frame_hwc = (frames[i].permute((1, 2, 0)) * 255).type(torch.uint8).cpu().numpy()
+        PIL.Image.fromarray(frame_hwc).save(save_dir / f"frame_{idx:06d}_decoded.png")
+        shutil.copyfile(imgs_dir / f"frame_{idx:06d}.png", save_dir / f"frame_{idx:06d}_original.png")
+
+
+def save_first_episode(imgs_dir: Path, dataset: LeRobotDataset) -> Path:
     ep_num_images = dataset.episode_data_index["to"][0].item()
     if imgs_dir.exists() and len(list(imgs_dir.glob("frame_*.png"))) == ep_num_images:
         return imgs_dir
@@ -153,13 +157,14 @@ def sample_timestamps(timestamps_mode: str, ep_num_images: int, fps: int):
     return [idx / fps for idx in frame_indexes]
 
 
-def benchmark_video_decoding(
+def benchmark_decoding(
     imgs_dir: Path,
     video_path: Path,
     timestamps_mode: str,
     backend: str,
     ep_num_images: int,
     fps: int,
+    num_samples: int = 50,
     num_workers: int = 4,
     save_frames: bool = False,
 ) -> dict:
@@ -185,27 +190,19 @@ def benchmark_video_decoding(
 
         frames_np, original_frames_np = frames.numpy(), original_frames.numpy()
         for i in range(num_frames):
+            result["mse_values"].append(mean_squared_error(original_frames_np[i], frames_np[i]))
             result["psnr_values"].append(
                 peak_signal_noise_ratio(original_frames_np[i], frames_np[i], data_range=1.0)
             )
             result["ssim_values"].append(
                 structural_similarity(original_frames_np[i], frames_np[i], data_range=1.0, channel_axis=0)
             )
-            result["mse_values"].append(
-                mean_squared_error(original_frames_np[i], frames_np[i]) for i in range(num_frames)
-            )
 
         if save_frames and t == 0:
-            save_dir = video_path.parent / "saved" / timestamps_mode / backend
-            save_dir.mkdir(parents=True, exist_ok=True)
-            for i in range(num_frames):
-                frame_hwc = (frames[i].permute((1, 2, 0)) * 255).type(torch.uint8).cpu().numpy()
-                PIL.Image.fromarray(frame_hwc).save(save_dir / f"frame_{i:06d}.png")
+            save_dir = video_path.with_suffix("") / f"{timestamps_mode}_{backend}"
+            save_decoded_frames(imgs_dir, save_dir, frames, timestamps, fps)
 
         return result
-
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        results = list(tqdm(executor.map(process_sample, range(NUM_SAMPLES)), desc="samples", leave=False))
 
     load_times_video_ms = []
     load_times_images_ms = []
@@ -213,12 +210,15 @@ def benchmark_video_decoding(
     psnr_values = []
     ssim_values = []
 
-    for result in results:
-        load_times_video_ms.append(result["load_time_video_ms"])
-        load_times_images_ms.append(result["load_time_images_ms"])
-        psnr_values.extend(result["psnr_values"])
-        ssim_values.extend(result["ssim_values"])
-        mse_values.extend(result["mse_values"])
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = [executor.submit(process_sample, i) for i in range(num_samples)]
+        for future in tqdm(as_completed(futures), total=num_samples, desc="samples", leave=False):
+            result = future.result()
+            load_times_video_ms.append(result["load_time_video_ms"])
+            load_times_images_ms.append(result["load_time_images_ms"])
+            psnr_values.extend(result["psnr_values"])
+            ssim_values.extend(result["ssim_values"])
+            mse_values.extend(result["mse_values"])
 
     avg_load_time_video_ms = float(np.array(load_times_video_ms).mean())
     avg_load_time_images_ms = float(np.array(load_times_images_ms).mean())
@@ -234,12 +234,15 @@ def benchmark_video_decoding(
     }
 
 
-def run_video_benchmark(
+def benchmark_encoding_decoding(
     dataset: LeRobotDataset,
     video_path: Path,
     imgs_dir: Path,
     encoding_cfg: dict,
-    num_workers: int = 4,
+    decoding_cfg: dict,
+    num_samples: int,
+    num_workers: int,
+    save_frames: bool,
     overwrite: bool = False,
     seed: int = 1337,
 ):
@@ -251,9 +254,9 @@ def run_video_benchmark(
             imgs_dir=imgs_dir,
             video_path=video_path,
             fps=fps,
-            video_codec=encoding_cfg["codec"],
-            pixel_format=encoding_cfg["pixel_format"],
-            group_of_pictures_size=encoding_cfg.get("gop_size"),
+            video_codec=encoding_cfg["vcodec"],
+            pixel_format=encoding_cfg["pix_fmt"],
+            group_of_pictures_size=encoding_cfg.get("g"),
             constant_rate_factor=encoding_cfg.get("crf"),
             overwrite=True,
         )
@@ -267,10 +270,20 @@ def run_video_benchmark(
 
     random.seed(seed)
     benchmark_table = []
-    for timestamps_mode in tqdm(TIMESTAMPS_MODES, desc="timestamps modes", leave=False):
-        for backend in tqdm(DECODING_BACKENDS, desc="backends", leave=False):
-            benchmark_row = benchmark_video_decoding(
-                imgs_dir, video_path, timestamps_mode, backend, ep_num_images, fps, num_workers
+    for timestamps_mode in tqdm(
+        decoding_cfg["timestamps_modes"], desc="decodings (timestamps_modes)", leave=False
+    ):
+        for backend in tqdm(decoding_cfg["backends"], desc="decodings (backends)", leave=False):
+            benchmark_row = benchmark_decoding(
+                imgs_dir,
+                video_path,
+                timestamps_mode,
+                backend,
+                ep_num_images,
+                fps,
+                num_samples,
+                num_workers,
+                save_frames,
             )
             benchmark_row.update(
                 **{
@@ -290,22 +303,52 @@ def run_video_benchmark(
     return benchmark_table
 
 
-def main(output_dir: Path = OUTPUT_DIR):
-    # TODO(aliberts): args from argparse
-    check_datasets_formats(DATASET_REPO_IDS)
+def main(
+    output_dir: Path,
+    repo_ids: list[str],
+    # vcodec: list[str],
+    pix_fmt: list[str],
+    g: list[int],
+    crf: list[int],
+    timestamps_modes: list[str],
+    backends: list[str],
+    num_samples: int,
+    num_workers: int,
+    save_frames: bool,
+):
+    check_datasets_formats(repo_ids)
+    encoding_benchmarks = {
+        # "vcodec": vcodec,
+        "pix_fmt": pix_fmt,
+        "g": g,
+        "crf": crf,
+    }
+    decoding_benchmarks = {
+        "timestamps_modes": timestamps_modes,
+        "backends": backends,
+    }
     benchmark_table = []
-    for repo_id in tqdm(DATASET_REPO_IDS, desc="datasets"):
-        # We only use the first episode
+    for repo_id in tqdm(repo_ids, desc="datasets"):
         dataset = LeRobotDataset(repo_id)
-        imgs_dir = save_first_episode(dataset, output_dir)
+        imgs_dir = output_dir / "images" / dataset.repo_id.replace("/", "_")
+        # We only use the first episode
+        save_first_episode(imgs_dir, dataset)
 
-        for var_name, values in tqdm(BENCHMARKS.items(), desc="encodings", leave=False):
-            for value in values:
-                video_path = output_dir / "videos" / repo_id / var_name / f"{value}.mp4"
+        for key, values in tqdm(encoding_benchmarks.items(), desc="encodings", leave=False):
+            for value in tqdm(values, desc=f"encodings ({key})", leave=False):
                 encoding_cfg = BASE_ENCODING.copy()
-                encoding_cfg[var_name] = value
-                benchmark_table += run_video_benchmark(
-                    dataset, video_path, imgs_dir, encoding_cfg, num_workers=10
+                encoding_cfg[key] = value
+                args_path = Path("_".join(str(value) for value in encoding_cfg.values()))
+                video_path = output_dir / "videos" / args_path / f"{repo_id.replace('/', '_')}.mp4"
+                benchmark_table += benchmark_encoding_decoding(
+                    dataset,
+                    video_path,
+                    imgs_dir,
+                    encoding_cfg,
+                    decoding_benchmarks,
+                    num_samples,
+                    num_workers,
+                    save_frames,
                 )
 
     columns_order = ["repo_id", "resolution", "num_pixels"]
@@ -325,9 +368,95 @@ def main(output_dir: Path = OUTPUT_DIR):
     ]
     benchmark_df = pd.DataFrame(benchmark_table, columns=columns_order)
     now = dt.datetime.now()
-    csv_path = output_dir / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_{NUM_SAMPLES}-samples.csv"
+    csv_path = output_dir / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_{num_samples}-samples.csv"
     benchmark_df.to_csv(csv_path, header=True, index=False)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("outputs/video_benchmark"),
+        help="Directory where the video benchmark outputs are written.",
+    )
+    parser.add_argument(
+        "--repo-ids",
+        type=str,
+        nargs="*",
+        default=[
+            "lerobot/pusht_image",
+            "aliberts/aloha_mobile_shrimp_image",
+            "aliberts/paris_street",
+            "aliberts/kitchen",
+        ],
+        help="Datasets repo-ids to test against. First episodes only are used. Must be images.",
+    )
+    # TODO(aliberts): add "libaom-av1" (need to build ffmpeg with "--enable-libaom")
+    # parser.add_argument(
+    #     "--vcodec",
+    #     type=str,
+    #     nargs="*",
+    #     default=["libx264", "libaom-av1"],
+    #     help="Video codecs to be tested",
+    # )
+    parser.add_argument(
+        "--pix-fmt",
+        type=str,
+        nargs="*",
+        default=["yuv444p", "yuv420p"],
+        help="Pixel formats (chroma subsampling) to be tested",
+    )
+    parser.add_argument(
+        "--g",
+        type=parse_int_or_none,
+        nargs="*",
+        default=[1, 2, 3, 4, 5, 6, 10, 15, 20, 40, 100, None],
+        help="Group of pictures sizes to be tested.",
+    )
+    parser.add_argument(
+        "--crf",
+        type=parse_int_or_none,
+        nargs="*",
+        default=[0, 5, 10, 15, 20, 25, 30, 40, 50, None],
+        help="Constant rate factors to be tested.",
+    )
+    parser.add_argument(
+        "--timestamps-modes",
+        type=str,
+        nargs="*",
+        default=[
+            "1_frame",
+            "2_frames",
+            "2_frames_4_space",
+            "6_frames",
+        ],
+        help="Timestamps scenarios to be tested.",
+    )
+    parser.add_argument(
+        "--backends",
+        type=str,
+        nargs="*",
+        default=["pyav", "video_reader"],
+        help="Torchvision decoding backend to be tested.",
+    )
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=50,
+        help="Number of samples for each encoding x decoding config.",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=10,
+        help="Number of processes for parallelized sample processing.",
+    )
+    parser.add_argument(
+        "--save-frames",
+        type=int,
+        default=0,
+        help="Whether to save decoded frames or not. Enter a non-zero number for true.",
+    )
+    args = parser.parse_args()
+    main(**vars(args))
