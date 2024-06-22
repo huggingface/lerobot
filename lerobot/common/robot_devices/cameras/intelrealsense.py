@@ -1,6 +1,7 @@
 
 
-from dataclasses import dataclass
+import argparse
+from dataclasses import dataclass, replace
 from pathlib import Path
 import time
 import traceback
@@ -9,11 +10,11 @@ import numpy as np
 import pyrealsense2 as rs
 
 from lerobot.common.robot_devices.cameras.opencv import find_camera_indices
-from lerobot.common.robot_devices.cameras.utils import save_color_image, save_depth_image, write_shape
+from lerobot.common.robot_devices.cameras.utils import save_color_image, save_depth_image
 
 SERIAL_NUMBER_INDEX = 1
 
-def find_camera_indices(raise_when_empty):
+def find_camera_indices(raise_when_empty=True):
     camera_ids = []
     for device in rs.context().query_devices():
         serial_number = int(device.get_info(rs.camera_info(SERIAL_NUMBER_INDEX)))
@@ -24,17 +25,18 @@ def find_camera_indices(raise_when_empty):
 
     return camera_ids
 
-def benchmark_cameras(cameras, out_dir, save_images=False):
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+def benchmark_cameras(cameras, out_dir=None, save_images=False):
+    if save_images:
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
 
     while True:
         now = time.time()
         for camera in cameras:
             if camera.use_depth:
-                color_image, depth_image = camera.capture_image()
+                color_image, depth_image = camera.capture_image("bgr" if save_images else "rgb")
             else:
-                color_image = camera.capture_image()
+                color_image = camera.capture_image("bgr" if save_images else "rgb")
 
             if save_images:
                 image_path = out_dir / f"camera_{camera.camera_index:02}.png"
@@ -118,13 +120,18 @@ class IntelRealSenseCamera():
     color_image, depth_image = camera.capture_image()
     ```
     """
+    AVAILABLE_CAMERA_INDICES = find_camera_indices()
 
     def __init__(self,
             camera_index: int | None = None,
             config: IntelRealSenseCameraConfig | None = None,
+            **kwargs,
         ):
         if config is None:
             config = IntelRealSenseCameraConfig()
+        # Overwrite config arguments using kwargs
+        config = replace(config, **kwargs)
+
         self.camera_index = camera_index
         self.fps = config.fps
         self.width = config.width
@@ -140,16 +147,22 @@ class IntelRealSenseCamera():
         if (self.fps or self.width or self.height) and not (self.fps and self.width and self.height):
             raise ValueError(f"Expected all fps, width and height to be set, when one of them is set, but {self.fps=}, {self.width=}, {self.height=}.")
 
-        if camera_index is None:
-            available_camera_indices = find_camera_indices(raise_when_empty=True)
-            raise ValueError(f"`camera_index` is expected to be a serial number of one of these available cameras ({available_camera_indices}), but {camera_index} is provided instead.")
+        if self.camera_index is None:
+            raise ValueError(f"`camera_index` is expected to be a serial number of one of these available cameras ({IntelRealSenseCamera.AVAILABLE_CAMERA_INDICES}), but {camera_index} is provided instead.")
+
+        self.camera = None
+        self.is_connected = False
+
+    def connect(self):
+        if self.is_connected:
+            raise ValueError(f"Camera {self.camera_index} is already connected.")
 
         config = rs.config()
         config.enable_device(str(self.camera_index))
 
         if self.fps and self.width and self.height:
             # TODO(rcadene): can we set rgb8 directly?
-            config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps)
+            config.enable_stream(rs.stream.color, self.width, self.height, rs.format.rgb8, self.fps)
         else:
             config.enable_stream(rs.stream.color)
 
@@ -164,13 +177,17 @@ class IntelRealSenseCamera():
             self.camera.start(config)
         except RuntimeError:
             # Verify that the provided `camera_index` is valid before printing the traceback
-            available_camera_indices = find_camera_indices(raise_when_empty=True)
-            if camera_index not in available_camera_indices:
-                raise ValueError(f"`camera_index` is expected to be a serial number of one of these available cameras {available_camera_indices}, but {camera_index} is provided instead.")
+            if self.camera_index not in IntelRealSenseCamera.AVAILABLE_CAMERA_INDICES:
+                raise ValueError(f"`camera_index` is expected to be a serial number of one of these available cameras {IntelRealSenseCamera.AVAILABLE_CAMERA_INDICES}, but {self.camera_index} is provided instead.")
             traceback.print_exc()
+
+        self.is_connected = True
 
 
     def capture_image(self, temporary_color: str | None = None) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        if not self.is_connected:
+            self.connect()
+
         frame = self.camera.wait_for_frames()
 
         color_frame = frame.get_color_frame()
@@ -189,8 +206,8 @@ class IntelRealSenseCamera():
         # OpenCV uses BGR format as default (blue, green red) for all operations, including displaying images.
         # However, Deep Learning framework such as LeRobot uses RGB format as default to train neural networks,
         # so we convert the image color from BGR to RGB.
-        if requested_color == "rgb":
-            color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
+        # if requested_color == "rgb":
+        #     color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
 
         if self.use_depth:
             depth_frame = frame.get_depth_frame()
@@ -212,46 +229,86 @@ class IntelRealSenseCamera():
                     return
                 traceback.print_exc()
 
-
     def __del__(self):
         self.disconnect()
 
 
+def save_images_config(config, out_dir: Path):
+    camera_ids = IntelRealSenseCamera.AVAILABLE_CAMERA_INDICES
+    cameras = []
+    print(f"Available camera indices: {camera_ids}")
+    for camera_idx in camera_ids:
+        camera = IntelRealSenseCamera(camera_idx, config)
+        cameras.append(camera)
+
+    out_dir = out_dir.parent / f"{out_dir.name}_{config.width}x{config.height}_{config.fps}_depth_{config.use_depth}"
+    benchmark_cameras(cameras, out_dir, save_images=True)
+
+def benchmark_config(config, camera_ids: list[int]):
+    cameras = [IntelRealSenseCamera(idx, config) for idx in camera_ids]
+    benchmark_cameras(cameras)
+
+
 if __name__ == "__main__":
-    # Works well!
-    # use_depth = False
-    # fps = 90
-    # width = 640
-    # height = 480
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", type=str, choices=["save_images", 'benchmark'], default="save_images")
+    parser.add_argument("--camera-ids", type=int, nargs="*", default=[128422271609, 128422271614, 128422271393])
+    parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--width", type=str, default=640)
+    parser.add_argument("--height", type=str, default=480)
+    parser.add_argument("--use-depth", type=int, default=0)
+    parser.add_argument("--out-dir", type=Path, default="outputs/benchmark_cameras/intelrealsense/2024_06_22_1738")
+    args = parser.parse_args()
 
-    # # Works well!
-    # use_depth = True
-    # fps = 90
-    # width = 640
-    # height = 480
+    config = IntelRealSenseCameraConfig(args.fps, args.width, args.height, use_depth=bool(args.use_depth))
+    # config = IntelRealSenseCameraConfig()
+    # config = IntelRealSenseCameraConfig(60, 640, 480)
+    # config = IntelRealSenseCameraConfig(90, 640, 480)
+    # config = IntelRealSenseCameraConfig(30, 1280, 720)
 
-    # # Doesn't work well, latency varies too much
-    # use_depth = True
-    # fps = 30
-    # width = 1280
-    # height = 720
+    if args.mode == "save_images":
+        save_images_config(config, args.out_dir)
+    elif args.mode == "benchmark":
+        benchmark_config(config, args.camera_ids)
+    else:
+        raise ValueError(args.mode)
+    
 
-    # Works well
-    use_depth = False
-    fps = 30
-    width = 1280
-    height = 720
+# if __name__ == "__main__":
+#     # Works well!
+#     # use_depth = False
+#     # fps = 90
+#     # width = 640
+#     # height = 480
 
-    config = IntelRealSenseCameraConfig640x480Fps30()
-    # config = IntelRealSenseCameraConfig(fps, width, height, use_depth=use_depth)
-    cameras = [
-        IntelRealSenseCamera(0, config),
-        # IntelRealSenseCamera(128422270109, config),
-        # IntelRealSenseCamera(128422271609, config),
-        # IntelRealSenseCamera(128422271614, config),
-        # IntelRealSenseCamera(128422271393, config),
-    ]
+#     # # Works well!
+#     # use_depth = True
+#     # fps = 90
+#     # width = 640
+#     # height = 480
 
-    out_dir = "outputs/benchmark_cameras/intelrealsense/"
-    out_dir += f"{config.width}x{config.height}_{config.fps}_depth_{config.use_depth}"
-    benchmark_cameras(cameras, out_dir, save_images=False)
+#     # # Doesn't work well, latency varies too much
+#     # use_depth = True
+#     # fps = 30
+#     # width = 1280
+#     # height = 720
+
+#     # Works well
+#     use_depth = False
+#     fps = 30
+#     width = 1280
+#     height = 720
+
+#     config = IntelRealSenseCameraConfig()
+#     # config = IntelRealSenseCameraConfig(fps, width, height, use_depth=use_depth)
+#     cameras = [
+#         # IntelRealSenseCamera(0, config),
+#         # IntelRealSenseCamera(128422270109, config),
+#         IntelRealSenseCamera(128422271609, config),
+#         IntelRealSenseCamera(128422271614, config),
+#         IntelRealSenseCamera(128422271393, config),
+#     ]
+
+#     out_dir = "outputs/benchmark_cameras/intelrealsense/2024_06_22_1729"
+#     out_dir += f"{config.width}x{config.height}_{config.fps}_depth_{config.use_depth}"
+#     benchmark_cameras(cameras, out_dir, save_images=False)

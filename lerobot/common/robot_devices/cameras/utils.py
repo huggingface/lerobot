@@ -7,7 +7,7 @@ from typing import Protocol
 import numpy as np
 
 
-def write_shape_on_image(image):
+def write_shape_on_image_inplace(image):
     height, width = image.shape[:2]
     text = f'Width: {width} Height: {height}'
 
@@ -25,7 +25,7 @@ def save_color_image(image, path, write_shape=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if write_shape:
-        write_shape_on_image(image)
+        write_shape_on_image_inplace(image)
     cv2.imwrite(str(path), image)
 
 
@@ -37,7 +37,7 @@ def save_depth_image(depth, path, write_shape=False):
     depth_image = cv2.applyColorMap(cv2.convertScaleAbs(depth, alpha=0.03), cv2.COLORMAP_JET)
 
     if write_shape:
-        write_shape_on_image(depth_image)
+        write_shape_on_image_inplace(depth_image)
     cv2.imwrite(str(path), depth_image)
 
 

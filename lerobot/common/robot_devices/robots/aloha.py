@@ -1,5 +1,5 @@
 import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import numpy as np
 import torch
 from examples.real_robot_example.gym_real_world.robot import Robot
@@ -111,19 +111,19 @@ class AlohaRobotConfig:
     )
     camera_devices: dict[str, Camera] = field(
         default_factory=lambda: {
-            "cam_high": OpenCVCamera(5),
-            "cam_low": OpenCVCamera(11),
-            "cam_left_wrist": OpenCVCamera(18),
-            "cam_right_wrist": OpenCVCamera(26),
+            "cam_high": OpenCVCamera(16),
+            "cam_low": OpenCVCamera(4),
+            "cam_left_wrist": OpenCVCamera(10),
+            "cam_right_wrist": OpenCVCamera(22),
         }
     )
 
     # Allows to easily pick a subset of all devices
     activated_leaders: list[str] | None = field(
-        default_factory=lambda: ["right", "left"]
+        default_factory=lambda: ["left", "right"]
     )
     activated_followers: list[str] | None = field(
-        default_factory=lambda: ["right", "left"]
+        default_factory=lambda: ["left", "right"]
     )
     activated_cameras: list[str] | None = field(
         default_factory=lambda: ["cam_high", "cam_low", "cam_left_wrist", "cam_right_wrist"]
@@ -139,62 +139,88 @@ class AlohaRobot():
     ```
     """
 
-    def __init__(self, config: AlohaRobotConfig | None = None):
+    def __init__(self, config: AlohaRobotConfig | None = None, **kwargs):
         if config is None:
             config = AlohaRobotConfig()
+        # Overwrite config arguments using kwargs
+        config = replace(config, **kwargs)
 
         self.leaders = {}
-        for name in config.activated_leaders:
-            info = config.leader_devices[name]
-            self.leaders[name] = Robot(info["port"], servo_ids=info["servos"])
-
         self.followers = {}
-        for name in config.activated_followers:
-            info = config.follower_devices[name]
-            self.followers[name] = Robot(info["port"], servo_ids=info["servos"])
-
         self.cameras = {}
-        for name in config.activated_cameras:
-            self.cameras[name] = config.camera_devices[name]
+
+        if config.activated_leaders:
+            for name in config.activated_leaders:
+                info = config.leader_devices[name]
+                self.leaders[name] = Robot(info["port"], servo_ids=info["servos"])
+
+        if config.activated_followers:
+            for name in config.activated_followers:
+                info = config.follower_devices[name]
+                self.followers[name] = Robot(info["port"], servo_ids=info["servos"])
+
+        if config.activated_cameras:
+            for name in config.activated_cameras:
+                self.cameras[name] = config.camera_devices[name]
 
     def init_teleop(self):
-        for follower in self.followers.values():
-            follower._enable_torque()
+        for name in self.followers:
+            self.followers[name]._enable_torque()
+        for name in self.cameras:
+            self.cameras[name].connect()
 
     def teleop_step(self, record_data=False) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
-        # Prepare to assign the positions of the leader to the follower 
-        leader_right_pos = self.leaders["right"].read_position()
-        leader_left_pos = self.leaders["left"].read_position()
+        # Prepare to assign the positions of the leader to the follower
+        leader_pos = {}
+        for name in self.leaders:
+            leader_pos[name] = self.leaders[name].read_position()
 
         # Update the position of the follower gripper to account for the different minimum and maximum range
         # position in range [0, 4096[ which corresponds to 4096 bins of 360 degrees
         # for all our dynamixel servors
         # gripper id=8 has a different range from leader to follower
-        follower_right_goal_pos = convert_gripper_range_from_leader_to_follower(leader_right_pos)
-        follower_left_goal_pos = convert_gripper_range_from_leader_to_follower(leader_left_pos)
+        follower_goal_pos = {}
+        for name in self.leaders:
+            follower_goal_pos[name] = convert_gripper_range_from_leader_to_follower(leader_pos[name])
 
-        self.followers["right"].set_goal_pos(follower_right_goal_pos)
-        self.followers["left"].set_goal_pos(follower_left_goal_pos)
+        # Send action
+        for name in self.followers:
+            self.followers[name].set_goal_pos(follower_goal_pos[name])
 
         # Early exit when recording data is not requested
         if not record_data:
             return
 
-        follower_right_pos = self.followers["right"].read_position()
-        follower_left_pos = self.followers["left"].read_position()
+        # Read follower position
+        follower_pos = {}
+        for name in self.followers:
+            follower_pos[name] = self.followers[name].read_position()
 
-        observation, action = {}, {}
+        # Create state by concatenating follower current position
+        state = []
+        for name in ["left", "right"]:
+            if name in follower_pos:
+                state.append(follower_pos[name])
+        state = np.concatenate(state)
 
-        for cam_key, camera in self.cameras.items():
-            observation[f"observations.images.{cam_key}"] = camera.capture_image()
+        # Create action by concatenating follower goal position
+        action = []
+        for name in ["left", "right"]:
+            if name in follower_goal_pos:
+                action.append(follower_goal_pos[name])
+        action = np.concatenate(action)
 
-        observation["observations.state"] = np.concatenate([follower_right_pos, follower_left_pos])
-        action["action"] = np.concatenate([follower_right_goal_pos, follower_left_goal_pos])
+        # Capture images from cameras
+        images = {}
+        for name in self.cameras:
+            images[name] = self.cameras[name].capture_image()
 
-        for key in observation:
-            observation[key] = torch.from_numpy(observation[key])
-        for key in action:
-            action[key] = torch.from_numpy(action[key])
+        # Populate output dictionnaries and format to pytorch
+        obs_dict, action_dict = {}, {}
+        obs_dict["observations.state"] = torch.from_numpy(state)
+        action_dict["action"] = torch.from_numpy(action)
+        for name in self.cameras:
+            obs_dict[f"observations.images.{name}"] =  torch.from_numpy(images[name])
 
-        return observation, action
+        return obs_dict, action_dict
 
