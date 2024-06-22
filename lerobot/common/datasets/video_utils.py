@@ -169,7 +169,7 @@ def encode_video_frames(
     log_level: str | None = "error",
     overwrite: bool = False,
 ) -> None:
-    """More info on ffmpeg arguments tuning on `lerobot/common/datasets/_video_benchmark/README.md`"""
+    """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
     video_path = Path(video_path)
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
