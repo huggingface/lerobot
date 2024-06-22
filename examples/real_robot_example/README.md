@@ -24,7 +24,7 @@ In general, this example should be very easily extendable to any type of arm usi
 
 Follow these steps:
 - install `lerobot`
-- install the Dynamixel-sdk: ` pip install dynamixel-sdk`
+- install the Dynamixel-sdk: `pip install dynamixel-sdk`
 
 ## Usage
 

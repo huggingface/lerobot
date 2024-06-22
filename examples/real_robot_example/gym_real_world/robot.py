@@ -49,7 +49,7 @@ class Robot:
         )
         for id in self.servo_ids:
             self.pwm_writer.addParam(id, [2048])
-        self._disable_torque()
+        # self._disable_torque()
         self.motor_control_state = MotorControlType.DISABLED
 
     def read_position(self, tries=2):
@@ -88,7 +88,7 @@ class Robot:
 
     def set_goal_pos(self, action):
         """
-        :param action: list or numpy array of target joint positions in range [0, 4096]
+        :param action: list or numpy array of target joint positions in range [0, 4096[
         """
         if self.motor_control_state is not MotorControlType.POSITION_CONTROL:
             self._set_position_control()
@@ -163,6 +163,11 @@ class Robot:
     def _set_position_control(self):
         self._disable_torque()
         for motor_id in self.servo_ids:
-            self.dynamixel.set_operating_mode(motor_id, OperatingMode.POSITION)
+            # TODO(rcadene): redesign
+            if motor_id == 9:
+                self.dynamixel.set_operating_mode(9, OperatingMode.CURRENT_CONTROLLED_POSITION)
+            else:
+                self.dynamixel.set_operating_mode(motor_id, OperatingMode.POSITION)
+
         self._enable_torque()
         self.motor_control_state = MotorControlType.POSITION_CONTROL
