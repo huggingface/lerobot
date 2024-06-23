@@ -75,6 +75,7 @@ def load_from_raw(
         # Excludes observation from last timestep
         for timestep_idx, obs in enumerate(demo[1:]):
             prev_obs = demo[timestep_idx - 1]
+            # TODO: Add other low dim states
             ep_dict["observation.states.joint_positions"].append(torch.as_tensor(prev_obs.joint_positions))
             ep_dict["observation.states.gripper_open"].append(torch.as_tensor(prev_obs.gripper_open))
 
