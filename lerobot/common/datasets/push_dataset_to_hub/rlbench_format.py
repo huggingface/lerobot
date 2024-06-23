@@ -59,11 +59,11 @@ def load_from_raw(
         ep_dict = defaultdict(list)
 
         demo = demos[ep_idx]
-        # Number of frames == number of actions == number of observations - 1
-        num_frames = len(demo) - 1
-        # Last step of demonstration is considered done
+        num_frames = len(demo)
+        # Last two steps of demonstration is considered done
+        # This is because last timestep does not have an action
         done = torch.zeros(num_frames, dtype=torch.bool)
-        done[-1] = True
+        done[-2:] = True
 
         # Get camera attributes from rlbench.demo.Observation
         camera_attributes = []
@@ -73,18 +73,21 @@ def load_from_raw(
 
         # Start from second timestep
         # Excludes observation from last timestep
-        for timestep_idx, obs in enumerate(demo[1:]):
-            prev_obs = demo[timestep_idx - 1]
+        for timestep_idx, obs in enumerate(demo):
             # TODO: Add other low dim states
-            ep_dict["observation.states.joint_positions"].append(torch.as_tensor(prev_obs.joint_positions))
-            ep_dict["observation.states.gripper_open"].append(torch.as_tensor(prev_obs.gripper_open))
+            ep_dict["observation.states.joint_positions"].append(torch.as_tensor(obs.joint_positions))
+            ep_dict["observation.states.gripper_open"].append(torch.as_tensor(obs.gripper_open))
 
             for camera in camera_attributes:
-                image = getattr(prev_obs, f"{camera}_rgb")
+                image = getattr(obs, f"{camera}_rgb")
                 ep_dict[f"observation.images.{camera}"].append(torch.as_tensor(image))
 
             # First timestep doesn't have an action
-            ep_dict["action"].append(torch.as_tensor(obs.misc["joint_position_action"]))
+            if timestep_idx > 0:
+                ep_dict["action"].append(torch.as_tensor(obs.misc["joint_position_action"]))
+        # len(action) == len(observation) - 1
+        # Hence we add a dummy action to the last timestep
+        ep_dict["action"].append(torch.zeros_like(ep_dict["action"][-1]))
 
         for key, value in ep_dict.items():
             ep_dict[key] = torch.stack(value)
