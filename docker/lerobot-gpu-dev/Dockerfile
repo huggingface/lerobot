@@ -6,12 +6,14 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # Install apt dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake \
+    autoconf automake build-essential cmake yasm \
     git git-lfs openssh-client \
-    nano vim less util-linux \
+    nano vim less util-linux tree \
     htop atop nvtop \
     sed gawk grep curl wget zip unzip \
     tcpdump sysstat screen tmux \
+    libass-dev libfreetype6-dev libsdl2-dev libtool libva-dev libvdpau-dev libvorbis-dev \
+    libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev pkg-config texinfo zlib1g-dev \
     libglib2.0-0 libgl1-mesa-glx libegl1-mesa \
     python${PYTHON_VERSION} python${PYTHON_VERSION}-venv \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
