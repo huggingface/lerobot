@@ -1,25 +1,16 @@
+import shutil
 from collections import defaultdict
 from pathlib import Path
-import rlbench
-from rlbench import Environment
-import rlbench.demo
-from rlbench.observation_config import ObservationConfig
+
+import torch
+import tqdm
+from datasets import Dataset, Features, Image, Sequence, Value
 from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.arm_action_modes import JointVelocity
 from rlbench.action_modes.gripper_action_modes import Discrete
 from rlbench.environment import Environment
 from rlbench.observation_config import ObservationConfig
 from rlbench.tasks import ReachTarget
-
-import shutil
-from pathlib import Path
-
-import numpy as np
-import torch
-import tqdm
-import zarr
-from datasets import Dataset, Features, Image, Sequence, Value
-from PIL import Image as PILImage
 
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, save_images_concurrently
 from lerobot.common.datasets.utils import (
@@ -28,20 +19,31 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
+
 def _launch_env(dataset_root: str = ""):
     obs_config = ObservationConfig()
     obs_config.set_all(True)
 
-    env = Environment(MoveArmThenGripper(JointVelocity(), Discrete()), dataset_root, obs_config, headless=True)
+    env = Environment(
+        MoveArmThenGripper(JointVelocity(), Discrete()), dataset_root, obs_config, headless=True
+    )
     env.launch()
     return env
+
 
 def check_format(raw_dir: Path) -> bool:
     # If demos can be loaded, the format is correct
     demos = load_from_raw(raw_dir)
     return bool(demos)
 
-def load_from_raw(raw_dir: Path, videos_dir: Path | None = None, fps: int | None = None, video: bool | None = None, episodes: list[int] | None = None) -> dict:
+
+def load_from_raw(
+    raw_dir: Path,
+    videos_dir: Path | None = None,
+    fps: int | None = None,
+    video: bool | None = None,
+    episodes: list[int] | None = None,
+) -> dict:
     env = _launch_env(str(raw_dir))
     # TODO: Automatically detect task
     task = env.get_task(ReachTarget)
@@ -72,17 +74,17 @@ def load_from_raw(raw_dir: Path, videos_dir: Path | None = None, fps: int | None
         # Start from second timestep
         # Excludes observation from last timestep
         for timestep_idx, obs in enumerate(demo[1:]):
-            prev_obs = demo[timestep_idx-1]
-            ep_dict["observation.states.joint_positions"].append(torch.as_tensor(prev_obs.joint_positions))    
+            prev_obs = demo[timestep_idx - 1]
+            ep_dict["observation.states.joint_positions"].append(torch.as_tensor(prev_obs.joint_positions))
             ep_dict["observation.states.gripper_open"].append(torch.as_tensor(prev_obs.gripper_open))
 
             for camera in camera_attributes:
-                image = getattr(prev_obs, f"{camera}_rgb") 
+                image = getattr(prev_obs, f"{camera}_rgb")
                 ep_dict[f"observation.images.{camera}"].append(torch.as_tensor(image))
 
             # First timestep doesn't have an action
             ep_dict["action"].append(torch.as_tensor(obs.misc["joint_position_action"]))
-            
+
         for key, value in ep_dict.items():
             ep_dict[key] = torch.stack(value)
 
@@ -108,7 +110,6 @@ def load_from_raw(raw_dir: Path, videos_dir: Path | None = None, fps: int | None
                 ep_dict[img_key] = [
                     {"path": f"videos/{fname}", "timestamp": i / fps} for i in range(num_frames)
                 ]
-            
 
         ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames)
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
@@ -123,7 +124,6 @@ def load_from_raw(raw_dir: Path, videos_dir: Path | None = None, fps: int | None
     return data_dict
 
 
-
 def to_hf_dataset(data_dict: dict, video: bool):
     features = {}
 
@@ -133,14 +133,13 @@ def to_hf_dataset(data_dict: dict, video: bool):
             features[key] = VideoFrame()
         else:
             features[key] = Image()
-    
+
     # Low dimensional states
     features["observation.states.joint_positions"] = Sequence(
-        length=data_dict["observation.states.joint_positions"].shape[1], feature=Value(dtype="float32", id=None)
+        length=data_dict["observation.states.joint_positions"].shape[1],
+        feature=Value(dtype="float32", id=None),
     )
-    features["observation.states.gripper_open"] = Value(
-        dtype="float32", id=None
-    )
+    features["observation.states.gripper_open"] = Value(dtype="float32", id=None)
 
     # Only supports joint position actions for now
     features["action"] = Sequence(
