@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libass-dev \
     libfreetype6-dev \
     libgnutls28-dev \
+    libunistring-dev \
     libmp3lame-dev \
     libtool \
     libvorbis-dev \
