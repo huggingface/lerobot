@@ -93,7 +93,7 @@ class OpenCVCamera():
     color_image = camera.capture_image()
     ```
     """
-    AVAILABLE_CAMERAS_INDICES = find_camera_indices()
+    # AVAILABLE_CAMERAS_INDICES = find_camera_indices()
 
     def __init__(self, camera_index: int, config: OpenCVCameraConfig | None = None):
         if config is None:

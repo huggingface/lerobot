@@ -5,6 +5,7 @@ import torch
 from examples.real_robot_example.gym_real_world.robot import Robot
 from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
 from lerobot.common.robot_devices.cameras.utils import Camera
+from lerobot.common.robot_devices.motors.dynamixel import pos2pwm, pwm2pos
 
 MAX_LEADER_GRIPPER_RAD = 0.7761942786701344
 MAX_LEADER_GRIPPER_POS = 2567
@@ -111,10 +112,10 @@ class AlohaRobotConfig:
     )
     camera_devices: dict[str, Camera] = field(
         default_factory=lambda: {
-            "cam_high": OpenCVCamera(16),
-            "cam_low": OpenCVCamera(4),
-            "cam_left_wrist": OpenCVCamera(10),
-            "cam_right_wrist": OpenCVCamera(22),
+            # "cam_high": OpenCVCamera(16),
+            # "cam_low": OpenCVCamera(4),
+            # "cam_left_wrist": OpenCVCamera(10),
+            # "cam_right_wrist": OpenCVCamera(22),
         }
     )
 
@@ -144,6 +145,7 @@ class AlohaRobot():
             config = AlohaRobotConfig()
         # Overwrite config arguments using kwargs
         config = replace(config, **kwargs)
+        self.config = config
 
         self.leaders = {}
         self.followers = {}
@@ -202,6 +204,7 @@ class AlohaRobot():
             if name in follower_pos:
                 state.append(follower_pos[name])
         state = np.concatenate(state)
+        state = pwm2pos(state)
 
         # Create action by concatenating follower goal position
         action = []
@@ -209,6 +212,7 @@ class AlohaRobot():
             if name in follower_goal_pos:
                 action.append(follower_goal_pos[name])
         action = np.concatenate(action)
+        action = pwm2pos(action)
 
         # Capture images from cameras
         images = {}
@@ -217,10 +221,22 @@ class AlohaRobot():
 
         # Populate output dictionnaries and format to pytorch
         obs_dict, action_dict = {}, {}
-        obs_dict["observations.state"] = torch.from_numpy(state)
+        obs_dict["observation.state"] = torch.from_numpy(state)
         action_dict["action"] = torch.from_numpy(action)
         for name in self.cameras:
-            obs_dict[f"observations.images.{name}"] =  torch.from_numpy(images[name])
+            obs_dict[f"observation.images.{name}"] =  torch.from_numpy(images[name])
 
         return obs_dict, action_dict
 
+    def send_action(self, action):
+        from_idx = 0
+        to_idx = 0
+        follower_goal_pos = {}
+        for name in ["left", "right"]:
+            if name in self.followers:
+                to_idx += len(self.config.follower_devices[name]["servos"])
+                follower_goal_pos[name] = pos2pwm(action[from_idx:to_idx].numpy())
+                from_idx = to_idx
+
+        for name in self.followers:
+            self.followers[name].set_goal_pos(follower_goal_pos[name])
