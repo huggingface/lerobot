@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     texinfo \
     yasm \
     zlib1g-dev \
+    nasm \
     libx264-dev \
     libx265-dev libnuma-dev \
     libvpx-dev \
