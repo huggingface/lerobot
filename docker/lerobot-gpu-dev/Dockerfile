@@ -6,17 +6,40 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # Install apt dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    autoconf automake build-essential cmake yasm \
+    build-essential cmake \
     git git-lfs openssh-client \
     nano vim less util-linux tree \
     htop atop nvtop \
     sed gawk grep curl wget zip unzip \
     tcpdump sysstat screen tmux \
-    libass-dev libfreetype6-dev libsdl2-dev libtool libva-dev libvdpau-dev libvorbis-dev \
-    libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev pkg-config texinfo zlib1g-dev \
     libglib2.0-0 libgl1-mesa-glx libegl1-mesa \
     python${PYTHON_VERSION} python${PYTHON_VERSION}-venv \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install ffmpeg build dependencies. See:
+# https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf automake yasm \
+    libass-dev \
+    libfreetype6-dev \
+    libgnutls28-dev \
+    libmp3lame-dev \
+    libtool \
+    libvorbis-dev \
+    meson \
+    ninja-build \
+    pkg-config \
+    texinfo \
+    yasm \
+    zlib1g-dev \
+    libx264-dev \
+    libx265-dev libnuma-dev \
+    libvpx-dev \
+    libfdk-aac-dev \
+    libopus-dev \
+    libsvtav1-dev libsvtav1enc-dev libsvtav1dec-dev \
+    libdav1d-dev
+
 
 # Install gh cli tool
 RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
