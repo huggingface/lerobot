@@ -178,7 +178,7 @@ def benchmark_decoding(
 
         with time_benchmark:
             frames = decode_video_frames_torchvision(
-                video_path, timestamps=timestamps, tolerance_s=1e-3, backend=backend
+                video_path, timestamps=timestamps, tolerance_s=1e-4, backend=backend
             )
         result["load_time_video_ms"] = time_benchmark.result_ms / num_frames
 

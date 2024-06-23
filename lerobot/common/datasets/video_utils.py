@@ -142,6 +142,10 @@ def decode_video_frames_torchvision(
         "It means that the closest frame that can be loaded from the video is too far away in time."
         "This might be due to synchronization issues with timestamps during data collection."
         "To be safe, we advise to ignore this item during training."
+        f"\nqueried timestamps: {query_ts}"
+        f"\nloaded timestamps: {loaded_ts}"
+        f"\nvideo: {video_path}"
+        f"\nbackend: {backend}"
     )
 
     # get closest frames to the query timestamps
