@@ -353,6 +353,7 @@ def main(
                         encoding_cfg = BASE_ENCODING.copy()
                         encoding_cfg["vcodec"] = video_codec
                         encoding_cfg["pix_fmt"] = pixel_format
+                        encoding_cfg[key] = value
                         args_path = Path("_".join(str(value) for value in encoding_cfg.values()))
                         video_path = output_dir / "videos" / args_path / f"{repo_id.replace('/', '_')}.mp4"
                         benchmark_table += benchmark_encoding_decoding(
