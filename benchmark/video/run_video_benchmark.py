@@ -340,10 +340,10 @@ def main(
         "avg_psnr",
         "avg_ssim",
     ]
-    for video_codec in tqdm(vcodec, desc="encodings (vcodec)", leave=False):
+    for video_codec in tqdm(vcodec, desc="encodings (vcodec)"):
         benchmark_table = []
         for pixel_format in tqdm(pix_fmt, desc="encodings (pix_fmt)", leave=False):
-            for repo_id in tqdm(repo_ids, desc="encodings (datasets)"):
+            for repo_id in tqdm(repo_ids, desc="encodings (datasets)", leave=False):
                 dataset = LeRobotDataset(repo_id)
                 imgs_dir = output_dir / "images" / dataset.repo_id.replace("/", "_")
                 # We only use the first episode
