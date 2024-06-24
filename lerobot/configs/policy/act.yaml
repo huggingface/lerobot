@@ -4,7 +4,7 @@ seed: 1000
 dataset_repo_id: lerobot/aloha_sim_insertion_human
 
 override_dataset_stats:
-  observation.images.top:
+  observation.images:
     # stats from imagenet, since we use a pretrained vision model
     mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
     std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)

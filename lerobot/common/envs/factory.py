@@ -27,7 +27,7 @@ def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv
     if n_envs is not None and n_envs < 1:
         raise ValueError("`n_envs must be at least 1")
 
-    package_name = f"gym_{cfg.env.name}"
+    package_name = "rlbench" if cfg.env.name == "rlbench" else f"gym_{cfg.env.name}"
 
     try:
         importlib.import_module(package_name)
@@ -44,12 +44,21 @@ def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv
         gym_kwgs["max_episode_steps"] = cfg.env.episode_length
 
     # batched version of the env that returns an observation of shape (b, c)
-    env_cls = gym.vector.AsyncVectorEnv if cfg.eval.use_async_envs else gym.vector.SyncVectorEnv
-    env = env_cls(
-        [
-            lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs)
-            for _ in range(n_envs if n_envs is not None else cfg.eval.batch_size)
-        ]
-    )
+    if cfg.eval.use_async_envs:
+        context = "spawn" if cfg.env.name == "rlbench" else None
+        env = gym.vector.AsyncVectorEnv(
+            [
+                lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs)
+                for _ in range(n_envs if n_envs is not None else cfg.eval.batch_size)
+            ],
+            context=context,
+        )
+    else:
+        env = gym.vector.SyncVectorEnv(
+            [
+                lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs)
+                for _ in range(n_envs if n_envs is not None else cfg.eval.batch_size)
+            ]
+        )
 
     return env
