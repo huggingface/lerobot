@@ -15,11 +15,12 @@
 # limitations under the License.
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
 from pprint import pformat
-from threading import Lock, Thread
+from threading import Lock
 
 import datasets
 import hydra
@@ -35,7 +36,7 @@ from torch.cuda.amp import GradScaler
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
-from lerobot.common.datasets.utils import calculate_episode_data_index, cycle
+from lerobot.common.datasets.utils import calculate_episode_data_index, cycle, hf_transform_to_torch
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
@@ -108,6 +109,7 @@ def update_policy(
     lr_scheduler=None,
     use_amp: bool = False,
     step: int = 0,
+    lock=None,
 ):
     """Returns a dictionary of items for logging."""
     start_time = time.perf_counter()
@@ -130,7 +132,8 @@ def update_policy(
 
     # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
     # although it still skips optimizer.step() if the gradients contain infs or NaNs.
-    grad_scaler.step(optimizer)
+    with lock if lock is not None else nullcontext():
+        grad_scaler.step(optimizer)
     # Updates the scale for next iteration.
     grad_scaler.update()
 
@@ -293,6 +296,8 @@ def update_online_buffer(
             k: torch.cat([online_dataset.episode_data_index[k], new_episode_data_index[k] + start_index])
             for k in ["from", "to"]
         }
+        # Note: This is needed as for some reason, some HF dataset operations seem to remove the transform?
+        online_dataset.hf_dataset.set_transform(hf_transform_to_torch)
 
         if buffer_capacity is not None and len(online_dataset) > buffer_capacity:
             # Remove as many frames from the dataset as need to keep within the desired capacity.
@@ -313,6 +318,7 @@ def update_online_buffer(
             enable_progress_bars()
             # Calculate the episode_data_index
             online_dataset.episode_data_index = calculate_episode_data_index(online_dataset.hf_dataset)
+            online_dataset.hf_dataset.set_transform(hf_transform_to_torch)
 
     # update the concatenated dataset length used during sampling
     concat_dataset.cumulative_sizes = concat_dataset.cumsum(concat_dataset.datasets)
@@ -542,13 +548,14 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # create an env dedicated to online episodes collection from policy rollout
     online_training_env = make_env(cfg, n_envs=1)
     # create an empty online dataset similar to offline dataset
-    online_dataset = deepcopy(offline_dataset)
+    online_dataset = make_dataset(cfg)
     # TODO(now): Consolidate the reset into one method.
     online_dataset.hf_dataset = {}
     online_dataset.episode_data_index = {}
     online_dataset.cache = {}
 
-    lock = Lock()
+    online_rollout_policy = deepcopy(policy)
+    online_rollout_policy.eval()
 
     # create dataloader for online training
     concat_dataset = torch.utils.data.ConcatDataset([offline_dataset, online_dataset])
@@ -566,6 +573,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     )
     dl_iter = cycle(dataloader)
 
+    lock = Lock()
+
+    executor = ThreadPoolExecutor(max_workers=1)
+
     online_step = 0
     is_offline = False
     while True:
@@ -576,11 +587,13 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             logging.info("Start online training by interacting with environment")
 
         def sample_trajectory_and_update_buffer():
-            policy.eval()
+            with lock:
+                online_rollout_policy.load_state_dict(policy.state_dict())
+            online_rollout_policy.eval()
             with torch.no_grad():
                 eval_info = eval_policy(
                     online_training_env,
-                    policy,
+                    online_rollout_policy,
                     n_episodes=1,
                     max_episodes_rendered=1,
                     videos_dir=Path("test"),
@@ -602,13 +615,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 )
 
         start_time = time.perf_counter()
-        thread = Thread(target=sample_trajectory_and_update_buffer)
-        thread.start()
-        online_rollout_s = time.perf_counter() - start_time
-        if len(online_dataset) == 0:
+        future = executor.submit(sample_trajectory_and_update_buffer)
+        if len(online_dataset) == 0 or not cfg.training.do_online_rollout_async:
             start_time = time.perf_counter()
-            thread.join()
-            online_rollout_s += time.perf_counter() - start_time
+            future.result()
+            online_rollout_s = time.perf_counter() - start_time
 
         policy.train()
         for _ in range(cfg.training.online_steps_between_rollouts):
@@ -629,6 +640,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 lr_scheduler=lr_scheduler,
                 use_amp=cfg.use_amp,
                 step=step,
+                lock=lock,
             )
 
             train_info["dataloading_s"] = dataloading_s
@@ -644,10 +656,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             step += 1
             online_step += 1
 
-        if thread.is_alive():
+        if future.running():
             start_time = time.perf_counter()
-            thread.join()
-            online_rollout_s += time.perf_counter() - start_time
+            future.result()
+            online_rollout_s = time.perf_counter() - start_time
 
     if eval_env:
         eval_env.close()

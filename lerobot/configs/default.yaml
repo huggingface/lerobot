@@ -40,6 +40,7 @@ training:
   online_buffer_capacity: null
   # `online_env_seed` is used for environments for online training data rollouts.
   online_env_seed: ???
+  do_online_rollout_async: false
   eval_freq: ???
   log_freq: 250
   # `dataset_use_cache` indicates whether to cache all dataset items as Tensors in RAM. Potentially useful for
