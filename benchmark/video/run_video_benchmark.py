@@ -178,7 +178,7 @@ def benchmark_decoding(
 
         with time_benchmark:
             frames = decode_video_frames_torchvision(
-                video_path, timestamps=timestamps, tolerance_s=1e-4, backend=backend
+                video_path, timestamps=timestamps, tolerance_s=2e-1, backend=backend
             )
         result["load_time_video_ms"] = time_benchmark.result_ms / num_frames
 
@@ -304,7 +304,7 @@ def benchmark_encoding_decoding(
 def main(
     output_dir: Path,
     repo_ids: list[str],
-    # vcodec: list[str],
+    vcodec: list[str],
     pix_fmt: list[str],
     g: list[int],
     crf: list[int],
@@ -317,7 +317,7 @@ def main(
     check_datasets_formats(repo_ids)
     encoding_benchmarks = {
         # "vcodec": vcodec,
-        "pix_fmt": pix_fmt,
+        # "pix_fmt": pix_fmt,
         "g": g,
         "crf": crf,
     }
@@ -325,33 +325,9 @@ def main(
         "timestamps_modes": timestamps_modes,
         "backends": backends,
     }
-    benchmark_table = []
-    for repo_id in tqdm(repo_ids, desc="datasets"):
-        dataset = LeRobotDataset(repo_id)
-        imgs_dir = output_dir / "images" / dataset.repo_id.replace("/", "_")
-        # We only use the first episode
-        save_first_episode(imgs_dir, dataset)
-
-        for key, values in tqdm(encoding_benchmarks.items(), desc="encodings", leave=False):
-            for value in tqdm(values, desc=f"encodings ({key})", leave=False):
-                encoding_cfg = BASE_ENCODING.copy()
-                encoding_cfg[key] = value
-                args_path = Path("_".join(str(value) for value in encoding_cfg.values()))
-                video_path = output_dir / "videos" / args_path / f"{repo_id.replace('/', '_')}.mp4"
-                benchmark_table += benchmark_encoding_decoding(
-                    dataset,
-                    video_path,
-                    imgs_dir,
-                    encoding_cfg,
-                    decoding_benchmarks,
-                    num_samples,
-                    num_workers,
-                    save_frames,
-                )
-
-    columns_order = ["repo_id", "resolution", "num_pixels"]
-    columns_order += list(BASE_ENCODING.keys())
-    columns_order += [
+    headers = ["repo_id", "resolution", "num_pixels"]
+    headers += list(BASE_ENCODING.keys())
+    headers += [
         "video_size_bytes",
         "images_size_bytes",
         "video_images_size_ratio",
@@ -364,10 +340,36 @@ def main(
         "avg_psnr",
         "avg_ssim",
     ]
-    benchmark_df = pd.DataFrame(benchmark_table, columns=columns_order)
-    now = dt.datetime.now()
-    csv_path = output_dir / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_{num_samples}-samples.csv"
-    benchmark_df.to_csv(csv_path, header=True, index=False)
+    for video_codec in tqdm(vcodec, desc="encodings (vcodec)", leave=False):
+        benchmark_table = []
+        for pixel_format in tqdm(pix_fmt, desc="encodings (pix_fmt)", leave=False):
+            for repo_id in tqdm(repo_ids, desc="encodings (datasets)"):
+                dataset = LeRobotDataset(repo_id)
+                imgs_dir = output_dir / "images" / dataset.repo_id.replace("/", "_")
+                # We only use the first episode
+                save_first_episode(imgs_dir, dataset)
+                for key, values in tqdm(encoding_benchmarks.items(), desc="encodings (g, crf)", leave=False):
+                    for value in tqdm(values, desc=f"encodings ({key})", leave=False):
+                        encoding_cfg = BASE_ENCODING.copy()
+                        encoding_cfg["vcodec"] = video_codec
+                        encoding_cfg["pix_fmt"] = pixel_format
+                        args_path = Path("_".join(str(value) for value in encoding_cfg.values()))
+                        video_path = output_dir / "videos" / args_path / f"{repo_id.replace('/', '_')}.mp4"
+                        benchmark_table += benchmark_encoding_decoding(
+                            dataset,
+                            video_path,
+                            imgs_dir,
+                            encoding_cfg,
+                            decoding_benchmarks,
+                            num_samples,
+                            num_workers,
+                            save_frames,
+                        )
+
+        benchmark_df = pd.DataFrame(benchmark_table, columns=headers)
+        now = dt.datetime.now()
+        csv_path = output_dir / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_{video_codec}_{num_samples}-samples.csv"
+        benchmark_df.to_csv(csv_path, header=True, index=False)
 
 
 if __name__ == "__main__":
@@ -390,14 +392,13 @@ if __name__ == "__main__":
         ],
         help="Datasets repo-ids to test against. First episodes only are used. Must be images.",
     )
-    # TODO(aliberts): add "libaom-av1" (need to build ffmpeg with "--enable-libaom")
-    # parser.add_argument(
-    #     "--vcodec",
-    #     type=str,
-    #     nargs="*",
-    #     default=["libx264", "libaom-av1"],
-    #     help="Video codecs to be tested",
-    # )
+    parser.add_argument(
+        "--vcodec",
+        type=str,
+        nargs="*",
+        default=["libx264", "libx265", "libsvtav1"],
+        help="Video codecs to be tested",
+    )
     parser.add_argument(
         "--pix-fmt",
         type=str,
