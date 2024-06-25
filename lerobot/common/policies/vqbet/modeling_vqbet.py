@@ -395,8 +395,8 @@ class VQBeTHead(nn.Module):
         slices = []
         slices.extend(
             [
-                actions[:, j : j + self.vqvae_model.config.action_chunk_size, :]
-                for j in range(actions.shape[1] + 1 - self.vqvae_model.config.action_chunk_size)
+                actions[:, j : j + self.config.action_chunk_size, :]
+                for j in range(actions.shape[1] + 1 - self.config.action_chunk_size)
             ]
         )
         # dimensions : (batch, action_chunk_size, action_dim)
