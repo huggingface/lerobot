@@ -5,402 +5,36 @@ import numpy as np
 from dynamixel_sdk import PacketHandler, PortHandler, COMM_SUCCESS, GroupSyncRead, GroupSyncWrite
 
 
-def write_goal_current(io: PacketHandler, serial: PortHandler, servo_id: int, address: int, goal_current: int | None = None):
+def pos2pwm(pos: np.ndarray) -> np.ndarray:
     """
-    Write the goal current to the puppet robot
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param servo_id: int
-    :param goal_current: current
+    :param pos: numpy array of joint positions in range [-pi, pi]
+    :return: numpy array of pwm values in range [0, 4096]
     """
-    comm, error = io.write2ByteTxRx(serial, servo_id, 102, goal_current)
-
-    if goal_current is not None:
-        if comm != COMM_SUCCESS:
-            print(f"Failed to communicate with motor {servo_id}")
-            print("%s" % io.getTxRxResult(comm))
-        if error != 0:
-            print(f"Error while writing goal current to motor {servo_id}")
-            print("%s" % io.getRxPacketError(error))
+    return ((pos / 3.14 + 1.0) * 2048).astype(np.int64)
 
 
-def read_present_current(io: PacketHandler, serial: PortHandler, servo_id: int, address: int) -> int | None:
+def pwm2pos(pwm: np.ndarray) -> np.ndarray:
     """
-    Read the present current from the puppet robot
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param servo_id: int
-    :return: int
+    :param pwm: numpy array of pwm values in range [0, 4096]
+    :return: numpy array of joint positions in range [-pi, pi]
     """
-
-    current, comm, error = io.read2ByteTxRx(serial, servo_id, 126)
-
-    if comm != COMM_SUCCESS:
-        print(f"Failed to communicate with motor {servo_id}")
-        print("%s" % io.getTxRxResult(comm))
-        if error != 0:
-            print(f"Error while reading present current from motor {servo_id}")
-            print("%s" % io.getRxPacketError(error))
-
-    return current if comm == COMM_SUCCESS and error == 0 else None
+    return (pwm / 2048 - 1) * 3.14
 
 
-def write_goal_position(io: PacketHandler, serial: PortHandler, servo_id: int, address: int, goal_position: int | None = None):
+def pwm2vel(pwm: np.ndarray) -> np.ndarray:
     """
-    Write the goal position to the puppet robot
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param servo_id: int
-    :param goal_position:
+    :param pwm: numpy array of pwm/s joint velocities
+    :return: numpy array of rad/s joint velocities
     """
-    comm, error = io.write4ByteTxRx(serial, servo_id, 116, goal_position)
-
-    if goal_position is not None:
-        if comm != COMM_SUCCESS:
-            print(f"Failed to communicate with motor {servo_id}")
-            print("%s" % io.getTxRxResult(comm))
-        if error != 0:
-            print(f"Error while writing goal position to motor {servo_id}")
-            print("%s" % io.getRxPacketError(error))
+    return pwm * 3.14 / 2048
 
 
-def write_goal_positions(io: PacketHandler, serial: PortHandler, ids: np.array, address: int, goal_positions: np.array):
+def vel2pwm(vel: np.ndarray) -> np.ndarray:
     """
-    Write the goal positions to the puppet robot
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param ids: np.array
-    :param goal_positions: np.array
+    :param vel: numpy array of rad/s joint velocities
+    :return: numpy array of pwm/s joint velocities
     """
-
-    for i in range(len(ids)):
-        if goal_positions[i] is not None:
-            comm, error = io.write4ByteTxRx(serial, ids[i], 116, goal_positions[i])
-            if comm != COMM_SUCCESS:
-                print(f"Failed to communicate with motor {ids[i]}")
-                print("%s" % io.getTxRxResult(comm))
-            if error != 0:
-                print(f"Error while writing goal position to motor {ids[i]}")
-                print("%s" % io.getRxPacketError(error))
-
-
-def read_present_position(io: PacketHandler, serial: PortHandler, servo_id: int, address: int):
-    """
-    Read the present position from the puppet robot
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param servo_id: int
-    :return: int
-    """
-
-    position, comm, error = io.read4ByteTxRx(serial, servo_id, 132)
-
-    if comm != COMM_SUCCESS:
-        print(f"Failed to communicate with motor {servo_id}")
-        print("%s" % io.getTxRxResult(comm))
-    if error != 0:
-        print(f"Error while reading present position from motor {servo_id}")
-        print("%s" % io.getRxPacketError(error))
-
-    return position if comm == COMM_SUCCESS and error == 0 else None
-
-
-def read_present_positions(io: PacketHandler, serial: PortHandler, ids: np.array, address: int):
-    """
-    Read the present positions from the puppet robot
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param ids: np.array
-    :return: np.array
-    """
-    present_positions = []
-
-    for id_ in ids:
-        position, comm, error = io.read4ByteTxRx(serial, id_, 132)
-
-        if comm != COMM_SUCCESS:
-            print(f"Failed to communicate with motor {id_}")
-            print("%s" % io.getTxRxResult(comm))
-        if error != 0:
-            print(f"Error while reading present position from motor {id_}")
-            print("%s" % io.getRxPacketError(error))
-
-        present_positions.append(position if comm == COMM_SUCCESS and error == 0 else None)
-
-    return np.array(present_positions)
-
-
-def read_present_velocity(io: PacketHandler, serial: PortHandler, servo_id: int, address: int):
-    """
-    Read the present velocity from the puppet robot
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param id: int
-    :return: int
-    """
-
-    velocity, comm, error = io.read4ByteTxRx(serial, servo_id, 128)
-
-    if comm != COMM_SUCCESS:
-        print(f"Failed to communicate with motor {servo_id}")
-        print("%s" % io.getTxRxResult(comm))
-    if error != 0:
-        print(f"Error while reading present velocity from motor {servo_id}")
-        print("%s" % io.getRxPacketError(error))
-
-    return velocity if comm == COMM_SUCCESS and error == 0 else None
-
-
-def read_present_velocities(io: PacketHandler, serial: PortHandler, ids: np.array, address: int):
-    """
-    Read the present velocities from the puppet robot
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param ids: list
-    :return: list
-    """
-    present_velocities = []
-
-    for id_ in ids:
-        velocity, comm, error = io.read4ByteTxRx(serial, id_, 128)
-
-        if comm != COMM_SUCCESS:
-            print(f"Failed to communicate with motor {id_}")
-            print("%s" % io.getTxRxResult(comm))
-        if error != 0:
-            print(f"Error while reading present velocity from motor {id_}")
-            print("%s" % io.getRxPacketError(error))
-
-        present_velocities.append(velocity if comm == COMM_SUCCESS and error == 0 else None)
-
-    return np.array(present_velocities)
-
-
-def enable_torque(io: PacketHandler, serial: PortHandler, servo_id: int, address: int):
-    """
-    Enable the torque of the puppet robot
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param servo_id: int
-    """
-    comm, error = io.write1ByteTxRx(serial, servo_id, 64, 1)
-
-    if comm != COMM_SUCCESS:
-        print(f"Failed to communicate with motor {servo_id}")
-        print("%s" % io.getTxRxResult(comm))
-    if error != 0:
-        print(f"Error while enabling torque for motor {servo_id}")
-        print("%s" % io.getRxPacketError(error))
-
-
-def enable_torques(io: PacketHandler, serial: PortHandler, ids: np.array, address: int):
-    """
-    Enable the torques of the puppet robot
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param ids: np.array
-    """
-    for id_ in ids:
-        comm, error = io.write1ByteTxRx(serial, id_, 64, 1)
-
-        if comm != COMM_SUCCESS:
-            print(f"Failed to communicate with motor {id_}")
-            print("%s" % io.getTxRxResult(comm))
-        if error != 0:
-            print(f"Error while enabling torque for motor {id_}")
-            print("%s" % io.getRxPacketError(error))
-
-
-def disable_torque(io: PacketHandler, serial: PortHandler, servo_id: int, address: int):
-    """
-    Disable the torque of the puppet robot
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param servo_id: int
-    """
-    comm, error = io.write1ByteTxRx(serial, servo_id, 64, 0)
-
-    if comm != COMM_SUCCESS:
-        print(f"Failed to communicate with motor {servo_id}")
-        print("%s" % io.getTxRxResult(comm))
-    if error != 0:
-        print(f"Error while disabling torque for motor {servo_id}")
-        print("%s" % io.getRxPacketError(error))
-
-
-def disable_torques(io: PacketHandler, serial: PortHandler, ids: np.array, address: int):
-    """
-    Disable the torques of the puppet robot
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param ids: np.array
-    """
-    for id_ in ids:
-        comm, error = io.write1ByteTxRx(serial, id_, 64, 0)
-
-        if comm != COMM_SUCCESS:
-            print(f"Failed to communicate with motor {id_}")
-            print("%s" % io.getTxRxResult(comm))
-        if error != 0:
-            print(f"Error while disabling torque for motor {id_}")
-            print("%s" % io.getRxPacketError(error))
-
-
-def write_operating_mode(io: PacketHandler, serial: PortHandler, servo_id: int, address: int, mode: int):
-    """
-    Write the appropriate operating mode for the LCR.
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param servo_id: int
-    :param mode: mode to write
-    """
-    comm, error = io.write1ByteTxRx(serial, servo_id, 11, mode)
-
-    if mode is not None:
-        if comm != COMM_SUCCESS:
-            print(f"Failed to communicate with motor {servo_id}")
-            print("%s" % io.getTxRxResult(comm))
-        if error != 0:
-            print(f"Error while writing operating mode for motor {servo_id}")
-            print("%s" % io.getRxPacketError(error))
-
-
-def write_operating_modes(io: PacketHandler, serial: PortHandler, ids: np.array, address: int, mode: int):
-    """
-    Write the appropriate operating mode for the LCR.
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param ids: numpy array of motor ids
-    :param mode: mode to write
-    """
-    for id_ in ids:
-        comm, error = io.write1ByteTxRx(serial, id_, 11, mode)
-
-        if mode is not None:
-            if comm != COMM_SUCCESS:
-                print(f"Failed to communicate with motor {id_}")
-                print("%s" % io.getTxRxResult(comm))
-            if error != 0:
-                print(f"Error while writing operating mode for motor {id_}")
-                print("%s" % io.getRxPacketError(error))
-
-
-def write_homing_offset(io: PacketHandler, serial: PortHandler, servo_id: int, address: int, offset: int):
-    """
-    Write the homing offset for the LCR.
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param servo_id: int
-    :param offset: int
-    """
-    comm, error = io.write4ByteTxRx(serial, servo_id, 20, offset)
-
-    if offset is not None:
-        if comm != COMM_SUCCESS:
-            print(f"Failed to communicate with motor {servo_id}")
-            print("%s" % io.getTxRxResult(comm))
-        if error != 0:
-            print(f"Error while writing homing offset for motor {servo_id}")
-            print("%s" % io.getRxPacketError(error))
-
-
-def write_homing_offsets(io: PacketHandler, serial: PortHandler, ids: np.array, address: int, offsets: np.array):
-    """
-    Write the homing offset for the LCR.
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param ids: numpy array of motor ids
-    :param offsets: numpy array of offsets
-    """
-    for i, id_ in enumerate(ids):
-        comm, error = io.write4ByteTxRx(serial, id_, 20, int(offsets[i]))
-
-        if offsets[i] is not None:
-            if comm != COMM_SUCCESS:
-                print(f"Failed to communicate with motor {id_}")
-                print("%s" % io.getTxRxResult(comm))
-            if error != 0:
-                print(f"Error while writing homing offset for motor {id_}")
-                print("%s" % io.getRxPacketError(error))
-
-
-def write_drive_mode(io: PacketHandler, serial: PortHandler, servo_id: int, address: int, mode: int):
-    """
-    Write the drive mode for the LCR.
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param servo_id: int
-    :param mode: int
-    """
-    comm, error = io.write1ByteTxRx(serial, servo_id, 10, mode)
-
-    if mode is not None:
-        if comm != COMM_SUCCESS:
-            print(f"Failed to communicate with motor {servo_id}")
-            print("%s" % io.getTxRxResult(comm))
-        if error != 0:
-            print(f"Error while writing drive mode for motor {servo_id}")
-            print("%s" % io.getRxPacketError(error))
-
-
-def write_drive_modes(io: PacketHandler, serial: PortHandler, ids: np.array, address: int, modes: np.array):
-    """
-    Write the drive mode for the LCR.
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param ids: numpy array of motor ids
-    :param modes: numpy array of drive modes
-    """
-    for i, id_ in enumerate(ids):
-        comm, error = io.write1ByteTxRx(serial, id_, 10, modes[i])
-
-        if modes[i] is not None:
-            if comm != COMM_SUCCESS:
-                print(f"Failed to communicate with motor {id_}")
-                print("%s" % io.getTxRxResult(comm))
-            if error != 0:
-                print(f"Error while writing drive mode for motor {id_}")
-                print("%s" % io.getRxPacketError(error))
-
-
-def write_current_limit(io: PacketHandler, serial: PortHandler, servo_id: int, address: int, limit: int):
-    """
-    Write the current limit for the LCR.
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param servo_id: int
-    :param limit: int
-    """
-    comm, error = io.write2ByteTxRx(serial, servo_id, 38, limit)
-
-    if limit is not None:
-        if comm != COMM_SUCCESS:
-            print(f"Failed to communicate with motor {servo_id}")
-            print("%s" % io.getTxRxResult(comm))
-        if error != 0:
-            print(f"Error while writing current limit for motor {servo_id}")
-            print("%s" % io.getRxPacketError(error))
-
-
-def write_current_limits(io: PacketHandler, serial: PortHandler, ids: np.array, address: int, limits: np.array):
-    """
-    Write the current limit for the LCR.
-    :param io: PacketHandler
-    :param serial: PortHandler
-    :param ids: numpy array of motor ids
-    :param limits: numpy array of current limits
-    """
-    for i, id_ in enumerate(ids):
-        comm, error = io.write2ByteTxRx(serial, id_, 38, limits[i])
-
-        if limits[i] is not None:
-            if comm != COMM_SUCCESS:
-                print(f"Failed to communicate with motor {id_}")
-                print("%s" % io.getTxRxResult(comm))
-            if error != 0:
-                print(f"Error while writing current limit for motor {id_}")
-                print("%s" % io.getRxPacketError(error))
-
+    return (vel * 2048 / 3.14).astype(np.int64)
 
 PROTOCOL_VERSION = 2.0
 BAUDRATE = 1_000_000
@@ -464,7 +98,7 @@ def process_response(packet_handler, dxl_comm_result: int, dxl_error: int, motor
 
 
 
-class DynamixelMotorChain:
+class DynamixelMotorsChain:
 
     def __init__(self, port: str, motor_models: dict[int, str], extra_model_control_table: dict[str, list[tuple]] | None = None):
         self.port = port
@@ -496,19 +130,15 @@ class DynamixelMotorChain:
         if not self.portHandler.setPacketTimeoutMillis(TIMOUT_MS):
             raise OSError(f"Failed to set packet timeout to {TIMOUT_MS} (ms)")
 
-        self.position_reader = GroupSyncRead(self.port_handler, self.packet_handler, 
-
-        )
-
-        self.torque_enabled = {idx: False for idx in self.motor_models}
-        self.torque_enabled = {idx: False for idx in self.motor_models}
+        # self.torque_enabled = {idx: False for idx in self.motor_models}
+        self.group_readers = {}
+        self.group_writters = {}
 
     @property
     def motor_ids(self) -> list[int]:
         return list(self.motor_models.keys())
 
     def write(self, data_name, value, motor_idx: int | None):
-        # By default, enable torque on all motors
         motor_ids = [motor_idx] if motor_idx else self.motor_ids
         
         for idx in motor_ids:
@@ -522,20 +152,92 @@ class DynamixelMotorChain:
             elif bytes == 4:
                 rslt, err = self.packet_handler.write4ByteTxRx(*args)
             else:
-                raise NotImplementedError(f"Value of the number of bytes to be sent is expected to be in [1, 2, 4], but {num_byte} is provided instead.")
+                raise NotImplementedError(f"Value of the number of bytes to be sent is expected to be in [1, 2, 4], but {bytes} is provided instead.")
             
-            process_response(self.packet_handler, rslt, err, idx)
+            if rslt != COMM_SUCCESS:
+                raise ConnectionError(
+                    f"Write failed due to communication error on port {self.port} for motor {motor_idx}: {self.packet_handler.getTxRxResult(rslt)}"
+                )
+            elif err != 0:
+                raise ConnectionError(
+                    f"Write failed due to error {err} on port {self.port} for motor {motor_idx}: {self.packet_handler.getTxRxResult(err)}"
+                )
+
+    def read_(self, data_name, motor_idx: int | None):
+        motor_ids = self.motor_ids if motor_idx is None else [motor_idx]
+
+        if data_name not in self.group_readers:
+            addr = self.motor_ctrl[0]["addr"]
+            bytes = self.motor_ctrl[0]["bytes"]
+            group_reader = GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
+
+            for idx in motor_idx:
+                group_reader.addParam(idx)
+
+            self.group_readers[data_name] = group_reader
+        
+        rslt = self.group_readers[data_name].txRxPacket()
+        
+
+    def write_(self, data_name, motor_ids: int | None):
+        if data_name not in self.group_readers:
+            addr = self.motor_ctrl[0]["addr"]
+            bytes = self.motor_ctrl[0]["bytes"]
+            self.group_readers[data_name] = GroupSyncWrite(self.port_handler, self.packet_handler, addr, bytes)
+
 
     def read(self, data_name, motor_idx: int | None):
-
-
+        # TODO(rcadene): implement retry
+        motor_ids = self.motor_ids if motor_idx is None else [motor_idx]
+        
+        values = []
+        for idx in motor_ids:
+            addr = self.motor_ctrl[idx][data_name]["addr"]
+            bytes = self.motor_ctrl[idx][data_name]["bytes"]
+            args = (self.port_handler, idx, addr)
+            if bytes == 1:
+                value, rslt, err = self.packet_handler.write1ByteTxRx(*args)
+            elif bytes == 2:
+                value, rslt, err = self.packet_handler.write2ByteTxRx(*args)
+            elif bytes == 4:
+                value, rslt, err = self.packet_handler.write4ByteTxRx(*args)
+            else:
+                raise NotImplementedError(f"Value of the number of bytes to be sent is expected to be in [1, 2, 4], but {bytes} is provided instead.")
+                
+            if rslt != COMM_SUCCESS:
+                raise ConnectionError(
+                    f"Read failed due to communication error on port {self.port} for motor {motor_idx}: {self.packet_handler.getTxRxResult(rslt)}"
+                )
+            elif err != 0:
+                raise ConnectionError(
+                    f"Read failed due to error {err} on port {self.port} for motor {motor_idx}: {self.packet_handler.getTxRxResult(err)}"
+                )
+            
+            values.append(value)
+            
+        if motor_idx is None:
+            return values
+        else:
+            return values[0]
+        
     def enable_torque(self, motor_idx: int | None):
-        self.send_paquet("torque", TorqueMode.ENABLED, motor_idx)
+        # By default, enable torque on all motors
+        self.write("torque", TorqueMode.ENABLED, motor_idx)
 
     def disable_torque(self, motor_idx: int | None):
-        self.send_paquet("torque", TorqueMode.DISABLED, motor_idx)
+        self.write("torque", TorqueMode.DISABLED, motor_idx)
 
     def set_operating_mode(self, motor_idx: int | None, mode: OperatingMode):
-        self.send_paquet("torque", mode, motor_idx, num_byte=2)
+        self.write("torque", mode, motor_idx, num_byte=2)
         
+    def read_position(self, motor_idx: int | None):
+        return self.read("position", motor_idx)
+    
+    def read_position(self, motor_idx: int | None):
+        return self.read("position", motor_idx)
+    
+    def write_goal_position(self, motor_idx: int | None):
+        return self.write("goal_position", motor_idx)
+    
+
 
