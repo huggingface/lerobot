@@ -178,7 +178,7 @@ def benchmark_decoding(
 
         with time_benchmark:
             frames = decode_video_frames_torchvision(
-                video_path, timestamps=timestamps, tolerance_s=2e-1, backend=backend
+                video_path, timestamps=timestamps, tolerance_s=5e-1, backend=backend
             )
         result["load_time_video_ms"] = time_benchmark.result_ms / num_frames
 
@@ -340,9 +340,10 @@ def main(
         "avg_psnr",
         "avg_ssim",
     ]
+    file_paths = []
     for video_codec in tqdm(vcodec, desc="encodings (vcodec)"):
-        benchmark_table = []
         for pixel_format in tqdm(pix_fmt, desc="encodings (pix_fmt)", leave=False):
+            benchmark_table = []
             for repo_id in tqdm(repo_ids, desc="encodings (datasets)", leave=False):
                 dataset = LeRobotDataset(repo_id)
                 imgs_dir = output_dir / "images" / dataset.repo_id.replace("/", "_")
@@ -367,10 +368,22 @@ def main(
                             save_frames,
                         )
 
-        benchmark_df = pd.DataFrame(benchmark_table, columns=headers)
-        now = dt.datetime.now()
-        csv_path = output_dir / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_{video_codec}_{num_samples}-samples.csv"
-        benchmark_df.to_csv(csv_path, header=True, index=False)
+            # Save intermediate results
+            benchmark_df = pd.DataFrame(benchmark_table, columns=headers)
+            now = dt.datetime.now()
+            csv_path = (
+                output_dir
+                / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_{video_codec}_{pix_fmt}_{num_samples}-samples.csv"
+            )
+            benchmark_df.to_csv(csv_path, header=True, index=False)
+            file_paths.append(csv_path)
+            del benchmark_df
+
+    # Concatenate all results
+    df_list = [pd.read_csv(csv_path) for csv_path in file_paths]
+    concatenated_df = pd.concat(df_list, ignore_index=True)
+    concatenated_path = output_dir / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_all_{num_samples}-samples.csv"
+    concatenated_df.to_csv(concatenated_path, header=True, index=False)
 
 
 if __name__ == "__main__":
