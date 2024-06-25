@@ -391,20 +391,16 @@ class VQBeTHead(nn.Module):
         self._focal_loss_fn = FocalLoss(gamma=2.0)
 
     def discretize(self, n_vqvae_training_steps, actions):
-        if self.vqvae_model.config.action_chunk_size == 1:
-            # even though this code is not using action chunk, it maintains a dummy dimension for action chunk (batch, action_chunk_size = 1, action_dim)
-            actions = actions.reshape(-1, 1, actions.shape[-1])
-        else:
-            # using action chunk
-            slices = []
-            slices.extend(
-                [
-                    actions[:, j : j + self.vqvae_model.config.action_chunk_size, :]
-                    for j in range(actions.shape[1] + 1 - self.vqvae_model.config.action_chunk_size)
-                ]
-            )
-            # dimensions : (batch, action_chunk_size, action_dim)
-            actions = torch.cat(slices, dim=0)
+        # Resizing action sequence data to fit the action chunk size
+        slices = []
+        slices.extend(
+            [
+                actions[:, j : j + self.vqvae_model.config.action_chunk_size, :]
+                for j in range(actions.shape[1] + 1 - self.vqvae_model.config.action_chunk_size)
+            ]
+        )
+        # dimensions : (batch, action_chunk_size, action_dim)
+        actions = torch.cat(slices, dim=0)
 
         actions = actions.to(get_device_from_parameters(self.vqvae_model))
 
