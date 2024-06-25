@@ -155,4 +155,4 @@ PATH="$HOME/bin:$PATH" python benchmark/video/run_video_benchmark.py \
     --save-frames 1
 ```
 
-For now, results for `libx264` are available [here](https://docs.google.com/spreadsheets/d/1OYJB43Qu8fC26k_OyoMFgGBBKfQRCi4BIuYitQnq3sw/edit?usp=sharing)
+Results are available [here](https://docs.google.com/spreadsheets/d/1OYJB43Qu8fC26k_OyoMFgGBBKfQRCi4BIuYitQnq3sw/edit?usp=sharing)
