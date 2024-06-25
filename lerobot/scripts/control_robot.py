@@ -19,7 +19,6 @@ from lerobot.common.robot_devices.robots.aloha import AlohaRobot, AlohaRobotConf
 from lerobot.scripts.push_dataset_to_hub import save_meta_data
 from lerobot.scripts.robot_controls.record_dataset import record_dataset
 import concurrent.futures
-import keyboard
 
 CONTROL_MODES = [
     "teleoperate",
@@ -32,11 +31,14 @@ CONTROL_MODES = [
 
 
 CONFIG = AlohaRobotConfig(
-    activated_leaders=["left"],
-    activated_followers=["left"],
+    #activated_leaders=["left"],
+    activated_leaders=["right"],
+    #activated_followers=["left"],
+    activated_followers=["right"],
     #activated_cameras=["cam_high", "cam_low", "cam_left_wrist"],
     #activated_cameras=["cam_high", "cam_left_wrist"],
-    activated_cameras=["cam_left_wrist"],
+    #activated_cameras=["cam_left_wrist"],
+    activated_cameras=[],
     camera_devices={
         # "cam_high": IntelRealSenseCamera(128422271609, width=640, height=480, color="rgb", fps=30),
         # "cam_low": IntelRealSenseCamera(128422271393, width=640, height=480, color="rgb", fps=30),

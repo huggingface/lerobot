@@ -5,7 +5,7 @@ import torch
 from examples.real_robot_example.gym_real_world.robot import Robot
 from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
 from lerobot.common.robot_devices.cameras.utils import Camera
-from lerobot.common.robot_devices.motors.dynamixel import pos2pwm, pwm2pos
+from lerobot.common.robot_devices.motors.dynamixel_old import pos2pwm, pwm2pos
 
 MAX_LEADER_GRIPPER_RAD = 0.7761942786701344
 MAX_LEADER_GRIPPER_POS = 2567
@@ -89,7 +89,8 @@ class AlohaRobotConfig:
     leader_devices: dict[str, str] = field(
         default_factory=lambda: {
             "right": {
-                "port": "/dev/ttyDXL_master_right",
+                #"port": "/dev/ttyDXL_master_right",
+                "port": "/dev/ttyDXL_master_left",
                 "servos": [1, 2, 3, 4, 5, 6, 7, 8, 9],
             },
             "left": {
@@ -217,7 +218,7 @@ class AlohaRobot():
         # Capture images from cameras
         images = {}
         for name in self.cameras:
-            images[name] = self.cameras[name].capture_image()
+            images[name] = self.cameras[name].read()
 
         # Populate output dictionnaries and format to pytorch
         obs_dict, action_dict = {}, {}

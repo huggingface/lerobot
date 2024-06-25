@@ -3,6 +3,7 @@
 import argparse
 from dataclasses import dataclass, replace
 from pathlib import Path
+from threading import Thread
 import time
 import traceback
 import cv2
@@ -153,6 +154,10 @@ class IntelRealSenseCamera():
         self.camera = None
         self.is_connected = False
 
+        self.t = Thread(target=self.capture_image_loop, args=())
+        self.t.daemon = True
+        self._color_image = None
+
     def connect(self):
         if self.is_connected:
             raise ValueError(f"Camera {self.camera_index} is already connected.")
@@ -182,12 +187,9 @@ class IntelRealSenseCamera():
             traceback.print_exc()
 
         self.is_connected = True
-
+        self.t.start()
 
     def capture_image(self, temporary_color: str | None = None) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-        if not self.is_connected:
-            self.connect()
-
         frame = self.camera.wait_for_frames()
 
         color_frame = frame.get_color_frame()
@@ -218,6 +220,15 @@ class IntelRealSenseCamera():
             return color_image, depth_image
         else:
             return color_image
+
+    def capture_image_loop(self):
+        while True:
+            self._color_image = self.capture_image()
+
+    def read(self):
+        while self._color_image is None:
+            time.sleep(0.1)
+        return self._color_image
 
     def disconnect(self):
         if getattr(self, "camera", None):
