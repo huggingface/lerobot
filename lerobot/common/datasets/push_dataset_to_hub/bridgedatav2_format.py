@@ -28,9 +28,7 @@ import tqdm
 from datasets import Dataset, Features, Image, Sequence, Value
 
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, save_images_concurrently
-from lerobot.common.datasets.utils import (
-    hf_transform_to_torch,
-)
+from lerobot.common.datasets.utils import calculate_episode_data_index, hf_transform_to_torch
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
 
@@ -79,16 +77,19 @@ def load_state_timestamp(path):
     return x["full_state"], x["time_stamp"]
 
 
-def load_from_raw(raw_dir, out_dir, fps, video, debug):
+def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episodes: list[int] | None = None):
     traj_search_path = os.path.join("**", "traj_group*", "traj*")
     traj_folders = list(raw_dir.glob(traj_search_path))
     ep_dicts = []
-    episode_data_index = {"from": [], "to": []}
 
-    id_from = 0
-    for ep_idx, ep_path in tqdm.tqdm(enumerate(traj_folders), total=len(traj_folders)):
-        if len(list(ep_path.glob("*.pkl"))) != 2:
-            continue
+    # remove paths from traj_folders that don't have actions
+    traj_folders = [ep_path for ep_path in traj_folders if len(list(ep_path.glob("*.pkl"))) == 2]
+
+    num_episodes = len(traj_folders)
+    ep_ids = episodes if episodes else range(num_episodes)
+
+    for ep_idx in tqdm.tqdm(ep_ids):
+        ep_path = traj_folders[ep_idx]
 
         is_in_scripted_raw = "scripted_raw" in str(ep_path)
 
@@ -123,12 +124,12 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
 
         if video:
             # save png images in temporary directory
-            tmp_imgs_dir = out_dir / "tmp_images"
-            save_images_concurrently(imgs_array, tmp_imgs_dir)  # TODO: this isn't working
+            tmp_imgs_dir = videos_dir / "tmp_images"
+            save_images_concurrently(imgs_array, tmp_imgs_dir)
 
             # encode images to a mp4 video
             fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
-            video_path = out_dir / "videos" / fname
+            video_path = videos_dir / fname
             encode_video_frames(tmp_imgs_dir, video_path, fps)
 
             # clean temporary images directory
@@ -149,18 +150,13 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
         assert isinstance(ep_idx, int)
         ep_dicts.append(ep_dict)
 
-        episode_data_index["from"].append(id_from)
-        episode_data_index["to"].append(id_from + num_frames)
-
-        id_from += num_frames
-
         gc.collect()
 
-        # process first episode only
-        if debug:
-            break
     data_dict = concatenate_episodes(ep_dicts)
-    return data_dict, episode_data_index
+
+    total_frames = data_dict["frame_index"].shape[0]
+    data_dict["index"] = torch.arange(0, total_frames, 1)
+    return data_dict
 
 
 def to_hf_dataset(data_dict, video) -> Dataset:
@@ -186,22 +182,24 @@ def to_hf_dataset(data_dict, video) -> Dataset:
     return hf_dataset
 
 
-def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=True, debug=False):
+def from_raw_to_lerobot_format(
+    raw_dir: Path,
+    videos_dir: Path,
+    fps: int | None = None,
+    video: bool = True,
+    episodes: list[int] | None = None,
+):
     # sanity check
     check_format(raw_dir)
 
     if fps is None:
         fps = 5
 
-    data_dir, episode_data_index = load_from_raw(raw_dir, out_dir, fps, video, debug)
+    data_dir = load_from_raw(raw_dir, videos_dir, fps, video, episodes)
     hf_dataset = to_hf_dataset(data_dir, video)
+    episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
         "fps": fps,
         "video": video,
     }
     return hf_dataset, episode_data_index, info
-
-
-if __name__ == "__main__":
-    dataset, _, _ = from_raw_to_lerobot_format(Path("./data"), Path("./out"), 5, False, True)
-    print(dataset)
