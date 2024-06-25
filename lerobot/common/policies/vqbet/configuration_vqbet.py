@@ -20,7 +20,7 @@ class VQBeTConfig:
     Args:
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
-        n_action_pred_token: Number of future tokens that VQ-BeT predicts.
+        n_action_pred_token: Total number of current token and future tokens that VQ-BeT predicts.
         action_chunk_size: Action chunk size of each action prediction token.
         input_shapes: A dictionary defining the shapes of the input data for the policy.
             The key represents the input data name, and the value is a list indicating the dimensions

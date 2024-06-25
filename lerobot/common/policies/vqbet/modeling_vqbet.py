@@ -402,8 +402,6 @@ class VQBeTHead(nn.Module):
         # dimensions : (batch, action_chunk_size, action_dim)
         actions = torch.cat(slices, dim=0)
 
-        actions = actions.to(get_device_from_parameters(self.vqvae_model))
-
         loss, metric = self.vqvae_model.vqvae_forward(actions)
         n_different_codes = sum(
             [len(torch.unique(metric[2][:, i])) for i in range(self.vqvae_model.vqvae_num_layers)]
@@ -845,7 +843,7 @@ class VqVae(nn.Module):
             return einops.rearrange(output, "N (T A) -> N T A", A=self.config.output_shapes["action"][0])
 
     def get_code(self, state):
-        # in phase 2 of VQ-BeT training, we need a `actual labels of action data` to calculate the Focal loss for code prediction head. (please refer to section 3.3 in the paper https://arxiv.org/pdf/2403.03181)
+        # in phase 2 of VQ-BeT training, we need a `ground truth labels of action data` to calculate the Focal loss for code prediction head. (please refer to section 3.3 in the paper https://arxiv.org/pdf/2403.03181)
         # this function outputs the `GT code` of given action using frozen encoder and quantization layers. (please refer to Figure 2. in the paper https://arxiv.org/pdf/2403.03181)
         state = einops.rearrange(state, "N T A -> N (T A)")
         with torch.no_grad():
