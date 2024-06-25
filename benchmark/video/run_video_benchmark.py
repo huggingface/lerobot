@@ -373,7 +373,7 @@ def main(
             now = dt.datetime.now()
             csv_path = (
                 output_dir
-                / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_{video_codec}_{pix_fmt}_{num_samples}-samples.csv"
+                / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_{video_codec}_{pixel_format}_{num_samples}-samples.csv"
             )
             benchmark_df.to_csv(csv_path, header=True, index=False)
             file_paths.append(csv_path)
