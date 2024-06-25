@@ -391,16 +391,15 @@ class VQBeTHead(nn.Module):
         self._focal_loss_fn = FocalLoss(gamma=2.0)
 
     def discretize(self, n_vqvae_training_steps, actions):
-        # Resizing action sequence data to fit the action chunk size
-        slices = []
-        slices.extend(
+        # Resize the action sequence data to fit the action chunk size using a sliding window approach.
+        actions = torch.cat(
             [
                 actions[:, j : j + self.config.action_chunk_size, :]
                 for j in range(actions.shape[1] + 1 - self.config.action_chunk_size)
-            ]
+            ],
+            dim=0,
         )
-        # dimensions : (batch, action_chunk_size, action_dim)
-        actions = torch.cat(slices, dim=0)
+        # `actions` is a tensor of shape (new_batch, action_chunk_size, action_dim) where new_batch is the number of possible chunks created from the original sequences using the sliding window.
 
         loss, metric = self.vqvae_model.vqvae_forward(actions)
         n_different_codes = sum(
