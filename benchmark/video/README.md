@@ -151,9 +151,8 @@ PATH="$HOME/bin:$PATH" python benchmark/video/run_video_benchmark.py \
     --timestamps-modes 1_frame 2_frames 6_frames \
     --backends pyav video_reader \
     --num-samples 50 \
-    --num-workers 50 \
+    --num-workers 10 \
     --save-frames 1
 ```
 
-Results will be available here.
-<!-- Results are available [here](https://docs.google.com/spreadsheets/d/1OYJB43Qu8fC26k_OyoMFgGBBKfQRCi4BIuYitQnq3sw/edit?usp=sharing) -->
+For now, results for `libx264` are available [here](https://docs.google.com/spreadsheets/d/1OYJB43Qu8fC26k_OyoMFgGBBKfQRCi4BIuYitQnq3sw/edit?usp=sharing)
