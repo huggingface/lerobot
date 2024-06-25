@@ -11,13 +11,13 @@ What is the optimal trade-off between:
 
 How to encode videos?
 - Which video codec (`-vcodec`) to use? `libx264`, `libx265`, `libaom`/`libsvtav1`?
-- How much compression (`-crf`)? Low compression with `0`, normal compression with `20` or extreme with `56`?
+- How much compression (`-crf`)? No compression with `0`, normal compression with `20` or extreme with `56`?
 - What pixel format to use (`-pix_fmt`)? `yuv444p` or `yuv420p`?
 - How many key frames (`-g`)? A key frame every `10` frames?
 
 How to decode videos?
 - Which `decoder`? `torchvision`, `torchaudio`, `ffmpegio`, `decord`, or `nvc`?
-- What scenarios for the requested timestamps? (`timestamps_mode`)
+- What scenarios to use for the requesting timestamps during benchmark? (`timestamps_mode`)
 
 ## Metrics
 
@@ -52,6 +52,8 @@ For these reasons, we run this benchmark on four datasets:
 - `aliberts/paris_street`: (720 x 1280 pixels) real-world outdoor, moving camera.
 - `aliberts/kitchen`: (1080 x 1920 pixels) real-world indoor, fixed camera.
 
+Note: The datasets used for this benchmark need to be image datasets, not video datasets.
+
 **Requested timestamps**
 Given the way video decoding works, once a keyframe has been loaded the decoding of subsequent frames is fast.
 This of course is affected by the `-g` parameter at encoding, which specifies the frequency of the keyframes. Given our typical use cases in robotics policies which might request a few timestamps in different random places, we want to replicate these use cases with the following scenarios:
@@ -69,7 +71,6 @@ However, due to how video decoding is implemented with `pyav`, we don't have acc
 **Data augmentations**
 We might revisit this benchmark and find better settings if we train our policies with various data augmentations to make them more robust (e.g. robust to color changes, compression, etc.).
 
-
 ## How the benchmark works
 
 The benchmark evaluates both encoding and decoding of video frames.
@@ -81,6 +82,36 @@ Then, we iterate through every combination of the decoding parameters `backend` 
 
 Intermediate results saved for each `vcodec` and `pix_fmt` combination in csv tables.
 These are then all concatenated to a single table ready for analysis.
+
+## Install
+
+Building ffmpeg from source is required to include libx265 and libaom/libsvtav1 (av1) video codecs ([compilation guide](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu)).
+
+**Note:** While you still need to build torchvision with a conda-installed `ffmpeg<4.3` to use video_reader (as described in [#220](https://github.com/huggingface/lerobot/pull/220)), you also need another version which is custom-built with all the video codecs for encoding. For the script to then use that version, you can prepend the command above with `PATH="$HOME/bin:$PATH"`, which is where ffmpeg should be built.
+
+## Adding a video decoder
+
+Right now, we're only benchmarking the two video decoder available with torchvision: `pyav` and `video_reader`.
+You can easily add a new decoder to benchmark by adding it to this function in the script:
+```diff
+def decode_video_frames(
+    video_path: str,
+    timestamps: list[float],
+    tolerance_s: float,
+    backend: str,
+) -> torch.Tensor:
+    if backend in ["pyav", "video_reader"]:
+        return decode_video_frames_torchvision(
+            video_path, timestamps, tolerance_s, backend
+        )
++    elif backend == ["your_decoder"]:
++        returen your_decoder_function(
++            video_path, timestamps, tolerance_s, backend
++        )
+    else:
+        raise NotImplementedError(backend)
+```
+
 
 ## Example
 
@@ -125,4 +156,4 @@ PATH="$HOME/bin:$PATH" python benchmark/video/run_video_benchmark.py \
 ```
 
 Results will be available here.
-<!-- [here](https://docs.google.com/spreadsheets/d/1OYJB43Qu8fC26k_OyoMFgGBBKfQRCi4BIuYitQnq3sw/edit?usp=sharing) -->
+<!-- Results are available [here](https://docs.google.com/spreadsheets/d/1OYJB43Qu8fC26k_OyoMFgGBBKfQRCi4BIuYitQnq3sw/edit?usp=sharing) -->

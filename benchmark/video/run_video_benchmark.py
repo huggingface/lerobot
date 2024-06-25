@@ -15,19 +15,8 @@
 # limitations under the License.
 """Assess the performance of video decoding in various configurations.
 
-This script will run different video decoding benchmarks where one parameter varies at a time.
-These parameters and theirs values are specified in the BENCHMARKS dict.
-
-All of these benchmarks are evaluated within different timestamps modes corresponding to different frame-loading scenarios:
-    - `1_frame`: 1 single frame is loaded.
-    - `2_frames`: 2 consecutive frames are loaded.
-    - `2_frames_4_space`: 2 frames separated by 4 frames are loaded.
-    - `6_frames`: 6 consecutive frames are loaded.
-
-These values are more or less arbitrary and based on possible future usage.
-
-These benchmarks are run on the first episode of each dataset specified in DATASET_REPO_IDS.
-Note: These datasets need to be image datasets, not video datasets.
+This script will benchmark different video encoding and decoding parameters.
+See the provided README.md or run `python benchmark/video/run_video_benchmark.py --help` for usage info.
 """
 
 import argparse
@@ -155,6 +144,18 @@ def sample_timestamps(timestamps_mode: str, ep_num_images: int, fps: int) -> lis
     return [idx / fps for idx in frame_indexes]
 
 
+def decode_video_frames(
+    video_path: str,
+    timestamps: list[float],
+    tolerance_s: float,
+    backend: str,
+) -> torch.Tensor:
+    if backend in ["pyav", "video_reader"]:
+        return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
+    else:
+        raise NotImplementedError(backend)
+
+
 def benchmark_decoding(
     imgs_dir: Path,
     video_path: Path,
@@ -177,9 +178,7 @@ def benchmark_decoding(
         }
 
         with time_benchmark:
-            frames = decode_video_frames_torchvision(
-                video_path, timestamps=timestamps, tolerance_s=5e-1, backend=backend
-            )
+            frames = decode_video_frames(video_path, timestamps=timestamps, tolerance_s=5e-1, backend=backend)
         result["load_time_video_ms"] = time_benchmark.result_ms / num_frames
 
         with time_benchmark:
@@ -316,8 +315,6 @@ def main(
 ):
     check_datasets_formats(repo_ids)
     encoding_benchmarks = {
-        # "vcodec": vcodec,
-        # "pix_fmt": pix_fmt,
         "g": g,
         "crf": crf,
     }

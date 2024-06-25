@@ -69,7 +69,7 @@ def decode_video_frames_torchvision(
     tolerance_s: float,
     backend: str = "pyav",
     log_loaded_timestamps: bool = False,
-):
+) -> torch.Tensor:
     """Loads frames associated to the requested timestamps of a video
 
     The backend can be either "pyav" (default) or "video_reader".
@@ -77,9 +77,8 @@ def decode_video_frames_torchvision(
     https://github.com/pytorch/vision/blob/main/torchvision/csrc/io/decoder/gpu/README.rst
     (note that you need to compile against ffmpeg<4.3)
 
-    While both use cpu, "video_reader" is faster than "pyav" but requires additional setup.
-    See our benchmark results for more info on performance:
-    https://github.com/huggingface/lerobot/pull/220
+    While both use cpu, "video_reader" is supposedly faster than "pyav" but requires additional setup.
+    For more info on video decoding, see `benchmark/video/README.md`
 
     See torchvision doc for more info on these two backends:
     https://pytorch.org/vision/0.18/index.html?highlight=backend#torchvision.set_video_backend
