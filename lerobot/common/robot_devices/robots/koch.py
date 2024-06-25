@@ -6,8 +6,7 @@ from examples.real_robot_example.gym_real_world.robot import Robot
 from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
 from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsChain
-from lerobot.common.robot_devices.motors.dynamixel_old import pos2pwm, pwm2pos
-from lerobot.common.robot_devices.robots.utils import MotorsChain
+from lerobot.common.robot_devices.motors.utils import MotorsChain
 
 
 GRIPPER_INDEX = -1
@@ -33,14 +32,34 @@ class KochRobotConfig:
     # Define all the components of the robot
     leader_motors: dict[str, MotorsChain] = field(
         default_factory=lambda: {
-            "right": DynamixelMotorsChain("/dev/ttyDXL_master_right", [1, 2, 3, 4, 5, 6]),
-            "left": DynamixelMotorsChain("/dev/ttyDXL_master_left", [1, 2, 3, 4, 5, 6]),
+            "left": DynamixelMotorsChain(
+                #"/dev/tty.usbmodem575E0030111", {
+                "/dev/tty.usbmodem575E0031751", {
+                    1: "xl330-m077",
+                    2: "xl330-m077",
+                    3: "xl330-m077",
+                    4: "xl330-m077",
+                    5: "xl330-m077",
+                    6: "xl330-m077",
+                }
+            ),
+            #"left": DynamixelMotorsChain("/dev/ttyDXL_master_left", [1, 2, 3, 4, 5, 6]),
         }
     )
     follower_motors: dict[str, MotorsChain] = field(
         default_factory=lambda: {
-            "right": DynamixelMotorsChain("/dev/ttyDXL_puppet_right", [1, 2, 3, 4, 5, 6]),
-            "left": DynamixelMotorsChain("/dev/ttyDXL_puppet_left", [1, 2, 3, 4, 5, 6]),
+            #"right": DynamixelMotorsChain("/dev/ttyDXL_puppet_right", [1, 2, 3, 4, 5, 6]),
+            "left": DynamixelMotorsChain(
+                # "/dev/tty.usbmodem575E0031691", {
+                "/dev/tty.usbmodem575E0032081", {
+                    1: "xl430-w250",
+                    2: "xl430-w250",
+                    3: "xl330-m288",
+                    4: "xl330-m288",
+                    5: "xl330-m288",
+                    6: "xl330-m288",
+                }
+            ),
         }
     )
     cameras: dict[str, Camera] = field(
@@ -101,7 +120,7 @@ class KochRobot():
             if name in follower_pos:
                 state.append(follower_pos[name])
         state = np.concatenate(state)
-        state = pwm2pos(state)
+        #state = pwm2pos(state)
 
         # Create action by concatenating follower goal position
         action = []
@@ -109,7 +128,7 @@ class KochRobot():
             if name in follower_goal_pos:
                 action.append(follower_goal_pos[name])
         action = np.concatenate(action)
-        action = pwm2pos(action)
+        #action = pwm2pos(action)
 
         # Capture images from cameras
         images = {}
@@ -131,9 +150,10 @@ class KochRobot():
         follower_goal_pos = {}
         for name in ["left", "right"]:
             if name in self.follower_motors:
-                to_idx += len(self.config.follower_devices[name]["servos"])
-                follower_goal_pos[name] = pos2pwm(action[from_idx:to_idx].numpy())
+                to_idx += len(self.config.follower_motors[name].motor_ids)
+                follower_goal_pos[name] = action[from_idx:to_idx].numpy()
+                #follower_goal_pos[name] = pos2pwm(action[from_idx:to_idx].numpy())
                 from_idx = to_idx
 
         for name in self.follower_motors:
-            self.follower_motors[name].set_goal_pos(follower_goal_pos[name])
+            self.follower_motors[name].write_goal_position(follower_goal_pos[name].astype(np.int64))

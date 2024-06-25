@@ -61,6 +61,7 @@ moviepy = ">=1.0.3"
 rerun-sdk = ">=0.15.1"
 deepdiff = ">=7.0.1"
 pyrealsense2 = {version = "^2.55.1.6486", optional = true}
+dynamixel-sdk = "^3.7.31"
 
 
 [tool.poetry.extras]

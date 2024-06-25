@@ -14,7 +14,7 @@ from lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format import to_hf_
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes
 from lerobot.common.datasets.utils import calculate_episode_data_index, load_hf_dataset
 from lerobot.common.datasets.video_utils import encode_video_frames
-from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
+# from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
 from lerobot.common.robot_devices.robots.aloha import AlohaRobot, AlohaRobotConfig
 from lerobot.common.robot_devices.robots.koch import KochRobot, KochRobotConfig
 from lerobot.scripts.push_dataset_to_hub import save_meta_data
@@ -48,7 +48,7 @@ CONTROL_MODES = [
 # ALOHA_ROBOT = AlohaRobot(ALOHA_CONFIG, activated_cameras=None)
 
 KOCH_CONFIG = KochRobotConfig()
-KOCH_ROBOT = KochRobot(KOCH_CONFIG, activated_cameras=None)
+KOCH_ROBOT = KochRobot(KOCH_CONFIG)
 
 def teleoperate():
     robot = KOCH_ROBOT
@@ -69,11 +69,19 @@ def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
     img.save(str(path), quality=100)
 
 
-def record_dataset(root="tmp/data", repo_id="lerobot/debug", fps=30, video=True, warmup_time_s=2, record_time_s=60):
+def busy_wait(seconds):
+    # Significantly more accurate than `time.sleep`, and mendatory for our use case,
+    # but it consumes CPU cycles.
+    # TODO(rcadene): find an alternative
+    end_time = time.perf_counter() + seconds
+    while time.perf_counter() < end_time:
+        pass
+
+def record_dataset(root="tmp/data", repo_id="lerobot/debug", fps=30, video=True, warmup_time_s=2, record_time_s=10):
     if not video:
         raise NotImplementedError()
 
-    robot = AlohaRobot(CONFIG)
+    robot = KOCH_ROBOT
     robot.init_teleop()
 
     local_dir = Path(root) / repo_id
@@ -132,6 +140,10 @@ def record_dataset(root="tmp/data", repo_id="lerobot/debug", fps=30, video=True,
                 ep_dict[key].append(action[key])
 
             frame_index += 1
+
+            dt_s = (time.perf_counter() - now)
+            #time.sleep(1 / fps - dt_s)
+            busy_wait(1 / fps - dt_s)
 
             dt_s = (time.perf_counter() - now)
             print(f"Latency (ms): {dt_s * 1000:.2f}\tFrequency: {1 / dt_s:.2f}")
@@ -222,7 +234,7 @@ def replay_episode(root="tmp/data", repo_id="lerobot/debug", fps=30):
 
     hf_dataset = load_hf_dataset(repo_id, CODEBASE_VERSION, root, "train")
 
-    robot = AlohaRobot(CONFIG)
+    robot = KOCH_ROBOT
     robot.init_teleop()
     
     print("Replaying episode")
@@ -236,7 +248,8 @@ def replay_episode(root="tmp/data", repo_id="lerobot/debug", fps=30):
         robot.send_action(action)
 
         dt_s = (time.perf_counter() - now)
-        time.sleep(1 / fps - dt_s)
+        # time.sleep(1 / fps - dt_s)
+        busy_wait(1 / fps - dt_s)
 
         dt_s = (time.perf_counter() - now)
         print(f"Latency (ms): {dt_s * 1000:.2f}\tFrequency: {1 / dt_s:.2f}")
