@@ -55,7 +55,6 @@ from safetensors.torch import save_file
 
 from lerobot.common.datasets.compute_stats import compute_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
-from lerobot.common.datasets.push_dataset_to_hub._download_raw import download_raw
 from lerobot.common.datasets.utils import flatten_dict
 
 
@@ -70,6 +69,8 @@ def get_from_raw_to_lerobot_format_fn(raw_format: str):
         from lerobot.common.datasets.push_dataset_to_hub.dora_parquet_format import from_raw_to_lerobot_format
     elif raw_format == "xarm_pkl":
         from lerobot.common.datasets.push_dataset_to_hub.xarm_pkl_format import from_raw_to_lerobot_format
+    elif raw_format == "cam_png":
+        from lerobot.common.datasets.push_dataset_to_hub.cam_png_format import from_raw_to_lerobot_format
     else:
         raise ValueError(
             f"The selected {raw_format} can't be found. Did you add it to `lerobot/scripts/push_dataset_to_hub.py::get_from_raw_to_lerobot_format_fn`?"
@@ -181,10 +182,6 @@ def push_dataset_to_hub(
         # Temporary directory used to store images, videos, meta_data
         meta_data_dir = Path(cache_dir) / "meta_data"
         videos_dir = Path(cache_dir) / "videos"
-
-    # Download the raw dataset if available
-    if not raw_dir.exists():
-        download_raw(raw_dir, dataset_id)
 
     if raw_format is None:
         # TODO(rcadene, adilzouitine): implement auto_find_raw_format
