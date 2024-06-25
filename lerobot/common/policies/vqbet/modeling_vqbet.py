@@ -1,4 +1,5 @@
 import math
+import warnings
 from collections import deque
 from typing import Callable, List
 
@@ -83,9 +84,11 @@ class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
         # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
 
-        assert (
-            self.vqbet.action_head.vqvae_model.discretized.item()
-        ), "To evaluate in the environment, your VQ-BeT model should contain a pretrained Residual VQ."
+        if not self.vqbet.action_head.vqvae_model.discretized.item():
+            warnings.warn(
+                "To evaluate in the environment, your VQ-BeT model should contain a pretrained Residual VQ.",
+                stacklevel=1,
+            )
 
         if len(self._queues["action"]) == 0:
             batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
