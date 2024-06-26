@@ -31,6 +31,7 @@ from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
 
@@ -82,6 +83,7 @@ class Logger:
 
     pretrained_model_dir_name = "pretrained_model"
     training_state_file_name = "training_state.pth"
+    online_buffer_dir_name = "online_buffer"
 
     def __init__(self, cfg: DictConfig, log_dir: str, wandb_job_name: str | None = None):
         """
@@ -175,6 +177,7 @@ class Logger:
         train_step: int,
         optimizer: Optimizer,
         scheduler: LRScheduler | None,
+        online_buffer: LeRobotDataset | None,
     ):
         """Checkpoint the global training_step, optimizer state, scheduler state, and random state.
 
@@ -188,6 +191,8 @@ class Logger:
         if scheduler is not None:
             training_state["scheduler"] = scheduler.state_dict()
         torch.save(training_state, save_dir / self.training_state_file_name)
+        if online_buffer is not None:
+            online_buffer.save(save_dir / self.online_buffer_dir_name)
 
     def save_checkpont(
         self,
@@ -196,6 +201,7 @@ class Logger:
         optimizer: Optimizer,
         scheduler: LRScheduler | None,
         identifier: str,
+        online_buffer: LeRobotDataset | None = None,
     ):
         """Checkpoint the model weights and the training state."""
         checkpoint_dir = self.checkpoints_dir / str(identifier)
@@ -207,10 +213,12 @@ class Logger:
         self.save_model(
             checkpoint_dir / self.pretrained_model_dir_name, policy, wandb_artifact_name=wandb_artifact_name
         )
-        self.save_training_state(checkpoint_dir, train_step, optimizer, scheduler)
+        self.save_training_state(checkpoint_dir, train_step, optimizer, scheduler, online_buffer)
         os.symlink(checkpoint_dir.absolute(), self.last_checkpoint_dir)
 
-    def load_last_training_state(self, optimizer: Optimizer, scheduler: LRScheduler | None) -> int:
+    def load_last_training_state(
+        self, optimizer: Optimizer, scheduler: LRScheduler | None
+    ) -> tuple[int, None | LeRobotDataset]:
         """
         Given the last checkpoint in the logging directory, load the optimizer state, scheduler state, and
         random state, and return the global training step.
@@ -225,7 +233,13 @@ class Logger:
             )
         # Small hack to get the expected keys: use `get_global_random_state`.
         set_global_random_state({k: training_state[k] for k in get_global_random_state()})
-        return training_state["step"]
+        ret = (training_state["step"], None)
+        if (self.last_checkpoint_dir / self.online_buffer_dir_name).exists():
+            ret = (
+                ret[0],
+                LeRobotDataset(repo_id=self.online_buffer_dir_name, root=self.last_checkpoint_dir),
+            )
+        return ret
 
     def log_dict(self, d, step, mode="train"):
         assert mode in {"train", "eval"}
