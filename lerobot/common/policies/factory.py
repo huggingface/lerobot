@@ -55,6 +55,11 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
         from lerobot.common.policies.act.modeling_act import ACTPolicy
 
         return ACTPolicy, ACTConfig
+    elif name == "vqbet":
+        from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
+        from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
+
+        return VQBeTPolicy, VQBeTConfig
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
