@@ -99,7 +99,7 @@ policy:
   clip_sample_range: 1.0
 
   # Inference
-  num_inference_steps: 100
+  num_inference_steps: null  # if not provided, defaults to `num_train_timesteps`
 
   # Loss computation
   do_mask_loss_for_padding: false
