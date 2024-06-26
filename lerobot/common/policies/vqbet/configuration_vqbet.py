@@ -102,7 +102,7 @@ class VQBeTConfig:
     use_group_norm: bool = True
     spatial_softmax_num_keypoints: int = 32
     # VQ-VAE
-    n_vqvae_training_steps: int = 3000
+    n_vqvae_training_steps: int = 20000
     vqvae_n_embed: int = 16
     vqvae_embedding_dim: int = 256
     vqvae_enc_hidden_dim: int = 128
