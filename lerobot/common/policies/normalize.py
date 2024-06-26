@@ -102,6 +102,7 @@ class Normalize(nn.Module):
         shapes: dict[str, list[int]],
         modes: dict[str, str],
         stats: dict[str, dict[str, Tensor]] | None = None,
+        std_epsilon: float = 1e-5,
     ):
         """
         Args:
@@ -120,11 +121,15 @@ class Normalize(nn.Module):
                 not provided, as expected for finetuning or evaluation, the default buffers should to be
                 overwritten by a call to `policy.load_state_dict(state_dict)`. That way, initializing the
                 dataset is not needed to get the stats, since they are already in the policy state_dict.
+            std_epsilon (float, optional): A small minimal value for the standard deviation to avoid division by
+                zero. Default is `1e-5`. We use `clamp_min` to make sure the standard deviation (or the difference
+                between min and max) is at least `std_epsilon`.
         """
         super().__init__()
         self.shapes = shapes
         self.modes = modes
         self.stats = stats
+        self.std_epsilon = std_epsilon
         stats_buffers = create_stats_buffers(shapes, modes, stats)
         for key, buffer in stats_buffers.items():
             setattr(self, "buffer_" + key.replace(".", "_"), buffer)
@@ -132,6 +137,7 @@ class Normalize(nn.Module):
     # TODO(rcadene): should we remove torch.no_grad?
     @torch.no_grad
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        output_batch = {}
         for key, mode in self.modes.items():
             buffer = getattr(self, "buffer_" + key.replace(".", "_"))
 
@@ -140,19 +146,25 @@ class Normalize(nn.Module):
                 std = buffer["std"]
                 assert not torch.isinf(mean).any(), _no_stats_error_str("mean")
                 assert not torch.isinf(std).any(), _no_stats_error_str("std")
-                batch[key] = (batch[key] - mean) / (std + 1e-8)
+                output_batch[key] = (batch[key] - mean) / std.clamp_min(self.std_epsilon)
             elif mode == "min_max":
                 min = buffer["min"]
                 max = buffer["max"]
                 assert not torch.isinf(min).any(), _no_stats_error_str("min")
                 assert not torch.isinf(max).any(), _no_stats_error_str("max")
+                # To add to have at least std_epsilon between min and max
+                epsilon = (self.std_epsilon - (max - min).abs()).clamp_min(0)
+                max = max + epsilon
                 # normalize to [0,1]
-                batch[key] = (batch[key] - min) / (max - min + 1e-8)
+                output_batch[key] = (batch[key] - min) / (max - min)
                 # normalize to [-1, 1]
-                batch[key] = batch[key] * 2 - 1
+                output_batch[key] = output_batch[key] * 2 - 1
             else:
                 raise ValueError(mode)
-        return batch
+        for key in batch:
+            if key not in output_batch:
+                output_batch[key] = batch[key]
+        return output_batch
 
 
 class Unnormalize(nn.Module):
@@ -166,6 +178,7 @@ class Unnormalize(nn.Module):
         shapes: dict[str, list[int]],
         modes: dict[str, str],
         stats: dict[str, dict[str, Tensor]] | None = None,
+        std_epsilon: float = 1e-5,
     ):
         """
         Args:
@@ -184,11 +197,16 @@ class Unnormalize(nn.Module):
                 not provided, as expected for finetuning or evaluation, the default buffers should to be
                 overwritten by a call to `policy.load_state_dict(state_dict)`. That way, initializing the
                 dataset is not needed to get the stats, since they are already in the policy state_dict.
+            std_epsilon (float, optional): A small minimal value for the standard deviation to avoid division by
+                zero in the Normalize step. We use the same value for unnormalization here to have a consistent
+                behavior. Default is `1e-5`. We use `clamp_min` to make sure the standard deviation (or the difference
+                between min and max) is at least `std_epsilon`.
         """
         super().__init__()
         self.shapes = shapes
         self.modes = modes
         self.stats = stats
+        self.std_epsilon = std_epsilon
         # `self.buffer_observation_state["mean"]` contains `torch.tensor(state_dim)`
         stats_buffers = create_stats_buffers(shapes, modes, stats)
         for key, buffer in stats_buffers.items():
@@ -197,6 +215,7 @@ class Unnormalize(nn.Module):
     # TODO(rcadene): should we remove torch.no_grad?
     @torch.no_grad
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        output_batch = {}
         for key, mode in self.modes.items():
             buffer = getattr(self, "buffer_" + key.replace(".", "_"))
 
@@ -205,14 +224,20 @@ class Unnormalize(nn.Module):
                 std = buffer["std"]
                 assert not torch.isinf(mean).any(), _no_stats_error_str("mean")
                 assert not torch.isinf(std).any(), _no_stats_error_str("std")
-                batch[key] = batch[key] * std + mean
+                output_batch[key] = batch[key] * std.clamp_min(self.std_epsilon) + mean
             elif mode == "min_max":
                 min = buffer["min"]
                 max = buffer["max"]
                 assert not torch.isinf(min).any(), _no_stats_error_str("min")
                 assert not torch.isinf(max).any(), _no_stats_error_str("max")
-                batch[key] = (batch[key] + 1) / 2
-                batch[key] = batch[key] * (max - min) + min
+                # To add to have at least std_epsilon between min and max
+                epsilon = (self.std_epsilon - (max - min).abs()).clamp_min(0)
+                max = max + epsilon
+                output_batch[key] = (batch[key] + 1) / 2
+                output_batch[key] = output_batch[key] * (max - min) + min
             else:
                 raise ValueError(mode)
-        return batch
+        for key in batch:
+            if key not in output_batch:
+                output_batch[key] = batch[key]
+        return output_batch
