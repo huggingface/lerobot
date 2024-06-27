@@ -595,7 +595,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     )
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
-        num_workers=cfg.training.num_workers,
+        num_workers=0,
         batch_size=cfg.training.batch_size,
         sampler=sampler,
         pin_memory=device.type != "cpu",
