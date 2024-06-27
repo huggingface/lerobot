@@ -19,6 +19,7 @@ import torch
 from omegaconf import ListConfig, OmegaConf
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
+from lerobot.common.datasets.transforms import get_image_transforms
 
 
 def resolve_delta_timestamps(cfg):
@@ -71,17 +72,39 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
 
     resolve_delta_timestamps(cfg)
 
-    # TODO(rcadene): add data augmentations
+    image_transforms = None
+    if cfg.training.image_transforms.enable:
+        cfg_tf = cfg.training.image_transforms
+        image_transforms = get_image_transforms(
+            brightness_weight=cfg_tf.brightness.weight,
+            brightness_min_max=cfg_tf.brightness.min_max,
+            contrast_weight=cfg_tf.contrast.weight,
+            contrast_min_max=cfg_tf.contrast.min_max,
+            saturation_weight=cfg_tf.saturation.weight,
+            saturation_min_max=cfg_tf.saturation.min_max,
+            hue_weight=cfg_tf.hue.weight,
+            hue_min_max=cfg_tf.hue.min_max,
+            sharpness_weight=cfg_tf.sharpness.weight,
+            sharpness_min_max=cfg_tf.sharpness.min_max,
+            max_num_transforms=cfg_tf.max_num_transforms,
+            random_order=cfg_tf.random_order,
+        )
 
     if isinstance(cfg.dataset_repo_id, str):
         dataset = LeRobotDataset(
             cfg.dataset_repo_id,
             split=split,
             delta_timestamps=cfg.training.get("delta_timestamps"),
+            image_transforms=image_transforms,
+            video_backend=cfg.video_backend,
         )
     else:
         dataset = MultiLeRobotDataset(
-            cfg.dataset_repo_id, split=split, delta_timestamps=cfg.training.get("delta_timestamps")
+            cfg.dataset_repo_id,
+            split=split,
+            delta_timestamps=cfg.training.get("delta_timestamps"),
+            image_transforms=image_transforms,
+            video_backend=cfg.video_backend,
         )
 
     if cfg.get("override_dataset_stats"):

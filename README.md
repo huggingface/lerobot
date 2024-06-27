@@ -134,7 +134,8 @@ python lerobot/scripts/visualize_dataset.py \
     --episode-index 0
 ```
 
-or from a dataset in a local folder with the root `DATA_DIR` environment variable
+or from a dataset in a local folder with the root `DATA_DIR` environment variable (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
+
 ```bash
 DATA_DIR='./my_local_data_dir' python lerobot/scripts/visualize_dataset.py \
     --repo-id lerobot/pusht \
@@ -150,6 +151,7 @@ https://github-production-user-asset-6210df.s3.amazonaws.com/4681518/328035972-f
 Our script can also visualize datasets stored on a distant server. See `python lerobot/scripts/visualize_dataset.py --help` for more instructions.
 
 ### The `LeRobotDataset` format
+
 
 A dataset in `LeRobotDataset` format is very simple to use. It can be loaded from a repository on the Hugging Face hub or a local folder simply with e.g. `dataset = LeRobotDataset("lerobot/aloha_static_coffee")` and can be indexed into like any Hugging Face and Pytorch dataset. For instance `dataset[0]` will retrieve a sample of the dataset observations and actions in pytorch tensors format ready to be fed to a model.
 
@@ -281,13 +283,13 @@ To add a dataset to the hub, you need to login using a write-access token, which
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-Then move your dataset folder in `data` directory (e.g. `data/aloha_static_pingpong_test`), and push your dataset to the hub with:
+Then point to your raw dataset folder (e.g. `data/aloha_static_pingpong_test_raw`), and push your dataset to the hub with:
 ```bash
 python lerobot/scripts/push_dataset_to_hub.py \
---data-dir data \
---dataset-id aloha_static_pingpong_test \
---raw-format aloha_hdf5 \
---community-id lerobot
+--raw-dir data/aloha_static_pingpong_test_raw \
+--out-dir data \
+--repo-id lerobot/aloha_static_pingpong_test \
+--raw-format aloha_hdf5
 ```
 
 See `python lerobot/scripts/push_dataset_to_hub.py --help` for more instructions.

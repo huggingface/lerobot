@@ -28,6 +28,7 @@ seed: ???
 # "dataset_index" into the returned item. The index mapping is made according to the order in which the
 # datsets are provided.
 dataset_repo_id: lerobot/pusht
+video_backend: pyav
 
 training:
   offline_steps: ???
@@ -38,11 +39,46 @@ training:
   # `online_env_seed` is used for environments for online training data rollouts.
   online_env_seed: ???
   eval_freq: ???
-  save_freq: ???
   log_freq: 250
   save_checkpoint: true
+  # Checkpoint is saved every `save_freq` training iterations and after the last training step.
+  save_freq: ???
   num_workers: 4
   batch_size: ???
+  image_transforms:
+  # These transforms are all using standard torchvision.transforms.v2
+  # You can find out how these transformations affect images here:
+  # https://pytorch.org/vision/0.18/auto_examples/transforms/plot_transforms_illustrations.html
+  # We use a custom RandomSubsetApply container to sample them.
+  # For each transform, the following parameters are available:
+  #   weight: This represents the multinomial probability (with no replacement)
+  #           used for sampling the transform. If the sum of the weights is not 1,
+  #           they will be normalized.
+  #   min_max: Lower & upper bound respectively used for sampling the transform's parameter
+  #           (following uniform distribution) when it's applied.
+    # Set this flag to `true` to enable transforms during training
+    enable: false
+    # This is the maximum number of transforms (sampled from these below) that will be applied to each frame.
+    # It's an integer in the interval [1, number of available transforms].
+    max_num_transforms: 3
+    # By default, transforms are applied in Torchvision's suggested order (shown below).
+    # Set this to True to apply them in a random order.
+    random_order: false
+    brightness:
+      weight: 1
+      min_max: [0.8, 1.2]
+    contrast:
+      weight: 1
+      min_max: [0.8, 1.2]
+    saturation:
+      weight: 1
+      min_max: [0.5, 1.5]
+    hue:
+      weight: 1
+      min_max: [-0.05, 0.05]
+    sharpness:
+      weight: 1
+      min_max: [0.8, 1.2]
 
 eval:
   n_episodes: 1

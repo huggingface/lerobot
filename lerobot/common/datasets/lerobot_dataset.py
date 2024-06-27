@@ -46,15 +46,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
         version: str | None = CODEBASE_VERSION,
         root: Path | None = DATA_DIR,
         split: str = "train",
-        transform: Callable | None = None,
+        image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
+        video_backend: str | None = None,
     ):
         super().__init__()
         self.repo_id = repo_id
         self.version = version
         self.root = root
         self.split = split
-        self.transform = transform
+        self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         # load data from hub or locally when root is provided
         # TODO(rcadene, aliberts): implement faster transfer
@@ -69,6 +70,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.info = load_info(repo_id, version, root)
         if self.video:
             self.videos_dir = load_videos(repo_id, version, root)
+            self.video_backend = video_backend if video_backend is not None else "pyav"
 
     @property
     def fps(self) -> int:
@@ -149,10 +151,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self.video_frame_keys,
                 self.videos_dir,
                 self.tolerance_s,
+                self.video_backend,
             )
 
-        if self.transform is not None:
-            item = self.transform(item)
+        if self.image_transforms is not None:
+            for cam in self.camera_keys:
+                item[cam] = self.image_transforms(item[cam])
 
         return item
 
@@ -168,7 +172,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"  Recorded Frames per Second: {self.fps},\n"
             f"  Camera Keys: {self.camera_keys},\n"
             f"  Video Frame Keys: {self.video_frame_keys if self.video else 'N/A'},\n"
-            f"  Transformations: {self.transform},\n"
+            f"  Transformations: {self.image_transforms},\n"
             f")"
         )
 
@@ -187,6 +191,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         stats=None,
         info=None,
         videos_dir=None,
+        video_backend=None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from existing data and attributes instead of loading from the filesystem.
 
@@ -202,13 +207,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.version = version
         obj.root = root
         obj.split = split
-        obj.transform = transform
+        obj.image_transforms = transform
         obj.delta_timestamps = delta_timestamps
         obj.hf_dataset = hf_dataset
         obj.episode_data_index = episode_data_index
         obj.stats = stats
         obj.info = info if info is not None else {}
         obj.videos_dir = videos_dir
+        obj.video_backend = video_backend if video_backend is not None else "pyav"
         return obj
 
 
@@ -225,8 +231,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         version: str | None = CODEBASE_VERSION,
         root: Path | None = DATA_DIR,
         split: str = "train",
-        transform: Callable | None = None,
+        image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
+        video_backend: str | None = None,
     ):
         super().__init__()
         self.repo_ids = repo_ids
@@ -239,7 +246,8 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 root=root,
                 split=split,
                 delta_timestamps=delta_timestamps,
-                transform=transform,
+                image_transforms=image_transforms,
+                video_backend=video_backend,
             )
             for repo_id in repo_ids
         ]
@@ -274,7 +282,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         self.version = version
         self.root = root
         self.split = split
-        self.transform = transform
+        self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.stats = aggregate_stats(self._datasets)
 
@@ -380,6 +388,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         for data_key in self.disabled_data_keys:
             if data_key in item:
                 del item[data_key]
+
         return item
 
     def __repr__(self):
@@ -394,6 +403,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             f"  Recorded Frames per Second: {self.fps},\n"
             f"  Camera Keys: {self.camera_keys},\n"
             f"  Video Frame Keys: {self.video_frame_keys if self.video else 'N/A'},\n"
-            f"  Transformations: {self.transform},\n"
+            f"  Transformations: {self.image_transforms},\n"
             f")"
         )

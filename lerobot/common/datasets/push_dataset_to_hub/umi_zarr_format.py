@@ -19,7 +19,6 @@ import logging
 import shutil
 from pathlib import Path
 
-import numpy as np
 import torch
 import tqdm
 import zarr
@@ -29,6 +28,7 @@ from PIL import Image as PILImage
 from lerobot.common.datasets.push_dataset_to_hub._umi_imagecodecs_numcodecs import register_codecs
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, save_images_concurrently
 from lerobot.common.datasets.utils import (
+    calculate_episode_data_index,
     hf_transform_to_torch,
 )
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
@@ -59,23 +59,7 @@ def check_format(raw_dir) -> bool:
     assert all(nb_frames == zarr_data[dataset].shape[0] for dataset in required_datasets)
 
 
-def get_episode_idxs(episode_ends: np.ndarray) -> np.ndarray:
-    # Optimized and simplified version of this function: https://github.com/real-stanford/universal_manipulation_interface/blob/298776ce251f33b6b3185a98d6e7d1f9ad49168b/diffusion_policy/common/replay_buffer.py#L374
-    from numba import jit
-
-    @jit(nopython=True)
-    def _get_episode_idxs(episode_ends):
-        result = np.zeros((episode_ends[-1],), dtype=np.int64)
-        start_idx = 0
-        for episode_number, end_idx in enumerate(episode_ends):
-            result[start_idx:end_idx] = episode_number
-            start_idx = end_idx
-        return result
-
-    return _get_episode_idxs(episode_ends)
-
-
-def load_from_raw(raw_dir, out_dir, fps, video, debug):
+def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episodes: list[int] | None = None):
     zarr_path = raw_dir / "cup_in_the_wild.zarr"
     zarr_data = zarr.open(zarr_path, mode="r")
 
@@ -92,39 +76,41 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
     episode_ends = zarr_data["meta/episode_ends"][:]
     num_episodes = episode_ends.shape[0]
 
-    episode_ids = torch.from_numpy(get_episode_idxs(episode_ends))
-
     # We convert it in torch tensor later because the jit function does not support torch tensors
     episode_ends = torch.from_numpy(episode_ends)
 
+    # load data indices from which each episode starts and ends
+    from_ids, to_ids = [], []
+    from_idx = 0
+    for to_idx in episode_ends:
+        from_ids.append(from_idx)
+        to_ids.append(to_idx)
+        from_idx = to_idx
+
     ep_dicts = []
-    episode_data_index = {"from": [], "to": []}
-
-    id_from = 0
-    for ep_idx in tqdm.tqdm(range(num_episodes)):
-        id_to = episode_ends[ep_idx]
-        num_frames = id_to - id_from
-
-        # sanity heck
-        assert (episode_ids[id_from:id_to] == ep_idx).all()
+    ep_ids = episodes if episodes else range(num_episodes)
+    for ep_idx, selected_ep_idx in tqdm.tqdm(enumerate(ep_ids)):
+        from_idx = from_ids[selected_ep_idx]
+        to_idx = to_ids[selected_ep_idx]
+        num_frames = to_idx - from_idx
 
         # TODO(rcadene): save temporary images of the episode?
 
-        state = states[id_from:id_to]
+        state = states[from_idx:to_idx]
 
         ep_dict = {}
 
         # load 57MB of images in RAM (400x224x224x3 uint8)
-        imgs_array = zarr_data["data/camera0_rgb"][id_from:id_to]
+        imgs_array = zarr_data["data/camera0_rgb"][from_idx:to_idx]
         img_key = "observation.image"
         if video:
             # save png images in temporary directory
-            tmp_imgs_dir = out_dir / "tmp_images"
+            tmp_imgs_dir = videos_dir / "tmp_images"
             save_images_concurrently(imgs_array, tmp_imgs_dir)
 
             # encode images to a mp4 video
             fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
-            video_path = out_dir / "videos" / fname
+            video_path = videos_dir / fname
             encode_video_frames(tmp_imgs_dir, video_path, fps)
 
             # clean temporary images directory
@@ -139,27 +125,18 @@ def load_from_raw(raw_dir, out_dir, fps, video, debug):
         ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int64)
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
         ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
-        ep_dict["episode_data_index_from"] = torch.tensor([id_from] * num_frames)
-        ep_dict["episode_data_index_to"] = torch.tensor([id_from + num_frames] * num_frames)
-        ep_dict["end_pose"] = end_pose[id_from:id_to]
-        ep_dict["start_pos"] = start_pos[id_from:id_to]
-        ep_dict["gripper_width"] = gripper_width[id_from:id_to]
+        ep_dict["episode_data_index_from"] = torch.tensor([from_idx] * num_frames)
+        ep_dict["episode_data_index_to"] = torch.tensor([from_idx + num_frames] * num_frames)
+        ep_dict["end_pose"] = end_pose[from_idx:to_idx]
+        ep_dict["start_pos"] = start_pos[from_idx:to_idx]
+        ep_dict["gripper_width"] = gripper_width[from_idx:to_idx]
         ep_dicts.append(ep_dict)
-
-        episode_data_index["from"].append(id_from)
-        episode_data_index["to"].append(id_from + num_frames)
-        id_from += num_frames
-
-        # process first episode only
-        if debug:
-            break
 
     data_dict = concatenate_episodes(ep_dicts)
 
-    total_frames = id_from
+    total_frames = data_dict["frame_index"].shape[0]
     data_dict["index"] = torch.arange(0, total_frames, 1)
-
-    return data_dict, episode_data_index
+    return data_dict
 
 
 def to_hf_dataset(data_dict, video):
@@ -199,7 +176,13 @@ def to_hf_dataset(data_dict, video):
     return hf_dataset
 
 
-def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=True, debug=False):
+def from_raw_to_lerobot_format(
+    raw_dir: Path,
+    videos_dir: Path,
+    fps: int | None = None,
+    video: bool = True,
+    episodes: list[int] | None = None,
+):
     # sanity check
     check_format(raw_dir)
 
@@ -212,9 +195,9 @@ def from_raw_to_lerobot_format(raw_dir: Path, out_dir: Path, fps=None, video=Tru
             "Generating UMI dataset without `video=True` creates ~150GB on disk and requires ~80GB in RAM."
         )
 
-    data_dict, episode_data_index = load_from_raw(raw_dir, out_dir, fps, video, debug)
+    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes)
     hf_dataset = to_hf_dataset(data_dict, video)
-
+    episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
         "fps": fps,
         "video": video,

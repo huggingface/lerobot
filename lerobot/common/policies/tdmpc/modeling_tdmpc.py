@@ -134,7 +134,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         self._prev_mean: torch.Tensor | None = None
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]):
+    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
         batch = self.normalize_inputs(batch)
         batch["observation.image"] = batch[self.input_image_key]
