@@ -41,8 +41,8 @@ def make_env(cfg: DictConfig, n_envs: int = 1) -> gym.vector.VectorEnv:
         )
     else:
         env = gym.vector.SyncVectorEnv(
-            [lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs) for _ in range(n_envs)]
-            ** gym_vector_kwgs
+            [lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs) for _ in range(n_envs)],
+            **gym_vector_kwgs,
         )
 
     return env
