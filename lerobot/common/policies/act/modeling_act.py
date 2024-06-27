@@ -76,6 +76,7 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         self.model = ACT(config)
 
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+        self.expected_state_keys = [k for k in config.input_shapes if k.startswith("observation.state")]
 
         self.reset()
 
@@ -98,6 +99,7 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
 
         batch = self.normalize_inputs(batch)
         batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+        batch["observation.states"] = torch.concat([batch[k] for k in self.expected_state_keys], dim=-1)
 
         # If we are doing temporal ensembling, keep track of the exponential moving average (EMA), and return
         # the first action.
@@ -135,7 +137,13 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
+        batch_size = batch["action"].shape[0]
         batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+        # TODO: Find better way to handle this
+        # Scalars have (B,) shape, so we need to reshape them to (B, 1) to match the expected shape.
+        batch["observation.states"] = torch.concat(
+            [batch[k].reshape(batch_size, -1) for k in self.expected_state_keys], dim=-1
+        )
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
@@ -200,15 +208,17 @@ class ACT(nn.Module):
         self.config = config
         # BERT style VAE encoder with input tokens [cls, robot_state, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
-        self.use_input_state = "observation.state" in config.input_shapes
+        self.expected_state_keys = [k for k in config.input_shapes if k.startswith("observation.state")]
+
+        self.use_input_state = any(self.expected_state_keys)
+        self.state_shape = sum(config.input_shapes[k][0] for k in self.expected_state_keys)
+
         if self.config.use_vae:
             self.vae_encoder = ACTEncoder(config)
             self.vae_encoder_cls_embed = nn.Embedding(1, config.dim_model)
             # Projection layer for joint-space configuration to hidden dimension.
             if self.use_input_state:
-                self.vae_encoder_robot_state_input_proj = nn.Linear(
-                    config.input_shapes["observation.state"][0], config.dim_model
-                )
+                self.vae_encoder_robot_state_input_proj = nn.Linear(self.state_shape, config.dim_model)
             # Projection layer for action (joint-space target) to hidden dimension.
             self.vae_encoder_action_input_proj = nn.Linear(
                 config.output_shapes["action"][0], config.dim_model
@@ -243,9 +253,7 @@ class ACT(nn.Module):
         # Transformer encoder input projections. The tokens will be structured like
         # [latent, robot_state, image_feature_map_pixels].
         if self.use_input_state:
-            self.encoder_robot_state_input_proj = nn.Linear(
-                config.input_shapes["observation.state"][0], config.dim_model
-            )
+            self.encoder_robot_state_input_proj = nn.Linear(self.state_shape, config.dim_model)
         self.encoder_latent_input_proj = nn.Linear(config.latent_dim, config.dim_model)
         self.encoder_img_feat_input_proj = nn.Conv2d(
             backbone_model.fc.in_features, config.dim_model, kernel_size=1
@@ -276,7 +284,7 @@ class ACT(nn.Module):
         `batch` should have the following structure:
 
         {
-            "observation.state": (B, state_dim) batch of robot states.
+            "observation.states": (B, state_dim) batch of robot states.
             "observation.images": (B, n_cameras, C, H, W) batch of images.
             "action" (optional, only if training with VAE): (B, chunk_size, action dim) batch of actions.
         }
@@ -300,7 +308,7 @@ class ACT(nn.Module):
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size
             )  # (B, 1, D)
             if self.use_input_state:
-                robot_state_embed = self.vae_encoder_robot_state_input_proj(batch["observation.state"])
+                robot_state_embed = self.vae_encoder_robot_state_input_proj(batch["observation.states"])
                 robot_state_embed = robot_state_embed.unsqueeze(1)  # (B, 1, D)
             action_embed = self.vae_encoder_action_input_proj(batch["action"])  # (B, S, D)
 
@@ -320,7 +328,7 @@ class ACT(nn.Module):
             cls_joint_is_pad = torch.full(
                 (batch_size, 2 if self.use_input_state else 1),
                 False,
-                device=batch["observation.state"].device,
+                device=batch["observation.states"].device,
             )
             key_padding_mask = torch.cat(
                 [cls_joint_is_pad, batch["action_is_pad"]], axis=1
@@ -344,7 +352,7 @@ class ACT(nn.Module):
             mu = log_sigma_x2 = None
             # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use buffer
             latent_sample = torch.zeros([batch_size, self.config.latent_dim], dtype=torch.float32).to(
-                batch["observation.state"].device
+                batch["observation.states"].device
             )
 
         # Prepare all other transformer encoder inputs.
@@ -366,7 +374,7 @@ class ACT(nn.Module):
 
         # Get positional embeddings for robot state and latent.
         if self.use_input_state:
-            robot_state_embed = self.encoder_robot_state_input_proj(batch["observation.state"])  # (B, C)
+            robot_state_embed = self.encoder_robot_state_input_proj(batch["observation.states"])  # (B, C)
         latent_embed = self.encoder_latent_input_proj(latent_sample)  # (B, C)
 
         # Stack encoder input and positional embeddings moving to (S, B, C).
