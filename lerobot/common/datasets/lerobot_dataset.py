@@ -49,7 +49,7 @@ class OnlineLeRobotDataset(torch.utils.data.Dataset):
         self,
         data: dict[str, torch.Tensor],
         fps: float,
-        delta_timestamps: dict[list[float]] | None = None,
+        delta_timestamps: dict[str, list[float]] | dict[str, torch.Tensor] | None = None,
         use_cache: bool = False,
     ):
         super().__init__()
@@ -75,6 +75,19 @@ class OnlineLeRobotDataset(torch.utils.data.Dataset):
         return 1 / self.fps - 1e-4
 
     @property
+    def delta_timestamps(self) -> dict[str, torch.Tensor] | None:
+        return self._delta_timestamps
+
+    @delta_timestamps.setter
+    def delta_timestamps(self, delta_timestamps: dict[str, torch.Tensor] | dict[str, list[float]] | None):
+        if delta_timestamps is None:
+            self._delta_timestamps = delta_timestamps
+        else:
+            self._delta_timestamps = {
+                k: v if isinstance(v, torch.Tensor) else torch.tensor(v) for k, v in delta_timestamps.items()
+            }
+
+    @property
     def num_episodes(self) -> int:
         if len(self.data) > 0:
             return len(torch.unique(self.data["episode_index"]))
@@ -93,7 +106,7 @@ class OnlineLeRobotDataset(torch.utils.data.Dataset):
         item = {}
 
         if self.cache is not None and idx in self.cache:
-            item = deepcopy(self.cache[idx])
+            item = self.cache[idx]
             if self.delta_timestamps is None:
                 return item
 
@@ -118,8 +131,7 @@ class OnlineLeRobotDataset(torch.utils.data.Dataset):
             if data_key in item:
                 continue
             # get timestamps used as query to retrieve data of previous/future frames
-            delta_ts = self.delta_timestamps[data_key]
-            query_ts = current_ts + torch.tensor(delta_ts)
+            query_ts = current_ts + self.delta_timestamps[data_key]
 
             # compute distances between each query timestamp and all timestamps of all the frames belonging to the episode
             dist = torch.cdist(query_ts[:, None], episode_timestamps[:, None], p=1)
@@ -136,7 +148,7 @@ class OnlineLeRobotDataset(torch.utils.data.Dataset):
                 "data collection."
             )
 
-            # load frames for this data key, stacking on the first dimension
+            # load frames for this data key.
             item[data_key] = self.data[data_key][episode_data_indices[argmin_]]
 
             item[f"{data_key}_is_pad"] = is_pad
