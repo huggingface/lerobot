@@ -16,6 +16,7 @@
 import json
 import logging
 import os
+from copy import deepcopy
 from pathlib import Path
 from typing import Callable
 
@@ -41,6 +42,96 @@ from lerobot.common.datasets.video_utils import VideoFrame, load_from_videos
 
 DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 CODEBASE_VERSION = "v1.4"
+
+
+class OnlineLeRobotDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        data: dict[str, torch.Tensor],
+        fps: float,
+        delta_timestamps: dict[list[float]] | None = None,
+        use_cache: bool = False,
+    ):
+        super().__init__()
+        self.delta_timestamps = delta_timestamps
+        self._fps = fps
+        self.data = data
+        self.cache = {} if use_cache else None
+
+    def save_data(self, path: str):
+        torch.save(self.data, path)
+
+    @property
+    def fps(self) -> float:
+        return self._fps
+
+    @property
+    def tolerance_s(self) -> float:
+        """Tolerance in seconds used to discard loaded frames when their timestamps
+        are not close enough from the requested frames. It is only used when `delta_timestamps`
+        is provided or when loading video frames from mp4 files.
+        """
+        # 1e-4 to account for possible numerical error
+        return 1 / self.fps - 1e-4
+
+    @property
+    def num_episodes(self) -> int:
+        if len(self.data) > 0:
+            return len(torch.unique(self.data["episode_index"]))
+
+    @property
+    def num_samples(self) -> int:
+        if len(self.data) > 0:
+            return len(next(iter(self.data.values())))
+        else:
+            return 0
+
+    def __len__(self):
+        return self.num_samples
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        if self.cache is not None and idx in self.cache:
+            return self.cache[idx]
+
+        item = {k: v[idx] for k, v in self.data.items()}
+        if self.delta_timestamps is None:
+            if self.cache is not None:
+                self.cache[idx] = deepcopy(item)
+            return item
+
+        episode_index = item["episode_index"].item()
+        episode_data_indices = torch.where(self.data["episode_index"] == episode_index)[0]
+        episode_timestamps = self.data["timestamp"][self.data["episode_index"] == episode_index]
+        current_ts = item["timestamp"].item()
+
+        for data_key in self.delta_timestamps:
+            # get timestamps used as query to retrieve data of previous/future frames
+            delta_ts = self.delta_timestamps[data_key]
+            query_ts = current_ts + torch.tensor(delta_ts)
+
+            # compute distances between each query timestamp and all timestamps of all the frames belonging to the episode
+            dist = torch.cdist(query_ts[:, None], episode_timestamps[:, None], p=1)
+            min_, argmin_ = dist.min(1)
+
+            is_pad = min_ > self.tolerance_s
+
+            # check violated query timestamps are all outside the episode range
+            assert (
+                (query_ts[is_pad] < episode_timestamps[0]) | (episode_timestamps[-1] < query_ts[is_pad])
+            ).all(), (
+                f"One or several timestamps unexpectedly violate the tolerance ({min_} > {self.tolerance_s=}"
+                ") inside episode range. This might be due to synchronization issues with timestamps during "
+                "data collection."
+            )
+
+            # load frames for this data key, stacking on the first dimension
+            item[data_key] = self.data[data_key][episode_data_indices[argmin_]]
+
+            item[f"{data_key}_is_pad"] = is_pad
+
+        if self.cache is not None:
+            self.cache[idx] = deepcopy(item)
+        return item
 
 
 class LeRobotDataset(torch.utils.data.Dataset):
