@@ -11,3 +11,6 @@ env:
   episode_length: 200
   gym_vector:
     context: spawn
+
+eval:
+  use_async_envs: true
