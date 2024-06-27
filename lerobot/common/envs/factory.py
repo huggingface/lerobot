@@ -13,13 +13,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import importlib
 
 import gymnasium as gym
 from omegaconf import DictConfig
 
 
-def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv:
+def make_env(cfg: DictConfig, n_envs: int | None = 1) -> gym.vector.VectorEnv:
     """Makes a gym vector environment according to the evaluation config.
 
     n_envs can be used to override eval.batch_size in the configuration. Must be at least 1.
@@ -29,15 +28,7 @@ def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv
 
     package_name = "rlbench" if cfg.env.name == "rlbench" else f"gym_{cfg.env.name}"
 
-    try:
-        importlib.import_module(package_name)
-    except ModuleNotFoundError as e:
-        print(
-            f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.env.name}]'`"
-        )
-        raise e
-
-    gym_handle = f"{package_name}/{cfg.env.task}"
+    gym_handle = f"{package_name}:{package_name}/{cfg.env.task}"
     gym_kwgs = dict(cfg.env.get("gym", {}))
 
     if cfg.env.get("episode_length"):
