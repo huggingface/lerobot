@@ -90,21 +90,33 @@ class OnlineLeRobotDataset(torch.utils.data.Dataset):
         return self.num_samples
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        if self.cache is not None and idx in self.cache:
-            return self.cache[idx]
+        item = {}
 
-        item = {k: v[idx] for k, v in self.data.items()}
+        if self.cache is not None and idx in self.cache:
+            item = deepcopy(self.cache[idx])
+            if self.delta_timestamps is None:
+                return item
+
         if self.delta_timestamps is None:
+            item = {k: v[idx] for k, v in self.data.items()}
             if self.cache is not None:
                 self.cache[idx] = deepcopy(item)
             return item
 
+        delta_timestamps_keys = set(self.delta_timestamps)
+        delta_timestamps_image_keys = {k for k in self.delta_timestamps if k.startswith("observation.image")}
+
+        if len(item) == 0:
+            item = {k: v[idx] for k, v in self.data.items() if k not in delta_timestamps_keys}
+
         episode_index = item["episode_index"].item()
+        current_ts = item["timestamp"].item()
         episode_data_indices = torch.where(self.data["episode_index"] == episode_index)[0]
         episode_timestamps = self.data["timestamp"][self.data["episode_index"] == episode_index]
-        current_ts = item["timestamp"].item()
 
         for data_key in self.delta_timestamps:
+            if data_key in item:
+                continue
             # get timestamps used as query to retrieve data of previous/future frames
             delta_ts = self.delta_timestamps[data_key]
             query_ts = current_ts + torch.tensor(delta_ts)
@@ -129,8 +141,8 @@ class OnlineLeRobotDataset(torch.utils.data.Dataset):
 
             item[f"{data_key}_is_pad"] = is_pad
 
-        if self.cache is not None:
-            self.cache[idx] = deepcopy(item)
+        if self.cache is not None and idx not in self.cache:
+            self.cache[idx] = {k: v.clone() for k, v in item.items() if k not in delta_timestamps_image_keys}
         return item
 
 
