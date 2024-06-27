@@ -315,14 +315,14 @@ def update_online_buffer(
         # Extend the online dataset with the new data.
         online_dataset.hf_dataset = concatenate_datasets([online_dataset.hf_dataset, new_hf_dataset])
 
-        # Minor optimization: if we didn't have to remove surplus frames we can calculate the episode data
-        # index with a shortcut.
+        # # Minor optimization: if we didn't have to remove surplus frames we can calculate the episode data
+        # # index with a shortcut.
         if n_surplus == 0:
             online_dataset.episode_data_index = {
                 k: torch.cat(
                     [
                         online_dataset.episode_data_index[k],
-                        new_episode_data_index[k] + start_new_episode_indices,
+                        new_episode_data_index[k] + start_new_indices,
                     ]
                 )
                 for k in ["from", "to"]
@@ -330,10 +330,11 @@ def update_online_buffer(
         else:
             # Calculate the episode_data_index
             online_dataset.episode_data_index = calculate_episode_data_index(online_dataset.hf_dataset)
-            # Shift cache indices
-            if online_dataset.cache is not None:
-                shifted_cache = {k - n_surplus: v for k, v in online_dataset.cache.items() if k >= n_surplus}
-                online_dataset.cache = shifted_cache
+
+        # Shift cache indices
+        if online_dataset.cache is not None:
+            shifted_cache = {k - n_surplus: v for k, v in online_dataset.cache.items() if k >= n_surplus}
+            online_dataset.cache = shifted_cache
 
     # update the concatenated dataset length used during sampling
     concat_dataset.cumulative_sizes = concat_dataset.cumsum(concat_dataset.datasets)
@@ -594,8 +595,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     )
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
-        # num_workers=cfg.training.num_workers,
-        num_workers=0,
+        num_workers=cfg.training.num_workers,
         batch_size=cfg.training.batch_size,
         sampler=sampler,
         pin_memory=device.type != "cpu",
