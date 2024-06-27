@@ -18,7 +18,7 @@ import gymnasium as gym
 from omegaconf import DictConfig
 
 
-def make_env(cfg: DictConfig, n_envs: int | None = 1) -> gym.vector.VectorEnv:
+def make_env(cfg: DictConfig, n_envs: int = 1) -> gym.vector.VectorEnv:
     """Makes a gym vector environment according to the evaluation config.
 
     n_envs can be used to override eval.batch_size in the configuration. Must be at least 1.
@@ -36,18 +36,12 @@ def make_env(cfg: DictConfig, n_envs: int | None = 1) -> gym.vector.VectorEnv:
     # batched version of the env that returns an observation of shape (b, c)
     if cfg.eval.use_async_envs:
         env = gym.vector.AsyncVectorEnv(
-            [
-                lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs)
-                for _ in range(n_envs if n_envs is not None else cfg.eval.batch_size)
-            ],
+            [lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs) for _ in range(n_envs)],
             **gym_vector_kwgs,
         )
     else:
         env = gym.vector.SyncVectorEnv(
-            [
-                lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs)
-                for _ in range(n_envs if n_envs is not None else cfg.eval.batch_size)
-            ]
+            [lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs) for _ in range(n_envs)]
             ** gym_vector_kwgs
         )
 
