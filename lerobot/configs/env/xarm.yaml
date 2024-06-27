@@ -3,7 +3,7 @@
 fps: 15
 
 env:
-  name: xarm
+  name: gym_xarm
   task: XarmLift-v0
   image_size: 84
   state_dim: 4

@@ -9,6 +9,5 @@ env:
   action_dim: 8
   fps: ${fps}
   episode_length: 200
-  # gym:
-    # obs_type: pixels_agent_pos
-    # render_mode: rgb_array
+  gym_vector:
+    context: spawn

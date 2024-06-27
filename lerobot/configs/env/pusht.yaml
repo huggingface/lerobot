@@ -3,7 +3,7 @@
 fps: 10
 
 env:
-  name: pusht
+  name: gym_pusht
   task: PushT-v0
   image_size: 96
   state_dim: 2
