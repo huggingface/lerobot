@@ -178,6 +178,7 @@ def load_previous_and_future_frames(
     episode_data_index: dict[str, torch.Tensor],
     delta_timestamps: dict[str, list[float]],
     tolerance_s: float,
+    first_episode_index: int = 0,
 ) -> dict[torch.Tensor]:
     """
     Given a current item in the dataset containing a timestamp (e.g. 0.6 seconds), and a list of time differences of
@@ -215,7 +216,8 @@ def load_previous_and_future_frames(
       issues with timestamps during data collection.
     """
     # get indices of the frames associated to the episode, and their timestamps
-    ep_id = item["episode_index"].item()
+    ep_id = item["episode_index"].item() - first_episode_index
+    # print(item["episode_index"].item(), first_episode_index, ep_id)
     ep_data_id_from = episode_data_index["from"][ep_id].item()
     ep_data_id_to = episode_data_index["to"][ep_id].item()
     ep_data_ids = torch.arange(ep_data_id_from, ep_data_id_to, 1)

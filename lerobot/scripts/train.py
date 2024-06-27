@@ -273,6 +273,28 @@ def update_online_buffer(
         online_dataset.hf_dataset = new_hf_dataset
         online_dataset.episode_data_index = new_episode_data_index
     else:
+        n_surplus = 0
+        if (
+            buffer_capacity is not None
+            and (n_surplus := max(0, len(online_dataset) + len(new_hf_dataset) - buffer_capacity)) > 0
+        ):
+            # Remove as many frames from the dataset as need to keep within the desired capacity.
+            online_dataset.hf_dataset = online_dataset.hf_dataset.select(
+                range(n_surplus, len(online_dataset.hf_dataset))
+            )
+            # # Shift the indices of the existing dataset
+            # disable_progress_bars()
+            # start_index = hf_dataset["index"][0]
+            # start_episode_index = hf_dataset["episode_index"][0]
+            # online_dataset.hf_dataset = hf_dataset.map(
+            #     lambda episode_index, data_index: {
+            #         "episode_index": episode_index - hf_dataset["episode_index"][0],
+            #         "index": data_index - hf_dataset["index"][0],
+            #     },
+            #     input_columns=["episode_index", "index"],
+            # )
+            # enable_progress_bars()
+
         # Get the indices required to continue where the data in online_dataset finishes.
         start_new_episode_indices = online_dataset.hf_dataset["episode_index"][-1].item() + 1
         start_new_indices = online_dataset.hf_dataset["index"][-1].item() + 1
@@ -289,27 +311,6 @@ def update_online_buffer(
             input_columns=["episode_index", "index"],
         )
         enable_progress_bars()
-
-        n_surplus = 0
-        if (
-            buffer_capacity is not None
-            and (n_surplus := len(online_dataset) + len(new_hf_dataset) - buffer_capacity) > 0
-        ):
-            # Remove as many frames from the dataset as need to keep within the desired capacity.
-            n_surplus = len(online_dataset.hf_dataset) - buffer_capacity
-            hf_dataset = online_dataset.hf_dataset.select(range(n_surplus, len(online_dataset.hf_dataset)))
-            # Remap the indices
-            start_episode_index = hf_dataset["episode_index"][0]
-            start_index = hf_dataset["index"][0]
-            disable_progress_bars()
-            online_dataset.hf_dataset = hf_dataset.map(
-                lambda episode_index, data_index: {
-                    "episode_index": episode_index - start_episode_index,
-                    "index": data_index - start_index,
-                },
-                input_columns=["episode_index", "index"],
-            )
-            enable_progress_bars()
 
         # Extend the online dataset with the new data.
         online_dataset.hf_dataset = concatenate_datasets([online_dataset.hf_dataset, new_hf_dataset])
@@ -593,6 +594,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     )
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
+        # num_workers=cfg.training.num_workers,
         num_workers=0,
         batch_size=cfg.training.batch_size,
         sampler=sampler,
