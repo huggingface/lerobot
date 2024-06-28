@@ -5,7 +5,7 @@ PYTHON_PATH := $(shell which python)
 # If Poetry is installed, redefine PYTHON_PATH to use the Poetry-managed Python
 POETRY_CHECK := $(shell command -v poetry)
 ifneq ($(POETRY_CHECK),)
-    PYTHON_PATH := $(shell poetry run which python)
+	PYTHON_PATH := $(shell poetry run which python)
 endif
 
 export PATH := $(dir $(PYTHON_PATH)):$(PATH)
@@ -46,6 +46,7 @@ test-act-ete-train:
 		policy.n_action_steps=20 \
 		policy.chunk_size=20 \
 		training.batch_size=2 \
+		training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/act/
 
 test-act-ete-eval:
@@ -73,6 +74,7 @@ test-act-ete-train-amp:
 		policy.chunk_size=20 \
 		training.batch_size=2 \
 		hydra.run.dir=tests/outputs/act_amp/ \
+		training.image_transforms.enable=true \
 		use_amp=true
 
 test-act-ete-eval-amp:
@@ -100,6 +102,7 @@ test-diffusion-ete-train:
 		training.save_checkpoint=true \
 		training.save_freq=2 \
 		training.batch_size=2 \
+		training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/diffusion/
 
 test-diffusion-ete-eval:
@@ -127,6 +130,7 @@ test-tdmpc-ete-train:
 		training.save_checkpoint=true \
 		training.save_freq=2 \
 		training.batch_size=2 \
+		training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/tdmpc/
 
 test-tdmpc-ete-eval:
@@ -159,5 +163,6 @@ test-act-pusht-tutorial:
 		training.save_model=true \
 		training.save_freq=2 \
 		training.batch_size=2 \
+		training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/act_pusht/
 	rm lerobot/configs/policy/created_by_Makefile.yaml
