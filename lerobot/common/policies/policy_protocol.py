@@ -44,11 +44,13 @@ class Policy(Protocol):
             dataset_stats: Dataset statistics to be used for normalization.
         """
 
-    def reset(self):
-        """To be called whenever the environment is reset.
+    @property
+    def n_obs_steps(self) -> int:
+        """TODO(now)"""
 
-        Does things like clearing caches.
-        """
+    @property
+    def input_keys(self) -> int:
+        """TODO(now)"""
 
     def forward(self, batch: dict[str, Tensor]) -> dict:
         """Run the batch through the model and compute the loss for training or validation.
@@ -57,12 +59,8 @@ class Policy(Protocol):
         other items should be logging-friendly, native Python types.
         """
 
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Return one action to run in the environment (potentially in batch mode).
-
-        When the model uses a history of observations, or outputs a sequence of actions, this method deals
-        with caching.
-        """
+    def run_inference(self, observation_batch: dict[str, Tensor]) -> Tensor:
+        """Return a sequence of actions to run in the environment (potentially in batch mode)."""
 
 
 @runtime_checkable
