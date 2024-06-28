@@ -261,40 +261,7 @@ def update_online_buffer(
     assert new_data_dict["episode_index"][0].item() == 0
     assert new_data_dict["index"][0].item() == 0
 
-    if len(online_dataset) == 0:
-        # Initialize online dataset.
-        online_dataset.data = new_data_dict
-    else:
-        n_surplus = 0
-        if (
-            buffer_capacity is not None
-            and (
-                n_surplus := max(
-                    0, len(online_dataset) + len(new_data_dict["episode_index"]) - buffer_capacity
-                )
-            )
-            > 0
-        ):
-            # Remove as many frames from the dataset as need to keep within the desired capacity.
-            online_dataset.data = {k: v[n_surplus:] for k, v in online_dataset.data.items()}
-            # Shift the indices of the existing dataset
-            online_dataset.data["index"] -= online_dataset["index"][0]
-            online_dataset.data["episode_index"] -= online_dataset["episode_index"][0]
-
-        # Make the new dataset continue where the data in online_dataset finishes.
-        new_data_dict["index"] += online_dataset.data["index"][-1] + 1
-        new_data_dict["episode_index"] += online_dataset.data["episode_index"][-1] + 1
-
-        # Extend the online dataset with the new data.
-        online_dataset.data = {
-            k: torch.cat([online_dataset.data[k], new_data_dict[k]]) for k in online_dataset.data
-        }
-
-        # Shift the cache indices.
-        if online_dataset.cache is not None and n_surplus > 0:
-            online_dataset.cache = {
-                k - n_surplus: v for k, v in online_dataset.cache.items() if k - n_surplus >= 0
-            }
+    online_dataset.add_data(new_data_dict)
 
     # update the concatenated dataset length used during sampling
     concat_dataset.cumulative_sizes = concat_dataset.cumsum(concat_dataset.datasets)
@@ -310,6 +277,90 @@ def update_online_buffer(
 
     # update the total number of samples used during sampling
     sampler.num_samples = len(concat_dataset)
+
+
+# def update_online_buffer(
+#     online_dataset: OnlineLeRobotDataset,
+#     concat_dataset: torch.utils.data.ConcatDataset,
+#     sampler: torch.utils.data.WeightedRandomSampler,
+#     new_data_dict: dict[str, torch.Tensor],
+#     online_sampling_ratio: float,
+#     buffer_capacity: float | None = None,
+# ):
+#     """
+#     Modifies the online_dataset, concat_dataset, and sampler in place by integrating
+#     new episodes from new_data_dict into the online_dataset, updating the concatenated
+#     dataset's structure and adjusting the sampling strategy based on the specified
+#     percentage of online samples.
+
+#     Args:
+#         online_dataset: The existing online dataset to be updated.
+#         concat_dataset: The concatenated dataset that combines offline and online datasets (in that order),
+#             used for sampling purposes.
+#         sampler: A sampler that will be updated to reflect changes in the dataset sizes and specified sampling
+#             weights.
+#         new_data_dict: A Hugging Face dataset containing the new episodes to be added.
+#         new_episode_data_index: A dictionary containing two keys ("from" and "to") associated to dataset
+#             indices. They indicate the start index and end index of each episode in the dataset.
+#         online_sampling_ratio: The target percentage of samples that should come from the online dataset
+#             during sampling operations.
+#         buffer_capacity: A maximum capacity (in units of frames) for the online dataset. The dataset is
+#             treated like a queue where the first frames in are removed, if necessary, to make space for new
+#             frames.
+#     """
+#     # Sanity check to make sure that new_data_dict starts from 0.
+#     assert new_data_dict["episode_index"][0].item() == 0
+#     assert new_data_dict["index"][0].item() == 0
+
+#     if len(online_dataset) == 0:
+#         # Initialize online dataset.
+#         online_dataset.data = new_data_dict
+#     else:
+#         n_surplus = 0
+#         if (
+#             buffer_capacity is not None
+#             and (
+#                 n_surplus := max(
+#                     0, len(online_dataset) + len(new_data_dict["episode_index"]) - buffer_capacity
+#                 )
+#             )
+#             > 0
+#         ):
+#             # Remove as many frames from the dataset as need to keep within the desired capacity.
+#             online_dataset.data = {k: v[n_surplus:] for k, v in online_dataset.data.items()}
+#             # Shift the indices of the existing dataset
+#             online_dataset.data["index"] -= online_dataset["index"][0]
+#             online_dataset.data["episode_index"] -= online_dataset["episode_index"][0]
+
+#         # Make the new dataset continue where the data in online_dataset finishes.
+#         new_data_dict["index"] += online_dataset.data["index"][-1] + 1
+#         new_data_dict["episode_index"] += online_dataset.data["episode_index"][-1] + 1
+
+#         # Extend the online dataset with the new data.
+#         online_dataset.data = {
+#             k: torch.cat([online_dataset.data[k], new_data_dict[k]]) for k in online_dataset.data
+#         }
+
+#         # Shift the cache indices.
+#         if online_dataset.cache is not None and n_surplus > 0:
+#             online_dataset.cache = {
+#                 k - n_surplus: v for k, v in online_dataset.cache.items() if k - n_surplus >= 0
+#             }
+
+#     # update the concatenated dataset length used during sampling
+#     concat_dataset.cumulative_sizes = concat_dataset.cumsum(concat_dataset.datasets)
+
+#     # update the sampling weights for each frame so that online frames get sampled a certain percentage of
+#     # times
+#     len_online = len(online_dataset)
+#     len_offline = len(concat_dataset) - len_online
+#     sampler.weights = torch.tensor(
+#         [(1 - online_sampling_ratio) / len_offline] * len_offline
+#         + [online_sampling_ratio / len_online] * len_online
+#     )
+
+#     # update the total number of samples used during sampling
+#     sampler.num_samples = len(concat_dataset)
 
 
 def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
@@ -406,7 +457,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     step = 0  # number of policy updates (forward + backward + optim)
     if cfg.resume:
-        step, online_dataset_data_dict = logger.load_last_training_state(optimizer, lr_scheduler)
+        step = logger.load_last_training_state(optimizer, lr_scheduler)
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
@@ -455,7 +506,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 optimizer,
                 lr_scheduler,
                 identifier=step_identifier,
-                online_buffer=online_dataset,
             )
             logging.info("Resume training")
 
@@ -522,13 +572,18 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # create an env dedicated to online episodes collection from policy rollout
     online_training_env = make_env(cfg, n_envs=cfg.training.online_rollout_batch_size)
     online_dataset = OnlineLeRobotDataset(
-        {},
+        logger.log_dir / "online_buffer",
+        data_shapes={
+            **policy.config.input_shapes,
+            **policy.config.output_shapes,
+            "next.reward": (),
+            "next.done": (),
+        },
+        buffer_capacity=cfg.training.online_buffer_capacity,
         fps=offline_dataset.fps,
         delta_timestamps=offline_dataset.delta_timestamps,
         use_cache=cfg.training.dataset_use_cache,
     )
-    if cfg.resume and online_dataset_data_dict is not None:
-        online_dataset.data = online_dataset_data_dict
 
     online_rollout_policy = deepcopy(policy)
     online_rollout_policy.eval()

@@ -31,7 +31,6 @@ from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from lerobot.common.datasets.lerobot_dataset import OnlineLeRobotDataset
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
 
@@ -177,7 +176,6 @@ class Logger:
         train_step: int,
         optimizer: Optimizer,
         scheduler: LRScheduler | None,
-        online_buffer: OnlineLeRobotDataset | None,
     ):
         """Checkpoint the global training_step, optimizer state, scheduler state, and random state.
 
@@ -191,8 +189,6 @@ class Logger:
         if scheduler is not None:
             training_state["scheduler"] = scheduler.state_dict()
         torch.save(training_state, save_dir / self.training_state_file_name)
-        if online_buffer is not None:
-            online_buffer.save_data(save_dir / self.online_buffer_file_name)
 
     def save_checkpont(
         self,
@@ -201,7 +197,6 @@ class Logger:
         optimizer: Optimizer,
         scheduler: LRScheduler | None,
         identifier: str,
-        online_buffer: OnlineLeRobotDataset | None = None,
     ):
         """Checkpoint the model weights and the training state."""
         checkpoint_dir = self.checkpoints_dir / str(identifier)
@@ -213,12 +208,10 @@ class Logger:
         self.save_model(
             checkpoint_dir / self.pretrained_model_dir_name, policy, wandb_artifact_name=wandb_artifact_name
         )
-        self.save_training_state(checkpoint_dir, train_step, optimizer, scheduler, online_buffer)
+        self.save_training_state(checkpoint_dir, train_step, optimizer, scheduler)
         os.symlink(checkpoint_dir.absolute(), self.last_checkpoint_dir)
 
-    def load_last_training_state(
-        self, optimizer: Optimizer, scheduler: LRScheduler | None
-    ) -> tuple[int, None | dict[str, torch.Tensor]]:
+    def load_last_training_state(self, optimizer: Optimizer, scheduler: LRScheduler | None) -> int:
         """
         Given the last checkpoint in the logging directory, load the optimizer state, scheduler state, and
         random state, and return the global training step.
@@ -233,13 +226,7 @@ class Logger:
             )
         # Small hack to get the expected keys: use `get_global_random_state`.
         set_global_random_state({k: training_state[k] for k in get_global_random_state()})
-        ret = (training_state["step"], None)
-        if (self.last_checkpoint_dir / self.online_buffer_file_name).exists():
-            ret = (
-                ret[0],
-                torch.load(self.last_checkpoint_dir / self.online_buffer_file_name),
-            )
-        return ret
+        return training_state["step"]
 
     def log_dict(self, d, step, mode="train"):
         assert mode in {"train", "eval"}
