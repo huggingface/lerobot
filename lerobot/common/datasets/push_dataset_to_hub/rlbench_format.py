@@ -1,3 +1,12 @@
+"""Process rlbench files formatted like in: https://github.com/stepjam/RLBench
+
+To generate raw rlbench datasets, run:
+```python
+# First, `pip install ".[rlbench]"`
+rlbench-generate-dataset --help
+```
+"""
+
 import shutil
 from collections import defaultdict
 from pathlib import Path
@@ -8,9 +17,9 @@ from datasets import Dataset, Features, Image, Sequence, Value
 from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.arm_action_modes import JointVelocity
 from rlbench.action_modes.gripper_action_modes import Discrete
+from rlbench.backend.utils import task_file_to_task_class
 from rlbench.environment import Environment
 from rlbench.observation_config import ObservationConfig
-from rlbench.tasks import ReachTarget
 
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, save_images_concurrently
 from lerobot.common.datasets.utils import (
@@ -31,12 +40,6 @@ def _launch_env(dataset_root: str = ""):
     return env
 
 
-def check_format(raw_dir: Path) -> bool:
-    # If demos can be loaded, the format is correct
-    demos = load_from_raw(raw_dir)
-    return bool(demos)
-
-
 def load_from_raw(
     raw_dir: Path,
     videos_dir: Path | None = None,
@@ -44,12 +47,13 @@ def load_from_raw(
     video: bool | None = None,
     episodes: list[int] | None = None,
 ) -> dict:
-    env = _launch_env(str(raw_dir))
-    # TODO: Automatically detect task
-    task = env.get_task(ReachTarget)
-    # TODO: Don't hardcode the number of demos
-    # TODO: Maybe use rlbench.utils.get_stored_demos?
-    demos = task.get_demos(100)
+    # Example of raw_dir structure: data/raw/rlbench/reach_targe/variation0/
+    # env accepts: data/raw/rlbench/
+    env = _launch_env(str(raw_dir.parents[1]))
+    task_name = raw_dir.parent.name
+    task_cls = task_file_to_task_class(task_name)
+    task = env.get_task(task_cls)
+    demos = task.get_demos(-1)
     env.shutdown()
 
     num_episodes = len(demos)
@@ -167,8 +171,7 @@ def from_raw_to_lerobot_format(
     video: bool = True,
     episodes: list[int] | None = None,
 ):
-    # sanity check
-    # check_format(raw_dir)
+    # No need to check data format, since RLBench will raise errors when loading
 
     if fps is None:
         fps = 10

@@ -3350,7 +3350,7 @@ gym = ["gymnasium (==1.0.0a2)"]
 type = "git"
 url = "https://github.com/eugeneteoh/RLBench.git"
 reference = "gymnasium"
-resolved_reference = "112c7f5ff8075b6aee04dbcb4ec68124abc56117"
+resolved_reference = "97839dde1aca1dc72b3336d009aae346bc5f7083"
 
 [[package]]
 name = "safetensors"
