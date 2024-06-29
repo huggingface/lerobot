@@ -29,7 +29,7 @@ training:
 
 eval:
   n_episodes: 50
-  batch_size: 50
+  batch_size: 1
 
 # See `configuration_act.py` for more details.
 policy:
