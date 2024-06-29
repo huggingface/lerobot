@@ -208,9 +208,9 @@ class ACT(nn.Module):
         self.config = config
         # BERT style VAE encoder with input tokens [cls, robot_state, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
-        self.expected_state_keys = [k for k in config.input_shapes if k.startswith("observation.state")]
 
-        self.use_input_state = any(self.expected_state_keys)
+        # If any keys with the prefix "observation.state" are present in the input_shapes, we will use the use state information
+        self.use_input_state = any(self.k for k in config.input_shapes if k.startswith("observation.state"))
         self.state_shape = sum(config.input_shapes[k][0] for k in self.expected_state_keys)
 
         if self.config.use_vae:
