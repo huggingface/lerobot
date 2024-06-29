@@ -210,8 +210,9 @@ class ACT(nn.Module):
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
 
         # If any keys with the prefix "observation.state" are present in the input_shapes, we will use the use state information
-        self.use_input_state = any(self.k for k in config.input_shapes if k.startswith("observation.state"))
-        self.state_shape = sum(config.input_shapes[k][0] for k in self.expected_state_keys)
+        expected_state_keys = [k for k in config.input_shapes if k.startswith("observation.state")]
+        self.use_input_state = any(expected_state_keys)
+        self.state_shape = sum(config.input_shapes[k][0] for k in expected_state_keys)
 
         if self.config.use_vae:
             self.vae_encoder = ACTEncoder(config)
