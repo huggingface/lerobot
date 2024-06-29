@@ -61,7 +61,7 @@ moviepy = ">=1.0.3"
 rerun-sdk = ">=0.15.1"
 deepdiff = ">=7.0.1"
 scikit-image = {version = "^0.23.2", optional = true}
-rlbench = {git = "https://github.com/eugeneteoh/RLBench.git", rev = "gymnasium"}
+rlbench = {git = "https://github.com/eugeneteoh/RLBench.git", rev = "gymnasium", optional = true}
 
 
 [tool.poetry.extras]

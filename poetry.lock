@@ -2086,7 +2086,7 @@ dill = ">=0.3.8"
 name = "natsort"
 version = "8.4.0"
 description = "Simple yet flexible natural sorting in Python."
-optional = false
+optional = true
 python-versions = ">=3.7"
 files = [
     {file = "natsort-8.4.0-py3-none-any.whl", hash = "sha256:4732914fb471f56b5cce04d7bae6f164a592c7712e1c85f9ef585e197299521c"},
@@ -3021,7 +3021,7 @@ diagrams = ["jinja2", "railroad-diagrams"]
 name = "pyquaternion"
 version = "0.9.9"
 description = "A fully featured, pythonic library for representing and using quaternions."
-optional = false
+optional = true
 python-versions = "*"
 files = [
     {file = "pyquaternion-0.9.9-py2-none-any.whl", hash = "sha256:d0eb69219ca99bfcbc25c1e2c4f82e58c61dce3e907e929f13c5f3615e4b6518"},
@@ -3040,7 +3040,7 @@ test = ["nose"]
 name = "PyRep"
 version = "4.1.0.3"
 description = "Python CoppeliaSim wrapper"
-optional = false
+optional = true
 python-versions = "*"
 files = []
 develop = false
@@ -3329,7 +3329,7 @@ tests = ["pytest (==7.1.2)"]
 name = "rlbench"
 version = "1.2.0"
 description = "RLBench"
-optional = false
+optional = true
 python-versions = "*"
 files = []
 develop = false
@@ -3521,7 +3521,7 @@ test = ["asv", "numpydoc (>=1.7)", "pooch (>=1.6.0)", "pytest (>=7.0)", "pytest-
 name = "scipy"
 version = "1.13.1"
 description = "Fundamental algorithms for scientific computing in Python"
-optional = false
+optional = true
 python-versions = ">=3.9"
 files = [
     {file = "scipy-1.13.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:20335853b85e9a49ff7572ab453794298bcf0354d8068c5f6775a0eabf350aca"},
@@ -4388,4 +4388,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "36c2998218940da3c2532f6884fd9379a80132a1ac26a6994502a07020e461ac"
+content-hash = "599aefe2d2897b008a3a4a780d710bb16b3c701d5ca9abc55e8c98c0023a0070"
