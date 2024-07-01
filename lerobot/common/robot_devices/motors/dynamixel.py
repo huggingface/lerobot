@@ -10,7 +10,7 @@ BAUD_RATE = 1_000_000
 TIMEOUT_MS = 1000
 
 
-def u32_to_i32(value: int | np.array) -> int | np.array:
+def u32_to_i32(value):
     """
     Convert an unsigned 32-bit integer array to a signed 32-bit integer array.
     """
@@ -26,7 +26,7 @@ def u32_to_i32(value: int | np.array) -> int | np.array:
     return value
 
 
-def i32_to_u32(value: int | np.array) -> int | np.array:
+def i32_to_u32(value):
     """
     Convert a signed 32-bit integer array to an unsigned 32-bit integer array.
     """
@@ -135,6 +135,7 @@ X_SERIES_CONTROL_TABLE = [
 ]
 
 MODEL_CONTROL_TABLE = {
+    "x_series": X_SERIES_CONTROL_TABLE,
     "xl330-m077": X_SERIES_CONTROL_TABLE,
     "xl330-m288": X_SERIES_CONTROL_TABLE,
     "xl430-w250": X_SERIES_CONTROL_TABLE,
