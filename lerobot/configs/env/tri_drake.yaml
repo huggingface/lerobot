@@ -1,0 +1,13 @@
+# @package _global_
+
+fps: 30
+
+env:
+  name: tri
+  task: PutSpatulaInUtensilCrock-v0
+  state_dim: 62
+  action_dim: 14
+  fps: ${fps}
+  episode_length: 400
+  gym:
+    fps: ${fps}
