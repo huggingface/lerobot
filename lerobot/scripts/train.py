@@ -88,6 +88,11 @@ def make_optimizer_and_scheduler(cfg, policy):
     elif policy.name == "tdmpc":
         optimizer = torch.optim.Adam(policy.parameters(), cfg.training.lr)
         lr_scheduler = None
+    elif cfg.policy.name == "vqbet":
+        from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTOptimizer, VQBeTScheduler
+
+        optimizer = VQBeTOptimizer(policy, cfg)
+        lr_scheduler = VQBeTScheduler(optimizer, cfg)
     else:
         raise NotImplementedError()
 
@@ -351,7 +356,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
 
-        if cfg.training.save_checkpoint and step % cfg.training.save_freq == 0:
+        if cfg.training.save_checkpoint and (
+            step % cfg.training.save_freq == 0
+            or step == cfg.training.offline_steps + cfg.training.online_steps
+        ):
             logging.info(f"Checkpoint policy after step {step}")
             # Note: Save with step as the identifier, and format it to have at least 6 digits but more if
             # needed (choose 6 as a minimum for consistency without being overkill).
