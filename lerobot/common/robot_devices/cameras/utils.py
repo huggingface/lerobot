@@ -1,15 +1,13 @@
-
 from pathlib import Path
-import time
-import cv2
 from typing import Protocol
 
+import cv2
 import numpy as np
 
 
 def write_shape_on_image_inplace(image):
     height, width = image.shape[:2]
-    text = f'Width: {width} Height: {height}'
+    text = f"Width: {width} Height: {height}"
 
     # Define the font, scale, color, and thickness
     font = cv2.FONT_HERSHEY_SIMPLEX

@@ -1,10 +1,18 @@
-from copy import deepcopy
 import enum
-from typing import Union
-import numpy as np
+from copy import deepcopy
 
-from dynamixel_sdk import PacketHandler, PortHandler, COMM_SUCCESS, GroupSyncRead, GroupSyncWrite
-from dynamixel_sdk import DXL_HIBYTE, DXL_HIWORD, DXL_LOBYTE, DXL_LOWORD
+import numpy as np
+from dynamixel_sdk import (
+    COMM_SUCCESS,
+    DXL_HIBYTE,
+    DXL_HIWORD,
+    DXL_LOBYTE,
+    DXL_LOWORD,
+    GroupSyncRead,
+    GroupSyncWrite,
+    PacketHandler,
+    PortHandler,
+)
 
 PROTOCOL_VERSION = 2.0
 BAUD_RATE = 1_000_000
@@ -69,12 +77,12 @@ X_SERIES_CONTROL_TABLE = {
     "Velocity_Trajectory": (136, 4),
     "Position_Trajectory": (140, 4),
     "Present_Input_Voltage": (144, 2),
-    "Present_Temperature": (146, 1)
+    "Present_Temperature": (146, 1),
 }
 
 CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
 CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
-#CONVERT_POSITION_TO_ANGLE_REQUIRED = ["Goal_Position", "Present_Position"]
+# CONVERT_POSITION_TO_ANGLE_REQUIRED = ["Goal_Position", "Present_Position"]
 CONVERT_POSITION_TO_ANGLE_REQUIRED = []
 
 MODEL_CONTROL_TABLE = {
@@ -86,6 +94,7 @@ MODEL_CONTROL_TABLE = {
     "xm540-w270": X_SERIES_CONTROL_TABLE,
 }
 
+
 def uint32_to_int32(values: np.ndarray):
     """
     Convert an unsigned 32-bit integer array to a signed 32-bit integer array.
@@ -94,6 +103,7 @@ def uint32_to_int32(values: np.ndarray):
         if values[i] is not None and values[i] > 2147483647:
             values[i] = values[i] - 4294967296
     return values
+
 
 def int32_to_uint32(values: np.ndarray):
     """
@@ -104,11 +114,13 @@ def int32_to_uint32(values: np.ndarray):
             values[i] = values[i] + 4294967296
     return values
 
+
 def motor_position_to_angle(position: np.ndarray) -> np.ndarray:
     """
     Convert from motor position in [-2048, 2048] to radian in [-pi, pi]
     """
     return (position / 2048) * 3.14
+
 
 def motor_angle_to_position(angle: np.ndarray) -> np.ndarray:
     """
@@ -134,7 +146,7 @@ def motor_angle_to_position(angle: np.ndarray) -> np.ndarray:
 
 
 def get_group_sync_key(data_name, motor_names):
-    group_key = f"{data_name}_" + "_".join([name for name in motor_names])
+    group_key = f"{data_name}_" + "_".join(motor_names)
     return group_key
 
 
@@ -158,9 +170,12 @@ class DriveMode(enum.Enum):
 
 
 class DynamixelMotorsBus:
-
-    def __init__(self, port: str, motors: dict[str, tuple[int, str]],
-                 extra_model_control_table: dict[str, list[tuple]] | None = None):
+    def __init__(
+        self,
+        port: str,
+        motors: dict[str, tuple[int, str]],
+        extra_model_control_table: dict[str, list[tuple]] | None = None,
+    ):
         self.port = port
         self.motors = motors
 
@@ -185,14 +200,14 @@ class DynamixelMotorsBus:
     @property
     def motor_names(self) -> list[int]:
         return list(self.motors.keys())
-    
+
     def set_calibration(self, calibration: dict[str, tuple[int, bool]]):
         self.calibration = calibration
 
     def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         if not self.calibration:
             return values
-        
+
         if motor_names is None:
             motor_names = self.motor_names
 
@@ -205,7 +220,7 @@ class DynamixelMotorsBus:
                 values[i] += homing_offset
 
         return values
-    
+
     def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         if not self.calibration:
             return values
@@ -264,7 +279,7 @@ class DynamixelMotorsBus:
 
         if data_name in CALIBRATION_REQUIRED:
             values = self.apply_calibration(values, motor_names)
-        
+
         if data_name in CONVERT_POSITION_TO_ANGLE_REQUIRED:
             values = motor_position_to_angle(values)
 
@@ -307,9 +322,11 @@ class DynamixelMotorsBus:
 
         init_group = data_name not in self.group_readers
         if init_group:
-            self.group_writers[group_key] = GroupSyncWrite(self.port_handler, self.packet_handler, addr, bytes)
+            self.group_writers[group_key] = GroupSyncWrite(
+                self.port_handler, self.packet_handler, addr, bytes
+            )
 
-        for idx, value in zip(motor_ids, values):
+        for idx, value in zip(motor_ids, values, strict=False):
             if bytes == 1:
                 data = [
                     DXL_LOBYTE(DXL_LOWORD(value)),
@@ -329,7 +346,8 @@ class DynamixelMotorsBus:
             else:
                 raise NotImplementedError(
                     f"Value of the number of bytes to be sent is expected to be in [1, 2, 4], but "
-                    f"{bytes} is provided instead.")
+                    f"{bytes} is provided instead."
+                )
 
             if init_group:
                 self.group_writers[group_key].addParam(idx, data)

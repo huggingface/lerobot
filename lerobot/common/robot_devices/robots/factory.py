@@ -1,11 +1,8 @@
-
-
 def make_robot(name):
-
     if name == "koch":
-        from lerobot.common.robot_devices.robots.koch import KochRobot
-        from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
         from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
+        from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
+        from lerobot.common.robot_devices.robots.koch import KochRobot
 
         robot = KochRobot(
             leader_arms={
@@ -38,9 +35,9 @@ def make_robot(name):
             },
             cameras={
                 "main": OpenCVCamera(1, fps=30, width=640, height=480),
-            }
+            },
         )
     else:
         raise ValueError(f"Robot '{name}' not found.")
-    
+
     return robot
