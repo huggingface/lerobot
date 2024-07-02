@@ -87,7 +87,7 @@ These are then all concatenated to a single table ready for analysis.
 
 Building ffmpeg from source is required to include libx265 and libaom/libsvtav1 (av1) video codecs ([compilation guide](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu)).
 
-**Note:** While you still need to build torchvision with a conda-installed `ffmpeg<4.3` to use video_reader (as described in [#220](https://github.com/huggingface/lerobot/pull/220)), you also need another version which is custom-built with all the video codecs for encoding. For the script to then use that version, you can prepend the command above with `PATH="$HOME/bin:$PATH"`, which is where ffmpeg should be built.
+**Note:** While you still need to build torchvision with a conda-installed `ffmpeg<4.3` to use the `video_reader` decoder (as described in [#220](https://github.com/huggingface/lerobot/pull/220)), you also need another version which is custom-built with all the video codecs for encoding. For the script to then use that version, you can prepend the command above with `PATH="$HOME/bin:$PATH"`, which is where ffmpeg should be built.
 
 ## Adding a video decoder
 
@@ -105,7 +105,7 @@ def decode_video_frames(
             video_path, timestamps, tolerance_s, backend
         )
 +    elif backend == ["your_decoder"]:
-+        returen your_decoder_function(
++        return your_decoder_function(
 +            video_path, timestamps, tolerance_s, backend
 +        )
     else:
@@ -114,7 +114,6 @@ def decode_video_frames(
 
 
 ## Example
-
 For a quick run, you can try these parameters:
 ```bash
 python benchmark/video/run_video_benchmark.py \
@@ -135,9 +134,11 @@ python benchmark/video/run_video_benchmark.py \
 
 ## Results
 
+### Reproduce
 We ran the benchmark with the following parameters:
 ```bash
-PATH="$HOME/bin:$PATH" python benchmark/video/run_video_benchmark.py \
+# h264 and h265 encodings
+python benchmark/video/run_video_benchmark.py \
     --output-dir outputs/video_benchmark \
     --repo-ids \
         lerobot/pusht_image \
@@ -151,8 +152,71 @@ PATH="$HOME/bin:$PATH" python benchmark/video/run_video_benchmark.py \
     --timestamps-modes 1_frame 2_frames 6_frames \
     --backends pyav video_reader \
     --num-samples 50 \
-    --num-workers 10 \
+    --num-workers 5 \
+    --save-frames 1
+
+# av1 encoding (only compatible with yuv420p and pyav decoder)
+python benchmark/video/run_video_benchmark.py \
+    --output-dir outputs/video_benchmark \
+    --repo-ids \
+        lerobot/pusht_image \
+        aliberts/aloha_mobile_shrimp_image \
+        aliberts/paris_street \
+        aliberts/kitchen \
+    --vcodec libsvtav1 \
+    --pix-fmt yuv420p \
+    --g 1 2 3 4 5 6 10 15 20 40 None \
+    --crf 0 5 10 15 20 25 30 40 50 None \
+    --timestamps-modes 1_frame 2_frames 6_frames \
+    --backends pyav \
+    --num-samples 50 \
+    --num-workers 5 \
     --save-frames 1
 ```
 
-Results are available [here](https://docs.google.com/spreadsheets/d/1OYJB43Qu8fC26k_OyoMFgGBBKfQRCi4BIuYitQnq3sw/edit?usp=sharing)
+### Raw results
+Full results are available [here](https://docs.google.com/spreadsheets/d/1OYJB43Qu8fC26k_OyoMFgGBBKfQRCi4BIuYitQnq3sw/edit?usp=sharing)
+
+
+### Comparison with the previous benchmark
+We compare the average l2 error (`avg_l2e`) used in the previous version of this benchmark with the current metrics (`avg_mse`, `avg_psnr`, `avg_ssim`).
+The comparison is done on the former baseline of parameters: `vcodec=libx264`, `pix_fmt=yuv444p`, `g=2`, `crf=None`
+
+| repo_id                            | resolution  | vcodec  | pix_fmt | g | crf | timestamps_mode | backend | avg_l2e  | avg_mse  | avg_psnr | avg_ssim |
+| ---------------------------------- | ----------- | ------- | ------- | - | --- | --------------- | ------- | -------- | -------- | -------- | -------- |
+| lerobot/pusht_image                | 96 x 96     | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 1.35E-04 | 5.74E-05 | 42.59    | 99.61%   |
+| lerobot/pusht_image                | 96 x 96     | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 1.32E-04 | 5.47E-05 | 42.81    | 99.63%   |
+| lerobot/pusht_image                | 96 x 96     | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 1.36E-04 | 5.78E-05 | 42.58    | 99.62%   |
+| lerobot/pusht_image                | 96 x 96     | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 1.35E-04 | 5.74E-05 | 42.59    | 99.61%   |
+| lerobot/pusht_image                | 96 x 96     | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 1.32E-04 | 5.47E-05 | 42.81    | 99.63%   |
+| lerobot/pusht_image                | 96 x 96     | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 1.36E-04 | 5.78E-05 | 42.58    | 99.62%   |
+| aliberts/aloha_mobile_shrimp_image | 480 x 640   | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 3.63E-05 | 2.32E-04 | 39.98    | 97.43%   |
+| aliberts/aloha_mobile_shrimp_image | 480 x 640   | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 3.71E-05 | 2.88E-04 | 39.90    | 97.18%   |
+| aliberts/aloha_mobile_shrimp_image | 480 x 640   | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 3.17E-05 | 1.30E-04 | 40.36    | 97.59%   |
+| aliberts/aloha_mobile_shrimp_image | 480 x 640   | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 3.63E-05 | 2.32E-04 | 39.98    | 97.43%   |
+| aliberts/aloha_mobile_shrimp_image | 480 x 640   | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 3.71E-05 | 2.88E-04 | 39.90    | 97.18%   |
+| aliberts/aloha_mobile_shrimp_image | 480 x 640   | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 3.17E-05 | 1.30E-04 | 40.36    | 97.59%   |
+| aliberts/paris_street              | 720 x 1280  | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 2.54E-05 | 2.05E-04 | 37.19    | 96.57%   |
+| aliberts/paris_street              | 720 x 1280  | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 2.47E-05 | 1.95E-04 | 37.43    | 96.71%   |
+| aliberts/paris_street              | 720 x 1280  | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 2.45E-05 | 1.91E-04 | 37.48    | 96.66%   |
+| aliberts/paris_street              | 720 x 1280  | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 2.54E-05 | 2.05E-04 | 37.19    | 96.57%   |
+| aliberts/paris_street              | 720 x 1280  | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 2.47E-05 | 1.95E-04 | 37.43    | 96.71%   |
+| aliberts/paris_street              | 720 x 1280  | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 2.45E-05 | 1.91E-04 | 37.48    | 96.66%   |
+| aliberts/kitchen                   | 1080 x 1920 | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 1.18E-05 | 9.67E-05 | 40.24    | 97.02%   |
+| aliberts/kitchen                   | 1080 x 1920 | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 1.16E-05 | 9.38E-05 | 40.38    | 97.08%   |
+| aliberts/kitchen                   | 1080 x 1920 | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 1.21E-05 | 1.27E-04 | 40.26    | 97.05%   |
+| aliberts/kitchen                   | 1080 x 1920 | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 1.18E-05 | 9.67E-05 | 40.24    | 97.02%   |
+| aliberts/kitchen                   | 1080 x 1920 | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 1.16E-05 | 9.38E-05 | 40.38    | 97.08%   |
+| aliberts/kitchen                   | 1080 x 1920 | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 1.21E-05 | 1.27E-04 | 40.26    | 97.05%   |
+
+
+
+## Parameters selected for LeRobotDataset
+
+Considering these results, we chose what we think is the best set of encoding parameter:
+- vcodec: `libsvtav1`
+- pix-fmt: `yuv420p`
+- g: `2`
+- crf: `30`
+
+Since we're using av1 encoding, we're chosing the `pyav` decoder as `video_reader` does not support it (and it's also easier to use).
