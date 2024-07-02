@@ -325,11 +325,11 @@ def main(
     headers = ["repo_id", "resolution", "num_pixels"]
     headers += list(BASE_ENCODING.keys())
     headers += [
+        "timestamps_mode",
+        "backend",
         "video_size_bytes",
         "images_size_bytes",
         "video_images_size_ratio",
-        "timestamps_mode",
-        "backend",
         "avg_load_time_video_ms",
         "avg_load_time_images_ms",
         "video_images_load_time_ratio",
