@@ -721,6 +721,9 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             online_rollout_s, update_online_buffer_s = future.result()
             await_rollout_s = time.perf_counter() - start
 
+        if online_step >= cfg.training.online_steps:
+            break
+
     if eval_env:
         eval_env.close()
     logging.info("End of training")
