@@ -4326,6 +4326,7 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "jaraco.test", "more
 aloha = ["gym-aloha"]
 dev = ["debugpy", "pre-commit"]
 dora = ["gym-dora"]
+koch = ["dynamixel-sdk"]
 pusht = ["gym-pusht"]
 test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
@@ -4335,4 +4336,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "c630f4de53b32deae37f469b747ce36dcccc183fedd03af7a1799d967f5ebdb3"
+content-hash = "81dc830d3d36c67e2fe2aea6cc30829eb2977edbf49a037df21a5f329a01aee5"

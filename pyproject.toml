@@ -74,6 +74,7 @@ dev = ["pre-commit", "debugpy"]
 test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
 video_benchmark = ["scikit-image"]
+koch = ["dynamixel-sdk"]
 
 [tool.ruff]
 line-length = 110
