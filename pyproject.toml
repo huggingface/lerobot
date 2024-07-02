@@ -61,6 +61,8 @@ moviepy = ">=1.0.3"
 rerun-sdk = ">=0.15.1"
 deepdiff = ">=7.0.1"
 scikit-image = {version = "^0.23.2", optional = true}
+dynamixel-sdk = {version = "^3.7.31", optional = true}
+
 
 
 [tool.poetry.extras]
