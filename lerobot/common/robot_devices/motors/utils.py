@@ -1,5 +1,6 @@
 from typing import Protocol
 
+
 class MotorsBus(Protocol):
     def motor_names(self): ...
     def set_calibration(self): ...

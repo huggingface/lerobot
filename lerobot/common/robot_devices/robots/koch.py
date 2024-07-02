@@ -1,14 +1,18 @@
-import copy
+import pickle
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-import pickle
+
 import numpy as np
 import torch
-from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
-from lerobot.common.robot_devices.cameras.utils import Camera
-from lerobot.common.robot_devices.motors.dynamixel import DriveMode, DynamixelMotorsBus, OperatingMode, TorqueMode, motor_position_to_angle
-from lerobot.common.robot_devices.motors.utils import MotorsBus
 
+from lerobot.common.robot_devices.cameras.utils import Camera
+from lerobot.common.robot_devices.motors.dynamixel import (
+    DriveMode,
+    DynamixelMotorsBus,
+    OperatingMode,
+    TorqueMode,
+)
+from lerobot.common.robot_devices.motors.utils import MotorsBus
 
 ########################################################################
 # Calibration logic
@@ -21,6 +25,7 @@ from lerobot.common.robot_devices.motors.utils import MotorsBus
 TARGET_HORIZONTAL_POSITION = np.array([0, -1024, 1024, 0, -1024, 0])
 TARGET_90_DEGREE_POSITION = np.array([1024, 0, 0, 1024, 0, -1024])
 GRIPPER_OPEN = np.array([-400])
+
 
 def apply_homing_offset(values: np.array, homing_offset: np.array) -> np.array:
     for i in range(len(values)):
@@ -35,18 +40,21 @@ def apply_drive_mode(values: np.array, drive_mode: np.array) -> np.array:
             values[i] = -values[i]
     return values
 
+
 def apply_calibration(values: np.array, homing_offset: np.array, drive_mode: np.array) -> np.array:
     values = apply_drive_mode(values, drive_mode)
     values = apply_homing_offset(values, homing_offset)
     return values
 
+
 def revert_calibration(values: np.array, homing_offset: np.array, drive_mode: np.array) -> np.array:
     """
     Transform working position into real position for the robot.
     """
-    values = apply_homing_offset(values, np.array([
-        -homing_offset if homing_offset is not None else None for homing_offset in homing_offset
-    ]))
+    values = apply_homing_offset(
+        values,
+        np.array([-homing_offset if homing_offset is not None else None for homing_offset in homing_offset]),
+    )
     values = apply_drive_mode(values, drive_mode)
     return values
 
@@ -73,15 +81,20 @@ def compute_corrections(positions: np.array, drive_mode: list[bool], target_posi
 
 def compute_nearest_rounded_positions(positions: np.array) -> np.array:
     return np.array(
-        [round(positions[i] / 1024) * 1024 if positions[i] is not None else None for i in range(len(positions))])
+        [
+            round(positions[i] / 1024) * 1024 if positions[i] is not None else None
+            for i in range(len(positions))
+        ]
+    )
 
 
-def compute_homing_offset(arm: DynamixelMotorsBus, drive_mode: list[bool], target_position: np.array) -> np.array:
+def compute_homing_offset(
+    arm: DynamixelMotorsBus, drive_mode: list[bool], target_position: np.array
+) -> np.array:
     # Get the present positions of the servos
     present_positions = apply_calibration(
-        arm.read("Present_Position"),
-        np.array([0, 0, 0, 0, 0, 0]),
-        drive_mode)
+        arm.read("Present_Position"), np.array([0, 0, 0, 0, 0, 0]), drive_mode
+    )
 
     nearest_positions = compute_nearest_rounded_positions(present_positions)
     correction = compute_corrections(nearest_positions, drive_mode, target_position)
@@ -91,9 +104,8 @@ def compute_homing_offset(arm: DynamixelMotorsBus, drive_mode: list[bool], targe
 def compute_drive_mode(arm: DynamixelMotorsBus, offset: np.array):
     # Get current positions
     present_positions = apply_calibration(
-        arm.read("Present_Position"),
-        offset,
-        np.array([False, False, False, False, False, False]))
+        arm.read("Present_Position"), offset, np.array([False, False, False, False, False, False])
+    )
 
     nearest_positions = compute_nearest_rounded_positions(present_positions)
 
@@ -131,7 +143,9 @@ def run_arm_calibration(arm: MotorsBus, name: str):
     print(f"Please move the '{name}' arm to the horizontal position (gripper fully closed)")
     input("Press Enter to continue...")
 
-    horizontal_homing_offset = compute_homing_offset(arm, [False, False, False, False, False, False], TARGET_HORIZONTAL_POSITION)
+    horizontal_homing_offset = compute_homing_offset(
+        arm, [False, False, False, False, False, False], TARGET_HORIZONTAL_POSITION
+    )
 
     # TODO(rcadene): document what position 2 mean
     print(f"Please move the '{name}' arm to the 90 degree position (gripper fully open)")
@@ -158,6 +172,7 @@ def run_arm_calibration(arm: MotorsBus, name: str):
 ########################################################################
 # Alexander Koch robot arm
 ########################################################################
+
 
 @dataclass
 class KochRobotConfig:
@@ -201,12 +216,11 @@ class KochRobotConfig:
             ),
         }
     )
-    cameras: dict[str, Camera] = field(
-        default_factory=lambda: {}
-    )
+    cameras: dict[str, Camera] = field(default_factory=lambda: {})
 
-class KochRobot():
-    """ Tau Robotics: https://tau-robotics.com
+
+class KochRobot:
+    """Tau Robotics: https://tau-robotics.com
 
     Example of usage:
     ```python
@@ -214,7 +228,12 @@ class KochRobot():
     ```
     """
 
-    def __init__(self, config: KochRobotConfig | None = None, calibration_path: Path = ".cache/calibration/koch.pkl", **kwargs):
+    def __init__(
+        self,
+        config: KochRobotConfig | None = None,
+        calibration_path: Path = ".cache/calibration/koch.pkl",
+        **kwargs,
+    ):
         if config is None:
             config = KochRobotConfig()
         # Overwrite config arguments using kwargs
@@ -234,13 +253,13 @@ class KochRobot():
             for name in self.leader_arms:
                 reset_arm(self.leader_arms[name])
 
-            with open(self.calibration_path, 'rb') as f:
+            with open(self.calibration_path, "rb") as f:
                 calibration = pickle.load(f)
         else:
             calibration = self.run_calibration()
 
             self.calibration_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.calibration_path, 'wb') as f:
+            with open(self.calibration_path, "wb") as f:
                 pickle.dump(calibration, f)
 
         for name in self.follower_arms:
@@ -261,21 +280,23 @@ class KochRobot():
 
         for name in self.follower_arms:
             homing_offset, drive_mode = run_arm_calibration(self.follower_arms[name], f"{name} follower")
-            
+
             calibration[f"follower_{name}"] = {}
             for idx, motor_name in enumerate(self.follower_arms[name].motor_names):
                 calibration[f"follower_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
 
         for name in self.leader_arms:
             homing_offset, drive_mode = run_arm_calibration(self.leader_arms[name], f"{name} leader")
-            
+
             calibration[f"leader_{name}"] = {}
             for idx, motor_name in enumerate(self.leader_arms[name].motor_names):
                 calibration[f"leader_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
 
         return calibration
 
-    def teleop_step(self, record_data=False) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    def teleop_step(
+        self, record_data=False
+    ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         # Prepare to assign the positions of the leader to the follower
         leader_pos = {}
         for name in self.leader_arms:
@@ -322,7 +343,7 @@ class KochRobot():
         obs_dict["observation.state"] = torch.from_numpy(state)
         action_dict["action"] = torch.from_numpy(action)
         for name in self.cameras:
-            obs_dict[f"observation.images.{name}"] =  torch.from_numpy(images[name])
+            obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
 
         return obs_dict, action_dict
 

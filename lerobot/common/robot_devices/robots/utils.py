@@ -1,5 +1,6 @@
 from typing import Protocol
 
+
 class Robot(Protocol):
     def init_teleop(self): ...
     def run_calibration(self): ...

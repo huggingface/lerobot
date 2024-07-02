@@ -580,9 +580,7 @@ def main(
 
 def get_pretrained_policy_path(pretrained_policy_name_or_path, revision=None):
     try:
-        pretrained_policy_path = Path(
-            snapshot_download(pretrained_policy_name_or_path, revision=revision)
-        )
+        pretrained_policy_path = Path(snapshot_download(pretrained_policy_name_or_path, revision=revision))
     except (HFValidationError, RepositoryNotFoundError) as e:
         if isinstance(e, HFValidationError):
             error_message = (
@@ -644,7 +642,9 @@ if __name__ == "__main__":
     if args.pretrained_policy_name_or_path is None:
         main(hydra_cfg_path=args.config, out_dir=args.out_dir, config_overrides=args.overrides)
     else:
-        pretrained_policy_path = get_pretrained_policy_path(args.pretrained_policy_name_or_path, revision=args.revision)
+        pretrained_policy_path = get_pretrained_policy_path(
+            args.pretrained_policy_name_or_path, revision=args.revision
+        )
 
         main(
             pretrained_policy_path=pretrained_policy_path,
