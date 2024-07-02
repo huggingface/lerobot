@@ -85,7 +85,7 @@ class OnlineLeRobotDataset(torch.utils.data.Dataset):
             k: make_memmap_safe(
                 filename=Path(write_dir) / k,
                 dtype=v["dtype"],
-                mode="r+",
+                mode="r+" if (Path(write_dir) / k).exists() else "w+",
                 shape=tuple(v["shape"]),
             )
             for k, v in data_spec.items()

@@ -114,8 +114,14 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
 
         image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
         # Note: This check is covered in the post-init of the config but have a sanity check just in case.
-        assert len(image_keys) == 1
-        self.input_image_key = image_keys[0]
+        self._use_image = False
+        self._use_env_state = False
+        if len(image_keys) > 0:
+            assert len(image_keys) == 1
+            self._use_image = True
+            self.input_image_key = image_keys[0]
+        if "observation.environment_state" in config.input_shapes:
+            self._use_env_state = True
 
         self.reset()
 
@@ -125,10 +131,13 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         called on `env.reset()`
         """
         self._queues = {
-            "observation.image": deque(maxlen=1),
             "observation.state": deque(maxlen=1),
             "action": deque(maxlen=self.config.n_action_repeats),
         }
+        if self._use_image:
+            self._queues["observation.image"] = deque(maxlen=1)
+        if self._use_env_state:
+            self._queues["observation.environment_state"] = deque(maxlen=1)
         # Previous mean obtained from the cross-entropy method (CEM) used during MPC. It is used to warm start
         # CEM for the next step.
         self._prev_mean: torch.Tensor | None = None
@@ -137,7 +146,8 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
         batch = self.normalize_inputs(batch)
-        batch["observation.image"] = batch[self.input_image_key]
+        if self._use_image:
+            batch["observation.image"] = batch[self.input_image_key]
 
         self._queues = populate_queues(self._queues, batch)
 
@@ -151,9 +161,15 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
                 batch[key] = batch[key][:, 0]
 
             # NOTE: Order of observations matters here.
-            z = self.model.encode({k: batch[k] for k in ["observation.image", "observation.state"]})
+            encode_keys = []
+            if self._use_image:
+                encode_keys.append("observation.image")
+            if self._use_env_state:
+                encode_keys.append("observation.environment_state")
+            encode_keys.append("observation.state")
+            z = self.model.encode({k: batch[k] for k in encode_keys})
             if self.config.use_mpc:
-                batch_size = batch["observation.image"].shape[0]
+                batch_size = batch["observation.state"].shape[0]
                 # Batch processing is not handled in MPC mode, so process the batch in a loop.
                 action = []  # will be a batch of actions for one step
                 for i in range(batch_size):
@@ -164,13 +180,15 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
                 # Plan with the policy (π) alone.
                 action = self.model.pi(z)
 
-            self.unnormalize_outputs({"action": action})["action"]
+            action = torch.clamp(action, -1, +1)
+
+            action = self.unnormalize_outputs({"action": action})["action"]
 
             for _ in range(self.config.n_action_repeats):
                 self._queues["action"].append(action)
 
         action = self._queues["action"].popleft()
-        return torch.clamp(action, -1, 1)
+        return action
 
     @torch.no_grad()
     def plan(self, z: Tensor) -> Tensor:
@@ -319,7 +337,8 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         device = get_device_from_parameters(self)
 
         batch = self.normalize_inputs(batch)
-        batch["observation.image"] = batch[self.input_image_key]
+        if self._use_image:
+            batch["observation.image"] = batch[self.input_image_key]
         batch = self.normalize_targets(batch)
 
         # import os
@@ -358,7 +377,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         observations = {k: v for k, v in batch.items() if k.startswith("observation.")}
 
         # Apply random image augmentations.
-        if self.config.max_random_shift_ratio > 0:
+        if self._use_image and self.config.max_random_shift_ratio > 0:
             observations["observation.image"] = flatten_forward_unflatten(
                 partial(random_shifts_aug, max_random_shift_ratio=self.config.max_random_shift_ratio),
                 observations["observation.image"],
@@ -370,7 +389,9 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         for k in observations:
             current_observation[k] = observations[k][0]
             next_observations[k] = observations[k][1:]
-        horizon, batch_size = next_observations["observation.image"].shape[:2]
+        horizon, batch_size = next_observations[
+            "observation.image" if self._use_image else "observation.environment_state"
+        ].shape[:2]
 
         # Run latent rollout using the latent dynamics model and policy model.
         # Note this has shape `horizon+1` because there are `horizon` actions and a current `z`. Each action
@@ -763,6 +784,16 @@ class TDMPCObservationEncoder(nn.Module):
                 nn.LayerNorm(config.latent_dim),
                 nn.Sigmoid(),
             )
+        if "observation.environment_state" in config.input_shapes:
+            self.env_state_enc_layers = nn.Sequential(
+                nn.Linear(
+                    config.input_shapes["observation.environment_state"][0], config.state_encoder_hidden_dim
+                ),
+                nn.ELU(),
+                nn.Linear(config.state_encoder_hidden_dim, config.latent_dim),
+                nn.LayerNorm(config.latent_dim),
+                nn.Sigmoid(),
+            )
 
     def forward(self, obs_dict: dict[str, Tensor]) -> Tensor:
         """Encode the image and/or state vector.
@@ -771,8 +802,11 @@ class TDMPCObservationEncoder(nn.Module):
         over all features.
         """
         feat = []
+        # NOTE: Order of observations matters here.
         if "observation.image" in self.config.input_shapes:
             feat.append(flatten_forward_unflatten(self.image_enc_layers, obs_dict["observation.image"]))
+        if "observation.environment_state" in self.config.input_shapes:
+            feat.append(self.env_state_enc_layers(obs_dict["observation.environment_state"]))
         if "observation.state" in self.config.input_shapes:
             feat.append(self.state_enc_layers(obs_dict["observation.state"]))
         return torch.stack(feat, dim=0).mean(0)

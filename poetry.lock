@@ -1114,12 +1114,10 @@ subdirectory = "gym_dora"
 name = "gym-pusht"
 version = "0.1.4"
 description = "A gymnasium environment for PushT."
-optional = true
-python-versions = "<4.0,>=3.10"
-files = [
-    {file = "gym_pusht-0.1.4-py3-none-any.whl", hash = "sha256:04ec628fac80d77cf4edf280ed528ab06f7b8997e4452c78999b4730c2d269ab"},
-    {file = "gym_pusht-0.1.4.tar.gz", hash = "sha256:5926ef8098bde7f6a180bdd34b4ce3a827fb333847cc54d8ad47c430e249f44c"},
-]
+optional = false
+python-versions = "^3.10"
+files = []
+develop = false
 
 [package.dependencies]
 gymnasium = ">=0.29.1"
@@ -1132,6 +1130,12 @@ shapely = ">=2.0.3"
 [package.extras]
 dev = ["debugpy (>=1.8.1)", "pre-commit (>=3.7.0)"]
 test = ["pytest (>=8.1.0)", "pytest-cov (>=5.0.0)"]
+
+[package.source]
+type = "git"
+url = "https://github.com/alexander-soare/gym-pusht.git"
+reference = "add_keypoints_mode"
+resolved_reference = "312c8b391a7f33014595cfece7867543c37a055f"
 
 [[package]]
 name = "gym-xarm"
@@ -1595,7 +1599,7 @@ setuptools = "!=50.0.0"
 name = "lazy-loader"
 version = "0.4"
 description = "Makes it easy to load subpackages and functions on demand."
-optional = true
+optional = false
 python-versions = ">=3.7"
 files = [
     {file = "lazy_loader-0.4-py3-none-any.whl", hash = "sha256:342aa8e14d543a154047afb4ba8ef17f5563baad3fc610d7b15b213b0f119efc"},
@@ -2412,10 +2416,10 @@ files = [
 
 [package.dependencies]
 numpy = [
+    {version = ">=1.26.0", markers = "python_version >= \"3.12\""},
+    {version = ">=1.23.5", markers = "python_version >= \"3.11\" and python_version < \"3.12\""},
     {version = ">=1.21.4", markers = "python_version >= \"3.10\" and platform_system == \"Darwin\" and python_version < \"3.11\""},
     {version = ">=1.21.2", markers = "platform_system != \"Darwin\" and python_version >= \"3.10\" and python_version < \"3.11\""},
-    {version = ">=1.23.5", markers = "python_version >= \"3.11\" and python_version < \"3.12\""},
-    {version = ">=1.26.0", markers = "python_version >= \"3.12\""},
 ]
 
 [[package]]
@@ -2481,9 +2485,9 @@ files = [
 
 [package.dependencies]
 numpy = [
-    {version = ">=1.22.4", markers = "python_version < \"3.11\""},
-    {version = ">=1.23.2", markers = "python_version == \"3.11\""},
     {version = ">=1.26.0", markers = "python_version >= \"3.12\""},
+    {version = ">=1.23.2", markers = "python_version == \"3.11\""},
+    {version = ">=1.22.4", markers = "python_version < \"3.11\""},
 ]
 python-dateutil = ">=2.8.2"
 pytz = ">=2020.1"
@@ -2852,7 +2856,7 @@ files = [
 name = "pygame"
 version = "2.6.0"
 description = "Python Game Development"
-optional = true
+optional = false
 python-versions = ">=3.6"
 files = [
     {file = "pygame-2.6.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:e5707aa9d029752495b3eddc1edff62e0e390a02f699b0f1ce77fe0b8c70ea4f"},
@@ -3409,7 +3413,7 @@ torch = ["safetensors[numpy]", "torch (>=1.10)"]
 name = "scikit-image"
 version = "0.23.2"
 description = "Image processing in Python"
-optional = true
+optional = false
 python-versions = ">=3.10"
 files = [
     {file = "scikit_image-0.23.2-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:f9a8db6c52f8d0e1474ea8320d7b8db442b4d6baa29dd0acbd02f8a49572f18a"},
@@ -3452,7 +3456,7 @@ test = ["asv", "numpydoc (>=1.7)", "pooch (>=1.6.0)", "pytest (>=7.0)", "pytest-
 name = "scipy"
 version = "1.14.0"
 description = "Fundamental algorithms for scientific computing in Python"
-optional = true
+optional = false
 python-versions = ">=3.10"
 files = [
     {file = "scipy-1.14.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:7e911933d54ead4d557c02402710c2396529540b81dd554fc1ba270eb7308484"},
@@ -3659,7 +3663,7 @@ test = ["build[virtualenv] (>=1.0.3)", "filelock (>=3.4.0)", "importlib-metadata
 name = "shapely"
 version = "2.0.4"
 description = "Manipulation and analysis of geometric objects"
-optional = true
+optional = false
 python-versions = ">=3.7"
 files = [
     {file = "shapely-2.0.4-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:011b77153906030b795791f2fdfa2d68f1a8d7e40bce78b029782ade3afe4f2f"},
@@ -3790,7 +3794,7 @@ tests = ["pytest", "pytest-cov"]
 name = "tifffile"
 version = "2024.6.18"
 description = "Read and write TIFF files"
-optional = true
+optional = false
 python-versions = ">=3.9"
 files = [
     {file = "tifffile-2024.6.18-py3-none-any.whl", hash = "sha256:67299c0445fc47463bbc71f3cb4676da2ab0242b0c6c6542a0680801b4b97d8a"},
@@ -4318,4 +4322,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "61aad793c07c8cb260782a965af289c724bd69dd71abd826d0b27f62542c8b64"
+content-hash = "4e23709cac2de1880e099b1aec5df1157d169b0123d42676ec9aa02862e9bf2a"
