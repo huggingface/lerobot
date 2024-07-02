@@ -234,7 +234,6 @@ def update_online_buffer(
     sampler: torch.utils.data.WeightedRandomSampler,
     new_data_dict: dict[str, torch.Tensor],
     online_sampling_ratio: float,
-    buffer_capacity: float | None = None,
 ):
     """
     Modifies the online_dataset, concat_dataset, and sampler in place by integrating
@@ -659,7 +658,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     sampler,
                     new_data_dict=eval_info["episodes"],
                     online_sampling_ratio=cfg.training.online_sampling_ratio,
-                    buffer_capacity=cfg.training.online_buffer_capacity,
                 )
                 update_online_buffer_s = time.perf_counter() - start_update_buffer_time
 
