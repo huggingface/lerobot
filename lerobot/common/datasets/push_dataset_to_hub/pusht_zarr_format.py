@@ -116,9 +116,10 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
         block_pos = state[:, 2:4]
         block_angle = state[:, 4]
 
-        # get reward, success, done
+        # get reward, success, done, and keypoints
         reward = torch.zeros(num_frames)
         success = torch.zeros(num_frames, dtype=torch.bool)
+        keypoints = torch.zeros(num_frames, 16)  # 8 keypoints each with 2 coords
         done = torch.zeros(num_frames, dtype=torch.bool)
         for i in range(num_frames):
             space = pymunk.Space()
@@ -134,7 +135,7 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
             ]
             space.add(*walls)
 
-            block_body = PushTEnv.add_tee(space, block_pos[i].tolist(), block_angle[i].item())
+            block_body, block_shapes = PushTEnv.add_tee(space, block_pos[i].tolist(), block_angle[i].item())
             goal_geom = pymunk_to_shapely(goal_body, block_body.shapes)
             block_geom = pymunk_to_shapely(block_body, block_body.shapes)
             intersection_area = goal_geom.intersection(block_geom).area
@@ -142,6 +143,7 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
             coverage = intersection_area / goal_area
             reward[i] = np.clip(coverage / success_threshold, 0, 1)
             success[i] = coverage > success_threshold
+            keypoints[i] = torch.from_numpy(PushTEnv.get_keypoints(block_shapes).flatten())
 
         # last step of demonstration is considered done
         done[-1] = True
@@ -169,6 +171,7 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
             ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
 
         ep_dict["observation.state"] = agent_pos
+        ep_dict["observation.environment_state"] = keypoints
         ep_dict["action"] = actions[from_idx:to_idx]
         ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int64)
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
@@ -180,7 +183,6 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
         ep_dict["next.done"] = torch.cat([done[1:], done[[-1]]])
         ep_dict["next.success"] = torch.cat([success[1:], success[[-1]]])
         ep_dicts.append(ep_dict)
-
     data_dict = concatenate_episodes(ep_dicts)
 
     total_frames = data_dict["frame_index"].shape[0]
@@ -198,6 +200,9 @@ def to_hf_dataset(data_dict, video):
 
     features["observation.state"] = Sequence(
         length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
+    )
+    features["observation.environment_state"] = Sequence(
+        length=data_dict["observation.environment_state"].shape[1], feature=Value(dtype="float32", id=None)
     )
     features["action"] = Sequence(
         length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)

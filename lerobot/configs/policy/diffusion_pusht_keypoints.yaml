@@ -5,21 +5,7 @@
 #       https://github.com/huggingface/lerobot/pull/134 for more details.
 
 seed: 100000
-dataset_repo_id: lerobot/pusht
-
-override_dataset_stats:
-  # TODO(rcadene, alexander-soare): should we remove image stats as well? do we use a pretrained vision model?
-  observation.image:
-    mean: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
-    std: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
-  # TODO(rcadene, alexander-soare): we override state and action stats to use the same as the pretrained model
-  # from the original codebase, but we should remove these and train our own pretrained model
-  observation.state:
-    min: [13.456424, 32.938293]
-    max: [496.14618, 510.9579]
-  action:
-    min: [12.0, 25.0]
-    max: [511.0, 511.0]
+dataset_repo_id: alexandersoare/pusht_keypoints
 
 training:
   offline_steps: 200000
@@ -40,7 +26,7 @@ training:
   online_steps_between_rollouts: 1
 
   delta_timestamps:
-    observation.image: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.environment_state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
     observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
     action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.horizon})]"
 
@@ -62,14 +48,14 @@ policy:
 
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
-    observation.image: [3, 96, 96]
+    observation.environment_state: [16]
     observation.state: ["${env.state_dim}"]
   output_shapes:
     action: ["${env.action_dim}"]
 
   # Normalization / Unnormalization
   input_normalization_modes:
-    observation.image: mean_std
+    observation.environment_state: min_max
     observation.state: min_max
   output_normalization_modes:
     action: min_max
@@ -83,13 +69,13 @@ policy:
   use_group_norm: True
   spatial_softmax_num_keypoints: 32
   # Unet.
-  down_dims: [512, 1024, 2048]
+  down_dims: [256, 512, 1024]
   kernel_size: 5
   n_groups: 8
   diffusion_step_embed_dim: 128
   use_film_scale_modulation: True
   # Noise scheduler.
-  noise_scheduler_type: DDPM
+  noise_scheduler_type: DDIM
   num_train_timesteps: 100
   beta_schedule: squaredcos_cap_v2
   beta_start: 0.0001
@@ -99,7 +85,7 @@ policy:
   clip_sample_range: 1.0
 
   # Inference
-  num_inference_steps: null  # if not provided, defaults to `num_train_timesteps`
+  num_inference_steps: 10  # if not provided, defaults to `num_train_timesteps`
 
   # Loss computation
   do_mask_loss_for_padding: false
