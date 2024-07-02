@@ -165,10 +165,10 @@ def encode_video_frames(
     imgs_dir: Path,
     video_path: Path,
     fps: int,
-    video_codec: str = "libx264",
-    pixel_format: str = "yuv444p",
+    video_codec: str = "libsvtav1",
+    pixel_format: str = "yuv420p",
     group_of_pictures_size: int | None = 2,
-    constant_rate_factor: int | None = None,
+    constant_rate_factor: int | None = 30,
     log_level: str | None = "error",
     overwrite: bool = False,
 ) -> None:
