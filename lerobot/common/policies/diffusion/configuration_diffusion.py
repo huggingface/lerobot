@@ -122,10 +122,12 @@ class DiffusionConfig:
     # Architecture / modeling.
     # Vision backbone.
     vision_backbone: str = "resnet18"
-    crop_shape: tuple[int, int] | None = (84, 84)
+    resize_shape: tuple[int, int] | None = (256, 342)
+    crop_shape: tuple[int, int] | None = (224, 224)
     crop_is_random: bool = True
     pretrained_backbone_weights: str | None = None
-    use_group_norm: bool = True
+    use_spatial_softmax: bool = False
+    use_group_norm: bool = False
     spatial_softmax_num_keypoints: int = 32
     # Unet.
     down_dims: tuple[int, ...] = (512, 1024, 2048)
@@ -145,6 +147,13 @@ class DiffusionConfig:
 
     # Inference
     num_inference_steps: int | None = None
+
+    use_ema: bool = True
+    ema_update_after_step: int = 0
+    ema_min_alpha: float = 0.0
+    ema_max_alpha: float = 0.9999
+    ema_inv_gamma: float = 1.0
+    ema_power: float = 0.75
 
     # Loss computation
     do_mask_loss_for_padding: bool = False

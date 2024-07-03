@@ -20,6 +20,7 @@ TODO(alexander-soare):
   - Remove reliance on diffusers for DDPMScheduler and LR scheduler.
 """
 
+import copy
 import math
 from collections import deque
 from typing import Callable
@@ -33,6 +34,7 @@ from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
+from torch.nn.modules.batchnorm import _BatchNorm
 
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
@@ -82,6 +84,12 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
 
         self.diffusion = DiffusionModel(config)
 
+        self.ema_diffusion = None
+        self.ema = None
+        if self.config.use_ema:
+            self.ema_diffusion = copy.deepcopy(self.diffusion)
+            self.ema = DiffusionEMA(config, model=self.ema_diffusion)
+
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
 
         self.reset()
@@ -124,7 +132,10 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         if len(self._queues["action"]) == 0:
             # stack n latest observations from the queue
             batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
-            actions = self.diffusion.generate_actions(batch)
+            if not self.training and self.ema_diffusion is not None:
+                actions = self.ema_diffusion.generate_actions(batch)
+            else:
+                actions = self.diffusion.generate_actions(batch)
 
             # TODO(rcadene): make above methods return output dictionary?
             actions = self.unnormalize_outputs({"action": actions})["action"]
@@ -141,6 +152,70 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
         return {"loss": loss}
+
+
+class DiffusionEMA:
+    """
+    Exponential Moving Average of models weights
+    """
+
+    def __init__(self, config: DiffusionConfig, model: nn.Module):
+        """
+        @crowsonkb's notes on EMA Warmup:
+            If gamma=1 and power=1, implements a simple average. gamma=1, power=2/3 are good values for models
+            you plan to train for a million or more steps (reaches decay factor 0.999 at 31.6K steps, 0.9999
+            at 1M steps), gamma=1, power=3/4 for models you plan to train for less (reaches decay factor 0.999
+            at 10K steps, 0.9999 at 215.4k steps).
+        Args:
+            inv_gamma (float): Inverse multiplicative factor of EMA warmup. Default: 1.
+            power (float): Exponential factor of EMA warmup. Default: 2/3.
+            min_alpha (float): The minimum EMA decay rate. Default: 0.
+        """
+
+        self.averaged_model = model
+        self.averaged_model.eval()
+        self.averaged_model.requires_grad_(False)
+
+        self.update_after_step = config.ema_update_after_step
+        self.inv_gamma = config.ema_inv_gamma
+        self.power = config.ema_power
+        self.min_alpha = config.ema_min_alpha
+        self.max_alpha = config.ema_max_alpha
+
+        self.alpha = 0.0
+        self.optimization_step = 0
+
+    def get_decay(self, optimization_step):
+        """
+        Compute the decay factor for the exponential moving average.
+        """
+        step = max(0, optimization_step - self.update_after_step - 1)
+        value = 1 - (1 + step / self.inv_gamma) ** -self.power
+
+        if step <= 0:
+            return 0.0
+
+        return max(self.min_alpha, min(value, self.max_alpha))
+
+    @torch.no_grad()
+    def step(self, new_model):
+        self.alpha = self.get_decay(self.optimization_step)
+
+        for module, ema_module in zip(new_model.modules(), self.averaged_model.modules(), strict=True):
+            # Iterate over immediate parameters only.
+            for param, ema_param in zip(
+                module.parameters(recurse=False), ema_module.parameters(recurse=False), strict=True
+            ):
+                if isinstance(param, dict):
+                    raise RuntimeError("Dict parameter not supported")
+                if isinstance(module, _BatchNorm) or not param.requires_grad:
+                    # Copy BatchNorm parameters, and non-trainable parameters directly.
+                    ema_param.copy_(param.to(dtype=ema_param.dtype).data)
+                else:
+                    ema_param.mul_(self.alpha)
+                    ema_param.add_(param.data.to(dtype=ema_param.dtype), alpha=1 - self.alpha)
+
+        self.optimization_step += 1
 
 
 def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
@@ -161,7 +236,10 @@ class DiffusionModel(nn.Module):
         super().__init__()
         self.config = config
 
-        self.rgb_encoder = DiffusionRgbEncoder(config)
+        if config.use_spatial_softmax:
+            self.rgb_encoder = DiffusionSpatialRgbEncoder(config)
+        else:
+            self.rgb_encoder = DiffusionRgbEncoder(config)
         num_images = len([k for k in config.input_shapes if k.startswith("observation.image")])
         self.unet = DiffusionConditionalUnet1d(
             config,
@@ -387,7 +465,7 @@ class SpatialSoftmax(nn.Module):
         return feature_keypoints
 
 
-class DiffusionRgbEncoder(nn.Module):
+class DiffusionSpatialRgbEncoder(nn.Module):
     """Encoder an RGB image into a 1D feature vector.
 
     Includes the ability to normalize and crop the image first.
@@ -463,6 +541,72 @@ class DiffusionRgbEncoder(nn.Module):
         x = torch.flatten(self.pool(self.backbone(x)), start_dim=1)
         # Final linear layer with non-linearity.
         x = self.relu(self.out(x))
+        return x
+
+
+class DiffusionRgbEncoder(nn.Module):
+    """Encoder an RGB image into a 1D feature vector.
+
+    Includes the ability to normalize and crop the image first.
+    """
+
+    def __init__(self, config: DiffusionConfig):
+        super().__init__()
+        # Set up optional preprocessing.
+        if config.crop_shape is not None:
+            self.do_crop = True
+            # First, do a resize
+            self.resize = torchvision.transforms.Resize(config.resize_shape)
+            # Always use center crop for eval
+            self.center_crop = torchvision.transforms.CenterCrop(config.crop_shape)
+            if config.crop_is_random:
+                self.maybe_random_crop = torchvision.transforms.RandomCrop(config.crop_shape)
+            else:
+                self.maybe_random_crop = self.center_crop
+        else:
+            self.do_crop = False
+
+        # Set up backbone.
+        backbone_model = getattr(torchvision.models, config.vision_backbone)(
+            weights=config.pretrained_backbone_weights
+        )
+        # Drop the final (classification) layer
+        self.backbone = nn.Sequential(*(list(backbone_model.children())[:-1]))
+
+        # Set up pooling and final layers.
+        # Use a dry run to get the feature map shape.
+        # The dummy input should take the number of image channels from `config.input_shapes` and it should
+        # use the height and width from `config.crop_shape` if it is provided, otherwise it should use the
+        # height and width from `config.input_shapes`.
+        image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+        # Note: we have a check in the config class to make sure all images have the same shape.
+        image_key = image_keys[0]
+        dummy_input_h_w = (
+            config.crop_shape if config.crop_shape is not None else config.input_shapes[image_key][1:]
+        )
+        dummy_input = torch.zeros(size=(1, config.input_shapes[image_key][0], *dummy_input_h_w))
+        with torch.inference_mode():
+            dummy_feature_map = self.backbone(dummy_input)
+        feature_map_shape = tuple(dummy_feature_map.shape[1:])
+        self.feature_dim = feature_map_shape[-1]
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x: (B, C, H, W) image tensor with pixel values in [0, 1].
+        Returns:
+            (B, D) image feature.
+        """
+        # Preprocess: maybe crop (if it was set up in the __init__).
+        x = self.resize(x)
+        if self.do_crop:
+            if self.training:  # noqa: SIM108
+                x = self.maybe_random_crop(x)
+            else:
+                # Always use center crop for eval.
+                x = self.center_crop(x)
+        # Extract backbone feature.
+        x = torch.flatten(self.pool(self.backbone(x)), start_dim=1)
         return x
 
 

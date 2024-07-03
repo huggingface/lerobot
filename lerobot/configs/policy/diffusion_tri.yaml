@@ -1,0 +1,128 @@
+# @package _global_
+
+# Defaults for training for the PushT dataset as per https://github.com/real-stanford/diffusion_policy.
+# Note: We do not track EMA model weights as we discovered it does not improve the results. See
+#       https://github.com/huggingface/lerobot/pull/134 for more details.
+
+seed: 100000
+dataset_repo_id: notmahi/tutorial-tri-BimanualPutRedBellPepperInBin
+
+override_dataset_stats:
+  observation.images.wrist_right_minus:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.wrist_left_plus:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.scene_right_0:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.scene_left_0:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+
+
+training:
+  offline_steps: 200000
+  online_steps: 0
+  eval_freq: 5000
+  save_freq: 5000
+  log_freq: 250
+  save_checkpoint: true
+
+  batch_size: 64
+  grad_clip_norm: 10
+  lr: 1.0e-4
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  adam_betas: [0.95, 0.999]
+  adam_eps: 1.0e-8
+  adam_weight_decay: 1.0e-6
+  online_steps_between_rollouts: 1
+
+  delta_timestamps:
+    observation.images.wrist_right_minus: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.images.wrist_left_plus: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.images.scene_right_0: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.images.scene_left_0: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.horizon})]"
+
+  # The original implementation doesn't sample frames for the last 7 steps,
+  # which avoids excessive padding and leads to improved training results.
+  drop_n_last_frames: 7  # ${policy.horizon} - ${policy.n_action_steps} - ${policy.n_obs_steps} + 1
+
+eval:
+  n_episodes: 50
+  batch_size: 50
+
+policy:
+  name: diffusion
+
+  # Input / output structure.
+  n_obs_steps: 2
+  horizon: 16
+  n_action_steps: 8
+
+  input_shapes:
+    observation.images.wrist_right_minus: [3, 480, 640]
+    observation.images.wrist_left_plus: [3, 480, 640]
+    observation.images.scene_right_0: [3, 480, 640]
+    observation.images.scene_left_0: [3, 480, 640]
+    observation.state: ["${env.state_dim}"]
+  output_shapes:
+    action: ["${env.action_dim}"]
+
+  # Normalization / Unnormalization
+  input_normalization_modes:
+    observation.images.wrist_right_minus: mean_std
+    observation.images.wrist_left_plus: mean_std
+    observation.images.scene_right_0: mean_std
+    observation.images.scene_left_0: mean_std
+    observation.state: min_max
+  output_normalization_modes:
+    action: min_max
+
+  # Architecture / modeling.
+  # Vision backbone.
+  vision_backbone: vit_b_16
+  pretrained_backbone_weights: IMAGENET1K_SWAG_E2E_V1
+  resize_shape: [256, 342]
+  crop_shape: [224, 224]
+  crop_is_random: True
+  pretrained_backbone_weights: null
+  use_group_norm: True
+  spatial_softmax_num_keypoints: 32
+  # Unet.
+  down_dims: [256, 512, 1024]
+  kernel_size: 5
+  n_groups: 8
+  diffusion_step_embed_dim: 128
+  use_film_scale_modulation: True
+  # Noise scheduler.
+  noise_scheduler_type: DDPM
+  num_train_timesteps: 100
+  beta_schedule: squaredcos_cap_v2
+  beta_start: 0.0001
+  beta_end: 0.02
+  prediction_type: epsilon # epsilon / sample
+  clip_sample: True
+  clip_sample_range: 1.0
+
+  # Inference
+  num_inference_steps: null  # if not provided, defaults to `num_train_timesteps`
+
+  # TODO(alexander-soare): Remove these from the policy config.
+  use_ema: true
+  ema_update_after_step: 0
+  ema_min_alpha: 0.0
+  ema_max_alpha: 0.9999
+  ema_inv_gamma: 1.0
+  ema_power: 0.75
+
+  # Loss computation
+  do_mask_loss_for_padding: false
