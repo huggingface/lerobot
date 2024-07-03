@@ -348,3 +348,52 @@ If you want, you can cite this work with:
     year = {2024}
 }
 ```
+
+Additionally, if you are using any of the particular policy architecture, pretrained models, or datasets, it is recommended to cite the original authors of the work as they appear below:
+
+- [Diffusion Policy](https://diffusion-policy.cs.columbia.edu)
+```
+@inproceedings{chi2023diffusionpolicy,
+	title={Diffusion Policy: Visuomotor Policy Learning via Action Diffusion},
+	author={Chi, Cheng and Feng, Siyuan and Du, Yilun and Xu, Zhenjia and Cousineau, Eric and Burchfiel, Benjamin and Song, Shuran},
+	booktitle={Proceedings of Robotics: Science and Systems (RSS)},
+	year={2023}
+}
+
+@article{chi2024diffusionpolicy,
+	author = {Cheng Chi and Zhenjia Xu and Siyuan Feng and Eric Cousineau and Yilun Du and Benjamin Burchfiel and Russ Tedrake and Shuran Song},
+	title ={Diffusion Policy: Visuomotor Policy Learning via Action Diffusion},
+	journal = {The International Journal of Robotics Research},
+	year = {2024},
+}
+```
+- [ACT or ALOHA](https://tonyzhaozh.github.io/aloha)
+```
+@article{zhao2023learning,
+  title={Learning fine-grained bimanual manipulation with low-cost hardware},
+  author={Zhao, Tony Z and Kumar, Vikash and Levine, Sergey and Finn, Chelsea},
+  journal={arXiv preprint arXiv:2304.13705},
+  year={2023}
+}
+```
+
+- [TDMPC](https://www.nicklashansen.com/td-mpc/)
+
+```
+@inproceedings{Hansen2022tdmpc,
+	title={Temporal Difference Learning for Model Predictive Control},
+	author={Nicklas Hansen and Xiaolong Wang and Hao Su},
+	booktitle={ICML},
+	year={2022}
+}
+```
+
+- VQ-BeT Policy: [VQ-BeT](https://sjlee.cc/vq-bet/)
+```
+@article{lee2024behavior,
+  title={Behavior generation with latent actions},
+  author={Lee, Seungjae and Wang, Yibin and Etukuru, Haritheja and Kim, H Jin and Shafiullah, Nur Muhammad Mahi and Pinto, Lerrel},
+  journal={arXiv preprint arXiv:2403.03181},
+  year={2024}
+}
+```
