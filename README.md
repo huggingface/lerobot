@@ -381,7 +381,7 @@ Additionally, if you are using any of the particular policy architecture, pretra
 }
 ```
 
-- VQ-BeT Policy: [VQ-BeT](https://sjlee.cc/vq-bet/)
+- [VQ-BeT](https://sjlee.cc/vq-bet/)
 ```bibtex
 @article{lee2024behavior,
   title={Behavior generation with latent actions},
