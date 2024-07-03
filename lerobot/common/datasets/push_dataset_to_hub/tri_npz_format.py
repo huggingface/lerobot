@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Contains utilities to process raw data format of HDF5 files like in: https://github.com/tonyzhaozh/act
+Contains utilities to process raw data format of npz files from TRI sim environments.
 """
 
 import os
@@ -91,7 +91,7 @@ def check_format(raw_dir: Path) -> bool:
     ]
 
     for ep_idx in range(num_episodes):
-        ep_folder: Path = raw_dir / f"episode_{ep_idx}_random_0" / PREFIX
+        ep_folder: Path = raw_dir / f"episode_{ep_idx}" / PREFIX
         assert ep_folder.exists()
 
         metadata_path = ep_folder / "metadata.yaml"
@@ -127,18 +127,12 @@ def load_from_raw(
         "robot__actual__poses__left::panda__rot_6d",
         "robot__actual__grippers__right::panda_hand",
         "robot__actual__grippers__left::panda_hand",
-        "robot__actual__joint_position__right::panda",
-        "robot__actual__joint_position__left::panda",
-        "robot__actual__joint_velocity__right::panda",
-        "robot__actual__joint_velocity__left::panda",
-        "robot__actual__joint_torque__right::panda",
-        "robot__actual__joint_torque__left::panda",
     ]
 
     ep_dicts = []
     ep_ids = episodes if episodes else range(num_episodes)
     for ep_idx in tqdm.tqdm(ep_ids):
-        ep_path = raw_dir / f"episode_{ep_idx}_random_0" / PREFIX
+        ep_path = raw_dir / f"episode_{ep_idx}" / PREFIX
 
         actions_before_processing = np.load(ep_path / "actions.npz")["actions"]
         num_frames = actions_before_processing.shape[0]
