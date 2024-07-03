@@ -571,7 +571,9 @@ class DiffusionRgbEncoder(nn.Module):
             weights=config.pretrained_backbone_weights
         )
         # Drop the final (classification) layer
-        self.backbone = nn.Sequential(*(list(backbone_model.children())[:-1]))
+        # self.backbone = nn.Sequential(*(list(backbone_model.children())[:-1]))
+        self.backbone = backbone_model
+        self.backbone.heads = nn.Identity()
 
         # Set up pooling and final layers.
         # Use a dry run to get the feature map shape.
@@ -584,7 +586,7 @@ class DiffusionRgbEncoder(nn.Module):
         dummy_input_h_w = (
             config.crop_shape if config.crop_shape is not None else config.input_shapes[image_key][1:]
         )
-        dummy_input = torch.zeros(size=(1, config.input_shapes[image_key][0], *dummy_input_h_w))
+        dummy_input = torch.zeros(size=(2, config.input_shapes[image_key][0], *dummy_input_h_w))
         with torch.inference_mode():
             dummy_feature_map = self.backbone(dummy_input)
         feature_map_shape = tuple(dummy_feature_map.shape[1:])
@@ -606,7 +608,7 @@ class DiffusionRgbEncoder(nn.Module):
                 # Always use center crop for eval.
                 x = self.center_crop(x)
         # Extract backbone feature.
-        x = torch.flatten(self.pool(self.backbone(x)), start_dim=1)
+        x = torch.flatten(self.backbone(x), start_dim=1)
         return x
 
 

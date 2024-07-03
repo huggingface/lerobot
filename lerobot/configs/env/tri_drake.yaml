@@ -5,7 +5,7 @@ fps: 30
 env:
   name: tri
   task: PutSpatulaInUtensilCrock-v0
-  state_dim: 62
+  state_dim: 20
   action_dim: 14
   fps: ${fps}
   episode_length: 400

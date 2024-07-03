@@ -34,7 +34,7 @@ training:
   log_freq: 250
   save_checkpoint: true
 
-  batch_size: 64
+  batch_size: 32
   grad_clip_norm: 10
   lr: 1.0e-4
   lr_scheduler: cosine
@@ -90,11 +90,11 @@ policy:
   # Architecture / modeling.
   # Vision backbone.
   vision_backbone: vit_b_16
-  pretrained_backbone_weights: IMAGENET1K_SWAG_E2E_V1
+  pretrained_backbone_weights: IMAGENET1K_SWAG_LINEAR_V1
   resize_shape: [256, 342]
   crop_shape: [224, 224]
   crop_is_random: True
-  pretrained_backbone_weights: null
+  use_spatial_softmax: False
   use_group_norm: True
   spatial_softmax_num_keypoints: 32
   # Unet.
