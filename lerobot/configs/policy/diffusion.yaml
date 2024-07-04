@@ -24,8 +24,8 @@ override_dataset_stats:
 training:
   offline_steps: 200000
   online_steps: 0
-  eval_freq: 10000
-  save_freq: 10000
+  eval_freq: 25000
+  save_freq: 25000
   save_checkpoint: true
 
   batch_size: 64
