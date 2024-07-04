@@ -40,6 +40,31 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --raw-format umi_zarr \
 --repo-id lerobot/umi_cup_in_the_wild
 ```
+
+If you are pushing a new version of an existing dataset, you need to update the version of ALL datasets.
+Here's the workflow:
+
+1. Increment the minor version number in CODEBASE_VERSION from lerobot_dataset.py
+2. Run push_dataset_to_hub.py for the datasets you want to update.
+3. Update the versions of ALL other datasets with the following script:
+
+```python
+from huggingface_hub import create_branch
+from huggingface_hub.utils._errors import HfHubHTTPError
+
+from lerobot import available_datasets
+
+for repo_id in available_datasets:
+    try:
+        create_branch(repo_id, repo_type="dataset", branch="v1.5", revision="v1.4")
+    except HfHubHTTPError:
+        # Note, this should only be the case for the datasets you have updated. If you see any others, please
+        # reach out to the core LeRobot team.
+        print(f"Found existing branch for {repo_id}")
+```
+
+On the other hand, if you are pushing a new dataset, you don't need to worry about any of the instructions
+above.
 """
 
 import argparse
