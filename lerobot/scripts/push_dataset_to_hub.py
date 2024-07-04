@@ -43,7 +43,11 @@ python lerobot/scripts/push_dataset_to_hub.py \
 
 **WARNING: Updating an existing dataset**
 
-If you want to update an existing dataset, you need to change the `CODEBASE_VERSION` from `lerobot_dataset.py` before running `push_dataset_to_hub.py`. This is especially useful if you introduce a breaking change intentionally or not (i.e. something not backward compatible such as modifying the reward functions used, deleting some frames at the end of an episode, etc.). That way, people running a previous version of the codebase won't be affected by your change and backward compatibility is maintained.
+If you want to update an existing dataset, you need to change the `CODEBASE_VERSION` from `lerobot_dataset.py`
+before running `push_dataset_to_hub.py`. This is especially useful if you introduce a breaking change
+intentionally or not (i.e. something not backward compatible such as modifying the reward functions used,
+deleting some frames at the end of an episode, etc.). That way, people running a previous version of the
+codebase won't be affected by your change and backward compatibility is maintained.
 
 For instance, Pusht has many versions to maintain backward compatibility between LeRobot codebase versions:
 - [v1.0](https://huggingface.co/datasets/lerobot/pusht/tree/v1.0)
@@ -54,25 +58,41 @@ For instance, Pusht has many versions to maintain backward compatibility between
 - [v1.5](https://huggingface.co/datasets/lerobot/pusht/tree/v1.5) <-- last version
 - [main](https://huggingface.co/datasets/lerobot/pusht/tree/main)  <-- points to the last version
 
-However, you will need to update the version of ALL the other datasets so that they have the new `CODEBASE_VERSION` as a branch in their hugging face dataset repository. Don't worry, there is an easy way that doesn't require to run `push_dataset_to_hub.py`. You can just "branch-out" from the `main` branch on HF dataset repo by running this script which corresponds to a `git checkout -b` (so no copy or upload needed):
+However, you will need to update the version of ALL the other datasets so that they have the new
+`CODEBASE_VERSION` as a branch in their hugging face dataset repository. Don't worry, there is an easy way
+that doesn't require to run `push_dataset_to_hub.py`. You can just "branch-out" from the `main` branch on HF
+dataset repo by running this script which corresponds to a `git checkout -b` (so no copy or upload needed):
 
 ```python
-from huggingface_hub import create_branch
-from huggingface_hub.utils._errors import HfHubHTTPError
+# You probably want to run this with HF_HUB_DISABLE_PROGRESS_BARS=1
+# to make it easier to see the printout.
+
+from huggingface_hub import create_branch, hf_hub_download
+from huggingface_hub.utils._errors import RepositoryNotFoundError
 
 from lerobot import available_datasets
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
+
+NEW_CODEBASE_VERSION = "v1.5"  # REPLACE THIS WITH YOUR DESIRED VERSION
 
 for repo_id in available_datasets:
+    # First check if the newer version already exists.
     try:
-        create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
-    except HfHubHTTPError:
-        # Note, this should only be the case for the datasets you have updated. If you see any others, please
-        # reach out to the core LeRobot team.
-        print(f"Found existing branch for {repo_id}")
+        hf_hub_download(
+            repo_id=repo_id, repo_type="dataset", filename=".gitattributes", revision=NEW_CODEBASE_VERSION
+        )
+        print(f"Found existing branch for {repo_id}. Please contact a member of the core LeRobot team.")
+        print("Exiting early")
+        break
+    except RepositoryNotFoundError:
+        # Now create a branch.
+        create_branch(repo_id, repo_type="dataset", branch=NEW_CODEBASE_VERSION, revision=CODEBASE_VERSION)
+        print(f"{repo_id} successfully updated")
+
 ```
 
 On the other hand, if you are pushing a new dataset, you don't need to worry about any of the instructions
-above.
+above, nor to be compatible with previous codebase versions.
 """
 
 import argparse
@@ -349,7 +369,10 @@ def main():
     parser.add_argument(
         "--tests-data-dir",
         type=Path,
-        help="When provided, save tests artifacts into the given directory for (e.g. `--tests-data-dir tests/data/lerobot/pusht`).",
+        help=(
+            "When provided, save tests artifacts into the given directory "
+            "(e.g. `--tests-data-dir tests/data` will save to tests/data/{--repo-id})."
+        ),
     )
 
     args = parser.parse_args()
