@@ -39,7 +39,7 @@ training:
   # `online_env_seed` is used for environments for online training data rollouts.
   online_env_seed: ???
   eval_freq: ???
-  log_freq: 250
+  log_freq: 200
   save_checkpoint: true
   # Checkpoint is saved every `save_freq` training iterations and after the last training step.
   save_freq: ???
