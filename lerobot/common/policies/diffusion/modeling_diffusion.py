@@ -83,7 +83,7 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         self.diffusion = DiffusionModel(config)
 
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
-        self._use_env_state = "observation.environment_state" in config.input_shapes
+        self.use_env_state = "observation.environment_state" in config.input_shapes
 
         self.reset()
 
@@ -95,7 +95,7 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         }
         if len(self.expected_image_keys) > 0:
             self._queues["observation.images"] = deque(maxlen=self.config.n_obs_steps)
-        else:
+        if self.use_env_state:
             self._queues["observation.environment_state"] = deque(maxlen=self.config.n_obs_steps)
 
     @torch.no_grad
@@ -236,8 +236,8 @@ class DiffusionModel(nn.Module):
             img_features = self.rgb_encoder(
                 einops.rearrange(batch["observation.images"], "b s n ... -> (b s n) ...")
             )
-            # Separate batch dim and sequence dim back out. The camera index dim gets absorbed into the feature
-            # dim (effectively concatenating the camera features).
+            # Separate batch dim and sequence dim back out. The camera index dim gets absorbed into the
+            # feature dim (effectively concatenating the camera features).
             img_features = einops.rearrange(
                 img_features, "(b s n) ... -> b s (n ...)", b=batch_size, s=n_obs_steps
             )

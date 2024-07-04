@@ -1111,7 +1111,7 @@ subdirectory = "gym_dora"
 name = "gym-pusht"
 version = "0.1.4"
 description = "A gymnasium environment for PushT."
-optional = false
+optional = true
 python-versions = "^3.10"
 files = []
 develop = false
@@ -1592,7 +1592,7 @@ setuptools = "!=50.0.0"
 name = "lazy-loader"
 version = "0.4"
 description = "Makes it easy to load subpackages and functions on demand."
-optional = false
+optional = true
 python-versions = ">=3.7"
 files = [
     {file = "lazy_loader-0.4-py3-none-any.whl", hash = "sha256:342aa8e14d543a154047afb4ba8ef17f5563baad3fc610d7b15b213b0f119efc"},
@@ -2845,7 +2845,7 @@ files = [
 name = "pygame"
 version = "2.5.2"
 description = "Python Game Development"
-optional = false
+optional = true
 python-versions = ">=3.6"
 files = [
     {file = "pygame-2.5.2-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:a0769eb628c818761755eb0a0ca8216b95270ea8cbcbc82227e39ac9644643da"},
@@ -3400,7 +3400,7 @@ torch = ["safetensors[numpy]", "torch (>=1.10)"]
 name = "scikit-image"
 version = "0.23.2"
 description = "Image processing in Python"
-optional = false
+optional = true
 python-versions = ">=3.10"
 files = [
     {file = "scikit_image-0.23.2-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:f9a8db6c52f8d0e1474ea8320d7b8db442b4d6baa29dd0acbd02f8a49572f18a"},
@@ -3443,7 +3443,7 @@ test = ["asv", "numpydoc (>=1.7)", "pooch (>=1.6.0)", "pytest (>=7.0)", "pytest-
 name = "scipy"
 version = "1.13.1"
 description = "Fundamental algorithms for scientific computing in Python"
-optional = false
+optional = true
 python-versions = ">=3.9"
 files = [
     {file = "scipy-1.13.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:20335853b85e9a49ff7572ab453794298bcf0354d8068c5f6775a0eabf350aca"},
@@ -3650,7 +3650,7 @@ testing = ["build[virtualenv] (>=1.0.3)", "filelock (>=3.4.0)", "importlib-metad
 name = "shapely"
 version = "2.0.4"
 description = "Manipulation and analysis of geometric objects"
-optional = false
+optional = true
 python-versions = ">=3.7"
 files = [
     {file = "shapely-2.0.4-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:011b77153906030b795791f2fdfa2d68f1a8d7e40bce78b029782ade3afe4f2f"},
@@ -3781,7 +3781,7 @@ tests = ["pytest", "pytest-cov"]
 name = "tifffile"
 version = "2024.5.22"
 description = "Read and write TIFF files"
-optional = false
+optional = true
 python-versions = ">=3.9"
 files = [
     {file = "tifffile-2024.5.22-py3-none-any.whl", hash = "sha256:e281781c15d7d197d7e12749849c965651413aa905f97a48b0f84bd90a3b4c6f"},
@@ -4309,4 +4309,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "1b3aad9d474afee3bf6171399259b08dd6955050cf374f5940e58c344ee2b9fe"
+content-hash = "61f99befbc2250fe59cb54119c3dbd3aa3c1dfe5d3d7790c6f7c4f90fe43112e"
