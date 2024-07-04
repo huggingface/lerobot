@@ -70,7 +70,7 @@ available_datasets_per_env = {
         "lerobot/aloha_sim_transfer_cube_human_image",
         "lerobot/aloha_sim_transfer_cube_scripted_image",
     ],
-    "pusht": ["lerobot/pusht", "lerobot/pusht_image"],
+    "pusht": ["lerobot/pusht", "lerobot/pusht_image", "lerobot/pusht_keypoints"],
     "xarm": [
         "lerobot/xarm_lift_medium",
         "lerobot/xarm_lift_medium_replay",
