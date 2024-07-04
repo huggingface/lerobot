@@ -422,6 +422,7 @@ def _compile_episode_data(
             "frame_index": torch.arange(0, num_frames, 1),
             "timestamp": torch.arange(0, num_frames, 1) / fps,
             "next.done": rollout_data["done"][ep_ix, :num_frames],
+            "next.success": rollout_data["success"][ep_ix, :num_frames],
             "next.reward": rollout_data["reward"][ep_ix, :num_frames].type(torch.float32),
         }
         for key in rollout_data["observation"]:

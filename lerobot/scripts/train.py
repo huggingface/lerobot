@@ -582,6 +582,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             **policy.config.output_shapes,
             "next.reward": (),
             "next.done": (),
+            "next.success": (),
         },
         buffer_capacity=cfg.training.online_buffer_capacity,
         fps=offline_dataset.fps,

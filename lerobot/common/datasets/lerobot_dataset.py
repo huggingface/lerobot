@@ -499,7 +499,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     self.episode_data_index,
                     self.delta_timestamps,
                     self.tolerance_s,
-                    self.hf_dataset["episode_index"][0].item(),
                 )
 
             if self.video:
