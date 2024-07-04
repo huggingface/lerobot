@@ -64,7 +64,7 @@ from lerobot import available_datasets
 
 for repo_id in available_datasets:
     try:
-        create_branch(repo_id, repo_type="dataset", branch="v1.5", revision="v1.4")
+        create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
     except HfHubHTTPError:
         # Note, this should only be the case for the datasets you have updated. If you see any others, please
         # reach out to the core LeRobot team.
