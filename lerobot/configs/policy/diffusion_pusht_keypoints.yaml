@@ -5,7 +5,7 @@
 #       https://github.com/huggingface/lerobot/pull/134 for more details.
 
 seed: 100000
-dataset_repo_id: alexandersoare/pusht_keypoints
+dataset_repo_id: alexandersoare/pusht_keypoints_only
 
 training:
   offline_steps: 200000
@@ -69,7 +69,7 @@ policy:
   use_group_norm: True
   spatial_softmax_num_keypoints: 32
   # Unet.
-  down_dims: [256, 512, 1024]
+  down_dims: [512, 1024, 2048]
   kernel_size: 5
   n_groups: 8
   diffusion_step_embed_dim: 128
