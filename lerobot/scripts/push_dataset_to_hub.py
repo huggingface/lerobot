@@ -41,12 +41,20 @@ python lerobot/scripts/push_dataset_to_hub.py \
 --repo-id lerobot/umi_cup_in_the_wild
 ```
 
-If you are pushing a new version of an existing dataset, you need to update the version of ALL datasets.
-Here's the workflow:
+**WARNING: Updating an existing dataset**
 
-1. Increment the minor version number in CODEBASE_VERSION from lerobot_dataset.py
-2. Run push_dataset_to_hub.py for the datasets you want to update.
-3. Update the versions of ALL other datasets with the following script:
+If you want to update an existing dataset, you need to change the `CODEBASE_VERSION` from `lerobot_dataset.py` before running `push_dataset_to_hub.py`. This is especially useful if you introduce a breaking change intentionally or not (i.e. something not backward compatible such as modifying the reward functions used, deleting some frames at the end of an episode, etc.). That way, people running a previous version of the codebase won't be affected by your change and backward compatibility is maintained.
+
+For instance, Pusht has many versions to maintain backward compatibility between LeRobot codebase versions:
+- [v1.0](https://huggingface.co/datasets/lerobot/pusht/tree/v1.0)
+- [v1.1](https://huggingface.co/datasets/lerobot/pusht/tree/v1.1)
+- [v1.2](https://huggingface.co/datasets/lerobot/pusht/tree/v1.2)
+- [v1.3](https://huggingface.co/datasets/lerobot/pusht/tree/v1.3)
+- [v1.4](https://huggingface.co/datasets/lerobot/pusht/tree/v1.4)
+- [v1.5](https://huggingface.co/datasets/lerobot/pusht/tree/v1.5) <-- last version
+- [main](https://huggingface.co/datasets/lerobot/pusht/tree/main)  <-- points to the last version
+
+However, you will need to update the version of ALL the other datasets so that they have the new `CODEBASE_VERSION` as a branch in their hugging face dataset repository. Don't worry, there is an easy way that doesn't require to run `push_dataset_to_hub.py`. You can just "branch-out" from the `main` branch on HF dataset repo by running this script which corresponds to a `git checkout -b` (so no copy or upload needed):
 
 ```python
 from huggingface_hub import create_branch
