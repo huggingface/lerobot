@@ -64,14 +64,15 @@ that doesn't require to run `push_dataset_to_hub.py`. You can just "branch-out" 
 dataset repo by running this script which corresponds to a `git checkout -b` (so no copy or upload needed):
 
 ```python
-# You probably want to run this with HF_HUB_DISABLE_PROGRESS_BARS=1
-# to make it easier to see the printout.
+import os
 
 from huggingface_hub import create_branch, hf_hub_download
 from huggingface_hub.utils._errors import RepositoryNotFoundError
 
 from lerobot import available_datasets
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
+
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"  # makes it easier to see the print-out below
 
 NEW_CODEBASE_VERSION = "v1.5"  # REPLACE THIS WITH YOUR DESIRED VERSION
 
