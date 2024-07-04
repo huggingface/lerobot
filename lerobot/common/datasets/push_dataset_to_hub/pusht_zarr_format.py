@@ -60,7 +60,7 @@ def load_from_raw(
     fps: int,
     video: bool,
     episodes: list[int] | None = None,
-    keypoints_only: bool = False,
+    keypoints_instead_of_image: bool = False,
 ):
     try:
         import pymunk
@@ -112,7 +112,7 @@ def load_from_raw(
         assert (episode_ids[from_idx:to_idx] == ep_idx).all()
 
         # get image
-        if not keypoints_only:
+        if not keypoints_instead_of_image:
             image = imgs[from_idx:to_idx]
             assert image.min() >= 0.0
             assert image.max() <= 255.0
@@ -124,10 +124,11 @@ def load_from_raw(
         block_pos = state[:, 2:4]
         block_angle = state[:, 4]
 
-        # get reward, success, done, and keypoints
+        # get reward, success, done, and (maybe) keypoints
         reward = torch.zeros(num_frames)
         success = torch.zeros(num_frames, dtype=torch.bool)
-        keypoints = torch.zeros(num_frames, 16)  # 8 keypoints each with 2 coords
+        if keypoints_instead_of_image:
+            keypoints = torch.zeros(num_frames, 16)  # 8 keypoints each with 2 coords
         done = torch.zeros(num_frames, dtype=torch.bool)
         for i in range(num_frames):
             space = pymunk.Space()
@@ -151,14 +152,15 @@ def load_from_raw(
             coverage = intersection_area / goal_area
             reward[i] = np.clip(coverage / success_threshold, 0, 1)
             success[i] = coverage > success_threshold
-            keypoints[i] = torch.from_numpy(PushTEnv.get_keypoints(block_shapes).flatten())
+            if keypoints_instead_of_image:
+                keypoints[i] = torch.from_numpy(PushTEnv.get_keypoints(block_shapes).flatten())
 
         # last step of demonstration is considered done
         done[-1] = True
 
         ep_dict = {}
 
-        if not keypoints_only:
+        if not keypoints_instead_of_image:
             imgs_array = [x.numpy() for x in image]
             img_key = "observation.image"
             if video:
@@ -182,7 +184,8 @@ def load_from_raw(
                 ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
 
         ep_dict["observation.state"] = agent_pos
-        ep_dict["observation.environment_state"] = keypoints
+        if keypoints_instead_of_image:
+            ep_dict["observation.environment_state"] = keypoints
         ep_dict["action"] = actions[from_idx:to_idx]
         ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int64)
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
@@ -201,10 +204,10 @@ def load_from_raw(
     return data_dict
 
 
-def to_hf_dataset(data_dict, video, keypoints_only: bool = False):
+def to_hf_dataset(data_dict, video, keypoints_instead_of_image: bool = False):
     features = {}
 
-    if not keypoints_only:
+    if not keypoints_instead_of_image:
         if video:
             features["observation.image"] = VideoFrame()
         else:
@@ -213,9 +216,11 @@ def to_hf_dataset(data_dict, video, keypoints_only: bool = False):
     features["observation.state"] = Sequence(
         length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
     )
-    features["observation.environment_state"] = Sequence(
-        length=data_dict["observation.environment_state"].shape[1], feature=Value(dtype="float32", id=None)
-    )
+    if keypoints_instead_of_image:
+        features["observation.environment_state"] = Sequence(
+            length=data_dict["observation.environment_state"].shape[1],
+            feature=Value(dtype="float32", id=None),
+        )
     features["action"] = Sequence(
         length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)
     )
@@ -239,9 +244,9 @@ def from_raw_to_lerobot_format(
     video: bool = True,
     episodes: list[int] | None = None,
 ):
-    # Manually change this to True to not include images at all (but don't merge with True). Also make sure to
-    # use video = 0 in the `push_dataset_to_hub.py` script.
-    keypoints_only = False
+    # Manually change this to True to use keypoints of the T instead of an image observation (but don't merge
+    # with True). Also make sure to use video = 0 in the `push_dataset_to_hub.py` script.
+    keypoints_instead_of_image = False
 
     # sanity check
     check_format(raw_dir)
@@ -249,11 +254,11 @@ def from_raw_to_lerobot_format(
     if fps is None:
         fps = 10
 
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, keypoints_only)
-    hf_dataset = to_hf_dataset(data_dict, video, keypoints_only)
+    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, keypoints_instead_of_image)
+    hf_dataset = to_hf_dataset(data_dict, video, keypoints_instead_of_image)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
         "fps": fps,
-        "video": video if not keypoints_only else 0,
+        "video": video if not keypoints_instead_of_image else 0,
     }
     return hf_dataset, episode_data_index, info
