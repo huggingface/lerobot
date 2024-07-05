@@ -34,7 +34,8 @@ def make_robot(name):
                 ),
             },
             cameras={
-                "main": OpenCVCamera(1, fps=30, width=640, height=480),
+                "macbookpro": OpenCVCamera(1, fps=30, width=640, height=480),
+                "iphone": OpenCVCamera(2, fps=30, width=640, height=480),
             },
         )
     else:

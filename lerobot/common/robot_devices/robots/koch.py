@@ -244,6 +244,9 @@ class KochRobot:
         self.follower_arms = self.config.follower_arms
         self.cameras = self.config.cameras
 
+        self.async_read = False
+        self.async_write = False
+
     def init_teleop(self):
         if self.calibration_path.exists():
             # Reset all arms before setting calibration
@@ -264,6 +267,7 @@ class KochRobot:
 
         for name in self.follower_arms:
             self.follower_arms[name].set_calibration(calibration[f"follower_{name}"])
+            self.follower_arms[name].write("Torque_Enable", 1)
             self.follower_arms[name].write("Torque_Enable", 1)
 
         for name in self.leader_arms:
@@ -300,7 +304,10 @@ class KochRobot:
         # Prepare to assign the positions of the leader to the follower
         leader_pos = {}
         for name in self.leader_arms:
-            leader_pos[name] = self.leader_arms[name].read("Present_Position")
+            if self.async_read:
+                leader_pos[name] = self.leader_arms[name].async_read("Present_Position")
+            else:
+                leader_pos[name] = self.leader_arms[name].read("Present_Position")
 
         follower_goal_pos = {}
         for name in self.leader_arms:
@@ -308,7 +315,10 @@ class KochRobot:
 
         # Send action
         for name in self.follower_arms:
-            self.follower_arms[name].write("Goal_Position", follower_goal_pos[name])
+            if self.async_write:
+                self.follower_arms[name].async_write("Goal_Position", follower_goal_pos[name])
+            else:
+                self.follower_arms[name].write("Goal_Position", follower_goal_pos[name])
 
         # Early exit when recording data is not requested
         if not record_data:
@@ -317,7 +327,10 @@ class KochRobot:
         # Read follower position
         follower_pos = {}
         for name in self.follower_arms:
-            follower_pos[name] = self.follower_arms[name].read("Present_Position")
+            if self.async_read:
+                follower_pos[name] = self.follower_arms[name].async_read("Present_Position")
+            else:
+                follower_pos[name] = self.follower_arms[name].read("Present_Position")
 
         # Create state by concatenating follower current position
         state = []
@@ -336,7 +349,7 @@ class KochRobot:
         # Capture images from cameras
         images = {}
         for name in self.cameras:
-            images[name] = self.cameras[name].read()
+            images[name] = self.cameras[name].async_read()
 
         # Populate output dictionnaries and format to pytorch
         obs_dict, action_dict = {}, {}
@@ -351,7 +364,10 @@ class KochRobot:
         # Read follower position
         follower_pos = {}
         for name in self.follower_arms:
-            follower_pos[name] = self.follower_arms[name].read("Present_Position")
+            if self.async_read:
+                follower_pos[name] = self.follower_arms[name].async_read("Present_Position")
+            else:
+                follower_pos[name] = self.follower_arms[name].read("Present_Position")
 
         # Create state by concatenating follower current position
         state = []
@@ -363,7 +379,7 @@ class KochRobot:
         # Capture images from cameras
         images = {}
         for name in self.cameras:
-            images[name] = self.cameras[name].read()
+            images[name] = self.cameras[name].async_read()
 
         # Populate output dictionnaries and format to pytorch
         obs_dict = {}
@@ -383,4 +399,7 @@ class KochRobot:
                 from_idx = to_idx
 
         for name in self.follower_arms:
-            self.follower_arms[name].write("Goal_Position", follower_goal_pos[name].astype(np.int32))
+            if self.async_write:
+                self.follower_arms[name].async_write("Goal_Position", follower_goal_pos[name].astype(np.int32))
+            else:
+                self.follower_arms[name].write("Goal_Position", follower_goal_pos[name].astype(np.int32))

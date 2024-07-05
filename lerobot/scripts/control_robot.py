@@ -101,7 +101,7 @@ def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
 def busy_wait(seconds):
     # Significantly more accurate than `time.sleep`, and mendatory for our use case,
     # but it consumes CPU cycles.
-    # TODO(rcadene): find an alternative
+    # TODO(rcadene): find an alternative: from python 11, time.sleep is precise
     end_time = time.perf_counter() + seconds
     while time.perf_counter() < end_time:
         pass
@@ -156,41 +156,45 @@ def record_dataset(
     videos_dir = local_dir / "videos"
     videos_dir.mkdir(parents=True, exist_ok=True)
 
-    start_time = time.perf_counter()
-
-    is_warmup_print = False
-    is_record_print = False
-    ep_dicts = []
-
     # Save images using threads to reach high fps (30 and more)
     # Using `with` ensures the program exists smoothly if an execption is raised.
     with concurrent.futures.ThreadPoolExecutor() as executor:
+
+        timestamp = 0
+        start_time = time.perf_counter()
+        is_warmup_print = False
+        while timestamp < warmup_time_s:
+            if not is_warmup_print:
+                print("Warming up by skipping frames")
+                os.system('say "Warmup" &')
+                is_warmup_print = True
+
+            now = time.perf_counter()
+            observation, action = robot.teleop_step(record_data=True)
+
+            dt_s = time.perf_counter() - now
+            busy_wait(1 / fps - dt_s)
+
+            dt_s = time.perf_counter() - now
+            print(f"Latency (ms): {dt_s * 1000:.2f}\tFrequency: {1 / dt_s:.2f} (Warmup)")
+
+            timestamp = time.perf_counter() - start_time
+
+        ep_dicts = []
         for episode_index in range(num_episodes):
             ep_dict = {}
             frame_index = 0
-
-            while True:
-                if not is_warmup_print:
-                    print("Warming up by skipping frames")
-                    os.system('say "Warmup"')
-                    is_warmup_print = True
-                now = time.perf_counter()
-
-                observation, action = robot.teleop_step(record_data=True)
-                timestamp = time.perf_counter() - start_time
-
-                if timestamp < warmup_time_s:
-                    dt_s = time.perf_counter() - now
-                    busy_wait(1 / fps - dt_s)
-
-                    dt_s = time.perf_counter() - now
-                    print(f"Latency (ms): {dt_s * 1000:.2f}\tFrequency: {1 / dt_s:.2f} (Warmup)")
-                    continue
-
+            timestamp = 0
+            start_time = time.perf_counter()
+            is_record_print = False
+            while timestamp < episode_time_s:
                 if not is_record_print:
-                    print("Recording")
-                    os.system(f'say "Recording episode {episode_index}"')
+                    print(f"Recording episode {episode_index}")
+                    os.system(f'say "Recording episode {episode_index}" &')
                     is_record_print = True
+
+                now = time.perf_counter()
+                observation, action = robot.teleop_step(record_data=True)
 
                 image_keys = [key for key in observation if "image" in key]
                 not_image_keys = [key for key in observation if "image" not in key]
@@ -216,11 +220,9 @@ def record_dataset(
                 dt_s = time.perf_counter() - now
                 print(f"Latency (ms): {dt_s * 1000:.2f}\tFrequency: {1 / dt_s:.2f}")
 
-                if timestamp > episode_time_s - warmup_time_s:
-                    break
+                timestamp = time.perf_counter() - start_time
 
-            print("Encoding to `LeRobotDataset` format")
-            os.system('say "Encoding"')
+            print("Encoding images to videos")
 
             num_frames = frame_index
 
@@ -271,7 +273,7 @@ def record_dataset(
     for key in image_keys:
         time.sleep(10)
         tmp_imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
-        # shutil.rmtree(tmp_imgs_dir)
+        shutil.rmtree(tmp_imgs_dir)
 
     lerobot_dataset = LeRobotDataset.from_preloaded(
         repo_id=repo_id,

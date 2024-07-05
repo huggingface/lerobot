@@ -1,4 +1,5 @@
 import argparse
+import math
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -8,6 +9,7 @@ import cv2
 import numpy as np
 
 from lerobot.common.robot_devices.cameras.utils import save_color_image
+from lerobot.common.utils.utils import capture_timestamp_utc
 
 
 def find_camera_indices(raise_when_empty=False, max_index_search_range=60):
@@ -119,9 +121,9 @@ class OpenCVCamera:
         self.camera = None
         self.is_connected = False
 
-        self.t = Thread(target=self.capture_image_loop, args=())
-        self.t.daemon = True
-        self._color_image = None
+        self.threads = {}
+        self.results = {}
+        self.logs = {}
 
     def connect(self):
         if self.is_connected:
@@ -161,7 +163,7 @@ class OpenCVCamera:
         actual_width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
         actual_height = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
-        if self.fps and self.fps != actual_fps:
+        if self.fps and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             raise OSError(
                 f"Can't set {self.fps=} for camera {self.camera_index}. Actual value is {actual_fps}."
             )
@@ -175,11 +177,12 @@ class OpenCVCamera:
             )
 
         self.is_connected = True
-        self.t.start()
 
-    def capture_image(self, temporary_color: str | None = None) -> np.ndarray:
+    def read(self, temporary_color: str | None = None) -> np.ndarray:
         if not self.is_connected:
             self.connect()
+
+        start_time = time.perf_counter()
 
         ret, color_image = self.camera.read()
         if not ret:
@@ -196,20 +199,41 @@ class OpenCVCamera:
         if requested_color == "rgb":
             color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
 
+        # log the number of seconds it took to read the image
+        self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
+
+        # log the utc time at which the image was received
+        self.logs["timestamp_utc"] = capture_timestamp_utc()
+
         return color_image
 
-    def capture_image_loop(self):
+    def read_loop(self):
         while True:
-            self._color_image = self.capture_image()
+            self.results["color_image"] = self.read()
 
-    def read(self):
-        while self._color_image is None:
-            time.sleep(0.1)
-        return self._color_image
+    def async_read(self):
+        if "read" not in self.threads:
+            self.threads["read"] = Thread(target=self.read_loop, args=())
+            self.threads["read"].daemon = True
+            self.threads["read"].start()
+
+        num_tries = 0
+        while "color_image" not in self.results:
+            num_tries += 1
+            time.sleep(1/self.fps)
+            if num_tries > self.fps:
+                if self.threads["read"].ident is None and not self.threads["read"].is_alive():
+                    raise Exception("The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.threads[\"read\"].start()` has been called.")
+
+        return self.results["color_image"] #, self.logs["timestamp_utc"]
 
     def disconnect(self):
         if getattr(self, "camera", None):
             self.camera.release()
+            for name in self.threads:
+                if self.threads[name].is_alive():
+                    # wait for the thread to finish
+                    self.threads[name].join()
 
     def __del__(self):
         self.disconnect()
@@ -217,8 +241,10 @@ class OpenCVCamera:
 
 def save_images_config(config: OpenCVCameraConfig, out_dir: Path):
     cameras = []
-    print(f"Available camera indices: {OpenCVCamera.AVAILABLE_CAMERAS_INDICES}")
-    for camera_idx in OpenCVCamera.AVAILABLE_CAMERAS_INDICES:
+
+    available_cam_ids = find_camera_indices()
+    print(f"Available camera indices: {available_cam_ids}")
+    for camera_idx in available_cam_ids:
         camera = OpenCVCamera(camera_idx, config)
         cameras.append(camera)
 

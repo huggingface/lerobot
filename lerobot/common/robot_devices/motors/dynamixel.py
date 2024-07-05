@@ -1,5 +1,8 @@
 import enum
 from copy import deepcopy
+from queue import Queue
+from threading import Thread
+import time
 
 import numpy as np
 from dynamixel_sdk import (
@@ -13,6 +16,8 @@ from dynamixel_sdk import (
     PacketHandler,
     PortHandler,
 )
+
+from lerobot.common.utils.utils import capture_timestamp_utc
 
 PROTOCOL_VERSION = 2.0
 BAUD_RATE = 1_000_000
@@ -149,6 +154,15 @@ def get_group_sync_key(data_name, motor_names):
     group_key = f"{data_name}_" + "_".join(motor_names)
     return group_key
 
+def get_thread_name(fn_name, data_name, motor_names):
+    group_key = get_group_sync_key(data_name, motor_names)
+    thread_name = f"{fn_name}_{group_key}"
+    return thread_name
+
+def get_log_name(var_name, fn_name, data_name, motor_names):
+    thread_name = get_thread_name(fn_name, data_name, motor_names)
+    log_name = f"{var_name}_{thread_name}"
+    return log_name
 
 class TorqueMode(enum.Enum):
     ENABLED = 1
@@ -197,6 +211,11 @@ class DynamixelMotorsBus:
 
         self.calibration = None
 
+        self.threads = {}
+        self.queues = {}
+        self.results = {}
+        self.logs = {}
+
     @property
     def motor_names(self) -> list[int]:
         return list(self.motors.keys())
@@ -239,6 +258,8 @@ class DynamixelMotorsBus:
         return values
 
     def read(self, data_name, motor_names: list[str] | None = None):
+        start_time = time.perf_counter()
+
         if motor_names is None:
             motor_names = self.motor_names
 
@@ -259,7 +280,12 @@ class DynamixelMotorsBus:
             for idx in motor_ids:
                 self.group_readers[group_key].addParam(idx)
 
-        comm = self.group_readers[group_key].txRxPacket()
+        NUM_TRIES = 10
+        for _ in range(NUM_TRIES):
+            comm = self.group_readers[group_key].txRxPacket()
+            if comm == COMM_SUCCESS:
+                break
+
         if comm != COMM_SUCCESS:
             raise ConnectionError(
                 f"Read failed due to communication error on port {self.port} for group_key {group_key}: "
@@ -283,14 +309,29 @@ class DynamixelMotorsBus:
         if data_name in CONVERT_POSITION_TO_ANGLE_REQUIRED:
             values = motor_position_to_angle(values)
 
+        # log the number of seconds it took to read the data from the motors
+        delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
+        self.logs[delta_ts_name] = time.perf_counter() - start_time
+
+        # log the utc time at which the data was received
+        ts_utc_name = get_log_name("timestamp_utc", "read", data_name, motor_names)
+        self.logs[ts_utc_name] = capture_timestamp_utc()
+
         return values
 
     def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
+        start_time = time.perf_counter()
+
         if motor_names is None:
             motor_names = self.motor_names
 
         if isinstance(motor_names, str):
             motor_names = [motor_names]
+
+        if isinstance(values, (int, float, np.integer)):
+            values = [int(values)] * len(motor_names)
+
+        values = np.array(values)
 
         motor_ids = []
         models = []
@@ -298,11 +339,6 @@ class DynamixelMotorsBus:
             motor_idx, model = self.motors[name]
             motor_ids.append(motor_idx)
             models.append(model)
-
-        if isinstance(values, (int, float, np.integer)):
-            values = [int(values)] * len(motor_ids)
-
-        values = np.array(values)
 
         if data_name in CONVERT_POSITION_TO_ANGLE_REQUIRED:
             values = motor_angle_to_position(values)
@@ -360,6 +396,99 @@ class DynamixelMotorsBus:
                 f"Write failed due to communication error on port {self.port} for group_key {group_key}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
             )
+
+        # log the number of seconds it took to write the data to the motors
+        delta_ts_name = get_log_name("delta_timestamp_s", "write", data_name, motor_names)
+        self.logs[delta_ts_name] = time.perf_counter() - start_time
+
+        # TODO(rcadene): should we log the time before sending the write command?
+        # log the utc time when the write has been completed
+        ts_utc_name = get_log_name("timestamp_utc", "write", data_name, motor_names)
+        self.logs[ts_utc_name] = capture_timestamp_utc()
+
+    def read_loop(self, data_name, motor_names: list[str] | None = None):
+        while True:
+            thread_name = get_thread_name("read", data_name, motor_names)
+            self.results[thread_name] = self.read(data_name, motor_names)
+
+    def async_read(self, data_name, motor_names: list[str] | None = None):
+        if motor_names is None:
+            motor_names = self.motor_names
+
+        if isinstance(motor_names, str):
+            motor_names = [motor_names]
+
+        thread_name = get_thread_name("read", data_name, motor_names)
+
+        if thread_name not in self.threads:
+            self.threads[thread_name] = Thread(target=self.read_loop, args=(data_name, motor_names))
+            self.threads[thread_name].daemon = True
+            self.threads[thread_name].start()
+
+        FPS = 200
+        num_tries = 0
+        while thread_name not in self.results:
+            num_tries += 1
+            time.sleep(1 / FPS)
+            if num_tries > FPS:
+                if self.threads[thread_name].ident is None and not self.threads[thread_name].is_alive():
+                    raise Exception(f"The thread responsible for `self.async_read({data_name}, {motor_names})` took too much time to start. There might be an issue. Verify that `self.threads[thread_name].start()` has been called.")
+
+        # ts_utc_name = get_log_name("timestamp_utc", "read", data_name, motor_names)
+        return self.results[thread_name] #, self.logs[ts_utc_name]
+
+    def write_loop(self, data_name, queue: Queue, motor_names: list[str] | None = None):
+        while True:
+            values = queue.get()
+            if values is None:  # A way to terminate the thread
+                break
+            self.write(data_name, values, motor_names)
+            queue.task_done()
+
+    def async_write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
+        if motor_names is None:
+            motor_names = self.motor_names
+
+        if isinstance(motor_names, str):
+            motor_names = [motor_names]
+
+        if isinstance(values, (int, float, np.integer)):
+            values = [int(values)] * len(motor_names)
+        
+        values = np.array(values)
+
+        thread_name = get_thread_name("write", data_name, motor_names)
+        ts_utc_name = get_log_name("timestamp_utc", "write", data_name, motor_names)
+
+        if thread_name not in self.threads:
+            self.queues[thread_name] = Queue()
+            self.threads[thread_name] = Thread(target=self.write_loop, args=(data_name, self.queues[thread_name], motor_names))
+            self.threads[thread_name].daemon = True
+            self.threads[thread_name].start()
+
+        self.queues[thread_name].put(values)
+
+        FPS = 200
+        num_tries = 0
+        while ts_utc_name not in self.logs:
+            num_tries += 1
+            time.sleep(1 / FPS)
+            if num_tries > FPS:
+                if self.threads[thread_name].ident is None and not self.threads[thread_name].is_alive():
+                    raise Exception(f"The thread responsible for `self.async_write({data_name}, {values}, {motor_names})` took too much time to start. There might be an issue. Verify that `self.threads[thread_name].start()` has been called.")
+
+        return self.logs[ts_utc_name]
+
+    def __del__(self):
+        for thread_name in self.queues:
+            # Send value that corresponds to `break` logic
+            self.queues[thread_name].put(None)
+            self.queues[thread_name].join()
+        
+        for thread_name in self.queues:
+            self.threads[thread_name].join()
+
+        # TODO(rcadene): find a simple way to exit threads created by async_read
 
     # def read(self, data_name, motor_name: str):
     #     motor_idx, model = self.motors[motor_name]
