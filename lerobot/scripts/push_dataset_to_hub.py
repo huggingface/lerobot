@@ -222,6 +222,7 @@ def push_dataset_to_hub(
         # get the first episode
         num_items_first_ep = episode_data_index["to"][0] - episode_data_index["from"][0]
         test_hf_dataset = hf_dataset.select(range(num_items_first_ep))
+        episode_data_index = {k: v[:1] for k, v in episode_data_index.items()}
 
         test_hf_dataset = test_hf_dataset.with_format(None)
         test_hf_dataset.save_to_disk(str(tests_data_dir / repo_id / "train"))
