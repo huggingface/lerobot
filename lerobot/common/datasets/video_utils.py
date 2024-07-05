@@ -16,6 +16,7 @@
 import logging
 import subprocess
 import warnings
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
@@ -169,6 +170,7 @@ def encode_video_frames(
     pixel_format: str = "yuv420p",
     group_of_pictures_size: int | None = 2,
     constant_rate_factor: int | None = 30,
+    fast_decode: int = 0,
     log_level: str | None = "error",
     overwrite: bool = False,
 ) -> None:
@@ -176,19 +178,26 @@ def encode_video_frames(
     video_path = Path(video_path)
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    ffmpeg_args = {
-        "-f": "image2",
-        "-r": str(fps),
-        "-i": str(imgs_dir / "frame_%06d.png"),
-        "-vcodec": video_codec,
-        "-pix_fmt": pixel_format,
-    }
+    ffmpeg_args = OrderedDict(
+        [
+            ("-f", "image2"),
+            ("-r", str(fps)),
+            ("-i", str(imgs_dir / "frame_%06d.png")),
+            ("-vcodec", video_codec),
+            ("-pix_fmt", pixel_format),
+        ]
+    )
 
     if group_of_pictures_size is not None:
         ffmpeg_args["-g"] = str(group_of_pictures_size)
 
     if constant_rate_factor is not None:
         ffmpeg_args["-crf"] = str(constant_rate_factor)
+
+    if fast_decode:
+        key = "-svtav1-params" if video_codec == "libsvtav1" else "-tune"
+        value = f"fast-decode={fast_decode}" if video_codec == "libsvtav1" else "fastdecode"
+        ffmpeg_args[key] = value
 
     if log_level is not None:
         ffmpeg_args["-loglevel"] = str(log_level)

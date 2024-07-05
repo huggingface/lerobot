@@ -48,6 +48,7 @@ BASE_ENCODING = OrderedDict(
         ("pix_fmt", "yuv444p"),
         ("g", 2),
         ("crf", None),
+        # ("fastdecode", 0),
     ]
 )
 
@@ -255,6 +256,7 @@ def benchmark_encoding_decoding(
             pixel_format=encoding_cfg["pix_fmt"],
             group_of_pictures_size=encoding_cfg.get("g"),
             constant_rate_factor=encoding_cfg.get("crf"),
+            # fast_decode=encoding_cfg.get("fastdecode"),
             overwrite=True,
         )
 
@@ -307,6 +309,7 @@ def main(
     pix_fmt: list[str],
     g: list[int],
     crf: list[int],
+    # fastdecode: list[int],
     timestamps_modes: list[str],
     backends: list[str],
     num_samples: int,
@@ -317,6 +320,7 @@ def main(
     encoding_benchmarks = {
         "g": g,
         "crf": crf,
+        # "fastdecode": fastdecode,
     }
     decoding_benchmarks = {
         "timestamps_modes": timestamps_modes,
@@ -431,6 +435,15 @@ if __name__ == "__main__":
         default=[0, 5, 10, 15, 20, 25, 30, 40, 50, None],
         help="Constant rate factors to be tested.",
     )
+    # parser.add_argument(
+    #     "--fastdecode",
+    #     type=int,
+    #     nargs="*",
+    #     default=[0, 1],
+    #     help="Use the fastdecode tuning option. 0 disables it. "
+    #         "For libx264 and libx265, only 1 is possible. "
+    #         "For libsvtav1, 1, 2 or 3 are possible values with a higher number meaning a faster decoding optimization",
+    # )
     parser.add_argument(
         "--timestamps-modes",
         type=str,
