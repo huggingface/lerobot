@@ -70,7 +70,9 @@ available_datasets_per_env = {
         "lerobot/aloha_sim_transfer_cube_human_image",
         "lerobot/aloha_sim_transfer_cube_scripted_image",
     ],
-    "pusht": ["lerobot/pusht", "lerobot/pusht_image", "lerobot/pusht_keypoints"],
+    # TODO(alexander-soare): Add "lerobot/pusht_keypoints". Right now we can't because this is too tightly
+    # coupled with tests.
+    "pusht": ["lerobot/pusht", "lerobot/pusht_image"],
     "xarm": [
         "lerobot/xarm_lift_medium",
         "lerobot/xarm_lift_medium_replay",
