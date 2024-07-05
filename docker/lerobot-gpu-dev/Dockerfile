@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install ffmpeg build dependencies. See:
 # https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu
+# TODO(aliberts): create image to build dependencies from source instead
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf automake yasm \
     libass-dev \
