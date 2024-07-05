@@ -1112,9 +1112,11 @@ name = "gym-pusht"
 version = "0.1.4"
 description = "A gymnasium environment for PushT."
 optional = true
-python-versions = "^3.10"
-files = []
-develop = false
+python-versions = "<4.0,>=3.10"
+files = [
+    {file = "gym_pusht-0.1.4-py3-none-any.whl", hash = "sha256:04ec628fac80d77cf4edf280ed528ab06f7b8997e4452c78999b4730c2d269ab"},
+    {file = "gym_pusht-0.1.4.tar.gz", hash = "sha256:5926ef8098bde7f6a180bdd34b4ce3a827fb333847cc54d8ad47c430e249f44c"},
+]
 
 [package.dependencies]
 gymnasium = ">=0.29.1"
@@ -1127,12 +1129,6 @@ shapely = ">=2.0.3"
 [package.extras]
 dev = ["debugpy (>=1.8.1)", "pre-commit (>=3.7.0)"]
 test = ["pytest (>=8.1.0)", "pytest-cov (>=5.0.0)"]
-
-[package.source]
-type = "git"
-url = "https://github.com/alexander-soare/gym-pusht.git"
-reference = "add_keypoints_mode"
-resolved_reference = "291cca77e8cca3f148628e3420f308609904a1c4"
 
 [[package]]
 name = "gym-xarm"
