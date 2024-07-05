@@ -263,9 +263,6 @@ def test_push_dataset_to_hub_out_dir_force_override_false(tmpdir):
 )
 @require_package_arg
 def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_id, make_test_data):
-    """
-    make_test_data checks that only one episode is selected
-    """
     num_episodes = 3
     tmpdir = Path(tmpdir)
 
@@ -305,8 +302,16 @@ def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_
         assert cam_key in item
 
     if make_test_data:
+        # Check that only the first episode is selected.
         test_dataset = LeRobotDataset(repo_id=repo_id, root=tmpdir / "tests/data")
-        assert test_dataset.hf_dataset["episode_index"] == lerobot_dataset.hf_dataset["episode_index"][:1]
+        num_frames = sum(
+            i == lerobot_dataset.hf_dataset["episode_index"][0]
+            for i in lerobot_dataset.hf_dataset["episode_index"]
+        ).item()
+        assert (
+            test_dataset.hf_dataset["episode_index"]
+            == lerobot_dataset.hf_dataset["episode_index"][:num_frames]
+        )
         for k in ["from", "to"]:
             assert torch.equal(test_dataset.episode_data_index[k], lerobot_dataset.episode_data_index[k][:1])
 
