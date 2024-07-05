@@ -28,7 +28,10 @@ class DiffusionConfig:
 
     Notes on the inputs and outputs:
         - "observation.state" is required as an input key.
-        - At least one key starting with "observation.image is required as an input.
+        - Either:
+            - At least one key starting with "observation.image is required as an input.
+              AND/OR
+            - The key "observation.environment_state" is required as input.
         - If there are multiple keys beginning with "observation.image" they are treated as multiple camera
           views. Right now we only support all images having the same shape.
         - "action" is required as an output key.
