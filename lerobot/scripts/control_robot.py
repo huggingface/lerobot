@@ -63,6 +63,7 @@ python lerobot/scripts/control_robot.py run_policy \
 
 import argparse
 import concurrent.futures
+import logging
 import os
 import shutil
 import time
@@ -82,7 +83,7 @@ from lerobot.common.datasets.video_utils import encode_video_frames
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
-from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
+from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 from lerobot.scripts.push_dataset_to_hub import save_meta_data
 
@@ -97,7 +98,6 @@ def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(path), quality=100)
 
-
 def busy_wait(seconds):
     # Significantly more accurate than `time.sleep`, and mendatory for our use case,
     # but it consumes CPU cycles.
@@ -106,12 +106,41 @@ def busy_wait(seconds):
     while time.perf_counter() < end_time:
         pass
 
-
 def none_or_int(value):
     if value == "None":
         return None
     return int(value)
 
+def log_control_info(robot, dt_s, episode_index=None, frame_index=None):
+    log_items = []
+    if episode_index is not None:
+        log_items += [f"ep:{episode_index}"]
+    if frame_index is not None:
+        log_items += [f"frame:{frame_index}"]
+    
+    # total step time displayed in milliseconds and its frequency
+    log_items += [f"dt:{dt_s * 1000:5.2f}={1/ dt_s:3.1f}hz"]
+        
+    for name in robot.leader_arms:
+        read_dt_s = robot.logs[f'read_leader_{name}_pos_dt_s']
+        log_items += [
+            f"dtRlead{name[0]}:{read_dt_s * 1000:5.2f}={1/ read_dt_s:3.1f}hz",
+        ]
+    for name in robot.follower_arms:
+        write_dt_s = robot.logs[f'write_follower_{name}_goal_pos_dt_s']
+        read_dt_s = robot.logs[f'read_follower_{name}_pos_dt_s']
+        log_items += [
+            f"dtRfoll{name[0]}:{write_dt_s * 1000:5.2f}={1/ write_dt_s:3.1f}hz",
+            f"dtWfoll{name[0]}:{read_dt_s * 1000:5.2f}={1/ read_dt_s:3.1f}hz",
+        ]
+    for name in robot.cameras:
+        read_dt_s = robot.logs[f"read_camera_{name}_dt_s"]
+        async_read_dt_s = robot.logs[f"async_read_camera_{name}_dt_s"]
+        log_items += [
+            f"dtRcam{name[0]}:{read_dt_s * 1000:5.2f}={1/read_dt_s:3.1f}hz",
+            f"dtARcam{name[0]}:{async_read_dt_s * 1000:5.2f}={1/async_read_dt_s:3.1f}hz",
+        ]
+    logging.info(" ".join(log_items))
 
 ########################################################################################
 # Control modes
@@ -130,7 +159,7 @@ def teleoperate(robot: Robot, fps: int | None = None):
             busy_wait(1 / fps - dt_s)
 
         dt_s = time.perf_counter() - now
-        print(f"Latency (ms): {dt_s * 1000:.2f}\tFrequency: {1 / dt_s:.2f}")
+        log_control_info(robot, dt_s)
 
 
 def record_dataset(
@@ -157,15 +186,18 @@ def record_dataset(
     videos_dir.mkdir(parents=True, exist_ok=True)
 
     # Save images using threads to reach high fps (30 and more)
-    # Using `with` ensures the program exists smoothly if an execption is raised.
-    with concurrent.futures.ThreadPoolExecutor() as executor:
+    # Using `with` to exist smoothly if an execption is raised.
+    # Using only 4 worker threads to avoid blocking the main thread.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
 
+        # Execute a few seconds without recording data, to give times
+        # to the robot devices to connect and start synchronizing.
         timestamp = 0
         start_time = time.perf_counter()
         is_warmup_print = False
         while timestamp < warmup_time_s:
             if not is_warmup_print:
-                print("Warming up by skipping frames")
+                logging.info("Warming up (no data recording)")
                 os.system('say "Warmup" &')
                 is_warmup_print = True
 
@@ -176,10 +208,11 @@ def record_dataset(
             busy_wait(1 / fps - dt_s)
 
             dt_s = time.perf_counter() - now
-            print(f"Latency (ms): {dt_s * 1000:.2f}\tFrequency: {1 / dt_s:.2f} (Warmup)")
+            log_control_info(robot, dt_s)
 
             timestamp = time.perf_counter() - start_time
 
+        # Start recording all episodes
         ep_dicts = []
         for episode_index in range(num_episodes):
             ep_dict = {}
@@ -189,7 +222,7 @@ def record_dataset(
             is_record_print = False
             while timestamp < episode_time_s:
                 if not is_record_print:
-                    print(f"Recording episode {episode_index}")
+                    logging.info(f"Recording episode {episode_index}")
                     os.system(f'say "Recording episode {episode_index}" &')
                     is_record_print = True
 
@@ -218,11 +251,11 @@ def record_dataset(
                 busy_wait(1 / fps - dt_s)
 
                 dt_s = time.perf_counter() - now
-                print(f"Latency (ms): {dt_s * 1000:.2f}\tFrequency: {1 / dt_s:.2f}")
+                log_control_info(robot, dt_s)
 
                 timestamp = time.perf_counter() - start_time
 
-            print("Encoding images to videos")
+            logging.info("Encoding images to videos")
 
             num_frames = frame_index
 
@@ -232,6 +265,7 @@ def record_dataset(
                 video_path = local_dir / "videos" / fname
                 encode_video_frames(tmp_imgs_dir, video_path, fps)
 
+                # TODO(rcadene): uncomment?
                 # clean temporary images directory
                 # shutil.rmtree(tmp_imgs_dir)
 
@@ -304,7 +338,7 @@ def replay_episode(robot: Robot, episode: int, fps: int | None = None, root="dat
 
     robot.init_teleop()
 
-    print("Replaying episode")
+    logging.info("Replaying episode")
     os.system('say "Replaying episode"')
 
     for idx in range(from_idx, to_idx):
@@ -317,7 +351,7 @@ def replay_episode(robot: Robot, episode: int, fps: int | None = None, root="dat
         busy_wait(1 / fps - dt_s)
 
         dt_s = time.perf_counter() - now
-        print(f"Latency (ms): {dt_s * 1000:.2f}\tFrequency: {1 / dt_s:.2f}")
+        log_control_info(robot, dt_s)
 
 
 def run_policy(robot: Robot, policy: torch.nn.Module, hydra_cfg: DictConfig):
@@ -349,7 +383,7 @@ def run_policy(robot: Robot, policy: torch.nn.Module, hydra_cfg: DictConfig):
         busy_wait(1 / fps - dt_s)
 
         dt_s = time.perf_counter() - now
-        print(f"Latency (ms): {dt_s * 1000:.2f}\tFrequency: {1 / dt_s:.2f}")
+        log_control_info(robot, dt_s)
 
 
 if __name__ == "__main__":
@@ -405,6 +439,8 @@ if __name__ == "__main__":
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
     args = parser.parse_args()
+
+    init_logging()
 
     control_mode = args.mode
     robot_name = args.robot

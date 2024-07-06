@@ -6,6 +6,10 @@ from pathlib import Path
 from threading import Thread
 
 import cv2
+# Using 1 thread to avoid blocking the main thread.
+# Especially useful during data collection when other threads are used
+# to save the images.
+cv2.setNumThreads(1)
 import numpy as np
 
 from lerobot.common.robot_devices.cameras.utils import save_color_image
@@ -120,7 +124,6 @@ class OpenCVCamera:
 
         self.camera = None
         self.is_connected = False
-
         self.threads = {}
         self.results = {}
         self.logs = {}

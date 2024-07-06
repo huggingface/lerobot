@@ -1,6 +1,7 @@
 import pickle
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+import time
 
 import numpy as np
 import torch
@@ -243,11 +244,20 @@ class KochRobot:
         self.leader_arms = self.config.leader_arms
         self.follower_arms = self.config.follower_arms
         self.cameras = self.config.cameras
+        self.is_connected = False
+        self.logs = {}
 
         self.async_read = False
         self.async_write = False
 
-    def init_teleop(self):
+    def connect(self):
+        if self.is_connected:
+            raise ValueError(f"KochRobot is already connected.")
+
+        for name in self.follower_arms:
+            self.follower_arms[name].connect()
+            self.leader_arms[name].connect()
+
         if self.calibration_path.exists():
             # Reset all arms before setting calibration
             for name in self.follower_arms:
@@ -279,7 +289,12 @@ class KochRobot:
         for name in self.cameras:
             self.cameras[name].connect()
 
+        self.is_connected = True
+
     def run_calibration(self):
+        if not self.is_connected:
+            raise ValueError(f"KochRobot is not connected. You need to run `robot.connect()`.")
+
         calibration = {}
 
         for name in self.follower_arms:
@@ -301,13 +316,18 @@ class KochRobot:
     def teleop_step(
         self, record_data=False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        if not self.is_connected:
+            raise ValueError(f"KochRobot is not connected. You need to run `robot.connect()`.")
+
         # Prepare to assign the positions of the leader to the follower
         leader_pos = {}
         for name in self.leader_arms:
+            now = time.perf_counter()
             if self.async_read:
                 leader_pos[name] = self.leader_arms[name].async_read("Present_Position")
             else:
                 leader_pos[name] = self.leader_arms[name].read("Present_Position")
+            self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - now
 
         follower_goal_pos = {}
         for name in self.leader_arms:
@@ -315,10 +335,12 @@ class KochRobot:
 
         # Send action
         for name in self.follower_arms:
+            now = time.perf_counter()
             if self.async_write:
                 self.follower_arms[name].async_write("Goal_Position", follower_goal_pos[name])
             else:
                 self.follower_arms[name].write("Goal_Position", follower_goal_pos[name])
+            self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - now
 
         # Early exit when recording data is not requested
         if not record_data:
@@ -327,10 +349,12 @@ class KochRobot:
         # Read follower position
         follower_pos = {}
         for name in self.follower_arms:
+            now = time.perf_counter()
             if self.async_read:
                 follower_pos[name] = self.follower_arms[name].async_read("Present_Position")
             else:
                 follower_pos[name] = self.follower_arms[name].read("Present_Position")
+            self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - now
 
         # Create state by concatenating follower current position
         state = []
@@ -349,7 +373,10 @@ class KochRobot:
         # Capture images from cameras
         images = {}
         for name in self.cameras:
+            now = time.perf_counter()
             images[name] = self.cameras[name].async_read()
+            self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
+            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - now
 
         # Populate output dictionnaries and format to pytorch
         obs_dict, action_dict = {}, {}
@@ -361,6 +388,9 @@ class KochRobot:
         return obs_dict, action_dict
 
     def capture_observation(self):
+        if not self.is_connected:
+            raise ValueError(f"KochRobot is not connected. You need to run `robot.connect()`.")
+
         # Read follower position
         follower_pos = {}
         for name in self.follower_arms:
@@ -389,6 +419,9 @@ class KochRobot:
         return obs_dict
 
     def send_action(self, action):
+        if not self.is_connected:
+            raise ValueError(f"KochRobot is not connected. You need to run `robot.connect()`.")
+
         from_idx = 0
         to_idx = 0
         follower_goal_pos = {}

@@ -154,14 +154,19 @@ def get_group_sync_key(data_name, motor_names):
     group_key = f"{data_name}_" + "_".join(motor_names)
     return group_key
 
-def get_thread_name(fn_name, data_name, motor_names):
+def get_result_name(fn_name, data_name, motor_names):
     group_key = get_group_sync_key(data_name, motor_names)
-    thread_name = f"{fn_name}_{group_key}"
-    return thread_name
+    rslt_name = f"{fn_name}_{group_key}"
+    return rslt_name
+
+def get_queue_name(fn_name, data_name, motor_names):
+    group_key = get_group_sync_key(data_name, motor_names)
+    queue_name = f"{fn_name}_{group_key}"
+    return queue_name
 
 def get_log_name(var_name, fn_name, data_name, motor_names):
-    thread_name = get_thread_name(fn_name, data_name, motor_names)
-    log_name = f"{var_name}_{thread_name}"
+    group_key = get_group_sync_key(data_name, motor_names)
+    log_name = f"{var_name}_{fn_name}_{group_key}"
     return log_name
 
 class TorqueMode(enum.Enum):
@@ -197,6 +202,18 @@ class DynamixelMotorsBus:
         if extra_model_control_table:
             self.model_ctrl_table.update(extra_model_control_table)
 
+        self.port_handler = None
+        self.packet_handler = None
+        self.calibration = None
+        self.is_connected = False
+        self.group_readers = {}
+        self.group_writers = {}
+        self.logs = {}
+
+    def connect(self):
+        if self.is_connected:
+            raise ValueError(f"KochRobot is already connected.")
+
         self.port_handler = PortHandler(self.port)
         self.packet_handler = PacketHandler(PROTOCOL_VERSION)
 
@@ -206,15 +223,13 @@ class DynamixelMotorsBus:
         self.port_handler.setBaudRate(BAUD_RATE)
         self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
 
-        self.group_readers = {}
-        self.group_writers = {}
-
-        self.calibration = None
-
-        self.threads = {}
-        self.queues = {}
+        # for async_read and async_write
+        self.thread = None
+        self.async_read_args = {}
+        self.write_queue = Queue()
         self.results = {}
-        self.logs = {}
+
+        self.is_connected = True
 
     @property
     def motor_names(self) -> list[int]:
@@ -258,6 +273,9 @@ class DynamixelMotorsBus:
         return values
 
     def read(self, data_name, motor_names: list[str] | None = None):
+        if not self.is_connected:
+            raise ValueError(f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`.")
+
         start_time = time.perf_counter()
 
         if motor_names is None:
@@ -320,6 +338,9 @@ class DynamixelMotorsBus:
         return values
 
     def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
+        if not self.is_connected:
+            raise ValueError(f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`.")
+
         start_time = time.perf_counter()
 
         if motor_names is None:
@@ -406,10 +427,20 @@ class DynamixelMotorsBus:
         ts_utc_name = get_log_name("timestamp_utc", "write", data_name, motor_names)
         self.logs[ts_utc_name] = capture_timestamp_utc()
 
-    def read_loop(self, data_name, motor_names: list[str] | None = None):
+    def read_write_loop(self, async_read_args, write_queue):
         while True:
-            thread_name = get_thread_name("read", data_name, motor_names)
-            self.results[thread_name] = self.read(data_name, motor_names)
+            for group_name, read_args in async_read_args.items():
+                self.results[group_name] = self.read(*read_args)
+
+            if write_queue.empty():
+                continue
+
+            write_args = write_queue.get()
+            if write_args is None:  # A way to terminate the thread
+                break
+            self.write(*write_args)
+
+            write_queue.task_done()
 
     def async_read(self, data_name, motor_names: list[str] | None = None):
         if motor_names is None:
@@ -418,32 +449,25 @@ class DynamixelMotorsBus:
         if isinstance(motor_names, str):
             motor_names = [motor_names]
 
-        thread_name = get_thread_name("read", data_name, motor_names)
+        if self.thread is None:
+            self.thread = Thread(target=self.read_write_loop, args=(self.async_read_args, self.write_queue))
+            self.thread.daemon = True
+            self.thread.start()
 
-        if thread_name not in self.threads:
-            self.threads[thread_name] = Thread(target=self.read_loop, args=(data_name, motor_names))
-            self.threads[thread_name].daemon = True
-            self.threads[thread_name].start()
+        group_name = get_group_sync_key(data_name, motor_names)
+        self.async_read_args[group_name] = (data_name, motor_names)
 
         FPS = 200
         num_tries = 0
-        while thread_name not in self.results:
+        while group_name not in self.results:
             num_tries += 1
             time.sleep(1 / FPS)
             if num_tries > FPS:
-                if self.threads[thread_name].ident is None and not self.threads[thread_name].is_alive():
+                if self.thread.ident is None and not self.thread.is_alive():
                     raise Exception(f"The thread responsible for `self.async_read({data_name}, {motor_names})` took too much time to start. There might be an issue. Verify that `self.threads[thread_name].start()` has been called.")
 
         # ts_utc_name = get_log_name("timestamp_utc", "read", data_name, motor_names)
-        return self.results[thread_name] #, self.logs[ts_utc_name]
-
-    def write_loop(self, data_name, queue: Queue, motor_names: list[str] | None = None):
-        while True:
-            values = queue.get()
-            if values is None:  # A way to terminate the thread
-                break
-            self.write(data_name, values, motor_names)
-            queue.task_done()
+        return self.results[group_name] #, self.logs[ts_utc_name]
 
     def async_write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
         if motor_names is None:
@@ -457,38 +481,33 @@ class DynamixelMotorsBus:
         
         values = np.array(values)
 
-        thread_name = get_thread_name("write", data_name, motor_names)
-        ts_utc_name = get_log_name("timestamp_utc", "write", data_name, motor_names)
+        if self.thread is None:
+            self.thread = Thread(target=self.read_write_loop, args=(self.async_read_args, self.write_queue))
+            self.thread.daemon = True
+            self.thread.start()
 
-        if thread_name not in self.threads:
-            self.queues[thread_name] = Queue()
-            self.threads[thread_name] = Thread(target=self.write_loop, args=(data_name, self.queues[thread_name], motor_names))
-            self.threads[thread_name].daemon = True
-            self.threads[thread_name].start()
-
-        self.queues[thread_name].put(values)
+        self.write_queue.put((data_name, values, motor_names))
 
         FPS = 200
         num_tries = 0
+        ts_utc_name = get_log_name("timestamp_utc", "write", data_name, motor_names)
         while ts_utc_name not in self.logs:
             num_tries += 1
             time.sleep(1 / FPS)
             if num_tries > FPS:
-                if self.threads[thread_name].ident is None and not self.threads[thread_name].is_alive():
+                if self.thread.ident is None and not self.thread.is_alive():
                     raise Exception(f"The thread responsible for `self.async_write({data_name}, {values}, {motor_names})` took too much time to start. There might be an issue. Verify that `self.threads[thread_name].start()` has been called.")
 
         return self.logs[ts_utc_name]
 
     def __del__(self):
-        for thread_name in self.queues:
-            # Send value that corresponds to `break` logic
-            self.queues[thread_name].put(None)
-            self.queues[thread_name].join()
+        # Send value that corresponds to `break` logic
+        # if self.queue is not None:
+        #     self.queue.put(None)
+        #     self.queue.join()
         
-        for thread_name in self.queues:
-            self.threads[thread_name].join()
-
-        # TODO(rcadene): find a simple way to exit threads created by async_read
+        if self.thread is not None:
+            self.thread.join()
 
     # def read(self, data_name, motor_name: str):
     #     motor_idx, model = self.motors[motor_name]
