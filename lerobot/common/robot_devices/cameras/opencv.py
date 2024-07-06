@@ -98,7 +98,7 @@ class OpenCVCamera:
 
     ```python
     camera = OpenCVCamera(2)
-    color_image = camera.capture_image()
+    color_image = camera.read()
     ```
     """
 
@@ -124,8 +124,8 @@ class OpenCVCamera:
 
         self.camera = None
         self.is_connected = False
-        self.threads = {}
-        self.results = {}
+        self.thread = None
+        self.color_image = None
         self.logs = {}
 
     def connect(self):
@@ -212,31 +212,31 @@ class OpenCVCamera:
 
     def read_loop(self):
         while True:
-            self.results["color_image"] = self.read()
+            self.color_image = self.read()
 
     def async_read(self):
-        if "read" not in self.threads:
-            self.threads["read"] = Thread(target=self.read_loop, args=())
-            self.threads["read"].daemon = True
-            self.threads["read"].start()
+        if self.thread is None:
+            self.thread = Thread(target=self.read_loop, args=())
+            self.thread.daemon = True
+            self.thread.start()
 
         num_tries = 0
-        while "color_image" not in self.results:
+        while self.color_image is None:
             num_tries += 1
             time.sleep(1/self.fps)
             if num_tries > self.fps:
-                if self.threads["read"].ident is None and not self.threads["read"].is_alive():
-                    raise Exception("The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.threads[\"read\"].start()` has been called.")
+                if self.thread.ident is None and not self.thread.is_alive():
+                    raise Exception("The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.thread.start()` has been called.")
 
-        return self.results["color_image"] #, self.logs["timestamp_utc"]
+        return self.color_image
 
     def disconnect(self):
         if getattr(self, "camera", None):
             self.camera.release()
-            for name in self.threads:
-                if self.threads[name].is_alive():
+            if self.thread is not None:
+                if self.thread.is_alive():
                     # wait for the thread to finish
-                    self.threads[name].join()
+                    self.thread.join()
 
     def __del__(self):
         self.disconnect()
