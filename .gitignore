@@ -149,3 +149,7 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# Test notebooks
+notebooks
+multimodal-maze-firebase-adminsdk-5ksg8-1ae971bec0.json

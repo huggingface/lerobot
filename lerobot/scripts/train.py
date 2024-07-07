@@ -47,7 +47,7 @@ from lerobot.scripts.eval import eval_policy
 
 
 def make_optimizer_and_scheduler(cfg, policy):
-    if cfg.policy.name == "act":
+    if cfg.policy.name in ["act", "mlpbc"]:
         optimizer_params_dicts = [
             {
                 "params": [
