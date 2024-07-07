@@ -189,6 +189,23 @@ class DriveMode(enum.Enum):
 
 
 class DynamixelMotorsBus:
+    """
+    Example of usage for 1 motor connected to the bus:
+    ```python
+    motor_name = "gripper"
+    motor_index = 6
+    motor_model = "xl330-m077"
+
+    robot = DynamixelMotorsBus(
+        port="/dev/tty.usbmodem575E0031751",
+        motors={motor_name: (motor_index, motor_model)},
+    )
+    robot.connect()
+
+    while True:
+        robot.teleop_step()
+    ```
+    """
     def __init__(
         self,
         port: str,

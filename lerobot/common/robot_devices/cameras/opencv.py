@@ -98,6 +98,7 @@ class OpenCVCamera:
 
     ```python
     camera = OpenCVCamera(2)
+    camera.connect()
     color_image = camera.read()
     ```
     """

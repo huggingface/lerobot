@@ -226,6 +226,9 @@ class KochRobot:
     Example of usage:
     ```python
     robot = KochRobot()
+    robot.connect()
+    while True:
+        robot.teleop_step()
     ```
     """
 
@@ -246,9 +249,6 @@ class KochRobot:
         self.cameras = self.config.cameras
         self.is_connected = False
         self.logs = {}
-
-        self.async_read = False
-        self.async_write = False
 
     def connect(self):
         if self.is_connected:
@@ -323,10 +323,7 @@ class KochRobot:
         leader_pos = {}
         for name in self.leader_arms:
             now = time.perf_counter()
-            if self.async_read:
-                leader_pos[name] = self.leader_arms[name].async_read("Present_Position")
-            else:
-                leader_pos[name] = self.leader_arms[name].read("Present_Position")
+            leader_pos[name] = self.leader_arms[name].read("Present_Position")
             self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - now
 
         follower_goal_pos = {}
@@ -336,10 +333,7 @@ class KochRobot:
         # Send action
         for name in self.follower_arms:
             now = time.perf_counter()
-            if self.async_write:
-                self.follower_arms[name].async_write("Goal_Position", follower_goal_pos[name])
-            else:
-                self.follower_arms[name].write("Goal_Position", follower_goal_pos[name])
+            self.follower_arms[name].write("Goal_Position", follower_goal_pos[name])
             self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - now
 
         # Early exit when recording data is not requested
@@ -350,10 +344,7 @@ class KochRobot:
         follower_pos = {}
         for name in self.follower_arms:
             now = time.perf_counter()
-            if self.async_read:
-                follower_pos[name] = self.follower_arms[name].async_read("Present_Position")
-            else:
-                follower_pos[name] = self.follower_arms[name].read("Present_Position")
+            follower_pos[name] = self.follower_arms[name].read("Present_Position")
             self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - now
 
         # Create state by concatenating follower current position
@@ -394,10 +385,7 @@ class KochRobot:
         # Read follower position
         follower_pos = {}
         for name in self.follower_arms:
-            if self.async_read:
-                follower_pos[name] = self.follower_arms[name].async_read("Present_Position")
-            else:
-                follower_pos[name] = self.follower_arms[name].read("Present_Position")
+            follower_pos[name] = self.follower_arms[name].read("Present_Position")
 
         # Create state by concatenating follower current position
         state = []
@@ -432,7 +420,4 @@ class KochRobot:
                 from_idx = to_idx
 
         for name in self.follower_arms:
-            if self.async_write:
-                self.follower_arms[name].async_write("Goal_Position", follower_goal_pos[name].astype(np.int32))
-            else:
-                self.follower_arms[name].write("Goal_Position", follower_goal_pos[name].astype(np.int32))
+            self.follower_arms[name].write("Goal_Position", follower_goal_pos[name].astype(np.int32))
