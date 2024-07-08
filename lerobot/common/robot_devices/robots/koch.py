@@ -223,12 +223,88 @@ class KochRobotConfig:
 class KochRobot:
     """Tau Robotics: https://tau-robotics.com
 
-    Example of usage:
+    Example of highest frequency teleoperation without camera:
     ```python
-    robot = KochRobot()
+    # Defines how to communicate with the motors of the leader and follower arms
+    leader_arms = {
+        "main": DynamixelMotorsBus(
+            port="/dev/tty.usbmodem575E0031751",
+            motors={
+                # name: (index, model)
+                "shoulder_pan": (1, "xl330-m077"),
+                "shoulder_lift": (2, "xl330-m077"),
+                "elbow_flex": (3, "xl330-m077"),
+                "wrist_flex": (4, "xl330-m077"),
+                "wrist_roll": (5, "xl330-m077"),
+                "gripper": (6, "xl330-m077"),
+            },
+        ),
+    }
+    follower_arms = {
+        "main": DynamixelMotorsBus(
+            port="/dev/tty.usbmodem575E0032081",
+            motors={
+                # name: (index, model)
+                "shoulder_pan": (1, "xl430-w250"),
+                "shoulder_lift": (2, "xl430-w250"),
+                "elbow_flex": (3, "xl330-m288"),
+                "wrist_flex": (4, "xl330-m288"),
+                "wrist_roll": (5, "xl330-m288"),
+                "gripper": (6, "xl330-m288"),
+            },
+        ),
+    }
+    robot = KochRobot(leader_arms, follower_arms)
+
+    # Connect motors buses and cameras if any (Required)
     robot.connect()
+
     while True:
         robot.teleop_step()
+    ```
+
+    Example of highest frequency data collection without camera:
+    ```python
+    # Assumes leader and follower arms have been instantiated already (see first example)
+    robot = KochRobot(leader_arms, follower_arms)
+    robot.connect()
+    while True:
+        observation, action = robot.teleop_step(record_data=True)
+    ```
+
+    Example of highest frequency data collection with cameras:
+    ```python
+    # Defines how to communicate with 2 cameras connected to the computer.
+    # Here, the webcam of the mackbookpro and the iphone (connected in USB to the macbookpro)
+    # can be reached respectively using the camera indices 0 and 1. These indices can be
+    # arbitrary. See the documentation of `OpenCVCamera` to find your own camera indices.
+    cameras = {
+        "macbookpro": OpenCVCamera(camera_index=0, fps=30, width=640, height=480),
+        "iphone": OpenCVCamera(camera_index=1, fps=30, width=640, height=480),
+    }
+    
+    # Assumes leader and follower arms have been instantiated already (see first example)
+    robot = KochRobot(leader_arms, follower_arms, cameras)
+    robot.connect()
+    while True:
+        observation, action = robot.teleop_step(record_data=True)
+    ```
+
+    Example of controlling the robot with a policy (without running multiple policies in parallel to ensure highest frequency):
+    ```python
+    # Assumes leader and follower arms + cameras have been instantiated already (see previous example)
+    robot = KochRobot(leader_arms, follower_arms, cameras)
+    robot.connect()
+    while True:
+        # Uses the follower arms and cameras to capture an observation
+        observation = robot.capture_observation()
+
+        # Assumes a policy has been instantiated
+        with torch.inference_mode():
+            action = policy.select_action(observation)
+
+        # Orders the robot to move
+        robot.send_action(action)
     ```
     """
 
@@ -277,7 +353,6 @@ class KochRobot:
 
         for name in self.follower_arms:
             self.follower_arms[name].set_calibration(calibration[f"follower_{name}"])
-            self.follower_arms[name].write("Torque_Enable", 1)
             self.follower_arms[name].write("Torque_Enable", 1)
 
         for name in self.leader_arms:

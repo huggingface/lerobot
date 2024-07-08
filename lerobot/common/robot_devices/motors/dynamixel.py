@@ -17,6 +17,7 @@ from dynamixel_sdk import (
     PortHandler,
 )
 
+from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
 
 PROTOCOL_VERSION = 2.0
@@ -196,14 +197,15 @@ class DynamixelMotorsBus:
     motor_index = 6
     motor_model = "xl330-m077"
 
-    robot = DynamixelMotorsBus(
+    motors_bus = DynamixelMotorsBus(
         port="/dev/tty.usbmodem575E0031751",
         motors={motor_name: (motor_index, motor_model)},
     )
-    robot.connect()
+    motors_bus.connect()
 
-    while True:
-        robot.teleop_step()
+    motors_bus.teleop_step()
+
+    motors_bus.disconnect()
     ```
     """
     def __init__(
@@ -229,7 +231,7 @@ class DynamixelMotorsBus:
 
     def connect(self):
         if self.is_connected:
-            raise ValueError(f"KochRobot is already connected.")
+            raise RobotDeviceAlreadyConnectedError(f"DynamixelMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice.")
 
         self.port_handler = PortHandler(self.port)
         self.packet_handler = PacketHandler(PROTOCOL_VERSION)
@@ -239,12 +241,6 @@ class DynamixelMotorsBus:
 
         self.port_handler.setBaudRate(BAUD_RATE)
         self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
-
-        # for async_read and async_write
-        self.thread = None
-        self.async_read_args = {}
-        self.write_queue = Queue()
-        self.results = {}
 
         self.is_connected = True
 
@@ -444,87 +440,16 @@ class DynamixelMotorsBus:
         ts_utc_name = get_log_name("timestamp_utc", "write", data_name, motor_names)
         self.logs[ts_utc_name] = capture_timestamp_utc()
 
-    def read_write_loop(self, async_read_args, write_queue):
-        while True:
-            for group_name, read_args in async_read_args.items():
-                self.results[group_name] = self.read(*read_args)
+    def disconnect(self):
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError(f"DynamixelMotorsBus({self.port}) is not connected. Try running `motors_bus.connect()` first.")
 
-            if write_queue.empty():
-                continue
-
-            write_args = write_queue.get()
-            if write_args is None:  # A way to terminate the thread
-                break
-            self.write(*write_args)
-
-            write_queue.task_done()
-
-    def async_read(self, data_name, motor_names: list[str] | None = None):
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        if isinstance(motor_names, str):
-            motor_names = [motor_names]
-
-        if self.thread is None:
-            self.thread = Thread(target=self.read_write_loop, args=(self.async_read_args, self.write_queue))
-            self.thread.daemon = True
-            self.thread.start()
-
-        group_name = get_group_sync_key(data_name, motor_names)
-        self.async_read_args[group_name] = (data_name, motor_names)
-
-        FPS = 200
-        num_tries = 0
-        while group_name not in self.results:
-            num_tries += 1
-            time.sleep(1 / FPS)
-            if num_tries > FPS:
-                if self.thread.ident is None and not self.thread.is_alive():
-                    raise Exception(f"The thread responsible for `self.async_read({data_name}, {motor_names})` took too much time to start. There might be an issue. Verify that `self.threads[thread_name].start()` has been called.")
-
-        # ts_utc_name = get_log_name("timestamp_utc", "read", data_name, motor_names)
-        return self.results[group_name] #, self.logs[ts_utc_name]
-
-    def async_write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        if isinstance(motor_names, str):
-            motor_names = [motor_names]
-
-        if isinstance(values, (int, float, np.integer)):
-            values = [int(values)] * len(motor_names)
-        
-        values = np.array(values)
-
-        if self.thread is None:
-            self.thread = Thread(target=self.read_write_loop, args=(self.async_read_args, self.write_queue))
-            self.thread.daemon = True
-            self.thread.start()
-
-        self.write_queue.put((data_name, values, motor_names))
-
-        FPS = 200
-        num_tries = 0
-        ts_utc_name = get_log_name("timestamp_utc", "write", data_name, motor_names)
-        while ts_utc_name not in self.logs:
-            num_tries += 1
-            time.sleep(1 / FPS)
-            if num_tries > FPS:
-                if self.thread.ident is None and not self.thread.is_alive():
-                    raise Exception(f"The thread responsible for `self.async_write({data_name}, {values}, {motor_names})` took too much time to start. There might be an issue. Verify that `self.threads[thread_name].start()` has been called.")
-
-        return self.logs[ts_utc_name]
+        closePort
 
     def __del__(self):
-        # Send value that corresponds to `break` logic
-        # if self.queue is not None:
-        #     self.queue.put(None)
-        #     self.queue.join()
-        
-        if self.thread is not None:
-            self.thread.join()
+        if self.is_connected:
+            self.disconnect()
+
 
     # def read(self, data_name, motor_name: str):
     #     motor_idx, model = self.motors[motor_name]

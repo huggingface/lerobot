@@ -148,7 +148,8 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None):
 
 
 def teleoperate(robot: Robot, fps: int | None = None):
-    robot.init_teleop()
+    if not robot.is_connected:
+        robot.connect()
 
     while True:
         now = time.perf_counter()
@@ -176,7 +177,8 @@ def record_dataset(
     if not video:
         raise NotImplementedError()
 
-    robot.init_teleop()
+    if not robot.is_connected:
+        robot.connect()
 
     local_dir = Path(root) / repo_id
     if local_dir.exists():
@@ -336,7 +338,8 @@ def replay_episode(robot: Robot, episode: int, fps: int | None = None, root="dat
     from_idx = dataset.episode_data_index["from"][episode].item()
     to_idx = dataset.episode_data_index["to"][episode].item()
 
-    robot.init_teleop()
+    if not robot.is_connected:
+        robot.connect()
 
     logging.info("Replaying episode")
     os.system('say "Replaying episode"')
@@ -365,6 +368,9 @@ def run_policy(robot: Robot, policy: torch.nn.Module, hydra_cfg: DictConfig):
     set_global_seed(hydra_cfg.seed)
 
     fps = hydra_cfg.env.fps
+
+    if not robot.is_connected:
+        robot.connect()
 
     while True:
         now = time.perf_counter()
