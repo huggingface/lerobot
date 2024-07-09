@@ -298,6 +298,7 @@ class VQBeTModel(nn.Module):
         # bin prediction head / offset prediction head part of VQ-BeT
         self.action_head = VQBeTHead(config)
 
+        # Action tokens for: each observation step, the current action token, and all future action tokens.
         num_tokens = self.config.n_action_pred_token + self.config.n_obs_steps - 1
         self.register_buffer(
             "select_target_actions_indices",
