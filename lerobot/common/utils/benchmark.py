@@ -16,7 +16,6 @@
 import threading
 import time
 from contextlib import ContextDecorator
-from functools import wraps
 
 
 class TimeBenchmark(ContextDecorator):
@@ -39,15 +38,6 @@ class TimeBenchmark(ContextDecorator):
             time.sleep(1)
         print(f"Block took {benchmark.result:.4f} seconds")
 
-        # As a decorator
-        @benchmark
-        def example_function():
-            time.sleep(1)
-            return "Function result"
-
-        result, elapsed_time = example_function()
-        print(f"Function took {elapsed_time:.4f} seconds and returned '{result}'")
-
         # With multithreading
         import threading
 
@@ -56,15 +46,10 @@ class TimeBenchmark(ContextDecorator):
                 time.sleep(1)
             print(f"Block took {benchmark.result:.4f} seconds")
 
-        def decorator_example():
-            result, elapsed_time = example_function()
-            print(f"Function took {elapsed_time:.4f} seconds and returned '{result}'")
-
         threads = []
         for _ in range(3):
             t1 = threading.Thread(target=context_manager_example)
-            t2 = threading.Thread(target=decorator_example)
-            threads.extend([t1, t2])
+            threads.append(t1)
 
         for t in threads:
             t.start()
@@ -87,15 +72,6 @@ class TimeBenchmark(ContextDecorator):
         if self.print_time:
             print(f"Elapsed time: {self.local.elapsed_time:.4f} seconds")
         return False
-
-    def __call__(self, func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            with self:
-                result = func(*args, **kwargs)
-            return result, self.local.elapsed_time
-
-        return wrapper
 
     @property
     def result(self):
