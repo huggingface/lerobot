@@ -232,7 +232,7 @@ class DiffusionModel(nn.Module):
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
         global_cond_feats = [batch["observation.state"]]
         # Extract image feature (first combine batch, sequence, and camera index dims).
-        if self._use_images == "images":
+        if self._use_images:
             img_features = self.rgb_encoder(
                 einops.rearrange(batch["observation.images"], "b s n ... -> (b s n) ...")
             )
