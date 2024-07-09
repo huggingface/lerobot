@@ -3,11 +3,18 @@ import time
 import numpy as np
 import pytest
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
+from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 
 
 def test_motors_bus():
+    # TODO(rcadene): measure fps in nightly?
+    # TODO(rcadene): test logs
+    # TODO(rcadene): test calibration
+    # TODO(rcadene): add compatibility with other motors bus
+
     # Test instantiating a common motors structure.
     # Here the one from Alexander Koch follower arm.
+    port = "/dev/tty.usbmodem575E0032081"
     motors = {
         # name: (index, model)
         "shoulder_pan": (1, "xl430-w250"),
@@ -17,24 +24,29 @@ def test_motors_bus():
         "wrist_roll": (5, "xl330-m288"),
         "gripper": (6, "xl330-m288"),
     }
-    motors_bus = DynamixelMotorsBus(
-        port="/dev/tty.usbmodem575E0032081",
-        motors=motors,
-    )
+    motors_bus = DynamixelMotorsBus(port, motors)
 
     # Test reading and writting before connecting raises an error
-    with pytest.raises(ValueError):
+    with pytest.raises(RobotDeviceNotConnectedError):
         motors_bus.read("Torque_Enable")
-    with pytest.raises(ValueError):
-        motors_bus.write("Torque_Enable")
+    with pytest.raises(RobotDeviceNotConnectedError):
+        motors_bus.write("Torque_Enable", 1)
+    with pytest.raises(RobotDeviceNotConnectedError):
+        motors_bus.disconnect()
+    
+    # Test deleting the object without connecting first
+    del motors_bus
 
+    # Test connecting
+    motors_bus = DynamixelMotorsBus(port, motors)
     motors_bus.connect()
 
     # Test connecting twice raises an error
-    with pytest.raises(ValueError):
+    with pytest.raises(RobotDeviceAlreadyConnectedError):
         motors_bus.connect()
 
-    # Test reading torque on all motors and its 0 after first connection
+    # Test disabling torque and reading torque on all motors
+    motors_bus.write("Torque_Enable", 0)
     values = motors_bus.read("Torque_Enable")
     assert isinstance(values, np.ndarray)
     assert len(values) == len(motors)
@@ -67,7 +79,5 @@ def test_motors_bus():
     # Give time for the motors to move to the goal position
     time.sleep(1)
     new_values = motors_bus.read("Present_Position")
-    assert new_values == values
+    assert (new_values == values).all()
 
-    # TODO(rcadene): test calibration
-    # TODO(rcadene): test logs?

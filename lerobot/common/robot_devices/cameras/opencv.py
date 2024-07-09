@@ -1,5 +1,6 @@
 import argparse
 import math
+import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -8,9 +9,8 @@ from threading import Thread
 import cv2
 
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-# Using 1 thread to avoid blocking the main thread.
-# Especially useful during data collection when other threads are used
-# to save the images.
+# Use 1 thread to avoid blocking the main thread. Especially useful during data collection
+# when other threads are used to save the images.
 cv2.setNumThreads(1)
 import numpy as np
 
@@ -89,6 +89,10 @@ class OpenCVCameraConfig:
     height: int | None = None
     color: str = "rgb"
 
+    def __post_init__(self):
+        if self.color not in ["rgb", "bgr"]:
+            raise ValueError(f"Expected color values are 'rgb' or 'bgr', but {self.color} is provided.")
+
 
 class OpenCVCamera:
     # TODO(rcadene): improve dosctring
@@ -122,12 +126,10 @@ class OpenCVCamera:
         if not isinstance(self.camera_index, int):
             raise ValueError(f"Camera index must be provided as an int, but {self.camera_index} was given instead.")
 
-        if self.color not in ["rgb", "bgr"]:
-            raise ValueError(f"Expected color values are 'rgb' or 'bgr', but {self.color} is provided.")
-
         self.camera = None
         self.is_connected = False
         self.thread = None
+        self.stop_event = None
         self.color_image = None
         self.logs = {}
 
@@ -159,26 +161,26 @@ class OpenCVCamera:
         # needs to be re-created.
         self.camera = cv2.VideoCapture(self.camera_index)
 
-        if self.fps:
+        if self.fps is not None:
             self.camera.set(cv2.CAP_PROP_FPS, self.fps)
-        if self.width:
+        if self.width is not None:
             self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        if self.height:
+        if self.height is not None:
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
 
         actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
         actual_width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
         actual_height = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
-        if self.fps and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
+        if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             raise OSError(
                 f"Can't set {self.fps=} for camera {self.camera_index}. Actual value is {actual_fps}."
             )
-        if self.width and self.width != actual_width:
+        if self.width is not None and self.width != actual_width:
             raise OSError(
                 f"Can't set {self.width=} for camera {self.camera_index}. Actual value is {actual_width}."
             )
-        if self.height and self.height != actual_height:
+        if self.height is not None and self.height != actual_height:
             raise OSError(
                 f"Can't set {self.height=} for camera {self.camera_index}. Actual value is {actual_height}."
             )
@@ -216,6 +218,10 @@ class OpenCVCamera:
         if requested_color == "rgb":
             color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
 
+        h, w, _ = color_image.shape
+        if h != self.height or w != self.width:
+            raise OSError(f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead.")
+
         # log the number of seconds it took to read the image
         self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
 
@@ -225,7 +231,7 @@ class OpenCVCamera:
         return color_image
 
     def read_loop(self):
-        while True:
+        while self.stop_event is None or not self.stop_event.is_set():
             self.color_image = self.read()
 
     def async_read(self):
@@ -233,6 +239,7 @@ class OpenCVCamera:
             raise RobotDeviceNotConnectedError(f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first.")
 
         if self.thread is None:
+            self.stop_event = threading.Event()
             self.thread = Thread(target=self.read_loop, args=())
             self.thread.daemon = True
             self.thread.start()
@@ -242,27 +249,29 @@ class OpenCVCamera:
             num_tries += 1
             time.sleep(1/self.fps)
             if num_tries > self.fps:
-                if self.thread.ident is None and not self.thread.is_alive():
+                if self.thread.ident is None or not self.thread.is_alive():
                     raise Exception("The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.thread.start()` has been called.")
-
+                
         return self.color_image
 
     def disconnect(self):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first.")
 
-        self.camera.release()
-        self.camera = None
-
         if self.thread is not None and self.thread.is_alive():
             # wait for the thread to finish
+            self.stop_event.set()
             self.thread.join()
             self.thread = None
+            self.stop_event = None
+
+        self.camera.release()
+        self.camera = None
 
         self.is_connected = False
 
     def __del__(self):
-        if self.is_connected:
+        if getattr(self, "is_connected", False):
             self.disconnect()
 
 

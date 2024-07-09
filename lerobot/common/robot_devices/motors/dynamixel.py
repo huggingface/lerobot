@@ -101,6 +101,7 @@ MODEL_CONTROL_TABLE = {
 }
 
 
+# TODO(rcadene): find better namming for these functions
 def uint32_to_int32(values: np.ndarray):
     """
     Convert an unsigned 32-bit integer array to a signed 32-bit integer array.
@@ -120,35 +121,18 @@ def int32_to_uint32(values: np.ndarray):
             values[i] = values[i] + 4294967296
     return values
 
-
-def motor_position_to_angle(position: np.ndarray) -> np.ndarray:
-    """
-    Convert from motor position in [-2048, 2048] to radian in [-pi, pi]
-    """
-    return (position / 2048) * 3.14
-
-
-def motor_angle_to_position(angle: np.ndarray) -> np.ndarray:
-    """
-    Convert from radian in [-pi, pi] to motor position in [-2048, 2048]
-    """
-    return ((angle / 3.14) * 2048).astype(np.int64)
-
-
-# def pwm2vel(pwm: np.ndarray) -> np.ndarray:
+# def motor_position_to_angle(position: np.ndarray) -> np.ndarray:
 #     """
-#     :param pwm: numpy array of pwm/s joint velocities
-#     :return: numpy array of rad/s joint velocities
+#     Convert from motor position in [-2048, 2048] to radian in [-pi, pi]
 #     """
-#     return pwm * 3.14 / 2048
+#     return (position / 2048) * 3.14
 
 
-# def vel2pwm(vel: np.ndarray) -> np.ndarray:
+# def motor_angle_to_position(angle: np.ndarray) -> np.ndarray:
 #     """
-#     :param vel: numpy array of rad/s joint velocities
-#     :return: numpy array of pwm/s joint velocities
+#     Convert from radian in [-pi, pi] to motor position in [-2048, 2048]
 #     """
-#     return (vel * 2048 / 3.14).astype(np.int64)
+#     return ((angle / 3.14) * 2048).astype(np.int64)
 
 
 def get_group_sync_key(data_name, motor_names):
@@ -285,14 +269,17 @@ class DynamixelMotorsBus:
 
         return values
 
-    def read(self, data_name, motor_names: list[str] | None = None):
+    def read(self, data_name, motor_names: str | list[str] | None = None):
         if not self.is_connected:
-            raise ValueError(f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`.")
+            raise RobotDeviceNotConnectedError(f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`.")
 
         start_time = time.perf_counter()
 
         if motor_names is None:
             motor_names = self.motor_names
+
+        if isinstance(motor_names, str):
+            motor_names = [motor_names]
 
         motor_ids = []
         models = []
@@ -352,7 +339,7 @@ class DynamixelMotorsBus:
 
     def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
         if not self.is_connected:
-            raise ValueError(f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`.")
+            raise RobotDeviceNotConnectedError(f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`.")
 
         start_time = time.perf_counter()
 
@@ -444,10 +431,17 @@ class DynamixelMotorsBus:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(f"DynamixelMotorsBus({self.port}) is not connected. Try running `motors_bus.connect()` first.")
 
-        closePort
+        if self.port_handler is not None:
+            self.port_handler.closePort()
+            self.port_handler = None
+
+        self.packet_handler = None
+        self.group_readers = {}
+        self.group_writers = {}
+        self.is_connected = False
 
     def __del__(self):
-        if self.is_connected:
+        if getattr(self, "is_connected", False):
             self.disconnect()
 
 
