@@ -358,10 +358,8 @@ class ACT(nn.Module):
             )
 
         # Prepare transformer encoder inputs.
-        encoder_in_tokens = []
+        encoder_in_tokens = [self.encoder_latent_input_proj(latent_sample)]
         encoder_in_pos_embed = list(self.encoder_1d_feature_pos_embed.weight.unsqueeze(1))
-        # Latent token:
-        encoder_in_tokens.append(self.encoder_latent_input_proj(latent_sample))
         # Robot state token.
         if self.use_robot_state:
             encoder_in_tokens.append(self.encoder_robot_state_input_proj(batch["observation.state"]))
