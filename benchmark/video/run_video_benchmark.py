@@ -48,11 +48,13 @@ BASE_ENCODING = OrderedDict(
         ("pix_fmt", "yuv444p"),
         ("g", 2),
         ("crf", None),
+        # TODO(aliberts): Add fastdecode
         # ("fastdecode", 0),
     ]
 )
 
 
+# TODO(rcadene, aliberts): move to `utils.py` folder when we want to refactor 
 def parse_int_or_none(value) -> int | None:
     if value.lower() == "none":
         return None

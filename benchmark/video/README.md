@@ -6,7 +6,7 @@ What is the optimal trade-off between:
 - maximizing loading time with random access,
 - minimizing memory space on disk,
 - maximizing success rate of policies,
-- compatibility accross devices/platforms (e.g. video players, web browsers) for playing videos?
+- compatibility across devices/platforms for decoding videos (e.g. video players, web browsers).
 
 How to encode videos?
 - Which video codec (`-vcodec`) to use? h264, h265, AV1?
@@ -22,7 +22,7 @@ How to decode videos?
 ## Variables
 **Image content & size**
 We don't expect the same optimal settings for a dataset of images from a simulation, or from real-world in an appartment, or in a factory, or outdoor, or with lots of moving objects in the scene, etc. Similarly, loading times might not vary linearly with the image size (resolution).
-For these reasons, we run this benchmark on four datasets:
+For these reasons, we run this benchmark on four representative datasets:
 - `lerobot/pusht_image`: (96 x 96 pixels) simulation with simple geometric shapes, fixed camera.
 - `aliberts/aloha_mobile_shrimp_image`: (480 x 640 pixels) real-world indoor, moving camera.
 - `aliberts/paris_street`: (720 x 1280 pixels) real-world outdoor, moving camera.
@@ -41,7 +41,7 @@ We might revisit this benchmark and find better settings if we train our policie
 | **g**       | `1`, `2`, `3`, `4`, `5`, `6`, `10`, `15`, `20`, `40`, `None` |
 | **crf**     | `0`, `5`, `10`, `15`, `20`, `25`, `30`, `40`, `50`, `None`   |
 
-One important thing to note for `crf` (like many other parameters with ffmpeg) is that its value is interpreted dependending on the video codec. This means that the same `crf` value used with one codec doesn't necessarily translate into the same thing with another codec. In fact, the default value (`None`) isn't the same amongst the different video codecs (the same goes for `g`).
+Note that `crf` value might be interpreted differently by various video codecs. In other words, the same value used with one codec doesn't necessarily translate into the same compression level with another codec. In fact, the default value (`None`) isn't the same amongst the different video codecs. Importantly, it is also the case for many other ffmpeg arguments like `g` which specifies the frequency of the key frames.
 
 For a comprehensive list and documentation of these parameters, see the ffmpeg documentation depending on the video codec used:
 - h264: https://trac.ffmpeg.org/wiki/Encode/H.264
@@ -55,8 +55,8 @@ We tested two video decoding backends from torchvision:
 - `video_reader` (requires to build torchvision from source)
 
 **Requested timestamps**
-Given the way video decoding works, once a keyframe has been loaded the decoding of subsequent frames is fast.
-This of course is affected by the `-g` parameter at encoding, which specifies the frequency of the keyframes. Given our typical use cases in robotics policies which might request a few timestamps in different random places, we want to replicate these use cases with the following scenarios:
+Given the way video decoding works, once a keyframe has been loaded, the decoding of subsequent frames is fast.
+This of course is affected by the `-g` parameter during encoding, which specifies the frequency of the keyframes. Given our typical use cases in robotics policies which might request a few timestamps in different random places, we want to replicate these use cases with the following scenarios:
 - `1_frame`: 1 frame,
 - `2_frames`: 2 consecutive frames (e.g. `[t, t + 1 / fps]`),
 - `6_frames`: 6 consecutive frames (e.g. `[t + i / fps for i in range(6)]`)
@@ -64,7 +64,7 @@ This of course is affected by the `-g` parameter at encoding, which specifies th
 Note that this differs significantly from a typical use case like watching a movie, in which every frame is loaded sequentially from the beginning to the end and it's acceptable to have big values for `-g`.
 
 Additionally, because some policies might request single timestamps that are a few frames appart, we also have the following scenario:
-- `2_frames_4_space`: 2 frames space by 4 consecutive frames of spacing (e.g `[t, t + 5 / fps]`),
+- `2_frames_4_space`: 2 frames with 4 consecutive frames of spacing in between (e.g `[t, t + 5 / fps]`),
 
 However, due to how video decoding is implemented with `pyav`, we don't have access to an accurate seek so in practice this scenario is essentially the same as `6_frames` since all 6 frames between `t` and `t + 5 / fps` will be decoded.
 
@@ -257,4 +257,4 @@ Considering these results, we chose what we think is the best set of encoding pa
 - g: `2`
 - crf: `30`
 
-Since we're using av1 encoding, we're chosing the `pyav` decoder as `video_reader` does not support it (and it's also easier to use).
+Since we're using av1 encoding, we're choosing the `pyav` decoder as `video_reader` does not support it (and `pyav` doesn't require a custom build of `torchvision`).
