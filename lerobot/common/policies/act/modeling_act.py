@@ -76,7 +76,6 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         self.model = ACT(config)
 
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
-        self.use_env_state = "observation.environment_state" in config.input_shapes
 
         self.reset()
 
