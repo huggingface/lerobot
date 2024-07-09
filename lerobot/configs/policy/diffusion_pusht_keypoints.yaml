@@ -1,6 +1,11 @@
 # @package _global_
 
-# Defaults for training for the PushT dataset as per https://github.com/real-stanford/diffusion_policy.
+# Defaults for training for the pusht_keypoints dataset.
+
+# Note: The original work trains keypoints-only with conditioning via inpainting. Here, we encode the
+# observation along with the agent position and use the encoding as global conditioning for the denoising
+# U-Net.
+
 # Note: We do not track EMA model weights as we discovered it does not improve the results. See
 #       https://github.com/huggingface/lerobot/pull/134 for more details.
 
