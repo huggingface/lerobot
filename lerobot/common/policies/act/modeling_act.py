@@ -288,14 +288,6 @@ class ACT(nn.Module):
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
         """A forward pass through the Action Chunking Transformer (with optional VAE encoder).
 
-        `batch` should have the following structure:
-
-        {
-            "observation.state": (B, state_dim) batch of robot states.
-            "observation.images": (B, n_cameras, C, H, W) batch of images.
-            "action" (optional, only if training with VAE): (B, chunk_size, action dim) batch of actions.
-        }
-
         Returns:
             (B, chunk_size, action_dim) batch of action sequences
             Tuple containing the latent PDF's parameters (mean, log(σ²)) both as (B, L) tensors where L is the
