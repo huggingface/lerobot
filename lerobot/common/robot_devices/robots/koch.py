@@ -187,7 +187,7 @@ class KochRobotConfig:
     leader_arms: dict[str, MotorsBus] = field(
         default_factory=lambda: {
             "main": DynamixelMotorsBus(
-                port="/dev/tty.usbmodem575E0031751",
+                port="/dev/ttyACM1",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": (1, "xl330-m077"),
@@ -203,7 +203,7 @@ class KochRobotConfig:
     follower_arms: dict[str, MotorsBus] = field(
         default_factory=lambda: {
             "main": DynamixelMotorsBus(
-                port="/dev/tty.usbmodem575E0032081",
+                port="/dev/ttyACM0",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": (1, "xl430-w250"),
