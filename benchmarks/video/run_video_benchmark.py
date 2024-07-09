@@ -54,7 +54,7 @@ BASE_ENCODING = OrderedDict(
 )
 
 
-# TODO(rcadene, aliberts): move to `utils.py` folder when we want to refactor 
+# TODO(rcadene, aliberts): move to `utils.py` folder when we want to refactor
 def parse_int_or_none(value) -> int | None:
     if value.lower() == "none":
         return None
@@ -170,7 +170,7 @@ def benchmark_decoding(
     num_workers: int = 4,
     save_frames: bool = False,
 ) -> dict:
-    def process_sample(t):
+    def process_sample(sample: int):
         time_benchmark = TimeBenchmark()
         timestamps = sample_timestamps(timestamps_mode, ep_num_images, fps)
         num_frames = len(timestamps)
@@ -198,7 +198,7 @@ def benchmark_decoding(
                 structural_similarity(original_frames_np[i], frames_np[i], data_range=1.0, channel_axis=0)
             )
 
-        if save_frames and t == 0:
+        if save_frames and sample == 0:
             save_dir = video_path.with_suffix("") / f"{timestamps_mode}_{backend}"
             save_decoded_frames(imgs_dir, save_dir, frames, timestamps, fps)
 
@@ -210,6 +210,9 @@ def benchmark_decoding(
     psnr_values = []
     ssim_values = []
 
+    # A sample is a single set of decoded frames specified by timestamps_mode (e.g. a single frame, 2 frames, etc.).
+    # For each sample, we record metrics (loading time and quality metrics) which are then averaged over all samples.
+    # As these samples are independent, we run them in parallel threads to speed up the benchmark.
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         futures = [executor.submit(process_sample, i) for i in range(num_samples)]
         for future in tqdm(as_completed(futures), total=num_samples, desc="samples", leave=False):
