@@ -209,33 +209,35 @@ def record_dataset(
     # Save images using threads to reach high fps (30 and more)
     # Using `with` to exist smoothly if an execption is raised.
     # Using only 4 worker threads to avoid blocking the main thread.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
 
-        # Execute a few seconds without recording data, to give times
-        # to the robot devices to connect and start synchronizing.
-        timestamp = 0
-        start_time = time.perf_counter()
-        is_warmup_print = False
-        while timestamp < warmup_time_s:
-            if not is_warmup_print:
-                logging.info("Warming up (no data recording)")
-                os.system('say "Warmup" &')
-                is_warmup_print = True
+    futures = []
 
-            now = time.perf_counter()
-            observation, action = robot.teleop_step(record_data=True)
+    # Execute a few seconds without recording data, to give times
+    # to the robot devices to connect and start synchronizing.
+    timestamp = 0
+    start_time = time.perf_counter()
+    is_warmup_print = False
+    while timestamp < warmup_time_s:
+        if not is_warmup_print:
+            logging.info("Warming up (no data recording)")
+            os.system('say "Warmup" &')
+            is_warmup_print = True
 
-            dt_s = time.perf_counter() - now
-            busy_wait(1 / fps - dt_s)
+        now = time.perf_counter()
+        observation, action = robot.teleop_step(record_data=True)
 
-            dt_s = time.perf_counter() - now
-            log_control_info(robot, dt_s)
+        dt_s = time.perf_counter() - now
+        busy_wait(1 / fps - dt_s)
 
-            timestamp = time.perf_counter() - start_time
+        dt_s = time.perf_counter() - now
+        log_control_info(robot, dt_s)
 
-        # Start recording all episodes
-        ep_dicts = []
-        for episode_index in range(num_episodes):
+        timestamp = time.perf_counter() - start_time
+
+    # Start recording all episodes
+    ep_dicts = []
+    for episode_index in range(num_episodes):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             ep_dict = {}
             frame_index = 0
             timestamp = 0
@@ -254,7 +256,8 @@ def record_dataset(
                 not_image_keys = [key for key in observation if "image" not in key]
 
                 for key in image_keys:
-                    executor.submit(save_image, observation[key], key, frame_index, episode_index, videos_dir)
+                    future = executor.submit(save_image, observation[key], key, frame_index, episode_index, videos_dir)
+                    futures.append(future)
 
                 for key in not_image_keys:
                     if key not in ep_dict:
@@ -276,40 +279,40 @@ def record_dataset(
 
                 timestamp = time.perf_counter() - start_time
 
-            logging.info("Encoding images to videos")
+        logging.info("Encoding images to videos")
 
-            num_frames = frame_index
+        num_frames = frame_index
 
-            for key in image_keys:
-                tmp_imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
-                fname = f"{key}_episode_{episode_index:06d}.mp4"
-                video_path = local_dir / "videos" / fname
-                encode_video_frames(tmp_imgs_dir, video_path, fps)
+        for key in image_keys:
+            tmp_imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
+            fname = f"{key}_episode_{episode_index:06d}.mp4"
+            video_path = local_dir / "videos" / fname
+            encode_video_frames(tmp_imgs_dir, video_path, fps)
 
-                # TODO(rcadene): uncomment?
-                # clean temporary images directory
-                # shutil.rmtree(tmp_imgs_dir)
+            # TODO(rcadene): uncomment?
+            # clean temporary images directory
+            # shutil.rmtree(tmp_imgs_dir)
 
-                # store the reference to the video frame
-                ep_dict[key] = []
-                for i in range(num_frames):
-                    ep_dict[key].append({"path": f"videos/{fname}", "timestamp": i / fps})
+            # store the reference to the video frame
+            ep_dict[key] = []
+            for i in range(num_frames):
+                ep_dict[key].append({"path": f"videos/{fname}", "timestamp": i / fps})
 
-            for key in not_image_keys:
-                ep_dict[key] = torch.stack(ep_dict[key])
+        for key in not_image_keys:
+            ep_dict[key] = torch.stack(ep_dict[key])
 
-            for key in action:
-                ep_dict[key] = torch.stack(ep_dict[key])
+        for key in action:
+            ep_dict[key] = torch.stack(ep_dict[key])
 
-            ep_dict["episode_index"] = torch.tensor([episode_index] * num_frames)
-            ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
-            ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
+        ep_dict["episode_index"] = torch.tensor([episode_index] * num_frames)
+        ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
+        ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
 
-            done = torch.zeros(num_frames, dtype=torch.bool)
-            done[-1] = True
-            ep_dict["next.done"] = done
+        done = torch.zeros(num_frames, dtype=torch.bool)
+        done[-1] = True
+        ep_dict["next.done"] = done
 
-            ep_dicts.append(ep_dict)
+        ep_dicts.append(ep_dict)
 
     data_dict = concatenate_episodes(ep_dicts)
 
@@ -338,6 +341,7 @@ def record_dataset(
         videos_dir=videos_dir,
     )
     stats = compute_stats(lerobot_dataset) if run_compute_stats else {}
+    lerobot_dataset.stats = stats
 
     hf_dataset = hf_dataset.with_format(None)  # to remove transforms that cant be saved
     hf_dataset.save_to_disk(str(local_dir / "train"))

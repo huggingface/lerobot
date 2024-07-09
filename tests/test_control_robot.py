@@ -19,14 +19,14 @@ def test_teleoperate():
 def test_record_dataset_and_replay_episode_and_run_policy(tmpdir):
     robot_name = "koch"
     env_name = "koch_real"
-    policy_name = "act_real"
+    policy_name = "act_koch_real"
 
     #root = Path(tmpdir)
     root = Path("tmp/data")
     repo_id = "lerobot/debug"
 
     robot = make_robot(robot_name)
-    dataset = record_dataset(robot, fps=30, root=root, repo_id=repo_id, warmup_time_s=2, episode_time_s=2, num_episodes=2)
+    dataset = record_dataset(robot, fps=30, root=root, repo_id=repo_id, warmup_time_s=1, episode_time_s=1, num_episodes=2)
 
     replay_episode(robot, episode=0, fps=30, root=root, repo_id=repo_id)
 
