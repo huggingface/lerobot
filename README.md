@@ -58,6 +58,7 @@
 - Thanks to Cheng Chi, Zhenjia Xu and colleagues for open sourcing Diffusion policy, Pusht environment and datasets, as well as UMI datasets. Ours are adapted from [Diffusion Policy](https://diffusion-policy.cs.columbia.edu) and [UMI Gripper](https://umi-gripper.github.io).
 - Thanks to Nicklas Hansen, Yunhai Feng and colleagues for open sourcing TDMPC policy, Simxarm environments and datasets. Ours are adapted from [TDMPC](https://github.com/nicklashansen/tdmpc) and [FOWM](https://www.yunhaifeng.com/FOWM).
 - Thanks to Antonio Loquercio and Ashish Kumar for their early support.
+- Thanks to [Seungjae (Jay) Lee](https://sjlee.cc/), [Mahi Shafiullah](https://mahis.life/) and colleagues for open sourcing [VQ-BeT](https://sjlee.cc/vq-bet/) policy and helping us adapt the codebase to our repository. The policy is adapted from [VQ-BeT repo](https://github.com/jayLEE0301/vq_bet_official).
 
 
 ## Installation
@@ -339,11 +340,53 @@ with profile(
 ## Citation
 
 If you want, you can cite this work with:
-```
+```bibtex
 @misc{cadene2024lerobot,
     author = {Cadene, Remi and Alibert, Simon and Soare, Alexander and Gallouedec, Quentin and Zouitine, Adil and Wolf, Thomas},
     title = {LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch},
     howpublished = "\url{https://github.com/huggingface/lerobot}",
     year = {2024}
+}
+```
+
+Additionally, if you are using any of the particular policy architecture, pretrained models, or datasets, it is recommended to cite the original authors of the work as they appear below:
+
+- [Diffusion Policy](https://diffusion-policy.cs.columbia.edu)
+```bibtex
+@article{chi2024diffusionpolicy,
+	author = {Cheng Chi and Zhenjia Xu and Siyuan Feng and Eric Cousineau and Yilun Du and Benjamin Burchfiel and Russ Tedrake and Shuran Song},
+	title ={Diffusion Policy: Visuomotor Policy Learning via Action Diffusion},
+	journal = {The International Journal of Robotics Research},
+	year = {2024},
+}
+```
+- [ACT or ALOHA](https://tonyzhaozh.github.io/aloha)
+```bibtex
+@article{zhao2023learning,
+  title={Learning fine-grained bimanual manipulation with low-cost hardware},
+  author={Zhao, Tony Z and Kumar, Vikash and Levine, Sergey and Finn, Chelsea},
+  journal={arXiv preprint arXiv:2304.13705},
+  year={2023}
+}
+```
+
+- [TDMPC](https://www.nicklashansen.com/td-mpc/)
+
+```bibtex
+@inproceedings{Hansen2022tdmpc,
+	title={Temporal Difference Learning for Model Predictive Control},
+	author={Nicklas Hansen and Xiaolong Wang and Hao Su},
+	booktitle={ICML},
+	year={2022}
+}
+```
+
+- [VQ-BeT](https://sjlee.cc/vq-bet/)
+```bibtex
+@article{lee2024behavior,
+  title={Behavior generation with latent actions},
+  author={Lee, Seungjae and Wang, Yibin and Etukuru, Haritheja and Kim, H Jin and Shafiullah, Nur Muhammad Mahi and Pinto, Lerrel},
+  journal={arXiv preprint arXiv:2403.03181},
+  year={2024}
 }
 ```
