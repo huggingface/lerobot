@@ -2,6 +2,20 @@
 
 # Defaults for training for the pusht_keypoints dataset.
 
+# They keypoints are on the vertices of the rectangles that make up the PushT as documented in the PushT
+# environment
+# https://github.com/huggingface/gym-pusht/blob/5e2489be9ff99ed9cd47b6c653dda3b7aa844d24/gym_pusht/envs/pusht.py#L522-L534
+# For completeness, the diagram is copied here:
+#        0───────────1
+#        │           │
+#        3───4───5───2
+#            │   │
+#            │   │
+#            │   │
+#            │   │
+#            7───6
+
+
 # Note: The original work trains keypoints-only with conditioning via inpainting. Here, we encode the
 # observation along with the agent position and use the encoding as global conditioning for the denoising
 # U-Net.
