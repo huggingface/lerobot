@@ -216,37 +216,6 @@ python benchmark/video/run_video_benchmark.py \
     --save-frames 1
 ```
 
-### Comparison with the previous benchmark
-We compare the average l2 error (`avg_l2e`) used in the previous version of this benchmark with the current metrics (`avg_mse`, `avg_psnr`, `avg_ssim`).
-The comparison is done on the former baseline of parameters: `vcodec=libx264`, `pix_fmt=yuv444p`, `g=2`, `crf=None`
-
-| repo_id                            | resolution  | vcodec  | pix_fmt | g | crf | timestamps_mode | backend | avg_l2e  | avg_mse  | avg_psnr | avg_ssim |
-| ---------------------------------- | ----------- | ------- | ------- | - | --- | --------------- | ------- | -------- | -------- | -------- | -------- |
-| lerobot/pusht_image                | 96 x 96     | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 1.35E-04 | 5.74E-05 | 42.59    | 99.61%   |
-| lerobot/pusht_image                | 96 x 96     | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 1.32E-04 | 5.47E-05 | 42.81    | 99.63%   |
-| lerobot/pusht_image                | 96 x 96     | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 1.36E-04 | 5.78E-05 | 42.58    | 99.62%   |
-| lerobot/pusht_image                | 96 x 96     | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 1.35E-04 | 5.74E-05 | 42.59    | 99.61%   |
-| lerobot/pusht_image                | 96 x 96     | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 1.32E-04 | 5.47E-05 | 42.81    | 99.63%   |
-| lerobot/pusht_image                | 96 x 96     | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 1.36E-04 | 5.78E-05 | 42.58    | 99.62%   |
-| aliberts/aloha_mobile_shrimp_image | 480 x 640   | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 3.63E-05 | 2.32E-04 | 39.98    | 97.43%   |
-| aliberts/aloha_mobile_shrimp_image | 480 x 640   | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 3.71E-05 | 2.88E-04 | 39.90    | 97.18%   |
-| aliberts/aloha_mobile_shrimp_image | 480 x 640   | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 3.17E-05 | 1.30E-04 | 40.36    | 97.59%   |
-| aliberts/aloha_mobile_shrimp_image | 480 x 640   | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 3.63E-05 | 2.32E-04 | 39.98    | 97.43%   |
-| aliberts/aloha_mobile_shrimp_image | 480 x 640   | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 3.71E-05 | 2.88E-04 | 39.90    | 97.18%   |
-| aliberts/aloha_mobile_shrimp_image | 480 x 640   | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 3.17E-05 | 1.30E-04 | 40.36    | 97.59%   |
-| aliberts/paris_street              | 720 x 1280  | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 2.54E-05 | 2.05E-04 | 37.19    | 96.57%   |
-| aliberts/paris_street              | 720 x 1280  | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 2.47E-05 | 1.95E-04 | 37.43    | 96.71%   |
-| aliberts/paris_street              | 720 x 1280  | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 2.45E-05 | 1.91E-04 | 37.48    | 96.66%   |
-| aliberts/paris_street              | 720 x 1280  | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 2.54E-05 | 2.05E-04 | 37.19    | 96.57%   |
-| aliberts/paris_street              | 720 x 1280  | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 2.47E-05 | 1.95E-04 | 37.43    | 96.71%   |
-| aliberts/paris_street              | 720 x 1280  | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 2.45E-05 | 1.91E-04 | 37.48    | 96.66%   |
-| aliberts/kitchen                   | 1080 x 1920 | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 1.18E-05 | 9.67E-05 | 40.24    | 97.02%   |
-| aliberts/kitchen                   | 1080 x 1920 | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 1.16E-05 | 9.38E-05 | 40.38    | 97.08%   |
-| aliberts/kitchen                   | 1080 x 1920 | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 1.21E-05 | 1.27E-04 | 40.26    | 97.05%   |
-| aliberts/kitchen                   | 1080 x 1920 | libx264 | yuv444p | 2 |     | 1_frame         | pyav    | 1.18E-05 | 9.67E-05 | 40.24    | 97.02%   |
-| aliberts/kitchen                   | 1080 x 1920 | libx264 | yuv444p | 2 |     | 2_frames        | pyav    | 1.16E-05 | 9.38E-05 | 40.38    | 97.08%   |
-| aliberts/kitchen                   | 1080 x 1920 | libx264 | yuv444p | 2 |     | 6_frames        | pyav    | 1.21E-05 | 1.27E-04 | 40.26    | 97.05%   |
-
 ### Raw results
 Full results are available [here](https://docs.google.com/spreadsheets/d/1OYJB43Qu8fC26k_OyoMFgGBBKfQRCi4BIuYitQnq3sw/edit?usp=sharing)
 
