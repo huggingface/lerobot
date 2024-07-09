@@ -3,7 +3,7 @@
 # Defaults for training for the pusht_keypoints dataset.
 
 # They keypoints are on the vertices of the rectangles that make up the PushT as documented in the PushT
-# environment
+# environment as documented in:
 # https://github.com/huggingface/gym-pusht/blob/5e2489be9ff99ed9cd47b6c653dda3b7aa844d24/gym_pusht/envs/pusht.py#L522-L534
 # For completeness, the diagram is copied here:
 #        0───────────1
