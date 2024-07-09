@@ -29,22 +29,27 @@ class TimeBenchmark(ContextDecorator):
         print: If True, prints the elapsed time upon exiting the context or completing the function. Defaults
         to False.
 
-    Usage examples:
+    Examples:
+
+        Using as a context manager:
+
+        >>> benchmark = TimeBenchmark()
+        >>> with benchmark:
+        ...     time.sleep(1)
+        >>> print(f"Block took {benchmark.result:.4f} seconds")
+        Block took approximately 1.0000 seconds
+
+        Using with multithreading:
+
+        ```python
+        import threading
 
         benchmark = TimeBenchmark()
 
-        # As a context manager
-        with benchmark:
-            time.sleep(1)
-        print(f"Block took {benchmark.result:.4f} seconds")
-
-        # With multithreading
-        import threading
-
         def context_manager_example():
             with benchmark:
-                time.sleep(1)
-            print(f"Block took {benchmark.result:.4f} seconds")
+                time.sleep(0.01)
+            print(f"Block took {benchmark.result_ms:.2f} milliseconds")
 
         threads = []
         for _ in range(3):
@@ -56,6 +61,11 @@ class TimeBenchmark(ContextDecorator):
 
         for t in threads:
             t.join()
+        ```
+        Expected output:
+        Block took approximately 10.00 milliseconds
+        Block took approximately 10.00 milliseconds
+        Block took approximately 10.00 milliseconds
     """
 
     def __init__(self, print=False):
