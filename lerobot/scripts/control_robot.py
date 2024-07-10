@@ -287,11 +287,11 @@ def record_dataset(
             tmp_imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
             fname = f"{key}_episode_{episode_index:06d}.mp4"
             video_path = local_dir / "videos" / fname
+            # note: video encoding is not done asynchronously
             encode_video_frames(tmp_imgs_dir, video_path, fps)
 
-            # TODO(rcadene): uncomment?
             # clean temporary images directory
-            # shutil.rmtree(tmp_imgs_dir)
+            shutil.rmtree(tmp_imgs_dir)
 
             # store the reference to the video frame
             ep_dict[key] = []
