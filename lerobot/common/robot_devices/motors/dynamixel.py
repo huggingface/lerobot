@@ -123,20 +123,6 @@ def int32_to_uint32(values: np.ndarray):
     return values
 
 
-# def motor_position_to_angle(position: np.ndarray) -> np.ndarray:
-#     """
-#     Convert from motor position in [-2048, 2048] to radian in [-pi, pi]
-#     """
-#     return (position / 2048) * 3.14
-
-
-# def motor_angle_to_position(angle: np.ndarray) -> np.ndarray:
-#     """
-#     Convert from radian in [-pi, pi] to motor position in [-2048, 2048]
-#     """
-#     return ((angle / 3.14) * 2048).astype(np.int64)
-
-
 def get_group_sync_key(data_name, motor_names):
     group_key = f"{data_name}_" + "_".join(motor_names)
     return group_key
