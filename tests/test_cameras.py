@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
+from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera, save_images_from_cameras
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 
 CAMERA_INDEX = 2
@@ -116,3 +116,7 @@ def test_camera():
     with pytest.raises(OSError):
         camera.connect()
     del camera
+
+
+def test_save_images_from_cameras(tmpdir):
+    save_images_from_cameras(tmpdir, record_time_s=1)

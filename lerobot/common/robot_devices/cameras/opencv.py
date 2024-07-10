@@ -16,7 +16,6 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from lerobot.common.robot_devices.cameras.utils import save_color_image
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
 from lerobot.scripts.control_robot import busy_wait
@@ -52,38 +51,71 @@ def find_camera_indices(raise_when_empty=False, max_index_search_range=MAX_OPENC
     return camera_ids
 
 
-def benchmark_cameras(cameras, out_dir=None, save_images=False, num_warmup_frames=4):
-    if out_dir:
-        out_dir = Path(out_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
+def save_image(img_array, camera_index, frame_index, images_dir):
+    img = Image.fromarray(img_array)
+    path = images_dir / f"camera_{camera_index:02d}_frame_{frame_index:06d}.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(str(path), quality=100)
 
-    for _ in range(num_warmup_frames):
-        for camera in cameras:
-            try:
-                camera.read()
-                time.sleep(0.01)
-            except OSError as e:
-                print(e)
 
-    while True:
-        now = time.time()
-        for camera in cameras:
-            color_image = camera.read("bgr" if save_images else "rgb")
+def save_images_from_cameras(
+    images_dir: Path, camera_ids=None, fps=None, width=None, height=None, record_time_s=2
+):
+    if camera_ids is None:
+        print("Finding available camera indices")
+        camera_ids = find_camera_indices()
 
-            if save_images:
-                image_path = out_dir / f"camera_{camera.camera_index:02}.png"
-                print(f"Write to {image_path}")
-                save_color_image(color_image, image_path, write_shape=True)
+    print("Connecting cameras")
+    cameras = []
+    for cam_idx in camera_ids:
+        camera = OpenCVCamera(cam_idx, fps=fps, width=width, height=height)
+        camera.connect()
+        print(
+            f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color={camera.color})"
+        )
+        cameras.append(camera)
 
-        dt_s = time.time() - now
-        dt_ms = dt_s * 1000
-        freq = 1 / dt_s
-        print(f"Latency (ms): {dt_ms:.2f}\tFrequency: {freq:.2f}")
+    images_dir = Path(
+        images_dir,
+    )
+    if images_dir.exists():
+        shutil.rmtree(
+            images_dir,
+        )
+    images_dir.mkdir(parents=True, exist_ok=True)
 
-        if save_images:
-            break
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+    print(f"Saving images to {images_dir}")
+    frame_index = 0
+    start_time = time.perf_counter()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        while True:
+            now = time.perf_counter()
+
+            for camera in cameras:
+                # If we use async_read when fps is None, the loop will go full speed, and we will endup
+                # saving the same images from the cameras multiple times until the RAM/disk is full.
+                image = camera.read() if fps is None else camera.async_read()
+
+                executor.submit(
+                    save_image,
+                    image,
+                    camera.camera_index,
+                    frame_index,
+                    images_dir,
+                )
+
+            if fps is not None:
+                dt_s = time.perf_counter() - now
+                busy_wait(1 / fps - dt_s)
+
+            if time.perf_counter() - start_time > record_time_s:
+                break
+
+            print(f"Frame: {frame_index:04d}\tLatency (ms): {(time.perf_counter() - now) * 1000:.2f}")
+
+            frame_index += 1
+
+    print(f"Images have been saved to {images_dir}")
 
 
 @dataclass
@@ -308,79 +340,46 @@ class OpenCVCamera:
             self.disconnect()
 
 
-def save_image(img_array, camera_index, frame_index, images_dir):
-    img = Image.fromarray(img_array)
-    path = images_dir / f"camera_{camera_index:02d}_frame_{frame_index:06d}.png"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(str(path), quality=100)
-
-
-def save_images_from_cameras(
-    images_dir: Path, camera_ids=None, fps=None, width=None, height=None, record_time_s=2
-):
-    if camera_ids is None:
-        print("Finding available camera indices")
-        camera_ids = find_camera_indices()
-
-    print("Connecting cameras")
-    cameras = []
-    for cam_idx in camera_ids:
-        camera = OpenCVCamera(cam_idx, fps=fps, width=width, height=height)
-        camera.connect()
-        print(
-            f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color={camera.color})"
-        )
-        cameras.append(camera)
-
-    images_dir = Path(
-        images_dir,
-    )
-    if images_dir.exists():
-        shutil.rmtree(
-            images_dir,
-        )
-    images_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"Saving images to {images_dir}")
-    frame_index = 0
-    start_time = time.perf_counter()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        while True:
-            now = time.perf_counter()
-
-            for camera in cameras:
-                # If we use async_read when fps is None, the loop will go full speed, and we will endup
-                # saving the same images from the cameras multiple times until the RAM/disk is full.
-                image = camera.read() if fps is None else camera.async_read()
-
-                executor.submit(
-                    save_image,
-                    image,
-                    camera.camera_index,
-                    frame_index,
-                    images_dir,
-                )
-
-            if fps is not None:
-                dt_s = time.perf_counter() - now
-                busy_wait(1 / fps - dt_s)
-
-            if time.perf_counter() - start_time > record_time_s:
-                break
-
-            print(f"Frame: {frame_index:04d}\tLatency (ms): {(time.perf_counter() - now) * 1000:.2f}")
-
-            frame_index += 1
-
-    print(f"Images have been saved to {images_dir}")
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--camera-ids", type=int, nargs="*", default=None)
-    parser.add_argument("--fps", type=int, default=None)
-    parser.add_argument("--width", type=str, default=None)
-    parser.add_argument("--height", type=str, default=None)
-    parser.add_argument("--images-dir", type=Path, default="outputs/images_from_opencv_cameras")
+    parser = argparse.ArgumentParser(
+        description="Save a few frames using `OpenCVCamera` for all cameras connected to the computer, or a selected subset."
+    )
+    parser.add_argument(
+        "--camera-ids",
+        type=int,
+        nargs="*",
+        default=None,
+        help="List of camera indices used to instantiate the `OpenCVCamera`. If not provided, find and use all available camera indices.",
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=None,
+        help="Set the number of frames recorded per seconds for all cameras. If not provided, use the default fps of each camera.",
+    )
+    parser.add_argument(
+        "--width",
+        type=str,
+        default=None,
+        help="Set the width for all cameras. If not provided, use the default width of each camera.",
+    )
+    parser.add_argument(
+        "--height",
+        type=str,
+        default=None,
+        help="Set the height for all cameras. If not provided, use the default height of each camera.",
+    )
+    parser.add_argument(
+        "--images-dir",
+        type=Path,
+        default="outputs/images_from_opencv_cameras",
+        help="Set directory to save a few frames for each camera.",
+    )
+    parser.add_argument(
+        "--record-time-s",
+        type=float,
+        default=2.0,
+        help="Set the number of seconds used to record the frames. By default, 2 seconds.",
+    )
     args = parser.parse_args()
     save_images_from_cameras(**vars(args))
