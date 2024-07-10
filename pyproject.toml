@@ -61,6 +61,8 @@ moviepy = ">=1.0.3"
 rerun-sdk = ">=0.15.1"
 deepdiff = ">=7.0.1"
 scikit-image = {version = "^0.23.2", optional = true}
+pandas = {version = "^2.2.2", optional = true}
+pytest-mock = {version = "^3.14.0", optional = true}
 
 
 [tool.poetry.extras]
@@ -69,9 +71,9 @@ pusht = ["gym-pusht"]
 xarm = ["gym-xarm"]
 aloha = ["gym-aloha"]
 dev = ["pre-commit", "debugpy"]
-test = ["pytest", "pytest-cov"]
+test = ["pytest", "pytest-cov", "pytest-mock"]
 umi = ["imagecodecs"]
-video_benchmark = ["scikit-image"]
+video_benchmark = ["scikit-image", "pandas"]
 
 [tool.ruff]
 line-length = 110
