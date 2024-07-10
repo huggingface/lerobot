@@ -23,7 +23,7 @@ RUN echo "source /opt/venv/bin/activate" >> /root/.bashrc
 COPY . /lerobot
 WORKDIR /lerobot
 RUN pip install --upgrade --no-cache-dir pip
-RUN pip install --no-cache-dir ".[test, aloha, xarm, pusht]"
+RUN pip install --no-cache-dir ".[test, aloha, xarm, pusht, koch]"
 
 # Set EGL as the rendering backend for MuJoCo
 ENV MUJOCO_GL="egl"
