@@ -84,9 +84,9 @@ def test_camera(request):
     del camera
 
     # Test acquiring a bgr image
-    camera = OpenCVCamera(CAMERA_INDEX, color="bgr")
+    camera = OpenCVCamera(CAMERA_INDEX, color_mode="bgr")
     camera.connect()
-    assert camera.color == "bgr"
+    assert camera.color_mode == "bgr"
     bgr_color_image = camera.read()
     assert np.allclose(color_image, bgr_color_image[:, :, [2, 1, 0]], rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE)
     del camera

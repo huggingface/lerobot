@@ -71,7 +71,7 @@ def save_images_from_cameras(
         camera = OpenCVCamera(cam_idx, fps=fps, width=width, height=height)
         camera.connect()
         print(
-            f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color={camera.color})"
+            f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
         )
         cameras.append(camera)
 
@@ -134,11 +134,13 @@ class OpenCVCameraConfig:
     fps: int | None = None
     width: int | None = None
     height: int | None = None
-    color: str = "rgb"
+    color_mode: str = "rgb"
 
     def __post_init__(self):
-        if self.color not in ["rgb", "bgr"]:
-            raise ValueError(f"Expected color values are 'rgb' or 'bgr', but {self.color} is provided.")
+        if self.color_mode not in ["rgb", "bgr"]:
+            raise ValueError(
+                f"Expected color_mode values are 'rgb' or 'bgr', but {self.color_mode} is provided."
+            )
 
 
 class OpenCVCamera:
@@ -155,7 +157,7 @@ class OpenCVCamera:
     python lerobot/common/robot_devices/cameras/opencv.py --images-dir outputs/images_from_opencv_cameras
     ```
 
-    When an OpenCVCamera is instantiated, if no specific config is provided, the default fps, width, height and color
+    When an OpenCVCamera is instantiated, if no specific config is provided, the default fps, width, height and color_mode
     of the given camera will be used.
 
     Example of usage of the class:
@@ -167,7 +169,7 @@ class OpenCVCamera:
     camera.disconnect()
     ```
 
-    Example of changing default fps, width, height and color:
+    Example of changing default fps, width, height and color_mode:
     ```python
     camera = OpenCVCamera(0, fps=30, width=1280, height=720)
     camera = connect()  # applies the settings, might error out if these settings are not compatible with the camera
@@ -175,7 +177,7 @@ class OpenCVCamera:
     camera = OpenCVCamera(0, fps=90, width=640, height=480)
     camera = connect()
 
-    camera = OpenCVCamera(0, fps=90, width=640, height=480, color="bgr")
+    camera = OpenCVCamera(0, fps=90, width=640, height=480, color_mode="bgr")
     camera = connect()
     ```
     """
@@ -190,7 +192,7 @@ class OpenCVCamera:
         self.fps = config.fps
         self.width = config.width
         self.height = config.height
-        self.color = config.color
+        self.color_mode = config.color_mode
 
         if not isinstance(self.camera_index, int):
             raise ValueError(
@@ -262,7 +264,7 @@ class OpenCVCamera:
 
         self.is_connected = True
 
-    def read(self, temporary_color: str | None = None) -> np.ndarray:
+    def read(self, temporary_color_mode: str | None = None) -> np.ndarray:
         """Read a frame from the camera returned in the format (height, width, channels)
         (e.g. (640, 480, 3)), contrarily to the pytorch format which is channel first.
 
@@ -280,15 +282,17 @@ class OpenCVCamera:
         if not ret:
             raise OSError(f"Can't capture color image from camera {self.camera_index}.")
 
-        requested_color = self.color if temporary_color is None else temporary_color
+        requested_color_mode = self.color_mode if temporary_color_mode is None else temporary_color_mode
 
-        if requested_color not in ["rgb", "bgr"]:
-            raise ValueError(f"Expected color values are 'rgb' or 'bgr', but {requested_color} is provided.")
+        if requested_color_mode not in ["rgb", "bgr"]:
+            raise ValueError(
+                f"Expected color values are 'rgb' or 'bgr', but {requested_color_mode} is provided."
+            )
 
         # OpenCV uses BGR format as default (blue, green red) for all operations, including displaying images.
         # However, Deep Learning framework such as LeRobot uses RGB format as default to train neural networks,
         # so we convert the image color from BGR to RGB.
-        if requested_color == "rgb":
+        if requested_color_mode == "rgb":
             color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
 
         h, w, _ = color_image.shape
