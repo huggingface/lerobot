@@ -1,7 +1,9 @@
-from pathlib import Path
 import pickle
+from pathlib import Path
+
 import pytest
 import torch
+
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.koch import KochRobot
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
@@ -13,7 +15,24 @@ def test_robot(tmpdir):
     # TODO(rcadene): add compatibility with other robots
 
     # Save calibration preset
-    calibration = {'follower_main': {'shoulder_pan': (-2048, False), 'shoulder_lift': (2048, True), 'elbow_flex': (-1024, False), 'wrist_flex': (2048, True), 'wrist_roll': (2048, True), 'gripper': (2048, True)}, 'leader_main': {'shoulder_pan': (-2048, False), 'shoulder_lift': (1024, True), 'elbow_flex': (2048, True), 'wrist_flex': (-2048, False), 'wrist_roll': (2048, True), 'gripper': (2048, True)}}
+    calibration = {
+        "follower_main": {
+            "shoulder_pan": (-2048, False),
+            "shoulder_lift": (2048, True),
+            "elbow_flex": (-1024, False),
+            "wrist_flex": (2048, True),
+            "wrist_roll": (2048, True),
+            "gripper": (2048, True),
+        },
+        "leader_main": {
+            "shoulder_pan": (-2048, False),
+            "shoulder_lift": (1024, True),
+            "elbow_flex": (2048, True),
+            "wrist_flex": (-2048, False),
+            "wrist_roll": (2048, True),
+            "gripper": (2048, True),
+        },
+    }
     tmpdir = Path(tmpdir)
     calibration_path = tmpdir / "calibration.pkl"
     calibration_path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,4 +124,3 @@ def test_robot(tmpdir):
     for name in robot.cameras:
         assert not robot.cameras[name].is_connected
     del robot
-

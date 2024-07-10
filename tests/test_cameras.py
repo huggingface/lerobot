@@ -1,17 +1,14 @@
-
-
-from pathlib import Path
 import numpy as np
 import pytest
 
 from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
-from lerobot.common.robot_devices.utils import RobotDeviceNotConnectedError, RobotDeviceAlreadyConnectedError
-
+from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 
 CAMERA_INDEX = 2
 # Maximum absolute difference between two consecutive images recored by a camera.
 # This value differs with respect to the camera.
 MAX_PIXEL_DIFFERENCE = 25
+
 
 def compute_max_pixel_difference(first_image, second_image):
     return np.abs(first_image.astype(float) - second_image.astype(float)).max()
@@ -20,7 +17,7 @@ def compute_max_pixel_difference(first_image, second_image):
 def test_camera():
     """Test assumes that `camera.read()` returns the same image when called multiple times in a row.
     So the environment should not change (you shouldnt be in front of the camera) and the camera should not be moving.
-    
+
     Warning: The tests worked for a macbookpro camera, but I am getting assertion error (`np.allclose(color_image, async_color_image)`)
     for my iphone camera and my LG monitor camera.
     """
@@ -68,7 +65,10 @@ def test_camera():
         camera.read()
     color_image = camera.read()
     async_color_image = camera.async_read()
-    print("max_pixel_difference between read() and async_read()", compute_max_pixel_difference(color_image, async_color_image))
+    print(
+        "max_pixel_difference between read() and async_read()",
+        compute_max_pixel_difference(color_image, async_color_image),
+    )
     assert np.allclose(color_image, async_color_image, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE)
 
     # Test disconnecting
@@ -86,7 +86,7 @@ def test_camera():
     camera.connect()
     assert camera.color == "bgr"
     bgr_color_image = camera.read()
-    assert np.allclose(color_image, bgr_color_image[:, :, [2,1,0]], rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE)
+    assert np.allclose(color_image, bgr_color_image[:, :, [2, 1, 0]], rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE)
     del camera
 
     # TODO(rcadene): Add a test for a camera that doesnt support fps=60 and raises an OSError
@@ -116,4 +116,3 @@ def test_camera():
     with pytest.raises(OSError):
         camera.connect()
     del camera
-

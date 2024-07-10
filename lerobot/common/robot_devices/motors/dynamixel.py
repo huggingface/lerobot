@@ -1,8 +1,6 @@
 import enum
-from copy import deepcopy
-from queue import Queue
-from threading import Thread
 import time
+from copy import deepcopy
 
 import numpy as np
 from dynamixel_sdk import (
@@ -100,6 +98,8 @@ MODEL_CONTROL_TABLE = {
     "xm540-w270": X_SERIES_CONTROL_TABLE,
 }
 
+NUM_READ_RETRY = 10
+
 
 # TODO(rcadene): find better namming for these functions
 def uint32_to_int32(values: np.ndarray):
@@ -121,6 +121,7 @@ def int32_to_uint32(values: np.ndarray):
             values[i] = values[i] + 4294967296
     return values
 
+
 # def motor_position_to_angle(position: np.ndarray) -> np.ndarray:
 #     """
 #     Convert from motor position in [-2048, 2048] to radian in [-pi, pi]
@@ -139,20 +140,24 @@ def get_group_sync_key(data_name, motor_names):
     group_key = f"{data_name}_" + "_".join(motor_names)
     return group_key
 
+
 def get_result_name(fn_name, data_name, motor_names):
     group_key = get_group_sync_key(data_name, motor_names)
     rslt_name = f"{fn_name}_{group_key}"
     return rslt_name
+
 
 def get_queue_name(fn_name, data_name, motor_names):
     group_key = get_group_sync_key(data_name, motor_names)
     queue_name = f"{fn_name}_{group_key}"
     return queue_name
 
+
 def get_log_name(var_name, fn_name, data_name, motor_names):
     group_key = get_group_sync_key(data_name, motor_names)
     log_name = f"{var_name}_{fn_name}_{group_key}"
     return log_name
+
 
 class TorqueMode(enum.Enum):
     ENABLED = 1
@@ -192,6 +197,7 @@ class DynamixelMotorsBus:
     motors_bus.disconnect()
     ```
     """
+
     def __init__(
         self,
         port: str,
@@ -215,7 +221,9 @@ class DynamixelMotorsBus:
 
     def connect(self):
         if self.is_connected:
-            raise RobotDeviceAlreadyConnectedError(f"DynamixelMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice.")
+            raise RobotDeviceAlreadyConnectedError(
+                f"DynamixelMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice."
+            )
 
         self.port_handler = PortHandler(self.port)
         self.packet_handler = PacketHandler(PROTOCOL_VERSION)
@@ -271,7 +279,9 @@ class DynamixelMotorsBus:
 
     def read(self, data_name, motor_names: str | list[str] | None = None):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`.")
+            raise RobotDeviceNotConnectedError(
+                f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
+            )
 
         start_time = time.perf_counter()
 
@@ -298,8 +308,7 @@ class DynamixelMotorsBus:
             for idx in motor_ids:
                 self.group_readers[group_key].addParam(idx)
 
-        NUM_TRIES = 10
-        for _ in range(NUM_TRIES):
+        for _ in range(NUM_READ_RETRY):
             comm = self.group_readers[group_key].txRxPacket()
             if comm == COMM_SUCCESS:
                 break
@@ -324,9 +333,6 @@ class DynamixelMotorsBus:
         if data_name in CALIBRATION_REQUIRED:
             values = self.apply_calibration(values, motor_names)
 
-        if data_name in CONVERT_POSITION_TO_ANGLE_REQUIRED:
-            values = motor_position_to_angle(values)
-
         # log the number of seconds it took to read the data from the motors
         delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
         self.logs[delta_ts_name] = time.perf_counter() - start_time
@@ -339,7 +345,9 @@ class DynamixelMotorsBus:
 
     def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`.")
+            raise RobotDeviceNotConnectedError(
+                f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
+            )
 
         start_time = time.perf_counter()
 
@@ -360,9 +368,6 @@ class DynamixelMotorsBus:
             motor_idx, model = self.motors[name]
             motor_ids.append(motor_idx)
             models.append(model)
-
-        if data_name in CONVERT_POSITION_TO_ANGLE_REQUIRED:
-            values = motor_angle_to_position(values)
 
         if data_name in CALIBRATION_REQUIRED:
             values = self.revert_calibration(values, motor_names)
@@ -429,7 +434,9 @@ class DynamixelMotorsBus:
 
     def disconnect(self):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(f"DynamixelMotorsBus({self.port}) is not connected. Try running `motors_bus.connect()` first.")
+            raise RobotDeviceNotConnectedError(
+                f"DynamixelMotorsBus({self.port}) is not connected. Try running `motors_bus.connect()` first."
+            )
 
         if self.port_handler is not None:
             self.port_handler.closePort()
@@ -443,7 +450,6 @@ class DynamixelMotorsBus:
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
-
 
     # def read(self, data_name, motor_name: str):
     #     motor_idx, model = self.motors[motor_name]

@@ -2,7 +2,7 @@
 
 # Use `act_koch_real.yaml` to train on real-world datasets collected on Alexander Koch's robots.
 # Compared to `act.yaml`, it contains 2 cameras (i.e. laptop, phone) instead of 1 camera (i.e. top).
-# Also, `training.eval_freq` is set to -1. This config is used to evaluate checkpoints at a certain frequency of training steps. 
+# Also, `training.eval_freq` is set to -1. This config is used to evaluate checkpoints at a certain frequency of training steps.
 # When it is set to -1, it deactivates evaluation. This is because real-world evaluation is done through our `control_robot.py` script.
 # Look at the documentation in header of `control_robot.py` for more information on how to collect data , train and evaluate a policy.
 #

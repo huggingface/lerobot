@@ -7,15 +7,15 @@ from pathlib import Path
 from threading import Thread
 
 import cv2
-
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-# Use 1 thread to avoid blocking the main thread. Especially useful during data collection
-# when other threads are used to save the images.
-cv2.setNumThreads(1)
 import numpy as np
 
 from lerobot.common.robot_devices.cameras.utils import save_color_image
+from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
+
+# Use 1 thread to avoid blocking the main thread. Especially useful during data collection
+# when other threads are used to save the images.
+cv2.setNumThreads(1)
 
 
 def find_camera_indices(raise_when_empty=False, max_index_search_range=60):
@@ -124,7 +124,9 @@ class OpenCVCamera:
         self.color = config.color
 
         if not isinstance(self.camera_index, int):
-            raise ValueError(f"Camera index must be provided as an int, but {self.camera_index} was given instead.")
+            raise ValueError(
+                f"Camera index must be provided as an int, but {self.camera_index} was given instead."
+            )
 
         self.camera = None
         self.is_connected = False
@@ -184,7 +186,7 @@ class OpenCVCamera:
             raise OSError(
                 f"Can't set {self.height=} for camera {self.camera_index}. Actual value is {actual_height}."
             )
-        
+
         self.fps = actual_fps
         self.width = actual_width
         self.height = actual_height
@@ -193,13 +195,15 @@ class OpenCVCamera:
 
     def read(self, temporary_color: str | None = None) -> np.ndarray:
         """Read a frame from the camera returned in the format (height, width, channels)
-           (e.g. (640, 480, 3)), contrarily to the pytorch format which is channel first.
+        (e.g. (640, 480, 3)), contrarily to the pytorch format which is channel first.
 
-           Note: Reading a frame is done every `camera.fps` times per second, and it is blocking.
-           If you are reading data from other sensors, we advise to use `camera.async_read()` which is non blocking version of `camera.read()`.
+        Note: Reading a frame is done every `camera.fps` times per second, and it is blocking.
+        If you are reading data from other sensors, we advise to use `camera.async_read()` which is non blocking version of `camera.read()`.
         """
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first.")
+            raise RobotDeviceNotConnectedError(
+                f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
+            )
 
         start_time = time.perf_counter()
 
@@ -220,7 +224,9 @@ class OpenCVCamera:
 
         h, w, _ = color_image.shape
         if h != self.height or w != self.width:
-            raise OSError(f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead.")
+            raise OSError(
+                f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
+            )
 
         # log the number of seconds it took to read the image
         self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
@@ -236,7 +242,9 @@ class OpenCVCamera:
 
     def async_read(self):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first.")
+            raise RobotDeviceNotConnectedError(
+                f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
+            )
 
         if self.thread is None:
             self.stop_event = threading.Event()
@@ -247,16 +255,19 @@ class OpenCVCamera:
         num_tries = 0
         while self.color_image is None:
             num_tries += 1
-            time.sleep(1/self.fps)
-            if num_tries > self.fps:
-                if self.thread.ident is None or not self.thread.is_alive():
-                    raise Exception("The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.thread.start()` has been called.")
-                
+            time.sleep(1 / self.fps)
+            if num_tries > self.fps and (self.thread.ident is None or not self.thread.is_alive()):
+                raise Exception(
+                    "The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.thread.start()` has been called."
+                )
+
         return self.color_image
 
     def disconnect(self):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first.")
+            raise RobotDeviceNotConnectedError(
+                f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
+            )
 
         if self.thread is not None and self.thread.is_alive():
             # wait for the thread to finish

@@ -28,7 +28,7 @@ def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv
         raise ValueError("`n_envs must be at least 1")
 
     if cfg.env.name == "real_world":
-        return    
+        return
 
     package_name = f"gym_{cfg.env.name}"
 

@@ -102,6 +102,7 @@ def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(path), quality=100)
 
+
 def busy_wait(seconds):
     # Significantly more accurate than `time.sleep`, and mendatory for our use case,
     # but it consumes CPU cycles.
@@ -110,10 +111,12 @@ def busy_wait(seconds):
     while time.perf_counter() < end_time:
         pass
 
+
 def none_or_int(value):
     if value == "None":
         return None
     return int(value)
+
 
 def log_control_info(robot, dt_s, episode_index=None, frame_index=None):
     log_items = []
@@ -121,7 +124,7 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None):
         log_items += [f"ep:{episode_index}"]
     if frame_index is not None:
         log_items += [f"frame:{frame_index}"]
-        
+
     def log_dt(shortname, dt_val_s):
         nonlocal log_items
         log_items += [f"{shortname}:{dt_val_s * 1000:5.2f}={1/ dt_val_s:3.1f}hz"]
@@ -130,16 +133,16 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None):
     log_dt("dt", dt_s)
 
     for name in robot.leader_arms:
-        key = f'read_leader_{name}_pos_dt_s'
+        key = f"read_leader_{name}_pos_dt_s"
         if key in robot.logs:
             log_dt("dtRlead", robot.logs[key])
 
     for name in robot.follower_arms:
-        key = f'write_follower_{name}_goal_pos_dt_s'
+        key = f"write_follower_{name}_goal_pos_dt_s"
         if key in robot.logs:
             log_dt("dtRfoll", robot.logs[key])
 
-        key = f'read_follower_{name}_pos_dt_s'
+        key = f"read_follower_{name}_pos_dt_s"
         if key in robot.logs:
             log_dt("dtWfoll", robot.logs[key])
 
@@ -153,6 +156,7 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None):
             log_dt("dtARcam", robot.logs[key])
 
     logging.info(" ".join(log_items))
+
 
 ########################################################################################
 # Control modes
@@ -256,7 +260,9 @@ def record_dataset(
                 not_image_keys = [key for key in observation if "image" not in key]
 
                 for key in image_keys:
-                    future = executor.submit(save_image, observation[key], key, frame_index, episode_index, videos_dir)
+                    future = executor.submit(
+                        save_image, observation[key], key, frame_index, episode_index, videos_dir
+                    )
                     futures.append(future)
 
                 for key in not_image_keys:

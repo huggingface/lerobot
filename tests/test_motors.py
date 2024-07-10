@@ -1,7 +1,8 @@
-
 import time
+
 import numpy as np
 import pytest
+
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 
@@ -33,7 +34,7 @@ def test_motors_bus():
         motors_bus.write("Torque_Enable", 1)
     with pytest.raises(RobotDeviceNotConnectedError):
         motors_bus.disconnect()
-    
+
     # Test deleting the object without connecting first
     del motors_bus
 
@@ -80,4 +81,3 @@ def test_motors_bus():
     time.sleep(1)
     new_values = motors_bus.read("Present_Position")
     assert (new_values == values).all()
-
