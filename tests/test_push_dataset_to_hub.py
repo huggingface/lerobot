@@ -211,7 +211,7 @@ def _mock_download_raw_dora(raw_dir, num_frames=6, num_episodes=3, fps=30):
 
         fname = f"{cam_key}_episode_{ep_idx:06d}.mp4"
         video_path = raw_dir / "videos" / fname
-        encode_video_frames(tmp_imgs_dir, video_path, fps)
+        encode_video_frames(tmp_imgs_dir, video_path, fps, video_codec="libx264")
 
 
 def _mock_download_raw(raw_dir, repo_id):
@@ -227,6 +227,23 @@ def _mock_download_raw(raw_dir, repo_id):
         _mock_download_raw_umi(raw_dir)
     else:
         raise ValueError(repo_id)
+
+
+def _mock_encode_video_frames(*args, **kwargs):
+    kwargs["video_codec"] = "libx264"
+    return encode_video_frames(*args, **kwargs)
+
+
+def patch_encoder(raw_format, mocker):
+    format_module_map = {
+        "aloha_hdf5": "lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format.encode_video_frames",
+        "pusht_zarr": "lerobot.common.datasets.push_dataset_to_hub.pusht_zarr_format.encode_video_frames",
+        "xarm_pkl": "lerobot.common.datasets.push_dataset_to_hub.xarm_pkl_format.encode_video_frames",
+        "umi_zarr": "lerobot.common.datasets.push_dataset_to_hub.umi_zarr_format.encode_video_frames",
+    }
+
+    if raw_format in format_module_map:
+        mocker.patch(format_module_map[raw_format], side_effect=_mock_encode_video_frames)
 
 
 def test_push_dataset_to_hub_invalid_repo_id(tmpdir):
@@ -251,17 +268,21 @@ def test_push_dataset_to_hub_out_dir_force_override_false(tmpdir):
 
 
 @pytest.mark.parametrize(
-    "required_packages, raw_format, repo_id",
+    "required_packages, raw_format, repo_id, make_test_data",
     [
-        (["gym-pusht"], "pusht_zarr", "lerobot/pusht"),
-        (None, "xarm_pkl", "lerobot/xarm_lift_medium"),
-        (None, "aloha_hdf5", "lerobot/aloha_sim_insertion_scripted"),
-        (["imagecodecs"], "umi_zarr", "lerobot/umi_cup_in_the_wild"),
-        (None, "dora_parquet", "cadene/wrist_gripper"),
+        (["gym_pusht"], "pusht_zarr", "lerobot/pusht", False),
+        (["gym_pusht"], "pusht_zarr", "lerobot/pusht", True),
+        (None, "xarm_pkl", "lerobot/xarm_lift_medium", False),
+        (None, "aloha_hdf5", "lerobot/aloha_sim_insertion_scripted", False),
+        (["imagecodecs"], "umi_zarr", "lerobot/umi_cup_in_the_wild", False),
+        (None, "dora_parquet", "cadene/wrist_gripper", False),
     ],
 )
 @require_package_arg
-def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_id):
+def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_id, make_test_data, mocker):
+    # Patch `encode_video_frames` so that it uses 'libx264' instead of 'libsvtav1' for testing
+    patch_encoder(raw_format, mocker)
+
     num_episodes = 3
     tmpdir = Path(tmpdir)
 
@@ -278,6 +299,7 @@ def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_
         local_dir=local_dir,
         force_override=False,
         cache_dir=tmpdir / "cache",
+        tests_data_dir=tmpdir / "tests/data" if make_test_data else None,
     )
 
     # minimal generic tests on the local directory containing LeRobotDataset
@@ -298,6 +320,20 @@ def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_
     assert "timestamp" in item
     for cam_key in lerobot_dataset.camera_keys:
         assert cam_key in item
+
+    if make_test_data:
+        # Check that only the first episode is selected.
+        test_dataset = LeRobotDataset(repo_id=repo_id, root=tmpdir / "tests/data")
+        num_frames = sum(
+            i == lerobot_dataset.hf_dataset["episode_index"][0]
+            for i in lerobot_dataset.hf_dataset["episode_index"]
+        ).item()
+        assert (
+            test_dataset.hf_dataset["episode_index"]
+            == lerobot_dataset.hf_dataset["episode_index"][:num_frames]
+        )
+        for k in ["from", "to"]:
+            assert torch.equal(test_dataset.episode_data_index[k], lerobot_dataset.episode_data_index[k][:1])
 
 
 @pytest.mark.parametrize(
