@@ -155,13 +155,28 @@ class OpenCVCamera:
     python lerobot/common/robot_devices/cameras/opencv.py --images-dir outputs/images_from_opencv_cameras
     ```
 
-    Example of uage of the class:
+    When an OpenCVCamera is instantiated, if no specific config is provided, the default fps, width, height and color
+    of the given camera will be used.
+
+    Example of usage of the class:
     ```python
     camera = OpenCVCamera(camera_index=0)
     camera.connect()
     color_image = camera.read()
     # when done using the camera, consider disconnecting
     camera.disconnect()
+    ```
+
+    Example of changing default fps, width, height and color:
+    ```python
+    camera = OpenCVCamera(0, fps=30, width=1280, height=720)
+    camera = connect()  # applies the settings, might error out if these settings are not compatible with the camera
+
+    camera = OpenCVCamera(0, fps=90, width=640, height=480)
+    camera = connect()
+
+    camera = OpenCVCamera(0, fps=90, width=640, height=480, color="bgr")
+    camera = connect()
     ```
     """
 

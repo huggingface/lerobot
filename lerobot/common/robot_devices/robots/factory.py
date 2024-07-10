@@ -1,5 +1,7 @@
 def make_robot(name):
     if name == "koch":
+        # TODO(rcadene): Add configurable robot from command line and yaml config
+        # TODO(rcadene): Add example with and without cameras
         from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
         from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
         from lerobot.common.robot_devices.robots.koch import KochRobot

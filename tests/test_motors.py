@@ -3,7 +3,7 @@ import time
 import numpy as np
 import pytest
 
-from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
+from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus, find_port
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 
 
@@ -81,3 +81,7 @@ def test_motors_bus():
     time.sleep(1)
     new_values = motors_bus.read("Present_Position")
     assert (new_values == values).all()
+
+
+def test_find_port():
+    find_port()

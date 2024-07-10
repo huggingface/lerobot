@@ -1,6 +1,7 @@
 import enum
 import time
 from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
 from dynamixel_sdk import (
@@ -159,6 +160,35 @@ def get_log_name(var_name, fn_name, data_name, motor_names):
     return log_name
 
 
+def find_available_ports():
+    ports = []
+    for path in Path("/dev").glob("tty.usbmodem*"):
+        ports.append(str(path))
+    return ports
+
+
+def find_port():
+    print("Finding all available ports for the DynamixelMotorsBus.")
+    ports_before = find_available_ports()
+    print(ports_before)
+
+    print("Remove the usb cable from your DynamixelMotorsBus and press Enter when done.")
+    input()
+
+    time.sleep(0.5)
+    ports_after = find_available_ports()
+    ports_diff = list(set(ports_before) - set(ports_after))
+
+    if len(ports_diff) == 1:
+        port = ports_diff[0]
+        print(f"The port of this DynamixelMotorsBus is {port}.")
+        print("Reconnect the usb cable.")
+    elif len(ports_diff) == 0:
+        raise OSError(f"Could not detect the port. No difference was found ({ports_diff}).")
+    else:
+        raise OSError(f"Could not detect the port. More than one port was found ({ports_diff}).")
+
+
 class TorqueMode(enum.Enum):
     ENABLED = 1
     DISABLED = 0
@@ -179,7 +209,23 @@ class DriveMode(enum.Enum):
 
 
 class DynamixelMotorsBus:
+    # TODO(rcadene): Add a script to find the motor indices without DynamixelWizzard2
     """
+    The DynamixelMotorsBus class allows to efficiently read and write to the attached motors. It relies on
+    the python dynamixel sdk to communicate with the motors. For more info, see the [Dynamixel SDK Documentation](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
+
+    A DynamixelMotorsBus instance requires a port (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`)).
+    To find the port, you can run our utility script:
+    ```bash
+    python lerobot/common/robot_devices/motors/dynamixel.py
+    >>> Finding all available ports for the DynamixelMotorsBus.
+    >>> ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+    >>> Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
+    >>> The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0031751.
+    >>> Reconnect the usb cable.
+    ```
+    To find the motor indices, use [DynamixelWizzard2](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_wizard2).
+
     Example of usage for 1 motor connected to the bus:
     ```python
     motor_name = "gripper"
@@ -194,6 +240,7 @@ class DynamixelMotorsBus:
 
     motors_bus.teleop_step()
 
+    # when done, consider disconnecting
     motors_bus.disconnect()
     ```
     """
@@ -450,3 +497,8 @@ class DynamixelMotorsBus:
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
+
+
+if __name__ == "__main__":
+    # Helper to find the usb port associated to all your DynamixelMotorsBus.
+    find_port()
