@@ -210,12 +210,6 @@ def record_dataset(
     videos_dir = local_dir / "videos"
     videos_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save images using threads to reach high fps (30 and more)
-    # Using `with` to exist smoothly if an execption is raised.
-    # Using only 4 worker threads to avoid blocking the main thread.
-
-    futures = []
-
     # Execute a few seconds without recording data, to give times
     # to the robot devices to connect and start synchronizing.
     timestamp = 0
@@ -241,6 +235,9 @@ def record_dataset(
     # Start recording all episodes
     ep_dicts = []
     for episode_index in range(num_episodes):
+        # Save images using threads to reach high fps (30 and more)
+        # Using `with` to exist smoothly if an execption is raised.
+        # Using only 4 worker threads to avoid blocking the main thread.
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             ep_dict = {}
             frame_index = 0
@@ -260,10 +257,7 @@ def record_dataset(
                 not_image_keys = [key for key in observation if "image" not in key]
 
                 for key in image_keys:
-                    future = executor.submit(
-                        save_image, observation[key], key, frame_index, episode_index, videos_dir
-                    )
-                    futures.append(future)
+                    executor.submit(save_image, observation[key], key, frame_index, episode_index, videos_dir)
 
                 for key in not_image_keys:
                     if key not in ep_dict:

@@ -1,5 +1,11 @@
+"""
+This file contains utilities for recording frames from cameras. For more info look at `OpenCVCamera` docstring.
+"""
+
 import argparse
+import concurrent.futures
 import math
+import shutil
 import threading
 import time
 from dataclasses import dataclass, replace
@@ -8,17 +14,26 @@ from threading import Thread
 
 import cv2
 import numpy as np
+from PIL import Image
 
 from lerobot.common.robot_devices.cameras.utils import save_color_image
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
+from lerobot.scripts.control_robot import busy_wait
 
 # Use 1 thread to avoid blocking the main thread. Especially useful during data collection
 # when other threads are used to save the images.
 cv2.setNumThreads(1)
 
+# The maximum opencv device index depends on your operating system. For instance,
+# if you have 3 cameras, they should be associated to index 0, 1, and 2. This is the case
+# on MacOS. However, on Ubuntu, the indices are different like 6, 16, 23.
+# When you change the USB port or reboot the computer, the operating system might
+# treat the same cameras as new devices. Thus we select a higher bound to search indices.
+MAX_OPENCV_INDEX = 60
 
-def find_camera_indices(raise_when_empty=False, max_index_search_range=60):
+
+def find_camera_indices(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX):
     camera_ids = []
     for camera_idx in range(max_index_search_range):
         camera = cv2.VideoCapture(camera_idx)
@@ -45,7 +60,7 @@ def benchmark_cameras(cameras, out_dir=None, save_images=False, num_warmup_frame
     for _ in range(num_warmup_frames):
         for camera in cameras:
             try:
-                camera.capture_image()
+                camera.read()
                 time.sleep(0.01)
             except OSError as e:
                 print(e)
@@ -53,7 +68,7 @@ def benchmark_cameras(cameras, out_dir=None, save_images=False, num_warmup_frame
     while True:
         now = time.time()
         for camera in cameras:
-            color_image = camera.capture_image("bgr" if save_images else "rgb")
+            color_image = camera.read("bgr" if save_images else "rgb")
 
             if save_images:
                 image_path = out_dir / f"camera_{camera.camera_index:02}.png"
@@ -95,13 +110,20 @@ class OpenCVCameraConfig:
 
 
 class OpenCVCamera:
-    # TODO(rcadene): improve dosctring
     """
-    https://docs.opencv.org/4.x/d0/da7/videoio_overview.html
-    https://docs.opencv.org/4.x/d4/d15/group__videoio__flags__base.html#ga023786be1ee68a9105bf2e48c700294d
+    The OpenCVCamera class allows to efficiently record images from cameras. It relies on opencv2 to communicate
+    with the cameras. Most cameras are compatible. For more info, see the [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
 
-    Example of uage:
+    An OpenCVCamera instance requires a camera index (e.g. `OpenCVCamera(camera_index=0)`). When you only have one camera
+    like a webcam of a laptop, the camera index is expected to be 0, but it might also be very different, and the camera index
+    might change if you reboot your computer or re-plug your camera. This behavior depends on your operation system.
 
+    To find the camera indices of your cameras, you can run our utility script that will be save a few frames for each camera:
+    ```bash
+    python lerobot/common/robot_devices/cameras/opencv.py --images-dir outputs/images_from_opencv_cameras
+    ```
+
+    Example of uage of the class:
     ```python
     camera = OpenCVCamera(camera_index=0)
     camera.connect()
@@ -286,43 +308,79 @@ class OpenCVCamera:
             self.disconnect()
 
 
-def save_images_config(config: OpenCVCameraConfig, out_dir: Path):
-    cameras = []
+def save_image(img_array, camera_index, frame_index, images_dir):
+    img = Image.fromarray(img_array)
+    path = images_dir / f"camera_{camera_index:02d}_frame_{frame_index:06d}.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(str(path), quality=100)
 
-    available_cam_ids = find_camera_indices()
-    print(f"Available camera indices: {available_cam_ids}")
-    for camera_idx in available_cam_ids:
-        camera = OpenCVCamera(camera_idx, config)
+
+def save_images_from_cameras(
+    images_dir: Path, camera_ids=None, fps=None, width=None, height=None, record_time_s=2
+):
+    if camera_ids is None:
+        print("Finding available camera indices")
+        camera_ids = find_camera_indices()
+
+    print("Connecting cameras")
+    cameras = []
+    for cam_idx in camera_ids:
+        camera = OpenCVCamera(cam_idx, fps=fps, width=width, height=height)
+        camera.connect()
+        print(
+            f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color={camera.color})"
+        )
         cameras.append(camera)
 
-    out_dir = out_dir.parent / f"{out_dir.name}_{config.width}x{config.height}_{config.fps}"
-    benchmark_cameras(cameras, out_dir, save_images=True)
+    images_dir = Path(
+        images_dir,
+    )
+    if images_dir.exists():
+        shutil.rmtree(
+            images_dir,
+        )
+    images_dir.mkdir(parents=True, exist_ok=True)
 
+    print(f"Saving images to {images_dir}")
+    frame_index = 0
+    start_time = time.perf_counter()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        while True:
+            now = time.perf_counter()
 
-def benchmark_config(config: OpenCVCameraConfig, camera_ids: list[int]):
-    cameras = [OpenCVCamera(idx, config) for idx in camera_ids]
-    benchmark_cameras(cameras)
+            for camera in cameras:
+                # If we use async_read when fps is None, the loop will go full speed, and we will endup
+                # saving the same images from the cameras multiple times until the RAM/disk is full.
+                image = camera.read() if fps is None else camera.async_read()
+
+                executor.submit(
+                    save_image,
+                    image,
+                    camera.camera_index,
+                    frame_index,
+                    images_dir,
+                )
+
+            if fps is not None:
+                dt_s = time.perf_counter() - now
+                busy_wait(1 / fps - dt_s)
+
+            if time.perf_counter() - start_time > record_time_s:
+                break
+
+            print(f"Frame: {frame_index:04d}\tLatency (ms): {(time.perf_counter() - now) * 1000:.2f}")
+
+            frame_index += 1
+
+    print(f"Images have been saved to {images_dir}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", type=str, choices=["save_images", "benchmark"], default="save_images")
-    parser.add_argument("--camera-ids", type=int, nargs="*", default=[16, 4, 22, 10])
-    parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--width", type=str, default=640)
-    parser.add_argument("--height", type=str, default=480)
-    parser.add_argument("--out-dir", type=Path, default="outputs/benchmark_cameras/opencv/2024_06_22_1727")
+    parser.add_argument("--camera-ids", type=int, nargs="*", default=None)
+    parser.add_argument("--fps", type=int, default=None)
+    parser.add_argument("--width", type=str, default=None)
+    parser.add_argument("--height", type=str, default=None)
+    parser.add_argument("--images-dir", type=Path, default="outputs/images_from_opencv_cameras")
     args = parser.parse_args()
-
-    config = OpenCVCameraConfig(args.fps, args.width, args.height)
-    # config = OpenCVCameraConfig()
-    # config = OpenCVCameraConfig(60, 640, 480)
-    # config = OpenCVCameraConfig(90, 640, 480)
-    # config = OpenCVCameraConfig(30, 1280, 720)
-
-    if args.mode == "save_images":
-        save_images_config(config, args.out_dir)
-    elif args.mode == "benchmark":
-        benchmark_config(config, args.camera_ids)
-    else:
-        raise ValueError(args.mode)
+    save_images_from_cameras(**vars(args))
