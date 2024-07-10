@@ -3,7 +3,6 @@ import time
 import numpy as np
 import pytest
 
-from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus, find_port
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from tests.utils import require_koch
 
@@ -14,6 +13,7 @@ def test_motors_bus(request):
     # TODO(rcadene): test logs
     # TODO(rcadene): test calibration
     # TODO(rcadene): add compatibility with other motors bus
+    from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 
     # Test instantiating a common motors structure.
     # Here the one from Alexander Koch follower arm.
@@ -87,4 +87,6 @@ def test_motors_bus(request):
 
 @require_koch
 def test_find_port(request):
+    from lerobot.common.robot_devices.motors.dynamixel import find_port
+
     find_port()
