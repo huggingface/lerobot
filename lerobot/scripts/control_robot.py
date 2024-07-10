@@ -409,7 +409,14 @@ def run_policy(robot: Robot, policy: torch.nn.Module, hydra_cfg: DictConfig, run
             torch.inference_mode(),
             torch.autocast(device_type=device.type) if hydra_cfg.use_amp else nullcontext(),
         ):
+            # add batch dimension to 1
+            for name in observation:
+                observation[name] = observation[name].unsqueeze(0)
+
             action = policy.select_action(observation)
+
+            # remove batch dimension
+            action = action.squeeze(0)
 
         robot.send_action(action)
 
