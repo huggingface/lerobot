@@ -5,9 +5,11 @@ import pytest
 
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus, find_port
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from tests.utils import require_koch
 
 
-def test_motors_bus():
+@require_koch
+def test_motors_bus(request):
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
     # TODO(rcadene): test calibration
@@ -83,5 +85,6 @@ def test_motors_bus():
     assert (new_values == values).all()
 
 
-def test_find_port():
+@require_koch
+def test_find_port(request):
     find_port()

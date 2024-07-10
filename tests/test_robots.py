@@ -7,9 +7,11 @@ import torch
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.koch import KochRobot
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from tests.utils import require_koch
 
 
-def test_robot(tmpdir):
+@require_koch
+def test_robot(tmpdir, request):
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
     # TODO(rcadene): add compatibility with other robots
