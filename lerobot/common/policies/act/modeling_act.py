@@ -267,7 +267,8 @@ class ACT(nn.Module):
         if self.use_env_state:
             n_1d_tokens += 1
         self.encoder_1d_feature_pos_embed = nn.Embedding(n_1d_tokens, config.dim_model)
-        self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
+        if self.use_images:
+            self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
 
         # Transformer decoder.
         # Learnable positional embedding for the transformer's decoder (in the style of DETR object queries).
@@ -286,6 +287,17 @@ class ACT(nn.Module):
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
         """A forward pass through the Action Chunking Transformer (with optional VAE encoder).
+
+        `batch` should have the following structure:
+        {
+            "observation.state" (optional): (B, state_dim) batch of robot states.
+
+            "observation.images": (B, n_cameras, C, H, W) batch of images.
+                AND/OR
+            "observation.environment_state": (B, env_dim) batch of environment states.
+
+            "action" (optional, only if training with VAE): (B, chunk_size, action dim) batch of actions.
+        }
 
         Returns:
             (B, chunk_size, action_dim) batch of action sequences
@@ -385,8 +397,8 @@ class ACT(nn.Module):
                 all_cam_pos_embeds.append(cam_pos_embed)
             # Concatenate camera observation feature maps and positional embeddings along the width dimension,
             # and move to (sequence, batch, dim).
-            all_cam_tokens = torch.cat(all_cam_features, axis=-1)
-            encoder_in_tokens.extend(einops.rearrange(all_cam_tokens, "b c h w -> (h w) b c"))
+            all_cam_features = torch.cat(all_cam_features, axis=-1)
+            encoder_in_tokens.extend(einops.rearrange(all_cam_features, "b c h w -> (h w) b c"))
             all_cam_pos_embeds = torch.cat(all_cam_pos_embeds, axis=-1)
             encoder_in_pos_embed.extend(einops.rearrange(all_cam_pos_embeds, "b c h w -> (h w) b c"))
 
