@@ -87,8 +87,6 @@ X_SERIES_CONTROL_TABLE = {
 
 CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
 CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
-# CONVERT_POSITION_TO_ANGLE_REQUIRED = ["Goal_Position", "Present_Position"]
-CONVERT_POSITION_TO_ANGLE_REQUIRED = []
 
 MODEL_CONTROL_TABLE = {
     "x_series": X_SERIES_CONTROL_TABLE,
@@ -421,7 +419,7 @@ class DynamixelMotorsBus:
                 self.port_handler, self.packet_handler, addr, bytes
             )
 
-        for idx, value in zip(motor_ids, values, strict=False):
+        for idx, value in zip(motor_ids, values, strict=True):
             if bytes == 1:
                 data = [
                     DXL_LOBYTE(DXL_LOWORD(value)),
