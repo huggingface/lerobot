@@ -21,7 +21,7 @@ from typing import Dict
 import datasets
 import torch
 from datasets import load_dataset, load_from_disk
-from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub import hf_hub_download, list_repo_refs, snapshot_download
 from PIL import Image as PILImage
 from safetensors.torch import load_file
 from torchvision import transforms
@@ -354,3 +354,8 @@ def cycle(iterable):
             yield next(iterator)
         except StopIteration:
             iterator = iter(iterable)
+
+
+def get_hf_dataset_repo_branches(repo_id: str) -> list[str]:
+    dataset_info = list_repo_refs(repo_id, repo_type="dataset")
+    return [b.name for b in dataset_info.branches]
