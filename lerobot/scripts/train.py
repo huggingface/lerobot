@@ -123,7 +123,7 @@ def update_policy(
     # Unscale the graident of the optimzer's assigned params in-place **prior to gradient clipping**.
     grad_scaler.unscale_(optimizer)
     if accelerator:
-        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm, error_if_nonfinite=False)
+        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
     else:
         grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), grad_clip_norm, error_if_nonfinite=False)
     # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
@@ -233,11 +233,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     if job_name is None:
         raise NotImplementedError()
 
-    if accelerator:
-        if accelerator.is_main_process:
-            init_logging()
-    else:
+    if not accelerator or accelerator.is_main_process:
         init_logging()
+
+    if accelerator:
+        logging.info(f"Acccelerated is enabled, training with the following configuration:\n {accelerator.state}") 
 
     # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
     # to check for any differences between the provided config and the checkpoint's config.
@@ -313,7 +313,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     eval_env = None
     if cfg.training.eval_freq > 0:
         if accelerator:
-            raise NotImplementedError("Evaluation is not yet supported with accelerate.")
+            raise NotImplementedError("Evaluation is not supported with accelerate yet.")
         else:
             logging.info("make_env")
             eval_env = make_env(cfg)
@@ -453,7 +453,6 @@ def train_cli(cfg: dict):
     if cfg.training.accelerate.enable:
         import accelerate
         accelerator = accelerate.Accelerator()
-        print("Accelerator initialized : ", accelerator.state)
         train(
             cfg,
             out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
