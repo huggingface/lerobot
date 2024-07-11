@@ -211,7 +211,7 @@ def _mock_download_raw_dora(raw_dir, num_frames=6, num_episodes=3, fps=30):
 
         fname = f"{cam_key}_episode_{ep_idx:06d}.mp4"
         video_path = raw_dir / "videos" / fname
-        encode_video_frames(tmp_imgs_dir, video_path, fps, video_codec="libx264")
+        encode_video_frames(tmp_imgs_dir, video_path, fps, vcodec="libx264")
 
 
 def _mock_download_raw(raw_dir, repo_id):

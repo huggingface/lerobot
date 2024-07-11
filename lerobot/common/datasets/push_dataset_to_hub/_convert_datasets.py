@@ -14,31 +14,65 @@ SOURCE_FORMAT = {
 
 
 def convert_datasets(
-    raw_dir: Path, vcodec: str, pix_fmt: str, g: int, crf: int, dry_run: bool = False
+    local_dir: Path,
+    raw_repo_ids: list[str],
+    push_repo: str,
+    vcodec: str,
+    pix_fmt: str,
+    g: int,
+    crf: int,
+    dry_run: bool = False,
 ) -> None:
-    for repo_id in available_datasets:
-        name = repo_id.split("/")[1]
-        name_raw = f"{name}_raw"
-        repo_id_raw = f"cadene/{name_raw}"
-        raw_format = SOURCE_FORMAT[name.split("_")[0]]
+    if len(raw_repo_ids) == 1 and raw_repo_ids[0].lower() == "all":
+        raw_repo_ids = [f"cadene/{id_.split('/')[1]}_raw" for id_ in available_datasets]
+
+    for dataset_repo_id_raw in raw_repo_ids:
+        dataset_id_raw = dataset_repo_id_raw.split("/")[1]
+        dataset_id = dataset_id_raw[:-4]
+        dataset_repo_id_push = f"{push_repo}/{dataset_id}"
+        raw_format = SOURCE_FORMAT[dataset_id.split("_")[0]]
+        local_dataset_dir = local_dir / dataset_repo_id_raw
+        encoding = {
+            "vcodec": vcodec,
+            "pix_fmt": pix_fmt,
+            "g": g,
+            "crf": crf,
+        }
 
         if not dry_run:
-            download_raw(raw_dir, repo_id_raw)
-            push_dataset_to_hub(raw_dir / name_raw, raw_format=raw_format, repo_id=repo_id)
+            if not (local_dataset_dir).is_dir():
+                download_raw(local_dataset_dir, dataset_repo_id_raw)
+
+            push_dataset_to_hub(
+                local_dataset_dir, raw_format=raw_format, repo_id=dataset_repo_id_push, encoding=encoding
+            )
         else:
             print("DRY RUN:")
-            print(f"    - downloading {repo_id_raw} into {raw_dir / name_raw}")
-            print(f"    - encoding it with {vcodec=}, {pix_fmt=}, {g=}, {crf=}")
-            print(f"    - pushing it to {repo_id}")
+            print(f"    - downloading {dataset_repo_id_raw} into {local_dataset_dir}")
+            print(f"    - encoding it with {encoding=}")
+            print(f"    - pushing it to {dataset_repo_id_push}")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--raw-dir",
+        "--local-dir",
         type=Path,
-        required=True,
+        default=Path("data"),
         help="Directory where raw datasets will be downloaded and encoded before being uploaded.",
+    )
+    parser.add_argument(
+        "--raw-repo-ids",
+        type=str,
+        nargs="*",
+        default=["all"],
+        help="Dataset repo ids. if 'all', the list from `available_datasets` will be used.",
+    )
+    parser.add_argument(
+        "--push-repo",
+        type=str,
+        default="lerobot",
+        help="Repo to upload datasets to",
     )
     parser.add_argument(
         "--vcodec",

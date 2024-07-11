@@ -196,6 +196,7 @@ def push_dataset_to_hub(
     force_override: bool = False,
     cache_dir: Path = Path("/tmp"),
     tests_data_dir: Path | None = None,
+    encoding: dict | None = None,
 ):
     # Check repo_id is well formated
     if len(repo_id.split("/")) != 2:
@@ -245,7 +246,7 @@ def push_dataset_to_hub(
     # convert dataset from original raw format to LeRobot format
     from_raw_to_lerobot_format = get_from_raw_to_lerobot_format_fn(raw_format)
     hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(
-        raw_dir, videos_dir, fps, video, episodes
+        raw_dir, videos_dir, fps, video, episodes, encoding
     )
 
     lerobot_dataset = LeRobotDataset.from_preloaded(

@@ -25,7 +25,11 @@ import tqdm
 from datasets import Dataset, Features, Image, Sequence, Value
 from PIL import Image as PILImage
 
-from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, save_images_concurrently
+from lerobot.common.datasets.push_dataset_to_hub.utils import (
+    concatenate_episodes,
+    get_default_encoding,
+    save_images_concurrently,
+)
 from lerobot.common.datasets.utils import (
     calculate_episode_data_index,
     hf_transform_to_torch,
@@ -55,7 +59,14 @@ def check_format(raw_dir):
         assert all(len(nested_dict[subkey]) == expected_len for subkey in subkeys if subkey in nested_dict)
 
 
-def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episodes: list[int] | None = None):
+def load_from_raw(
+    raw_dir: Path,
+    videos_dir: Path,
+    fps: int,
+    video: bool,
+    episodes: list[int] | None = None,
+    encoding: dict | None = None,
+):
     pkl_path = raw_dir / "buffer.pkl"
 
     with open(pkl_path, "rb") as f:
@@ -104,7 +115,7 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
             # encode images to a mp4 video
             fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
             video_path = videos_dir / fname
-            encode_video_frames(tmp_imgs_dir, video_path, fps)
+            encode_video_frames(tmp_imgs_dir, video_path, fps, **(encoding or {}))
 
             # clean temporary images directory
             shutil.rmtree(tmp_imgs_dir)
@@ -166,6 +177,7 @@ def from_raw_to_lerobot_format(
     fps: int | None = None,
     video: bool = True,
     episodes: list[int] | None = None,
+    encoding: dict | None = None,
 ):
     # sanity check
     check_format(raw_dir)
@@ -180,4 +192,7 @@ def from_raw_to_lerobot_format(
         "fps": fps,
         "video": video,
     }
+    if video:
+        info = {**info, "encoding": get_default_encoding() if encoding is None else encoding}
+
     return hf_dataset, episode_data_index, info
