@@ -146,7 +146,7 @@ def get_log_name(var_name, fn_name, data_name, motor_names):
 
 def find_available_ports():
     ports = []
-    for path in Path("/dev").glob("tty.usbmodem*"):
+    for path in Path("/dev").glob("tty*"):
         ports.append(str(path))
     return ports
 
