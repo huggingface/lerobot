@@ -26,7 +26,10 @@ class ACTConfig:
     Those are: `input_shapes` and 'output_shapes`.
 
     Notes on the inputs and outputs:
-        - At least one key starting with "observation.image is required as an input.
+        - Either:
+            - At least one key starting with "observation.image is required as an input.
+              AND/OR
+            - The key "observation.environment_state" is required as input.
         - If there are multiple keys beginning with "observation.images." they are treated as multiple camera
           views. Right now we only support all images having the same shape.
         - May optionally work without an "observation.state" key for the proprioceptive robot state.
@@ -162,3 +165,8 @@ class ACTConfig:
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
             )
+        if (
+            not any(k.startswith("observation.image") for k in self.input_shapes)
+            and "observation.environment_state" not in self.input_shapes
+        ):
+            raise ValueError("You must provide at least one image or the environment state among the inputs.")
