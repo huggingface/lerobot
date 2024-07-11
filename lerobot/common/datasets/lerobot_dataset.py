@@ -38,10 +38,6 @@ from lerobot.common.datasets.video_utils import VideoFrame, load_from_videos
 # For maintainers, see lerobot/common/datasets/push_dataset_to_hub/CODEBASE_VERSION.md
 CODEBASE_VERSION = "v1.6"
 DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
-<<<<<<< HEAD
-=======
-CODEBASE_VERSION = "v1.6"
->>>>>>> f1b8802 (Update codebase version)
 
 
 class LeRobotDataset(torch.utils.data.Dataset):
