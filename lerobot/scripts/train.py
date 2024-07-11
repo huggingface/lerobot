@@ -13,9 +13,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import argparse
 import logging
 import time
-from contextlib import nullcontext
 from pathlib import Path
 from pprint import pformat
 
@@ -44,7 +44,6 @@ from lerobot.common.utils.utils import (
     set_global_seed,
 )
 from lerobot.scripts.eval import eval_policy
-
 
 def make_optimizer_and_scheduler(cfg, policy):
     if cfg.policy.name == "act":
@@ -106,30 +105,31 @@ def update_policy(
     grad_clip_norm,
     grad_scaler: GradScaler,
     lr_scheduler=None,
-    use_amp: bool = False,
+    accelerator=None,
 ):
     """Returns a dictionary of items for logging."""
     start_time = time.perf_counter()
-    device = get_device_from_parameters(policy)
+
     policy.train()
-    with torch.autocast(device_type=device.type) if use_amp else nullcontext():
-        output_dict = policy.forward(batch)
+
+    output_dict = policy.forward(batch)
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
-        loss = output_dict["loss"]
-    grad_scaler.scale(loss).backward()
+    loss = output_dict["loss"]
+    if accelerator:
+        accelerator.backward(loss)
+    else:
+        loss.backward()
 
     # Unscale the graident of the optimzer's assigned params in-place **prior to gradient clipping**.
     grad_scaler.unscale_(optimizer)
-
-    grad_norm = torch.nn.utils.clip_grad_norm_(
-        policy.parameters(),
-        grad_clip_norm,
-        error_if_nonfinite=False,
-    )
-
+    if accelerator:
+        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm, error_if_nonfinite=False)
+    else:
+        grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), grad_clip_norm, error_if_nonfinite=False)
     # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
     # although it still skips optimizer.step() if the gradients contain infs or NaNs.
     grad_scaler.step(optimizer)
+
     # Updates the scale for next iteration.
     grad_scaler.update()
 
@@ -226,57 +226,63 @@ def log_eval_info(logger, info, step, cfg, dataset, is_offline):
     logger.log_dict(info, step, mode="eval")
 
 
-def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
+def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None, accelerator=None):
+
     if out_dir is None:
         raise NotImplementedError()
     if job_name is None:
         raise NotImplementedError()
 
-    init_logging()
+    if accelerator:
+        if accelerator.is_main_process:
+            init_logging()
+    else:
+        init_logging()
 
     # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
     # to check for any differences between the provided config and the checkpoint's config.
     if cfg.resume:
-        if not Logger.get_last_checkpoint_dir(out_dir).exists():
-            raise RuntimeError(
-                "You have set resume=True, but there is no model checkpoint in "
-                f"{Logger.get_last_checkpoint_dir(out_dir)}"
+        if not accelerator or accelerator.is_main_process:
+            if not Logger.get_last_checkpoint_dir(out_dir).exists():
+                raise RuntimeError(
+                    "You have set resume=True, but there is no model checkpoint in "
+                    f"{Logger.get_last_checkpoint_dir(out_dir)}"
+                )
+            checkpoint_cfg_path = str(Logger.get_last_pretrained_model_dir(out_dir) / "config.yaml")
+            logging.info(
+                colored(
+                    "You have set resume=True, indicating that you wish to resume a run",
+                    color="yellow",
+                    attrs=["bold"],
+                )
             )
-        checkpoint_cfg_path = str(Logger.get_last_pretrained_model_dir(out_dir) / "config.yaml")
-        logging.info(
-            colored(
-                "You have set resume=True, indicating that you wish to resume a run",
-                color="yellow",
-                attrs=["bold"],
-            )
-        )
-        # Get the configuration file from the last checkpoint.
-        checkpoint_cfg = init_hydra_config(checkpoint_cfg_path)
-        # Check for differences between the checkpoint configuration and provided configuration.
-        # Hack to resolve the delta_timestamps ahead of time in order to properly diff.
-        resolve_delta_timestamps(cfg)
-        diff = DeepDiff(OmegaConf.to_container(checkpoint_cfg), OmegaConf.to_container(cfg))
-        # Ignore the `resume` and parameters.
-        if "values_changed" in diff and "root['resume']" in diff["values_changed"]:
-            del diff["values_changed"]["root['resume']"]
-        # Log a warning about differences between the checkpoint configuration and the provided
-        # configuration.
-        if len(diff) > 0:
-            logging.warning(
-                "At least one difference was detected between the checkpoint configuration and "
-                f"the provided configuration: \n{pformat(diff)}\nNote that the checkpoint configuration "
-                "takes precedence.",
-            )
-        # Use the checkpoint config instead of the provided config (but keep `resume` parameter).
-        cfg = checkpoint_cfg
-        cfg.resume = True
+            # Get the configuration file from the last checkpoint.
+            checkpoint_cfg = init_hydra_config(checkpoint_cfg_path)
+            # Check for differences between the checkpoint configuration and provided configuration.
+            # Hack to resolve the delta_timestamps ahead of time in order to properly diff.
+            resolve_delta_timestamps(cfg)
+            diff = DeepDiff(OmegaConf.to_container(checkpoint_cfg), OmegaConf.to_container(cfg))
+            # Ignore the `resume` and parameters.
+            if "values_changed" in diff and "root['resume']" in diff["values_changed"]:
+                del diff["values_changed"]["root['resume']"]
+            # Log a warning about differences between the checkpoint configuration and the provided
+            # configuration.
+            if len(diff) > 0:
+                logging.warning(
+                    "At least one difference was detected between the checkpoint configuration and "
+                    f"the provided configuration: \n{pformat(diff)}\nNote that the checkpoint configuration "
+                    "takes precedence.",
+                )
+            # Use the checkpoint config instead of the provided config (but keep `resume` parameter).
+            cfg = checkpoint_cfg
+            cfg.resume = True
     elif Logger.get_last_checkpoint_dir(out_dir).exists():
         raise RuntimeError(
             f"The configured output directory {Logger.get_last_checkpoint_dir(out_dir)} already exists."
         )
-
-    # log metrics to terminal and wandb
-    logger = Logger(cfg, out_dir, wandb_job_name=job_name)
+    if not accelerator or accelerator.is_main_process:
+        # log metrics to terminal and wandb
+        logger = Logger(cfg, out_dir, wandb_job_name=job_name)
 
     if cfg.training.online_steps > 0:
         raise NotImplementedError("Online training is not implemented yet.")
@@ -284,10 +290,14 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     set_global_seed(cfg.seed)
 
     # Check device is available
-    device = get_safe_torch_device(cfg.device, log=True)
-
+    if accelerator:
+        device = accelerator.device
+    else:
+        device = get_safe_torch_device(cfg.device, log=True)
+ 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
+  
 
     logging.info("make_dataset")
     offline_dataset = make_dataset(cfg)
@@ -302,8 +312,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
     if cfg.training.eval_freq > 0:
-        logging.info("make_env")
-        eval_env = make_env(cfg)
+        if accelerator:
+            raise NotImplementedError("Evaluation is not yet supported with accelerate.")
+        else:
+            logging.info("make_env")
+            eval_env = make_env(cfg)
 
     logging.info("make_policy")
     policy = make_policy(
@@ -311,6 +324,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         dataset_stats=offline_dataset.stats if not cfg.resume else None,
         pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
     )
+
     assert isinstance(policy, nn.Module)
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
@@ -325,14 +339,15 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
 
-    log_output_dir(out_dir)
-    logging.info(f"{cfg.env.task=}")
-    logging.info(f"{cfg.training.offline_steps=} ({format_big_number(cfg.training.offline_steps)})")
-    logging.info(f"{cfg.training.online_steps=}")
-    logging.info(f"{offline_dataset.num_samples=} ({format_big_number(offline_dataset.num_samples)})")
-    logging.info(f"{offline_dataset.num_episodes=}")
-    logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
-    logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
+    if not accelerator or accelerator.is_main_process:
+        log_output_dir(out_dir)
+        logging.info(f"{cfg.env.task=}")
+        logging.info(f"{cfg.training.offline_steps=} ({format_big_number(cfg.training.offline_steps)})")
+        logging.info(f"{cfg.training.online_steps=}")
+        logging.info(f"{offline_dataset.num_samples=} ({format_big_number(offline_dataset.num_samples)})")
+        logging.info(f"{offline_dataset.num_episodes=}")
+        logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
+        logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # Note: this helper will be used in offline and online training loops.
     def evaluate_and_checkpoint_if_needed(step):
@@ -341,16 +356,15 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
         if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
-            with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
-                assert eval_env is not None
-                eval_info = eval_policy(
+            assert eval_env is not None
+            eval_info = eval_policy(
                     eval_env,
                     policy,
                     cfg.eval.n_episodes,
                     videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
-                )
+            )
             log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline=True)
             if cfg.wandb.enable:
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
@@ -365,7 +379,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             # needed (choose 6 as a minimum for consistency without being overkill).
             logger.save_checkpont(
                 step,
-                policy,
+                policy if not accelerator else accelerator.unwrap_model(policy),
                 optimizer,
                 lr_scheduler,
                 identifier=step_identifier,
@@ -392,20 +406,23 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         pin_memory=device.type != "cpu",
         drop_last=False,
     )
+    if accelerator:
+        policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
+            policy, optimizer, dataloader, lr_scheduler
+            )
+        
     dl_iter = cycle(dataloader)
-
+    
+    policy.to(device)
     policy.train()
     for _ in range(step, cfg.training.offline_steps):
         if step == 0:
             logging.info("Start offline training on a fixed dataset")
-
         start_time = time.perf_counter()
         batch = next(dl_iter)
         dataloading_s = time.perf_counter() - start_time
-
         for key in batch:
             batch[key] = batch[key].to(device, non_blocking=True)
-
         train_info = update_policy(
             policy,
             batch,
@@ -413,13 +430,12 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             cfg.training.grad_clip_norm,
             grad_scaler=grad_scaler,
             lr_scheduler=lr_scheduler,
-            use_amp=cfg.use_amp,
+            accelerator=accelerator,
         )
-
         train_info["dataloading_s"] = dataloading_s
-
-        if step % cfg.training.log_freq == 0:
-            log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline=True)
+        if not accelerator or accelerator.is_main_process:
+            if step % cfg.training.log_freq == 0:
+                log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline=True)
 
         # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
         # so we pass in step + 1.
@@ -434,11 +450,22 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../configs")
 def train_cli(cfg: dict):
-    train(
-        cfg,
-        out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
-        job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
-    )
+    if cfg.training.accelerate.enable:
+        import accelerate
+        accelerator = accelerate.Accelerator()
+        print("Accelerator initialized : ", accelerator.state)
+        train(
+            cfg,
+            out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
+            job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
+            accelerator=accelerator,
+        )
+    else:
+        train(
+            cfg,
+            out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
+            job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
+        )
 
 
 def train_notebook(out_dir=None, job_name=None, config_name="default", config_path="../configs"):
