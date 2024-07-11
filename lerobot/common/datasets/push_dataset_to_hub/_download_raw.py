@@ -31,7 +31,6 @@ from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
-<<<<<<< HEAD
 from lerobot.common.datasets.push_dataset_to_hub.utils import check_repo_id
 
 # {raw_repo_id: raw_format}
