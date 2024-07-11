@@ -1,5 +1,7 @@
 import enum
+import sys
 import time
+import traceback
 from copy import deepcopy
 from pathlib import Path
 
@@ -278,8 +280,15 @@ class DynamixelMotorsBus:
         self.port_handler = PortHandler(self.port)
         self.packet_handler = PacketHandler(PROTOCOL_VERSION)
 
-        if not self.port_handler.openPort():
-            raise OSError(f"Failed to open port {self.port}")
+        try:
+            if not self.port_handler.openPort():
+                raise OSError(f"Failed to open port '{self.port}'.")
+        except Exception:
+            traceback.print_exc()
+            print(
+                "\nTry running `python lerobot/common/robot_devices/motors/dynamixel.py` to make sure you use the correct port."
+            )
+            sys.exit(1)
 
         self.port_handler.setBaudRate(BAUD_RATE)
         self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)

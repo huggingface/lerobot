@@ -420,6 +420,7 @@ class KochRobot:
         if not record_data:
             return
 
+        # TODO(rcadene): Add velocity and other info
         # Read follower position
         follower_pos = {}
         for name in self.follower_arms:

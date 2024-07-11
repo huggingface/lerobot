@@ -127,7 +127,7 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None):
 
     def log_dt(shortname, dt_val_s):
         nonlocal log_items
-        log_items += [f"{shortname}:{dt_val_s * 1000:5.2f}={1/ dt_val_s:3.1f}hz"]
+        log_items += [f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"]
 
     # total step time displayed in milliseconds and its frequency
     log_dt("dt", dt_s)
@@ -149,11 +149,7 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None):
     for name in robot.cameras:
         key = f"read_camera_{name}_dt_s"
         if key in robot.logs:
-            log_dt("dtRcam", robot.logs[key])
-
-        key = f"async_read_camera_{name}_dt_s"
-        if key in robot.logs:
-            log_dt("dtARcam", robot.logs[key])
+            log_dt(f"dtR{name}", robot.logs[key])
 
     logging.info(" ".join(log_items))
 
