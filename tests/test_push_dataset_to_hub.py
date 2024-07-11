@@ -229,23 +229,6 @@ def _mock_download_raw(raw_dir, repo_id):
         raise ValueError(repo_id)
 
 
-def _mock_encode_video_frames(*args, **kwargs):
-    kwargs["video_codec"] = "libx264"
-    return encode_video_frames(*args, **kwargs)
-
-
-def patch_encoder(raw_format, mocker):
-    format_module_map = {
-        "aloha_hdf5": "lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format.encode_video_frames",
-        "pusht_zarr": "lerobot.common.datasets.push_dataset_to_hub.pusht_zarr_format.encode_video_frames",
-        "xarm_pkl": "lerobot.common.datasets.push_dataset_to_hub.xarm_pkl_format.encode_video_frames",
-        "umi_zarr": "lerobot.common.datasets.push_dataset_to_hub.umi_zarr_format.encode_video_frames",
-    }
-
-    if raw_format in format_module_map:
-        mocker.patch(format_module_map[raw_format], side_effect=_mock_encode_video_frames)
-
-
 def test_push_dataset_to_hub_invalid_repo_id(tmpdir):
     with pytest.raises(ValueError):
         push_dataset_to_hub(Path(tmpdir), "raw_format", "invalid_repo_id")
@@ -280,9 +263,6 @@ def test_push_dataset_to_hub_out_dir_force_override_false(tmpdir):
 )
 @require_package_arg
 def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_id, make_test_data, mocker):
-    # Patch `encode_video_frames` so that it uses 'libx264' instead of 'libsvtav1' for testing
-    patch_encoder(raw_format, mocker)
-
     num_episodes = 3
     tmpdir = Path(tmpdir)
 
@@ -300,6 +280,7 @@ def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_
         force_override=False,
         cache_dir=tmpdir / "cache",
         tests_data_dir=tmpdir / "tests/data" if make_test_data else None,
+        encoding={"vcodec": "libx264"},
     )
 
     # minimal generic tests on the local directory containing LeRobotDataset
