@@ -45,6 +45,7 @@ from lerobot.common.utils.utils import (
 )
 from lerobot.scripts.eval import eval_policy
 
+
 def make_optimizer_and_scheduler(cfg, policy):
     if cfg.policy.name == "act":
         optimizer_params_dicts = [
@@ -113,7 +114,7 @@ def update_policy(
     policy.train()
 
     output_dict = policy.forward(batch)
-        # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+    # TODO(rcadene): policy.unnormalize_outputs(out_dict)
     loss = output_dict["loss"]
     if accelerator:
         accelerator.backward(loss)
@@ -123,9 +124,11 @@ def update_policy(
     # Unscale the graident of the optimzer's assigned params in-place **prior to gradient clipping**.
     grad_scaler.unscale_(optimizer)
     if accelerator:
-        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+        grad_norm = accelerator.clip_grad_norm_(
+            policy.parameters(), grad_clip_norm)
     else:
-        grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), grad_clip_norm, error_if_nonfinite=False)
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            policy.parameters(), grad_clip_norm, error_if_nonfinite=False)
     # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
     # although it still skips optimizer.step() if the gradients contain infs or NaNs.
     grad_scaler.step(optimizer)
@@ -179,7 +182,8 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
         f"lr:{lr:0.1e}",
         # in seconds
         f"updt_s:{update_s:.3f}",
-        f"data_s:{dataloading_s:.3f}",  # if not ~0, you are bottlenecked by cpu or io
+        # if not ~0, you are bottlenecked by cpu or io
+        f"data_s:{dataloading_s:.3f}",
     ]
     logging.info(" ".join(log_items))
 
@@ -233,11 +237,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     if job_name is None:
         raise NotImplementedError()
 
-    if not accelerator or accelerator.is_main_process:
-        init_logging()
+    init_logging(accelerator)
 
     if accelerator:
-        logging.info(f"Acccelerated is enabled, training with the following configuration:\n {accelerator.state}") 
+        logging.info(
+            f"Acccelerated is enabled, training with the following configuration:\n {accelerator.state}")
 
     # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
     # to check for any differences between the provided config and the checkpoint's config.
@@ -248,7 +252,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     "You have set resume=True, but there is no model checkpoint in "
                     f"{Logger.get_last_checkpoint_dir(out_dir)}"
                 )
-            checkpoint_cfg_path = str(Logger.get_last_pretrained_model_dir(out_dir) / "config.yaml")
+            checkpoint_cfg_path = str(
+                Logger.get_last_pretrained_model_dir(out_dir) / "config.yaml")
             logging.info(
                 colored(
                     "You have set resume=True, indicating that you wish to resume a run",
@@ -261,7 +266,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             # Check for differences between the checkpoint configuration and provided configuration.
             # Hack to resolve the delta_timestamps ahead of time in order to properly diff.
             resolve_delta_timestamps(cfg)
-            diff = DeepDiff(OmegaConf.to_container(checkpoint_cfg), OmegaConf.to_container(cfg))
+            diff = DeepDiff(OmegaConf.to_container(
+                checkpoint_cfg), OmegaConf.to_container(cfg))
             # Ignore the `resume` and parameters.
             if "values_changed" in diff and "root['resume']" in diff["values_changed"]:
                 del diff["values_changed"]["root['resume']"]
@@ -280,9 +286,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         raise RuntimeError(
             f"The configured output directory {Logger.get_last_checkpoint_dir(out_dir)} already exists."
         )
-    if not accelerator or accelerator.is_main_process:
-        # log metrics to terminal and wandb
-        logger = Logger(cfg, out_dir, wandb_job_name=job_name)
+    logger = Logger(cfg, out_dir, wandb_job_name=job_name)
 
     if cfg.training.online_steps > 0:
         raise NotImplementedError("Online training is not implemented yet.")
@@ -294,10 +298,9 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         device = accelerator.device
     else:
         device = get_safe_torch_device(cfg.device, log=True)
- 
+
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-  
 
     logging.info("make_dataset")
     offline_dataset = make_dataset(cfg)
@@ -313,7 +316,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     eval_env = None
     if cfg.training.eval_freq > 0:
         if accelerator:
-            raise NotImplementedError("Evaluation is not supported with accelerate yet.")
+            raise NotImplementedError(
+                "Evaluation is not supported with accelerate yet.")
         else:
             logging.info("make_env")
             eval_env = make_env(cfg)
@@ -322,7 +326,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     policy = make_policy(
         hydra_cfg=cfg,
         dataset_stats=offline_dataset.stats if not cfg.resume else None,
-        pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
+        pretrained_policy_name_or_path=str(
+            logger.last_pretrained_model_dir) if cfg.resume else None,
     )
 
     assert isinstance(policy, nn.Module)
@@ -336,50 +341,60 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     if cfg.resume:
         step = logger.load_last_training_state(optimizer, lr_scheduler)
 
-    num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
+    num_learnable_params = sum(p.numel()
+                               for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
 
-    if not accelerator or accelerator.is_main_process:
-        log_output_dir(out_dir)
-        logging.info(f"{cfg.env.task=}")
-        logging.info(f"{cfg.training.offline_steps=} ({format_big_number(cfg.training.offline_steps)})")
-        logging.info(f"{cfg.training.online_steps=}")
-        logging.info(f"{offline_dataset.num_samples=} ({format_big_number(offline_dataset.num_samples)})")
-        logging.info(f"{offline_dataset.num_episodes=}")
-        logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
-        logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
+    log_output_dir(out_dir)
+    logging.info(f"{cfg.env.task=}")
+    logging.info(
+        f"{cfg.training.offline_steps=} ({format_big_number(cfg.training.offline_steps)})")
+    logging.info(f"{cfg.training.online_steps=}")
+    logging.info(
+        f"{offline_dataset.num_samples=} ({format_big_number(offline_dataset.num_samples)})")
+    logging.info(f"{offline_dataset.num_episodes=}")
+    logging.info(
+        f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
+    logging.info(
+        f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # Note: this helper will be used in offline and online training loops.
     def evaluate_and_checkpoint_if_needed(step):
-        _num_digits = max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
+        _num_digits = max(
+            6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
         step_identifier = f"{step:0{_num_digits}d}"
 
         if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             assert eval_env is not None
             eval_info = eval_policy(
-                    eval_env,
-                    policy,
-                    cfg.eval.n_episodes,
-                    videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
-                    max_episodes_rendered=4,
-                    start_seed=cfg.seed,
+                eval_env,
+                policy,
+                cfg.eval.n_episodes,
+                videos_dir=Path(out_dir) / "eval" /
+                f"videos_step_{step_identifier}",
+                max_episodes_rendered=4,
+                start_seed=cfg.seed,
             )
-            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline=True)
+            log_eval_info(
+                logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline=True)
             if cfg.wandb.enable:
-                logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+                logger.log_video(
+                    eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
 
         if cfg.training.save_checkpoint and (
             step % cfg.training.save_freq == 0
             or step == cfg.training.offline_steps + cfg.training.online_steps
-        ):
+        ) and (not accelerator or accelerator.is_main_process):
+            print(f"On process {accelerator.process_index}")
             logging.info(f"Checkpoint policy after step {step}")
             # Note: Save with step as the identifier, and format it to have at least 6 digits but more if
             # needed (choose 6 as a minimum for consistency without being overkill).
             logger.save_checkpont(
                 step,
-                policy if not accelerator else accelerator.unwrap_model(policy),
+                policy if not accelerator else accelerator.unwrap_model(
+                    policy),
                 optimizer,
                 lr_scheduler,
                 identifier=step_identifier,
@@ -409,10 +424,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     if accelerator:
         policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
             policy, optimizer, dataloader, lr_scheduler
-            )
-        
+        )
+
     dl_iter = cycle(dataloader)
-    
+
     policy.to(device)
     policy.train()
     for _ in range(step, cfg.training.offline_steps):
@@ -435,7 +450,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         train_info["dataloading_s"] = dataloading_s
         if not accelerator or accelerator.is_main_process:
             if step % cfg.training.log_freq == 0:
-                log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline=True)
+                log_train_info(logger, train_info, step, cfg,
+                               offline_dataset, is_offline=True)
 
         # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
         # so we pass in step + 1.
