@@ -165,7 +165,7 @@ def find_port():
 
     if len(ports_diff) == 1:
         port = ports_diff[0]
-        print(f"The port of this DynamixelMotorsBus is {port}.")
+        print(f"The port of this DynamixelMotorsBus is '{port}'")
         print("Reconnect the usb cable.")
     elif len(ports_diff) == 0:
         raise OSError(f"Could not detect the port. No difference was found ({ports_diff}).")
