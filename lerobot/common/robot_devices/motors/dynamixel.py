@@ -144,6 +144,25 @@ def get_log_name(var_name, fn_name, data_name, motor_names):
     return log_name
 
 
+def assert_same_address(model_ctrl_table, motor_models, data_name):
+    all_addr = []
+    all_bytes = []
+    for model in motor_models:
+        addr, bytes = model_ctrl_table[model][data_name]
+        all_addr.append(addr)
+        all_bytes.append(bytes)
+
+    if len(set(all_addr)) != 1:
+        raise NotImplementedError(
+            f"At least two motor models use a different address for `data_name`='{data_name}' ({list(zip(motor_models, all_addr, strict=False))}). Contact a LeRobot maintainer."
+        )
+
+    if len(set(all_bytes)) != 1:
+        raise NotImplementedError(
+            f"At least two motor models use a different bytes representation for `data_name`='{data_name}' ({list(zip(motor_models, all_bytes, strict=False))}). Contact a LeRobot maintainer."
+        )
+
+
 def find_available_ports():
     ports = []
     for path in Path("/dev").glob("tty*"):
@@ -329,7 +348,7 @@ class DynamixelMotorsBus:
             motor_ids.append(motor_idx)
             models.append(model)
 
-        # TODO(rcadene): assert all motors follow same address
+        assert_same_address(self.model_ctrl_table, models, data_name)
         addr, bytes = self.model_ctrl_table[model][data_name]
         group_key = get_group_sync_key(data_name, motor_names)
 
@@ -409,7 +428,7 @@ class DynamixelMotorsBus:
 
         values = values.tolist()
 
-        # TODO(rcadene): assert all motors follow same address
+        assert_same_address(self.model_ctrl_table, models, data_name)
         addr, bytes = self.model_ctrl_table[model][data_name]
         group_key = get_group_sync_key(data_name, motor_names)
 
