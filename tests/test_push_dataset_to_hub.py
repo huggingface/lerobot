@@ -262,7 +262,7 @@ def test_push_dataset_to_hub_out_dir_force_override_false(tmpdir):
     ],
 )
 @require_package_arg
-def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_id, make_test_data, mocker):
+def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_id, make_test_data):
     num_episodes = 3
     tmpdir = Path(tmpdir)
 

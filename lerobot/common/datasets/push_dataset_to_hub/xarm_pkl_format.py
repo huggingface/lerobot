@@ -185,7 +185,7 @@ def from_raw_to_lerobot_format(
     if fps is None:
         fps = 15
 
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes)
+    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding)
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
