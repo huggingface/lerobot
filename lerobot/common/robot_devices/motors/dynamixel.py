@@ -102,27 +102,6 @@ MODEL_CONTROL_TABLE = {
 NUM_READ_RETRY = 10
 
 
-# TODO(rcadene): find better namming for these functions
-def uint32_to_int32(values: np.ndarray):
-    """
-    Convert an unsigned 32-bit integer array to a signed 32-bit integer array.
-    """
-    for i in range(len(values)):
-        if values[i] is not None and values[i] > 2147483647:
-            values[i] = values[i] - 4294967296
-    return values
-
-
-def int32_to_uint32(values: np.ndarray):
-    """
-    Convert a signed 32-bit integer array to an unsigned 32-bit integer array.
-    """
-    for i in range(len(values)):
-        if values[i] is not None and values[i] < 0:
-            values[i] = values[i] + 4294967296
-    return values
-
-
 def get_group_sync_key(data_name, motor_names):
     group_key = f"{data_name}_" + "_".join(motor_names)
     return group_key
@@ -385,9 +364,9 @@ class DynamixelMotorsBus:
 
         values = np.array(values)
 
-        # TODO(rcadene): explain why
+        # Convert to signed int to use range [-2048, 2048] for our motor positions.
         if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
-            values = uint32_to_int32(values)
+            values = values.astype(np.int32)
 
         if data_name in CALIBRATION_REQUIRED:
             values = self.apply_calibration(values, motor_names)
@@ -431,10 +410,6 @@ class DynamixelMotorsBus:
         if data_name in CALIBRATION_REQUIRED:
             values = self.revert_calibration(values, motor_names)
 
-        # TODO(rcadene): why dont we do it?
-        # if data_name in CONVERT_INT32_TO_UINT32_REQUIRED:
-        #     values = int32_to_uint32(values)
-
         values = values.tolist()
 
         assert_same_address(self.model_ctrl_table, models, data_name)
@@ -448,6 +423,8 @@ class DynamixelMotorsBus:
             )
 
         for idx, value in zip(motor_ids, values, strict=True):
+            # Note: No need to convert back into unsigned int, since this byte preprocessing
+            # already handles it for us.
             if bytes == 1:
                 data = [
                     DXL_LOBYTE(DXL_LOWORD(value)),
