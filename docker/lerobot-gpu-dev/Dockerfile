@@ -8,13 +8,41 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake \
     git git-lfs openssh-client \
-    nano vim less util-linux \
+    nano vim less util-linux tree \
     htop atop nvtop \
     sed gawk grep curl wget zip unzip \
     tcpdump sysstat screen tmux \
     libglib2.0-0 libgl1-mesa-glx libegl1-mesa \
     python${PYTHON_VERSION} python${PYTHON_VERSION}-venv \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install ffmpeg build dependencies. See:
+# https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu
+# TODO(aliberts): create image to build dependencies from source instead
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf automake yasm \
+    libass-dev \
+    libfreetype6-dev \
+    libgnutls28-dev \
+    libunistring-dev \
+    libmp3lame-dev \
+    libtool \
+    libvorbis-dev \
+    meson \
+    ninja-build \
+    pkg-config \
+    texinfo \
+    yasm \
+    zlib1g-dev \
+    nasm \
+    libx264-dev \
+    libx265-dev libnuma-dev \
+    libvpx-dev \
+    libfdk-aac-dev \
+    libopus-dev \
+    libsvtav1-dev libsvtav1enc-dev libsvtav1dec-dev \
+    libdav1d-dev
+
 
 # Install gh cli tool
 RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
