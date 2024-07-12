@@ -75,6 +75,7 @@ dev = ["pre-commit", "debugpy"]
 test = ["pytest", "pytest-cov", "pytest-mock"]
 umi = ["imagecodecs"]
 video_benchmark = ["scikit-image", "pandas"]
+accelerate = ["accelerate"]
 
 [tool.ruff]
 line-length = 110

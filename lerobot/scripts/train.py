@@ -163,7 +163,8 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
-    num_samples = (step + 1) * cfg.training.batch_size * cfg.get("accelerate.num_processes", 1)
+    # If using multiple processes, the number of samples seen during training is multiplied by the number of processes/GPUs.
+    num_samples = (step + 1) * cfg.training.batch_size * cfg.training.accelerate.get("num_processes", 1)
     avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
@@ -201,7 +202,8 @@ def log_eval_info(logger, info, step, cfg, dataset, is_offline):
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
-    num_samples = (step + 1) * cfg.training.batch_size
+    # If using multiple processes, the number of samples seen during training is multiplied by the number of processes/GPUs.
+    num_samples = (step + 1) * cfg.training.batch_size * cfg.training.accelerate.get("num_processes", 1)
     avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
@@ -240,8 +242,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         nb_processes = accelerator.num_processes
         use_amp = accelerator.mixed_precision
         assert (
-            nb_processes == cfg.training.get("accelerate.num_processes", None)
-        ), f"Running on {nb_processes} processes, but the got {cfg.training.get('accelerate.num_processes', None)} processes in config."
+            nb_processes == cfg.training.accelerate.get("num_processes", None)
+        ), f"Running on {nb_processes} processes, but got nb_processes : {cfg.training.accelerate.get('num_processes', None)} in config."
         logging.info(
             f"Acccelerated is enabled, training will be launched with the following configuration :\nNumber of processes: {nb_processes} \nMixed precision: {use_amp}"
         )
@@ -249,44 +251,48 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
     # to check for any differences between the provided config and the checkpoint's config.
     if cfg.resume:
-        if not accelerator or accelerator.is_main_process:
-            if not Logger.get_last_checkpoint_dir(out_dir).exists():
-                raise RuntimeError(
-                    "You have set resume=True, but there is no model checkpoint in "
-                    f"{Logger.get_last_checkpoint_dir(out_dir)}"
-                )
-            checkpoint_cfg_path = str(Logger.get_last_pretrained_model_dir(out_dir) / "config.yaml")
-            logging.info(
-                colored(
-                    "You have set resume=True, indicating that you wish to resume a run",
-                    color="yellow",
-                    attrs=["bold"],
-                )
+        if not Logger.get_last_checkpoint_dir(out_dir).exists():
+            raise RuntimeError(
+                "You have set resume=True, but there is no model checkpoint in "
+                f"{Logger.get_last_checkpoint_dir(out_dir)}"
             )
-            # Get the configuration file from the last checkpoint.
-            checkpoint_cfg = init_hydra_config(checkpoint_cfg_path)
-            # Check for differences between the checkpoint configuration and provided configuration.
-            # Hack to resolve the delta_timestamps ahead of time in order to properly diff.
-            resolve_delta_timestamps(cfg)
-            diff = DeepDiff(OmegaConf.to_container(checkpoint_cfg), OmegaConf.to_container(cfg))
-            # Ignore the `resume` and parameters.
-            if "values_changed" in diff and "root['resume']" in diff["values_changed"]:
-                del diff["values_changed"]["root['resume']"]
-            # Log a warning about differences between the checkpoint configuration and the provided
-            # configuration.
-            if len(diff) > 0:
-                logging.warning(
-                    "At least one difference was detected between the checkpoint configuration and "
-                    f"the provided configuration: \n{pformat(diff)}\nNote that the checkpoint configuration "
-                    "takes precedence.",
-                )
-            # Use the checkpoint config instead of the provided config (but keep `resume` parameter).
-            cfg = checkpoint_cfg
-            cfg.resume = True
+        checkpoint_cfg_path = str(Logger.get_last_pretrained_model_dir(out_dir) / "config.yaml")
+        logging.info(
+            colored(
+                "You have set resume=True, indicating that you wish to resume a run",
+                color="yellow",
+                attrs=["bold"],
+            )
+        )
+        # Get the configuration file from the last checkpoint.
+        checkpoint_cfg = init_hydra_config(checkpoint_cfg_path)
+        # Check for differences between the checkpoint configuration and provided configuration.
+        # Hack to resolve the delta_timestamps ahead of time in order to properly diff.
+        resolve_delta_timestamps(cfg)
+        diff = DeepDiff(OmegaConf.to_container(checkpoint_cfg), OmegaConf.to_container(cfg))
+        # Ignore the `resume` and parameters.
+        if "values_changed" in diff and "root['resume']" in diff["values_changed"]:
+            del diff["values_changed"]["root['resume']"]
+        # Log a warning about differences between the checkpoint configuration and the provided
+        # configuration.
+        if len(diff) > 0:
+            logging.warning(
+                "At least one difference was detected between the checkpoint configuration and "
+                f"the provided configuration: \n{pformat(diff)}\nNote that the checkpoint configuration "
+                "takes precedence.",
+            )
+        # Use the checkpoint config instead of the provided config (but keep `resume` parameter).
+        cfg = checkpoint_cfg
+        cfg.resume = True
     elif Logger.get_last_checkpoint_dir(out_dir).exists():
         raise RuntimeError(
             f"The configured output directory {Logger.get_last_checkpoint_dir(out_dir)} already exists."
         )
+
+    if accelerator and not accelerator.is_main_process:
+        # Disable logging on non-main processes.
+        cfg.wandb.enable = False
+
     logger = Logger(cfg, out_dir, wandb_job_name=job_name)
 
     if cfg.training.online_steps > 0:
@@ -314,7 +320,9 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     eval_env = None
     if cfg.training.eval_freq > 0:
         if accelerator:
-            raise NotImplementedError("Simulation environments are not supported with accelerate yet.")
+            raise NotImplementedError(
+                "Creating simulation environments is not supported with accelerate yet."
+            )
         else:
             logging.info("make_env")
             eval_env = make_env(cfg)

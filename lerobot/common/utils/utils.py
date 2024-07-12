@@ -120,6 +120,7 @@ def init_logging(accelerator=None):
     logging.getLogger().addHandler(console_handler)
 
     if accelerator is not None and not accelerator.is_main_process:
+        # Disable duplicate logging on non-main processes
         logging.info(f"Disabling logging on non-main process {accelerator.process_index}")
         logging.getLogger().setLevel(logging.WARNING)
 
