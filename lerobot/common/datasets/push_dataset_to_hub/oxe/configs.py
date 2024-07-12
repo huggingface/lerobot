@@ -64,7 +64,7 @@ OXE_DATASET_CONFIGS = {
         "state_obs_keys": ["base_pose_tool_reached", "gripper_closed"],
         "state_encoding": StateEncoding.POS_QUAT,
         "action_encoding": ActionEncoding.EEF_POS,
-        "fps": 3, # TODO: placeholder (youliang)
+        "fps": 3,
     },
     "kuka": {
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
@@ -82,6 +82,7 @@ OXE_DATASET_CONFIGS = {
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
+        "fps": 5,
     },
     "bridge_orig": {  # Original version of Bridge V2 from project website
         "image_obs_keys": {"primary": "image_0", "secondary": "image_1", "wrist": None},
@@ -552,6 +553,19 @@ OXE_DATASET_CONFIGS = {
         "state_obs_keys": ["proprio"],
         "state_encoding": StateEncoding.POS_QUAT,
         "action_encoding": ActionEncoding.EEF_POS,
+        "fps": 15,
+    },
+    "droid100": {  # For testing
+        "image_obs_keys": {
+            "primary": "exterior_image_1_left",
+            "secondary": "exterior_image_2_left",
+            "wrist": "wrist_image_left",
+        },
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["proprio"],
+        "state_encoding": StateEncoding.POS_QUAT,
+        "action_encoding": ActionEncoding.EEF_POS,
+        "fps": 15,
     },
     "fmb_dataset": {
         "image_obs_keys": {
@@ -604,6 +618,7 @@ OXE_DATASET_CONFIGS = {
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
+        "fps": 15,
     },
     "tdroid_pour_corn_in_pot": {  # "pour corn from red bowl into steel pot" task, 50 demos @ 5 Hz control
         "image_obs_keys": {"primary": "static_image", "secondary": None, "wrist": None},
@@ -611,6 +626,7 @@ OXE_DATASET_CONFIGS = {
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
+        "fps": 15,
     },
     "tdroid_flip_pot_upright": {  # "flip pot upright" task, 10 demos @ 5 Hz control
         "image_obs_keys": {"primary": "static_image", "secondary": None, "wrist": None},
@@ -618,6 +634,7 @@ OXE_DATASET_CONFIGS = {
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
+        "fps": 15,
     },
     "tdroid_move_object_onto_plate": {  # "move <object> onto plate" task, 150 demos @ 5 Hz control
         "image_obs_keys": {"primary": "static_image", "secondary": None, "wrist": None},
@@ -625,6 +642,7 @@ OXE_DATASET_CONFIGS = {
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
+        "fps": 15,
     },
     "tdroid_knock_object_over": {  # "knock <object> over" task, 70 demos @ 5 Hz control
         "image_obs_keys": {"primary": "static_image", "secondary": None, "wrist": None},
@@ -632,6 +650,7 @@ OXE_DATASET_CONFIGS = {
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
+        "fps": 15,
     },
     "tdroid_cover_object_with_towel": {  # "cover <object> with towel" task, 45 demos @ 5 Hz control
         "image_obs_keys": {"primary": "static_image", "secondary": None, "wrist": None},
@@ -639,13 +658,19 @@ OXE_DATASET_CONFIGS = {
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
+        "fps": 15,
     },
     ### DROID Finetuning datasets
     "droid_wipe": {
-        "image_obs_keys": {"primary": "exterior_image_2_left", "secondary": None, "wrist": "wrist_image_left"},
+        "image_obs_keys": {
+            "primary": "exterior_image_2_left",
+            "secondary": None,
+            "wrist": "wrist_image_left",
+        },
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["proprio"],
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
+        "fps": 15,
     },
 }
