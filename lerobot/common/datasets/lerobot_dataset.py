@@ -37,8 +37,10 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import VideoFrame, load_from_videos
 
-DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
+# For maintainers, see lerobot/common/datasets/push_dataset_to_hub/codebase_version.md
 CODEBASE_VERSION = "v1.5"
+
+DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
 
 class LeRobotDataset(torch.utils.data.Dataset):
@@ -55,13 +57,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         self.repo_id = repo_id
         self.root = root
+        self.local = root is not None
         self.split = split
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         # load data from hub or locally when root is provided
         # TODO(rcadene, aliberts): implement faster transfer
         # https://huggingface.co/docs/huggingface_hub/en/guides/download#faster-downloads
-        if root is not None:
+        if self.local:
             self.version = "local"
             self.hf_dataset = load_hf_dataset_local(repo_id, root, split)
         else:
