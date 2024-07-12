@@ -66,7 +66,8 @@ def main():
         type=str,
         nargs="*",
         default=["all"],
-        help="Dataset repo ids. if 'all', the list from `available_datasets` will be used.",
+        help="Dataset repo ids. if 'all', the list from `available_datasets` will be "
+        "used and raw datasets will be fetched from the 'cadene/' repo.",
     )
     parser.add_argument(
         "--push-repo",
