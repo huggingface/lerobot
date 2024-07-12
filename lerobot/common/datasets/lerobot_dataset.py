@@ -25,8 +25,10 @@ import torch.utils
 from lerobot.common.datasets.compute_stats import aggregate_stats
 from lerobot.common.datasets.utils import (
     calculate_episode_data_index,
+    get_hf_dataset_safe_version,
     load_episode_data_index,
-    load_hf_dataset,
+    load_hf_dataset_local,
+    load_hf_dataset_remote,
     load_info,
     load_previous_and_future_frames,
     load_stats,
@@ -52,7 +54,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
     ):
         super().__init__()
         self.repo_id = repo_id
-        self.version = version
         self.root = root
         self.split = split
         self.image_transforms = image_transforms
@@ -60,16 +61,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # load data from hub or locally when root is provided
         # TODO(rcadene, aliberts): implement faster transfer
         # https://huggingface.co/docs/huggingface_hub/en/guides/download#faster-downloads
-        self.hf_dataset = load_hf_dataset(repo_id, version, root, split)
+        if root is not None:
+            self.version = "local"
+            self.hf_dataset = load_hf_dataset_local(repo_id, root, split)
+        else:
+            self.version = get_hf_dataset_safe_version(repo_id, version)
+            self.hf_dataset = load_hf_dataset_remote(repo_id, self.version, split)
         if split == "train":
-            self.episode_data_index = load_episode_data_index(repo_id, version, root)
+            self.episode_data_index = load_episode_data_index(repo_id, self.version, root)
         else:
             self.episode_data_index = calculate_episode_data_index(self.hf_dataset)
             self.hf_dataset = reset_episode_index(self.hf_dataset)
-        self.stats = load_stats(repo_id, version, root)
-        self.info = load_info(repo_id, version, root)
+        self.stats = load_stats(repo_id, self.version, root)
+        self.info = load_info(repo_id, self.version, root)
         if self.video:
-            self.videos_dir = load_videos(repo_id, version, root)
+            self.videos_dir = load_videos(repo_id, self.version, root)
             self.video_backend = video_backend if video_backend is not None else "pyav"
 
     @property

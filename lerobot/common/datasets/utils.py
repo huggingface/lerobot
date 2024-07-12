@@ -15,6 +15,7 @@
 # limitations under the License.
 import json
 import re
+import warnings
 from pathlib import Path
 from typing import Dict
 
@@ -80,28 +81,30 @@ def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     return items_dict
 
 
-def load_hf_dataset(repo_id, version, root, split) -> datasets.Dataset:
+def load_hf_dataset_local(repo_id: str, root: Path, split: str) -> datasets.Dataset:
     """hf_dataset contains all the observations, states, actions, rewards, etc."""
-    if root is not None:
-        hf_dataset = load_from_disk(str(Path(root) / repo_id / "train"))
-        # TODO(rcadene): clean this which enables getting a subset of dataset
-        if split != "train":
-            if "%" in split:
-                raise NotImplementedError(f"We dont support splitting based on percentage for now ({split}).")
-            match_from = re.search(r"train\[(\d+):\]", split)
-            match_to = re.search(r"train\[:(\d+)\]", split)
-            if match_from:
-                from_frame_index = int(match_from.group(1))
-                hf_dataset = hf_dataset.select(range(from_frame_index, len(hf_dataset)))
-            elif match_to:
-                to_frame_index = int(match_to.group(1))
-                hf_dataset = hf_dataset.select(range(to_frame_index))
-            else:
-                raise ValueError(
-                    f'`split` ({split}) should either be "train", "train[INT:]", or "train[:INT]"'
-                )
-    else:
-        hf_dataset = load_dataset(repo_id, revision=version, split=split)
+    hf_dataset = load_from_disk(str(Path(root) / repo_id / "train"))
+    # TODO(rcadene): clean this which enables getting a subset of dataset
+    if split != "train":
+        if "%" in split:
+            raise NotImplementedError(f"We dont support splitting based on percentage for now ({split}).")
+        match_from = re.search(r"train\[(\d+):\]", split)
+        match_to = re.search(r"train\[:(\d+)\]", split)
+        if match_from:
+            from_frame_index = int(match_from.group(1))
+            hf_dataset = hf_dataset.select(range(from_frame_index, len(hf_dataset)))
+        elif match_to:
+            to_frame_index = int(match_to.group(1))
+            hf_dataset = hf_dataset.select(range(to_frame_index))
+        else:
+            raise ValueError(f'`split` ({split}) should either be "train", "train[INT:]", or "train[:INT]"')
+    hf_dataset.set_transform(hf_transform_to_torch)
+    return hf_dataset
+
+
+def load_hf_dataset_remote(repo_id: str, version: str, split: str) -> datasets.Dataset:
+    """hf_dataset contains all the observations, states, actions, rewards, etc."""
+    hf_dataset = load_dataset(repo_id, revision=version, split=split)
     hf_dataset.set_transform(hf_transform_to_torch)
     return hf_dataset
 
@@ -124,6 +127,21 @@ def load_episode_data_index(repo_id, version, root) -> dict[str, torch.Tensor]:
         )
 
     return load_file(path)
+
+
+def get_hf_dataset_safe_version(repo_id: str, version: str) -> str:
+    dataset_info = list_repo_refs(repo_id, repo_type="dataset")
+    branches = [b.name for b in dataset_info.branches]
+    if version not in branches:
+        warnings.warn(
+            f"Version '{version}' not found on {repo_id}. Using 'main'.",
+            stacklevel=1,
+        )
+        if "main" not in branches:
+            raise ValueError(f"Version 'main' not found on {repo_id}")
+        return "main"
+    else:
+        return version
 
 
 def load_stats(repo_id, version, root) -> dict[str, dict[str, torch.Tensor]]:
@@ -354,8 +372,3 @@ def cycle(iterable):
             yield next(iterator)
         except StopIteration:
             iterator = iter(iterable)
-
-
-def get_hf_dataset_repo_branches(repo_id: str) -> list[str]:
-    dataset_info = list_repo_refs(repo_id, repo_type="dataset")
-    return [b.name for b in dataset_info.branches]
