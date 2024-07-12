@@ -22,7 +22,7 @@ from typing import Dict
 import datasets
 import torch
 from datasets import load_dataset, load_from_disk
-from huggingface_hub import hf_hub_download, list_repo_refs, snapshot_download
+from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 from PIL import Image as PILImage
 from safetensors.torch import load_file
 from torchvision import transforms
@@ -130,7 +130,8 @@ def load_episode_data_index(repo_id, version, root) -> dict[str, torch.Tensor]:
 
 
 def get_hf_dataset_safe_version(repo_id: str, version: str) -> str:
-    dataset_info = list_repo_refs(repo_id, repo_type="dataset")
+    api = HfApi()
+    dataset_info = api.list_repo_refs(repo_id, repo_type="dataset")
     branches = [b.name for b in dataset_info.branches]
     if version not in branches:
         warnings.warn(
