@@ -7,11 +7,10 @@ Example:
     python lerobot/scripts/push_dataset_to_hub.py \
         --raw-dir /hdd/tensorflow_datasets/bridge_dataset/1.0.0/ \
         --repo-id youliangtan/sampled_bridge_data_v2 \
-        --raw-format oxe_rlds \
-        --episodes 3 4 5 8 9 \
-        --fps 5
+        --raw-format oxe_rlds.bridge_orig \
+        --episodes 3 4 5 8 9
 
-Exact dataset fps is specified in:
+Exact dataset fps defined in oxe/config.py, obtained from:
     https://docs.google.com/spreadsheets/d/1rPBD77tk60AEIGZrGSODwyyzs5FgCU9Uz3h-3_t2A9g/edit?gid=0#gid=0&range=R:R
 """
 
@@ -19,12 +18,15 @@ import shutil
 from pathlib import Path
 
 import numpy as np
+import tensorflow as tf
 import tensorflow_datasets as tfds
 import torch
 import tqdm
 from datasets import Dataset, Features, Image, Sequence, Value
 from PIL import Image as PILImage
 
+from lerobot.common.datasets.push_dataset_to_hub.oxe.configs import OXE_DATASET_CONFIGS
+from lerobot.common.datasets.push_dataset_to_hub.oxe.transforms import OXE_STANDARDIZATION_TRANSFORMS
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, save_images_concurrently
 from lerobot.common.datasets.utils import (
     calculate_episode_data_index,
@@ -43,7 +45,51 @@ def tf_to_torch(data):
     return torch.from_numpy(data.numpy())
 
 
-def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episodes: list[int] | None = None):
+def tf_img_convert(img):
+    if img.dtype == tf.string:
+        img = tf.io.decode_image(img, expand_animations=False, dtype=tf.uint8)
+    elif img.dtype != tf.uint8:
+        raise ValueError(f"Unsupported image dtype: found with dtype {img.dtype}")
+    return img.numpy()
+
+
+def _broadcast_metadata_rlds(i: tf.Tensor, traj: dict) -> dict:
+    """
+    In the RLDS format, each trajectory has some top-level metadata that is explicitly separated out, and a "steps"
+    entry. This function moves the "steps" entry to the top level, broadcasting any metadata to the length of the
+    trajectory. This function also adds the extra metadata fields `_len`, `_traj_index`, and `_frame_index`.
+
+    NOTE: adapted from DLimp library https://github.com/kvablack/dlimp/
+    """
+    steps = traj.pop("steps")
+
+    traj_len = tf.shape(tf.nest.flatten(steps)[0])[0]
+
+    # broadcast metadata to the length of the trajectory
+    metadata = tf.nest.map_structure(lambda x: tf.repeat(x, traj_len), traj)
+
+    # put steps back in
+    assert "traj_metadata" not in steps
+    traj = {**steps, "traj_metadata": metadata}
+
+    assert "_len" not in traj
+    assert "_traj_index" not in traj
+    assert "_frame_index" not in traj
+    traj["_len"] = tf.repeat(traj_len, traj_len)
+    traj["_traj_index"] = tf.repeat(i, traj_len)
+    traj["_frame_index"] = tf.range(traj_len)
+
+    return traj
+
+
+def load_from_raw(
+    raw_dir: Path,
+    videos_dir: Path,
+    fps: int,
+    video: bool,
+    episodes: list[int],
+    oxe_dataset_name: str | None = None,
+):
     """
     Args:
         raw_dir (Path): _description_
@@ -53,22 +99,32 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
         episodes (list[int] | None, optional): _description_. Defaults to None.
     """
     ds_builder = tfds.builder_from_directory(str(raw_dir))
-    dataset = ds_builder.as_dataset(split="all")
+    dataset = ds_builder.as_dataset(
+        split="all",
+        decoders={"steps": tfds.decode.SkipDecoding()},
+    )
     dataset_info = ds_builder.info
     print("dataset_info: ", dataset_info)
 
-    image_keys = get_cameras_keys(dataset_info.features["steps"]["observation"].keys())
+    ds_length = len(dataset)
+    dataset = dataset.take(ds_length)
 
-    # check if there's a 'tfds.features.Text' in step, only take 1 lang instruction
-    lang_key = [
-        key for key, value in dataset_info.features["steps"].items() if isinstance(value, tfds.features.Text)
-    ]
-    lang_key = None if len(lang_key) == 0 else lang_key[0]
+    # "flatten" the dataset as such we can apply trajectory level map() easily
+    # each [obs][key] has a shape of (frame_size, ...)
+    dataset = dataset.enumerate().map(_broadcast_metadata_rlds)
+
+    # we will apply the standardization transform if the dataset_name is provided
+    if oxe_dataset_name is not None:
+        print(" - applying standardization transform for dataset: ", oxe_dataset_name)
+        assert oxe_dataset_name in OXE_STANDARDIZATION_TRANSFORMS
+        transform_fn = OXE_STANDARDIZATION_TRANSFORMS[oxe_dataset_name]
+        dataset = dataset.map(transform_fn)
+
+    image_keys = get_cameras_keys(dataset_info.features["steps"]["observation"].keys())
+    lang_key = "language_instruction" if "language_instruction" in dataset.element_spec else None
     print(" - image_keys: ", image_keys)
     print(" - lang_key: ", lang_key)
 
-    ds_length = len(dataset)
-    dataset = dataset.take(ds_length)
     it = iter(dataset)
 
     ep_dicts = []
@@ -83,7 +139,7 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
     for ep_idx in tqdm.tqdm(range(ds_length)):
         episode = next(it)
 
-        # if we user specified episodes, skip the ones not in the list
+        # if user specified episodes, skip the ones not in the list
         if episodes is not None:
             if len(episodes) == 0:
                 break
@@ -94,38 +150,49 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
             else:
                 continue  # skip
 
-        steps = episode["steps"]
-        num_frames = len(steps)
+        num_frames = episode["action"].shape[0]
+
+        ###########################################################
+        # Handle the episodic data
 
         # last step of demonstration is considered done
         done = torch.zeros(num_frames, dtype=torch.bool)
         done[-1] = True
-
-        states = []
-        actions = []  # TODO(YL): some actions can be a featuredict
-        rewards = torch.zeros(num_frames, dtype=torch.float32)
         ep_dict = {}
-        langs = []
+        langs = []  # TODO: might be located in "observation"
 
         image_array_dict = {key: [] for key in image_keys}
 
-        ###########################################################
-        # loop through all steps in the episode
-        for j, step in enumerate(steps):
-            states.append(tf_to_torch(step["observation"]["state"]))
-            actions.append(tf_to_torch(step["action"]))
-            rewards[j] = torch.tensor(step["reward"].numpy(), dtype=torch.float32)
+        # We will create the state observation tensor by stacking the state
+        # obs keys defined in the oxe/configs.py
+        if oxe_dataset_name is not None:
+            state_obs_keys = OXE_DATASET_CONFIGS[oxe_dataset_name]["state_obs_keys"]
+            # stack the state observations, if is None, pad with zeros
+            states = []
+            for key in state_obs_keys:
+                if key in episode["observation"]:
+                    states.append(tf_to_torch(episode["observation"][key]))
+                else:
+                    states.append(torch.zeros(num_frames, 1))  # pad with zeros
+            states = torch.cat(states, dim=1)
+            assert states.shape == (num_frames, 8)
+        else:
+            states = tf_to_torch(episode["observation"]["state"])
 
-            if lang_key is not None:
-                langs.append(str(step[lang_key]))
+        actions = tf_to_torch(episode["action"])
+        rewards = tf_to_torch(episode["reward"]).float()
 
-            for im_key in image_keys:
-                if im_key not in step["observation"]:
-                    continue
+        # If lang_key is present, convert the entire tensor at once
+        if lang_key is not None:
+            langs = [str(x) for x in episode[lang_key]]
 
-                img = step["observation"][im_key]
-                img = np.array(img)
-                image_array_dict[im_key].append(img)
+        for im_key in image_keys:
+            imgs = episode["observation"][im_key]
+            image_array_dict[im_key] = [tf_img_convert(img) for img in imgs]
+
+        # simple assertions
+        for item in [states, actions, rewards, done]:
+            assert len(item) == num_frames
 
         ###########################################################
 
@@ -157,12 +224,12 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
         if lang_key is not None:
             ep_dict["language_instruction"] = langs
 
-        ep_dict["observation.state"] = torch.stack(states)  # TODO better way
-        ep_dict["action"] = torch.stack(actions)
+        ep_dict["observation.state"] = states
+        ep_dict["action"] = actions
         ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
         ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames)
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
-        ep_dict["reward"] = rewards
+        ep_dict["next.reward"] = rewards
         ep_dict["next.done"] = done
 
         ep_dicts.append(ep_dict)
@@ -204,7 +271,7 @@ def to_hf_dataset(data_dict, video) -> Dataset:
     features["episode_index"] = Value(dtype="int64", id=None)
     features["frame_index"] = Value(dtype="int64", id=None)
     features["timestamp"] = Value(dtype="float32", id=None)
-    features["reward"] = Value(dtype="float32", id=None)
+    features["next.reward"] = Value(dtype="float32", id=None)
     features["next.done"] = Value(dtype="bool", id=None)
     features["index"] = Value(dtype="int64", id=None)
 
@@ -219,12 +286,22 @@ def from_raw_to_lerobot_format(
     fps: int | None = None,
     video: bool = True,
     episodes: list[int] | None = None,
+    oxe_dataset_name: str | None = None,
 ):
     """This is a test impl for rlds conversion"""
     if fps is None:
-        fps = 5
+        if oxe_dataset_name is not None:
+            if "fps" not in OXE_DATASET_CONFIGS[oxe_dataset_name]:
+                raise ValueError(
+                    "fps for this dataset is not specified in oxe/configs.py yet,"
+                    "means it is not yet tested"
+                )
+            fps = OXE_DATASET_CONFIGS[oxe_dataset_name]["fps"]
+        else:
+            print(" - WARNING: fps is not provided, using default value of 5 fps")
+            fps = 5
 
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes)
+    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, oxe_dataset_name)
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
