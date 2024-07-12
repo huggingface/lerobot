@@ -85,7 +85,7 @@ def relabel_bridge_actions(traj: Dict[str, Any]) -> Dict[str, Any]:
 def pprint_data_mixture(dataset_kwargs_list: List[Dict[str, Any]], dataset_weights: List[int]) -> None:
     print("\n######################################################################################")
     print(f"# Loading the following {len(dataset_kwargs_list)} datasets (incl. sampling weight):{'': >24} #")
-    for dataset_kwargs, weight in zip(dataset_kwargs_list, dataset_weights):
+    for dataset_kwargs, weight in zip(dataset_kwargs_list, dataset_weights, strict=False):
         pad = 80 - len(dataset_kwargs["name"])
         print(f"# {dataset_kwargs['name']}: {weight:=>{pad}f} #")
     print("######################################################################################\n")

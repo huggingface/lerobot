@@ -30,13 +30,16 @@ from lerobot.common.datasets.push_dataset_to_hub.oxe.data_utils import (
     relabel_bridge_actions,
 )
 
+
 def droid_baseact_transform_fn():
     from lerobot.common.datasets.push_dataset_to_hub.oxe.droid_utils import droid_baseact_transform
+
     return droid_baseact_transform
 
 
 def droid_finetuning_transform_fn():
     from lerobot.common.datasets.push_dataset_to_hub.oxe.droid_utils import droid_finetuning_transform
+
     return droid_finetuning_transform
 
 
@@ -45,8 +48,8 @@ def bridge_oxe_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     Applies to version of Bridge V2 in Open X-Embodiment mixture.
 
     Note =>> In original Bridge V2 dataset, the first timestep has an all-zero action, so we remove it!
-    """   
-    for key in trajectory.keys():
+    """
+    for key in trajectory:
         if key == "traj_metadata":
             continue
         elif key in ["observation", "action"]:
@@ -76,7 +79,7 @@ def bridge_orig_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
 
     Note =>> In original Bridge V2 dataset, the first timestep has an all-zero action, so we remove it!
     """
-    for key in trajectory.keys():
+    for key in trajectory:
         if key == "traj_metadata":
             continue
         elif key == "observation":
@@ -148,7 +151,9 @@ def kuka_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     )
     eef_value = tf.io.decode_raw(eef_value, tf.float32)
     trajectory["observation"]["clip_function_input/base_pose_tool_reached"] = tf.reshape(eef_value, (-1, 7))
-    gripper_value = tf.io.decode_compressed(trajectory["observation"]["gripper_closed"], compression_type="ZLIB")
+    gripper_value = tf.io.decode_compressed(
+        trajectory["observation"]["gripper_closed"], compression_type="ZLIB"
+    )
     gripper_value = tf.io.decode_raw(gripper_value, tf.float32)
     trajectory["observation"]["gripper_closed"] = tf.reshape(gripper_value, (-1, 1))
     # trajectory["language_instruction"] = tf.fill(
@@ -178,7 +183,9 @@ def taco_play_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
 
 def jaco_play_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["observation"]["state_eef"] = trajectory["observation"]["end_effector_cartesian_pos"][:, :6]
-    trajectory["observation"]["state_gripper"] = trajectory["observation"]["end_effector_cartesian_pos"][:, -1:]
+    trajectory["observation"]["state_gripper"] = trajectory["observation"]["end_effector_cartesian_pos"][
+        :, -1:
+    ]
 
     # make gripper action absolute action, +1 = open, 0 = close
     gripper_action = trajectory["action"]["gripper_closedness_action"][:, 0]
@@ -214,7 +221,9 @@ def berkeley_cable_routing_dataset_transform(trajectory: Dict[str, Any]) -> Dict
 
 def roboturk_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     # invert absolute gripper action, +1 = open, 0 = close
-    gripper_action = invert_gripper_actions(tf.clip_by_value(trajectory["action"]["gripper_closedness_action"], 0, 1))
+    gripper_action = invert_gripper_actions(
+        tf.clip_by_value(trajectory["action"]["gripper_closedness_action"], 0, 1)
+    )
 
     trajectory["action"] = tf.concat(
         (
@@ -324,7 +333,9 @@ def language_table_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, An
     instruction_bytes = trajectory["observation"]["instruction"]
     instruction_encoded = tf.strings.unicode_encode(instruction_bytes, output_encoding="UTF-8")
     # Remove trailing padding --> convert RaggedTensor to regular Tensor.
-    trajectory["language_instruction"] = tf.strings.split(instruction_encoded, "\x00")[:, :1].to_tensor()[:, 0]
+    trajectory["language_instruction"] = tf.strings.split(instruction_encoded, "\x00")[:, :1].to_tensor()[
+        :, 0
+    ]
     return trajectory
 
 
@@ -895,7 +906,8 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "berkeley_gnm_recon": gnm_dataset_transform,
     "berkeley_gnm_cory_hall": gnm_dataset_transform,
     "berkeley_gnm_sac_son": gnm_dataset_transform,
-    "droid": droid_baseact_transform_fn,
+    "droid": droid_baseact_transform_fn(),
+    "droid100": droid_baseact_transform_fn(),  # first 100 episodes of droid
     "fmb_dataset": fmb_dataset_transform,
     "dobbe": dobbe_dataset_transform,
     "roboset": roboset_dataset_transform,
@@ -908,5 +920,5 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "tdroid_knock_object_over": tdroid_dataset_transform,
     "tdroid_cover_object_with_towel": tdroid_dataset_transform,
     ### DROID Finetuning datasets
-    "droid_wipe": droid_finetuning_transform_fn,
+    "droid_wipe": droid_finetuning_transform_fn(),
 }

@@ -48,17 +48,17 @@ def velocity_act_to_wrist_frame(velocity, wrist_in_robot_frame):
     Returns: 9d velocity action in robot wrist frame (3 x translation, 6 x rotation as R6)
 
     """
-    R_frame = euler_to_rmat(wrist_in_robot_frame[:, 3:6])
-    R_frame_inv = invert_rmat(R_frame)
+    r_frame = euler_to_rmat(wrist_in_robot_frame[:, 3:6])
+    r_frame_inv = invert_rmat(r_frame)
 
     # world to wrist: dT_pi = R^-1 dT_rbt
-    vel_t = (R_frame_inv @ velocity[:, :3][..., None])[..., 0]
+    vel_t = (r_frame_inv @ velocity[:, :3][..., None])[..., 0]
 
     # world to wrist: dR_pi = R^-1 dR_rbt R
-    dR = euler_to_rmat(velocity[:, 3:6])
-    dR = R_frame_inv @ (dR @ R_frame)
-    dR_r6 = rotmat_to_rot6d(dR)
-    return tf.concat([vel_t, dR_r6], axis=-1)
+    dr_ = euler_to_rmat(velocity[:, 3:6])
+    dr_ = r_frame_inv @ (dr_ @ r_frame)
+    dr_r6 = rotmat_to_rot6d(dr_)
+    return tf.concat([vel_t, dr_r6], axis=-1)
 
 
 def rand_swap_exterior_images(img1, img2):
@@ -73,12 +73,12 @@ def droid_baseact_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     DROID dataset transformation for actions expressed in *base* frame of the robot.
     """
     dt = trajectory["action_dict"]["cartesian_velocity"][:, :3]
-    dR = trajectory["action_dict"]["cartesian_velocity"][:, 3:6]
+    dr_ = trajectory["action_dict"]["cartesian_velocity"][:, 3:6]
 
     trajectory["action"] = tf.concat(
         (
             dt,
-            dR,
+            dr_,
             1 - trajectory["action_dict"]["gripper_position"],
         ),
         axis=-1,
@@ -134,11 +134,11 @@ def droid_finetuning_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     DROID dataset transformation for actions expressed in *base* frame of the robot.
     """
     dt = trajectory["action_dict"]["cartesian_velocity"][:, :3]
-    dR = trajectory["action_dict"]["cartesian_velocity"][:, 3:6]
+    dr_ = trajectory["action_dict"]["cartesian_velocity"][:, 3:6]
     trajectory["action"] = tf.concat(
         (
             dt,
-            dR,
+            dr_,
             1 - trajectory["action_dict"]["gripper_position"],
         ),
         axis=-1,
@@ -158,7 +158,7 @@ def zero_action_filter(traj: Dict) -> bool:
     Filters transitions whose actions are all-0 (only relative actions, no gripper action).
     Note: this filter is applied *after* action normalization, so need to compare to "normalized 0".
     """
-    DROID_Q01 = tf.convert_to_tensor(
+    droid_q01 = tf.convert_to_tensor(
         [
             -0.7776297926902771,
             -0.5803514122962952,
@@ -168,7 +168,7 @@ def zero_action_filter(traj: Dict) -> bool:
             -0.8895104378461838,
         ]
     )
-    DROID_Q99 = tf.convert_to_tensor(
+    droid_q99 = tf.convert_to_tensor(
         [
             0.7597932070493698,
             0.5726242214441299,
@@ -178,6 +178,8 @@ def zero_action_filter(traj: Dict) -> bool:
             0.8897542208433151,
         ]
     )
-    DROID_NORM_0_ACT = 2 * (tf.zeros_like(traj["action"][:, :6]) - DROID_Q01) / (DROID_Q99 - DROID_Q01 + 1e-8) - 1
+    droid_norm_0_act = (
+        2 * (tf.zeros_like(traj["action"][:, :6]) - droid_q01) / (droid_q99 - droid_q01 + 1e-8) - 1
+    )
 
-    return tf.reduce_any(tf.math.abs(traj["action"][:, :6] - DROID_NORM_0_ACT) > 1e-5)
+    return tf.reduce_any(tf.math.abs(traj["action"][:, :6] - droid_norm_0_act) > 1e-5)
