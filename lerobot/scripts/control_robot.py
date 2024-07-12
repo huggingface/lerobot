@@ -209,7 +209,7 @@ def record_dataset(
     num_episodes=50,
     video=True,
     run_compute_stats=True,
-    num_image_writters=4,
+    num_image_writers=8,
     force_override=False,
 ):
     # TODO(rcadene): Add option to record logs
@@ -292,7 +292,7 @@ def record_dataset(
     # Using `with` to exist smoothly if an execption is raised.
     # Using only 4 worker threads to avoid blocking the main thread.
     futures = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writters) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
         # Start recording all episodes
         while episode_index < num_episodes:
             logging.info(f"Recording episode {episode_index}")
@@ -406,7 +406,7 @@ def record_dataset(
             if stop_recording or episode_index == num_episodes:
                 logging.info("Done recording")
                 os.system('say "Done recording"')
-                logging.info("Waiting for threads writting the images on disk to terminate...")
+                logging.info("Waiting for threads writing the images on disk to terminate...")
                 listener.stop()
                 for _ in tqdm.tqdm(
                     concurrent.futures.as_completed(futures), total=len(futures), desc="Writting images"
@@ -615,10 +615,10 @@ if __name__ == "__main__":
     )
 
     parser_record.add_argument(
-        "--num-image-writters",
+        "--num-image-writers",
         type=int,
-        default=4,
-        help="Number of threads writting the frames as png images on disk. Don't set too much as you might get unstable fps due to main thread being blocked.",
+        default=8,
+        help="Number of threads writing the frames as png images on disk. Don't set too much as you might get unstable fps due to main thread being blocked.",
     )
     parser_record.add_argument(
         "--force-override",
