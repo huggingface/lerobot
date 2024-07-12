@@ -295,10 +295,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     set_global_seed(cfg.seed)
 
     # Check device is available
-    if accelerator:
-        device = accelerator.device
-    else:
-        device = get_safe_torch_device(cfg.device, log=True)
+    device = accelerator.device if accelerator else get_safe_torch_device(cfg.device, log=True)
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -317,7 +314,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     eval_env = None
     if cfg.training.eval_freq > 0:
         if accelerator:
-            raise NotImplementedError("Evaluation is not supported with accelerate yet.")
+            raise NotImplementedError("Simulation environments are not supported with accelerate yet.")
         else:
             logging.info("make_env")
             eval_env = make_env(cfg)
@@ -326,8 +323,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     policy = make_policy(
         hydra_cfg=cfg,
         dataset_stats=offline_dataset.stats if not cfg.resume else None,
-        pretrained_policy_name_or_path=str(
-            logger.last_pretrained_model_dir) if cfg.resume else None,
+        pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
     )
 
     assert isinstance(policy, nn.Module)
@@ -441,9 +437,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             accelerator=accelerator,
         )
         train_info["dataloading_s"] = dataloading_s
-        if not accelerator or accelerator.is_main_process:
-            if step % cfg.training.log_freq == 0:
-                log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline=True)
+        if (step % cfg.training.log_freq == 0) and (not accelerator or accelerator.is_main_process):
+            log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline=True)
 
         # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
         # so we pass in step + 1.
