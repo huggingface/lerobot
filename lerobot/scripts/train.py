@@ -164,7 +164,11 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
     # If using multiple processes, the number of samples seen during training is multiplied by the number of processes/GPUs.
-    num_samples = (step + 1) * cfg.training.batch_size * cfg.training.accelerate.get("num_processes", 1)
+    num_samples = (
+        (step + 1)
+        * cfg.training.batch_size
+        * (cfg.training.accelerate.get("num_processes", 1) if cfg.training.accelerate.enable else 1)
+    )
     avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
@@ -203,7 +207,11 @@ def log_eval_info(logger, info, step, cfg, dataset, is_offline):
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
     # If using multiple processes, the number of samples seen during training is multiplied by the number of processes/GPUs.
-    num_samples = (step + 1) * cfg.training.batch_size * cfg.training.accelerate.get("num_processes", 1)
+    num_samples = (
+        (step + 1)
+        * cfg.training.batch_size
+        * (cfg.training.accelerate.get("num_processes", 1) if cfg.training.accelerate.enable else 1)
+    )
     avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
