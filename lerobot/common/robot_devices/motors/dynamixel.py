@@ -1,5 +1,4 @@
 import enum
-import sys
 import time
 import traceback
 from copy import deepcopy
@@ -265,9 +264,9 @@ class DynamixelMotorsBus:
         except Exception:
             traceback.print_exc()
             print(
-                "\nTry running `python lerobot/common/robot_devices/motors/dynamixel.py` to make sure you use the correct port."
+                "\nTry running `python lerobot/common/robot_devices/motors/dynamixel.py` to make sure you are using the correct port.\n"
             )
-            sys.exit(1)
+            raise
 
         self.port_handler.setBaudRate(BAUD_RATE)
         self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
