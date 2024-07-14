@@ -41,7 +41,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfdk-aac-dev \
     libopus-dev \
     libsvtav1-dev libsvtav1enc-dev libsvtav1dec-dev \
-    libdav1d-dev
+    libdav1d-dev \
+    python3-dev
 
 
 # Install gh cli tool
