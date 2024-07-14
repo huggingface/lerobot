@@ -835,7 +835,7 @@ files = [
 name = "evdev"
 version = "1.7.1"
 description = "Bindings to the Linux input handling subsystem"
-optional = false
+optional = true
 python-versions = ">=3.6"
 files = [
     {file = "evdev-1.7.1.tar.gz", hash = "sha256:0c72c370bda29d857e188d931019c32651a9c1ea977c08c8d939b1ced1637fde"},
@@ -3014,7 +3014,7 @@ dev = ["aafigure", "matplotlib", "numpy", "pygame", "pyglet (<2.0.0)", "sphinx",
 name = "pynput"
 version = "1.7.7"
 description = "Monitor and control user input devices"
-optional = false
+optional = true
 python-versions = "*"
 files = [
     {file = "pynput-1.7.7-py2.py3-none-any.whl", hash = "sha256:afc43f651684c98818de048abc76adf9f2d3d797083cb07c1f82be764a2d44cb"},
@@ -3031,7 +3031,7 @@ six = "*"
 name = "pyobjc-core"
 version = "10.3.1"
 description = "Python<->ObjC Interoperability Module"
-optional = false
+optional = true
 python-versions = ">=3.8"
 files = [
     {file = "pyobjc_core-10.3.1-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:ea46d2cda17921e417085ac6286d43ae448113158afcf39e0abe484c58fb3d78"},
@@ -3048,7 +3048,7 @@ files = [
 name = "pyobjc-framework-applicationservices"
 version = "10.3.1"
 description = "Wrappers for the framework ApplicationServices on macOS"
-optional = false
+optional = true
 python-versions = ">=3.8"
 files = [
     {file = "pyobjc_framework_ApplicationServices-10.3.1-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:b694260d423c470cb90c3a7009cfde93e332ea6fb4b9b9526ad3acbd33460e3d"},
@@ -3071,7 +3071,7 @@ pyobjc-framework-Quartz = ">=10.3.1"
 name = "pyobjc-framework-cocoa"
 version = "10.3.1"
 description = "Wrappers for the Cocoa frameworks on macOS"
-optional = false
+optional = true
 python-versions = ">=3.8"
 files = [
     {file = "pyobjc_framework_Cocoa-10.3.1-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:4cb4f8491ab4d9b59f5187e42383f819f7a46306a4fa25b84f126776305291d1"},
@@ -3091,7 +3091,7 @@ pyobjc-core = ">=10.3.1"
 name = "pyobjc-framework-coretext"
 version = "10.3.1"
 description = "Wrappers for the framework CoreText on macOS"
-optional = false
+optional = true
 python-versions = ">=3.8"
 files = [
     {file = "pyobjc_framework_CoreText-10.3.1-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:dd6123cfccc38e32be884d1a13fb62bd636ecb192b9e8ae2b8011c977dec229e"},
@@ -3113,7 +3113,7 @@ pyobjc-framework-Quartz = ">=10.3.1"
 name = "pyobjc-framework-quartz"
 version = "10.3.1"
 description = "Wrappers for the Quartz frameworks on macOS"
-optional = false
+optional = true
 python-versions = ">=3.8"
 files = [
     {file = "pyobjc_framework_Quartz-10.3.1-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:5ef4fd315ed2bc42ef77fdeb2bae28a88ec986bd7b8079a87ba3b3475348f96e"},
@@ -3256,7 +3256,7 @@ six = ">=1.5"
 name = "python-xlib"
 version = "0.33"
 description = "Python X Library"
-optional = false
+optional = true
 python-versions = "*"
 files = [
     {file = "python-xlib-0.33.tar.gz", hash = "sha256:55af7906a2c75ce6cb280a584776080602444f75815a7aff4d287bb2d7018b32"},
@@ -4497,7 +4497,7 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 aloha = ["gym-aloha"]
 dev = ["debugpy", "pre-commit"]
 dora = ["gym-dora"]
-koch = ["dynamixel-sdk"]
+koch = ["dynamixel-sdk", "pynput"]
 pusht = ["gym-pusht"]
 test = ["pytest", "pytest-cov", "pytest-mock"]
 umi = ["imagecodecs"]
@@ -4507,4 +4507,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "6d82706d5216ce065ba5912ea9f802846dfdf7e7b1665f8560cc782fb0dfa354"
+content-hash = "2c59d869c6b1f2132070387f3d371b5b004765ae853501bbd522eb400738f2d0"

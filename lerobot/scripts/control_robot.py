@@ -91,13 +91,14 @@ from pathlib import Path
 
 import torch
 import tqdm
+from huggingface_hub import create_branch
 from omegaconf import DictConfig
 from PIL import Image
 from pynput import keyboard
 
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.compute_stats import compute_stats
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format import to_hf_dataset
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes
 from lerobot.common.datasets.utils import calculate_episode_data_index
@@ -107,7 +108,7 @@ from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
-from lerobot.scripts.push_dataset_to_hub import save_meta_data
+from lerobot.scripts.push_dataset_to_hub import push_meta_data_to_hub, push_videos_to_hub, save_meta_data
 
 ########################################################################################
 # Utilities
@@ -209,6 +210,7 @@ def record_dataset(
     num_episodes=50,
     video=True,
     run_compute_stats=True,
+    push_to_hub=True,
     num_image_writers=8,
     force_override=False,
 ):
@@ -469,7 +471,12 @@ def record_dataset(
     meta_data_dir = local_dir / "meta_data"
     save_meta_data(info, stats, episode_data_index, meta_data_dir)
 
-    # TODO(rcadene): push to hub
+    if push_to_hub:
+        hf_dataset.push_to_hub(repo_id, revision="main")
+        push_meta_data_to_hub(repo_id, meta_data_dir, revision="main")
+        if video:
+            push_videos_to_hub(repo_id, videos_dir, revision="main")
+        create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
 
     logging.info("Exiting")
     os.system('say "Exiting" &')
@@ -613,7 +620,12 @@ if __name__ == "__main__":
         default=1,
         help="By default, run the computation of the data statistics at the end of data collection. Compute intensive and not required to just replay an episode.",
     )
-
+    parser.add_argument(
+        "--push-to-hub",
+        type=int,
+        default=1,
+        help="Upload dataset to Hugging Face hub.",
+    )
     parser_record.add_argument(
         "--num-image-writers",
         type=int,

@@ -36,8 +36,8 @@ def make_robot(name):
                 ),
             },
             cameras={
-                "laptop": OpenCVCamera(1, fps=30, width=640, height=480),
-                "phone": OpenCVCamera(2, fps=30, width=640, height=480),
+                "laptop": OpenCVCamera(0, fps=30, width=640, height=480),
+                "phone": OpenCVCamera(1, fps=30, width=640, height=480),
             },
         )
     else:
