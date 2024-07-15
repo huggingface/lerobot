@@ -118,22 +118,15 @@ def update_policy(
         accelerator.backward(loss)
     else:
         loss.backward()
-
-    # Unscale the graident of the optimzer's assigned params in-place **prior to gradient clipping**.
-    grad_scaler.unscale_(optimizer)
+    
     if accelerator:
         grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
     else:
         grad_norm = torch.nn.utils.clip_grad_norm_(
             policy.parameters(), grad_clip_norm, error_if_nonfinite=False
         )
-    # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
-    # although it still skips optimizer.step() if the gradients contain infs or NaNs.
-    grad_scaler.step(optimizer)
 
-    # Updates the scale for next iteration.
-    grad_scaler.update()
-
+    optimizer.step()
     optimizer.zero_grad()
 
     if lr_scheduler is not None:
