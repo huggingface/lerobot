@@ -141,6 +141,8 @@ def update_policy(
 
     if isinstance(policy, PolicyWithUpdate):
         # To possibly update an internal buffer (for instance an Exponential Moving Average like in TDMPC).
+        if accelerator:
+            accelerator.unwrap_model(policy).update()
         policy.update()
 
     info = {
@@ -327,13 +329,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
     if cfg.training.eval_freq > 0:
-        if accelerator:
-            raise NotImplementedError(
-                "Creating simulation environments is not supported with accelerate yet."
-            )
-        else:
-            logging.info("make_env")
-            eval_env = make_env(cfg)
+        logging.info("make_env")
+        eval_env = make_env(cfg)
 
     logging.info("make_policy")
     policy = make_policy(
@@ -372,15 +369,18 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
         if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
-            assert eval_env is not None
-            eval_info = eval_policy(
-                eval_env,
-                policy,
-                cfg.eval.n_episodes,
-                videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
-                max_episodes_rendered=4,
-                start_seed=cfg.seed,
-            )
+            with torch.no_grad():
+                assert eval_env is not None
+                if accelerator:
+                    accelerator.wait_for_everyone()
+                eval_info = eval_policy(
+                    eval_env,
+                    policy,
+                    cfg.eval.n_episodes,
+                    videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
+                    max_episodes_rendered=4,
+                    start_seed=cfg.seed,
+                )
             log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline=True)
             if cfg.wandb.enable:
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
