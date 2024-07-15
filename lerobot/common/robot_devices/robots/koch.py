@@ -477,7 +477,9 @@ class KochRobot:
         # Read follower position
         follower_pos = {}
         for name in self.follower_arms:
+            now = time.perf_counter()
             follower_pos[name] = self.follower_arms[name].read("Present_Position")
+            self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - now
 
         # Create state by concatenating follower current position
         state = []
@@ -489,7 +491,10 @@ class KochRobot:
         # Capture images from cameras
         images = {}
         for name in self.cameras:
+            now = time.perf_counter()
             images[name] = self.cameras[name].async_read()
+            self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
+            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - now
 
         # Populate output dictionnaries and format to pytorch
         obs_dict = {}
