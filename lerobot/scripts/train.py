@@ -116,7 +116,7 @@ def update_policy(
         accelerator.backward(loss)
     else:
         loss.backward()
-    
+
     if accelerator:
         grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
     else:
@@ -246,7 +246,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             nb_processes == cfg.training.accelerate.get("num_processes", None)
         ), f"Running on {nb_processes} processes, but got nb_processes : {cfg.training.accelerate.get('num_processes', None)} in config."
         logging.info(
-            f"Acccelerated is enabled, training will be launched with the following configuration :\nNumber of processes: {nb_processes} \nMixed precision: {use_amp}"
+            f"Acccelerate is enabled, training will be launched with the following configuration :\nNumber of processes: {nb_processes} \nMixed precision: {use_amp}"
         )
 
     # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
