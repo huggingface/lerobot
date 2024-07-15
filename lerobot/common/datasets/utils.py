@@ -135,7 +135,11 @@ def get_hf_dataset_safe_version(repo_id: str, version: str) -> str:
     branches = [b.name for b in dataset_info.branches]
     if version not in branches:
         warnings.warn(
-            f"Version '{version}' not found on {repo_id}. Using 'main'.",
+            f"""You are trying to load a dataset from {repo_id} created with a previous version of the
+            codebase. The following versions are available: {branches}.
+            The requested version ('{version}') is not found. You should be fine since
+            backward compatibility is maintained. If you encounter a problem, contact LeRobot maintainers on
+            Discord ('https://discord.com/invite/s3KuuzsPFb') or open an issue on github.""",
             stacklevel=1,
         )
         if "main" not in branches:
