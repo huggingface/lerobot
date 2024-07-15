@@ -24,7 +24,6 @@ from deepdiff import DeepDiff
 from omegaconf import DictConfig, OmegaConf
 from termcolor import colored
 from torch import nn
-from torch.cuda.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
@@ -102,7 +101,6 @@ def update_policy(
     batch,
     optimizer,
     grad_clip_norm,
-    grad_scaler: GradScaler,
     lr_scheduler=None,
     accelerator=None,
 ):
@@ -336,7 +334,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
-    grad_scaler = GradScaler(enabled=cfg.use_amp)
 
     step = 0  # number of policy updates (forward + backward + optim)
 
@@ -441,7 +438,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             batch,
             optimizer,
             cfg.training.grad_clip_norm,
-            grad_scaler=grad_scaler,
             lr_scheduler=lr_scheduler,
             accelerator=accelerator,
         )
