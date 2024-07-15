@@ -47,7 +47,6 @@ training:
   batch_size: ???
   accelerate:
     enable: false
-    use_amp: false
     num_processes: 1
   image_transforms:
   # These transforms are all using standard torchvision.transforms.v2
