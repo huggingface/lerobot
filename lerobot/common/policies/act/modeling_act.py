@@ -158,7 +158,14 @@ class ACTTemporalEnsembler:
         """Temporal ensembling as described in Algorithm 2 of https://arxiv.org/abs/2304.13705.
 
         The weights are calculated as wᵢ = exp(-temporal_ensemble_coeff * i) where w₀ is the oldest action.
-        They are then normalized to sum to 1 by dividing by Σwᵢ.
+        They are then normalized to sum to 1 by dividing by Σwᵢ. Here's some intuition around how the
+        coefficient works:
+            - Setting it to 0 uniformly weighs all actions.
+            - Setting it positive gives more weight to older actions.
+            - Setting it negative gives more weight to newer actions.
+        NOTE: The default value for `temporal_ensemble_coeff` used by the original ACT work is 0.01. This
+        results in older actions being weighed more highly than newer actions (if you know why, please submit
+        a PR with the explanation).
 
         Here we use an online method for computing the average rather than caching a history of actions in
         order to compute the average offline. For a simple 1D sequence it looks something like:
@@ -187,10 +194,6 @@ class ACTTemporalEnsembler:
             avg /= exp_weights[:i+1].sum()
         print("online", avg)
         ```
-
-        NOTE: The default value for `temporal_ensemble_coeff` used by the original ACT work is 0.01. This
-        results in older actions being weighed more highly than newer actions (if you know why, please submit
-        a PR with the explanation).
         """
         self.chunk_size = chunk_size
         self.ensemble_weights = torch.exp(-temporal_ensemble_coeff * torch.arange(chunk_size))

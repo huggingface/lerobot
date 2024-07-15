@@ -137,6 +137,7 @@ class ACTConfig:
     n_vae_encoder_layers: int = 4
 
     # Inference.
+    # Note: the value used in ACT when temporal ensembling is enabled is 0.01.
     temporal_ensemble_coeff: float | None = None
 
     # Training and loss computation.
