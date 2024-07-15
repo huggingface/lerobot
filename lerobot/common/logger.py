@@ -20,17 +20,15 @@
 
 import logging
 import os
-import re
-from glob import glob
 from pathlib import Path
 
 import torch
-from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from omegaconf import DictConfig, OmegaConf
 from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
+from lerobot.common.experiment_trackers import experiment_tracker_factory
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
 
@@ -48,18 +46,6 @@ def cfg_to_group(cfg: DictConfig, return_list: bool = False) -> list[str] | str:
         f"seed:{cfg.seed}",
     ]
     return lst if return_list else "-".join(lst)
-
-
-def get_wandb_run_id_from_filesystem(checkpoint_dir: Path) -> str:
-    # Get the WandB run ID.
-    paths = glob(str(checkpoint_dir / "../wandb/latest-run/run-*"))
-    if len(paths) != 1:
-        raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
-    match = re.search(r"run-([^\.]+).wandb", paths[0].split("/")[-1])
-    if match is None:
-        raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
-    wandb_run_id = match.groups(0)[0]
-    return wandb_run_id
 
 
 class Logger:
@@ -83,14 +69,21 @@ class Logger:
     pretrained_model_dir_name = "pretrained_model"
     training_state_file_name = "training_state.pth"
 
-    def __init__(self, cfg: DictConfig, log_dir: str, wandb_job_name: str | None = None):
+    def __init__(
+        self,
+        cfg: DictConfig,
+        log_dir: str,
+        job_name: str | None = None,
+    ):
         """
         Args:
             log_dir: The directory to save all logs and training outputs to.
-            job_name: The WandB job name.
+            job_name: The job name.
         """
         self._cfg = cfg
         self.log_dir = Path(log_dir)
+        self._experiment_tracker = experiment_tracker_factory(cfg)
+
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoints_dir = self.get_checkpoints_dir(log_dir)
         self.last_checkpoint_dir = self.get_last_checkpoint_dir(log_dir)
@@ -98,39 +91,43 @@ class Logger:
 
         # Set up WandB.
         self._group = cfg_to_group(cfg)
-        project = cfg.get("wandb", {}).get("project")
-        entity = cfg.get("wandb", {}).get("entity")
-        enable_wandb = cfg.get("wandb", {}).get("enable", False)
-        run_offline = not enable_wandb or not project
+
+        self._tracker_name = self._experiment_tracker.tracker_name if self._experiment_tracker else None
+        project = cfg.get(self._tracker_name).get("project") if self._tracker_name else None
+        entity = cfg.get(self._tracker_name).get("entity") if self._tracker_name else None
+        enable_tracking = cfg.get(self._tracker_name).get("enable", False) if self._tracker_name else False
+
+        run_offline = not enable_tracking or not project
         if run_offline:
             logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
-            self._wandb = None
+            self._experiment_tracker = None
         else:
-            os.environ["WANDB_SILENT"] = "true"
-            import wandb
-
-            wandb_run_id = None
-            if cfg.resume:
-                wandb_run_id = get_wandb_run_id_from_filesystem(self.checkpoints_dir)
-
-            wandb.init(
-                id=wandb_run_id,
+            assert self._experiment_tracker is not None, "Experiment tracker must be provided."
+            self._experiment_tracker.init(
+                checkpoints_dir=self.checkpoints_dir,
                 project=project,
                 entity=entity,
-                name=wandb_job_name,
+                name=job_name,
                 notes=cfg.get("wandb", {}).get("notes"),
                 tags=cfg_to_group(cfg, return_list=True),
-                dir=log_dir,
+                log_dir=log_dir,
                 config=OmegaConf.to_container(cfg, resolve=True),
                 # TODO(rcadene): try set to True
                 save_code=False,
                 # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
                 job_type="train_eval",
-                resume="must" if cfg.resume else None,
+                resume=cfg.resume,
             )
-            print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
-            logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
-            self._wandb = wandb
+            print(
+                colored(
+                    f"Logs will be synced with {self._experiment_tracker.tracker_name}.",
+                    "blue",
+                    attrs=["bold"],
+                )
+            )
+            logging.info(
+                f"Track this run --> {colored(self._experiment_tracker.experiment_url, 'yellow', attrs=['bold'])}"
+            )
 
     @classmethod
     def get_checkpoints_dir(cls, log_dir: str | Path) -> Path:
@@ -150,7 +147,7 @@ class Logger:
         """
         return cls.get_last_checkpoint_dir(log_dir) / cls.pretrained_model_dir_name
 
-    def save_model(self, save_dir: Path, policy: Policy, wandb_artifact_name: str | None = None):
+    def save_model(self, save_dir: Path, policy: Policy, artifact_name: str | None = None):
         """Save the weights of the Policy model using PyTorchModelHubMixin.
 
         The weights are saved in a folder called "pretrained_model" under the checkpoint directory.
@@ -161,11 +158,11 @@ class Logger:
         policy.save_pretrained(save_dir)
         # Also save the full Hydra config for the env configuration.
         OmegaConf.save(self._cfg, save_dir / "config.yaml")
-        if self._wandb and not self._cfg.wandb.disable_artifact:
+
+        disable_artifact = self._cfg.get(self._tracker_name).disable_artifact if self._tracker_name else False
+        if self._experiment_tracker and artifact_name and not disable_artifact:
             # note wandb artifact does not accept ":" or "/" in its name
-            artifact = self._wandb.Artifact(wandb_artifact_name, type="model")
-            artifact.add_file(save_dir / SAFETENSORS_SINGLE_FILE)
-            self._wandb.log_artifact(artifact)
+            self._experiment_tracker.log_model(save_dir, model_name=artifact_name)
         if self.last_checkpoint_dir.exists():
             os.remove(self.last_checkpoint_dir)
 
@@ -199,14 +196,12 @@ class Logger:
     ):
         """Checkpoint the model weights and the training state."""
         checkpoint_dir = self.checkpoints_dir / str(identifier)
-        wandb_artifact_name = (
+        artifact_name = (
             None
-            if self._wandb is None
+            if self._experiment_tracker is None
             else f"{self._group.replace(':', '_').replace('/', '_')}-{self._cfg.seed}-{identifier}"
         )
-        self.save_model(
-            checkpoint_dir / self.pretrained_model_dir_name, policy, wandb_artifact_name=wandb_artifact_name
-        )
+        self.save_model(checkpoint_dir / self.pretrained_model_dir_name, policy, artifact_name=artifact_name)
         self.save_training_state(checkpoint_dir, train_step, optimizer, scheduler)
         os.symlink(checkpoint_dir.absolute(), self.last_checkpoint_dir)
 
@@ -230,17 +225,16 @@ class Logger:
     def log_dict(self, d, step, mode="train"):
         assert mode in {"train", "eval"}
         # TODO(alexander-soare): Add local text log.
-        if self._wandb is not None:
+        if self._experiment_tracker:
             for k, v in d.items():
                 if not isinstance(v, (int, float, str)):
                     logging.warning(
-                        f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
+                        f'{self._experiment_tracker.tracker_name} logging of key "{k}" was ignored as its type is not handled by this wrapper.'
                     )
                     continue
-                self._wandb.log({f"{mode}/{k}": v}, step=step)
+                self._experiment_tracker.log_data({f"{mode}/{k}": v}, step=step)
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         assert mode in {"train", "eval"}
-        assert self._wandb is not None
-        wandb_video = self._wandb.Video(video_path, fps=self._cfg.fps, format="mp4")
-        self._wandb.log({f"{mode}/video": wandb_video}, step=step)
+        assert self._experiment_tracker is not None
+        self._experiment_tracker.log_video(video_path, fps=self._cfg.fps, format="mp4", mode=mode, step=step)
