@@ -142,6 +142,14 @@ class DiffusionConfig:
     prediction_type: str = "epsilon"
     clip_sample: bool = True
     clip_sample_range: float = 1.0
+    # Transformer
+    # input_dim: int
+    n_layer: int = 12
+    n_head: int = 12
+    p_drop_emb: float = 0.1
+    p_drop_attn: float = 0.1
+    causal_attn: bool = False
+    n_cond_layers: int = 0
 
     # Inference
     num_inference_steps: int | None = None
