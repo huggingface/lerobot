@@ -147,3 +147,22 @@ def require_package(package_name):
         return wrapper
 
     return decorator
+
+
+def require_koch(func):
+    """
+    Decorator that skips the test if an alexander koch robot is not available
+    """
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Access the pytest request context to get the is_koch_available fixture
+        request = kwargs.get("request")
+        if request is None:
+            raise ValueError("The 'request' fixture must be passed to the test function as a parameter.")
+
+        if not request.getfixturevalue("is_koch_available"):
+            pytest.skip("An alexander koch robot is not available.")
+        return func(*args, **kwargs)
+
+    return wrapper
