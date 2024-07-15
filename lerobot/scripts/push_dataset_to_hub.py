@@ -208,8 +208,8 @@ def push_dataset_to_hub(
     raw_dir = Path(raw_dir)
     if not raw_dir.exists():
         raise NotADirectoryError(
-            f"{raw_dir} does not exists. Check your paths or run this command to download an existing raw dataset on the hub:"
-            f"python lerobot/common/datasets/push_dataset_to_hub/_download_raw.py --raw-dir your/raw/dir --repo-id your/repo/id_raw"
+            f"{raw_dir} does not exists. Check your paths or run this command to download an existing raw dataset on the hub: "
+            f"`python lerobot/common/datasets/push_dataset_to_hub/_download_raw.py --raw-dir your/raw/dir --repo-id your/repo/id_raw`"
         )
 
     if local_dir:
