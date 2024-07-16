@@ -16,6 +16,7 @@
 import json
 import re
 import warnings
+from functools import cache
 from pathlib import Path
 from typing import Dict
 
@@ -81,54 +82,7 @@ def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     return items_dict
 
 
-def load_hf_dataset_local(repo_id: str, root: Path, split: str) -> datasets.Dataset:
-    """hf_dataset contains all the observations, states, actions, rewards, etc."""
-    hf_dataset = load_from_disk(str(Path(root) / repo_id / "train"))
-    # TODO(rcadene): clean this which enables getting a subset of dataset
-    if split != "train":
-        if "%" in split:
-            raise NotImplementedError(f"We dont support splitting based on percentage for now ({split}).")
-        match_from = re.search(r"train\[(\d+):\]", split)
-        match_to = re.search(r"train\[:(\d+)\]", split)
-        if match_from:
-            from_frame_index = int(match_from.group(1))
-            hf_dataset = hf_dataset.select(range(from_frame_index, len(hf_dataset)))
-        elif match_to:
-            to_frame_index = int(match_to.group(1))
-            hf_dataset = hf_dataset.select(range(to_frame_index))
-        else:
-            raise ValueError(f'`split` ({split}) should either be "train", "train[INT:]", or "train[:INT]"')
-    hf_dataset.set_transform(hf_transform_to_torch)
-    return hf_dataset
-
-
-def load_hf_dataset_remote(repo_id: str, version: str, split: str) -> datasets.Dataset:
-    """hf_dataset contains all the observations, states, actions, rewards, etc."""
-    hf_dataset = load_dataset(repo_id, revision=version, split=split)
-    hf_dataset.set_transform(hf_transform_to_torch)
-    return hf_dataset
-
-
-def load_episode_data_index(repo_id, version, root) -> dict[str, torch.Tensor]:
-    """episode_data_index contains the range of indices for each episode
-
-    Example:
-    ```python
-    from_id = episode_data_index["from"][episode_id].item()
-    to_id = episode_data_index["to"][episode_id].item()
-    episode_frames = [dataset[i] for i in range(from_id, to_id)]
-    ```
-    """
-    if root is not None:
-        path = Path(root) / repo_id / "meta_data" / "episode_data_index.safetensors"
-    else:
-        path = hf_hub_download(
-            repo_id, "meta_data/episode_data_index.safetensors", repo_type="dataset", revision=version
-        )
-
-    return load_file(path)
-
-
+@cache
 def get_hf_dataset_safe_version(repo_id: str, version: str) -> str:
     api = HfApi()
     dataset_info = api.list_repo_refs(repo_id, repo_type="dataset")
@@ -149,6 +103,55 @@ def get_hf_dataset_safe_version(repo_id: str, version: str) -> str:
         return version
 
 
+def load_hf_dataset(repo_id: str, version: str, root: Path, split: str) -> datasets.Dataset:
+    """hf_dataset contains all the observations, states, actions, rewards, etc."""
+    if root is not None:
+        hf_dataset = load_from_disk(str(Path(root) / repo_id / "train"))
+        # TODO(rcadene): clean this which enables getting a subset of dataset
+        if split != "train":
+            if "%" in split:
+                raise NotImplementedError(f"We dont support splitting based on percentage for now ({split}).")
+            match_from = re.search(r"train\[(\d+):\]", split)
+            match_to = re.search(r"train\[:(\d+)\]", split)
+            if match_from:
+                from_frame_index = int(match_from.group(1))
+                hf_dataset = hf_dataset.select(range(from_frame_index, len(hf_dataset)))
+            elif match_to:
+                to_frame_index = int(match_to.group(1))
+                hf_dataset = hf_dataset.select(range(to_frame_index))
+            else:
+                raise ValueError(
+                    f'`split` ({split}) should either be "train", "train[INT:]", or "train[:INT]"'
+                )
+    else:
+        safe_version = get_hf_dataset_safe_version(repo_id, version)
+        hf_dataset = load_dataset(repo_id, revision=safe_version, split=split)
+
+    hf_dataset.set_transform(hf_transform_to_torch)
+    return hf_dataset
+
+
+def load_episode_data_index(repo_id, version, root) -> dict[str, torch.Tensor]:
+    """episode_data_index contains the range of indices for each episode
+
+    Example:
+    ```python
+    from_id = episode_data_index["from"][episode_id].item()
+    to_id = episode_data_index["to"][episode_id].item()
+    episode_frames = [dataset[i] for i in range(from_id, to_id)]
+    ```
+    """
+    if root is not None:
+        path = Path(root) / repo_id / "meta_data" / "episode_data_index.safetensors"
+    else:
+        safe_version = get_hf_dataset_safe_version(repo_id, version)
+        path = hf_hub_download(
+            repo_id, "meta_data/episode_data_index.safetensors", repo_type="dataset", revision=safe_version
+        )
+
+    return load_file(path)
+
+
 def load_stats(repo_id, version, root) -> dict[str, dict[str, torch.Tensor]]:
     """stats contains the statistics per modality computed over the full dataset, such as max, min, mean, std
 
@@ -160,7 +163,10 @@ def load_stats(repo_id, version, root) -> dict[str, dict[str, torch.Tensor]]:
     if root is not None:
         path = Path(root) / repo_id / "meta_data" / "stats.safetensors"
     else:
-        path = hf_hub_download(repo_id, "meta_data/stats.safetensors", repo_type="dataset", revision=version)
+        safe_version = get_hf_dataset_safe_version(repo_id, version)
+        path = hf_hub_download(
+            repo_id, "meta_data/stats.safetensors", repo_type="dataset", revision=safe_version
+        )
 
     stats = load_file(path)
     return unflatten_dict(stats)
@@ -177,7 +183,8 @@ def load_info(repo_id, version, root) -> dict:
     if root is not None:
         path = Path(root) / repo_id / "meta_data" / "info.json"
     else:
-        path = hf_hub_download(repo_id, "meta_data/info.json", repo_type="dataset", revision=version)
+        safe_version = get_hf_dataset_safe_version(repo_id, version)
+        path = hf_hub_download(repo_id, "meta_data/info.json", repo_type="dataset", revision=safe_version)
 
     with open(path) as f:
         info = json.load(f)
@@ -189,7 +196,8 @@ def load_videos(repo_id, version, root) -> Path:
         path = Path(root) / repo_id / "videos"
     else:
         # TODO(rcadene): we download the whole repo here. see if we can avoid this
-        repo_dir = snapshot_download(repo_id, repo_type="dataset", revision=version)
+        safe_version = get_hf_dataset_safe_version(repo_id, version)
+        repo_dir = snapshot_download(repo_id, repo_type="dataset", revision=safe_version)
         path = Path(repo_dir) / "videos"
 
     return path

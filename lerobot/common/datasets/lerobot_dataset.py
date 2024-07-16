@@ -25,10 +25,8 @@ import torch.utils
 from lerobot.common.datasets.compute_stats import aggregate_stats
 from lerobot.common.datasets.utils import (
     calculate_episode_data_index,
-    get_hf_dataset_safe_version,
     load_episode_data_index,
-    load_hf_dataset_local,
-    load_hf_dataset_remote,
+    load_hf_dataset,
     load_info,
     load_previous_and_future_frames,
     load_stats,
@@ -47,7 +45,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         repo_id: str,
-        version: str | None = CODEBASE_VERSION,
         root: Path | None = DATA_DIR,
         split: str = "train",
         image_transforms: Callable | None = None,
@@ -57,28 +54,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         self.repo_id = repo_id
         self.root = root
-        self.local = root is not None
         self.split = split
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         # load data from hub or locally when root is provided
         # TODO(rcadene, aliberts): implement faster transfer
         # https://huggingface.co/docs/huggingface_hub/en/guides/download#faster-downloads
-        if self.local:
-            self.version = "local"
-            self.hf_dataset = load_hf_dataset_local(repo_id, root, split)
-        else:
-            self.version = get_hf_dataset_safe_version(repo_id, version)
-            self.hf_dataset = load_hf_dataset_remote(repo_id, self.version, split)
+        self.hf_dataset = load_hf_dataset(repo_id, CODEBASE_VERSION, root, split)
         if split == "train":
-            self.episode_data_index = load_episode_data_index(repo_id, self.version, root)
+            self.episode_data_index = load_episode_data_index(repo_id, CODEBASE_VERSION, root)
         else:
             self.episode_data_index = calculate_episode_data_index(self.hf_dataset)
             self.hf_dataset = reset_episode_index(self.hf_dataset)
-        self.stats = load_stats(repo_id, self.version, root)
-        self.info = load_info(repo_id, self.version, root)
+        self.stats = load_stats(repo_id, CODEBASE_VERSION, root)
+        self.info = load_info(repo_id, CODEBASE_VERSION, root)
         if self.video:
-            self.videos_dir = load_videos(repo_id, self.version, root)
+            self.videos_dir = load_videos(repo_id, CODEBASE_VERSION, root)
             self.video_backend = video_backend if video_backend is not None else "pyav"
 
     @property
@@ -173,7 +164,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return (
             f"{self.__class__.__name__}(\n"
             f"  Repository ID: '{self.repo_id}',\n"
-            f"  Version: '{self.version}',\n"
             f"  Split: '{self.split}',\n"
             f"  Number of Samples: {self.num_samples},\n"
             f"  Number of Episodes: {self.num_episodes},\n"
@@ -189,7 +179,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def from_preloaded(
         cls,
         repo_id: str = "from_preloaded",
-        version: str | None = CODEBASE_VERSION,
         root: Path | None = None,
         split: str = "train",
         transform: callable = None,
@@ -213,7 +202,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # create an empty object of type LeRobotDataset
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
-        obj.version = version
         obj.root = root
         obj.split = split
         obj.image_transforms = transform
@@ -237,7 +225,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         repo_ids: list[str],
-        version: str | None = CODEBASE_VERSION,
         root: Path | None = DATA_DIR,
         split: str = "train",
         image_transforms: Callable | None = None,
@@ -251,7 +238,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         self._datasets = [
             LeRobotDataset(
                 repo_id,
-                version=version,
                 root=root,
                 split=split,
                 delta_timestamps=delta_timestamps,
@@ -288,7 +274,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             )
             self.disabled_data_keys.update(extra_keys)
 
-        self.version = version
         self.root = root
         self.split = split
         self.image_transforms = image_transforms
@@ -404,7 +389,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         return (
             f"{self.__class__.__name__}(\n"
             f"  Repository IDs: '{self.repo_ids}',\n"
-            f"  Version: '{self.version}',\n"
             f"  Split: '{self.split}',\n"
             f"  Number of Samples: {self.num_samples},\n"
             f"  Number of Episodes: {self.num_episodes},\n"
