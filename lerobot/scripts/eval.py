@@ -47,7 +47,6 @@ import logging
 import os
 import threading
 import time
-from contextlib import nullcontext
 from copy import deepcopy
 from datetime import datetime as dt
 from pathlib import Path
@@ -555,10 +554,12 @@ def main(
     assert isinstance(policy, nn.Module)
     policy.eval()
 
-    with torch.no_grad(), accelerator.autocast() if accelerator else nullcontext():
+    if accelerator:
+        policy = accelerator.prepare_model(policy)
+    with torch.no_grad():
         info = eval_policy(
             env,
-            policy,
+            policy if accelerator is None else accelerator.unwrap_model(policy),
             hydra_cfg.eval.n_episodes,
             max_episodes_rendered=10,
             videos_dir=Path(out_dir) / "videos",
