@@ -365,7 +365,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     accelerator.wait_for_everyone()
                 eval_info = eval_policy(
                     eval_env,
-                    policy,
+                    policy if not accelerator else accelerator.unwrap_model(policy),
                     cfg.eval.n_episodes,
                     videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
                     max_episodes_rendered=4,
