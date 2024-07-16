@@ -42,9 +42,6 @@ training:
   save_freq: ???
   num_workers: 4
   batch_size: ???
-  accelerate:
-    enable: false
-    num_processes: 1
   image_transforms:
   # These transforms are all using standard torchvision.transforms.v2
   # You can find out how these transformations affect images here:

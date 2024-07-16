@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import os
 import time
 from pathlib import Path
 from pprint import pformat
@@ -134,7 +135,8 @@ def update_policy(
         # To possibly update an internal buffer (for instance an Exponential Moving Average like in TDMPC).
         if accelerator:
             accelerator.unwrap_model(policy).update()
-        policy.update()
+        else:
+            policy.update()
 
     info = {
         "loss": loss.item(),
@@ -147,7 +149,7 @@ def update_policy(
     return info
 
 
-def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
+def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline, accelerator=None):
     loss = info["loss"]
     grad_norm = info["grad_norm"]
     lr = info["lr"]
@@ -157,11 +159,7 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
     # If using multiple processes, the number of samples seen during training is multiplied by the number of processes/GPUs.
-    num_samples = (
-        (step + 1)
-        * cfg.training.batch_size
-        * (cfg.training.accelerate.get("num_processes", 1) if cfg.training.accelerate.enable else 1)
-    )
+    num_samples = (step + 1) * cfg.training.batch_size * (accelerator.num_processes if accelerator else 1)
     avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
@@ -192,7 +190,7 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
     logger.log_dict(info, step, mode="train")
 
 
-def log_eval_info(logger, info, step, cfg, dataset, is_offline):
+def log_eval_info(logger, info, step, cfg, dataset, is_offline, accelerator=None):
     eval_s = info["eval_s"]
     avg_sum_reward = info["avg_sum_reward"]
     pc_success = info["pc_success"]
@@ -200,11 +198,7 @@ def log_eval_info(logger, info, step, cfg, dataset, is_offline):
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
     # If using multiple processes, the number of samples seen during training is multiplied by the number of processes/GPUs.
-    num_samples = (
-        (step + 1)
-        * cfg.training.batch_size
-        * (cfg.training.accelerate.get("num_processes", 1) if cfg.training.accelerate.enable else 1)
-    )
+    num_samples = (step + 1) * cfg.training.batch_size * (accelerator.num_processes if accelerator else 1)
     avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
@@ -240,13 +234,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     init_logging(accelerator)
 
     if accelerator:
-        nb_processes = accelerator.num_processes
+        num_processes = accelerator.num_processes
         use_amp = accelerator.mixed_precision
-        assert (
-            nb_processes == cfg.training.accelerate.get("num_processes", None)
-        ), f"Running on {nb_processes} processes, but got nb_processes : {cfg.training.accelerate.get('num_processes', None)} in config."
         logging.info(
-            f"Acccelerate is enabled, training will be launched with the following configuration :\nNumber of processes: {nb_processes} \nMixed precision: {use_amp}"
+            f"Acccelerate is enabled, training will be launched with the following configuration :\nNumber of processes: {num_processes} \nPrecision: {use_amp}"
         )
 
     # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
@@ -371,7 +362,15 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
                 )
-            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline=True)
+            log_eval_info(
+                logger,
+                eval_info["aggregated"],
+                step,
+                cfg,
+                offline_dataset,
+                is_offline=True,
+                accelerator=accelerator,
+            )
             if cfg.wandb.enable:
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
@@ -431,8 +430,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         start_time = time.perf_counter()
         batch = next(dl_iter)
         dataloading_s = time.perf_counter() - start_time
+
         for key in batch:
             batch[key] = batch[key].to(device, non_blocking=True)
+
         train_info = update_policy(
             policy,
             batch,
@@ -441,9 +442,12 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             lr_scheduler=lr_scheduler,
             accelerator=accelerator,
         )
+
         train_info["dataloading_s"] = dataloading_s
         if (step % cfg.training.log_freq == 0) and (not accelerator or accelerator.is_main_process):
-            log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline=True)
+            log_train_info(
+                logger, train_info, step, cfg, offline_dataset, is_offline=True, accelerator=accelerator
+            )
 
         # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
         # so we pass in step + 1.
@@ -458,7 +462,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../configs")
 def train_cli(cfg: dict):
-    if cfg.training.accelerate.enable:
+    if "LOCAL_RANK" in os.environ:
         import accelerate
 
         accelerator = accelerate.Accelerator()

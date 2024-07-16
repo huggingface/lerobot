@@ -44,6 +44,7 @@ https://huggingface.co/lerobot/diffusion_pusht/tree/main.
 import argparse
 import json
 import logging
+import os
 import threading
 import time
 from contextlib import nullcontext
@@ -73,7 +74,7 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
-from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
+from lerobot.common.utils.utils import init_hydra_config, init_logging, set_global_seed
 
 
 def rollout(
@@ -524,6 +525,7 @@ def main(
     hydra_cfg_path: str | None = None,
     out_dir: str | None = None,
     config_overrides: list[str] | None = None,
+    accelerator: any = None,
 ):
     assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
     if pretrained_policy_path is not None:
@@ -533,9 +535,6 @@ def main(
 
     if out_dir is None:
         out_dir = f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
-
-    # Check device is available
-    device = get_safe_torch_device(hydra_cfg.device, log=True)
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -556,7 +555,7 @@ def main(
     assert isinstance(policy, nn.Module)
     policy.eval()
 
-    with torch.no_grad(), torch.autocast(device_type=device.type) if hydra_cfg.use_amp else nullcontext():
+    with torch.no_grad(), accelerator.autocast() if accelerator else nullcontext():
         info = eval_policy(
             env,
             policy,
@@ -639,6 +638,17 @@ if __name__ == "__main__":
             raise ValueError(
                 "The provided pretrained_policy_name_or_path is not a valid/existing Hugging Face Hub "
                 "repo ID, nor is it an existing local directory."
+            )
+
+        if "LOCAL_RANK" in os.environ:
+            import accelerate
+
+            accelerator = accelerate.Accelerator()
+            main(
+                pretrained_policy_path=pretrained_policy_path,
+                out_dir=args.out_dir,
+                config_overrides=args.overrides,
+                accelerator=accelerator,
             )
 
         main(
