@@ -172,6 +172,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"  Camera Keys: {self.camera_keys},\n"
             f"  Video Frame Keys: {self.video_frame_keys if self.video else 'N/A'},\n"
             f"  Transformations: {self.image_transforms},\n"
+            f"  Codebase Version: {self.info.get('codebase_version', '< v1.6')},\n"
             f")"
         )
 
