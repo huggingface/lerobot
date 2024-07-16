@@ -43,7 +43,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsvtav1-dev libsvtav1enc-dev libsvtav1dec-dev \
     libdav1d-dev
 
-
 # Install gh cli tool
 RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
     && mkdir -p -m 755 /etc/apt/keyrings \
