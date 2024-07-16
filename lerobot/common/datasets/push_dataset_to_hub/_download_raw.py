@@ -19,8 +19,8 @@ This file contains download scripts for raw datasets.
 Example of usage:
 ```
 python lerobot/common/datasets/push_dataset_to_hub/_download_raw.py \
---raw-dir data/cadene/pusht_raw \
---repo-id cadene/pusht_raw
+--raw-dir data/lerobot-raw/pusht_raw \
+--repo-id lerobot-raw/pusht_raw
 ```
 """
 

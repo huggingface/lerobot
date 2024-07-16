@@ -24,7 +24,7 @@ def convert_datasets(
     dry_run: bool = False,
 ) -> None:
     if len(raw_repo_ids) == 1 and raw_repo_ids[0].lower() == "all":
-        raw_repo_ids = [f"cadene/{id_.split('/')[1]}_raw" for id_ in available_datasets]
+        raw_repo_ids = [f"lerobot-raw/{id_.split('/')[1]}_raw" for id_ in available_datasets]
 
     for dataset_repo_id_raw in raw_repo_ids:
         dataset_id_raw = dataset_repo_id_raw.split("/")[1]
@@ -67,7 +67,7 @@ def main():
         nargs="*",
         default=["all"],
         help="Dataset repo ids. if 'all', the list from `available_datasets` will be "
-        "used and raw datasets will be fetched from the 'cadene/' repo.",
+        "used and raw datasets will be fetched from the 'lerobot-raw/' repo.",
     )
     parser.add_argument(
         "--push-repo",
