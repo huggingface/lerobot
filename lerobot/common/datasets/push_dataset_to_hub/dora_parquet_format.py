@@ -25,6 +25,7 @@ import pandas as pd
 import torch
 from datasets import Dataset, Features, Image, Sequence, Value
 
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
 from lerobot.common.datasets.utils import (
     calculate_episode_data_index,
     hf_transform_to_torch,
@@ -222,6 +223,7 @@ def from_raw_to_lerobot_format(
     hf_dataset = to_hf_dataset(data_df, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
+        "codebase_version": CODEBASE_VERSION,
         "fps": fps,
         "video": video,
     }

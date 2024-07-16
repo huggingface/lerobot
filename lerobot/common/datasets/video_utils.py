@@ -207,7 +207,8 @@ def encode_video_frames(
         ffmpeg_args.append("-y")
 
     ffmpeg_cmd = ["ffmpeg"] + ffmpeg_args + [str(video_path)]
-    subprocess.run(ffmpeg_cmd, check=True)
+    # redirect stdin to subprocess.DEVNULL to prevent reading random keyboard inputs from terminal
+    subprocess.run(ffmpeg_cmd, check=True, stdin=subprocess.DEVNULL)
 
 
 @dataclass
