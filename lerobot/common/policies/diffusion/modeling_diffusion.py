@@ -774,6 +774,7 @@ class TransformerForDiffusion(nn.Module):
                 nn.Linear(4 * config.diffusion_step_embed_dim, config.diffusion_step_embed_dim),
             )
         # decoder
+        print("diffusion_step_embed_dim = {config.diffusion_step_embed_dim} and n_head = {config.n_head}")
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=config.diffusion_step_embed_dim,
             nhead=config.n_head,
