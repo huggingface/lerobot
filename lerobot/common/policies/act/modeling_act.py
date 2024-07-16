@@ -469,10 +469,9 @@ class ACT(nn.Module):
         if self.use_images:
             all_cam_features = []
             all_cam_pos_embeds = []
-            images = batch["observation.images"]
 
-            for cam_index in range(images.shape[-4]):
-                cam_features = self.backbone(images[:, cam_index])["feature_map"]
+            for cam_index in range(batch["observation.images"].shape[-4]):
+                cam_features = self.backbone(batch["observation.images"][:, cam_index])["feature_map"]
                 # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use
                 # buffer
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
