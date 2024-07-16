@@ -640,7 +640,7 @@ if __name__ == "__main__":
                 "repo ID, nor is it an existing local directory."
             )
 
-        if "LOCAL_RANK" in os.environ:
+        if "ACCELERATE_MIXED_PRECISION" in os.environ:
             import accelerate
 
             accelerator = accelerate.Accelerator()
