@@ -191,7 +191,7 @@ def push_dataset_to_hub(
     # convert dataset from original raw format to LeRobot format
     from_raw_to_lerobot_format = get_from_raw_to_lerobot_format_fn(raw_format)
     hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(
-        raw_dir, videos_dir, CODEBASE_VERSION, fps, video, episodes
+        raw_dir, videos_dir, fps, video, episodes
     )
 
     lerobot_dataset = LeRobotDataset.from_preloaded(

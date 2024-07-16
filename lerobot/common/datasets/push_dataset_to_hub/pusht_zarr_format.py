@@ -241,7 +241,6 @@ def to_hf_dataset(data_dict, video, keypoints_instead_of_image: bool = False):
 def from_raw_to_lerobot_format(
     raw_dir: Path,
     videos_dir: Path,
-    codebase_version: str | None = CODEBASE_VERSION,
     fps: int | None = None,
     video: bool = True,
     episodes: list[int] | None = None,
@@ -260,7 +259,7 @@ def from_raw_to_lerobot_format(
     hf_dataset = to_hf_dataset(data_dict, video, keypoints_instead_of_image)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
-        "codebase_version": codebase_version,
+        "codebase_version": CODEBASE_VERSION,
         "fps": fps,
         "video": video if not keypoints_instead_of_image else 0,
     }

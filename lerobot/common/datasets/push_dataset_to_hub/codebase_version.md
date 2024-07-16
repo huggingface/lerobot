@@ -39,20 +39,19 @@ from huggingface_hub import HfApi
 from lerobot import available_datasets
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
 
-NEW_CODEBASE_VERSION = "v1.5"  # Replace this with your desired version.
-
 api = HfApi()
 
 for repo_id in available_datasets:
     dataset_info = api.list_repo_refs(repo_id, repo_type="dataset")
     branches = [b.name for b in dataset_info.branches]
-    if NEW_CODEBASE_VERSION in branches:
+    if CODEBASE_VERSION in branches:
         # First check if the newer version already exists.
         print(f"Found existing branch for {repo_id}. Please contact a member of the core LeRobot team.")
         print("Exiting early")
         break
     else:
-        # Now create a branch.
-        api.create_branch(repo_id, repo_type="dataset", branch=NEW_CODEBASE_VERSION, revision=CODEBASE_VERSION)
+        # Now create a branch named after the new version by branching out from "main"
+        # which is expected to be the preceding version
+        api.create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION, revision="main")
         print(f"{repo_id} successfully updated")
 ```
