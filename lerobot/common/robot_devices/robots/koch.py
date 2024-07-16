@@ -360,9 +360,9 @@ class KochRobot:
         # Set better PID values to close the gap between recored states and actions
         # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
         for name in self.follower_arms:
-            self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
+            self.follower_arms[name].write("Position_P_Gain", 600, "elbow_flex")
             self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
-            self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
+            self.follower_arms[name].write("Position_D_Gain", 1200, "elbow_flex")
 
         # Enable torque on all motors of the follower arms
         for name in self.follower_arms:
