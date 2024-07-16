@@ -72,13 +72,13 @@ training:
       min_max: [0.8, 1.2]
     saturation:
       weight: 1
-      min_max: [0.5, 1.5]
+      min_max: [0.7, 1.3]
     hue:
       weight: 1
-      min_max: [-0.05, 0.05]
+      min_max: [-0.02, 0.02]
     sharpness:
       weight: 1
-      min_max: [0.8, 1.2]
+      min_max: [0.1, 1.9]
 
 eval:
   n_episodes: 1

@@ -172,4 +172,4 @@ def visualize_transforms_cli(cfg):
 
 
 if __name__ == "__main__":
-    visualize_transforms()
+    visualize_transforms_cli()
