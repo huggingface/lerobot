@@ -164,8 +164,9 @@ class ACTTemporalEnsembler:
             - Setting it positive gives more weight to older actions.
             - Setting it negative gives more weight to newer actions.
         NOTE: The default value for `temporal_ensemble_coeff` used by the original ACT work is 0.01. This
-        results in older actions being weighed more highly than newer actions (if you know why, please submit
-        a PR with the explanation).
+        results in older actions being weighed more highly than newer actions (the experiments documented in
+        https://github.com/huggingface/lerobot/pull/319 hint at why highly weighing new actions might be
+        detrimental: doing so aggressively may diminish the benefits of action chunking).
 
         Here we use an online method for computing the average rather than caching a history of actions in
         order to compute the average offline. For a simple 1D sequence it looks something like:
