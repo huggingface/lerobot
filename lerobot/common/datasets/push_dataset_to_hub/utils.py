@@ -64,3 +64,11 @@ def get_default_encoding():
         for k, v in signature.parameters.items()
         if v.default is not inspect.Parameter.empty and k in ["vcodec", "pix_fmt", "g", "crf"]
     }
+
+
+def check_repo_id(repo_id: str) -> None:
+    if len(repo_id.split("/")) != 2:
+        raise ValueError(
+            f"""`repo_id` is expected to contain a community or user id `/` the name of the dataset
+            (e.g. 'lerobot/pusht'), but contains '{repo_id}'."""
+        )

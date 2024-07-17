@@ -55,6 +55,7 @@ from safetensors.torch import save_file
 
 from lerobot.common.datasets.compute_stats import compute_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
+from lerobot.common.datasets.push_dataset_to_hub.utils import check_repo_id
 from lerobot.common.datasets.utils import flatten_dict
 
 
@@ -144,11 +145,7 @@ def push_dataset_to_hub(
     tests_data_dir: Path | None = None,
     encoding: dict | None = None,
 ):
-    # Check repo_id is well formated
-    if len(repo_id.split("/")) != 2:
-        raise ValueError(
-            f"`repo_id` is expected to contain a community or user id `/` the name of the dataset (e.g. 'lerobot/pusht'), but instead contains '{repo_id}'."
-        )
+    check_repo_id(repo_id)
     user_id, dataset_id = repo_id.split("/")
 
     # Robustify when `raw_dir` is str instead of Path
