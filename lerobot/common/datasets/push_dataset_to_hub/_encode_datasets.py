@@ -21,6 +21,7 @@ def encode_datasets(
     pix_fmt: str,
     g: int,
     crf: int,
+    local_dir: Path | None = None,
     raw_format: str | None = None,
     dry_run: bool = False,
 ) -> None:
@@ -35,6 +36,7 @@ def encode_datasets(
         check_repo_id(raw_repo_id)
         dataset_repo_id_push = get_push_repo_id_from_raw(raw_repo_id, push_repo)
         dataset_raw_dir = raw_dir / raw_repo_id
+        dataset_dir = local_dir / dataset_repo_id_push if local_dir is not None else None
         encoding = {
             "vcodec": vcodec,
             "pix_fmt": pix_fmt,
@@ -47,10 +49,16 @@ def encode_datasets(
 
         if not dry_run:
             push_dataset_to_hub(
-                dataset_raw_dir, raw_format=repo_raw_format, repo_id=dataset_repo_id_push, encoding=encoding
+                dataset_raw_dir,
+                raw_format=repo_raw_format,
+                repo_id=dataset_repo_id_push,
+                local_dir=dataset_dir,
+                encoding=encoding,
             )
         else:
-            print(f"DRY RUN: pushing {dataset_raw_dir}   -->  {dataset_repo_id_push}@{CODEBASE_VERSION}")
+            print(
+                f"DRY RUN: {dataset_raw_dir}  -->  {dataset_dir}  -->  {dataset_repo_id_push}@{CODEBASE_VERSION}"
+            )
 
 
 def main():
@@ -76,6 +84,12 @@ def main():
         default=None,
         help="""Raw format to use for the raw repo-ids. Must be specified if --raw-repo-ids is not
             'lerobot-raw'""",
+    )
+    parser.add_argument(
+        "--local-dir",
+        type=Path,
+        default=None,
+        help="When provided, writes the dataset converted to LeRobotDataset format in this directory  (e.g. `data/lerobot/aloha_mobile_chair`).",
     )
     parser.add_argument(
         "--push-repo",
