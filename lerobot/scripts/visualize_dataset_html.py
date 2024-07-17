@@ -28,7 +28,7 @@ save disk space. The compression factor applied has been tuned to not affect suc
 Examples:
 
 - Visualize data stored on a local machine:
-```
+```bash
 local$ python lerobot/scripts/visualize_dataset_html.py \
     --repo-id lerobot/pusht
 
@@ -36,7 +36,7 @@ local$ open http://localhost:9090
 ```
 
 - Visualize data stored on a distant machine with a local viewer:
-```
+```bash
 distant$ python lerobot/scripts/visualize_dataset_html.py \
     --repo-id lerobot/pusht
 
@@ -45,31 +45,38 @@ local$ open http://localhost:9090
 ```
 
 - Select episodes to visualize:
-```
+```bash
 python lerobot/scripts/visualize_dataset_html.py \
     --repo-id lerobot/pusht \
     --episodes 7 3 5 1 4
 ```
+
+- Run inference of a policy on the dataset and visualize the results:
+```bash
+python lerobot/scripts/visualize_dataset_html.py \
+    --repo-id lerobot/pusht \
+    --episodes 7 3 5 1 4
+    -p lerobot/diffusion_pusht \
+    device=cpu
+```
 """
 
 import argparse
-import http.server
 import logging
 import shutil
 import warnings
 from pathlib import Path
-from typing import List
 
 import torch
 import tqdm
-from huggingface_hub import snapshot_download
+from flask import Flask, redirect, render_template, url_for
 from safetensors.torch import load_file, save_file
-from flask import Flask, render_template, url_for, redirect
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils.utils import init_hydra_config, init_logging
+from lerobot.scripts.eval import get_pretrained_policy_path
 
 
 class EpisodeSampler(torch.utils.data.Sampler):
@@ -85,28 +92,40 @@ class EpisodeSampler(torch.utils.data.Sampler):
         return len(self.frame_ids)
 
 
-def run_server(dataset: LeRobotDataset, episodes: List[int], port: str, static_folder: Path, template_folder: Path):
+def run_server(
+    dataset: LeRobotDataset, episodes: list[int], port: str, static_folder: Path, template_folder: Path
+):
     app = Flask(__name__, static_folder=static_folder.resolve(), template_folder=template_folder.resolve())
-    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0 # specifying not to cache
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # specifying not to cache
 
-    @app.route('/')
+    @app.route("/")
     def index():
         # home page redirects to the first episode page
         first_episode_id = episodes[0]
-        return redirect(url_for('show_episode', episode_id=first_episode_id))
+        return redirect(url_for("show_episode", episode_id=first_episode_id))
 
-    @app.route('/episode_<int:episode_id>')
+    @app.route("/episode_<int:episode_id>")
     def show_episode(episode_id):
         dataset_info = {
             "repo_id": dataset.repo_id,
-            'num_samples': dataset.num_samples,
-            'num_episodes': dataset.num_episodes,
-            'fps': dataset.fps,
+            "num_samples": dataset.num_samples,
+            "num_episodes": dataset.num_episodes,
+            "fps": dataset.fps,
         }
         video_paths = get_episode_video_paths(dataset, episode_id)
-        videos_info = [{"url": url_for('static', filename=video_path), "filename": Path(video_path).name} for video_path in video_paths]
-        ep_csv_url = url_for('static', filename=get_ep_csv_fname(episode_id))
-        return render_template('visualize_dataset_template.html', episode_id=episode_id, episodes=episodes, dataset_info=dataset_info, videos_info=videos_info, ep_csv_url=ep_csv_url)
+        videos_info = [
+            {"url": url_for("static", filename=video_path), "filename": Path(video_path).name}
+            for video_path in video_paths
+        ]
+        ep_csv_url = url_for("static", filename=get_ep_csv_fname(episode_id))
+        return render_template(
+            "visualize_dataset_template.html",
+            episode_id=episode_id,
+            episodes=episodes,
+            dataset_info=dataset_info,
+            videos_info=videos_info,
+            ep_csv_url=ep_csv_url,
+        )
 
     app.run(port=port)
 
@@ -135,11 +154,12 @@ def write_episode_data_csv(output_dir, file_name, episode_index, dataset, infere
         dim_action = len(dataset.hf_dataset["action"][0])
         header += [f"action_{i}" for i in range(dim_action)]
     if has_inference:
-        if "actions" in inference_results:
-            dim_pred_action = inference_results["actions"].shape[2]
+        if "action" in inference_results:
+            dim_pred_action = inference_results["action"].shape[1]
             header += [f"pred_action_{i}" for i in range(dim_pred_action)]
-        if "loss" in inference_results:
-            header += ["loss"]
+        for key in inference_results:
+            if "loss" in key:
+                header += [key]
 
     columns = ["timestamp"]
     if has_state:
@@ -159,14 +179,15 @@ def write_episode_data_csv(output_dir, file_name, episode_index, dataset, infere
 
     if has_inference:
         num_frames = len(rows)
-        if "actions" in inference_results:
-            assert num_frames == inference_results["actions"].shape[0]
+        if "action" in inference_results:
+            assert num_frames == inference_results["action"].shape[0]
             for i in range(num_frames):
-                rows[i] += inference_results["actions"][i, 0].tolist()
-        if "loss" in inference_results:
-            assert num_frames == inference_results["loss"].shape[0]
-            for i in range(num_frames):
-                rows[i] += [inference_results["loss"][i].item()]
+                rows[i] += inference_results["action"][i].tolist()
+        for key in inference_results:
+            if "loss" in key:
+                assert num_frames == inference_results[key].shape[0]
+                for i in range(num_frames):
+                    rows[i] += [inference_results[key][i].item()]
 
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(output_dir / file_name, "w") as f:
@@ -176,10 +197,13 @@ def write_episode_data_csv(output_dir, file_name, episode_index, dataset, infere
             f.write(",".join(row_str) + "\n")
 
 
-def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> List[str]:
+def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]:
     # get first frame of episode (hack to get video_path of the episode)
     first_frame_idx = dataset.episode_data_index["from"][ep_index].item()
-    return [dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"] for key in dataset.video_frame_keys]
+    return [
+        dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"]
+        for key in dataset.video_frame_keys
+    ]
 
 
 def run_inference(
@@ -198,8 +222,10 @@ def run_inference(
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=num_workers,
-        batch_size=batch_size,
+        # When using `select_action`, we set batch size 1 so that we feed 1 frame at a time, in a continuous fashion.
+        batch_size=1 if policy_method == "select_action" else batch_size,
         sampler=episode_sampler,
+        drop_last=False,
     )
 
     warned_ndim_eq_0 = False
@@ -211,7 +237,9 @@ def run_inference(
         batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
         with torch.inference_mode():
             if policy_method == "select_action":
+                gt_action = batch.pop("action")
                 output_dict = {"action": policy.select_action(batch)}
+                batch["action"] = gt_action
             elif policy_method == "forward":
                 output_dict = policy.forward(batch)
 
@@ -251,32 +279,28 @@ def visualize_dataset_html(
     serve: bool = True,
     port: int = 9090,
     force_override: bool = True,
-    policy_repo_id: str | None = None,
-    policy_ckpt_path: Path | None = None,
     policy_method: str = "select_action",
-    batch_size: int = 32,
-    num_workers: int = 4,
-    device: str = "cuda",
+    pretrained_policy_name_or_path: str | None = None,
+    overrides: list[str] | None = None,
 ) -> Path | None:
     init_logging()
 
-    has_policy = policy_repo_id or policy_ckpt_path
+    has_policy = pretrained_policy_name_or_path is not None
 
     if has_policy:
         logging.info("Loading policy")
-        if policy_repo_id:
-            pretrained_policy_path = Path(snapshot_download(policy_repo_id))
-        elif policy_ckpt_path:
-            pretrained_policy_path = Path(policy_ckpt_path)
+        pretrained_policy_path = get_pretrained_policy_path(pretrained_policy_name_or_path)
 
-        cfg = init_hydra_config(pretrained_policy_path / "config.yaml")
-        dataset = make_dataset(cfg)
-        policy = make_policy(cfg, pretrained_policy_path)
+        hydra_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", overrides)
+        dataset = make_dataset(hydra_cfg)
+        policy = make_policy(hydra_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
 
         if policy_method == "select_action":
             # Do not load previous observations or future actions, to simulate that the observations come from
             # an environment.
             dataset.delta_timestamps = None
+        elif policy_method == "forward":
+            raise NotImplementedError("TODO(rcadene): do not merge")
     else:
         dataset = LeRobotDataset(repo_id)
 
@@ -293,13 +317,13 @@ def visualize_dataset_html(
 
     # Create a simlink from the dataset video folder containg mp4 files to the output directory
     # so that the http server can get access to the mp4 files.
-    static_dir = output_dir / 'static'
+    static_dir = output_dir / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
-    ln_videos_dir = static_dir / 'videos'
+    ln_videos_dir = static_dir / "videos"
     if not ln_videos_dir.exists():
         ln_videos_dir.symlink_to(dataset.videos_dir.resolve())
 
-    template_dir = Path(__file__).resolve().parent
+    template_dir = Path(__file__).resolve().parent.parent / "templates"
 
     if episodes is None:
         episodes = list(range(dataset.num_episodes))
@@ -308,17 +332,25 @@ def visualize_dataset_html(
     for episode_index in tqdm.tqdm(episodes):
         inference_results = None
         if has_policy:
-            inference_results_path = output_dir / f"episode_{episode_index}.safetensors"
+            inference_results_path = output_dir / policy_method / f"episode_{episode_index}.safetensors"
             if inference_results_path.exists():
                 inference_results = load_file(inference_results_path)
             else:
                 inference_results = run_inference(
-                    dataset, episode_index, policy, policy_method, num_workers, batch_size, device
+                    dataset,
+                    episode_index,
+                    policy,
+                    policy_method,
+                    num_workers=hydra_cfg.training.num_workers,
+                    batch_size=hydra_cfg.training.batch_size,
+                    device=hydra_cfg.device,
                 )
-                save_file(inference_results, inference_results_path)
+            inference_results_path.parent.mkdir(parents=True, exist_ok=True)
+            save_file(inference_results, inference_results_path)
 
         # write states and actions in a csv
-        write_episode_data_csv(static_dir, get_ep_csv_fname(episode_index), episode_index, dataset, inference_results)
+        ep_csv_fname = get_ep_csv_fname(episode_index)
+        write_episode_data_csv(static_dir, ep_csv_fname, episode_index, dataset, inference_results)
 
     if serve:
         run_server(dataset, episodes, port, static_dir, template_dir)
@@ -366,41 +398,25 @@ def main():
     )
 
     parser.add_argument(
-        "--policy-repo-id",
-        type=str,
-        default=None,
-        help="Name of hugging face repositery containing a pretrained policy (e.g. `lerobot/diffusion_pusht` for https://huggingface.co/lerobot/diffusion_pusht).",
-    )
-    parser.add_argument(
-        "--policy-ckpt-path",
-        type=str,
-        default=None,
-        help="Path hugging face repositery containing a pretrained policy (e.g. `lerobot/diffusion_pusht` for https://huggingface.co/lerobot/diffusion_pusht).",
-    )
-    parser.add_argument(
         "--policy-method",
         type=str,
         default="select_action",
         choices=["select_action", "forward"],
-        help="Python method used to run the inference. It can be `forward` used during training to compute the loss, or `select_action` used during evaluation to output the sequence of actions.",
+        help="Python method used to run the inference. By default, set to `select_action` used during evaluation to output the sequence of actions. Can bet set to `forward` used during training to compute the loss.",
     )
     parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=32,
-        help="Batch size loaded by DataLoader.",
-    )
-    parser.add_argument(
-        "--num-workers",
-        type=int,
-        default=4,
-        help="Number of processes of Dataloader for loading the data.",
-    )
-    parser.add_argument(
-        "--device",
+        "-p",
+        "--pretrained-policy-name-or-path",
         type=str,
-        default="cuda",
-        help="Device used to run inference.",
+        help=(
+            "Either the repo ID of a model hosted on the Hub or a path to a directory containing weights "
+            "saved using `Policy.save_pretrained`."
+        ),
+    )
+    parser.add_argument(
+        "overrides",
+        nargs="*",
+        help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
 
     args = parser.parse_args()
