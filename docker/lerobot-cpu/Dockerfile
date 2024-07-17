@@ -8,7 +8,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # Install apt dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake \
-    libglib2.0-0 libgl1-mesa-glx libegl1-mesa \
+    libglib2.0-0 libgl1-mesa-glx libegl1-mesa ffmpeg \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create virtual environment
@@ -21,7 +21,7 @@ RUN echo "source /opt/venv/bin/activate" >> /root/.bashrc
 COPY . /lerobot
 WORKDIR /lerobot
 RUN pip install --upgrade --no-cache-dir pip
-RUN pip install --no-cache-dir ".[test, aloha, xarm, pusht]" \
+RUN pip install --no-cache-dir ".[test, aloha, xarm, pusht, koch]" \
     --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Set EGL as the rendering backend for MuJoCo

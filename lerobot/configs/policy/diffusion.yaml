@@ -24,9 +24,8 @@ override_dataset_stats:
 training:
   offline_steps: 200000
   online_steps: 0
-  eval_freq: 5000
-  save_freq: 5000
-  log_freq: 250
+  eval_freq: 25000
+  save_freq: 25000
   save_checkpoint: true
 
   batch_size: 64
@@ -99,7 +98,7 @@ policy:
   clip_sample_range: 1.0
 
   # Inference
-  num_inference_steps: 100
+  num_inference_steps: null  # if not provided, defaults to `num_train_timesteps`
 
   # Loss computation
   do_mask_loss_for_padding: false

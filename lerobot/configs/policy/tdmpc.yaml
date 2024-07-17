@@ -11,6 +11,7 @@ training:
   online_steps_between_rollouts: 1
   online_sampling_ratio: 0.5
   online_env_seed: 10000
+  log_freq: 100
 
   batch_size: 256
   grad_clip_norm: 10.0
@@ -54,7 +55,7 @@ policy:
   discount: 0.9
 
   # Inference.
-  use_mpc: false
+  use_mpc: true
   cem_iterations: 6
   max_std: 2.0
   min_std: 0.05
