@@ -272,7 +272,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         cfg.resume = True
     elif Logger.get_last_checkpoint_dir(out_dir).exists():
         raise RuntimeError(
-            f"The configured output directory {Logger.get_last_checkpoint_dir(out_dir)} already exists."
+            f"The configured output directory {Logger.get_last_checkpoint_dir(out_dir)} already exists. If "
+            "you meant to resume training, please use `resume=true` in your command or yaml configuration."
         )
 
     # log metrics to terminal and wandb
