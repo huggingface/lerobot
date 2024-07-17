@@ -22,6 +22,7 @@ def encode_datasets(
     g: int,
     crf: int,
     local_dir: Path | None = None,
+    tests_data_dir: Path | None = None,
     raw_format: str | None = None,
     dry_run: bool = False,
 ) -> None:
@@ -54,6 +55,7 @@ def encode_datasets(
                 repo_id=dataset_repo_id_push,
                 local_dir=dataset_dir,
                 encoding=encoding,
+                tests_data_dir=tests_data_dir,
             )
         else:
             print(
@@ -120,6 +122,15 @@ def main():
         type=int,
         default=30,
         help="Constant rate factors to be used for encoding.",
+    )
+    parser.add_argument(
+        "--tests-data-dir",
+        type=Path,
+        default=None,
+        help=(
+            "When provided, save tests artifacts into the given directory "
+            "(e.g. `--tests-data-dir tests/data` will save to tests/data/{--repo-id})."
+        ),
     )
     parser.add_argument(
         "--dry-run",
