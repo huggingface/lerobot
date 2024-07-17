@@ -38,7 +38,12 @@ from lerobot.common.policies.vqbet.vqbet_utils import GPT, ResidualVQ
 # ruff: noqa: N806
 
 
-class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
+class VQBeTPolicy(nn.Module, PyTorchModelHubMixin,
+                  library_name="lerobot",
+                  repo_url="https://github.com/huggingface/lerobot",
+                  docs_url="https://github.com/huggingface/lerobot/",
+                  tags=["robotics"],
+                 ):
     """
     VQ-BeT Policy as per "Behavior Generation with Latent Actions"
     """
