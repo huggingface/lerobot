@@ -195,6 +195,6 @@ def from_raw_to_lerobot_format(
         "video": video,
     }
     if video:
-        info = {**info, "encoding": get_default_encoding() if encoding is None else encoding}
+        info["encoding"] = get_default_encoding()
 
     return hf_dataset, episode_data_index, info

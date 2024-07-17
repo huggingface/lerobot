@@ -56,7 +56,7 @@ def save_images_concurrently(imgs_array: numpy.array, out_dir: Path, max_workers
         [executor.submit(save_image, imgs_array[i], i, out_dir) for i in range(num_images)]
 
 
-def get_default_encoding():
+def get_default_encoding() -> dict:
     """Returns the default ffmpeg encoding parameters used by `encode_video_frames`."""
     signature = inspect.signature(encode_video_frames)
     return {

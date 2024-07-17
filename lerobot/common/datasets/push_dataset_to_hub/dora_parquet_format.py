@@ -228,6 +228,6 @@ def from_raw_to_lerobot_format(
         "video": video,
     }
     if video:
-        info = {**info, "encoding": "unknown"}
+        info["encoding"] = "unknown"
 
     return hf_dataset, episode_data_index, info

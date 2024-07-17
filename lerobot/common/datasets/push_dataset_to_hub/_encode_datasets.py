@@ -50,7 +50,7 @@ def encode_datasets(
                 dataset_raw_dir, raw_format=repo_raw_format, repo_id=dataset_repo_id_push, encoding=encoding
             )
         else:
-            print(f"DRY RUN: pushing {dataset_raw_dir} to {dataset_repo_id_push}@{CODEBASE_VERSION}")
+            print(f"DRY RUN: pushing {dataset_raw_dir}   -->  {dataset_repo_id_push}@{CODEBASE_VERSION}")
 
 
 def main():
