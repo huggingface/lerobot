@@ -82,7 +82,6 @@ class Logger:
 
     pretrained_model_dir_name = "pretrained_model"
     training_state_file_name = "training_state.pth"
-    online_buffer_file_name = "online_buffer.pth"
 
     def __init__(self, cfg: DictConfig, log_dir: str, wandb_job_name: str | None = None):
         """

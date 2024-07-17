@@ -17,10 +17,9 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 import datasets
-import numpy as np
 import torch
 import torch.utils
 from safetensors.torch import save_file
@@ -46,334 +45,6 @@ CODEBASE_VERSION = "v1.5"
 DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
 
-def make_memmap_safe(**kwargs) -> np.memmap:
-    """Make a numpy memmap with checks on available disk space first.
-
-    Expected kwargs are: "filename", "dtype" (must by np.dtype), "mode" and "shape"
-
-    For information on dtypes:
-    https://numpy.org/doc/stable/reference/arrays.dtypes.html#arrays-dtypes-constructing
-    """
-    required_space = kwargs["dtype"].itemsize * np.prod(kwargs["shape"])  # bytes
-    stats = os.statvfs(Path(kwargs["filename"]).parent)
-    available_space = stats.f_bavail * stats.f_frsize  # bytes
-    if required_space >= available_space * 0.8:
-        raise RuntimeError(f"You're about to take up {required_space} of {available_space} bytes available.")
-    return np.memmap(**kwargs)
-
-
-class OnlineLeRobotDataset(torch.utils.data.Dataset):
-    """
-    The actual underlying data structure will have data inserted in a rolling fashion. Always insert
-    after the last index, and when you reach the end, wrap around to the start.
-    """
-
-    def __init__(
-        self,
-        write_dir: str | Path,
-        data_shapes: dict[str, tuple[int, ...]],
-        buffer_capacity: int,
-        fps: float,
-        delta_timestamps: dict[str, list[float]] | dict[str, torch.Tensor] | None = None,
-        use_cache: bool = False,
-    ):
-        super().__init__()
-        self._buffer_capacity = buffer_capacity
-        self.delta_timestamps = delta_timestamps
-        self._fps = fps
-        data_spec = self._make_data_spec(data_shapes, buffer_capacity)
-        os.makedirs(write_dir, exist_ok=True)
-        self._data = {
-            k: make_memmap_safe(
-                filename=Path(write_dir) / k,
-                dtype=v["dtype"],
-                mode="r+" if (Path(write_dir) / k).exists() else "w+",
-                shape=tuple(v["shape"]),
-            )
-            for k, v in data_spec.items()
-        }
-        self.cache: dict[str, np.ndarray] = {} if use_cache else None
-
-    def add_data(self, data: dict[str, np.ndarray]):
-        """Add new data to the end of the buffer.
-
-        Remove data from the start of the buffer if necessary.
-
-        Shift the incoming index and episode_index if necessary. Note that this will be done in place!
-        """
-        if not set(data) == set(self.data_keys):
-            raise ValueError("Missing data keys")
-        new_data_length = len(data[self.data_keys[0]])
-        if not all(len(data[k]) == new_data_length for k in self.data_keys):
-            raise ValueError("All data items should have the same length")
-
-        next_index = self._data["_next_index"][0]
-
-        # Shift the incoming indices if necessary.
-        if self.num_samples > 0:
-            last_episode_index = self._data["episode_index"][next_index - 1]
-            last_data_index = self._data["index"][next_index - 1]
-            data["episode_index"] += last_episode_index + 1
-            data["index"] += last_data_index + 1
-
-        # Insert the new data starting from next_index. It may be necessary to wrap around to the start.
-        n_surplus = max(0, new_data_length - (self._buffer_capacity - next_index))
-        for k in self.data_keys:
-            if n_surplus == 0:
-                slc = slice(next_index, next_index + new_data_length)
-                self._data[k][slc] = data[k]
-                self._data["_occupancy_mask"][slc] = True
-            else:
-                self._data[k][next_index:] = data[k][:-n_surplus]
-                self._data["_occupancy_mask"][next_index:] = True
-                self._data[k][:n_surplus] = data[k][-n_surplus:]
-                # Also invalidate overwritten cache indices.
-                if self.cache is not None:
-                    for i in range(n_surplus):
-                        if i in self.cache:
-                            del self.cache[i]
-        if n_surplus == 0:
-            self._data["_next_index"][0] = next_index + new_data_length
-        else:
-            self._data["_next_index"][0] = n_surplus
-
-    @property
-    def data_keys(self) -> list[str]:
-        keys = set(self._data)
-        keys.remove("_occupancy_mask")
-        keys.remove("_next_index")
-        return sorted(keys)
-
-    def _make_data_spec(
-        self, data_shapes: dict[str, tuple[int, ...]], buffer_capacity: int
-    ) -> dict[str, dict[str, Any]]:
-        data_spec = {
-            "_next_index": {"dtype": np.dtype("int64"), "shape": (1,)},
-            "_occupancy_mask": {"dtype": np.dtype("?"), "shape": (buffer_capacity,)},
-            "index": {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
-            "frame_index": {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
-            "episode_index": {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
-            "timestamp": {"dtype": np.dtype("float64"), "shape": (buffer_capacity,)},
-            **{
-                k: {"dtype": np.dtype("float32"), "shape": (buffer_capacity, *v)}
-                for k, v in data_shapes.items()
-            },
-        }
-        return data_spec
-
-    @property
-    def fps(self) -> float:
-        return self._fps
-
-    @property
-    def tolerance_s(self) -> float:
-        """Tolerance in seconds used to discard loaded frames when their timestamps
-        are not close enough from the requested frames. It is only used when `delta_timestamps`
-        is provided or when loading video frames from mp4 files.
-        """
-        # 1e-4 to account for possible numerical error
-        return 1 / self.fps - 1e-4
-
-    @property
-    def num_episodes(self) -> int:
-        return len(np.unique(self._data["episode_index"][self._data["_occupancy_mask"]]))
-
-    @property
-    def num_samples(self) -> int:
-        return np.count_nonzero(self._data["_occupancy_mask"])
-
-    def __len__(self):
-        return self.num_samples
-
-    def _item_to_tensors(self, item: dict) -> dict:
-        item_ = {}
-        for k, v in item.items():
-            if isinstance(v, torch.Tensor):
-                item_[k] = v
-            elif isinstance(v, np.ndarray):
-                item_[k] = torch.from_numpy(v)
-            else:
-                item_[k] = torch.tensor(v)
-        return item_
-
-    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        item = {}
-
-        if self.cache is not None and idx in self.cache:
-            item = self.cache[idx]
-            if self.delta_timestamps is None:
-                return self._item_to_tensors(item)
-
-        if self.delta_timestamps is None:
-            item = {k: v[idx] for k, v in self._data.items() if not k.startswith("_")}
-            if self.cache is not None:
-                self.cache[idx] = item
-            return self._item_to_tensors(item)
-
-        delta_timestamps_keys = set(self.delta_timestamps)
-        delta_timestamps_image_keys = {k for k in self.delta_timestamps if k.startswith("observation.image")}
-
-        if len(item) == 0:
-            item = {
-                k: v[idx]
-                for k, v in self._data.items()
-                if not k.startswith("_") and k not in delta_timestamps_keys
-            }
-
-        episode_index = item["episode_index"]
-        current_ts = item["timestamp"]
-        episode_data_indices = np.where(
-            np.bitwise_and(self._data["episode_index"] == episode_index, self._data["_occupancy_mask"])
-        )[0]
-        episode_timestamps = self._data["timestamp"][episode_data_indices]
-
-        for data_key in self.delta_timestamps:
-            if data_key in item:
-                continue
-            # get timestamps used as query to retrieve data of previous/future frames
-            query_ts = current_ts + np.array(self.delta_timestamps[data_key])
-
-            # compute distances between each query timestamp and all timestamps of all the frames belonging to the episode
-            dist = np.abs(query_ts[:, None] - episode_timestamps[None, :])
-            argmin_ = np.argmin(dist, axis=1)
-            min_ = dist[np.arange(dist.shape[0]), argmin_]
-
-            is_pad = min_ > self.tolerance_s
-
-            # check violated query timestamps are all outside the episode range
-            assert (
-                (query_ts[is_pad] < episode_timestamps[0]) | (episode_timestamps[-1] < query_ts[is_pad])
-            ).all(), (
-                f"One or several timestamps unexpectedly violate the tolerance ({min_} > {self.tolerance_s=}"
-                ") inside episode range. This might be due to synchronization issues with timestamps during "
-                "data collection."
-            )
-
-            # load frames for this data key.
-            item[data_key] = self._data[data_key][episode_data_indices[argmin_]]
-
-            item[f"{data_key}_is_pad"] = is_pad
-
-        if self.cache is not None and idx not in self.cache:
-            self.cache[idx] = {k: v.copy() for k, v in item.items() if k not in delta_timestamps_image_keys}
-
-        return self._item_to_tensors(item)
-
-
-# class OnlineLeRobotDataset(torch.utils.data.Dataset):
-#     def __init__(
-#         self,
-#         data: dict[str, torch.Tensor],
-#         fps: float,
-#         delta_timestamps: dict[str, list[float]] | dict[str, torch.Tensor] | None = None,
-#         use_cache: bool = False,
-#     ):
-#         super().__init__()
-#         self.delta_timestamps = delta_timestamps
-#         self._fps = fps
-#         self.data = data
-#         self.cache = {} if use_cache else None
-
-#     def save_data(self, path: str):
-#         torch.save(self.data, path)
-
-#     @property
-#     def fps(self) -> float:
-#         return self._fps
-
-#     @property
-#     def tolerance_s(self) -> float:
-#         """Tolerance in seconds used to discard loaded frames when their timestamps
-#         are not close enough from the requested frames. It is only used when `delta_timestamps`
-#         is provided or when loading video frames from mp4 files.
-#         """
-#         # 1e-4 to account for possible numerical error
-#         return 1 / self.fps - 1e-4
-
-#     @property
-#     def delta_timestamps(self) -> dict[str, torch.Tensor] | None:
-#         return self._delta_timestamps
-
-#     @delta_timestamps.setter
-#     def delta_timestamps(self, delta_timestamps: dict[str, torch.Tensor] | dict[str, list[float]] | None):
-#         if delta_timestamps is None:
-#             self._delta_timestamps = delta_timestamps
-#         else:
-#             self._delta_timestamps = {
-#                 k: v if isinstance(v, torch.Tensor) else torch.tensor(v) for k, v in delta_timestamps.items()
-#             }
-
-#     @property
-#     def num_episodes(self) -> int:
-#         if len(self.data) > 0:
-#             return len(torch.unique(self.data["episode_index"]))
-
-#     @property
-#     def num_samples(self) -> int:
-#         if len(self.data) > 0:
-#             return len(next(iter(self.data.values())))
-#         else:
-#             return 0
-
-#     def __len__(self):
-#         return self.num_samples
-
-#     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-#         item = {}
-
-#         if self.cache is not None and idx in self.cache:
-#             item = self.cache[idx]
-#             if self.delta_timestamps is None:
-#                 return item
-
-#         if self.delta_timestamps is None:
-#             item = {k: v[idx] for k, v in self.data.items()}
-#             if self.cache is not None:
-#                 self.cache[idx] = deepcopy(item)
-#             return item
-
-#         delta_timestamps_keys = set(self.delta_timestamps)
-#         delta_timestamps_image_keys = {k for k in self.delta_timestamps if k.startswith("observation.image")}
-
-#         if len(item) == 0:
-#             item = {k: v[idx] for k, v in self.data.items() if k not in delta_timestamps_keys}
-
-#         episode_index = item["episode_index"].item()
-#         current_ts = item["timestamp"].item()
-#         episode_data_indices = torch.where(self.data["episode_index"] == episode_index)[0]
-#         episode_timestamps = self.data["timestamp"][self.data["episode_index"] == episode_index]
-
-#         for data_key in self.delta_timestamps:
-#             if data_key in item:
-#                 continue
-#             # get timestamps used as query to retrieve data of previous/future frames
-#             query_ts = current_ts + self.delta_timestamps[data_key]
-
-#             # compute distances between each query timestamp and all timestamps of all the frames belonging to the episode
-#             dist = torch.cdist(query_ts[:, None], episode_timestamps[:, None], p=1)
-#             min_, argmin_ = dist.min(1)
-
-#             is_pad = min_ > self.tolerance_s
-
-#             # check violated query timestamps are all outside the episode range
-#             assert (
-#                 (query_ts[is_pad] < episode_timestamps[0]) | (episode_timestamps[-1] < query_ts[is_pad])
-#             ).all(), (
-#                 f"One or several timestamps unexpectedly violate the tolerance ({min_} > {self.tolerance_s=}"
-#                 ") inside episode range. This might be due to synchronization issues with timestamps during "
-#                 "data collection."
-#             )
-
-#             # load frames for this data key.
-#             item[data_key] = self.data[data_key][episode_data_indices[argmin_]]
-
-#             item[f"{data_key}_is_pad"] = is_pad
-
-#         if self.cache is not None and idx not in self.cache:
-#             self.cache[idx] = {k: v.clone() for k, v in item.items() if k not in delta_timestamps_image_keys}
-#         return item
-
-
 class LeRobotDataset(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -383,14 +54,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
         video_backend: str | None = None,
-        use_cache: bool = False,
     ):
-        """
-        Args:
-            use_cache: Enable this to cache all items as tensors for faster data loading after the first
-                epoch. Useful if you have a small enough dataset to fit into memory. You may set multiple
-                workers for the PyTorch Dataloader but remember to set persistent_workers=True.
-        """
         super().__init__()
         self.repo_id = repo_id
         self.root = root
@@ -411,7 +75,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.video:
             self.videos_dir = load_videos(repo_id, CODEBASE_VERSION, root)
             self.video_backend = video_backend if video_backend is not None else "pyav"
-        self.cache = {} if use_cache else None
 
     def save(self, save_dir: str | Path):
         save_dir = Path(save_dir)
@@ -487,30 +150,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        if self.cache is not None and idx in self.cache:
-            item = self.cache[idx]
-        else:
-            item = self.hf_dataset[idx]
+        item = self.hf_dataset[idx]
 
-            if self.delta_timestamps is not None:
-                item = load_previous_and_future_frames(
-                    item,
-                    self.hf_dataset,
-                    self.episode_data_index,
-                    self.delta_timestamps,
-                    self.tolerance_s,
-                )
+        if self.delta_timestamps is not None:
+            item = load_previous_and_future_frames(
+                item,
+                self.hf_dataset,
+                self.episode_data_index,
+                self.delta_timestamps,
+                self.tolerance_s,
+            )
 
-            if self.video:
-                item = load_from_videos(
-                    item,
-                    self.video_frame_keys,
-                    self.videos_dir,
-                    self.tolerance_s,
-                    self.video_backend,
-                )
-            if self.cache is not None:
-                self.cache[idx] = item
+        if self.video:
+            item = load_from_videos(
+                item,
+                self.video_frame_keys,
+                self.videos_dir,
+                self.tolerance_s,
+                self.video_backend,
+            )
 
         if self.image_transforms is not None:
             for cam in self.camera_keys:

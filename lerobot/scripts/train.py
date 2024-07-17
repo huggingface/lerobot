@@ -31,7 +31,7 @@ from torch import nn
 from torch.cuda.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
-from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset, OnlineLeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
@@ -47,6 +47,7 @@ from lerobot.common.utils.utils import (
     set_global_seed,
 )
 from lerobot.scripts.eval import eval_policy
+from lerobot.scripts.online_training_helpers import OnlineBuffer, update_online_buffer
 
 
 def make_optimizer_and_scheduler(cfg, policy):
@@ -110,7 +111,6 @@ def update_policy(
     grad_scaler: GradScaler,
     lr_scheduler=None,
     use_amp: bool = False,
-    step: int = 0,
     lock=None,
 ):
     """Returns a dictionary of items for logging."""
@@ -118,7 +118,7 @@ def update_policy(
     device = get_device_from_parameters(policy)
     policy.train()
     with torch.autocast(device_type=device.type) if use_amp else nullcontext():
-        output_dict = policy.forward(batch, step)
+        output_dict = policy.forward(batch)
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
         loss = output_dict["loss"]
     grad_scaler.scale(loss).backward()
@@ -160,7 +160,7 @@ def update_policy(
     return info
 
 
-def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
+def log_train_info(logger: Logger, info, step, cfg, dataset, is_online):
     loss = info["loss"]
     grad_norm = info["grad_norm"]
     lr = info["lr"]
@@ -194,12 +194,12 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
     info["num_samples"] = num_samples
     info["num_episodes"] = num_episodes
     info["num_epochs"] = num_epochs
-    info["is_offline"] = is_offline
+    info["is_online"] = is_online
 
     logger.log_dict(info, step, mode="train")
 
 
-def log_eval_info(logger, info, step, cfg, dataset, is_offline):
+def log_eval_info(logger, info, step, cfg, dataset, is_online):
     eval_s = info["eval_s"]
     avg_sum_reward = info["avg_sum_reward"]
     pc_success = info["pc_success"]
@@ -228,143 +228,9 @@ def log_eval_info(logger, info, step, cfg, dataset, is_offline):
     info["num_samples"] = num_samples
     info["num_episodes"] = num_episodes
     info["num_epochs"] = num_epochs
-    info["is_offline"] = is_offline
+    info["is_online"] = is_online
 
     logger.log_dict(info, step, mode="eval")
-
-
-def update_online_buffer(
-    online_dataset: OnlineLeRobotDataset,
-    concat_dataset: torch.utils.data.ConcatDataset,
-    sampler: torch.utils.data.WeightedRandomSampler,
-    new_data_dict: dict[str, torch.Tensor],
-    online_sampling_ratio: float,
-):
-    """
-    Modifies the online_dataset, concat_dataset, and sampler in place by integrating
-    new episodes from new_data_dict into the online_dataset, updating the concatenated
-    dataset's structure and adjusting the sampling strategy based on the specified
-    percentage of online samples.
-
-    Args:
-        online_dataset: The existing online dataset to be updated.
-        concat_dataset: The concatenated dataset that combines offline and online datasets (in that order),
-            used for sampling purposes.
-        sampler: A sampler that will be updated to reflect changes in the dataset sizes and specified sampling
-            weights.
-        new_data_dict: A Hugging Face dataset containing the new episodes to be added.
-        new_episode_data_index: A dictionary containing two keys ("from" and "to") associated to dataset
-            indices. They indicate the start index and end index of each episode in the dataset.
-        online_sampling_ratio: The target percentage of samples that should come from the online dataset
-            during sampling operations.
-        buffer_capacity: A maximum capacity (in units of frames) for the online dataset. The dataset is
-            treated like a queue where the first frames in are removed, if necessary, to make space for new
-            frames.
-    """
-    # Sanity check to make sure that new_data_dict starts from 0.
-    assert new_data_dict["episode_index"][0].item() == 0
-    assert new_data_dict["index"][0].item() == 0
-
-    online_dataset.add_data(new_data_dict)
-
-    # update the concatenated dataset length used during sampling
-    concat_dataset.cumulative_sizes = concat_dataset.cumsum(concat_dataset.datasets)
-
-    # update the sampling weights for each frame so that online frames get sampled a certain percentage of
-    # times
-    len_online = len(online_dataset)
-    len_offline = len(concat_dataset) - len_online
-    sampler.weights = torch.tensor(
-        [(1 - online_sampling_ratio) / len_offline] * len_offline
-        + [online_sampling_ratio / len_online] * len_online
-    )
-
-    # update the total number of samples used during sampling
-    sampler.num_samples = len(concat_dataset)
-
-
-# def update_online_buffer(
-#     online_dataset: OnlineLeRobotDataset,
-#     concat_dataset: torch.utils.data.ConcatDataset,
-#     sampler: torch.utils.data.WeightedRandomSampler,
-#     new_data_dict: dict[str, torch.Tensor],
-#     online_sampling_ratio: float,
-#     buffer_capacity: float | None = None,
-# ):
-#     """
-#     Modifies the online_dataset, concat_dataset, and sampler in place by integrating
-#     new episodes from new_data_dict into the online_dataset, updating the concatenated
-#     dataset's structure and adjusting the sampling strategy based on the specified
-#     percentage of online samples.
-
-#     Args:
-#         online_dataset: The existing online dataset to be updated.
-#         concat_dataset: The concatenated dataset that combines offline and online datasets (in that order),
-#             used for sampling purposes.
-#         sampler: A sampler that will be updated to reflect changes in the dataset sizes and specified sampling
-#             weights.
-#         new_data_dict: A Hugging Face dataset containing the new episodes to be added.
-#         new_episode_data_index: A dictionary containing two keys ("from" and "to") associated to dataset
-#             indices. They indicate the start index and end index of each episode in the dataset.
-#         online_sampling_ratio: The target percentage of samples that should come from the online dataset
-#             during sampling operations.
-#         buffer_capacity: A maximum capacity (in units of frames) for the online dataset. The dataset is
-#             treated like a queue where the first frames in are removed, if necessary, to make space for new
-#             frames.
-#     """
-#     # Sanity check to make sure that new_data_dict starts from 0.
-#     assert new_data_dict["episode_index"][0].item() == 0
-#     assert new_data_dict["index"][0].item() == 0
-
-#     if len(online_dataset) == 0:
-#         # Initialize online dataset.
-#         online_dataset.data = new_data_dict
-#     else:
-#         n_surplus = 0
-#         if (
-#             buffer_capacity is not None
-#             and (
-#                 n_surplus := max(
-#                     0, len(online_dataset) + len(new_data_dict["episode_index"]) - buffer_capacity
-#                 )
-#             )
-#             > 0
-#         ):
-#             # Remove as many frames from the dataset as need to keep within the desired capacity.
-#             online_dataset.data = {k: v[n_surplus:] for k, v in online_dataset.data.items()}
-#             # Shift the indices of the existing dataset
-#             online_dataset.data["index"] -= online_dataset["index"][0]
-#             online_dataset.data["episode_index"] -= online_dataset["episode_index"][0]
-
-#         # Make the new dataset continue where the data in online_dataset finishes.
-#         new_data_dict["index"] += online_dataset.data["index"][-1] + 1
-#         new_data_dict["episode_index"] += online_dataset.data["episode_index"][-1] + 1
-
-#         # Extend the online dataset with the new data.
-#         online_dataset.data = {
-#             k: torch.cat([online_dataset.data[k], new_data_dict[k]]) for k in online_dataset.data
-#         }
-
-#         # Shift the cache indices.
-#         if online_dataset.cache is not None and n_surplus > 0:
-#             online_dataset.cache = {
-#                 k - n_surplus: v for k, v in online_dataset.cache.items() if k - n_surplus >= 0
-#             }
-
-#     # update the concatenated dataset length used during sampling
-#     concat_dataset.cumulative_sizes = concat_dataset.cumsum(concat_dataset.datasets)
-
-#     # update the sampling weights for each frame so that online frames get sampled a certain percentage of
-#     # times
-#     len_online = len(online_dataset)
-#     len_offline = len(concat_dataset) - len_online
-#     sampler.weights = torch.tensor(
-#         [(1 - online_sampling_ratio) / len_offline] * len_offline
-#         + [online_sampling_ratio / len_online] * len_online
-#     )
-
-#     # update the total number of samples used during sampling
-#     sampler.num_samples = len(concat_dataset)
 
 
 def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
@@ -461,6 +327,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     grad_scaler = GradScaler(enabled=cfg.use_amp)
 
     step = 0  # number of policy updates (forward + backward + optim)
+
     if cfg.resume:
         step = logger.load_last_training_state(optimizer, lr_scheduler)
 
@@ -477,7 +344,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # Note: this helper will be used in offline and online training loops.
-    def evaluate_and_checkpoint_if_needed(step):
+    def evaluate_and_checkpoint_if_needed(step, is_online):
         _num_digits = max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
         step_identifier = f"{step:0{_num_digits}d}"
 
@@ -493,7 +360,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
                 )
-            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline=True)
+            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_online=is_online)
             if cfg.wandb.enable:
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
@@ -538,7 +405,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     dl_iter = cycle(dataloader)
 
     policy.train()
-    is_offline = True
     offline_step = 0
     for _ in range(step, cfg.training.offline_steps):
         if offline_step == 0:
@@ -559,24 +425,25 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             grad_scaler=grad_scaler,
             lr_scheduler=lr_scheduler,
             use_amp=cfg.use_amp,
-            step=step,
         )
 
         train_info["dataloading_s"] = dataloading_s
 
         if step % cfg.training.log_freq == 0:
-            log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline=True)
+            log_train_info(logger, train_info, step, cfg, offline_dataset, is_online=False)
 
         # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
         # so we pass in step + 1.
-        evaluate_and_checkpoint_if_needed(step + 1)
+        evaluate_and_checkpoint_if_needed(step + 1, is_online=False)
 
         step += 1
         offline_step += 1  # noqa: SIM113
 
-    # create an env dedicated to online episodes collection from policy rollout
-    online_training_env = make_env(cfg, n_envs=cfg.training.online_rollout_batch_size)
-    online_dataset = OnlineLeRobotDataset(
+    # Online training.
+
+    # Create an env dedicated to online episodes collection from policy rollout.
+    online_env = make_env(cfg, n_envs=cfg.training.online_rollout_batch_size)
+    online_dataset = OnlineBuffer(
         logger.log_dir / "online_buffer",
         data_shapes={
             **policy.config.input_shapes,
@@ -588,13 +455,14 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         buffer_capacity=cfg.training.online_buffer_capacity,
         fps=offline_dataset.fps,
         delta_timestamps=offline_dataset.delta_timestamps,
-        use_cache=cfg.training.dataset_use_cache,
+        use_cache=False,  # TODO(now): remove?
     )
 
-    online_rollout_policy = deepcopy(policy)
-    online_rollout_policy.eval()
+    # If we are doing online rollouts asynchronously, deepcopy the policy to use for online rollouts (this
+    # makes it possible to do online rollouts in parallel with training updates).
+    online_rollout_policy = deepcopy(policy) if cfg.training.do_online_rollout_async else policy
 
-    # create dataloader for online training
+    # Create dataloader for online training.
     concat_dataset = torch.utils.data.ConcatDataset([offline_dataset, online_dataset])
     if len(offline_dataset) > 0 and len(online_dataset) > 0:
         weights = torch.tensor(
@@ -608,10 +476,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     sampler = torch.utils.data.WeightedRandomSampler(
         weights, num_samples=len(concat_dataset), replacement=True
     )
+    # Note: This does not use multiple workers as the prefetching mechanism doesn't work well with a dataset
+    # that keeps changing size. This can be potentially worked around in future revisions.
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
-        # num_workers=cfg.training.num_workers,
-        # persistent_workers=cfg.training.num_workers > 0,
         batch_size=cfg.training.batch_size,
         sampler=sampler,
         pin_memory=device.type != "cpu",
@@ -619,16 +487,18 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     )
     dl_iter = cycle(dataloader)
 
+    # Lock and thread pool executor for asynchronous online rollouts. When asynchronous mode is disabled,
+    # these are still used but effectively do nothing.
     lock = Lock()
-
     executor = ThreadPoolExecutor(max_workers=1)
 
     online_step = 0
-    online_rollout_s = 0
-    update_online_buffer_s = 0
-    await_rollout_s = 0
-    rollout_start_seed = 0
-    is_offline = False
+    online_rollout_s = 0  # time take to do online rollout
+    update_online_buffer_s = 0  # time taken to update the online buffer with the online rollout data
+    # Time taken waiting for the online buffer to finish being updated. This is relevant when using the async
+    # online rollout option.
+    await_update_online_buffer_s = 0
+    rollout_start_seed = cfg.training.online_env_seed
     while True:
         if online_step == cfg.training.online_steps:
             break
@@ -644,21 +514,23 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             start_rollout_time = time.perf_counter()
             with torch.no_grad():
                 eval_info = eval_policy(
-                    online_training_env,
+                    online_env,
                     online_rollout_policy,
                     n_episodes=cfg.training.online_rollout_n_episodes,
                     max_episodes_rendered=min(10, cfg.training.online_rollout_n_episodes),
-                    videos_dir=Path("test"),
+                    videos_dir=logger.log_dir / "online_rollout_videos",
                     return_episode_data=True,
                     start_seed=(
                         rollout_start_seed := (rollout_start_seed + cfg.training.batch_size) % 1000000
                     ),
-                    enable_progbar=False,
+                    enable_progbar=True,
+                    enable_inner_progbar=True,
                 )
             online_rollout_s = time.perf_counter() - start_rollout_time
 
             with lock:
                 start_update_buffer_time = time.perf_counter()
+                # Warning: the new_data_dict may be modified in place.
                 update_online_buffer(
                     online_dataset,
                     concat_dataset,
@@ -675,7 +547,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             len(online_dataset) <= cfg.training.online_buffer_seed_size
             or not cfg.training.do_online_rollout_async
         ):
-            start_time = time.perf_counter()
             online_rollout_s, update_online_buffer_s = future.result()
 
         if len(online_dataset) <= cfg.training.online_buffer_seed_size:
@@ -702,23 +573,22 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 grad_scaler=grad_scaler,
                 lr_scheduler=lr_scheduler,
                 use_amp=cfg.use_amp,
-                step=step,
                 lock=lock,
             )
 
             train_info["dataloading_s"] = dataloading_s
-            train_info["await_rollout_s"] = await_rollout_s
             train_info["online_rollout_s"] = online_rollout_s
             train_info["update_online_buffer_s"] = update_online_buffer_s
+            train_info["await_update_online_buffer_s"] = await_update_online_buffer_s
             with lock:
                 train_info["online_buffer_size"] = len(online_dataset)
 
             if step % cfg.training.log_freq == 0:
-                log_train_info(logger, train_info, step, cfg, online_dataset, is_offline)
+                log_train_info(logger, train_info, step, cfg, online_dataset, is_online=True)
 
             # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
             # so we pass in step + 1.
-            evaluate_and_checkpoint_if_needed(step + 1)
+            evaluate_and_checkpoint_if_needed(step + 1, is_online=True)
 
             step += 1
             online_step += 1
@@ -726,7 +596,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         if future.running():
             start = time.perf_counter()
             online_rollout_s, update_online_buffer_s = future.result()
-            await_rollout_s = time.perf_counter() - start
+            await_update_online_buffer_s = time.perf_counter() - start
 
         if online_step >= cfg.training.online_steps:
             break

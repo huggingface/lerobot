@@ -32,30 +32,39 @@ video_backend: pyav
 
 training:
   offline_steps: ???
-  # NOTE: `online_steps` is not implemented yet. It's here as a placeholder.
-  online_steps: ???
-  online_steps_between_rollouts: ???
-  online_rollout_n_episodes: 1
-  online_rollout_batch_size: 1
-  online_sampling_ratio: 0.5
-  # TODO(now): Document this, and the train script will need to check that this is longer than the episode length
-  online_buffer_capacity: ???
-  online_buffer_seed_size: 0
-  # `online_env_seed` is used for environments for online training data rollouts.
-  online_env_seed: ???
-  do_online_rollout_async: false
+
+  # Offline training dataloader
+  num_workers: 4
+  dataloader_persistent_workers: true
+
+  batch_size: ???
+
   eval_freq: ???
   log_freq: 200
-  # `dataset_use_cache` indicates whether to cache all dataset items as Tensors in RAM. Potentially useful for
-  # faster data loading with datasets small enough to fit in memory. If you wish to use dataloader workers,
-  # remember to set `dataloader_persistent_workers to True.
-  dataset_use_cache: false
-  dataloader_persistent_workers: false
+
   save_checkpoint: true
   # Checkpoint is saved every `save_freq` training iterations and after the last training step.
   save_freq: ???
-  num_workers: 4
-  batch_size: ???
+
+  # Online training. Note that the online training loop adopts most of the options above apart from the
+  # dataloader options. For online training the dataloader uses 0 workers.
+  # NOTE: `online_steps` is not implemented yet. It's here as a placeholder.
+  online_steps: ???
+  online_steps_between_rollouts: ???
+  # TODO(now): Test > 1
+  online_rollout_n_episodes: 1
+  online_rollout_batch_size: 1
+  online_sampling_ratio: 0.5
+  # First seed to use for the online rollout environment. Seeds for subsequent rollouts are incremented by 1.
+  online_env_seed: 10000
+  # Sets the maximum number of frames that are stored in the online buffer for online
+  # training. The buffer is FIFO.
+  online_buffer_capacity: ???
+  # The minimum number of frames to have in the online buffer before commencing online training.
+  online_buffer_seed_size: 0
+  # TODO(now): Figure out how much this gains us and document it.
+  do_online_rollout_async: false
+
   image_transforms:
   # These transforms are all using standard torchvision.transforms.v2
   # You can find out how these transformations affect images here:

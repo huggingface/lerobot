@@ -132,7 +132,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         """
         self._queues = {
             "observation.state": deque(maxlen=1),
-            "action": deque(maxlen=self.config.n_action_repeats),
+            "action": deque(maxlen=max(self.config.n_action_steps, self.config.n_action_repeats)),
         }
         if self._use_image:
             self._queues["observation.image"] = deque(maxlen=1)
@@ -171,28 +171,33 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
             if self.config.use_mpc:
                 batch_size = batch["observation.state"].shape[0]
                 # Batch processing is not handled in MPC mode, so process the batch in a loop.
-                action = []  # will be a batch of actions for one step
+                actions = []
                 for i in range(batch_size):
                     # Note: self.plan does not handle batches, hence the squeeze.
-                    action.append(self.plan(z[i]))
-                action = torch.stack(action)
+                    actions.append(self.plan(z[i]))
+                actions = torch.stack(actions)  # (batch, horizon, action_dim)
             else:
-                # Plan with the policy (π) alone.
-                action = self.model.pi(z)
+                # Plan with the policy (π) alone. This always returns one action so unsqueeze to get a
+                # sequence dimension like in the MPC branch.
+                actions = self.model.pi(z).unsqueeze(1)
 
-            action = torch.clamp(action, -1, +1)
+            actions = torch.clamp(actions, -1, +1)
 
-            action = self.unnormalize_outputs({"action": action})["action"]
+            actions = self.unnormalize_outputs({"action": actions})["action"]
 
-            for _ in range(self.config.n_action_repeats):
-                self._queues["action"].append(action)
+            if self.config.n_action_repeats > 1:
+                for _ in range(self.config.n_action_repeats):
+                    self._queues["action"].append(actions[0])
+            else:
+                # Action queue is (n_action_steps, batch_size, action_dim), so we transpose the action.
+                self._queues["action"].extend(actions[:, : self.config.n_action_steps].transpose(0, 1))
 
         action = self._queues["action"].popleft()
         return action
 
     @torch.no_grad()
     def plan(self, z: Tensor) -> Tensor:
-        """Plan next action using TD-MPC inference.
+        """Plan sequence of actions using TD-MPC inference.
 
         Args:
             z: (latent_dim,) tensor for the initial state.
@@ -275,9 +280,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         # scores from the last iteration.
         actions = elite_actions[:, torch.multinomial(score, 1).item()]
 
-        # Select only the first action
-        action = actions[0]
-        return action
+        return actions
 
     @torch.no_grad()
     def estimate_value(self, z: Tensor, actions: Tensor):
@@ -329,7 +332,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
             G -= running_discount * self.config.uncertainty_regularizer_coeff * terminal_values.std(0)
         return G
 
-    def forward(self, batch: dict[str, Tensor], step) -> dict[str, Tensor | float]:
+    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor | float]:
         """Run the batch through the model and compute the loss.
 
         Returns a dictionary with loss as a tensor, and other information as native floats.
@@ -340,30 +343,6 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         if self._use_image:
             batch["observation.image"] = batch[self.input_image_key]
         batch = self.normalize_targets(batch)
-
-        # import os
-        # from time import sleep
-
-        # while True:
-        #     if not os.path.exists("/tmp/mutex.txt"):
-        #         sleep(0.01)
-        #         continue
-        #     batch_ = torch.load("/tmp/batch.pth")
-        #     print(f"STEP {step}")
-        #     assert torch.equal(batch["index"], batch_["index"])
-        #     assert torch.equal(batch["episode_index"], batch_["episode_index"])
-        #     if not torch.equal(batch["observation.image"], batch_["observation.image"]):
-        #         import cv2
-
-        #         for b, fn in [(batch, "outputs/img.png"), (batch_, "outputs/img_.png")]:
-        #             cv2.imwrite(
-        #                 fn,
-        #                 (b["observation.image"][0, 0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8),
-        #             )
-        #         assert False
-        #     assert torch.equal(batch["observation.state"], batch_["observation.state"])
-        #     os.remove("/tmp/mutex.txt")
-        #     break
 
         info = {}
 
@@ -398,38 +377,30 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         # gives us a next `z`.
         batch_size = batch["index"].shape[0]
         z_preds = torch.empty(horizon + 1, batch_size, self.config.latent_dim, device=device)
-        z_preds[0] = self.model.encode(current_observation)  # TODO(now): Same
+        z_preds[0] = self.model.encode(current_observation)
         reward_preds = torch.empty_like(reward, device=device)
         for t in range(horizon):
-            z_preds[t + 1], reward_preds[t] = self.model.latent_dynamics_and_reward(
-                z_preds[t], action[t]
-            )  # TODO(now): same
+            z_preds[t + 1], reward_preds[t] = self.model.latent_dynamics_and_reward(z_preds[t], action[t])
 
         # Compute Q and V value predictions based on the latent rollout.
-        q_preds_ensemble = self.model.Qs(
-            z_preds[:-1], action
-        )  # (ensemble, horizon, batch)  # TODO(now): all zeros
-        v_preds = self.model.V(z_preds[:-1])  # TODO(now): same
+        q_preds_ensemble = self.model.Qs(z_preds[:-1], action)  # (ensemble, horizon, batch)
+        v_preds = self.model.V(z_preds[:-1])
         info.update({"Q": q_preds_ensemble.mean().item(), "V": v_preds.mean().item()})
 
         # Compute various targets with stopgrad.
         with torch.no_grad():
             # Latent state consistency targets.
-            z_targets = self.model_target.encode(next_observations)  # TODO(now): same
+            z_targets = self.model_target.encode(next_observations)
             # State-action value targets (or TD targets) as in eqn 3 of the FOWM. Unlike TD-MPC which uses the
             # learned state-action value function in conjunction with the learned policy: Q(z, π(z)), FOWM
             # uses a learned state value function: V(z). This means the TD targets only depend on in-sample
             # actions (not actions estimated by π).
             # Note: Here we do not use self.model_target, but self.model. This is to follow the original code
             # and the FOWM paper.
-            q_targets = reward + self.config.discount * self.model.V(
-                self.model.encode(next_observations)
-            )  # TODO(now): same
+            q_targets = reward + self.config.discount * self.model.V(self.model.encode(next_observations))
             # From eqn 3 of FOWM. These appear as Q(z, a). Here we call them v_targets to emphasize that we
             # are using them to compute loss for V.
-            v_targets = self.model_target.Qs(
-                z_preds[:-1].detach(), action, return_min=True
-            )  # TODO(now): zeros
+            v_targets = self.model_target.Qs(z_preds[:-1].detach(), action, return_min=True)
 
         # Compute losses.
         # Exponentially decay the loss weight with respect to the timestep. Steps that are more distant in the
@@ -450,7 +421,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
                 * ~batch["observation.state_is_pad"][1:]
             )
             .sum(0)
-            .mean()  # TODO(now): same
+            .mean()
         )
         # Compute the reward loss as MSE loss between rewards predicted from the rollout and the dataset
         # rewards.
@@ -464,7 +435,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
                 * ~batch["action_is_pad"]
             )
             .sum(0)
-            .mean()  # TODO(now): same
+            .mean()
         )
         # Compute state-action value loss (TD loss) for all of the Q functions in the ensemble.
         q_value_loss = (
@@ -483,7 +454,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
                 * ~batch["observation.state_is_pad"][1:]
             )
             .sum(0)
-            .mean()  # TODO(now): same
+            .mean()
         )
         # Compute state value loss as in eqn 3 of FOWM.
         diff = v_targets - v_preds
@@ -502,7 +473,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
                 * ~batch["action_is_pad"]
             )
             .sum(0)
-            .mean()  # TODO(now): same
+            .mean()
         )
 
         # Calculate the advantage weighted regression loss for π as detailed in FOWM 3.1.
@@ -536,7 +507,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
             # `action_preds` depends on the first observation and the actions.
             * ~batch["observation.state_is_pad"][0]
             * ~batch["action_is_pad"]
-        ).mean()  # TODO(now): same
+        ).mean()
 
         loss = (
             self.config.consistency_coeff * consistency_loss
