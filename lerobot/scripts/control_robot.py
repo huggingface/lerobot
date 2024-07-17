@@ -264,35 +264,6 @@ def record_dataset(
             "Headless environment detected. Display cameras on screen and keyboard inputs will not be available."
         )
 
-    # Execute a few seconds without recording data, to give times
-    # to the robot devices to connect and start synchronizing.
-    timestamp = 0
-    start_time = time.perf_counter()
-    is_warmup_print = False
-    while timestamp < warmup_time_s:
-        if not is_warmup_print:
-            logging.info("Warming up (no data recording)")
-            os.system('say "Warmup" &')
-            is_warmup_print = True
-
-        now = time.perf_counter()
-
-        observation, action = robot.teleop_step(record_data=True)
-
-        if not is_headless():
-            image_keys = [key for key in observation if "image" in key]
-            for key in image_keys:
-                cv2.imshow(key, convert_torch_image_to_cv2(observation[key]))
-            cv2.waitKey(1)
-
-        dt_s = time.perf_counter() - now
-        busy_wait(1 / fps - dt_s)
-
-        dt_s = time.perf_counter() - now
-        log_control_info(robot, dt_s, fps=fps)
-
-        timestamp = time.perf_counter() - start_time
-
     # Allow to exit early while recording an episode or resetting the environment,
     # by tapping the right arrow key '->'. This might require a sudo permission
     # to allow your terminal to monitor keyboard events.
@@ -323,6 +294,35 @@ def record_dataset(
 
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
+
+    # Execute a few seconds without recording data, to give times
+    # to the robot devices to connect and start synchronizing.
+    timestamp = 0
+    start_time = time.perf_counter()
+    is_warmup_print = False
+    while timestamp < warmup_time_s:
+        if not is_warmup_print:
+            logging.info("Warming up (no data recording)")
+            os.system('say "Warmup" &')
+            is_warmup_print = True
+
+        now = time.perf_counter()
+
+        observation, action = robot.teleop_step(record_data=True)
+
+        if not is_headless():
+            image_keys = [key for key in observation if "image" in key]
+            for key in image_keys:
+                cv2.imshow(key, convert_torch_image_to_cv2(observation[key]))
+            cv2.waitKey(1)
+
+        dt_s = time.perf_counter() - now
+        busy_wait(1 / fps - dt_s)
+
+        dt_s = time.perf_counter() - now
+        log_control_info(robot, dt_s, fps=fps)
+
+        timestamp = time.perf_counter() - start_time
 
     # Save images using threads to reach high fps (30 and more)
     # Using `with` to exist smoothly if an execption is raised.
@@ -459,6 +459,10 @@ def record_dataset(
                     pass
                 break
 
+    robot.disconnect()
+    if not is_headless():
+        cv2.destroyAllWindows()
+
     num_episodes = episode_index
 
     logging.info("Encoding videos")
@@ -588,6 +592,31 @@ def run_policy(
             "Headless environment detected. Display cameras on screen and keyboard inputs will not be available."
         )
 
+    # Allow to reset environment or exit early
+    # by tapping the right arrow key '->'. This might require a sudo permission
+    # to allow your terminal to monitor keyboard events.
+    reset_environment = False
+    exit_reset = False
+
+    # Only import pynput if not in a headless environment
+    if not is_headless():
+        from pynput import keyboard
+
+        def on_press(key):
+            nonlocal reset_environment, exit_reset
+            try:
+                if key == keyboard.Key.right and not reset_environment:
+                    print("Right arrow key pressed. Suspend robot control to reset environment...")
+                    reset_environment = True
+                elif key == keyboard.Key.right and reset_environment:
+                    print("Right arrow key pressed. Enable robot control and exit reset environment...")
+                    exit_reset = True
+            except Exception as e:
+                print(f"Error handling key press: {e}")
+
+        listener = keyboard.Listener(on_press=on_press)
+        listener.start()
+
     # Execute a few seconds without recording data, to give times
     # to the robot devices to connect and start synchronizing.
     timestamp = 0
@@ -615,31 +644,6 @@ def run_policy(
         log_control_info(robot, dt_s, fps=fps)
 
         timestamp = time.perf_counter() - start_time
-
-    # Allow to reset environment or exit early
-    # by tapping the right arrow key '->'. This might require a sudo permission
-    # to allow your terminal to monitor keyboard events.
-    reset_environment = False
-    exit_reset = False
-
-    # Only import pynput if not in a headless environment
-    if not is_headless():
-        from pynput import keyboard
-
-        def on_press(key):
-            nonlocal reset_environment, exit_reset
-            try:
-                if key == keyboard.Key.right and not reset_environment:
-                    print("Right arrow key pressed. Suspend robot control to reset environment...")
-                    reset_environment = True
-                elif key == keyboard.Key.right and reset_environment:
-                    print("Right arrow key pressed. Enable robot control and exit reset environment...")
-                    exit_reset = True
-            except Exception as e:
-                print(f"Error handling key press: {e}")
-
-        listener = keyboard.Listener(on_press=on_press)
-        listener.start()
 
     start_time = time.perf_counter()
     while True:
