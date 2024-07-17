@@ -115,15 +115,11 @@ def update_policy(
     loss = output_dict["loss"]
     if accelerator:
         accelerator.backward(loss)
+        accelerator.unscale_gradients(optimizer=optimizer)
     else:
         loss.backward()
 
-    if accelerator:
-        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
-    else:
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            policy.parameters(), grad_clip_norm, error_if_nonfinite=False
-        )
+    grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), grad_clip_norm, error_if_nonfinite=False)
 
     optimizer.step()
     optimizer.zero_grad()
