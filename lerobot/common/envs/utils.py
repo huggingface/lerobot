@@ -50,14 +50,11 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             img /= 255
 
             return_observations[imgkey] = img
-    elif "environment_state" in observations:
+
+    if "environment_state" in observations:
         return_observations["observation.environment_state"] = torch.from_numpy(
             observations["environment_state"]
         ).float()
-    else:
-        raise AssertionError(
-            "Expected either 'pixels' or 'environment_state' to be in the environment observation dictionary."
-        )
 
     # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
     # requirement for "agent_pos"

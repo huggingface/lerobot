@@ -18,6 +18,7 @@ training:
   dataset_use_cache: true
   num_workers: 4
   dataloader_persistent_workers: true
+  log_freq: 100
 
   batch_size: 256
   grad_clip_norm: 10.0

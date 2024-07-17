@@ -45,7 +45,7 @@ training:
   online_env_seed: ???
   do_online_rollout_async: false
   eval_freq: ???
-  log_freq: 250
+  log_freq: 200
   # `dataset_use_cache` indicates whether to cache all dataset items as Tensors in RAM. Potentially useful for
   # faster data loading with datasets small enough to fit in memory. If you wish to use dataloader workers,
   # remember to set `dataloader_persistent_workers to True.
