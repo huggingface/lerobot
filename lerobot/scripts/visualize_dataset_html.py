@@ -93,7 +93,12 @@ class EpisodeSampler(torch.utils.data.Sampler):
 
 
 def run_server(
-    dataset: LeRobotDataset, episodes: list[int], port: str, static_folder: Path, template_folder: Path
+    dataset: LeRobotDataset,
+    episodes: list[int],
+    host: str,
+    port: str,
+    static_folder: Path,
+    template_folder: Path,
 ):
     app = Flask(__name__, static_folder=static_folder.resolve(), template_folder=template_folder.resolve())
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # specifying not to cache
@@ -127,7 +132,7 @@ def run_server(
             ep_csv_url=ep_csv_url,
         )
 
-    app.run(port=port)
+    app.run(host=host, port=port)
 
 
 def get_ep_csv_fname(episode_id: int):
@@ -277,6 +282,7 @@ def visualize_dataset_html(
     episodes: list[int] = None,
     output_dir: Path | None = None,
     serve: bool = True,
+    host: str = "127.0.0.1",
     port: int = 9090,
     force_override: bool = True,
     policy_method: str = "select_action",
@@ -353,7 +359,7 @@ def visualize_dataset_html(
         write_episode_data_csv(static_dir, ep_csv_fname, episode_index, dataset, inference_results)
 
     if serve:
-        run_server(dataset, episodes, port, static_dir, template_dir)
+        run_server(dataset, episodes, host, port, static_dir, template_dir)
 
 
 def main():
@@ -383,6 +389,12 @@ def main():
         type=int,
         default=1,
         help="Launch web server.",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Web host used by the http server.",
     )
     parser.add_argument(
         "--port",
