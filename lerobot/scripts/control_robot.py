@@ -313,7 +313,7 @@ def record_dataset(
         if not is_headless():
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
-                cv2.imshow(key, convert_torch_image_to_cv2(observation[key]))
+                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
             cv2.waitKey(1)
 
         dt_s = time.perf_counter() - now
@@ -354,7 +354,7 @@ def record_dataset(
                 if not is_headless():
                     image_keys = [key for key in observation if "image" in key]
                     for key in image_keys:
-                        cv2.imshow(key, convert_torch_image_to_cv2(observation[key]))
+                        cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
                     cv2.waitKey(1)
 
                 for key in not_image_keys:
@@ -512,6 +512,7 @@ def record_dataset(
         stats = compute_stats(lerobot_dataset)
         lerobot_dataset.stats = stats
     else:
+        stats = {}
         logging.info("Skipping computation of the dataset statistrics")
 
     hf_dataset = hf_dataset.with_format(None)  # to remove transforms that cant be saved
