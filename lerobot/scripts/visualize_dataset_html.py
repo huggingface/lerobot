@@ -404,8 +404,7 @@ def main():
     )
     parser.add_argument(
         "--force-override",
-        type=int,
-        default=0,
+        action="store_true",
         help="Delete the output directory if it exists already.",
     )
 
