@@ -70,4 +70,4 @@ jobs:
         run: poetry self add poetry-relax
 
       - name: Poetry relax
-        run: $ poetry relax --check
+        run: poetry relax --check
