@@ -21,8 +21,8 @@ build-gpu:
 test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-train
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval
-	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-amp
-	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval-amp
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-mixed-precision
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval-mixed-precision
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-train
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train
@@ -57,8 +57,8 @@ test-act-ete-eval:
 		env.episode_length=8 \
 		device=$(DEVICE) \
 
-test-act-ete-train-amp:
-	python lerobot/scripts/train.py \
+test-act-ete-train-accelerate-amp:
+	accelerate launch --cpu --mixed-precision=bf16 \
 		policy=act \
 		policy.dim_model=64 \
 		env=aloha \
@@ -74,17 +74,15 @@ test-act-ete-train-amp:
 		policy.chunk_size=20 \
 		training.batch_size=2 \
 		hydra.run.dir=tests/outputs/act_amp/ \
-		training.image_transforms.enable=true \
-		use_amp=true
+		training.image_transforms.enable=true
 
-test-act-ete-eval-amp:
-	python lerobot/scripts/eval.py \
+test-act-ete-eval-accelerate-amp:
+	accelerate launch --cpu --mixed-precision=bf16 lerobot/scripts/eval.py \
 		-p tests/outputs/act_amp/checkpoints/000002/pretrained_model \
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=8 \
-		device=$(DEVICE) \
-		use_amp=true
+		device=$(DEVICE)
 
 test-diffusion-ete-train:
 	python lerobot/scripts/train.py \
