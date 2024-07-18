@@ -73,12 +73,12 @@ jobs:
         id: poetry_relax
         run: |
           output=$(poetry relax --check 2>&1)
-          echo "$output"
           if echo "$output" | grep -q "Proposing updates"; then
             echo ""
             echo "Some dependencies have carret '^' contraints added by poetry by default.
             Please replace them with '>='. You can do this by hand or use poetry-relax to do this."
+            echo "$output"
             exit 1
           else
-            echo "Dependencies version contraints are compliant."
+            echo "$output"
           fi
