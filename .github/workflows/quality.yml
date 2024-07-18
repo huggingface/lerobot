@@ -70,4 +70,13 @@ jobs:
         run: poetry self add poetry-relax
 
       - name: Poetry relax
-        run: poetry relax --check
+        id: poetry_relax
+        run: |
+          output=$(poetry relax --check 2>&1)
+          echo "$output"
+          if echo "$output" | grep -q "Proposing updates"; then
+            echo "Dependencies need to be updated."
+            exit 1
+          else
+            echo "No updates proposed."
+          fi
