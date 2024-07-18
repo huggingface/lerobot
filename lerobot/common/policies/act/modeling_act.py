@@ -132,25 +132,26 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
-        l1_loss = (
-            F.l1_loss(batch["action"], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
-        ).mean()
+        bsize = actions_hat.shape[0]
+        l1_loss = F.l1_loss(batch["action"], actions_hat, reduction="none")
+        l1_loss = l1_loss * ~batch["action_is_pad"].unsqueeze(-1)
+        l1_loss = l1_loss.view(bsize, -1).mean(dim=1)
 
-        loss_dict = {"l1_loss": l1_loss.item()}
+        out_dict = {}
+        out_dict["l1_loss"] = l1_loss
+
         if self.config.use_vae:
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total
             # KL-divergence per batch element, then take the mean over the batch.
             # (See App. B of https://arxiv.org/abs/1312.6114 for more details).
-            mean_kld = (
-                (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
-            )
-            loss_dict["kld_loss"] = mean_kld.item()
-            loss_dict["loss"] = l1_loss + mean_kld * self.config.kl_weight
+            kld_loss = (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1)
+            out_dict["loss"] = l1_loss + kld_loss * self.config.kl_weight
         else:
-            loss_dict["loss"] = l1_loss
+            out_dict["loss"] = l1_loss
 
-        return loss_dict
+        out_dict["action"] = self.unnormalize_outputs({"action": actions_hat})["action"]
+        return out_dict
 
 
 class ACTTemporalEnsembler:
@@ -337,13 +338,20 @@ class ACT(nn.Module):
             self.encoder_env_state_input_proj = nn.Linear(
                 config.input_shapes["observation.environment_state"][0], config.dim_model
             )
-        self.encoder_latent_input_proj = nn.Linear(config.latent_dim, config.dim_model)
+        # Dataset index embedding.
+        if "dataset_index" in config.input_shapes:
+            # create a FiLM layer to condition on dataset index after the image features
+            self.film_layer = FiLMLayer(num_relations=1, out_features=config.dim_model, dropout=0.0)
+
+        # Image feature projection.
         if self.use_images:
             self.encoder_img_feat_input_proj = nn.Conv2d(
                 backbone_model.fc.in_features, config.dim_model, kernel_size=1
             )
         # Transformer encoder positional embeddings.
-        n_1d_tokens = 1  # for the latent
+        n_1d_tokens = 0  # for the latent
+        if self.config.use_vae:
+            n_1d_tokens += 1
         if self.use_robot_state:
             n_1d_tokens += 1
         if self.use_env_state:
@@ -379,6 +387,7 @@ class ACT(nn.Module):
             "observation.environment_state": (B, env_dim) batch of environment states.
 
             "action" (optional, only if training with VAE): (B, chunk_size, action dim) batch of actions.
+            "dataset_index" (optional): (B, 1) batch of dataset indices.
         }
 
         Returns:
@@ -452,8 +461,11 @@ class ACT(nn.Module):
             )
 
         # Prepare transformer encoder inputs.
-        encoder_in_tokens = [self.encoder_latent_input_proj(latent_sample)]
+        encoder_in_tokens = []
         encoder_in_pos_embed = list(self.encoder_1d_feature_pos_embed.weight.unsqueeze(1))
+        # Latent token.
+        if self.config.use_vae:
+            encoder_in_tokens.append(self.encoder_latent_input_proj(latent_sample))
         # Robot state token.
         if self.use_robot_state:
             encoder_in_tokens.append(self.encoder_robot_state_input_proj(batch["observation.state"]))
@@ -475,6 +487,8 @@ class ACT(nn.Module):
                 # buffer
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)  # (B, C, h, w)
+                if "dataset_index" in self.config.input_shapes:
+                    cam_features = self.film_layer(cam_features, batch["dataset_index"])
                 all_cam_features.append(cam_features)
                 all_cam_pos_embeds.append(cam_pos_embed)
             # Concatenate camera observation feature maps and positional embeddings along the width dimension,
@@ -743,3 +757,25 @@ def get_activation_fn(activation: str) -> Callable:
     if activation == "glu":
         return F.glu
     raise RuntimeError(f"activation should be relu/gelu/glu, not {activation}.")
+
+
+class FiLMLayer(nn.Module):
+    def __init__(self, out_features, num_relations, dropout=0.0):
+        super().__init__()
+        self.gamma_linear = nn.Linear(num_relations, out_features=out_features)
+        self.beta_linear = nn.Linear(num_relations, out_features=out_features)
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, x, dataset_index_token):
+        dataset_index_token = dataset_index_token.to(dtype=torch.float32)
+        dataset_index_token = dataset_index_token.unsqueeze(-1)
+
+        gamma = self.gamma_linear(dataset_index_token)
+        beta = self.beta_linear(dataset_index_token)
+        gamma = gamma.unsqueeze(2).unsqueeze(3).expand_as(x)
+        beta = beta.unsqueeze(2).unsqueeze(3).expand_as(x)
+        conditioned_x = gamma * x + beta
+
+        conditioned_x = self.dropout(conditioned_x)
+
+        return conditioned_x
