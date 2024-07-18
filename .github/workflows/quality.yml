@@ -54,3 +54,20 @@ jobs:
 
       - name: Poetry check
         run: poetry check
+
+
+  poetry_relax:
+    name: Poetry relax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Install poetry
+        run: pipx install poetry
+
+      - name: Install poetry-relax
+        run: poetry self add poetry-relax
+
+      - name: Poetry relax
+        run: $ poetry relax --check
