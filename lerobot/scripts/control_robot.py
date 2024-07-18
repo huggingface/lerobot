@@ -567,6 +567,8 @@ def run_policy(robot: Robot, policy: torch.nn.Module, hydra_cfg: DictConfig, run
         now = time.perf_counter()
 
         observation = robot.capture_observation()
+        # pass in dataset_index=0, which is red box
+        observation["dataset_index"] = torch.tensor([0])
 
         with (
             torch.inference_mode(),
