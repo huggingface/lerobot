@@ -75,8 +75,8 @@ from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.policies.factory import make_policy
+from lerobot.common.policies.utils import get_pretrained_policy_path
 from lerobot.common.utils.utils import init_hydra_config, init_logging
-from lerobot.scripts.eval import get_pretrained_policy_path
 
 
 class EpisodeSampler(torch.utils.data.Sampler):
