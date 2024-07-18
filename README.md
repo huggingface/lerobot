@@ -213,6 +213,8 @@ Note: After training your own policy, you can re-evaluate the checkpoints with:
 python lerobot/scripts/eval.py -p {OUTPUT_DIR}/checkpoints/last/pretrained_model
 ```
 
+You can also evaluate in mixed precision for faster inference. Use `accelerate launch --num_processes=1 --mixed_precision=fp16 lerobot/scripts/eval.py -p lerobot/diffusion_pusht`
+
 See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ### Train your own policy
@@ -228,6 +230,20 @@ python lerobot/scripts/train.py \
     env.task=AlohaInsertion-v0 \
     dataset_repo_id=lerobot/aloha_sim_insertion_human \
 ```
+
+We also support training on multiple GPUs and in different precisions with [Accelerate](https://huggingface.co/docs/accelerate/basic_tutorials/launch#using-accelerate-launch)
+
+To perform distributed training you should use the `accelerate launch` command. Here’s an example of launching a training script across multiple GPUs :
+(Note: Make sure you install accelerate with `pip install accelerate`, as it is optional and not installed as part of the main setup steps)
+
+```bash
+accelerate launch --num_processes=2 lerobot/scripts/train.py \
+    policy=act \
+    env=aloha \
+    env.task=AlohaTransferCube-v0 \
+    dataset_repo_id=lerobot/aloha_sim_transfer_cube_human \
+```
+Check out [example 7](./examples/7_train_policy_distributed)
 
 The experiment directory is automatically generated and will show up in yellow in your terminal. It looks like `outputs/train/2024-05-05/20-21-12_aloha_act_default`. You can manually specify an experiment directory by adding this argument to the `train.py` python command:
 ```bash

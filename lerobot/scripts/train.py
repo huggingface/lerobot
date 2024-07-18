@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import os
 import time
-from contextlib import nullcontext
 from pathlib import Path
 from pprint import pformat
 
@@ -25,7 +25,6 @@ from deepdiff import DeepDiff
 from omegaconf import DictConfig, OmegaConf
 from termcolor import colored
 from torch import nn
-from torch.cuda.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
@@ -35,7 +34,6 @@ from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import PolicyWithUpdate
-from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.utils import (
     format_big_number,
     get_safe_torch_device,
@@ -104,35 +102,26 @@ def update_policy(
     batch,
     optimizer,
     grad_clip_norm,
-    grad_scaler: GradScaler,
     lr_scheduler=None,
-    use_amp: bool = False,
+    accelerator=None,
 ):
     """Returns a dictionary of items for logging."""
     start_time = time.perf_counter()
-    device = get_device_from_parameters(policy)
+
     policy.train()
-    with torch.autocast(device_type=device.type) if use_amp else nullcontext():
-        output_dict = policy.forward(batch)
-        # TODO(rcadene): policy.unnormalize_outputs(out_dict)
-        loss = output_dict["loss"]
-    grad_scaler.scale(loss).backward()
 
-    # Unscale the graident of the optimzer's assigned params in-place **prior to gradient clipping**.
-    grad_scaler.unscale_(optimizer)
+    output_dict = policy.forward(batch)
+    # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+    loss = output_dict["loss"]
+    if accelerator:
+        accelerator.backward(loss)
+        accelerator.unscale_gradients(optimizer=optimizer)
+    else:
+        loss.backward()
 
-    grad_norm = torch.nn.utils.clip_grad_norm_(
-        policy.parameters(),
-        grad_clip_norm,
-        error_if_nonfinite=False,
-    )
+    grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), grad_clip_norm, error_if_nonfinite=False)
 
-    # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
-    # although it still skips optimizer.step() if the gradients contain infs or NaNs.
-    grad_scaler.step(optimizer)
-    # Updates the scale for next iteration.
-    grad_scaler.update()
-
+    optimizer.step()
     optimizer.zero_grad()
 
     if lr_scheduler is not None:
@@ -140,7 +129,10 @@ def update_policy(
 
     if isinstance(policy, PolicyWithUpdate):
         # To possibly update an internal buffer (for instance an Exponential Moving Average like in TDMPC).
-        policy.update()
+        if accelerator:
+            accelerator.unwrap_model(policy).update()
+        else:
+            policy.update()
 
     info = {
         "loss": loss.item(),
@@ -153,7 +145,7 @@ def update_policy(
     return info
 
 
-def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
+def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline, accelerator=None):
     loss = info["loss"]
     grad_norm = info["grad_norm"]
     lr = info["lr"]
@@ -162,7 +154,8 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
-    num_samples = (step + 1) * cfg.training.batch_size
+    # If using multiple processes, the number of samples seen during training is multiplied by the number of processes/GPUs.
+    num_samples = (step + 1) * cfg.training.batch_size * (accelerator.num_processes if accelerator else 1)
     avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
@@ -179,7 +172,8 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
         f"lr:{lr:0.1e}",
         # in seconds
         f"updt_s:{update_s:.3f}",
-        f"data_s:{dataloading_s:.3f}",  # if not ~0, you are bottlenecked by cpu or io
+        # if not ~0, you are bottlenecked by cpu or io
+        f"data_s:{dataloading_s:.3f}",
     ]
     logging.info(" ".join(log_items))
 
@@ -192,14 +186,15 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_offline):
     logger.log_dict(info, step, mode="train")
 
 
-def log_eval_info(logger, info, step, cfg, dataset, is_offline):
+def log_eval_info(logger, info, step, cfg, dataset, is_offline, accelerator=None):
     eval_s = info["eval_s"]
     avg_sum_reward = info["avg_sum_reward"]
     pc_success = info["pc_success"]
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
-    num_samples = (step + 1) * cfg.training.batch_size
+    # If using multiple processes, the number of samples seen during training is multiplied by the number of processes/GPUs.
+    num_samples = (step + 1) * cfg.training.batch_size * (accelerator.num_processes if accelerator else 1)
     avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
@@ -226,13 +221,20 @@ def log_eval_info(logger, info, step, cfg, dataset, is_offline):
     logger.log_dict(info, step, mode="eval")
 
 
-def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
+def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None, accelerator=None):
     if out_dir is None:
         raise NotImplementedError()
     if job_name is None:
         raise NotImplementedError()
 
-    init_logging()
+    init_logging(accelerator)
+
+    if accelerator:
+        num_processes = accelerator.num_processes
+        use_amp = accelerator.mixed_precision
+        logging.info(
+            f"Acccelerate is enabled, training will be launched with the following configuration :\nNumber of processes: {num_processes} \nPrecision: {use_amp}"
+        )
 
     # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
     # to check for any differences between the provided config and the checkpoint's config.
@@ -276,7 +278,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             "you meant to resume training, please use `resume=true` in your command or yaml configuration."
         )
 
-    # log metrics to terminal and wandb
+    if accelerator and not accelerator.is_main_process:
+        # Disable logging on non-main processes.
+        cfg.wandb.enable = False
+
     logger = Logger(cfg, out_dir, wandb_job_name=job_name)
 
     if cfg.training.online_steps > 0:
@@ -285,7 +290,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     set_global_seed(cfg.seed)
 
     # Check device is available
-    device = get_safe_torch_device(cfg.device, log=True)
+    device = accelerator.device if accelerator else get_safe_torch_device(cfg.device, log=True)
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -312,11 +317,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         dataset_stats=offline_dataset.stats if not cfg.resume else None,
         pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
     )
+
     assert isinstance(policy, nn.Module)
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
-    grad_scaler = GradScaler(enabled=cfg.use_amp)
 
     step = 0  # number of policy updates (forward + backward + optim)
 
@@ -342,31 +347,45 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
         if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
-            with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
+            with torch.no_grad():
                 assert eval_env is not None
+                if accelerator:
+                    accelerator.wait_for_everyone()
                 eval_info = eval_policy(
                     eval_env,
-                    policy,
+                    policy if not accelerator else accelerator.unwrap_model(policy),
                     cfg.eval.n_episodes,
                     videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
                 )
-            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_offline=True)
+            log_eval_info(
+                logger,
+                eval_info["aggregated"],
+                step,
+                cfg,
+                offline_dataset,
+                is_offline=True,
+                accelerator=accelerator,
+            )
             if cfg.wandb.enable:
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
 
-        if cfg.training.save_checkpoint and (
-            step % cfg.training.save_freq == 0
-            or step == cfg.training.offline_steps + cfg.training.online_steps
+        if (
+            cfg.training.save_checkpoint
+            and (
+                step % cfg.training.save_freq == 0
+                or step == cfg.training.offline_steps + cfg.training.online_steps
+            )
+            and (not accelerator or accelerator.is_main_process)
         ):
             logging.info(f"Checkpoint policy after step {step}")
             # Note: Save with step as the identifier, and format it to have at least 6 digits but more if
             # needed (choose 6 as a minimum for consistency without being overkill).
-            logger.save_checkpont(
+            logger.save_checkpoint(
                 step,
-                policy,
+                policy if not accelerator else accelerator.unwrap_model(policy),
                 optimizer,
                 lr_scheduler,
                 identifier=step_identifier,
@@ -393,13 +412,18 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         pin_memory=device.type != "cpu",
         drop_last=False,
     )
+    if accelerator:
+        policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
+            policy, optimizer, dataloader, lr_scheduler
+        )
+
     dl_iter = cycle(dataloader)
 
+    policy.to(device)
     policy.train()
     for _ in range(step, cfg.training.offline_steps):
         if step == 0:
             logging.info("Start offline training on a fixed dataset")
-
         start_time = time.perf_counter()
         batch = next(dl_iter)
         dataloading_s = time.perf_counter() - start_time
@@ -412,15 +436,15 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             batch,
             optimizer,
             cfg.training.grad_clip_norm,
-            grad_scaler=grad_scaler,
             lr_scheduler=lr_scheduler,
-            use_amp=cfg.use_amp,
+            accelerator=accelerator,
         )
 
         train_info["dataloading_s"] = dataloading_s
-
-        if step % cfg.training.log_freq == 0:
-            log_train_info(logger, train_info, step, cfg, offline_dataset, is_offline=True)
+        if (step % cfg.training.log_freq == 0) and (not accelerator or accelerator.is_main_process):
+            log_train_info(
+                logger, train_info, step, cfg, offline_dataset, is_offline=True, accelerator=accelerator
+            )
 
         # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
         # so we pass in step + 1.
@@ -435,11 +459,22 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../configs")
 def train_cli(cfg: dict):
-    train(
-        cfg,
-        out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
-        job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
-    )
+    if "ACCELERATE_MIXED_PRECISION" in os.environ:
+        import accelerate
+
+        accelerator = accelerate.Accelerator()
+        train(
+            cfg,
+            out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
+            job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
+            accelerator=accelerator,
+        )
+    else:
+        train(
+            cfg,
+            out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
+            job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
+        )
 
 
 def train_notebook(out_dir=None, job_name=None, config_name="default", config_path="../configs"):

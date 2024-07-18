@@ -189,7 +189,7 @@ class Logger:
             training_state["scheduler"] = scheduler.state_dict()
         torch.save(training_state, save_dir / self.training_state_file_name)
 
-    def save_checkpont(
+    def save_checkpoint(
         self,
         train_step: int,
         policy: Policy,
@@ -229,7 +229,6 @@ class Logger:
 
     def log_dict(self, d, step, mode="train"):
         assert mode in {"train", "eval"}
-        # TODO(alexander-soare): Add local text log.
         if self._wandb is not None:
             for k, v in d.items():
                 if not isinstance(v, (int, float, str)):

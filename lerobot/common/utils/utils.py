@@ -101,7 +101,7 @@ def seeded_context(seed: int) -> Generator[None, None, None]:
     set_global_random_state(random_state_dict)
 
 
-def init_logging():
+def init_logging(accelerator=None):
     def custom_format(record):
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
@@ -118,6 +118,11 @@ def init_logging():
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     logging.getLogger().addHandler(console_handler)
+
+    if accelerator is not None and not accelerator.is_main_process:
+        # Disable duplicate logging on non-main processes
+        logging.info(f"Setting logging level on non-main process {accelerator.process_index} to WARNING.")
+        logging.getLogger().setLevel(logging.WARNING)
 
 
 def format_big_number(num, precision=0):

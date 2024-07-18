@@ -66,6 +66,7 @@ pytest-mock = {version = ">=3.14.0", optional = true}
 dynamixel-sdk = {version = ">=3.7.31", optional = true}
 pynput = {version = ">=1.7.7", optional = true}
 
+accelerate = {version = "^0.32.1", optional = true}
 
 
 [tool.poetry.extras]
@@ -78,6 +79,7 @@ test = ["pytest", "pytest-cov", "pytest-mock"]
 umi = ["imagecodecs"]
 video_benchmark = ["scikit-image", "pandas"]
 koch = ["dynamixel-sdk", "pynput"]
+accelerate = ["accelerate"]
 
 [tool.ruff]
 line-length = 110
