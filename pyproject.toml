@@ -38,12 +38,12 @@ einops = ">=0.8.0"
 pymunk = ">=6.6.0"
 zarr = ">=2.17.0"
 numba = ">=0.59.0"
-torch = "^2.2.1"
+torch = ">=2.2.1"
 opencv-python = ">=4.9.0"
-diffusers = "^0.27.2"
+diffusers = ">=0.27.2"
 torchvision = ">=0.17.1"
 h5py = ">=3.10.0"
-huggingface-hub = {extras = ["hf-transfer"], version = "^0.23.0"}
+huggingface-hub = {extras = ["hf-transfer"], version = ">=0.23.0"}
 gymnasium = ">=0.29.1"
 cmake = ">=3.29.0.1"
 gym-dora = { git = "https://github.com/dora-rs/dora-lerobot.git", subdirectory = "gym_dora", optional = true }
@@ -54,17 +54,17 @@ pre-commit = {version = ">=3.7.0", optional = true}
 debugpy = {version = ">=1.8.1", optional = true}
 pytest = {version = ">=8.1.0", optional = true}
 pytest-cov = {version = ">=5.0.0", optional = true}
-datasets = "^2.19.0"
+datasets = ">=2.19.0"
 imagecodecs = { version = ">=2024.1.1", optional = true }
 pyav = ">=12.0.5"
 moviepy = ">=1.0.3"
 rerun-sdk = ">=0.15.1"
 deepdiff = ">=7.0.1"
-scikit-image = {version = "^0.23.2", optional = true}
-pandas = {version = "^2.2.2", optional = true}
-pytest-mock = {version = "^3.14.0", optional = true}
-dynamixel-sdk = {version = "^3.7.31", optional = true}
-pynput = {version = "^1.7.7", optional = true}
+scikit-image = {version = ">=0.23.2", optional = true}
+pandas = {version = ">=2.2.2", optional = true}
+pytest-mock = {version = ">=3.14.0", optional = true}
+dynamixel-sdk = {version = ">=3.7.31", optional = true}
+pynput = {version = ">=1.7.7", optional = true}
 
 
 
