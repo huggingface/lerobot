@@ -47,7 +47,7 @@ def train():
 
     # The policy is initialized with a configuration class, in this case `ACTConfig`.
     # For this example, no arguments are pased, the defaults are set up for Aloha on the Insertion task.
-    cfg = ACTConfig()
+    cfg = ACTConfig(chunk_size=chunk_size)
     policy = ACTPolicy(cfg, dataset_stats=dataset.stats)
     policy.train()
     num_total_params = sum(p.numel() for p in policy.parameters())
