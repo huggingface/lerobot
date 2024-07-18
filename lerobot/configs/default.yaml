@@ -35,7 +35,6 @@ training:
 
   # Offline training dataloader
   num_workers: 4
-  dataloader_persistent_workers: true
 
   batch_size: ???
 

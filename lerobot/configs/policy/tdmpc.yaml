@@ -17,7 +17,6 @@ training:
   online_buffer_capacity: 80000
   dataset_use_cache: true
   num_workers: 4
-  dataloader_persistent_workers: true
   log_freq: 100
 
   batch_size: 256

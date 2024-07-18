@@ -395,7 +395,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     dataloader = torch.utils.data.DataLoader(
         offline_dataset,
         num_workers=cfg.training.num_workers,
-        persistent_workers=cfg.training.dataloader_persistent_workers,
         batch_size=cfg.training.batch_size,
         shuffle=shuffle,
         sampler=sampler,
@@ -455,7 +454,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         buffer_capacity=cfg.training.online_buffer_capacity,
         fps=offline_dataset.fps,
         delta_timestamps=offline_dataset.delta_timestamps,
-        use_cache=False,  # TODO(now): remove?
     )
 
     # If we are doing online rollouts asynchronously, deepcopy the policy to use for online rollouts (this
@@ -481,9 +479,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
         batch_size=cfg.training.batch_size,
+        num_workers=4,
         sampler=sampler,
         pin_memory=device.type != "cpu",
-        drop_last=False,
+        drop_last=True,
     )
     dl_iter = cycle(dataloader)
 

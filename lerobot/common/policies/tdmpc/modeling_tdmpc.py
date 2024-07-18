@@ -168,18 +168,12 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
                 encode_keys.append("observation.environment_state")
             encode_keys.append("observation.state")
             z = self.model.encode({k: batch[k] for k in encode_keys})
-            if self.config.use_mpc:
-                batch_size = batch["observation.state"].shape[0]
-                # Batch processing is not handled in MPC mode, so process the batch in a loop.
-                actions = []
-                for i in range(batch_size):
-                    # Note: self.plan does not handle batches, hence the squeeze.
-                    actions.append(self.plan(z[i]))
-                actions = torch.stack(actions)  # (batch, horizon, action_dim)
+            if self.config.use_mpc:  # noqa: SIM108
+                actions = self.plan(z)  # (horizon, batch, action_dim)
             else:
                 # Plan with the policy (π) alone. This always returns one action so unsqueeze to get a
                 # sequence dimension like in the MPC branch.
-                actions = self.model.pi(z).unsqueeze(1)
+                actions = self.model.pi(z).unsqueeze(0)
 
             actions = torch.clamp(actions, -1, +1)
 
@@ -190,7 +184,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
                     self._queues["action"].append(actions[0])
             else:
                 # Action queue is (n_action_steps, batch_size, action_dim), so we transpose the action.
-                self._queues["action"].extend(actions[:, : self.config.n_action_steps].transpose(0, 1))
+                self._queues["action"].extend(actions[: self.config.n_action_steps])
 
         action = self._queues["action"].popleft()
         return action
@@ -200,23 +194,24 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         """Plan sequence of actions using TD-MPC inference.
 
         Args:
-            z: (latent_dim,) tensor for the initial state.
+            z: (batch, latent_dim,) tensor for the initial state.
         Returns:
-            (action_dim,) tensor for the next action.
-
-        TODO(alexander-soare) Extend this to be able to work with batches.
+            (horizon, batch, action_dim,) tensor for the planned trajectory of actions.
         """
         device = get_device_from_parameters(self)
+
+        batch_size = z.shape[0]
 
         # Sample Nπ trajectories from the policy.
         pi_actions = torch.empty(
             self.config.horizon,
             self.config.n_pi_samples,
+            batch_size,
             self.config.output_shapes["action"][0],
             device=device,
         )
         if self.config.n_pi_samples > 0:
-            _z = einops.repeat(z, "d -> n d", n=self.config.n_pi_samples)
+            _z = einops.repeat(z, "b d -> n b d", n=self.config.n_pi_samples)
             for t in range(self.config.horizon):
                 # Note: Adding a small amount of noise here doesn't hurt during inference and may even be
                 # helpful for CEM.
@@ -225,12 +220,14 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
 
         # In the CEM loop we will need this for a call to estimate_value with the gaussian sampled
         # trajectories.
-        z = einops.repeat(z, "d -> n d", n=self.config.n_gaussian_samples + self.config.n_pi_samples)
+        z = einops.repeat(z, "b d -> n b d", n=self.config.n_gaussian_samples + self.config.n_pi_samples)
 
         # Model Predictive Path Integral (MPPI) with the cross-entropy method (CEM) as the optimization
         # algorithm.
         # The initial mean and standard deviation for the cross-entropy method (CEM).
-        mean = torch.zeros(self.config.horizon, self.config.output_shapes["action"][0], device=device)
+        mean = torch.zeros(
+            self.config.horizon, batch_size, self.config.output_shapes["action"][0], device=device
+        )
         # Maybe warm start CEM with the mean from the previous step.
         if self._prev_mean is not None:
             mean[:-1] = self._prev_mean[1:]
@@ -241,6 +238,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
             std_normal_noise = torch.randn(
                 self.config.horizon,
                 self.config.n_gaussian_samples,
+                batch_size,
                 self.config.output_shapes["action"][0],
                 device=std.device,
             )
@@ -249,21 +247,24 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
             # Compute elite actions.
             actions = torch.cat([gaussian_actions, pi_actions], dim=1)
             value = self.estimate_value(z, actions).nan_to_num_(0)
-            elite_idxs = torch.topk(value, self.config.n_elites, dim=0).indices
-            elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
+            elite_idxs = torch.topk(value, self.config.n_elites, dim=0).indices  # (n_elites, batch)
+            elite_value = value.take_along_dim(elite_idxs, dim=0)  # (n_elites, batch)
+            # (horizon, n_elites, batch, action_dim)
+            elite_actions = actions.take_along_dim(einops.rearrange(elite_idxs, "n b -> 1 n b 1"), dim=1)
 
-            # Update guassian PDF parameters to be the (weighted) mean and standard deviation of the elites.
-            max_value = elite_value.max(0)[0]
+            # Update gaussian PDF parameters to be the (weighted) mean and standard deviation of the elites.
+            max_value = elite_value.max(0, keepdim=True)[0]  # (1, batch)
             # The weighting is a softmax over trajectory values. Note that this is not the same as the usage
             # of Ω in eqn 4 of the TD-MPC paper. Instead it is the normalized version of it: s = Ω/ΣΩ. This
             # makes the equations: μ = Σ(s⋅Γ), σ = Σ(s⋅(Γ-μ)²).
             score = torch.exp(self.config.elite_weighting_temperature * (elite_value - max_value))
-            score /= score.sum()
-            _mean = torch.sum(einops.rearrange(score, "n -> n 1") * elite_actions, dim=1)
+            score /= score.sum(axis=0, keepdim=True)
+            # (horizon, batch, action_dim)
+            _mean = torch.sum(einops.rearrange(score, "n b -> n b 1") * elite_actions, dim=1)
             _std = torch.sqrt(
                 torch.sum(
-                    einops.rearrange(score, "n -> n 1")
-                    * (elite_actions - einops.rearrange(_mean, "h d -> h 1 d")) ** 2,
+                    einops.rearrange(score, "n b -> n b 1")
+                    * (elite_actions - einops.rearrange(_mean, "h b d -> h 1 b d")) ** 2,
                     dim=1,
                 )
             )
@@ -278,7 +279,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
 
         # Randomly select one of the elite actions from the last iteration of MPPI/CEM using the softmax
         # scores from the last iteration.
-        actions = elite_actions[:, torch.multinomial(score, 1).item()]
+        actions = elite_actions[:, torch.multinomial(score.T, 1).squeeze(), torch.arange(batch_size)]
 
         return actions
 
