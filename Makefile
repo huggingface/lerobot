@@ -21,8 +21,8 @@ build-gpu:
 test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-train
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval
-	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-mixed-precision
-	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval-mixed-precision
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-accelerate-amp
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval-accelerate-amp
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-train
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train
