@@ -1,5 +1,5 @@
 """
-This script demonstrates how to train ACT policy with distributed training on the Aloha environment 
+This script demonstrates how to train ACT policy with distributed training on the Aloha environment
 on the Insertion task, using HuggingFace accelerate.
 
 Make sure you have installed accelerate before running this script: `pip install accelerate`.
@@ -20,7 +20,6 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 
-
 # Create a directory to store the training checkpoint.
 output_directory = Path("outputs/train/exemple_aloha_act_distributed")
 output_directory.mkdir(parents=True, exist_ok=True)
@@ -31,10 +30,13 @@ log_freq = 250
 # The chunk size is the number of actions that the policy will predict.
 chunk_size = 100
 
-delta_timestamps = {"action": 
-                    # Load the current action, the next 100 actions to be executed, because we the policy
-                    # trains to predict the next 100 actions.
-                    [i/50 for i in range(chunk_size)]}
+delta_timestamps = {
+    "action":
+    # Load the current action, the next 100 actions to be executed, because we the policy
+    # trains to predict the next 100 actions.
+    [i / 50 for i in range(chunk_size)]
+}
+
 
 def train():
     # We prepare for distributed training using the Accelerator.
@@ -54,6 +56,15 @@ def train():
     accelerator.print(f"Policy initialized with {num_total_params} parameters.")
 
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-5)
+
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        num_workers=4,
+        batch_size=8,
+        shuffle=True,
+        pin_memory=device != torch.device("cpu"),
+        drop_last=True,
+    )
 
     policy, optimizer, dataloader = accelerator.prepare(policy, optimizer, dataloader)
 
@@ -80,13 +91,14 @@ def train():
             if step >= training_steps:
                 done = True
                 break
-    
+
     # Unwrap the policy of its distributed training wrapper and save it.
     unwrapped_policy = accelerator.unwrap_model(policy)
     unwrapped_policy.save_pretrained(output_directory)
 
     accelerator.print("Finished offline training")
     accelerator.end_training()
+
 
 # We need to add a call to the training function in order to be able to use the Accelerator.
 if __name__ == "__main__":
