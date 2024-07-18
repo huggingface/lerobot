@@ -73,7 +73,7 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
-from lerobot.common.utils.utils import init_hydra_config, init_logging, set_global_seed
+from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 
 
 def rollout(
@@ -539,6 +539,8 @@ def main(
     torch.backends.cuda.matmul.allow_tf32 = True
     set_global_seed(hydra_cfg.seed)
 
+    device = accelerator.device if accelerator else get_safe_torch_device(hydra_cfg)
+
     log_output_dir(out_dir)
 
     logging.info("Making environment.")
@@ -556,6 +558,9 @@ def main(
 
     if accelerator:
         policy = accelerator.prepare_model(policy)
+
+    policy.to(device)
+
     with torch.no_grad():
         info = eval_policy(
             env,
