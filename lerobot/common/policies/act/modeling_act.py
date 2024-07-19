@@ -81,6 +81,9 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         if config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
 
+        if config.temporal_ensemble_coeff is not None:
+            self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
+
         self.reset()
 
     def reset(self):
@@ -345,6 +348,10 @@ class ACT(nn.Module):
         if self.use_robot_state:
             self.encoder_robot_state_input_proj = nn.Linear(
                 self.state_shape, config.dim_model
+            )
+        if self.use_env_state:
+            self.encoder_env_state_input_proj = nn.Linear(
+                config.input_shapes["observation.environment_state"][0], config.dim_model
             )
         if self.use_env_state:
             self.encoder_env_state_input_proj = nn.Linear(

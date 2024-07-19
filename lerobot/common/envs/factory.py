@@ -26,6 +26,8 @@ def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv
     if n_envs is not None and n_envs < 1:
         raise ValueError("`n_envs must be at least 1")
 
+    if cfg.env.name == "real_world":
+        return
     gym_handle = f"{cfg.env.name}:{cfg.env.name}/{cfg.env.task}"
     gym_kwgs = dict(cfg.env.get("gym", {}))
     gym_vector_kwgs = dict(cfg.env.get("gym_vector", {}))
