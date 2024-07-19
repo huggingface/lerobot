@@ -4,11 +4,25 @@ from lerobot.common.utils.utils import init_hydra_config
 import shutil
 import hydra
 from pathlib import Path
+import os
 
 
 policy_repo_id = "lerobot/diffusion_pusht"
 output_dir = "outputs/test_mps_operations"
 
+def create_symlink_to_latest_checkpoint(base_dir: Path):
+    # Define the new directory and symlink paths
+    new_dir = base_dir / "100000"
+    symlink_path = base_dir / "last"
+
+    # Create a symbolic link named 'last' pointing to '100000'
+    if symlink_path.exists() or symlink_path.is_symlink():
+        symlink_path.unlink()  # Remove existing symlink or directory
+
+    os.symlink(new_dir, symlink_path)
+
+    print(f"Directory '{new_dir}' created.")
+    print(f"Symlink '{symlink_path}' created pointing to '{new_dir}'.")
 
 def prepare_checkpoint_dir(pretrained_policy_name_or_path, output_folder):
     pretrained_policy_path = get_pretrained_policy_path(pretrained_policy_name_or_path)
@@ -26,4 +40,10 @@ def prepare_checkpoint_dir(pretrained_policy_name_or_path, output_folder):
 
 overrides = ["device=mps", "training.offline_steps=110000", "resume=true"]
 
-hydra_cfg = init_hydra_config(prepare_checkpoint_dir(policy_repo_id, output_dir) / "config.yaml", overrides=overrides)
+
+def main():
+    hydra_cfg = init_hydra_config(str(Path(output_dir)/ "checkpoints" / "last" / "pretrained_model" / "config.yaml"), overrides=overrides)
+    train(hydra_cfg, output_dir, job_name="mps_test")
+
+if __name__ == "__main__":
+    main()
