@@ -774,7 +774,6 @@ class TransformerForDiffusion(nn.Module):
                 nn.Linear(4 * config.diffusion_step_embed_dim, config.diffusion_step_embed_dim),
             )
         # decoder
-        print("diffusion_step_embed_dim = {config.diffusion_step_embed_dim} and n_head = {config.n_head}")
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=config.diffusion_step_embed_dim,
             nhead=config.n_head,
@@ -935,11 +934,11 @@ class TransformerForDiffusion(nn.Module):
         optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas)
         return optimizer
 
-    def forward(self, sample: torch.Tensor, timestep: torch.Tensor, float, int, cond: torch.Tensor, **kwargs):
+    def forward(self, sample: torch.Tensor, timestep: torch.Tensor, global_cond: torch.Tensor, **kwargs):
         """
         x: (B,T,input_dim)
         timestep: (B,)
-        cond: (B, global_cond_dim)
+        global_cond: (B, global_cond_dim)
         output: (B,T,input_dim)
         """
         # 1. time
@@ -950,7 +949,7 @@ class TransformerForDiffusion(nn.Module):
         time_emb = self.time_emb(timesteps).unsqueeze(1)
         # (B,1,n_emb)
 
-        cond = einops.rearrange(cond, "b (s n) ... -> b s (n ...)", b=batch_size, s=self.n_obs_steps)
+        cond = einops.rearrange(global_cond, "b (s n) ... -> b s (n ...)", b=batch_size, s=self.n_obs_steps)
         # (B,To,n_cond)
 
         # process input
