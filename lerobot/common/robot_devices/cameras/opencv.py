@@ -182,7 +182,7 @@ class OpenCVCamera:
     ```
     """
 
-    def __init__(self, camera_index: int, config: OpenCVCameraConfig | None = None, **kwargs):
+    def __init__(self, camera_index: int | str, config: OpenCVCameraConfig | None = None, **kwargs):
         if config is None:
             config = OpenCVCameraConfig()
         # Overwrite config arguments using kwargs
@@ -193,11 +193,6 @@ class OpenCVCamera:
         self.width = config.width
         self.height = config.height
         self.color_mode = config.color_mode
-
-        if not isinstance(self.camera_index, int):
-            raise ValueError(
-                f"Camera index must be provided as an int, but {self.camera_index} was given instead."
-            )
 
         self.camera = None
         self.is_connected = False
