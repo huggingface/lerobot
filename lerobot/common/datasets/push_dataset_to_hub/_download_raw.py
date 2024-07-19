@@ -31,6 +31,44 @@ from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
+AVAILABLE_RAW_REPO_IDS = [
+    "lerobot-raw/aloha_mobile_cabinet_raw",
+    "lerobot-raw/aloha_mobile_chair_raw",
+    "lerobot-raw/aloha_mobile_elevator_raw",
+    "lerobot-raw/aloha_mobile_shrimp_raw",
+    "lerobot-raw/aloha_mobile_wash_pan_raw",
+    "lerobot-raw/aloha_mobile_wipe_wine_raw",
+    "lerobot-raw/aloha_sim_insertion_human_raw",
+    "lerobot-raw/aloha_sim_insertion_scripted_raw",
+    "lerobot-raw/aloha_sim_transfer_cube_human_raw",
+    "lerobot-raw/aloha_sim_transfer_cube_scripted_raw",
+    "lerobot-raw/aloha_static_battery_raw",
+    "lerobot-raw/aloha_static_candy_raw",
+    "lerobot-raw/aloha_static_coffee_new_raw",
+    "lerobot-raw/aloha_static_coffee_raw",
+    "lerobot-raw/aloha_static_cups_open_raw",
+    "lerobot-raw/aloha_static_fork_pick_up_raw",
+    "lerobot-raw/aloha_static_pingpong_test_raw",
+    "lerobot-raw/aloha_static_pro_pencil_raw",
+    "lerobot-raw/aloha_static_screw_driver_raw",
+    "lerobot-raw/aloha_static_tape_raw",
+    "lerobot-raw/aloha_static_thread_velcro_raw",
+    "lerobot-raw/aloha_static_towel_raw",
+    "lerobot-raw/aloha_static_vinh_cup_left_raw",
+    "lerobot-raw/aloha_static_vinh_cup_raw",
+    "lerobot-raw/aloha_static_ziploc_slide_raw",
+    "lerobot-raw/pusht_raw",
+    "lerobot-raw/umi_cup_in_the_wild_raw",
+    "lerobot-raw/unitreeh1_fold_clothes_raw",
+    "lerobot-raw/unitreeh1_rearrange_objects_raw",
+    "lerobot-raw/unitreeh1_two_robot_greeting_raw",
+    "lerobot-raw/unitreeh1_warehouse_raw",
+    "lerobot-raw/xarm_lift_medium_raw",
+    "lerobot-raw/xarm_lift_medium_replay_raw",
+    "lerobot-raw/xarm_push_medium_raw",
+    "lerobot-raw/xarm_push_medium_replay_raw",
+]
+
 
 def download_raw(raw_dir: Path, repo_id: str):
     # Check repo_id is well formated
@@ -46,7 +84,6 @@ def download_raw(raw_dir: Path, repo_id: str):
             stacklevel=1,
         )
 
-    raw_dir = Path(raw_dir)
     # Send warning if raw_dir isn't well formated
     if raw_dir.parts[-2] != user_id or raw_dir.parts[-1] != dataset_id:
         warnings.warn(
@@ -56,61 +93,21 @@ def download_raw(raw_dir: Path, repo_id: str):
     raw_dir.mkdir(parents=True, exist_ok=True)
 
     logging.info(f"Start downloading from huggingface.co/{user_id} for {dataset_id}")
-    snapshot_download(f"{repo_id}", repo_type="dataset", local_dir=raw_dir)
+    snapshot_download(repo_id, repo_type="dataset", local_dir=raw_dir)
     logging.info(f"Finish downloading from huggingface.co/{user_id} for {dataset_id}")
 
 
 def download_all_raw_datasets():
     data_dir = Path("data")
-    repo_ids = [
-        "cadene/pusht_image_raw",
-        "cadene/xarm_lift_medium_image_raw",
-        "cadene/xarm_lift_medium_replay_image_raw",
-        "cadene/xarm_push_medium_image_raw",
-        "cadene/xarm_push_medium_replay_image_raw",
-        "cadene/aloha_sim_insertion_human_image_raw",
-        "cadene/aloha_sim_insertion_scripted_image_raw",
-        "cadene/aloha_sim_transfer_cube_human_image_raw",
-        "cadene/aloha_sim_transfer_cube_scripted_image_raw",
-        "cadene/pusht_raw",
-        "cadene/xarm_lift_medium_raw",
-        "cadene/xarm_lift_medium_replay_raw",
-        "cadene/xarm_push_medium_raw",
-        "cadene/xarm_push_medium_replay_raw",
-        "cadene/aloha_sim_insertion_human_raw",
-        "cadene/aloha_sim_insertion_scripted_raw",
-        "cadene/aloha_sim_transfer_cube_human_raw",
-        "cadene/aloha_sim_transfer_cube_scripted_raw",
-        "cadene/aloha_mobile_cabinet_raw",
-        "cadene/aloha_mobile_chair_raw",
-        "cadene/aloha_mobile_elevator_raw",
-        "cadene/aloha_mobile_shrimp_raw",
-        "cadene/aloha_mobile_wash_pan_raw",
-        "cadene/aloha_mobile_wipe_wine_raw",
-        "cadene/aloha_static_battery_raw",
-        "cadene/aloha_static_candy_raw",
-        "cadene/aloha_static_coffee_raw",
-        "cadene/aloha_static_coffee_new_raw",
-        "cadene/aloha_static_cups_open_raw",
-        "cadene/aloha_static_fork_pick_up_raw",
-        "cadene/aloha_static_pingpong_test_raw",
-        "cadene/aloha_static_pro_pencil_raw",
-        "cadene/aloha_static_screw_driver_raw",
-        "cadene/aloha_static_tape_raw",
-        "cadene/aloha_static_thread_velcro_raw",
-        "cadene/aloha_static_towel_raw",
-        "cadene/aloha_static_vinh_cup_raw",
-        "cadene/aloha_static_vinh_cup_left_raw",
-        "cadene/aloha_static_ziploc_slide_raw",
-        "cadene/umi_cup_in_the_wild_raw",
-    ]
-    for repo_id in repo_ids:
+    for repo_id in AVAILABLE_RAW_REPO_IDS:
         raw_dir = data_dir / repo_id
         download_raw(raw_dir, repo_id)
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=f"A script to download raw datasets from Hugging Face hub to a local directory. Here is a non exhaustive list of available repositories to use in `--repo-id`: {AVAILABLE_RAW_REPO_IDS}",
+    )
 
     parser.add_argument(
         "--raw-dir",

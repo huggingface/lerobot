@@ -18,7 +18,7 @@ import gymnasium as gym
 from omegaconf import DictConfig
 
 
-def make_env(cfg: DictConfig, n_envs: int = None) -> gym.vector.VectorEnv:
+def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv | None:
     """Makes a gym vector environment according to the evaluation config.
 
     n_envs can be used to override eval.batch_size in the configuration. Must be at least 1.

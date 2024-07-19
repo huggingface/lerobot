@@ -88,6 +88,11 @@ def make_optimizer_and_scheduler(cfg, policy):
     elif policy.name == "tdmpc":
         optimizer = torch.optim.Adam(policy.parameters(), cfg.training.lr)
         lr_scheduler = None
+    elif cfg.policy.name == "vqbet":
+        from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTOptimizer, VQBeTScheduler
+
+        optimizer = VQBeTOptimizer(policy, cfg)
+        lr_scheduler = VQBeTScheduler(optimizer, cfg)
     else:
         raise NotImplementedError()
 
@@ -267,7 +272,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         cfg.resume = True
     elif Logger.get_last_checkpoint_dir(out_dir).exists():
         raise RuntimeError(
-            f"The configured output directory {Logger.get_last_checkpoint_dir(out_dir)} already exists."
+            f"The configured output directory {Logger.get_last_checkpoint_dir(out_dir)} already exists. If "
+            "you meant to resume training, please use `resume=true` in your command or yaml configuration."
         )
 
     # log metrics to terminal and wandb

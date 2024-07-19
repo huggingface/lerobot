@@ -28,9 +28,15 @@ def _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg):
         logging.warning(
             f"Hydra config is missing arguments: {set(expected_kwargs).difference(hydra_cfg.policy)}"
         )
+
+    # OmegaConf.to_container returns lists where sequences are found, but our dataclasses use tuples to avoid
+    # issues with mutable defaults. This filter changes all lists to tuples.
+    def list_to_tuple(item):
+        return tuple(item) if isinstance(item, list) else item
+
     policy_cfg = policy_cfg_class(
         **{
-            k: v
+            k: list_to_tuple(v)
             for k, v in OmegaConf.to_container(hydra_cfg.policy, resolve=True).items()
             if k in expected_kwargs
         }
@@ -55,6 +61,11 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
         from lerobot.common.policies.act.modeling_act import ACTPolicy
 
         return ACTPolicy, ACTConfig
+    elif name == "vqbet":
+        from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
+        from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
+
+        return VQBeTPolicy, VQBeTConfig
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -75,7 +86,9 @@ def make_policy(
             policy. Therefore, this argument is mutually exclusive with `pretrained_policy_name_or_path`.
     """
     if not (pretrained_policy_name_or_path is None) ^ (dataset_stats is None):
-        raise ValueError("Only one of `pretrained_policy_name_or_path` and `dataset_stats` may be provided.")
+        raise ValueError(
+            "Exactly one of `pretrained_policy_name_or_path` and `dataset_stats` must be provided."
+        )
 
     policy_cls, policy_cfg_class = get_policy_and_config_classes(hydra_cfg.policy.name)
 
@@ -86,9 +99,10 @@ def make_policy(
     else:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
-        # TODO(alexander-soare): This hack makes use of huggingface_hub's tooling to load the policy with, pretrained
-        # weights which are then loaded into a fresh policy with the desired config. This PR in huggingface_hub should
-        # make it possible to avoid the hack: https://github.com/huggingface/huggingface_hub/pull/2274.
+        # TODO(alexander-soare): This hack makes use of huggingface_hub's tooling to load the policy with,
+        # pretrained weights which are then loaded into a fresh policy with the desired config. This PR in
+        # huggingface_hub should make it possible to avoid the hack:
+        # https://github.com/huggingface/huggingface_hub/pull/2274.
         policy = policy_cls(policy_cfg)
         policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
 

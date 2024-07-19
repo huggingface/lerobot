@@ -70,6 +70,8 @@ available_datasets_per_env = {
         "lerobot/aloha_sim_transfer_cube_human_image",
         "lerobot/aloha_sim_transfer_cube_scripted_image",
     ],
+    # TODO(alexander-soare): Add "lerobot/pusht_keypoints". Right now we can't because this is too tightly
+    # coupled with tests.
     "pusht": ["lerobot/pusht", "lerobot/pusht_image"],
     "xarm": [
         "lerobot/xarm_lift_medium",
@@ -134,12 +136,13 @@ available_policies = [
     "act",
     "diffusion",
     "tdmpc",
+    "vqbet",
 ]
 
 # keys and values refer to yaml files
 available_policies_per_env = {
     "aloha": ["act"],
-    "pusht": ["diffusion"],
+    "pusht": ["diffusion", "vqbet"],
     "xarm": ["tdmpc"],
     "dora_aloha_real": ["act_real"],
 }

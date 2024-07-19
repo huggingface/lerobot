@@ -578,6 +578,29 @@ def main(
     logging.info("End of eval")
 
 
+def get_pretrained_policy_path(pretrained_policy_name_or_path, revision=None):
+    try:
+        pretrained_policy_path = Path(snapshot_download(pretrained_policy_name_or_path, revision=revision))
+    except (HFValidationError, RepositoryNotFoundError) as e:
+        if isinstance(e, HFValidationError):
+            error_message = (
+                "The provided pretrained_policy_name_or_path is not a valid Hugging Face Hub repo ID."
+            )
+        else:
+            error_message = (
+                "The provided pretrained_policy_name_or_path was not found on the Hugging Face Hub."
+            )
+
+        logging.warning(f"{error_message} Treating it as a local directory.")
+        pretrained_policy_path = Path(pretrained_policy_name_or_path)
+    if not pretrained_policy_path.is_dir() or not pretrained_policy_path.exists():
+        raise ValueError(
+            "The provided pretrained_policy_name_or_path is not a valid/existing Hugging Face Hub "
+            "repo ID, nor is it an existing local directory."
+        )
+    return pretrained_policy_path
+
+
 if __name__ == "__main__":
     init_logging()
 
@@ -619,27 +642,9 @@ if __name__ == "__main__":
     if args.pretrained_policy_name_or_path is None:
         main(hydra_cfg_path=args.config, out_dir=args.out_dir, config_overrides=args.overrides)
     else:
-        try:
-            pretrained_policy_path = Path(
-                snapshot_download(args.pretrained_policy_name_or_path, revision=args.revision)
-            )
-        except (HFValidationError, RepositoryNotFoundError) as e:
-            if isinstance(e, HFValidationError):
-                error_message = (
-                    "The provided pretrained_policy_name_or_path is not a valid Hugging Face Hub repo ID."
-                )
-            else:
-                error_message = (
-                    "The provided pretrained_policy_name_or_path was not found on the Hugging Face Hub."
-                )
-
-            logging.warning(f"{error_message} Treating it as a local directory.")
-            pretrained_policy_path = Path(args.pretrained_policy_name_or_path)
-        if not pretrained_policy_path.is_dir() or not pretrained_policy_path.exists():
-            raise ValueError(
-                "The provided pretrained_policy_name_or_path is not a valid/existing Hugging Face Hub "
-                "repo ID, nor is it an existing local directory."
-            )
+        pretrained_policy_path = get_pretrained_policy_path(
+            args.pretrained_policy_name_or_path, revision=args.revision
+        )
 
         main(
             pretrained_policy_path=pretrained_policy_path,
