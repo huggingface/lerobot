@@ -27,7 +27,12 @@ from PIL import Image as PILImage
 
 from lerobot.common.datasets.push_dataset_to_hub.oxe.configs import OXE_DATASET_CONFIGS
 from lerobot.common.datasets.push_dataset_to_hub.oxe.transforms import OXE_STANDARDIZATION_TRANSFORMS
-from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, save_images_concurrently
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
+from lerobot.common.datasets.push_dataset_to_hub.utils import (
+    concatenate_episodes,
+    get_default_encoding,
+    save_images_concurrently,
+)
 from lerobot.common.datasets.utils import (
     calculate_episode_data_index,
     hf_transform_to_torch,
@@ -87,7 +92,8 @@ def load_from_raw(
     videos_dir: Path,
     fps: int,
     video: bool,
-    episodes: list[int],
+    episodes: list[int] | None = None,
+    encoding: dict | None = None,
     oxe_dataset_name: str | None = None,
 ):
     """
@@ -209,7 +215,7 @@ def load_from_raw(
                 # encode images to a mp4 video
                 fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
                 video_path = videos_dir / fname
-                encode_video_frames(tmp_imgs_dir, video_path, fps)
+                encode_video_frames(tmp_imgs_dir, video_path, fps, **(encoding or {}))
 
                 # clean temporary images directory
                 shutil.rmtree(tmp_imgs_dir)
@@ -286,6 +292,7 @@ def from_raw_to_lerobot_format(
     fps: int | None = None,
     video: bool = True,
     episodes: list[int] | None = None,
+    encoding: dict | None = None,
     oxe_dataset_name: str | None = None,
 ):
     """This is a test impl for rlds conversion"""
@@ -301,13 +308,17 @@ def from_raw_to_lerobot_format(
             print(" - WARNING: fps is not provided, using default value of 5 fps")
             fps = 5
 
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, oxe_dataset_name)
+    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding, oxe_dataset_name)
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
+        "codebase_version": CODEBASE_VERSION,
         "fps": fps,
         "video": video,
     }
+    if video:
+        info["encoding"] = get_default_encoding()
+    
     return hf_dataset, episode_data_index, info
 
 
