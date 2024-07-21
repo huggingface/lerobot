@@ -55,11 +55,11 @@ def get_wandb_run_id_from_filesystem(checkpoint_dir: Path) -> str:
     paths = glob(str(checkpoint_dir / "../wandb/latest-run/run-*"))
     if len(paths) != 1:
         return None
-        raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
+        #raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
     match = re.search(r"run-([^\.]+).wandb", paths[0].split("/")[-1])
     if match is None:
         return None
-        raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
+        #raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
     wandb_run_id = match.groups(0)[0]
     return wandb_run_id
 

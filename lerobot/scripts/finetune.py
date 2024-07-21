@@ -2,48 +2,48 @@ from lerobot.scripts.train import train
 from lerobot.scripts.eval import get_pretrained_policy_path
 from lerobot.common.utils.utils import init_hydra_config
 import shutil
-import hydra
 from pathlib import Path
 import os
+import yaml
 
 
 policy_repo_id = "m1b/red_box_training_state"
-output_dir = "outputs/test_mps_operations/koch"
+output_dir = "outputs/test_mps_operations/tmp"
 
-def create_symlink_to_latest_checkpoint(base_dir: Path):
-    # Define the new directory and symlink paths
-    new_dir = base_dir / "050000"
-    symlink_path = base_dir / "last"
+def load_pretrained_model(repo_id, output_dir):
+    pretrained_policy_path = get_pretrained_policy_path(repo_id)
+    model_dir = Path(output_dir) / "checkpoints" / "000000"
+    shutil.copytree(pretrained_policy_path, model_dir, dirs_exist_ok=True)
+    symlink_path = Path(output_dir) / "checkpoints" / "last"
+    if os.path.islink(symlink_path):
+        os.remove(symlink_path)
+    os.symlink(os.path.abspath(str(model_dir)), os.path.abspath(str(symlink_path)))
+    print(f"Symlink created pointing to '{model_dir}'.")
+    return model_dir
 
-    # Create a symbolic link named 'last' pointing to '100000'
-    if symlink_path.exists() or symlink_path.is_symlink():
-        symlink_path.unlink()  # Remove existing symlink or directory
-
-    os.symlink(str(new_dir), str(symlink_path))
-
-    print(f"Symlink '{symlink_path}' created pointing to '{new_dir}'.")
-
-def prepare_checkpoint_dir(pretrained_policy_name_or_path, output_folder):
-    pretrained_policy_path = get_pretrained_policy_path(pretrained_policy_name_or_path)
-    last_checkpoint_dir = Path(output_folder) / "050000"
-    last_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+def modify_config(model_dir, overrides):
+    config_path = model_dir / "pretrained_model" / "config.yaml"
+    with open(config_path, 'r') as file:
+        config = yaml.safe_load(file)
     
-    for item in pretrained_policy_path.iterdir():
-        dest = last_checkpoint_dir / item.name
-        if item.is_file():
-            shutil.copy(item, dest)
-        else:
-            shutil.copytree(item, dest)
-    
-    return last_checkpoint_dir
+    for override in overrides:
+        key, value = override.split('=')
+        keys = key.split('.')
+        d = config
+        for k in keys[:-1]:
+            d = d.setdefault(k, {})
+        d[keys[-1]] = value
 
-overrides = ["device=mps", "training.offline_steps=80000", "resume=true"]
-
-#prepare_checkpoint_dir(policy_repo_id, output_dir)
-#create_symlink_to_latest_checkpoint(Path("/Users/mbar/Desktop/projects/huggingface/lerobot/outputs/test_mps_operations/koch/checkpoints"))
+    with open(config_path, 'w') as file:
+        yaml.safe_dump(config, file)
 
 def main():
-    hydra_cfg = init_hydra_config(str(Path(output_dir)/ "checkpoints" /"last" / "pretrained_model" / "config.yaml"), overrides=overrides)
+    overrides = ["device=mps", "training.offline_steps=80000", "resume=true"]
+    model_dir = load_pretrained_model(policy_repo_id, output_dir)
+    modify_config(model_dir, overrides)
+    
+    config_path = model_dir / "pretrained_model" / "config.yaml"
+    hydra_cfg = init_hydra_config(config_path)
     train(hydra_cfg, output_dir, job_name="mps_test")
 
 if __name__ == "__main__":
