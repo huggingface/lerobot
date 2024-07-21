@@ -68,6 +68,8 @@ def set_global_random_state(random_state_dict: dict[str, Any]):
     """
     random.setstate(random_state_dict["random_state"])
     np.random.set_state(random_state_dict["numpy_random_state"])
+    if not isinstance(random_state_dict["torch_random_state"], torch.ByteTensor):
+        random_state_dict["torch_random_state"] = random_state_dict["torch_random_state"].type(torch.ByteTensor)
     torch.random.set_rng_state(random_state_dict["torch_random_state"])
     if torch.cuda.is_available():
         torch.cuda.random.set_rng_state(random_state_dict["torch_cuda_random_state"])
