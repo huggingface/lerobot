@@ -241,8 +241,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     init_logging()
 
-    # Check if settings are compatible with online training.
-    if isinstance(cfg.dataset_repo_id, ListConfig):
+    if cfg.training.online_steps > 0 and isinstance(cfg.dataset_repo_id, ListConfig):
         raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
 
     # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
@@ -484,11 +483,17 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     sampler = torch.utils.data.WeightedRandomSampler(
         weights, num_samples=len(concat_dataset), replacement=True
     )
-    # TODO(now): Add a way of verifying that num_workers == 0 if async rollouts.
+    if cfg.training.do_online_rollout_async and cfg.training.num_workers > 0:
+        logging.warning(
+            f"{cfg.training.num_workers=} will be ignored as you have "
+            f"{cfg.training.do_online_rollout_async=}. With > 0 workers, batches are prefetched, but "
+            "this isn't set up to work with asynchronous updates to the online buffer. Instead, 0 "
+            "workers will be used for the online training dataloader."
+        )
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
         batch_size=cfg.training.batch_size,
-        num_workers=cfg.training.num_workers,
+        num_workers=cfg.training.num_workers if not cfg.do_online_rollout_async else 0,
         sampler=sampler,
         pin_memory=device.type != "cpu",
         drop_last=True,
