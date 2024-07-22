@@ -25,6 +25,7 @@ import tqdm
 from datasets import Dataset, Features, Image, Sequence, Value
 from PIL import Image as PILImage
 
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, save_images_concurrently
 from lerobot.common.datasets.utils import (
     calculate_episode_data_index,
@@ -177,6 +178,7 @@ def from_raw_to_lerobot_format(
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
+        "codebase_version": CODEBASE_VERSION,
         "fps": fps,
         "video": video,
     }
