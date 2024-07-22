@@ -3213,23 +3213,6 @@ pytest = ">=4.6"
 testing = ["fields", "hunter", "process-tests", "pytest-xdist", "virtualenv"]
 
 [[package]]
-name = "pytest-mock"
-version = "3.14.0"
-description = "Thin-wrapper around the mock package for easier use with pytest"
-optional = true
-python-versions = ">=3.8"
-files = [
-    {file = "pytest-mock-3.14.0.tar.gz", hash = "sha256:2719255a1efeceadbc056d6bf3df3d1c5015530fb40cf347c0f9afac88410bd0"},
-    {file = "pytest_mock-3.14.0-py3-none-any.whl", hash = "sha256:0b72c38033392a5f4621342fe11e9219ac11ec9d375f8e2a0c164539e0d70f6f"},
-]
-
-[package.dependencies]
-pytest = ">=6.2.5"
-
-[package.extras]
-dev = ["pre-commit", "pytest-asyncio", "tox"]
-
-[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 description = "Extensions to the standard Python datetime module"
@@ -4494,7 +4477,7 @@ dev = ["debugpy", "pre-commit"]
 dora = ["gym-dora"]
 koch = ["dynamixel-sdk", "pynput"]
 pusht = ["gym-pusht"]
-test = ["pytest", "pytest-cov", "pytest-mock"]
+test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
 video-benchmark = ["pandas", "scikit-image"]
 xarm = ["gym-xarm"]
@@ -4502,4 +4485,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "882b44dada0890dd4e1c727d3363d95cbe1a4adf1d80aa5263080597d80be42c"
+content-hash = "dfe9c6a54e0382156e62e7bd2c7aab1be6372da76d30c61b06d27232276638cb"
