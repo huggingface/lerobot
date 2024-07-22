@@ -42,7 +42,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
     def __init__(
         self,
         write_dir: str | Path,
-        data_shapes: dict[str, tuple[int, ...]] | None,
+        data_spec: dict[str, Any] | None,
         buffer_capacity: int | None,
         fps: float | None = None,
         delta_timestamps: dict[str, list[float]] | dict[str, np.ndarray] | None = None,
@@ -55,9 +55,10 @@ class OnlineBuffer(torch.utils.data.Dataset):
             write_dir: Where to keep the numpy memmap files. One memmap file will be stored for each data key.
                 Note that if the files already exist, they are opened in read-write mode (used for training
                 resumption.)
-            data_shapes: A mapping from data key to data tensor shape. This should include all the data that
-                you wish to record into the buffer, but note that "index", "frame_index" and "episode_index"
-                are already accounted for by this class, so you don't need to pass their shapes.
+            data_spec: A mapping from data key to data specification, like {data_key: {"shape": tuple[int],
+                "dtype": np.dtype}}. This should include all the data that you wish to record into the buffer,
+                but note that "index", "frame_index" and "episode_index" are already accounted for by this
+                class, so you don't need to include them.
             buffer_capacity: How many frames should be stored in the buffer as a maximum. Be aware of your
                 system's available disk space when choosing this.
             fps: Same as the fps concept in LeRobot dataset. Here it needs to be provided for the
@@ -70,7 +71,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
         self.set_delta_timestamps(delta_timestamps)
         self._fps = fps
         self._buffer_capacity = buffer_capacity
-        data_spec = self._make_data_spec(data_shapes, buffer_capacity)
+        data_spec = self._make_data_spec(data_spec, buffer_capacity)
         os.makedirs(write_dir, exist_ok=True)
         self._data = {
             k: _make_memmap_safe(
@@ -97,19 +98,17 @@ class OnlineBuffer(torch.utils.data.Dataset):
         else:
             self._delta_timestamps = None
 
-    def _make_data_spec(
-        self, data_shapes: dict[str, tuple[int, ...]], buffer_capacity: int
-    ) -> dict[str, dict[str, Any]]:
+    def _make_data_spec(self, data_spec: dict[str, Any], buffer_capacity: int) -> dict[str, dict[str, Any]]:
         """Makes the data spec for np.memmap."""
-        if any(k.startswith("_") for k in data_shapes):
+        if any(k.startswith("_") for k in data_spec):
             raise ValueError(
-                "data_shapes keys should not start with '_'. This prefix is reserved for internal logic."
+                "data_spec keys should not start with '_'. This prefix is reserved for internal logic."
             )
         preset_keys = {"index", "frame_index", "episode_index", "timestamp"}
-        if len(intersection := set(data_shapes).intersection(preset_keys)) > 0:
+        if len(intersection := set(data_spec).intersection(preset_keys)) > 0:
             raise ValueError(
-                f"data_shapes should not contain any of {preset_keys} as these are handled internally. "
-                f"The provided data_shapes has {intersection}."
+                f"data_spec should not contain any of {preset_keys} as these are handled internally. "
+                f"The provided data_spec has {intersection}."
             )
         data_spec = {
             # _next_index will be a pointer to the next index that we should start filling from when we add
@@ -123,8 +122,8 @@ class OnlineBuffer(torch.utils.data.Dataset):
             "episode_index": {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
             "timestamp": {"dtype": np.dtype("float64"), "shape": (buffer_capacity,)},
             **{
-                k: {"dtype": np.dtype("float32"), "shape": (buffer_capacity, *v)}
-                for k, v in data_shapes.items()
+                k: {"dtype": v["dtype"], "shape": (buffer_capacity, *v["shape"])}
+                for k, v in data_spec.items()
             },
         }
         return data_spec
