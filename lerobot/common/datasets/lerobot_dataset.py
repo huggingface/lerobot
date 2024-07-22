@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import json
 import logging
 import os
 from pathlib import Path
@@ -22,13 +21,10 @@ from typing import Callable
 import datasets
 import torch
 import torch.utils
-from safetensors.torch import save_file
 
 from lerobot.common.datasets.compute_stats import aggregate_stats
 from lerobot.common.datasets.utils import (
     calculate_episode_data_index,
-    flatten_dict,
-    hf_transform_to_torch,
     load_episode_data_index,
     load_hf_dataset,
     load_info,
@@ -75,18 +71,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.video:
             self.videos_dir = load_videos(repo_id, CODEBASE_VERSION, root)
             self.video_backend = video_backend if video_backend is not None else "pyav"
-
-    def save(self, save_dir: str | Path):
-        save_dir = Path(save_dir)
-        self.hf_dataset.set_transform(None)
-        os.makedirs(save_dir / "train", exist_ok=True)
-        self.hf_dataset.save_to_disk(str(save_dir / "train"))
-        os.makedirs(save_dir / "meta_data", exist_ok=True)
-        save_file(self.episode_data_index, save_dir / "meta_data" / "episode_data_index.safetensors")
-        save_file(flatten_dict(self.stats), save_dir / "meta_data" / "stats.safetensors")
-        with open(save_dir / "meta_data" / "info.json", "w") as f:
-            json.dump(self.info, f, indent=2)
-        self.hf_dataset.set_transform(hf_transform_to_torch)
 
     @property
     def fps(self) -> int:

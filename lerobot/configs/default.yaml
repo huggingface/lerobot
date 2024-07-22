@@ -33,15 +33,14 @@ video_backend: pyav
 training:
   offline_steps: ???
 
-  # Offline training dataloader. Note that the online training dataloader adopts this setting if and only if
-  # do_online_rollout_async=false.
+  # Number of workers for the offline training dataloader. Note that the online training dataloader adopts
+  # this setting if and only if do_online_rollout_async=false.
   num_workers: 4
 
   batch_size: ???
 
   eval_freq: ???
   log_freq: 200
-
   save_checkpoint: true
   # Checkpoint is saved every `save_freq` training iterations and after the last training step.
   save_freq: ???
