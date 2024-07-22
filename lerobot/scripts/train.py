@@ -442,11 +442,11 @@ def train_cli(cfg: dict):
     if finetune == "y":
         pretrained_model_name_or_path = input("Enter the pretrained model name or path: ")
         config_path = get_pretrained_policy_path(pretrained_model_name_or_path) / "config.yaml"
-        hydra_cfg = init_hydra_config(config_path, overrides=["device=mps", "wandb.enable=false"])
+        hydra_cfg = init_hydra_config(config_path, overrides=["device=mps"])
         OmegaConf.set_struct(hydra_cfg, False)
         hydra_cfg.finetune = pretrained_model_name_or_path
-        hydra_cfg.use_amp = False
         out_dir = "outputs/train/finetune"
+        print("The fine-tuned model will be saved in ", out_dir)
         train(hydra_cfg, out_dir, job_name="test")
     else:
         train(
