@@ -83,16 +83,20 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         self.diffusion = DiffusionModel(config)
 
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+        self.use_env_state = "observation.environment_state" in config.input_shapes
 
         self.reset()
 
     def reset(self):
         """Clear observation and action queues. Should be called on `env.reset()`"""
         self._queues = {
-            "observation.images": deque(maxlen=self.config.n_obs_steps),
             "observation.state": deque(maxlen=self.config.n_obs_steps),
             "action": deque(maxlen=self.config.n_action_steps),
         }
+        if len(self.expected_image_keys) > 0:
+            self._queues["observation.images"] = deque(maxlen=self.config.n_obs_steps)
+        if self.use_env_state:
+            self._queues["observation.environment_state"] = deque(maxlen=self.config.n_obs_steps)
 
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -117,7 +121,8 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
         actually measured from the first observation which (if `n_obs_steps` > 1) happened in the past.
         """
         batch = self.normalize_inputs(batch)
-        batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+        if len(self.expected_image_keys) > 0:
+            batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
         # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
 
@@ -137,7 +142,8 @@ class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
-        batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+        if len(self.expected_image_keys) > 0:
+            batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
         return {"loss": loss}
@@ -161,15 +167,20 @@ class DiffusionModel(nn.Module):
         super().__init__()
         self.config = config
 
-        self.rgb_encoder = DiffusionRgbEncoder(config)
+        # Build observation encoders (depending on which observations are provided).
+        global_cond_dim = config.input_shapes["observation.state"][0]
         num_images = len([k for k in config.input_shapes if k.startswith("observation.image")])
-        self.unet = DiffusionConditionalUnet1d(
-            config,
-            global_cond_dim=(
-                config.input_shapes["observation.state"][0] + self.rgb_encoder.feature_dim * num_images
-            )
-            * config.n_obs_steps,
-        )
+        self._use_images = False
+        self._use_env_state = False
+        if num_images > 0:
+            self._use_images = True
+            self.rgb_encoder = DiffusionRgbEncoder(config)
+            global_cond_dim += self.rgb_encoder.feature_dim * num_images
+        if "observation.environment_state" in config.input_shapes:
+            self._use_env_state = True
+            global_cond_dim += config.input_shapes["observation.environment_state"][0]
+
+        self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim * config.n_obs_steps)
 
         self.noise_scheduler = _make_noise_scheduler(
             config.noise_scheduler_type,
@@ -219,24 +230,34 @@ class DiffusionModel(nn.Module):
     def _prepare_global_conditioning(self, batch: dict[str, Tensor]) -> Tensor:
         """Encode image features and concatenate them all together along with the state vector."""
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
+        global_cond_feats = [batch["observation.state"]]
         # Extract image feature (first combine batch, sequence, and camera index dims).
-        img_features = self.rgb_encoder(
-            einops.rearrange(batch["observation.images"], "b s n ... -> (b s n) ...")
-        )
-        # Separate batch dim and sequence dim back out. The camera index dim gets absorbed into the feature
-        # dim (effectively concatenating the camera features).
-        img_features = einops.rearrange(
-            img_features, "(b s n) ... -> b s (n ...)", b=batch_size, s=n_obs_steps
-        )
-        # Concatenate state and image features then flatten to (B, global_cond_dim).
-        return torch.cat([batch["observation.state"], img_features], dim=-1).flatten(start_dim=1)
+        if self._use_images:
+            img_features = self.rgb_encoder(
+                einops.rearrange(batch["observation.images"], "b s n ... -> (b s n) ...")
+            )
+            # Separate batch dim and sequence dim back out. The camera index dim gets absorbed into the
+            # feature dim (effectively concatenating the camera features).
+            img_features = einops.rearrange(
+                img_features, "(b s n) ... -> b s (n ...)", b=batch_size, s=n_obs_steps
+            )
+            global_cond_feats.append(img_features)
+
+        if self._use_env_state:
+            global_cond_feats.append(batch["observation.environment_state"])
+
+        # Concatenate features then flatten to (B, global_cond_dim).
+        return torch.cat(global_cond_feats, dim=-1).flatten(start_dim=1)
 
     def generate_actions(self, batch: dict[str, Tensor]) -> Tensor:
         """
         This function expects `batch` to have:
         {
             "observation.state": (B, n_obs_steps, state_dim)
+
             "observation.images": (B, n_obs_steps, num_cameras, C, H, W)
+                AND/OR
+            "observation.environment_state": (B, environment_dim)
         }
         """
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
@@ -260,13 +281,18 @@ class DiffusionModel(nn.Module):
         This function expects `batch` to have (at least):
         {
             "observation.state": (B, n_obs_steps, state_dim)
+
             "observation.images": (B, n_obs_steps, num_cameras, C, H, W)
+                AND/OR
+            "observation.environment_state": (B, environment_dim)
+
             "action": (B, horizon, action_dim)
             "action_is_pad": (B, horizon)
         }
         """
         # Input validation.
-        assert set(batch).issuperset({"observation.state", "observation.images", "action", "action_is_pad"})
+        assert set(batch).issuperset({"observation.state", "action", "action_is_pad"})
+        assert "observation.images" in batch or "observation.environment_state" in batch
         n_obs_steps = batch["observation.state"].shape[1]
         horizon = batch["action"].shape[1]
         assert horizon == self.config.horizon

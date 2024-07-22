@@ -1,4 +1,12 @@
+"""
+This file contains utilities for recording frames from cameras. For more info look at `OpenCVCamera` docstring.
+"""
+
 import argparse
+import concurrent.futures
+import math
+import shutil
+import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -6,11 +14,25 @@ from threading import Thread
 
 import cv2
 import numpy as np
+from PIL import Image
 
-from lerobot.common.robot_devices.cameras.utils import save_color_image
+from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.utils.utils import capture_timestamp_utc
+from lerobot.scripts.control_robot import busy_wait
+
+# Use 1 thread to avoid blocking the main thread. Especially useful during data collection
+# when other threads are used to save the images.
+cv2.setNumThreads(1)
+
+# The maximum opencv device index depends on your operating system. For instance,
+# if you have 3 cameras, they should be associated to index 0, 1, and 2. This is the case
+# on MacOS. However, on Ubuntu, the indices are different like 6, 16, 23.
+# When you change the USB port or reboot the computer, the operating system might
+# treat the same cameras as new devices. Thus we select a higher bound to search indices.
+MAX_OPENCV_INDEX = 60
 
 
-def find_camera_indices(raise_when_empty=False, max_index_search_range=60):
+def find_camera_indices(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX):
     camera_ids = []
     for camera_idx in range(max_index_search_range):
         camera = cv2.VideoCapture(camera_idx)
@@ -29,38 +51,71 @@ def find_camera_indices(raise_when_empty=False, max_index_search_range=60):
     return camera_ids
 
 
-def benchmark_cameras(cameras, out_dir=None, save_images=False, num_warmup_frames=4):
-    if out_dir:
-        out_dir = Path(out_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
+def save_image(img_array, camera_index, frame_index, images_dir):
+    img = Image.fromarray(img_array)
+    path = images_dir / f"camera_{camera_index:02d}_frame_{frame_index:06d}.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(str(path), quality=100)
 
-    for _ in range(num_warmup_frames):
-        for camera in cameras:
-            try:
-                camera.capture_image()
-                time.sleep(0.01)
-            except OSError as e:
-                print(e)
 
-    while True:
-        now = time.time()
-        for camera in cameras:
-            color_image = camera.capture_image("bgr" if save_images else "rgb")
+def save_images_from_cameras(
+    images_dir: Path, camera_ids=None, fps=None, width=None, height=None, record_time_s=2
+):
+    if camera_ids is None:
+        print("Finding available camera indices")
+        camera_ids = find_camera_indices()
 
-            if save_images:
-                image_path = out_dir / f"camera_{camera.camera_index:02}.png"
-                print(f"Write to {image_path}")
-                save_color_image(color_image, image_path, write_shape=True)
+    print("Connecting cameras")
+    cameras = []
+    for cam_idx in camera_ids:
+        camera = OpenCVCamera(cam_idx, fps=fps, width=width, height=height)
+        camera.connect()
+        print(
+            f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
+        )
+        cameras.append(camera)
 
-        dt_s = time.time() - now
-        dt_ms = dt_s * 1000
-        freq = 1 / dt_s
-        print(f"Latency (ms): {dt_ms:.2f}\tFrequency: {freq:.2f}")
+    images_dir = Path(
+        images_dir,
+    )
+    if images_dir.exists():
+        shutil.rmtree(
+            images_dir,
+        )
+    images_dir.mkdir(parents=True, exist_ok=True)
 
-        if save_images:
-            break
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+    print(f"Saving images to {images_dir}")
+    frame_index = 0
+    start_time = time.perf_counter()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        while True:
+            now = time.perf_counter()
+
+            for camera in cameras:
+                # If we use async_read when fps is None, the loop will go full speed, and we will endup
+                # saving the same images from the cameras multiple times until the RAM/disk is full.
+                image = camera.read() if fps is None else camera.async_read()
+
+                executor.submit(
+                    save_image,
+                    image,
+                    camera.camera_index,
+                    frame_index,
+                    images_dir,
+                )
+
+            if fps is not None:
+                dt_s = time.perf_counter() - now
+                busy_wait(1 / fps - dt_s)
+
+            if time.perf_counter() - start_time > record_time_s:
+                break
+
+            print(f"Frame: {frame_index:04d}\tLatency (ms): {(time.perf_counter() - now) * 1000:.2f}")
+
+            frame_index += 1
+
+    print(f"Images have been saved to {images_dir}")
 
 
 @dataclass
@@ -79,20 +134,51 @@ class OpenCVCameraConfig:
     fps: int | None = None
     width: int | None = None
     height: int | None = None
-    color: str = "rgb"
+    color_mode: str = "rgb"
+
+    def __post_init__(self):
+        if self.color_mode not in ["rgb", "bgr"]:
+            raise ValueError(
+                f"Expected color_mode values are 'rgb' or 'bgr', but {self.color_mode} is provided."
+            )
 
 
 class OpenCVCamera:
-    # TODO(rcadene): improve dosctring
     """
-    https://docs.opencv.org/4.x/d0/da7/videoio_overview.html
-    https://docs.opencv.org/4.x/d4/d15/group__videoio__flags__base.html#ga023786be1ee68a9105bf2e48c700294d
+    The OpenCVCamera class allows to efficiently record images from cameras. It relies on opencv2 to communicate
+    with the cameras. Most cameras are compatible. For more info, see the [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
 
-    Example of uage:
+    An OpenCVCamera instance requires a camera index (e.g. `OpenCVCamera(camera_index=0)`). When you only have one camera
+    like a webcam of a laptop, the camera index is expected to be 0, but it might also be very different, and the camera index
+    might change if you reboot your computer or re-plug your camera. This behavior depends on your operation system.
 
+    To find the camera indices of your cameras, you can run our utility script that will be save a few frames for each camera:
+    ```bash
+    python lerobot/common/robot_devices/cameras/opencv.py --images-dir outputs/images_from_opencv_cameras
+    ```
+
+    When an OpenCVCamera is instantiated, if no specific config is provided, the default fps, width, height and color_mode
+    of the given camera will be used.
+
+    Example of usage of the class:
     ```python
-    camera = OpenCVCamera(2)
-    color_image = camera.capture_image()
+    camera = OpenCVCamera(camera_index=0)
+    camera.connect()
+    color_image = camera.read()
+    # when done using the camera, consider disconnecting
+    camera.disconnect()
+    ```
+
+    Example of changing default fps, width, height and color_mode:
+    ```python
+    camera = OpenCVCamera(0, fps=30, width=1280, height=720)
+    camera = connect()  # applies the settings, might error out if these settings are not compatible with the camera
+
+    camera = OpenCVCamera(0, fps=90, width=640, height=480)
+    camera = connect()
+
+    camera = OpenCVCamera(0, fps=90, width=640, height=480, color_mode="bgr")
+    camera = connect()
     ```
     """
 
@@ -106,26 +192,23 @@ class OpenCVCamera:
         self.fps = config.fps
         self.width = config.width
         self.height = config.height
-        self.color = config.color
+        self.color_mode = config.color_mode
 
-        if self.color not in ["rgb", "bgr"]:
-            raise ValueError(f"Expected color values are 'rgb' or 'bgr', but {self.color} is provided.")
-
-        if self.camera_index is None:
+        if not isinstance(self.camera_index, int):
             raise ValueError(
-                f"`camera_index` is expected to be one of these available cameras {OpenCVCamera.AVAILABLE_CAMERAS_INDICES}, but {camera_index} is provided instead."
+                f"Camera index must be provided as an int, but {self.camera_index} was given instead."
             )
 
         self.camera = None
         self.is_connected = False
-
-        self.t = Thread(target=self.capture_image_loop, args=())
-        self.t.daemon = True
-        self._color_image = None
+        self.thread = None
+        self.stop_event = None
+        self.color_image = None
+        self.logs = {}
 
     def connect(self):
         if self.is_connected:
-            raise ValueError(f"Camera {self.camera_index} is already connected.")
+            raise RobotDeviceAlreadyConnectedError(f"Camera {self.camera_index} is already connected.")
 
         # First create a temporary camera trying to access `camera_index`,
         # and verify it is a valid camera by calling `isOpened`.
@@ -138,9 +221,10 @@ class OpenCVCamera:
         # valid cameras.
         if not is_camera_open:
             # Verify that the provided `camera_index` is valid before printing the traceback
-            if self.camera_index not in find_camera_indices():
+            available_cam_ids = find_camera_indices()
+            if self.camera_index not in available_cam_ids:
                 raise ValueError(
-                    f"`camera_index` is expected to be one of these available cameras {OpenCVCamera.AVAILABLE_CAMERAS_INDICES}, but {self.camera_index} is provided instead."
+                    f"`camera_index` is expected to be one of these available cameras {available_cam_ids}, but {self.camera_index} is provided instead."
                 )
 
             raise OSError(f"Can't access camera {self.camera_index}.")
@@ -150,106 +234,171 @@ class OpenCVCamera:
         # needs to be re-created.
         self.camera = cv2.VideoCapture(self.camera_index)
 
-        if self.fps:
+        if self.fps is not None:
             self.camera.set(cv2.CAP_PROP_FPS, self.fps)
-        if self.width:
+        if self.width is not None:
             self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        if self.height:
+        if self.height is not None:
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
 
         actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
         actual_width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
         actual_height = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
-        if self.fps and self.fps != actual_fps:
+        if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             raise OSError(
                 f"Can't set {self.fps=} for camera {self.camera_index}. Actual value is {actual_fps}."
             )
-        if self.width and self.width != actual_width:
+        if self.width is not None and self.width != actual_width:
             raise OSError(
                 f"Can't set {self.width=} for camera {self.camera_index}. Actual value is {actual_width}."
             )
-        if self.height and self.height != actual_height:
+        if self.height is not None and self.height != actual_height:
             raise OSError(
                 f"Can't set {self.height=} for camera {self.camera_index}. Actual value is {actual_height}."
             )
 
-        self.is_connected = True
-        self.t.start()
+        self.fps = actual_fps
+        self.width = actual_width
+        self.height = actual_height
 
-    def capture_image(self, temporary_color: str | None = None) -> np.ndarray:
+        self.is_connected = True
+
+    def read(self, temporary_color_mode: str | None = None) -> np.ndarray:
+        """Read a frame from the camera returned in the format (height, width, channels)
+        (e.g. (640, 480, 3)), contrarily to the pytorch format which is channel first.
+
+        Note: Reading a frame is done every `camera.fps` times per second, and it is blocking.
+        If you are reading data from other sensors, we advise to use `camera.async_read()` which is non blocking version of `camera.read()`.
+        """
         if not self.is_connected:
-            self.connect()
+            raise RobotDeviceNotConnectedError(
+                f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
+            )
+
+        start_time = time.perf_counter()
 
         ret, color_image = self.camera.read()
         if not ret:
             raise OSError(f"Can't capture color image from camera {self.camera_index}.")
 
-        requested_color = self.color if temporary_color is None else temporary_color
+        requested_color_mode = self.color_mode if temporary_color_mode is None else temporary_color_mode
 
-        if requested_color not in ["rgb", "bgr"]:
-            raise ValueError(f"Expected color values are 'rgb' or 'bgr', but {requested_color} is provided.")
+        if requested_color_mode not in ["rgb", "bgr"]:
+            raise ValueError(
+                f"Expected color values are 'rgb' or 'bgr', but {requested_color_mode} is provided."
+            )
 
         # OpenCV uses BGR format as default (blue, green red) for all operations, including displaying images.
         # However, Deep Learning framework such as LeRobot uses RGB format as default to train neural networks,
         # so we convert the image color from BGR to RGB.
-        if requested_color == "rgb":
+        if requested_color_mode == "rgb":
             color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
+
+        h, w, _ = color_image.shape
+        if h != self.height or w != self.width:
+            raise OSError(
+                f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
+            )
+
+        # log the number of seconds it took to read the image
+        self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
+
+        # log the utc time at which the image was received
+        self.logs["timestamp_utc"] = capture_timestamp_utc()
 
         return color_image
 
-    def capture_image_loop(self):
-        while True:
-            self._color_image = self.capture_image()
+    def read_loop(self):
+        while self.stop_event is None or not self.stop_event.is_set():
+            self.color_image = self.read()
 
-    def read(self):
-        while self._color_image is None:
-            time.sleep(0.1)
-        return self._color_image
+    def async_read(self):
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError(
+                f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
+            )
+
+        if self.thread is None:
+            self.stop_event = threading.Event()
+            self.thread = Thread(target=self.read_loop, args=())
+            self.thread.daemon = True
+            self.thread.start()
+
+        num_tries = 0
+        while self.color_image is None:
+            num_tries += 1
+            time.sleep(1 / self.fps)
+            if num_tries > self.fps and (self.thread.ident is None or not self.thread.is_alive()):
+                raise Exception(
+                    "The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.thread.start()` has been called."
+                )
+
+        return self.color_image
 
     def disconnect(self):
-        if getattr(self, "camera", None):
-            self.camera.release()
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError(
+                f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
+            )
+
+        if self.thread is not None and self.thread.is_alive():
+            # wait for the thread to finish
+            self.stop_event.set()
+            self.thread.join()
+            self.thread = None
+            self.stop_event = None
+
+        self.camera.release()
+        self.camera = None
+
+        self.is_connected = False
 
     def __del__(self):
-        self.disconnect()
-
-
-def save_images_config(config: OpenCVCameraConfig, out_dir: Path):
-    cameras = []
-    print(f"Available camera indices: {OpenCVCamera.AVAILABLE_CAMERAS_INDICES}")
-    for camera_idx in OpenCVCamera.AVAILABLE_CAMERAS_INDICES:
-        camera = OpenCVCamera(camera_idx, config)
-        cameras.append(camera)
-
-    out_dir = out_dir.parent / f"{out_dir.name}_{config.width}x{config.height}_{config.fps}"
-    benchmark_cameras(cameras, out_dir, save_images=True)
-
-
-def benchmark_config(config: OpenCVCameraConfig, camera_ids: list[int]):
-    cameras = [OpenCVCamera(idx, config) for idx in camera_ids]
-    benchmark_cameras(cameras)
+        if getattr(self, "is_connected", False):
+            self.disconnect()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", type=str, choices=["save_images", "benchmark"], default="save_images")
-    parser.add_argument("--camera-ids", type=int, nargs="*", default=[16, 4, 22, 10])
-    parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--width", type=str, default=640)
-    parser.add_argument("--height", type=str, default=480)
-    parser.add_argument("--out-dir", type=Path, default="outputs/benchmark_cameras/opencv/2024_06_22_1727")
+    parser = argparse.ArgumentParser(
+        description="Save a few frames using `OpenCVCamera` for all cameras connected to the computer, or a selected subset."
+    )
+    parser.add_argument(
+        "--camera-ids",
+        type=int,
+        nargs="*",
+        default=None,
+        help="List of camera indices used to instantiate the `OpenCVCamera`. If not provided, find and use all available camera indices.",
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=None,
+        help="Set the number of frames recorded per seconds for all cameras. If not provided, use the default fps of each camera.",
+    )
+    parser.add_argument(
+        "--width",
+        type=str,
+        default=None,
+        help="Set the width for all cameras. If not provided, use the default width of each camera.",
+    )
+    parser.add_argument(
+        "--height",
+        type=str,
+        default=None,
+        help="Set the height for all cameras. If not provided, use the default height of each camera.",
+    )
+    parser.add_argument(
+        "--images-dir",
+        type=Path,
+        default="outputs/images_from_opencv_cameras",
+        help="Set directory to save a few frames for each camera.",
+    )
+    parser.add_argument(
+        "--record-time-s",
+        type=float,
+        default=2.0,
+        help="Set the number of seconds used to record the frames. By default, 2 seconds.",
+    )
     args = parser.parse_args()
-
-    config = OpenCVCameraConfig(args.fps, args.width, args.height)
-    # config = OpenCVCameraConfig()
-    # config = OpenCVCameraConfig(60, 640, 480)
-    # config = OpenCVCameraConfig(90, 640, 480)
-    # config = OpenCVCameraConfig(30, 1280, 720)
-
-    if args.mode == "save_images":
-        save_images_config(config, args.out_dir)
-    elif args.mode == "benchmark":
-        benchmark_config(config, args.camera_ids)
-    else:
-        raise ValueError(args.mode)
+    save_images_from_cameras(**vars(args))

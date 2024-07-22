@@ -1,5 +1,8 @@
 import enum
+import time
+import traceback
 from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
 from dynamixel_sdk import (
@@ -13,6 +16,9 @@ from dynamixel_sdk import (
     PacketHandler,
     PortHandler,
 )
+
+from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.utils.utils import capture_timestamp_utc
 
 PROTOCOL_VERSION = 2.0
 BAUD_RATE = 1_000_000
@@ -82,8 +88,6 @@ X_SERIES_CONTROL_TABLE = {
 
 CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
 CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
-# CONVERT_POSITION_TO_ANGLE_REQUIRED = ["Goal_Position", "Present_Position"]
-CONVERT_POSITION_TO_ANGLE_REQUIRED = []
 
 MODEL_CONTROL_TABLE = {
     "x_series": X_SERIES_CONTROL_TABLE,
@@ -94,60 +98,78 @@ MODEL_CONTROL_TABLE = {
     "xm540-w270": X_SERIES_CONTROL_TABLE,
 }
 
-
-def uint32_to_int32(values: np.ndarray):
-    """
-    Convert an unsigned 32-bit integer array to a signed 32-bit integer array.
-    """
-    for i in range(len(values)):
-        if values[i] is not None and values[i] > 2147483647:
-            values[i] = values[i] - 4294967296
-    return values
-
-
-def int32_to_uint32(values: np.ndarray):
-    """
-    Convert a signed 32-bit integer array to an unsigned 32-bit integer array.
-    """
-    for i in range(len(values)):
-        if values[i] is not None and values[i] < 0:
-            values[i] = values[i] + 4294967296
-    return values
-
-
-def motor_position_to_angle(position: np.ndarray) -> np.ndarray:
-    """
-    Convert from motor position in [-2048, 2048] to radian in [-pi, pi]
-    """
-    return (position / 2048) * 3.14
-
-
-def motor_angle_to_position(angle: np.ndarray) -> np.ndarray:
-    """
-    Convert from radian in [-pi, pi] to motor position in [-2048, 2048]
-    """
-    return ((angle / 3.14) * 2048).astype(np.int64)
-
-
-# def pwm2vel(pwm: np.ndarray) -> np.ndarray:
-#     """
-#     :param pwm: numpy array of pwm/s joint velocities
-#     :return: numpy array of rad/s joint velocities
-#     """
-#     return pwm * 3.14 / 2048
-
-
-# def vel2pwm(vel: np.ndarray) -> np.ndarray:
-#     """
-#     :param vel: numpy array of rad/s joint velocities
-#     :return: numpy array of pwm/s joint velocities
-#     """
-#     return (vel * 2048 / 3.14).astype(np.int64)
+NUM_READ_RETRY = 10
 
 
 def get_group_sync_key(data_name, motor_names):
     group_key = f"{data_name}_" + "_".join(motor_names)
     return group_key
+
+
+def get_result_name(fn_name, data_name, motor_names):
+    group_key = get_group_sync_key(data_name, motor_names)
+    rslt_name = f"{fn_name}_{group_key}"
+    return rslt_name
+
+
+def get_queue_name(fn_name, data_name, motor_names):
+    group_key = get_group_sync_key(data_name, motor_names)
+    queue_name = f"{fn_name}_{group_key}"
+    return queue_name
+
+
+def get_log_name(var_name, fn_name, data_name, motor_names):
+    group_key = get_group_sync_key(data_name, motor_names)
+    log_name = f"{var_name}_{fn_name}_{group_key}"
+    return log_name
+
+
+def assert_same_address(model_ctrl_table, motor_models, data_name):
+    all_addr = []
+    all_bytes = []
+    for model in motor_models:
+        addr, bytes = model_ctrl_table[model][data_name]
+        all_addr.append(addr)
+        all_bytes.append(bytes)
+
+    if len(set(all_addr)) != 1:
+        raise NotImplementedError(
+            f"At least two motor models use a different address for `data_name`='{data_name}' ({list(zip(motor_models, all_addr, strict=False))}). Contact a LeRobot maintainer."
+        )
+
+    if len(set(all_bytes)) != 1:
+        raise NotImplementedError(
+            f"At least two motor models use a different bytes representation for `data_name`='{data_name}' ({list(zip(motor_models, all_bytes, strict=False))}). Contact a LeRobot maintainer."
+        )
+
+
+def find_available_ports():
+    ports = []
+    for path in Path("/dev").glob("tty*"):
+        ports.append(str(path))
+    return ports
+
+
+def find_port():
+    print("Finding all available ports for the DynamixelMotorsBus.")
+    ports_before = find_available_ports()
+    print(ports_before)
+
+    print("Remove the usb cable from your DynamixelMotorsBus and press Enter when done.")
+    input()
+
+    time.sleep(0.5)
+    ports_after = find_available_ports()
+    ports_diff = list(set(ports_before) - set(ports_after))
+
+    if len(ports_diff) == 1:
+        port = ports_diff[0]
+        print(f"The port of this DynamixelMotorsBus is '{port}'")
+        print("Reconnect the usb cable.")
+    elif len(ports_diff) == 0:
+        raise OSError(f"Could not detect the port. No difference was found ({ports_diff}).")
+    else:
+        raise OSError(f"Could not detect the port. More than one port was found ({ports_diff}).")
 
 
 class TorqueMode(enum.Enum):
@@ -170,6 +192,42 @@ class DriveMode(enum.Enum):
 
 
 class DynamixelMotorsBus:
+    # TODO(rcadene): Add a script to find the motor indices without DynamixelWizzard2
+    """
+    The DynamixelMotorsBus class allows to efficiently read and write to the attached motors. It relies on
+    the python dynamixel sdk to communicate with the motors. For more info, see the [Dynamixel SDK Documentation](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
+
+    A DynamixelMotorsBus instance requires a port (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`)).
+    To find the port, you can run our utility script:
+    ```bash
+    python lerobot/common/robot_devices/motors/dynamixel.py
+    >>> Finding all available ports for the DynamixelMotorsBus.
+    >>> ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+    >>> Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
+    >>> The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0031751.
+    >>> Reconnect the usb cable.
+    ```
+    To find the motor indices, use [DynamixelWizzard2](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_wizard2).
+
+    Example of usage for 1 motor connected to the bus:
+    ```python
+    motor_name = "gripper"
+    motor_index = 6
+    motor_model = "xl330-m077"
+
+    motors_bus = DynamixelMotorsBus(
+        port="/dev/tty.usbmodem575E0031751",
+        motors={motor_name: (motor_index, motor_model)},
+    )
+    motors_bus.connect()
+
+    motors_bus.teleop_step()
+
+    # when done, consider disconnecting
+    motors_bus.disconnect()
+    ```
+    """
+
     def __init__(
         self,
         port: str,
@@ -183,19 +241,37 @@ class DynamixelMotorsBus:
         if extra_model_control_table:
             self.model_ctrl_table.update(extra_model_control_table)
 
+        self.port_handler = None
+        self.packet_handler = None
+        self.calibration = None
+        self.is_connected = False
+        self.group_readers = {}
+        self.group_writers = {}
+        self.logs = {}
+
+    def connect(self):
+        if self.is_connected:
+            raise RobotDeviceAlreadyConnectedError(
+                f"DynamixelMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice."
+            )
+
         self.port_handler = PortHandler(self.port)
         self.packet_handler = PacketHandler(PROTOCOL_VERSION)
 
-        if not self.port_handler.openPort():
-            raise OSError(f"Failed to open port {self.port}")
+        try:
+            if not self.port_handler.openPort():
+                raise OSError(f"Failed to open port '{self.port}'.")
+        except Exception:
+            traceback.print_exc()
+            print(
+                "\nTry running `python lerobot/common/robot_devices/motors/dynamixel.py` to make sure you are using the correct port.\n"
+            )
+            raise
 
         self.port_handler.setBaudRate(BAUD_RATE)
         self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
 
-        self.group_readers = {}
-        self.group_writers = {}
-
-        self.calibration = None
+        self.is_connected = True
 
     @property
     def motor_names(self) -> list[int]:
@@ -238,54 +314,14 @@ class DynamixelMotorsBus:
 
         return values
 
-    def read(self, data_name, motor_names: list[str] | None = None):
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        motor_ids = []
-        models = []
-        for name in motor_names:
-            motor_idx, model = self.motors[name]
-            motor_ids.append(motor_idx)
-            models.append(model)
-
-        # TODO(rcadene): assert all motors follow same address
-        addr, bytes = self.model_ctrl_table[model][data_name]
-        group_key = get_group_sync_key(data_name, motor_names)
-
-        if data_name not in self.group_readers:
-            # create new group reader
-            self.group_readers[group_key] = GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
-            for idx in motor_ids:
-                self.group_readers[group_key].addParam(idx)
-
-        comm = self.group_readers[group_key].txRxPacket()
-        if comm != COMM_SUCCESS:
-            raise ConnectionError(
-                f"Read failed due to communication error on port {self.port} for group_key {group_key}: "
-                f"{self.packet_handler.getTxRxResult(comm)}"
+    def read(self, data_name, motor_names: str | list[str] | None = None):
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError(
+                f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
             )
 
-        values = []
-        for idx in motor_ids:
-            value = self.group_readers[group_key].getData(idx, addr, bytes)
-            values.append(value)
+        start_time = time.perf_counter()
 
-        values = np.array(values)
-
-        # TODO(rcadene): explain why
-        if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
-            values = uint32_to_int32(values)
-
-        if data_name in CALIBRATION_REQUIRED:
-            values = self.apply_calibration(values, motor_names)
-
-        if data_name in CONVERT_POSITION_TO_ANGLE_REQUIRED:
-            values = motor_position_to_angle(values)
-
-        return values
-
-    def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
         if motor_names is None:
             motor_names = self.motor_names
 
@@ -299,24 +335,83 @@ class DynamixelMotorsBus:
             motor_ids.append(motor_idx)
             models.append(model)
 
-        if isinstance(values, (int, float, np.integer)):
-            values = [int(values)] * len(motor_ids)
+        assert_same_address(self.model_ctrl_table, models, data_name)
+        addr, bytes = self.model_ctrl_table[model][data_name]
+        group_key = get_group_sync_key(data_name, motor_names)
+
+        if data_name not in self.group_readers:
+            # create new group reader
+            self.group_readers[group_key] = GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
+            for idx in motor_ids:
+                self.group_readers[group_key].addParam(idx)
+
+        for _ in range(NUM_READ_RETRY):
+            comm = self.group_readers[group_key].txRxPacket()
+            if comm == COMM_SUCCESS:
+                break
+
+        if comm != COMM_SUCCESS:
+            raise ConnectionError(
+                f"Read failed due to communication error on port {self.port} for group_key {group_key}: "
+                f"{self.packet_handler.getTxRxResult(comm)}"
+            )
+
+        values = []
+        for idx in motor_ids:
+            value = self.group_readers[group_key].getData(idx, addr, bytes)
+            values.append(value)
 
         values = np.array(values)
 
-        if data_name in CONVERT_POSITION_TO_ANGLE_REQUIRED:
-            values = motor_angle_to_position(values)
+        # Convert to signed int to use range [-2048, 2048] for our motor positions.
+        if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
+            values = values.astype(np.int32)
+
+        if data_name in CALIBRATION_REQUIRED:
+            values = self.apply_calibration(values, motor_names)
+
+        # log the number of seconds it took to read the data from the motors
+        delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
+        self.logs[delta_ts_name] = time.perf_counter() - start_time
+
+        # log the utc time at which the data was received
+        ts_utc_name = get_log_name("timestamp_utc", "read", data_name, motor_names)
+        self.logs[ts_utc_name] = capture_timestamp_utc()
+
+        return values
+
+    def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError(
+                f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
+            )
+
+        start_time = time.perf_counter()
+
+        if motor_names is None:
+            motor_names = self.motor_names
+
+        if isinstance(motor_names, str):
+            motor_names = [motor_names]
+
+        if isinstance(values, (int, float, np.integer)):
+            values = [int(values)] * len(motor_names)
+
+        values = np.array(values)
+
+        motor_ids = []
+        models = []
+        for name in motor_names:
+            motor_idx, model = self.motors[name]
+            motor_ids.append(motor_idx)
+            models.append(model)
 
         if data_name in CALIBRATION_REQUIRED:
             values = self.revert_calibration(values, motor_names)
 
-        # TODO(rcadene): why dont we do it?
-        # if data_name in CONVERT_INT32_TO_UINT32_REQUIRED:
-        #     values = int32_to_uint32(values)
-
         values = values.tolist()
 
-        # TODO(rcadene): assert all motors follow same address
+        assert_same_address(self.model_ctrl_table, models, data_name)
         addr, bytes = self.model_ctrl_table[model][data_name]
         group_key = get_group_sync_key(data_name, motor_names)
 
@@ -326,7 +421,9 @@ class DynamixelMotorsBus:
                 self.port_handler, self.packet_handler, addr, bytes
             )
 
-        for idx, value in zip(motor_ids, values, strict=False):
+        for idx, value in zip(motor_ids, values, strict=True):
+            # Note: No need to convert back into unsigned int, since this byte preprocessing
+            # already handles it for us.
             if bytes == 1:
                 data = [
                     DXL_LOBYTE(DXL_LOWORD(value)),
@@ -361,63 +458,35 @@ class DynamixelMotorsBus:
                 f"{self.packet_handler.getTxRxResult(comm)}"
             )
 
-    # def read(self, data_name, motor_name: str):
-    #     motor_idx, model = self.motors[motor_name]
-    #     addr, bytes = self.model_ctrl_table[model][data_name]
+        # log the number of seconds it took to write the data to the motors
+        delta_ts_name = get_log_name("delta_timestamp_s", "write", data_name, motor_names)
+        self.logs[delta_ts_name] = time.perf_counter() - start_time
 
-    #     args = (self.port_handler, motor_idx, addr)
-    #     if bytes == 1:
-    #         value, comm, err = self.packet_handler.read1ByteTxRx(*args)
-    #     elif bytes == 2:
-    #         value, comm, err = self.packet_handler.read2ByteTxRx(*args)
-    #     elif bytes == 4:
-    #         value, comm, err = self.packet_handler.read4ByteTxRx(*args)
-    #     else:
-    #         raise NotImplementedError(
-    #             f"Value of the number of bytes to be sent is expected to be in [1, 2, 4], but "
-    #             f"{bytes} is provided instead.")
+        # TODO(rcadene): should we log the time before sending the write command?
+        # log the utc time when the write has been completed
+        ts_utc_name = get_log_name("timestamp_utc", "write", data_name, motor_names)
+        self.logs[ts_utc_name] = capture_timestamp_utc()
 
-    #     if comm != COMM_SUCCESS:
-    #         raise ConnectionError(
-    #             f"Read failed due to communication error on port {self.port} for motor {motor_idx}: "
-    #             f"{self.packet_handler.getTxRxResult(comm)}"
-    #         )
-    #     elif err != 0:
-    #         raise ConnectionError(
-    #             f"Read failed due to error {err} on port {self.port} for motor {motor_idx}: "
-    #             f"{self.packet_handler.getTxRxResult(err)}"
-    #         )
+    def disconnect(self):
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError(
+                f"DynamixelMotorsBus({self.port}) is not connected. Try running `motors_bus.connect()` first."
+            )
 
-    #     if data_name in CALIBRATION_REQUIRED:
-    #         value = self.apply_calibration([value], [motor_name])[0]
+        if self.port_handler is not None:
+            self.port_handler.closePort()
+            self.port_handler = None
 
-    #     return value
+        self.packet_handler = None
+        self.group_readers = {}
+        self.group_writers = {}
+        self.is_connected = False
 
-    # def write(self, data_name, value, motor_name: str):
-    #     if data_name in CALIBRATION_REQUIRED:
-    #         value = self.revert_calibration([value], [motor_name])[0]
+    def __del__(self):
+        if getattr(self, "is_connected", False):
+            self.disconnect()
 
-    #     motor_idx, model = self.motors[motor_name]
-    #     addr, bytes = self.model_ctrl_table[model][data_name]
-    #     args = (self.port_handler, motor_idx, addr, value)
-    #     if bytes == 1:
-    #         comm, err = self.packet_handler.write1ByteTxRx(*args)
-    #     elif bytes == 2:
-    #         comm, err = self.packet_handler.write2ByteTxRx(*args)
-    #     elif bytes == 4:
-    #         comm, err = self.packet_handler.write4ByteTxRx(*args)
-    #     else:
-    #         raise NotImplementedError(
-    #             f"Value of the number of bytes to be sent is expected to be in [1, 2, 4], but {bytes} "
-    #             f"is provided instead.")
 
-    #     if comm != COMM_SUCCESS:
-    #         raise ConnectionError(
-    #             f"Write failed due to communication error on port {self.port} for motor {motor_idx}: "
-    #             f"{self.packet_handler.getTxRxResult(comm)}"
-    #         )
-    #     elif err != 0:
-    #         raise ConnectionError(
-    #             f"Write failed due to error {err} on port {self.port} for motor {motor_idx}: "
-    #             f"{self.packet_handler.getTxRxResult(err)}"
-    #         )
+if __name__ == "__main__":
+    # Helper to find the usb port associated to all your DynamixelMotorsBus.
+    find_port()

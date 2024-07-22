@@ -1,4 +1,5 @@
 import pickle
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -13,14 +14,20 @@ from lerobot.common.robot_devices.motors.dynamixel import (
     TorqueMode,
 )
 from lerobot.common.robot_devices.motors.utils import MotorsBus
+from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+
+URL_HORIZONTAL_POSITION = {
+    "follower": "https://raw.githubusercontent.com/huggingface/lerobot/main/media/koch/follower_horizontal.png",
+    "leader": "https://raw.githubusercontent.com/huggingface/lerobot/main/media/koch/leader_horizontal.png",
+}
+URL_90_DEGREE_POSITION = {
+    "follower": "https://raw.githubusercontent.com/huggingface/lerobot/main/media/koch/follower_90_degree.png",
+    "leader": "https://raw.githubusercontent.com/huggingface/lerobot/main/media/koch/leader_90_degree.png",
+}
 
 ########################################################################
 # Calibration logic
 ########################################################################
-
-# TARGET_HORIZONTAL_POSITION = motor_position_to_angle(np.array([0, -1024, 1024, 0, -1024, 0]))
-# TARGET_90_DEGREE_POSITION = motor_position_to_angle(np.array([1024, 0, 0, 1024, 0, -1024]))
-# GRIPPER_OPEN = motor_position_to_angle(np.array([-400]))
 
 TARGET_HORIZONTAL_POSITION = np.array([0, -1024, 1024, 0, -1024, 0])
 TARGET_90_DEGREE_POSITION = np.array([1024, 0, 0, 1024, 0, -1024])
@@ -136,11 +143,18 @@ def reset_arm(arm: MotorsBus):
     arm.write("Drive_Mode", DriveMode.NON_INVERTED.value)
 
 
-def run_arm_calibration(arm: MotorsBus, name: str):
+def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
+    """Example of usage:
+    ```python
+    run_arm_calibration(arm, "left", "follower")
+    ```
+    """
     reset_arm(arm)
 
     # TODO(rcadene): document what position 1 mean
-    print(f"Please move the '{name}' arm to the horizontal position (gripper fully closed)")
+    print(
+        f"Please move the '{name} {arm_type}' arm to the horizontal position (gripper fully closed, see {URL_HORIZONTAL_POSITION[arm_type]})"
+    )
     input("Press Enter to continue...")
 
     horizontal_homing_offset = compute_homing_offset(
@@ -148,7 +162,9 @@ def run_arm_calibration(arm: MotorsBus, name: str):
     )
 
     # TODO(rcadene): document what position 2 mean
-    print(f"Please move the '{name}' arm to the 90 degree position (gripper fully open)")
+    print(
+        f"Please move the '{name} {arm_type}' arm to the 90 degree position (gripper fully open, see {URL_90_DEGREE_POSITION[arm_type]})"
+    )
     input("Press Enter to continue...")
 
     drive_mode = compute_drive_mode(arm, horizontal_homing_offset)
@@ -183,48 +199,103 @@ class KochRobotConfig:
     ```
     """
 
-    # Define all the components of the robot
-    leader_arms: dict[str, MotorsBus] = field(
-        default_factory=lambda: {
-            "main": DynamixelMotorsBus(
-                port="/dev/ttyACM1",
-                motors={
-                    # name: (index, model)
-                    "shoulder_pan": (1, "xl330-m077"),
-                    "shoulder_lift": (2, "xl330-m077"),
-                    "elbow_flex": (3, "xl330-m077"),
-                    "wrist_flex": (4, "xl330-m077"),
-                    "wrist_roll": (5, "xl330-m077"),
-                    "gripper": (6, "xl330-m077"),
-                },
-            ),
-        }
-    )
-    follower_arms: dict[str, MotorsBus] = field(
-        default_factory=lambda: {
-            "main": DynamixelMotorsBus(
-                port="/dev/ttyACM0",
-                motors={
-                    # name: (index, model)
-                    "shoulder_pan": (1, "xl430-w250"),
-                    "shoulder_lift": (2, "xl430-w250"),
-                    "elbow_flex": (3, "xl330-m288"),
-                    "wrist_flex": (4, "xl330-m288"),
-                    "wrist_roll": (5, "xl330-m288"),
-                    "gripper": (6, "xl330-m288"),
-                },
-            ),
-        }
-    )
+    # Define all components of the robot
+    leader_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
+    follower_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
 
 
 class KochRobot:
+    # TODO(rcadene): Implement force feedback
     """Tau Robotics: https://tau-robotics.com
 
-    Example of usage:
+    Example of highest frequency teleoperation without camera:
     ```python
-    robot = KochRobot()
+    # Defines how to communicate with the motors of the leader and follower arms
+    leader_arms = {
+        "main": DynamixelMotorsBus(
+            port="/dev/tty.usbmodem575E0031751",
+            motors={
+                # name: (index, model)
+                "shoulder_pan": (1, "xl330-m077"),
+                "shoulder_lift": (2, "xl330-m077"),
+                "elbow_flex": (3, "xl330-m077"),
+                "wrist_flex": (4, "xl330-m077"),
+                "wrist_roll": (5, "xl330-m077"),
+                "gripper": (6, "xl330-m077"),
+            },
+        ),
+    }
+    follower_arms = {
+        "main": DynamixelMotorsBus(
+            port="/dev/tty.usbmodem575E0032081",
+            motors={
+                # name: (index, model)
+                "shoulder_pan": (1, "xl430-w250"),
+                "shoulder_lift": (2, "xl430-w250"),
+                "elbow_flex": (3, "xl330-m288"),
+                "wrist_flex": (4, "xl330-m288"),
+                "wrist_roll": (5, "xl330-m288"),
+                "gripper": (6, "xl330-m288"),
+            },
+        ),
+    }
+    robot = KochRobot(leader_arms, follower_arms)
+
+    # Connect motors buses and cameras if any (Required)
+    robot.connect()
+
+    while True:
+        robot.teleop_step()
+    ```
+
+    Example of highest frequency data collection without camera:
+    ```python
+    # Assumes leader and follower arms have been instantiated already (see first example)
+    robot = KochRobot(leader_arms, follower_arms)
+    robot.connect()
+    while True:
+        observation, action = robot.teleop_step(record_data=True)
+    ```
+
+    Example of highest frequency data collection with cameras:
+    ```python
+    # Defines how to communicate with 2 cameras connected to the computer.
+    # Here, the webcam of the mackbookpro and the iphone (connected in USB to the macbookpro)
+    # can be reached respectively using the camera indices 0 and 1. These indices can be
+    # arbitrary. See the documentation of `OpenCVCamera` to find your own camera indices.
+    cameras = {
+        "macbookpro": OpenCVCamera(camera_index=0, fps=30, width=640, height=480),
+        "iphone": OpenCVCamera(camera_index=1, fps=30, width=640, height=480),
+    }
+
+    # Assumes leader and follower arms have been instantiated already (see first example)
+    robot = KochRobot(leader_arms, follower_arms, cameras)
+    robot.connect()
+    while True:
+        observation, action = robot.teleop_step(record_data=True)
+    ```
+
+    Example of controlling the robot with a policy (without running multiple policies in parallel to ensure highest frequency):
+    ```python
+    # Assumes leader and follower arms + cameras have been instantiated already (see previous example)
+    robot = KochRobot(leader_arms, follower_arms, cameras)
+    robot.connect()
+    while True:
+        # Uses the follower arms and cameras to capture an observation
+        observation = robot.capture_observation()
+
+        # Assumes a policy has been instantiated
+        with torch.inference_mode():
+            action = policy.select_action(observation)
+
+        # Orders the robot to move
+        robot.send_action(action)
+    ```
+
+    Example of disconnecting which is not mandatory since we disconnect when the object is deleted:
+    ```python
+    robot.disconnect()
     ```
     """
 
@@ -243,50 +314,145 @@ class KochRobot:
         self.leader_arms = self.config.leader_arms
         self.follower_arms = self.config.follower_arms
         self.cameras = self.config.cameras
+        self.is_connected = False
+        self.logs = {}
 
-    def init_teleop(self):
+    def connect(self):
+        if self.is_connected:
+            raise RobotDeviceAlreadyConnectedError(
+                "KochRobot is already connected. Do not run `robot.connect()` twice."
+            )
+
+        if not self.leader_arms and not self.follower_arms and not self.cameras:
+            raise ValueError(
+                "KochRobot doesn't have any device to connect. See example of usage in docstring of the class."
+            )
+
+        # Connect the arms
+        for name in self.follower_arms:
+            self.follower_arms[name].connect()
+            self.leader_arms[name].connect()
+
+        # Initialize Dynamixel motors if they have not been set yet
+        self.initialize_motors_if_needed()
+
+        # Reset the arms and load or run calibration
         if self.calibration_path.exists():
             # Reset all arms before setting calibration
             for name in self.follower_arms:
                 reset_arm(self.follower_arms[name])
-
             for name in self.leader_arms:
                 reset_arm(self.leader_arms[name])
 
             with open(self.calibration_path, "rb") as f:
                 calibration = pickle.load(f)
         else:
+            # Run calibration process which begins by reseting all arms
             calibration = self.run_calibration()
 
             self.calibration_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.calibration_path, "wb") as f:
                 pickle.dump(calibration, f)
 
+        # Set calibration
         for name in self.follower_arms:
             self.follower_arms[name].set_calibration(calibration[f"follower_{name}"])
-            self.follower_arms[name].write("Torque_Enable", 1)
-
         for name in self.leader_arms:
             self.leader_arms[name].set_calibration(calibration[f"leader_{name}"])
-            # TODO(rcadene): add comments
-            self.leader_arms[name].write("Goal_Position", GRIPPER_OPEN, "gripper")
-            self.leader_arms[name].write("Torque_Enable", 1, "gripper")
 
+        # Set better PID values to close the gap between recored states and actions
+        # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
+        for name in self.follower_arms:
+            self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
+            self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
+            self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
+
+        # Enable torque on all motors of the follower arms
+        for name in self.follower_arms:
+            self.follower_arms[name].write("Torque_Enable", 1)
+
+        # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
+        # so that we can use it as a trigger to close the gripper of the follower arms.
+        for name in self.leader_arms:
+            self.leader_arms[name].write("Torque_Enable", 1, "gripper")
+            self.leader_arms[name].write("Goal_Position", GRIPPER_OPEN, "gripper")
+
+        # Connect the cameras
         for name in self.cameras:
             self.cameras[name].connect()
+
+        self.is_connected = True
+
+    def initialize_motors_if_needed(self):
+        # Check if motors are initialized
+        if not self.are_motors_initialized(self.leader_arms) or not self.are_motors_initialized(self.follower_arms):
+         # Prompt user for initialization
+            response = input(
+                "Motors are not initialized. Would you like to initialize them now? (Press Enter to continue or Ctrl+C to cancel): ")
+            if response == "":
+                self.initialize_motors(self.leader_arms)
+                self.initialize_motors(self.follower_arms)
+            else:
+                print("Initialization skipped.")
+
+    def initialize_motors(self, arms):
+        for name in arms:
+            for motor_name, (motor_id, model) in arms[name].motors.items():
+                # Open port
+                if not arms[name].port_handler.openPort():
+                    print(f"Failed to open port {arms[name].port}")
+                    return False
+
+                # Set port baud rate
+                if not arms[name].port_handler.setBaudRate(1000000):
+                    print(
+                        f"Failed to set baud rate for port {arms[name].port}")
+                    return False
+
+                new_baud_rate = 3  # Example value, map this to the desired baud rate
+                # Must disable torque before you can change EEPROM control table.
+                arms[name].write(
+                    "Torque_Enable", TorqueMode.DISABLED.value, motor_name)
+                arms[name].write("Baud_Rate", new_baud_rate, motor_name)
+
+    def are_motors_initialized(self, arms):
+        for name in arms:
+            # Open port
+            if not arms[name].port_handler.openPort():
+                print(f"Failed to open port {arms[name].port}")
+                return False
+
+            if not arms[name].port_handler.getBaudRate() == 1000000:
+                print(f"Baud rate is not correctly set for {arms[name].port}")
+                return False
+
+            for motor_name, (motor_id, model) in arms[name].motors.items():
+                expected_baud_rate = 3  # Example value, map this to the desired baud rate
+                
+                #Check that each motor Baud rate is correct.
+                if not arms[name].read("Baud_Rate", motor_name) == expected_baud_rate:
+                    print(f"Baud rate is not correctly set for {motor_name}")
+                    return False
+                
+                # # Now check that the arm IDs are correct.
+                # if not arms[name].read("ID", motor_name) == motor_id : 
+                #     print(f"Motor ID is not correctly set for {motor_name}")
+                #     return False
+
+        return False  # Placeholder; replace with actual check
 
     def run_calibration(self):
         calibration = {}
 
         for name in self.follower_arms:
-            homing_offset, drive_mode = run_arm_calibration(self.follower_arms[name], f"{name} follower")
+            homing_offset, drive_mode = run_arm_calibration(self.follower_arms[name], name, "follower")
 
             calibration[f"follower_{name}"] = {}
             for idx, motor_name in enumerate(self.follower_arms[name].motor_names):
                 calibration[f"follower_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
 
         for name in self.leader_arms:
-            homing_offset, drive_mode = run_arm_calibration(self.leader_arms[name], f"{name} leader")
+            homing_offset, drive_mode = run_arm_calibration(self.leader_arms[name], name, "leader")
 
             calibration[f"leader_{name}"] = {}
             for idx, motor_name in enumerate(self.leader_arms[name].motor_names):
@@ -297,10 +463,17 @@ class KochRobot:
     def teleop_step(
         self, record_data=False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError(
+                "KochRobot is not connected. You need to run `robot.connect()`."
+            )
+
         # Prepare to assign the positions of the leader to the follower
         leader_pos = {}
         for name in self.leader_arms:
+            now = time.perf_counter()
             leader_pos[name] = self.leader_arms[name].read("Present_Position")
+            self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - now
 
         follower_goal_pos = {}
         for name in self.leader_arms:
@@ -308,16 +481,21 @@ class KochRobot:
 
         # Send action
         for name in self.follower_arms:
+            now = time.perf_counter()
             self.follower_arms[name].write("Goal_Position", follower_goal_pos[name])
+            self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - now
 
         # Early exit when recording data is not requested
         if not record_data:
             return
 
+        # TODO(rcadene): Add velocity and other info
         # Read follower position
         follower_pos = {}
         for name in self.follower_arms:
+            now = time.perf_counter()
             follower_pos[name] = self.follower_arms[name].read("Present_Position")
+            self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - now
 
         # Create state by concatenating follower current position
         state = []
@@ -336,7 +514,10 @@ class KochRobot:
         # Capture images from cameras
         images = {}
         for name in self.cameras:
-            images[name] = self.cameras[name].read()
+            now = time.perf_counter()
+            images[name] = self.cameras[name].async_read()
+            self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
+            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - now
 
         # Populate output dictionnaries and format to pytorch
         obs_dict, action_dict = {}, {}
@@ -348,10 +529,18 @@ class KochRobot:
         return obs_dict, action_dict
 
     def capture_observation(self):
+        """The returned observations do not have a batch dimension."""
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError(
+                "KochRobot is not connected. You need to run `robot.connect()`."
+            )
+
         # Read follower position
         follower_pos = {}
         for name in self.follower_arms:
+            now = time.perf_counter()
             follower_pos[name] = self.follower_arms[name].read("Present_Position")
+            self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - now
 
         # Create state by concatenating follower current position
         state = []
@@ -363,16 +552,29 @@ class KochRobot:
         # Capture images from cameras
         images = {}
         for name in self.cameras:
-            images[name] = self.cameras[name].read()
+            now = time.perf_counter()
+            images[name] = self.cameras[name].async_read()
+            self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
+            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - now
 
         # Populate output dictionnaries and format to pytorch
         obs_dict = {}
         obs_dict["observation.state"] = torch.from_numpy(state)
         for name in self.cameras:
-            obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
+            # Convert to pytorch format: channel first and float32 in [0,1]
+            img = torch.from_numpy(images[name])
+            img = img.type(torch.float32) / 255
+            img = img.permute(2, 0, 1).contiguous()
+            obs_dict[f"observation.images.{name}"] = img
         return obs_dict
 
-    def send_action(self, action):
+    def send_action(self, action: torch.Tensor):
+        """The provided action is expected to be a vector."""
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError(
+                "KochRobot is not connected. You need to run `robot.connect()`."
+            )
+
         from_idx = 0
         to_idx = 0
         follower_goal_pos = {}
@@ -384,3 +586,24 @@ class KochRobot:
 
         for name in self.follower_arms:
             self.follower_arms[name].write("Goal_Position", follower_goal_pos[name].astype(np.int32))
+
+    def disconnect(self):
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError(
+                "KochRobot is not connected. You need to run `robot.connect()` before disconnecting."
+            )
+
+        for name in self.follower_arms:
+            self.follower_arms[name].disconnect()
+
+        for name in self.leader_arms:
+            self.leader_arms[name].disconnect()
+
+        for name in self.cameras:
+            self.cameras[name].disconnect()
+
+        self.is_connected = False
+
+    def __del__(self):
+        if getattr(self, "is_connected", False):
+            self.disconnect()
