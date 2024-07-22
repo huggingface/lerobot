@@ -62,7 +62,6 @@ rerun-sdk = ">=0.15.1"
 deepdiff = ">=7.0.1"
 scikit-image = {version = ">=0.23.2", optional = true}
 pandas = {version = ">=2.2.2", optional = true}
-pytest-mock = {version = ">=3.14.0", optional = true}
 dynamixel-sdk = {version = ">=3.7.31", optional = true}
 pynput = {version = ">=1.7.7", optional = true}
 
@@ -74,7 +73,7 @@ pusht = ["gym-pusht"]
 xarm = ["gym-xarm"]
 aloha = ["gym-aloha"]
 dev = ["pre-commit", "debugpy"]
-test = ["pytest", "pytest-cov", "pytest-mock"]
+test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
 video_benchmark = ["scikit-image", "pandas"]
 koch = ["dynamixel-sdk", "pynput"]
@@ -110,7 +109,6 @@ exclude = [
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "N", "B", "C4", "SIM"]
-ignore-init-module-imports = true
 
 
 [build-system]

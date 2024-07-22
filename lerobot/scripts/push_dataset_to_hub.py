@@ -55,6 +55,7 @@ from safetensors.torch import save_file
 
 from lerobot.common.datasets.compute_stats import compute_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
+from lerobot.common.datasets.push_dataset_to_hub.utils import check_repo_id
 from lerobot.common.datasets.utils import flatten_dict
 
 
@@ -140,14 +141,12 @@ def push_dataset_to_hub(
     num_workers: int = 8,
     episodes: list[int] | None = None,
     force_override: bool = False,
+    resume: bool = False,
     cache_dir: Path = Path("/tmp"),
     tests_data_dir: Path | None = None,
+    encoding: dict | None = None,
 ):
-    # Check repo_id is well formated
-    if len(repo_id.split("/")) != 2:
-        raise ValueError(
-            f"`repo_id` is expected to contain a community or user id `/` the name of the dataset (e.g. 'lerobot/pusht'), but instead contains '{repo_id}'."
-        )
+    check_repo_id(repo_id)
     user_id, dataset_id = repo_id.split("/")
 
     # Robustify when `raw_dir` is str instead of Path
@@ -173,7 +172,7 @@ def push_dataset_to_hub(
         if local_dir.exists():
             if force_override:
                 shutil.rmtree(local_dir)
-            else:
+            elif not resume:
                 raise ValueError(f"`local_dir` already exists ({local_dir}). Use `--force-override 1`.")
 
         meta_data_dir = local_dir / "meta_data"
@@ -191,7 +190,7 @@ def push_dataset_to_hub(
     # convert dataset from original raw format to LeRobot format
     from_raw_to_lerobot_format = get_from_raw_to_lerobot_format_fn(raw_format)
     hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(
-        raw_dir, videos_dir, fps, video, episodes
+        raw_dir, videos_dir, fps, video, episodes, encoding
     )
 
     lerobot_dataset = LeRobotDataset.from_preloaded(
@@ -314,6 +313,12 @@ def main():
         type=int,
         default=0,
         help="When set to 1, removes provided output directory if it already exists. By default, raises a ValueError exception.",
+    )
+    parser.add_argument(
+        "--resume",
+        type=int,
+        default=0,
+        help="When set to 1, resumes a previous run.",
     )
     parser.add_argument(
         "--tests-data-dir",

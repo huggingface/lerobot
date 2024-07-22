@@ -119,9 +119,10 @@ if __name__ == "__main__":
         #     ],
         #     "",
         # ),
+        # ("aloha", "act", ["policy.n_action_steps=10"], ""),
         # ("aloha", "act", ["policy.n_action_steps=1000", "policy.chunk_size=1000"], "_1000_steps"),
-        # ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"]),
-        # ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"]),
+        # ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"], ""),
+        # ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"], ""),
     ]
     if len(env_policies) == 0:
         raise RuntimeError("No policies were provided!")
