@@ -78,7 +78,7 @@ training:
   # seed size condition is satisfied.
   online_buffer_seed_size: 0
   # Whether to run the online rollouts asynchronously. This means we can run the online training steps in
-  # parallel with the rollouts. This might be advised if your GPU has the bandwith to handle training
+  # parallel with the rollouts. This might be advised if your GPU has the bandwidth to handle training
   # + eval + environment rendering simultaneously.
   do_online_rollout_async: false
 

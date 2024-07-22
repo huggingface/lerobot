@@ -442,9 +442,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # Create an env dedicated to online episodes collection from policy rollout.
     online_env = make_env(cfg, n_envs=cfg.training.online_rollout_batch_size)
     resolve_delta_timestamps(cfg)
-    if not cfg.resume:
+    online_buffer_path = logger.log_dir / "online_buffer"
+    if not cfg.resume or not online_buffer_path.exists():
         online_dataset = OnlineBuffer(
-            logger.log_dir / "online_buffer",
+            online_buffer_path,
             data_shapes={
                 **policy.config.input_shapes,
                 **policy.config.output_shapes,
@@ -459,8 +460,12 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     else:
         # If we are resuming a run, we default to the data shapes and buffer capacity from the saved online
         # buffer.
+        logging.warning(
+            "When online training is resumed we use the latest online buffer, which is not the necessarily "
+            "the one that was present at the time of the provided checkpoint!"
+        )
         online_dataset = OnlineBuffer(
-            logger.log_dir / "online_buffer",
+            online_buffer_path,
             fps=online_env.unwrapped.metadata["render_fps"],
             delta_timestamps=cfg.training.delta_timestamps,
         )
