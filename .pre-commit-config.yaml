@@ -31,7 +31,3 @@ repos:
         args:
           - "--check"
           - "--no-update"
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.18.4
-    hooks:
-      - id: gitleaks

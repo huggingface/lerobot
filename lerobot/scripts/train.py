@@ -43,7 +43,7 @@ from lerobot.common.utils.utils import (
     init_logging,
     set_global_seed,
 )
-from lerobot.scripts.eval import eval_policy
+from lerobot.scripts.eval import eval_policy, get_pretrained_policy_path
 
 
 def make_optimizer_and_scheduler(cfg, policy):
@@ -291,6 +291,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     torch.backends.cuda.matmul.allow_tf32 = True
 
     logging.info("make_dataset")
+    print(cfg)
     offline_dataset = make_dataset(cfg)
     if isinstance(offline_dataset, MultiLeRobotDataset):
         logging.info(
@@ -309,8 +310,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     logging.info("make_policy")
     policy = make_policy(
         hydra_cfg=cfg,
-        dataset_stats=offline_dataset.stats if not cfg.resume else None,
-        pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
+        dataset_stats=offline_dataset.stats if (not cfg.resume and not cfg.get("finetune")) else None,
+        pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir)
+        if cfg.resume
+        else (str(get_pretrained_policy_path(cfg.finetune)) if cfg.get("finetune") else None),
     )
     assert isinstance(policy, nn.Module)
     # Create optimizer and scheduler
@@ -435,11 +438,22 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../configs")
 def train_cli(cfg: dict):
-    train(
-        cfg,
-        out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
-        job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
-    )
+    finetune = input("Do you want to fine-tune the model? (y/N) ")
+    if finetune == "y":
+        pretrained_model_name_or_path = input("Enter the pretrained model name or path: ")
+        config_path = get_pretrained_policy_path(pretrained_model_name_or_path) / "config.yaml"
+        hydra_cfg = init_hydra_config(config_path, overrides=["device=mps", "wandb.enable=false"])
+        OmegaConf.set_struct(hydra_cfg, False)
+        hydra_cfg.finetune = pretrained_model_name_or_path
+        hydra_cfg.use_amp = False
+        out_dir = "outputs/train/finetune"
+        train(hydra_cfg, out_dir, job_name="test")
+    else:
+        train(
+            cfg,
+            out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
+            job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
+        )
 
 
 def train_notebook(out_dir=None, job_name=None, config_name="default", config_path="../configs"):
