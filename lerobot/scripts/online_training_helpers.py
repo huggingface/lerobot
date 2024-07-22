@@ -1,7 +1,6 @@
 """A collection of helper functions and classes for the online training loop in train.py"""
 
 import os
-import random
 from pathlib import Path
 from typing import Any
 
@@ -218,21 +217,15 @@ class OnlineBuffer(torch.utils.data.Dataset):
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         item = {k: v[idx] for k, v in self._data.items() if not k.startswith("_")}
 
+        if self.delta_timestamps is None:
+            return self._item_to_tensors(item)
+
         episode_index = item["episode_index"]
         current_ts = item["timestamp"]
         episode_data_indices = np.where(
             np.bitwise_and(self._data["episode_index"] == episode_index, self._data["_occupancy_mask"])
         )[0]
         episode_timestamps = self._data["timestamp"][episode_data_indices]
-
-        # Rejection sampling avoids using the last frame of an episode which is reserved for containing the
-        # final observation.
-        # TODO(now): cleaner solution
-        if item["index"] == self._data["index"][episode_data_indices[-1]]:
-            return self.__getitem__(random.choice(range(len(self))))
-
-        if self.delta_timestamps is None:
-            return self._item_to_tensors(item)
 
         for data_key in self.delta_timestamps:
             # Get timestamps used as query to retrieve data of previous/future frames.
