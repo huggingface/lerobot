@@ -531,8 +531,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     start_seed=(
                         rollout_start_seed := (rollout_start_seed + cfg.training.batch_size) % 1000000
                     ),
-                    enable_progbar=True,
-                    enable_inner_progbar=True,
                 )
             online_rollout_s = time.perf_counter() - start_rollout_time
 
