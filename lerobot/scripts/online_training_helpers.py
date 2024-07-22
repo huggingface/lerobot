@@ -67,7 +67,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
 
         """
         super().__init__()
-        self.delta_timestamps = delta_timestamps
+        self.set_delta_timestamps(delta_timestamps)
         self._fps = fps
         self._buffer_capacity = buffer_capacity
         data_spec = self._make_data_spec(data_shapes, buffer_capacity)
@@ -86,8 +86,12 @@ class OnlineBuffer(torch.utils.data.Dataset):
     def delta_timestamps(self) -> dict[str, np.ndarray] | None:
         return self._delta_timestamps
 
-    @delta_timestamps.setter
-    def delta_timestamps(self, value: dict[str, list[float]] | dict[str, np.ndarray] | None):
+    def set_delta_timestamps(self, value: dict[str, list[float]] | None):
+        """Set delta_timestamps converting the values to numpy arrays.
+
+        The conversion is for an optimization in the __getitem__. The loop is much slower if the arrays
+        need to be converted into numpy arrays.
+        """
         if value is not None:
             self._delta_timestamps = {k: np.array(v) for k, v in value.items()}
         else:
