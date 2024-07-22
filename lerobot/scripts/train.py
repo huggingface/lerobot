@@ -443,32 +443,26 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     online_env = make_env(cfg, n_envs=cfg.training.online_rollout_batch_size)
     resolve_delta_timestamps(cfg)
     online_buffer_path = logger.log_dir / "online_buffer"
-    if not cfg.resume or not online_buffer_path.exists():
-        online_dataset = OnlineBuffer(
-            online_buffer_path,
-            data_shapes={
-                **policy.config.input_shapes,
-                **policy.config.output_shapes,
-                "next.reward": (),
-                "next.done": (),
-                "next.success": (),
-            },
-            buffer_capacity=cfg.training.online_buffer_capacity,
-            fps=online_env.unwrapped.metadata["render_fps"],
-            delta_timestamps=cfg.training.delta_timestamps,
-        )
-    else:
+    if cfg.resume and not online_buffer_path.exists():
         # If we are resuming a run, we default to the data shapes and buffer capacity from the saved online
         # buffer.
         logging.warning(
             "When online training is resumed we use the latest online buffer, which is not the necessarily "
             "the one that was present at the time of the provided checkpoint!"
         )
-        online_dataset = OnlineBuffer(
-            online_buffer_path,
-            fps=online_env.unwrapped.metadata["render_fps"],
-            delta_timestamps=cfg.training.delta_timestamps,
-        )
+    online_dataset = OnlineBuffer(
+        online_buffer_path,
+        data_shapes={
+            **policy.config.input_shapes,
+            **policy.config.output_shapes,
+            "next.reward": (),
+            "next.done": (),
+            "next.success": (),
+        },
+        buffer_capacity=cfg.training.online_buffer_capacity,
+        fps=online_env.unwrapped.metadata["render_fps"],
+        delta_timestamps=cfg.training.delta_timestamps,
+    )
 
     # If we are doing online rollouts asynchronously, deepcopy the policy to use for online rollouts (this
     # makes it possible to do online rollouts in parallel with training updates).
@@ -498,7 +492,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
         batch_size=cfg.training.batch_size,
-        num_workers=cfg.training.num_workers if not cfg.do_online_rollout_async else 0,
+        num_workers=cfg.training.num_workers if not cfg.training.do_online_rollout_async else 0,
         sampler=sampler,
         pin_memory=device.type != "cpu",
         drop_last=True,

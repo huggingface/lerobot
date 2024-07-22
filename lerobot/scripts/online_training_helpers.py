@@ -42,8 +42,8 @@ class OnlineBuffer(torch.utils.data.Dataset):
     def __init__(
         self,
         write_dir: str | Path,
-        data_shapes: dict[str, tuple[int, ...]] | None = None,
-        buffer_capacity: int | None = None,
+        data_shapes: dict[str, tuple[int, ...]] | None,
+        buffer_capacity: int | None,
         fps: float | None = None,
         delta_timestamps: dict[str, list[float]] | dict[str, np.ndarray] | None = None,
     ):
@@ -57,11 +57,9 @@ class OnlineBuffer(torch.utils.data.Dataset):
                 resumption.)
             data_shapes: A mapping from data key to data tensor shape. This should include all the data that
                 you wish to record into the buffer, but note that "index", "frame_index" and "episode_index"
-                are already accounted for by this class, so you don't need to pass their shapes. You can pass
-                None if you are loading an existing buffer.
+                are already accounted for by this class, so you don't need to pass their shapes.
             buffer_capacity: How many frames should be stored in the buffer as a maximum. Be aware of your
-                system's available disk space when choosing this. You can pass None if you are loading an
-                existing buffer.
+                system's available disk space when choosing this.
             fps: Same as the fps concept in LeRobot dataset. Here it needs to be provided for the
                  delta_timestamps logic. You can pass None if you are not using delta_timestamps.
             delta_timestamps: Same as the delta_timestamps concept in LeRobotDataset. This is internally
@@ -72,11 +70,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
         self.delta_timestamps = delta_timestamps
         self._fps = fps
         self._buffer_capacity = buffer_capacity
-        if data_shapes is not None:
-            data_spec = self._make_data_spec(data_shapes, buffer_capacity)
-        else:
-            # Make a dummy data_spec with just the keys.
-            data_spec = {fn: None for fn in os.listdir(write_dir)}
+        data_spec = self._make_data_spec(data_shapes, buffer_capacity)
         os.makedirs(write_dir, exist_ok=True)
         self._data = {
             k: _make_memmap_safe(
