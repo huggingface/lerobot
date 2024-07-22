@@ -13,6 +13,14 @@ from lerobot.common.robot_devices.motors.dynamixel import (
     OperatingMode,
     TorqueMode,
 )
+
+from lerobot.common.robot_devices.motors.position_control.configure import (
+    build_logical_to_physical_tables,
+    build_physical_to_logical_tables,
+    build_logical_to_physical_function,
+    build_physical_to_logical_function,
+)
+
 from lerobot.common.robot_devices.motors.utils import MotorsBus
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 
@@ -29,98 +37,10 @@ URL_90_DEGREE_POSITION = {
 # Calibration logic
 ########################################################################
 
-TARGET_HORIZONTAL_POSITION = np.array([0, -1024, 1024, 0, -1024, 0])
-TARGET_90_DEGREE_POSITION = np.array([1024, 0, 0, 1024, 0, -1024])
-GRIPPER_OPEN = np.array([-400])
+TARGET_HORIZONTAL_POSITION = np.array([0, -90, 90, 0, -90, 0])
+TARGET_90_DEGREE_POSITION = np.array([90, 0, 0, 90, 0, -90])
 
-
-def apply_homing_offset(values: np.array, homing_offset: np.array) -> np.array:
-    for i in range(len(values)):
-        if values[i] is not None:
-            values[i] += homing_offset[i]
-    return values
-
-
-def apply_drive_mode(values: np.array, drive_mode: np.array) -> np.array:
-    for i in range(len(values)):
-        if values[i] is not None and drive_mode[i]:
-            values[i] = -values[i]
-    return values
-
-
-def apply_calibration(values: np.array, homing_offset: np.array, drive_mode: np.array) -> np.array:
-    values = apply_drive_mode(values, drive_mode)
-    values = apply_homing_offset(values, homing_offset)
-    return values
-
-
-def revert_calibration(values: np.array, homing_offset: np.array, drive_mode: np.array) -> np.array:
-    """
-    Transform working position into real position for the robot.
-    """
-    values = apply_homing_offset(
-        values,
-        np.array([-homing_offset if homing_offset is not None else None for homing_offset in homing_offset]),
-    )
-    values = apply_drive_mode(values, drive_mode)
-    return values
-
-
-def revert_appropriate_positions(positions: np.array, drive_mode: list[bool]) -> np.array:
-    for i, revert in enumerate(drive_mode):
-        if not revert and positions[i] is not None:
-            positions[i] = -positions[i]
-    return positions
-
-
-def compute_corrections(positions: np.array, drive_mode: list[bool], target_position: np.array) -> np.array:
-    correction = revert_appropriate_positions(positions, drive_mode)
-
-    for i in range(len(positions)):
-        if correction[i] is not None:
-            if drive_mode[i]:
-                correction[i] -= target_position[i]
-            else:
-                correction[i] += target_position[i]
-
-    return correction
-
-
-def compute_nearest_rounded_positions(positions: np.array) -> np.array:
-    return np.array(
-        [
-            round(positions[i] / 1024) * 1024 if positions[i] is not None else None
-            for i in range(len(positions))
-        ]
-    )
-
-
-def compute_homing_offset(
-    arm: DynamixelMotorsBus, drive_mode: list[bool], target_position: np.array
-) -> np.array:
-    # Get the present positions of the servos
-    present_positions = apply_calibration(
-        arm.read("Present_Position"), np.array([0, 0, 0, 0, 0, 0]), drive_mode
-    )
-
-    nearest_positions = compute_nearest_rounded_positions(present_positions)
-    correction = compute_corrections(nearest_positions, drive_mode, target_position)
-    return correction
-
-
-def compute_drive_mode(arm: DynamixelMotorsBus, offset: np.array):
-    # Get current positions
-    present_positions = apply_calibration(
-        arm.read("Present_Position"), offset, np.array([False, False, False, False, False, False])
-    )
-
-    nearest_positions = compute_nearest_rounded_positions(present_positions)
-
-    # construct 'drive_mode' list comparing nearest_positions and TARGET_90_DEGREE_POSITION
-    drive_mode = []
-    for i in range(len(nearest_positions)):
-        drive_mode.append(nearest_positions[i] != TARGET_90_DEGREE_POSITION[i])
-    return drive_mode
+GRIPPER_OPEN = np.array([-40])
 
 
 def reset_arm(arm: MotorsBus):
@@ -138,10 +58,6 @@ def reset_arm(arm: MotorsBus):
     # Use 'position control current based' for gripper
     arm.write("Operating_Mode", OperatingMode.CURRENT_CONTROLLED_POSITION.value, "gripper")
 
-    # Make sure the native calibration (homing offset abd drive mode) is disabled, since we use our own calibration layer to be more generic
-    arm.write("Homing_Offset", 0)
-    arm.write("Drive_Mode", DriveMode.NON_INVERTED.value)
-
 
 def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
     """Example of usage:
@@ -157,9 +73,7 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
     )
     input("Press Enter to continue...")
 
-    horizontal_homing_offset = compute_homing_offset(
-        arm, [False, False, False, False, False, False], TARGET_HORIZONTAL_POSITION
-    )
+    physical_position_1 = arm.read("Present_Position")
 
     # TODO(rcadene): document what position 2 mean
     print(
@@ -167,22 +81,24 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
     )
     input("Press Enter to continue...")
 
-    drive_mode = compute_drive_mode(arm, horizontal_homing_offset)
-    homing_offset = compute_homing_offset(arm, drive_mode, TARGET_90_DEGREE_POSITION)
+    physical_position_2 = arm.read("Present_Position")
 
-    # Invert offset for all drive_mode servos
-    for i in range(len(drive_mode)):
-        if drive_mode[i]:
-            homing_offset[i] = -homing_offset[i]
+    wanted = np.array(
+        [
+            (TARGET_HORIZONTAL_POSITION[i], TARGET_90_DEGREE_POSITION[i])
+            for i in range(len(TARGET_HORIZONTAL_POSITION))
+        ]
+    )
 
-    print("Calibration is done!")
+    position = np.array(
+        [(physical_position_1[i], physical_position_2[i]) for i in range(len(physical_position_1))]
+    )
 
-    print("=====================================")
-    print("      HOMING_OFFSET: ", " ".join([str(i) for i in homing_offset]))
-    print("      DRIVE_MODE: ", " ".join([str(i) for i in drive_mode]))
-    print("=====================================")
+    physical_to_logical_tables = build_physical_to_logical_tables(position, wanted)
 
-    return homing_offset, drive_mode
+    logical_to_physical_tables = build_logical_to_physical_tables(position, wanted)
+
+    return physical_to_logical_tables, logical_to_physical_tables
 
 
 ########################################################################
@@ -351,10 +267,38 @@ class KochRobot:
             with open(self.calibration_path, "wb") as f:
                 pickle.dump(calibration, f)
 
+        print(calibration)
+
         # Set calibration
         for name in self.follower_arms:
+            for motor in self.follower_arms[name].motor_names:
+                calibration[f"follower_{name}"][motor]["physical_to_logical"] = (
+                    build_physical_to_logical_function(
+                        calibration[f"follower_{name}"][motor]["physical_to_logical"]
+                    )
+                )
+
+                calibration[f"follower_{name}"][motor]["logical_to_physical"] = (
+                    build_logical_to_physical_function(
+                        calibration[f"follower_{name}"][motor]["logical_to_physical"]
+                    )
+                )
+
             self.follower_arms[name].set_calibration(calibration[f"follower_{name}"])
         for name in self.leader_arms:
+            for motor in self.leader_arms[name].motor_names:
+                calibration[f"leader_{name}"][motor]["physical_to_logical"] = (
+                    build_physical_to_logical_function(
+                        calibration[f"leader_{name}"][motor]["physical_to_logical"]
+                    )
+                )
+
+                calibration[f"leader_{name}"][motor]["logical_to_physical"] = (
+                    build_logical_to_physical_function(
+                        calibration[f"leader_{name}"][motor]["logical_to_physical"]
+                    )
+                )
+
             self.leader_arms[name].set_calibration(calibration[f"leader_{name}"])
 
         # Set better PID values to close the gap between recored states and actions
@@ -373,6 +317,7 @@ class KochRobot:
         for name in self.leader_arms:
             self.leader_arms[name].write("Torque_Enable", 1, "gripper")
             self.leader_arms[name].write("Goal_Position", GRIPPER_OPEN, "gripper")
+            self.leader_arms[name].write("Goal_Current", 40, "gripper")
 
         # Connect the cameras
         for name in self.cameras:
@@ -384,18 +329,34 @@ class KochRobot:
         calibration = {}
 
         for name in self.follower_arms:
-            homing_offset, drive_mode = run_arm_calibration(self.follower_arms[name], name, "follower")
+            physical_to_logical_tables, logical_to_physical_tables = run_arm_calibration(
+                self.follower_arms[name], name, "follower"
+            )
 
             calibration[f"follower_{name}"] = {}
             for idx, motor_name in enumerate(self.follower_arms[name].motor_names):
-                calibration[f"follower_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
+                calibration[f"follower_{name}"][motor_name] = {}
+                calibration[f"follower_{name}"][motor_name]["physical_to_logical"] = (
+                    physical_to_logical_tables[idx]
+                )
+                calibration[f"follower_{name}"][motor_name]["logical_to_physical"] = (
+                    logical_to_physical_tables[idx]
+                )
 
         for name in self.leader_arms:
-            homing_offset, drive_mode = run_arm_calibration(self.leader_arms[name], name, "leader")
+            physical_to_logical_tables, logical_to_physical_tables = run_arm_calibration(
+                self.leader_arms[name], name, "leader"
+            )
 
             calibration[f"leader_{name}"] = {}
             for idx, motor_name in enumerate(self.leader_arms[name].motor_names):
-                calibration[f"leader_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
+                calibration[f"leader_{name}"][motor_name] = {}
+                calibration[f"leader_{name}"][motor_name]["physical_to_logical"] = physical_to_logical_tables[
+                    idx
+                ]
+                calibration[f"leader_{name}"][motor_name]["logical_to_physical"] = logical_to_physical_tables[
+                    idx
+                ]
 
         return calibration
 
@@ -421,7 +382,10 @@ class KochRobot:
         # Send action
         for name in self.follower_arms:
             now = time.perf_counter()
-            self.follower_arms[name].write("Goal_Position", follower_goal_pos[name])
+            follower_position = self.follower_arms[name].read("Present_Position", raw=True)
+            self.follower_arms[name].write(
+                "Goal_Position", follower_goal_pos[name], supplementary_values=follower_position
+            )
             self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - now
 
         # Early exit when recording data is not requested

@@ -3,9 +3,9 @@ import time
 import traceback
 from copy import deepcopy
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
-import pyarrow as pa
 
 from dynamixel_sdk import (
     COMM_SUCCESS,
@@ -22,6 +22,12 @@ from dynamixel_sdk import (
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
+)
+
+from lerobot.common.robot_devices.motors.position_control.utils import (
+    physical_to_logical,
+    logical_to_physical,
+    calculate_physical_goal_with_offset_computation,
 )
 
 from lerobot.common.utils.utils import capture_timestamp_utc
@@ -147,13 +153,6 @@ def assert_same_address(model_ctrl_table, motor_models, data_name):
         raise NotImplementedError(
             f"At least two motor models use a different bytes representation for `data_name`='{data_name}' ({list(zip(motor_models, all_bytes, strict=False))}). Contact a LeRobot maintainer."
         )
-
-
-def joints_values_to_arrow(joints, values) -> pa.StructArray:
-    return pa.StructArray.from_arrays(
-        arrays=[joints, values],
-        names=["joints", "values"],
-    )
 
 
 def find_available_ports():
@@ -289,7 +288,7 @@ class DynamixelMotorsBus:
     def motor_names(self) -> list[str]:
         return list(self.motors.keys())
 
-    def set_calibration(self, calibration: dict[str, tuple[int, bool]]):
+    def set_calibration(self, calibration: dict[str, dict[str:Callable]]):
         self.calibration = calibration
 
     def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
@@ -299,38 +298,32 @@ class DynamixelMotorsBus:
         if motor_names is None:
             motor_names = self.motor_names
 
-        for i, name in enumerate(motor_names):
-            homing_offset, drive_mode = self.calibration[name]
+        return physical_to_logical(motor_names, values, self.calibration)
 
-            if values[i] is not None:
-                if drive_mode:
-                    values[i] *= -1
-                values[i] += homing_offset
-
-        return values
-
-    def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
+    def revert_calibration(
+        self,
+        values: np.ndarray | list,
+        motor_names: list[str] | None,
+        supplementary_values: np.ndarray | None = None,
+    ):
         if not self.calibration:
             return values
 
         if motor_names is None:
             motor_names = self.motor_names
 
-        for i, name in enumerate(motor_names):
-            homing_offset, drive_mode = self.calibration[name]
-
-            if values[i] is not None:
-                values[i] -= homing_offset
-                if drive_mode:
-                    values[i] *= -1
-
-        return values
+        if supplementary_values is None:
+            return logical_to_physical(motor_names, values, self.calibration)
+        else:
+            return calculate_physical_goal_with_offset_computation(
+                motor_names, supplementary_values, values, self.calibration
+            )
 
     def read(
         self,
         data_name: str,
-        motor_names: str | list[str] | pa.Array | None = None,
-        arrow=False,
+        motor_names: str | list[str] | None = None,
+        raw=False,
     ):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
@@ -344,9 +337,6 @@ class DynamixelMotorsBus:
 
         if isinstance(motor_names, str):
             motor_names = [motor_names]
-
-        if isinstance(motor_names, pa.Array):
-            motor_names = motor_names.tolist()
 
         motor_ids = []
         models = []
@@ -383,22 +373,13 @@ class DynamixelMotorsBus:
             dtype=np.uint32,
         )
 
-        if not arrow:
+        if not raw:
             # Convert to signed int to use range [-2048, 2048] for our motor positions.
             if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
                 values = values.astype(np.int32)
 
             if data_name in CALIBRATION_REQUIRED:
                 values = self.apply_calibration(values, motor_names)
-
-        else:
-            values = pa.array(values, type=pa.uint32())
-            values = values.from_buffers(pa.int32(), len(values), values.buffers())
-
-            values = pa.StructArray.from_arrays(
-                arrays=[motor_names, values],
-                names=["joints", "values"],
-            )
 
         # log the number of seconds it took to read the data from the motors
         delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
@@ -413,11 +394,11 @@ class DynamixelMotorsBus:
     def write(
         self,
         data_name,
-        values: int | float | np.ndarray | None = None,
+        values: int | float | np.ndarray | None,
         motor_names: str | list[str] | None = None,
-        arrow_joint_values: pa.StructArray | None = None,
+        raw=False,
+        supplementary_values: np.ndarray | None = None,
     ):
-        arrow = arrow_joint_values is not None
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
@@ -425,24 +406,15 @@ class DynamixelMotorsBus:
 
         start_time = time.perf_counter()
 
-        if not arrow:
-            if motor_names is None:
-                motor_names = self.motor_names
+        if motor_names is None:
+            motor_names = self.motor_names
 
-            if isinstance(motor_names, str):
-                motor_names = [motor_names]
-            if isinstance(values, (int, float, np.integer)):
-                values = [int(values)] * len(motor_names)
+        if isinstance(motor_names, str):
+            motor_names = [motor_names]
+        if isinstance(values, (int, float, np.integer)):
+            values = [int(values)] * len(motor_names)
 
-            values = np.array(values)
-        else:
-            motor_names = arrow_joint_values.field("joints").tolist()
-
-            values = pa.Array.from_buffers(
-                pa.uint32(),
-                length=len(arrow_joint_values.field("values")),
-                buffers=arrow_joint_values.field("values").buffers(),
-            )
+        values = np.array(values)
 
         motor_ids = []
         models = []
@@ -451,8 +423,8 @@ class DynamixelMotorsBus:
             motor_ids.append(motor_idx)
             models.append(model)
 
-        if not arrow and data_name in CALIBRATION_REQUIRED:
-            values = self.revert_calibration(values, motor_names)
+        if not raw and data_name in CALIBRATION_REQUIRED:
+            values = self.revert_calibration(values, motor_names, supplementary_values)
 
         assert_same_address(self.model_ctrl_table, models, data_name)
         addr, packet_bytes_size = self.model_ctrl_table[model][data_name]
@@ -465,10 +437,8 @@ class DynamixelMotorsBus:
             )
 
         for idx, value in zip(motor_ids, values, strict=True):
-            if arrow:
-                value = value.as_py()
-                if value is None:
-                    continue
+            if value is None:
+                continue
 
             # Note: No need to convert back into unsigned int, since this byte preprocessing
             # already handles it for us.
