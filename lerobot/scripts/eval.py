@@ -315,9 +315,7 @@ def eval_policy(
                 rollout_data,
                 done_indices,
                 start_episode_index=batch_ix * env.num_envs,
-                start_data_index=(
-                    0 if episode_data is None else (episode_data["episode_data_index"]["to"][-1].item())
-                ),
+                start_data_index=(0 if episode_data is None else (episode_data["index"][-1].item() + 1)),
                 fps=env.unwrapped.metadata["render_fps"],
             )
             if episode_data is None:
