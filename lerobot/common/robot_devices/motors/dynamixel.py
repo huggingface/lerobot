@@ -3,8 +3,11 @@ import time
 import traceback
 from copy import deepcopy
 from pathlib import Path
+from typing import List
 
 import numpy as np
+import pyarrow as pa
+
 from dynamixel_sdk import (
     COMM_SUCCESS,
     DXL_HIBYTE,
@@ -17,7 +20,11 @@ from dynamixel_sdk import (
     PortHandler,
 )
 
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.robot_devices.utils import (
+    RobotDeviceAlreadyConnectedError,
+    RobotDeviceNotConnectedError,
+)
+
 from lerobot.common.utils.utils import capture_timestamp_utc
 
 PROTOCOL_VERSION = 2.0
@@ -142,6 +149,12 @@ def assert_same_address(model_ctrl_table, motor_models, data_name):
             f"At least two motor models use a different bytes representation for `data_name`='{data_name}' ({list(zip(motor_models, all_bytes, strict=False))}). Contact a LeRobot maintainer."
         )
 
+def joints_values_to_arrow(joints, values) -> pa.StructArray:
+    return pa.StructArray.from_arrays(
+        arrays=[joints, values],
+        names=["joints", "values"],
+    )
+
 
 def find_available_ports():
     ports = []
@@ -155,7 +168,9 @@ def find_port():
     ports_before = find_available_ports()
     print(ports_before)
 
-    print("Remove the usb cable from your DynamixelMotorsBus and press Enter when done.")
+    print(
+        "Remove the usb cable from your DynamixelMotorsBus and press Enter when done."
+    )
     input()
 
     time.sleep(0.5)
@@ -167,23 +182,26 @@ def find_port():
         print(f"The port of this DynamixelMotorsBus is '{port}'")
         print("Reconnect the usb cable.")
     elif len(ports_diff) == 0:
-        raise OSError(f"Could not detect the port. No difference was found ({ports_diff}).")
+        raise OSError(
+            f"Could not detect the port. No difference was found ({ports_diff})."
+        )
     else:
-        raise OSError(f"Could not detect the port. More than one port was found ({ports_diff}).")
+        raise OSError(
+            f"Could not detect the port. More than one port was found ({ports_diff})."
+        )
 
 
 class TorqueMode(enum.Enum):
-    ENABLED = 1
-    DISABLED = 0
+    ENABLED = np.uint32(1)
+    DISABLED = np.uint32(0)
 
 
 class OperatingMode(enum.Enum):
-    VELOCITY = 1
-    POSITION = 3
-    EXTENDED_POSITION = 4
-    CURRENT_CONTROLLED_POSITION = 5
-    PWM = 16
-    UNKNOWN = -1
+    VELOCITY = np.uint32(0)
+    POSITION = np.uint32(3)
+    EXTENDED_POSITION = np.uint32(4)
+    CURRENT_CONTROLLED_POSITION = np.uint32(5)
+    PWM = np.uint32(16)
 
 
 class DriveMode(enum.Enum):
@@ -192,7 +210,7 @@ class DriveMode(enum.Enum):
 
 
 class DynamixelMotorsBus:
-    # TODO(rcadene): Add a script to find the motor indices without DynamixelWizzard2
+    # TODO(rcadene): Add a script to find and set the motor indices without DynamixelWizzard2
     """
     The DynamixelMotorsBus class allows to efficiently read and write to the attached motors. It relies on
     the python dynamixel sdk to communicate with the motors. For more info, see the [Dynamixel SDK Documentation](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
@@ -274,13 +292,15 @@ class DynamixelMotorsBus:
         self.is_connected = True
 
     @property
-    def motor_names(self) -> list[int]:
+    def motor_names(self) -> list[str]:
         return list(self.motors.keys())
 
     def set_calibration(self, calibration: dict[str, tuple[int, bool]]):
         self.calibration = calibration
 
-    def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
+    def apply_calibration(
+        self, values: np.ndarray | list, motor_names: list[str] | None
+    ):
         if not self.calibration:
             return values
 
@@ -297,7 +317,9 @@ class DynamixelMotorsBus:
 
         return values
 
-    def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
+    def revert_calibration(
+        self, values: np.ndarray | list, motor_names: list[str] | None
+    ):
         if not self.calibration:
             return values
 
@@ -314,7 +336,12 @@ class DynamixelMotorsBus:
 
         return values
 
-    def read(self, data_name, motor_names: str | list[str] | None = None):
+    def read(
+        self,
+        data_name: str,
+        motor_names: str | list[str] | pa.Array | None = None,
+        arrow=False,
+    ):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
@@ -328,6 +355,9 @@ class DynamixelMotorsBus:
         if isinstance(motor_names, str):
             motor_names = [motor_names]
 
+        if isinstance(motor_names, pa.Array):
+            motor_names = motor_names.tolist()
+
         motor_ids = []
         models = []
         for name in motor_names:
@@ -336,12 +366,14 @@ class DynamixelMotorsBus:
             models.append(model)
 
         assert_same_address(self.model_ctrl_table, models, data_name)
-        addr, bytes = self.model_ctrl_table[model][data_name]
+        addr, packet_bytes_size = self.model_ctrl_table[model][data_name]
         group_key = get_group_sync_key(data_name, motor_names)
 
         if data_name not in self.group_readers:
             # create new group reader
-            self.group_readers[group_key] = GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
+            self.group_readers[group_key] = GroupSyncRead(
+                self.port_handler, self.packet_handler, addr, packet_bytes_size
+            )
             for idx in motor_ids:
                 self.group_readers[group_key].addParam(idx)
 
@@ -356,22 +388,35 @@ class DynamixelMotorsBus:
                 f"{self.packet_handler.getTxRxResult(comm)}"
             )
 
-        values = []
-        for idx in motor_ids:
-            value = self.group_readers[group_key].getData(idx, addr, bytes)
-            values.append(value)
+        values = np.array(
+            [
+                self.group_readers[group_key].getData(idx, addr, packet_bytes_size)
+                for idx in motor_ids
+            ],
+            dtype=np.uint32,
+        )
 
-        values = np.array(values)
+        if not arrow:
+            # Convert to signed int to use range [-2048, 2048] for our motor positions.
+            if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
+                values = values.astype(np.int32)
 
-        # Convert to signed int to use range [-2048, 2048] for our motor positions.
-        if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
-            values = values.astype(np.int32)
+            if data_name in CALIBRATION_REQUIRED:
+                values = self.apply_calibration(values, motor_names)
 
-        if data_name in CALIBRATION_REQUIRED:
-            values = self.apply_calibration(values, motor_names)
+        else:
+            values = pa.array(values, type=pa.uint32())
+            values = values.from_buffers(pa.int32(), len(values), values.buffers())
+
+            values = pa.StructArray.from_arrays(
+                arrays=[motor_names, values],
+                names=["joints", "values"],
+            )
 
         # log the number of seconds it took to read the data from the motors
-        delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
+        delta_ts_name = get_log_name(
+            "delta_timestamp_s", "read", data_name, motor_names
+        )
         self.logs[delta_ts_name] = time.perf_counter() - start_time
 
         # log the utc time at which the data was received
@@ -380,7 +425,14 @@ class DynamixelMotorsBus:
 
         return values
 
-    def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
+    def write(
+        self,
+        data_name,
+        values: int | float | np.ndarray | None = None,
+        motor_names: str | list[str] | None = None,
+        arrow_joint_values: pa.StructArray | None = None,
+    ):
+        arrow = arrow_joint_values is not None
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
@@ -388,16 +440,24 @@ class DynamixelMotorsBus:
 
         start_time = time.perf_counter()
 
-        if motor_names is None:
-            motor_names = self.motor_names
+        if not arrow:
+            if motor_names is None:
+                motor_names = self.motor_names
 
-        if isinstance(motor_names, str):
-            motor_names = [motor_names]
+            if isinstance(motor_names, str):
+                motor_names = [motor_names]
+            if isinstance(values, (int, float, np.integer)):
+                values = [int(values)] * len(motor_names)
 
-        if isinstance(values, (int, float, np.integer)):
-            values = [int(values)] * len(motor_names)
+            values = np.array(values)
+        else:
+            motor_names = arrow_joint_values.field("joints").tolist()
 
-        values = np.array(values)
+            values = pa.Array.from_buffers(
+                pa.uint32(),
+                length=len(arrow_joint_values.field("values")),
+                buffers=arrow_joint_values.field("values").buffers(),
+            )
 
         motor_ids = []
         models = []
@@ -406,34 +466,37 @@ class DynamixelMotorsBus:
             motor_ids.append(motor_idx)
             models.append(model)
 
-        if data_name in CALIBRATION_REQUIRED:
+        if not arrow and data_name in CALIBRATION_REQUIRED:
             values = self.revert_calibration(values, motor_names)
 
-        values = values.tolist()
-
         assert_same_address(self.model_ctrl_table, models, data_name)
-        addr, bytes = self.model_ctrl_table[model][data_name]
+        addr, packet_bytes_size = self.model_ctrl_table[model][data_name]
         group_key = get_group_sync_key(data_name, motor_names)
 
         init_group = data_name not in self.group_readers
         if init_group:
             self.group_writers[group_key] = GroupSyncWrite(
-                self.port_handler, self.packet_handler, addr, bytes
+                self.port_handler, self.packet_handler, addr, packet_bytes_size
             )
 
         for idx, value in zip(motor_ids, values, strict=True):
+            if arrow:
+                value = value.as_py()
+                if value is None:
+                    continue
+
             # Note: No need to convert back into unsigned int, since this byte preprocessing
             # already handles it for us.
-            if bytes == 1:
+            if packet_bytes_size == 1:
                 data = [
                     DXL_LOBYTE(DXL_LOWORD(value)),
                 ]
-            elif bytes == 2:
+            elif packet_bytes_size == 2:
                 data = [
                     DXL_LOBYTE(DXL_LOWORD(value)),
                     DXL_HIBYTE(DXL_LOWORD(value)),
                 ]
-            elif bytes == 4:
+            elif packet_bytes_size == 4:
                 data = [
                     DXL_LOBYTE(DXL_LOWORD(value)),
                     DXL_HIBYTE(DXL_LOWORD(value)),
@@ -443,7 +506,7 @@ class DynamixelMotorsBus:
             else:
                 raise NotImplementedError(
                     f"Value of the number of bytes to be sent is expected to be in [1, 2, 4], but "
-                    f"{bytes} is provided instead."
+                    f"{packet_bytes_size} is provided instead."
                 )
 
             if init_group:
@@ -459,7 +522,9 @@ class DynamixelMotorsBus:
             )
 
         # log the number of seconds it took to write the data to the motors
-        delta_ts_name = get_log_name("delta_timestamp_s", "write", data_name, motor_names)
+        delta_ts_name = get_log_name(
+            "delta_timestamp_s", "write", data_name, motor_names
+        )
         self.logs[delta_ts_name] = time.perf_counter() - start_time
 
         # TODO(rcadene): should we log the time before sending the write command?
