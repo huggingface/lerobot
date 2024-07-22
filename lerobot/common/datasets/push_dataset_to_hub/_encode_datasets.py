@@ -54,6 +54,7 @@ def encode_datasets(
                 raw_format=repo_raw_format,
                 repo_id=dataset_repo_id_push,
                 local_dir=dataset_dir,
+                resume=True,
                 encoding=encoding,
                 tests_data_dir=tests_data_dir,
             )

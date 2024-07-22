@@ -141,6 +141,7 @@ def push_dataset_to_hub(
     num_workers: int = 8,
     episodes: list[int] | None = None,
     force_override: bool = False,
+    resume: bool = False,
     cache_dir: Path = Path("/tmp"),
     tests_data_dir: Path | None = None,
     encoding: dict | None = None,
@@ -171,7 +172,7 @@ def push_dataset_to_hub(
         if local_dir.exists():
             if force_override:
                 shutil.rmtree(local_dir)
-            else:
+            elif not resume:
                 raise ValueError(f"`local_dir` already exists ({local_dir}). Use `--force-override 1`.")
 
         meta_data_dir = local_dir / "meta_data"
@@ -312,6 +313,12 @@ def main():
         type=int,
         default=0,
         help="When set to 1, removes provided output directory if it already exists. By default, raises a ValueError exception.",
+    )
+    parser.add_argument(
+        "--resume",
+        type=int,
+        default=0,
+        help="When set to 1, resumes a previous run.",
     )
     parser.add_argument(
         "--tests-data-dir",
