@@ -442,19 +442,29 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     # Create an env dedicated to online episodes collection from policy rollout.
     online_env = make_env(cfg, n_envs=cfg.training.online_rollout_batch_size)
-    online_dataset = OnlineBuffer(
-        logger.log_dir / "online_buffer",
-        data_shapes={
-            **policy.config.input_shapes,
-            **policy.config.output_shapes,
-            "next.reward": (),
-            "next.done": (),
-            "next.success": (),
-        },
-        buffer_capacity=cfg.training.online_buffer_capacity,
-        fps=offline_dataset.fps,
-        delta_timestamps=offline_dataset.delta_timestamps,
-    )
+    resolve_delta_timestamps(cfg)
+    if not cfg.resume:
+        online_dataset = OnlineBuffer(
+            logger.log_dir / "online_buffer",
+            data_shapes={
+                **policy.config.input_shapes,
+                **policy.config.output_shapes,
+                "next.reward": (),
+                "next.done": (),
+                "next.success": (),
+            },
+            buffer_capacity=cfg.training.online_buffer_capacity,
+            fps=online_env.unwrapped.metadata["render_fps"],
+            delta_timestamps=cfg.training.delta_timestamps,
+        )
+    else:
+        # If we are resuming a run, we default to the data shapes and buffer capacity from the saved online
+        # buffer.
+        online_dataset = OnlineBuffer(
+            logger.log_dir / "online_buffer",
+            fps=online_env.unwrapped.metadata["render_fps"],
+            delta_timestamps=cfg.training.delta_timestamps,
+        )
 
     # If we are doing online rollouts asynchronously, deepcopy the policy to use for online rollouts (this
     # makes it possible to do online rollouts in parallel with training updates).
@@ -474,12 +484,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     sampler = torch.utils.data.WeightedRandomSampler(
         weights, num_samples=len(concat_dataset), replacement=True
     )
-    # Note: This does not use multiple workers as the prefetching mechanism doesn't work well with a dataset
-    # that keeps changing size. This can be potentially worked around in future revisions.
+    # TODO(now): Add a way of verifying that num_workers == 0 if async rollouts.
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
         batch_size=cfg.training.batch_size,
-        num_workers=4,
+        num_workers=cfg.training.num_workers,
         sampler=sampler,
         pin_memory=device.type != "cpu",
         drop_last=True,

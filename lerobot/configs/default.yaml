@@ -50,7 +50,6 @@ training:
   # NOTE: `online_steps` is not implemented yet. It's here as a placeholder.
   online_steps: ???
   online_steps_between_rollouts: ???
-  # TODO(now): Test > 1
   online_rollout_n_episodes: 1
   online_rollout_batch_size: 1
   online_sampling_ratio: 0.5
