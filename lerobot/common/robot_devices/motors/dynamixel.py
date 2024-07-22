@@ -148,6 +148,7 @@ def assert_same_address(model_ctrl_table, motor_models, data_name):
             f"At least two motor models use a different bytes representation for `data_name`='{data_name}' ({list(zip(motor_models, all_bytes, strict=False))}). Contact a LeRobot maintainer."
         )
 
+
 def joints_values_to_arrow(joints, values) -> pa.StructArray:
     return pa.StructArray.from_arrays(
         arrays=[joints, values],
@@ -167,9 +168,7 @@ def find_port():
     ports_before = find_available_ports()
     print(ports_before)
 
-    print(
-        "Remove the usb cable from your DynamixelMotorsBus and press Enter when done."
-    )
+    print("Remove the usb cable from your DynamixelMotorsBus and press Enter when done.")
     input()
 
     time.sleep(0.5)
@@ -181,13 +180,9 @@ def find_port():
         print(f"The port of this DynamixelMotorsBus is '{port}'")
         print("Reconnect the usb cable.")
     elif len(ports_diff) == 0:
-        raise OSError(
-            f"Could not detect the port. No difference was found ({ports_diff})."
-        )
+        raise OSError(f"Could not detect the port. No difference was found ({ports_diff}).")
     else:
-        raise OSError(
-            f"Could not detect the port. More than one port was found ({ports_diff})."
-        )
+        raise OSError(f"Could not detect the port. More than one port was found ({ports_diff}).")
 
 
 class TorqueMode(enum.Enum):
@@ -297,9 +292,7 @@ class DynamixelMotorsBus:
     def set_calibration(self, calibration: dict[str, tuple[int, bool]]):
         self.calibration = calibration
 
-    def apply_calibration(
-        self, values: np.ndarray | list, motor_names: list[str] | None
-    ):
+    def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         if not self.calibration:
             return values
 
@@ -316,9 +309,7 @@ class DynamixelMotorsBus:
 
         return values
 
-    def revert_calibration(
-        self, values: np.ndarray | list, motor_names: list[str] | None
-    ):
+    def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         if not self.calibration:
             return values
 
@@ -388,10 +379,7 @@ class DynamixelMotorsBus:
             )
 
         values = np.array(
-            [
-                self.group_readers[group_key].getData(idx, addr, packet_bytes_size)
-                for idx in motor_ids
-            ],
+            [self.group_readers[group_key].getData(idx, addr, packet_bytes_size) for idx in motor_ids],
             dtype=np.uint32,
         )
 
@@ -413,9 +401,7 @@ class DynamixelMotorsBus:
             )
 
         # log the number of seconds it took to read the data from the motors
-        delta_ts_name = get_log_name(
-            "delta_timestamp_s", "read", data_name, motor_names
-        )
+        delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
         self.logs[delta_ts_name] = time.perf_counter() - start_time
 
         # log the utc time at which the data was received
@@ -521,9 +507,7 @@ class DynamixelMotorsBus:
             )
 
         # log the number of seconds it took to write the data to the motors
-        delta_ts_name = get_log_name(
-            "delta_timestamp_s", "write", data_name, motor_names
-        )
+        delta_ts_name = get_log_name("delta_timestamp_s", "write", data_name, motor_names)
         self.logs[delta_ts_name] = time.perf_counter() - start_time
 
         # TODO(rcadene): should we log the time before sending the write command?
