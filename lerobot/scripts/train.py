@@ -130,7 +130,7 @@ def update_policy(
     if isinstance(policy, PolicyWithUpdate):
         # To possibly update an internal buffer (for instance an Exponential Moving Average like in TDMPC).
         if accelerator:
-            accelerator.unwrap_model(policy).update()
+            accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
         else:
             policy.update()
 
@@ -353,7 +353,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     accelerator.wait_for_everyone()
                 eval_info = eval_policy(
                     eval_env,
-                    policy if not accelerator else accelerator.unwrap_model(policy),
+                    policy if not accelerator else accelerator.unwrap_model(policy, keep_fp32_wrapper=True),
                     cfg.eval.n_episodes,
                     videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
                     max_episodes_rendered=4,
@@ -460,6 +460,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 @hydra.main(version_base="1.2", config_name="default", config_path="../configs")
 def train_cli(cfg: dict):
     if "ACCELERATE_MIXED_PRECISION" in os.environ:
+        print("Accelerate is enabled")
         import accelerate
 
         accelerator = accelerate.Accelerator()

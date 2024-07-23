@@ -564,7 +564,7 @@ def main(
     with torch.no_grad():
         info = eval_policy(
             env,
-            policy if accelerator is None else accelerator.unwrap_model(policy),
+            policy if accelerator is None else accelerator.unwrap_model(policy, keep_fp32_wrapper=True),
             hydra_cfg.eval.n_episodes,
             max_episodes_rendered=10,
             videos_dir=Path(out_dir) / "videos",
