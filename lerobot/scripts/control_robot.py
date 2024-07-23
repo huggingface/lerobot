@@ -585,9 +585,6 @@ def run_policy(robot: Robot, policy: torch.nn.Module, hydra_cfg: DictConfig, run
         now = time.perf_counter()
 
         observation = robot.capture_observation()
-        # pass in dataset_index=0, which is red box
-        observation["dataset_index"] = torch.tensor([0])
-
         with (
             torch.inference_mode(),
             torch.autocast(device_type=device.type)
@@ -595,9 +592,13 @@ def run_policy(robot: Robot, policy: torch.nn.Module, hydra_cfg: DictConfig, run
             else nullcontext(),
         ):
             # add batch dimension to 1
-            for name in observation:
+            for name in observation : 
                 observation[name] = observation[name].unsqueeze(0)
 
+            if "dataset_index" in hydra_cfg.policy.input_shapes:
+                # pass in dataset_index=0, which is red box
+                observation["dataset_index"] = torch.tensor([0])
+                
             if device.type == "mps":
                 for name in observation:
                     observation[name] = observation[name].to(device)

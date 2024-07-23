@@ -302,7 +302,7 @@ class KochRobot:
     def __init__(
         self,
         config: KochRobotConfig | None = None,
-        calibration_path: Path = ".cache/calibration/koch.pkl",
+        calibration_path: Path = "/Users/mbar/Desktop/projects/huggingface/lerobot/.cache/calibration/koch.pkl",
         **kwargs,
     ):
         if config is None:
