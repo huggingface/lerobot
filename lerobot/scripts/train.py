@@ -444,7 +444,7 @@ def train_cli(cfg: dict):
         OmegaConf.set_struct(hydra_cfg, False)
         hydra_cfg.finetune = finetune_path
         out_dir = "outputs/train/finetune"
-        print("The fine-tuned model will be saved in ", out_dir)
+        print("The fine-tuned policy will be saved in ", out_dir)
         train(hydra_cfg, out_dir, job_name="test")
     else:
         train(
