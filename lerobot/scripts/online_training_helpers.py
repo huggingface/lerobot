@@ -39,6 +39,14 @@ class OnlineBuffer(torch.utils.data.Dataset):
     The data is stored in a numpy memmap.
     """
 
+    NEXT_INDEX_KEY = "_next_index"
+    OCCUPANCY_MASK_KEY = "_occupancy_mask"
+    INDEX_KEY = "index"
+    FRAME_INDEX_KEY = "frame_index"
+    EPISODE_INDEX_KEY = "episode_index"
+    TIMESTAMP_KEY = "timestamp"
+    IS_PAD_POSTFIX = "_is_pad"
+
     def __init__(
         self,
         write_dir: str | Path,
@@ -67,9 +75,12 @@ class OnlineBuffer(torch.utils.data.Dataset):
                 converted to dict[str, np.ndarray] for optimization purposes.
 
         """
-        super().__init__()
         self.set_delta_timestamps(delta_timestamps)
         self._fps = fps
+        # Tolerance in seconds used to discard loaded frames when their timestamps are not close enough from
+        # the requested frames. It is only used when `delta_timestamps` is provided.
+        # minus 1e-4 to account for possible numerical error
+        self.tolerance_s = 1 / self.fps - 1e-4
         self._buffer_capacity = buffer_capacity
         data_spec = self._make_data_spec(data_spec, buffer_capacity)
         Path(write_dir).mkdir(parents=True, exist_ok=True)
@@ -103,7 +114,12 @@ class OnlineBuffer(torch.utils.data.Dataset):
             raise ValueError(
                 "data_spec keys should not start with '_'. This prefix is reserved for internal logic."
             )
-        preset_keys = {"index", "frame_index", "episode_index", "timestamp"}
+        preset_keys = {
+            OnlineBuffer.INDEX_KEY,
+            OnlineBuffer.FRAME_INDEX_KEY,
+            OnlineBuffer.EPISODE_INDEX_KEY,
+            OnlineBuffer.TIMESTAMP_KEY,
+        }
         if len(intersection := set(data_spec).intersection(preset_keys)) > 0:
             raise ValueError(
                 f"data_spec should not contain any of {preset_keys} as these are handled internally. "
@@ -112,14 +128,14 @@ class OnlineBuffer(torch.utils.data.Dataset):
         complete_data_spec = {
             # _next_index will be a pointer to the next index that we should start filling from when we add
             # more data.
-            "_next_index": {"dtype": np.dtype("int64"), "shape": (1,)},
+            OnlineBuffer.NEXT_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (1,)},
             # Since the memmap is initialized with all-zeros, this keeps track of which indices are occupied
             # with real data rather than the dummy initialization.
-            "_occupancy_mask": {"dtype": np.dtype("?"), "shape": (buffer_capacity,)},
-            "index": {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
-            "frame_index": {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
-            "episode_index": {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
-            "timestamp": {"dtype": np.dtype("float64"), "shape": (buffer_capacity,)},
+            OnlineBuffer.OCCUPANCY_MASK_KEY: {"dtype": np.dtype("?"), "shape": (buffer_capacity,)},
+            OnlineBuffer.INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
+            OnlineBuffer.FRAME_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
+            OnlineBuffer.EPISODE_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
+            OnlineBuffer.TIMESTAMP_KEY: {"dtype": np.dtype("float64"), "shape": (buffer_capacity,)},
         }
         for k, v in data_spec.items():
             complete_data_spec[k] = {"dtype": v["dtype"], "shape": (buffer_capacity, *v["shape"])}
@@ -135,24 +151,24 @@ class OnlineBuffer(torch.utils.data.Dataset):
         Shift the incoming data index and episode_index to continue on from the last frame. Note that this
         will be done in place!
         """
-        if not set(data) == set(self.data_keys):
-            raise ValueError("Missing data keys")
+        if len(missing_keys := (set(self.data_keys).difference(set(data)))) > 0:
+            raise ValueError(f"Missing data keys: {missing_keys}")
         new_data_length = len(data[self.data_keys[0]])
         if not all(len(data[k]) == new_data_length for k in self.data_keys):
             raise ValueError("All data items should have the same length")
 
-        next_index = self._data["_next_index"][0]
+        next_index = self._data[OnlineBuffer.NEXT_INDEX_KEY][0]
 
         # Sanity check to make sure that the new data indices start from 0.
-        assert data["episode_index"][0].item() == 0
-        assert data["index"][0].item() == 0
+        assert data[OnlineBuffer.EPISODE_INDEX_KEY][0].item() == 0
+        assert data[OnlineBuffer.INDEX_KEY][0].item() == 0
 
         # Shift the incoming indices if necessary.
         if self.num_samples > 0:
-            last_episode_index = self._data["episode_index"][next_index - 1]
-            last_data_index = self._data["index"][next_index - 1]
-            data["episode_index"] += last_episode_index + 1
-            data["index"] += last_data_index + 1
+            last_episode_index = self._data[OnlineBuffer.EPISODE_INDEX_KEY][next_index - 1]
+            last_data_index = self._data[OnlineBuffer.INDEX_KEY][next_index - 1]
+            data[OnlineBuffer.EPISODE_INDEX_KEY] += last_episode_index + 1
+            data[OnlineBuffer.INDEX_KEY] += last_data_index + 1
 
         # Insert the new data starting from next_index. It may be necessary to wrap around to the start.
         n_surplus = max(0, new_data_length - (self._buffer_capacity - next_index))
@@ -160,21 +176,21 @@ class OnlineBuffer(torch.utils.data.Dataset):
             if n_surplus == 0:
                 slc = slice(next_index, next_index + new_data_length)
                 self._data[k][slc] = data[k]
-                self._data["_occupancy_mask"][slc] = True
+                self._data[OnlineBuffer.OCCUPANCY_MASK_KEY][slc] = True
             else:
                 self._data[k][next_index:] = data[k][:-n_surplus]
-                self._data["_occupancy_mask"][next_index:] = True
+                self._data[OnlineBuffer.OCCUPANCY_MASK_KEY][next_index:] = True
                 self._data[k][:n_surplus] = data[k][-n_surplus:]
         if n_surplus == 0:
-            self._data["_next_index"][0] = next_index + new_data_length
+            self._data[OnlineBuffer.NEXT_INDEX_KEY][0] = next_index + new_data_length
         else:
-            self._data["_next_index"][0] = n_surplus
+            self._data[OnlineBuffer.NEXT_INDEX_KEY][0] = n_surplus
 
     @property
     def data_keys(self) -> list[str]:
         keys = set(self._data)
-        keys.remove("_occupancy_mask")
-        keys.remove("_next_index")
+        keys.remove(OnlineBuffer.OCCUPANCY_MASK_KEY)
+        keys.remove(OnlineBuffer.NEXT_INDEX_KEY)
         return sorted(keys)
 
     @property
@@ -182,21 +198,14 @@ class OnlineBuffer(torch.utils.data.Dataset):
         return self._fps
 
     @property
-    def tolerance_s(self) -> float:
-        """
-        Tolerance in seconds used to discard loaded frames when their timestamps are not close enough from the
-        requested frames. It is only used when `delta_timestamps` is provided.
-        """
-        # 1e-4 to account for possible numerical error
-        return 1 / self.fps - 1e-4
-
-    @property
     def num_episodes(self) -> int:
-        return len(np.unique(self._data["episode_index"][self._data["_occupancy_mask"]]))
+        return len(
+            np.unique(self._data[OnlineBuffer.EPISODE_INDEX_KEY][self._data[OnlineBuffer.OCCUPANCY_MASK_KEY]])
+        )
 
     @property
     def num_samples(self) -> int:
-        return np.count_nonzero(self._data["_occupancy_mask"])
+        return np.count_nonzero(self._data[OnlineBuffer.OCCUPANCY_MASK_KEY])
 
     def __len__(self):
         return self.num_samples
@@ -213,19 +222,26 @@ class OnlineBuffer(torch.utils.data.Dataset):
         return item_
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        if idx >= len(self) or idx < -len(self):
+            raise IndexError
+
         item = {k: v[idx] for k, v in self._data.items() if not k.startswith("_")}
 
         if self.delta_timestamps is None:
             return self._item_to_tensors(item)
 
-        episode_index = item["episode_index"]
-        current_ts = item["timestamp"]
+        episode_index = item[OnlineBuffer.EPISODE_INDEX_KEY]
+        current_ts = item[OnlineBuffer.TIMESTAMP_KEY]
         episode_data_indices = np.where(
-            np.bitwise_and(self._data["episode_index"] == episode_index, self._data["_occupancy_mask"])
+            np.bitwise_and(
+                self._data[OnlineBuffer.EPISODE_INDEX_KEY] == episode_index,
+                self._data[OnlineBuffer.OCCUPANCY_MASK_KEY],
+            )
         )[0]
-        episode_timestamps = self._data["timestamp"][episode_data_indices]
+        episode_timestamps = self._data[OnlineBuffer.TIMESTAMP_KEY][episode_data_indices]
 
         for data_key in self.delta_timestamps:
+            # Note: The logic in this loop is copied from `load_previous_and_future_frames`.
             # Get timestamps used as query to retrieve data of previous/future frames.
             query_ts = current_ts + self.delta_timestamps[data_key]
 
@@ -242,14 +258,13 @@ class OnlineBuffer(torch.utils.data.Dataset):
                 (query_ts[is_pad] < episode_timestamps[0]) | (episode_timestamps[-1] < query_ts[is_pad])
             ).all(), (
                 f"One or several timestamps unexpectedly violate the tolerance ({min_} > {self.tolerance_s=}"
-                ") inside episode range. This might be due to synchronization issues with timestamps during "
-                "data collection."
+                ") inside the episode range."
             )
 
             # Load frames for this data key.
             item[data_key] = self._data[data_key][episode_data_indices[argmin_]]
 
-            item[f"{data_key}_is_pad"] = is_pad
+            item[f"{data_key}{OnlineBuffer.IS_PAD_POSTFIX}"] = is_pad
 
         return self._item_to_tensors(item)
 
