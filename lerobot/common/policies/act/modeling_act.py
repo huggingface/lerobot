@@ -134,26 +134,25 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
-        bsize = actions_hat.shape[0]
-        l1_loss = F.l1_loss(batch["action"], actions_hat, reduction="none")
-        l1_loss = l1_loss * ~batch["action_is_pad"].unsqueeze(-1)
-        l1_loss = l1_loss.view(bsize, -1).mean(dim=1)
+        l1_loss = (
+            F.l1_loss(batch["action"], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
+        ).mean()
 
-        out_dict = {}
-        out_dict["l1_loss"] = l1_loss
-
+        loss_dict = {"l1_loss": l1_loss.item()}
         if self.config.use_vae:
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total
             # KL-divergence per batch element, then take the mean over the batch.
             # (See App. B of https://arxiv.org/abs/1312.6114 for more details).
-            kld_loss = (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1)
-            out_dict["loss"] = l1_loss + kld_loss * self.config.kl_weight
+            mean_kld = (
+                (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
+            )
+            loss_dict["kld_loss"] = mean_kld.item()
+            loss_dict["loss"] = l1_loss + mean_kld * self.config.kl_weight
         else:
-            out_dict["loss"] = l1_loss
+            loss_dict["loss"] = l1_loss
 
-        out_dict["action"] = self.unnormalize_outputs({"action": actions_hat})["action"]
-        return out_dict
+        return loss_dict
 
 
 class ACTTemporalEnsembler:
@@ -344,8 +343,7 @@ class ACT(nn.Module):
         if "dataset_index" in config.input_shapes:
             # create a FiLM layer to condition on dataset index after the image features
             self.film_layer = FiLMLayer(num_relations=1, out_features=config.dim_model, dropout=0.0)
-                
-                
+
         self.encoder_latent_input_proj = nn.Linear(config.latent_dim, config.dim_model)
 
         # Image feature projection.
