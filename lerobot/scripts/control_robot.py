@@ -107,7 +107,6 @@ from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episod
 from lerobot.common.datasets.utils import calculate_episode_data_index
 from lerobot.common.datasets.video_utils import encode_video_frames
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.robot_devices.cameras.utils import convert_torch_image_to_cv2
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
@@ -217,8 +216,10 @@ def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | Non
             break
 
 
-def record_dataset(
+def record(
     robot: Robot,
+    policy: torch.nn.Module | None = None,
+    hydra_cfg: DictConfig | None = None,
     fps: int | None = None,
     root="data",
     repo_id="lerobot/debug",
@@ -295,6 +296,21 @@ def record_dataset(
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
 
+    # Load policy if any
+    if policy is not None:
+        # Check device is available
+        device = get_safe_torch_device(hydra_cfg.device, log=True)
+
+        policy.eval()
+        policy.to(device)
+
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        set_global_seed(hydra_cfg.seed)
+
+        # override fps using policy fps
+        fps = hydra_cfg.env.fps
+
     # Execute a few seconds without recording data, to give times
     # to the robot devices to connect and start synchronizing.
     timestamp = 0
@@ -308,7 +324,10 @@ def record_dataset(
 
         now = time.perf_counter()
 
-        observation, action = robot.teleop_step(record_data=True)
+        if policy is None:
+            observation, action = robot.teleop_step(record_data=True)
+        else:
+            observation = robot.capture_observation()
 
         if not is_headless():
             image_keys = [key for key in observation if "image" in key]
@@ -339,7 +358,11 @@ def record_dataset(
             start_time = time.perf_counter()
             while timestamp < episode_time_s:
                 now = time.perf_counter()
-                observation, action = robot.teleop_step(record_data=True)
+
+                if policy is None:
+                    observation, action = robot.teleop_step(record_data=True)
+                else:
+                    observation = robot.capture_observation()
 
                 image_keys = [key for key in observation if "image" in key]
                 not_image_keys = [key for key in observation if "image" not in key]
@@ -361,6 +384,33 @@ def record_dataset(
                     if key not in ep_dict:
                         ep_dict[key] = []
                     ep_dict[key].append(observation[key])
+
+                if policy is not None:
+                    with (
+                        torch.inference_mode(),
+                        torch.autocast(device_type=device.type)
+                        if device.type == "cuda" and hydra_cfg.use_amp
+                        else nullcontext(),
+                    ):
+                        # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
+                        for name in observation:
+                            if "image" in name:
+                                observation[name] = observation[name].type(torch.float32) / 255
+                                observation[name] = observation[name].permute(2, 0, 1).contiguous()
+                            observation[name] = observation[name].unsqueeze(0)
+
+                        if device.type == "mps":
+                            for name in observation:
+                                observation[name] = observation[name].to(device)
+
+                        action = policy.select_action(observation)
+
+                        # remove batch dimension
+                        action = action.squeeze(0)
+                        action = action.to("cpu")
+
+                    robot.send_action(action)
+                    action = {"action": action}
 
                 for key in action:
                     if key not in ep_dict:
@@ -534,7 +584,7 @@ def record_dataset(
     return lerobot_dataset
 
 
-def replay_episode(robot: Robot, episode: int, fps: int | None = None, root="data", repo_id="lerobot/debug"):
+def replay(robot: Robot, episode: int, fps: int | None = None, root="data", repo_id="lerobot/debug"):
     # TODO(rcadene): Add option to record logs
     local_dir = Path(root) / repo_id
     if not local_dir.exists():
@@ -564,151 +614,6 @@ def replay_episode(robot: Robot, episode: int, fps: int | None = None, root="dat
         log_control_info(robot, dt_s, fps=fps)
 
 
-def run_policy(
-    robot: Robot,
-    policy: torch.nn.Module,
-    hydra_cfg: DictConfig,
-    warmup_time_s: float = 4,
-    run_time_s: float | None = None,
-    reset_time_s: float = 15,
-):
-    # TODO(rcadene): Add option to record eval dataset and logs
-
-    # Check device is available
-    device = get_safe_torch_device(hydra_cfg.device, log=True)
-
-    policy.eval()
-    policy.to(device)
-
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
-    set_global_seed(hydra_cfg.seed)
-
-    fps = hydra_cfg.env.fps
-
-    if not robot.is_connected:
-        robot.connect()
-
-    if is_headless():
-        logging.info(
-            "Headless environment detected. Display cameras on screen and keyboard inputs will not be available."
-        )
-
-    # Allow to reset environment or exit early
-    # by tapping the right arrow key '->'. This might require a sudo permission
-    # to allow your terminal to monitor keyboard events.
-    reset_environment = False
-    exit_reset = False
-
-    # Only import pynput if not in a headless environment
-    if not is_headless():
-        from pynput import keyboard
-
-        def on_press(key):
-            nonlocal reset_environment, exit_reset
-            try:
-                if key == keyboard.Key.right and not reset_environment:
-                    print("Right arrow key pressed. Suspend robot control to reset environment...")
-                    reset_environment = True
-                elif key == keyboard.Key.right and reset_environment:
-                    print("Right arrow key pressed. Enable robot control and exit reset environment...")
-                    exit_reset = True
-            except Exception as e:
-                print(f"Error handling key press: {e}")
-
-        listener = keyboard.Listener(on_press=on_press)
-        listener.start()
-
-    # Execute a few seconds without recording data, to give times
-    # to the robot devices to connect and start synchronizing.
-    timestamp = 0
-    start_time = time.perf_counter()
-    is_warmup_print = False
-    while timestamp < warmup_time_s:
-        if not is_warmup_print:
-            logging.info("Warming up (no data recording)")
-            os.system('say "Warmup" &')
-            is_warmup_print = True
-
-        now = time.perf_counter()
-        observation = robot.capture_observation()
-
-        if not is_headless():
-            image_keys = [key for key in observation if "image" in key]
-            for key in image_keys:
-                cv2.imshow(key, convert_torch_image_to_cv2(observation[key]))
-            cv2.waitKey(1)
-
-        dt_s = time.perf_counter() - now
-        busy_wait(1 / fps - dt_s)
-
-        dt_s = time.perf_counter() - now
-        log_control_info(robot, dt_s, fps=fps)
-
-        timestamp = time.perf_counter() - start_time
-
-    start_time = time.perf_counter()
-    while True:
-        now = time.perf_counter()
-
-        observation = robot.capture_observation()
-
-        if not is_headless():
-            image_keys = [key for key in observation if "image" in key]
-            for key in image_keys:
-                cv2.imshow(key, convert_torch_image_to_cv2(observation[key]))
-            cv2.waitKey(1)
-
-        with (
-            torch.inference_mode(),
-            torch.autocast(device_type=device.type)
-            if device.type == "cuda" and hydra_cfg.use_amp
-            else nullcontext(),
-        ):
-            # add batch dimension to 1
-            for name in observation:
-                observation[name] = observation[name].unsqueeze(0)
-
-            if device.type == "mps":
-                for name in observation:
-                    observation[name] = observation[name].to(device)
-
-            action = policy.select_action(observation)
-
-            # remove batch dimension
-            action = action.squeeze(0)
-
-        robot.send_action(action.to("cpu"))
-
-        dt_s = time.perf_counter() - now
-        busy_wait(1 / fps - dt_s)
-
-        dt_s = time.perf_counter() - now
-        log_control_info(robot, dt_s, fps=fps)
-
-        if run_time_s is not None and time.perf_counter() - start_time > run_time_s:
-            break
-
-        if reset_environment:
-            # Start resetting env while the executor are finishing
-            logging.info("Reset the environment")
-            os.system('say "Reset the environment" &')
-
-            # Wait if necessary
-            timestamp = 0
-            start_time = time.perf_counter()
-            with tqdm.tqdm(total=reset_time_s, desc="Waiting") as pbar:
-                while timestamp < reset_time_s:
-                    time.sleep(1)
-                    timestamp = time.perf_counter() - start_time
-                    pbar.update(1)
-                    if exit_reset:
-                        exit_reset = False
-                        break
-
-            reset_environment = False
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="mode", required=True)
@@ -716,10 +621,15 @@ if __name__ == "__main__":
     # Set common options for all the subparsers
     base_parser = argparse.ArgumentParser(add_help=False)
     base_parser.add_argument(
-        "--robot",
+        "--robot-path",
         type=str,
-        default="koch",
-        help="Name of the robot provided to the `make_robot(name)` factory function.",
+        default="lerobot/configs/robot/koch.yaml",
+        help="Path to robot yaml file used to instantiate the robot using `make_robot` factory function.",
+    )
+    base_parser.add_argument(
+        "robot_overrides",
+        nargs="*",
+        help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
 
     parser_teleop = subparsers.add_parser("teleoperate", parents=[base_parser])
@@ -727,7 +637,7 @@ if __name__ == "__main__":
         "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
     )
 
-    parser_record = subparsers.add_parser("record_dataset", parents=[base_parser])
+    parser_record = subparsers.add_parser("record", parents=[base_parser])
     parser_record.add_argument(
         "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
     )
@@ -786,8 +696,22 @@ if __name__ == "__main__":
         default=0,
         help="By default, data recording is resumed. When set to 1, delete the local directory and start data recording from scratch.",
     )
+    parser_record.add_argument(
+        "-p",
+        "--pretrained-policy-name-or-path",
+        type=str,
+        help=(
+            "Either the repo ID of a model hosted on the Hub or a path to a directory containing weights "
+            "saved using `Policy.save_pretrained`."
+        ),
+    )
+    parser_record.add_argument(
+        "overrides",
+        nargs="*",
+        help="Any key=value arguments to override config values (use dots for.nested=overrides)",
+    )
 
-    parser_replay = subparsers.add_parser("replay_episode", parents=[base_parser])
+    parser_replay = subparsers.add_parser("replay", parents=[base_parser])
     parser_replay.add_argument(
         "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
     )
@@ -805,41 +729,37 @@ if __name__ == "__main__":
     )
     parser_replay.add_argument("--episode", type=int, default=0, help="Index of the episode to replay.")
 
-    parser_policy = subparsers.add_parser("run_policy", parents=[base_parser])
-    parser_policy.add_argument(
-        "-p",
-        "--pretrained-policy-name-or-path",
-        type=str,
-        help=(
-            "Either the repo ID of a model hosted on the Hub or a path to a directory containing weights "
-            "saved using `Policy.save_pretrained`."
-        ),
-    )
-    parser_policy.add_argument(
-        "overrides",
-        nargs="*",
-        help="Any key=value arguments to override config values (use dots for.nested=overrides)",
-    )
     args = parser.parse_args()
 
     init_logging()
 
     control_mode = args.mode
-    robot_name = args.robot
+    robot_path = args.robot_path
+    robot_overrides = args.robot_overrides
     kwargs = vars(args)
     del kwargs["mode"]
-    del kwargs["robot"]
+    del kwargs["robot_path"]
+    del kwargs["robot_overrides"]
 
-    robot = make_robot(robot_name)
+    robot_cfg = init_hydra_config(robot_path, robot_overrides)
+    robot = make_robot(robot_cfg)
+
     if control_mode == "teleoperate":
         teleoperate(robot, **kwargs)
-    elif control_mode == "record_dataset":
-        record_dataset(robot, **kwargs)
-    elif control_mode == "replay_episode":
-        replay_episode(robot, **kwargs)
 
-    elif control_mode == "run_policy":
-        pretrained_policy_path = get_pretrained_policy_path(args.pretrained_policy_name_or_path)
-        hydra_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", args.overrides)
-        policy = make_policy(hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
-        run_policy(robot, policy, hydra_cfg)
+    elif control_mode == "record":
+        pretrained_policy_name_or_path = args.pretrained_policy_name_or_path
+        overrides = args.overrides
+        del kwargs["pretrained_policy_name_or_path"]
+        del kwargs["overrides"]
+
+        policy_cfg = None
+        if pretrained_policy_name_or_path is not None:
+            pretrained_policy_path = get_pretrained_policy_path(pretrained_policy_name_or_path)
+            policy_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", overrides)
+            policy = make_policy(hydra_cfg=policy_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
+
+        record(robot, policy, policy_cfg, **kwargs)
+
+    elif control_mode == "replay":
+        replay(robot, **kwargs)

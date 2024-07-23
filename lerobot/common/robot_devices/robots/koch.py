@@ -29,9 +29,12 @@ URL_90_DEGREE_POSITION = {
 # Calibration logic
 ########################################################################
 
+# In range ]-2048, 2048[
 TARGET_HORIZONTAL_POSITION = np.array([0, -1024, 1024, 0, -1024, 0])
 TARGET_90_DEGREE_POSITION = np.array([1024, 0, 0, 1024, 0, -1024])
-GRIPPER_OPEN = np.array([-400])
+
+# In range ]-180, 180[
+GRIPPER_OPEN = np.array([-35.156])
 
 
 def apply_homing_offset(values: np.array, homing_offset: np.array) -> np.array:
@@ -500,11 +503,7 @@ class KochRobot:
         obs_dict = {}
         obs_dict["observation.state"] = torch.from_numpy(state)
         for name in self.cameras:
-            # Convert to pytorch format: channel first and float32 in [0,1]
-            img = torch.from_numpy(images[name])
-            img = img.type(torch.float32) / 255
-            img = img.permute(2, 0, 1).contiguous()
-            obs_dict[f"observation.images.{name}"] = img
+            obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
         return obs_dict
 
     def send_action(self, action: torch.Tensor):
