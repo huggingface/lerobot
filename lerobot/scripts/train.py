@@ -448,8 +448,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         # If we are resuming a run, we default to the data shapes and buffer capacity from the saved online
         # buffer.
         logging.warning(
-            "When online training is resumed we use the latest online buffer, which is not the necessarily "
-            "the one that was present at the time of the provided checkpoint!"
+            "When online training is resumed, we load the latest online buffer from the prior run, "
+            "and this might not coincide with the state of the buffer as it was at the moment the checkpoint "
+            "was made. This is because the online buffer is updated on disk during training, independently "
+            "of our explicit checkpointing mechansims."
         )
     online_dataset = OnlineBuffer(
         online_buffer_path,
@@ -483,17 +485,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     sampler = torch.utils.data.WeightedRandomSampler(
         weights, num_samples=len(concat_dataset), replacement=True
     )
-    if cfg.training.do_online_rollout_async and cfg.training.num_workers > 0:
-        logging.warning(
-            f"{cfg.training.num_workers=} will be ignored as you have "
-            f"{cfg.training.do_online_rollout_async=}. With > 0 workers, batches are prefetched, but "
-            "this isn't set up to work with asynchronous updates to the online buffer. Instead, 0 "
-            "workers will be used for the online training dataloader."
-        )
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
         batch_size=cfg.training.batch_size,
-        num_workers=cfg.training.num_workers if not cfg.training.do_online_rollout_async else 0,
+        num_workers=cfg.training.num_workers,
         sampler=sampler,
         pin_memory=device.type != "cpu",
         drop_last=True,
@@ -503,6 +498,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # Lock and thread pool executor for asynchronous online rollouts. When asynchronous mode is disabled,
     # these are still used but effectively do nothing.
     lock = Lock()
+    # Note: 1 worker because we only ever want to run one set of online rollouts at a time. Batch
+    # parallelization of rollouts is handled within the job.
     executor = ThreadPoolExecutor(max_workers=1)
 
     online_step = 0
@@ -512,6 +509,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # online rollout option.
     await_update_online_buffer_s = 0
     rollout_start_seed = cfg.training.online_env_seed
+
     while True:
         if online_step == cfg.training.online_steps:
             break
@@ -554,9 +552,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             return online_rollout_s, update_online_buffer_s
 
         future = executor.submit(sample_trajectory_and_update_buffer)
+        # If we aren't doing async rollouts, or if we haven't yet gotten enough examples in our buffer, wait
+        # here until the rollout and buffer update is done, before proceeding to the policy update steps.
         if (
-            len(online_dataset) <= cfg.training.online_buffer_seed_size
-            or not cfg.training.do_online_rollout_async
+            not cfg.training.do_online_rollout_async
+            or len(online_dataset) <= cfg.training.online_buffer_seed_size
         ):
             online_rollout_s, update_online_buffer_s = future.result()
 
@@ -604,6 +604,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             step += 1
             online_step += 1
 
+        # If we're doing async rollouts, we should now wait until we've completed them before proceeding
+        # to do the next batch of rollouts.
         if future.running():
             start = time.perf_counter()
             online_rollout_s, update_online_buffer_s = future.result()

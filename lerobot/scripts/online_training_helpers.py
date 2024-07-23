@@ -72,16 +72,15 @@ class OnlineBuffer(torch.utils.data.Dataset):
         self._fps = fps
         self._buffer_capacity = buffer_capacity
         data_spec = self._make_data_spec(data_spec, buffer_capacity)
-        os.makedirs(write_dir, exist_ok=True)
-        self._data = {
-            k: _make_memmap_safe(
+        Path(write_dir).mkdir(parents=True, exist_ok=True)
+        self._data = {}
+        for k, v in data_spec.items():
+            self._data[k] = _make_memmap_safe(
                 filename=Path(write_dir) / k,
                 dtype=v["dtype"] if v is not None else None,
                 mode="r+" if (Path(write_dir) / k).exists() else "w+",
                 shape=tuple(v["shape"]) if v is not None else None,
             )
-            for k, v in data_spec.items()
-        }
 
     @property
     def delta_timestamps(self) -> dict[str, np.ndarray] | None:
@@ -110,7 +109,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
                 f"data_spec should not contain any of {preset_keys} as these are handled internally. "
                 f"The provided data_spec has {intersection}."
             )
-        data_spec = {
+        complete_data_spec = {
             # _next_index will be a pointer to the next index that we should start filling from when we add
             # more data.
             "_next_index": {"dtype": np.dtype("int64"), "shape": (1,)},
@@ -121,15 +120,17 @@ class OnlineBuffer(torch.utils.data.Dataset):
             "frame_index": {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
             "episode_index": {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
             "timestamp": {"dtype": np.dtype("float64"), "shape": (buffer_capacity,)},
-            **{
-                k: {"dtype": v["dtype"], "shape": (buffer_capacity, *v["shape"])}
-                for k, v in data_spec.items()
-            },
         }
-        return data_spec
+        for k, v in data_spec.items():
+            complete_data_spec[k] = {"dtype": v["dtype"], "shape": (buffer_capacity, *v["shape"])}
+        return complete_data_spec
 
     def add_data(self, data: dict[str, np.ndarray]):
         """Add new data to the buffer, which could potentially mean shifting old data out.
+
+        The new data should contain all the frames (in order) of any number of episodes. The indices should
+        start from 0 (note to the developer: this can easily be generalized). See the `rollout` and
+        `eval_policy` functions in `eval.py` for more information on how the data is constructed.
 
         Shift the incoming data index and episode_index to continue on from the last frame. Note that this
         will be done in place!

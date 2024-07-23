@@ -60,7 +60,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # load data from hub or locally when root is provided
         # TODO(rcadene, aliberts): implement faster transfer
         # https://huggingface.co/docs/huggingface_hub/en/guides/download#faster-downloads
-        self.hf_dataset: datasets.Dataset = load_hf_dataset(repo_id, CODEBASE_VERSION, root, split)
+        self.hf_dataset = load_hf_dataset(repo_id, CODEBASE_VERSION, root, split)
         if split == "train":
             self.episode_data_index = load_episode_data_index(repo_id, CODEBASE_VERSION, root)
         else:

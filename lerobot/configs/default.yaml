@@ -33,8 +33,7 @@ video_backend: pyav
 training:
   offline_steps: ???
 
-  # Number of workers for the offline training dataloader. Note that the online training dataloader adopts
-  # this setting if and only if do_online_rollout_async=false.
+  # Number of workers for the offline training dataloader.
   num_workers: 4
 
   batch_size: ???
