@@ -147,6 +147,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         """Select a single action given environment observations."""
         batch = self.normalize_inputs(batch)
         if self._use_image:
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.image"] = batch[self.input_image_key]
 
         self._queues = populate_queues(self._queues, batch)
@@ -342,6 +343,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
 
         batch = self.normalize_inputs(batch)
         if self._use_image:
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.image"] = batch[self.input_image_key]
         batch = self.normalize_targets(batch)
 
