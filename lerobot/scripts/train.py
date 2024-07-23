@@ -460,7 +460,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 @hydra.main(version_base="1.2", config_name="default", config_path="../configs")
 def train_cli(cfg: dict):
     if "ACCELERATE_MIXED_PRECISION" in os.environ:
-        print("Accelerate is enabled")
         import accelerate
 
         accelerator = accelerate.Accelerator()
