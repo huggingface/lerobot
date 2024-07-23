@@ -54,12 +54,10 @@ def get_wandb_run_id_from_filesystem(checkpoint_dir: Path) -> str:
     # Get the WandB run ID.
     paths = glob(str(checkpoint_dir / "../wandb/latest-run/run-*"))
     if len(paths) != 1:
-        return None
-        #raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
+        raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
     match = re.search(r"run-([^\.]+).wandb", paths[0].split("/")[-1])
     if match is None:
-        return None
-        #raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
+        raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
     wandb_run_id = match.groups(0)[0]
     return wandb_run_id
 
@@ -128,7 +126,7 @@ class Logger:
                 save_code=False,
                 # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
                 job_type="train_eval",
-                resume=None,
+                resume="must" if cfg.resume else None,
             )
             print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
             logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
