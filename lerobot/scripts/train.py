@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import argparse
 import logging
 import time
 from contextlib import nullcontext
@@ -438,8 +437,9 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../configs")
-def train_cli(cfg: dict, finetune_path : str = None):
-    if finetune_path :
+def train_cli(cfg: dict):
+    finetune_path = cfg.get("finetune")
+    if finetune_path:
         config_path = get_pretrained_policy_path(finetune_path) / "config.yaml"
         hydra_cfg = init_hydra_config(config_path, overrides=["device=mps"])
         OmegaConf.set_struct(hydra_cfg, False)
@@ -465,8 +465,4 @@ def train_notebook(out_dir=None, job_name=None, config_name="default", config_pa
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train a model.")
-    parser.add_argument("-f", "--finetune", type=str, nargs='?', const=True, help="Fine-tune the model with the given path.")
-    args = parser.parse_args()
-
-    train_cli(finetune_path=args.finetune)
+    train_cli()
