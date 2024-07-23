@@ -344,6 +344,9 @@ class ACT(nn.Module):
         if "dataset_index" in config.input_shapes:
             # create a FiLM layer to condition on dataset index after the image features
             self.film_layer = FiLMLayer(num_relations=1, out_features=config.dim_model, dropout=0.0)
+                
+                
+        self.encoder_latent_input_proj = nn.Linear(config.latent_dim, config.dim_model)
 
         # Image feature projection.
         if self.use_images:
@@ -351,9 +354,7 @@ class ACT(nn.Module):
                 backbone_model.fc.in_features, config.dim_model, kernel_size=1
             )
         # Transformer encoder positional embeddings.
-        n_1d_tokens = 0  # for the latent
-        if self.config.use_vae:
-            n_1d_tokens += 1
+        n_1d_tokens = 1
         if self.use_robot_state:
             n_1d_tokens += 1
         if self.use_env_state:
@@ -463,7 +464,7 @@ class ACT(nn.Module):
             )
 
         # Prepare transformer encoder inputs.
-        encoder_in_tokens = []
+        encoder_in_tokens = [self.encoder_latent_input_proj(latent_sample)]
         encoder_in_pos_embed = list(self.encoder_1d_feature_pos_embed.weight.unsqueeze(1))
         # Latent token.
         if self.config.use_vae:
