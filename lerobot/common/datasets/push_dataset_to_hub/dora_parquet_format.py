@@ -18,6 +18,7 @@ Contains utilities to process raw data format from dora-record
 """
 
 import re
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -199,6 +200,7 @@ def from_raw_to_lerobot_format(
     fps: int | None = None,
     video: bool = True,
     episodes: list[int] | None = None,
+    encoding: dict | None = None,
 ):
     # sanity check
     check_format(raw_dir)
@@ -211,6 +213,12 @@ def from_raw_to_lerobot_format(
     if not video:
         raise NotImplementedError()
 
+    if encoding is not None:
+        warnings.warn(
+            "Video encoding is currently done outside of LeRobot for the dora_parquet format.",
+            stacklevel=1,
+        )
+
     data_df = load_from_raw(raw_dir, videos_dir, fps, episodes)
     hf_dataset = to_hf_dataset(data_df, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
@@ -219,4 +227,7 @@ def from_raw_to_lerobot_format(
         "fps": fps,
         "video": video,
     }
+    if video:
+        info["encoding"] = "unknown"
+
     return hf_dataset, episode_data_index, info

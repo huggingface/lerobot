@@ -180,8 +180,10 @@ dataset attributes:
   │  ├ observation.images.cam_high: {'max': tensor with same number of dimensions (e.g. `(c, 1, 1)` for images, `(c,)` for states), etc.}
   │  ...
   ├ info: a dictionary of metadata on the dataset
+  │  ├ codebase_version (str): this is to keep track of the codebase version the dataset was created with
   │  ├ fps (float): frame per second the dataset is recorded/synchronized to
-  │  └ video (bool): indicates if frames are encoded in mp4 video files to save space or stored as png files
+  │  ├ video (bool): indicates if frames are encoded in mp4 video files to save space or stored as png files
+  │  └ encoding (dict): if video, this documents the main options that were used with ffmpeg to encode the videos
   ├ videos_dir (Path): where the mp4 videos or png images are stored/accessed
   └ camera_keys (list of string): the keys to access camera features in the item returned by the dataset (e.g. `["observation.images.cam_high", ...]`)
 ```
