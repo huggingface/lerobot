@@ -271,9 +271,6 @@ def record_dataset(
         now = time.perf_counter()
         observation, action = robot.teleop_step(record_data=True)
 
-        if not is_headless:
-            image_keys = [key for key in observation if "image" in key]
-
         dt_s = time.perf_counter() - now
         busy_wait(1 / fps - dt_s)
 
@@ -322,6 +319,25 @@ def record_dataset(
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
         # Start recording all episodes
         while episode_index < num_episodes:
+            timestamp = 0
+            is_warmup_print = False
+            start_time = time.perf_counter()
+            while timestamp < 1:
+                if not is_warmup_print:
+                    logging.info("Warming up (no data recording)")
+                    os.system('say "Warmup" &')
+                    is_warmup_print = True
+
+                now = time.perf_counter()
+                observation, action = robot.teleop_step(record_data=True)
+
+                dt_s = time.perf_counter() - now
+                busy_wait(1 / fps - dt_s)
+
+                dt_s = time.perf_counter() - now
+                log_control_info(robot, dt_s, fps=fps)
+
+                timestamp = time.perf_counter() - start_time
             logging.info(f"Recording episode {episode_index}")
             os.system(f'say "Recording episode {episode_index}" &')
             ep_dict = {}
@@ -490,7 +506,7 @@ def record_dataset(
     if run_compute_stats:
         logging.info("Computing dataset statistics")
         os.system('say "Computing dataset statistics" &')
-        stats = compute_stats(lerobot_dataset)
+        stats = compute_stats(lerobot_dataset, num_workers=8)
         lerobot_dataset.stats = stats
     else:
         logging.info("Skipping computation of the dataset statistrics")
