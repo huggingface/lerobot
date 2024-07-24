@@ -2,7 +2,7 @@
 This script demonstrates how to train ACT policy with distributed training on the Aloha environment
 on the Insertion task, using HuggingFace accelerate.
 
-Make sure you have installed accelerate before running this script: `pip install accelerate`.
+Apart from the main installation procedure, please also make sure you have installed accelerate before running this script: `pip install accelerate`.
 
 To launch it, you will have to use the accelerate launcher, for example:
 `accelerate launch examples/7_train_policy_distributed.py`. This will launch the script with default distributed parameters.
@@ -21,7 +21,7 @@ from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 
 # Create a directory to store the training checkpoint.
-output_directory = Path("outputs/train/exemple_aloha_act_distributed")
+output_directory = Path("outputs/train/example_aloha_act_distributed")
 output_directory.mkdir(parents=True, exist_ok=True)
 
 # Number of overall offline training steps (we'll only do offline training for this example.)
