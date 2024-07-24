@@ -36,7 +36,7 @@ def make_spoof_data_frames(n_episodes: int, n_frames_per_episode: int) -> dict[s
     new_data = {
         data_key: np.arange(n_frames_per_episode * n_episodes * np.prod(data_shape)).reshape(-1, *data_shape),
         OnlineBuffer.INDEX_KEY: np.arange(n_frames_per_episode * n_episodes),
-        OnlineBuffer.EPISODE_INDEX_KEY: np.zeros(n_frames_per_episode * n_episodes),
+        OnlineBuffer.EPISODE_INDEX_KEY: np.repeat(np.arange(n_episodes), n_frames_per_episode),
         OnlineBuffer.FRAME_INDEX_KEY: np.tile(np.arange(n_frames_per_episode), n_episodes),
         OnlineBuffer.TIMESTAMP_KEY: np.tile(np.arange(n_frames_per_episode) / fps, n_episodes),
     }
@@ -154,7 +154,7 @@ def test_delta_timestamps_within_tolerance():
     buffer.tolerance_s = 0.04
     item = buffer[2]
     data, is_pad = item["index"], item[f"index{OnlineBuffer.IS_PAD_POSTFIX}"]
-    assert torch.equal(data, torch.tensor([0, 2, 3])), "Data does not match expected values"
+    assert torch.allclose(data, torch.tensor([0, 2, 3])), "Data does not match expected values"
     assert not is_pad.any(), "Unexpected padding detected"
 
 
@@ -196,8 +196,9 @@ def test_delta_timestamps_outside_tolerance_outside_episode_range():
     ), "Padding does not match expected values"
 
 
-@pytest.mark.parametrize("offline_dataset_size", [0, 2])
-@pytest.mark.parametrize("online_dataset_size", [0, 2])
+# Arbitrarily set small dataset sizes, making sure to have uneven sizes.
+@pytest.mark.parametrize("offline_dataset_size", [0, 6])
+@pytest.mark.parametrize("online_dataset_size", [0, 4])
 @pytest.mark.parametrize("online_sampling_ratio", [0.0, 1.0])
 def test_compute_sampler_weights_trivial(
     offline_dataset_size: int, online_dataset_size: int, online_sampling_ratio: float
@@ -213,15 +214,16 @@ def test_compute_sampler_weights_trivial(
     if offline_dataset_size == 0:
         offline_dataset.episode_data_index = {}
     else:
+        # Set up an episode_data_index with at least two episodes.
         offline_dataset.episode_data_index = {
-            "from": torch.tensor([0]),
-            "to": torch.tensor([offline_dataset_size]),
+            "from": torch.tensor([0, offline_dataset_size // 2]),
+            "to": torch.tensor([offline_dataset_size // 2, offline_dataset_size]),
         }
     # Create spoof online datset.
     online_dataset, _ = make_new_buffer()
     if online_dataset_size > 0:
         online_dataset.add_data(
-            make_spoof_data_frames(n_episodes=1, n_frames_per_episode=online_dataset_size)
+            make_spoof_data_frames(n_episodes=2, n_frames_per_episode=online_dataset_size // 2)
         )
 
     weights = compute_sampler_weights(
@@ -234,65 +236,65 @@ def test_compute_sampler_weights_trivial(
     elif online_sampling_ratio == 1:
         expected_weights = torch.cat([torch.zeros(offline_dataset_size), torch.ones(online_dataset_size)])
     expected_weights /= expected_weights.sum()
-    assert torch.equal(weights, expected_weights)
+    assert torch.allclose(weights, expected_weights)
 
 
 def test_compute_sampler_weights_nontrivial_ratio():
+    # Arbitrarily set small dataset sizes, making sure to have uneven sizes.
     # Create spoof offline dataset.
-    offline_dataset = LeRobotDataset.from_preloaded(hf_dataset=Dataset.from_dict({"data": [0, 1]}))
+    offline_dataset = LeRobotDataset.from_preloaded(hf_dataset=Dataset.from_dict({"data": list(range(4))}))
     offline_dataset.hf_dataset.set_transform(hf_transform_to_torch)
     offline_dataset.episode_data_index = {
-        "from": torch.tensor([0]),
-        "to": torch.tensor([2]),
+        "from": torch.tensor([0, 2]),
+        "to": torch.tensor([2, 4]),
     }
     # Create spoof online datset.
     online_dataset, _ = make_new_buffer()
-    online_dataset.add_data(make_spoof_data_frames(n_episodes=1, n_frames_per_episode=2))
-
+    online_dataset.add_data(make_spoof_data_frames(n_episodes=4, n_frames_per_episode=2))
     online_sampling_ratio = 0.8
     weights = compute_sampler_weights(
         offline_dataset, online_dataset=online_dataset, online_sampling_ratio=online_sampling_ratio
     )
-    assert torch.equal(weights, torch.tensor([0.1, 0.1, 0.4, 0.4]))
+    assert torch.allclose(
+        weights, torch.tensor([0.05, 0.05, 0.05, 0.05, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+    )
 
 
 def test_compute_sampler_weights_nontrivial_ratio_and_drop_last_n():
+    # Arbitrarily set small dataset sizes, making sure to have uneven sizes.
     # Create spoof offline dataset.
-    offline_dataset = LeRobotDataset.from_preloaded(hf_dataset=Dataset.from_dict({"data": [0, 1]}))
+    offline_dataset = LeRobotDataset.from_preloaded(hf_dataset=Dataset.from_dict({"data": list(range(4))}))
     offline_dataset.hf_dataset.set_transform(hf_transform_to_torch)
     offline_dataset.episode_data_index = {
         "from": torch.tensor([0]),
-        "to": torch.tensor([2]),
+        "to": torch.tensor([4]),
     }
     # Create spoof online datset.
     online_dataset, _ = make_new_buffer()
-    online_dataset.add_data(make_spoof_data_frames(n_episodes=1, n_frames_per_episode=2))
+    online_dataset.add_data(make_spoof_data_frames(n_episodes=4, n_frames_per_episode=2))
     weights = compute_sampler_weights(
         offline_dataset, online_dataset=online_dataset, online_sampling_ratio=0.8, online_drop_n_last_frames=1
     )
-    assert torch.equal(weights, torch.tensor([0.1, 0.1, 0.8, 0.0]))
+    assert torch.allclose(
+        weights, torch.tensor([0.05, 0.05, 0.05, 0.05, 0.2, 0.0, 0.2, 0.0, 0.2, 0.0, 0.2, 0.0])
+    )
 
 
 def test_compute_sampler_weights_drop_n_last_frames():
     """Note: test copied from test_sampler."""
-    fps = 10
-    length = 2
     data_dict = {
-        "timestamp": np.arange(length) / fps,
-        "index": np.arange(length),
-        "episode_index": np.zeros(length),
-        "frame_index": np.arange(length),
+        "timestamp": [0, 0.1],
+        "index": [0, 1],
+        "episode_index": [0, 0],
+        "frame_index": [0, 1],
     }
     offline_dataset = LeRobotDataset.from_preloaded(hf_dataset=Dataset.from_dict(data_dict))
     offline_dataset.hf_dataset.set_transform(hf_transform_to_torch)
-    offline_dataset.episode_data_index = {"from": torch.tensor([0]), "to": torch.tensor([length])}
+    offline_dataset.episode_data_index = {"from": torch.tensor([0]), "to": torch.tensor([2])}
 
-    online_dataset = OnlineBuffer(
-        f"/tmp/{uuid4().hex}",
-        data_spec={},
-        buffer_capacity=len(data_dict["timestamp"]),
-    )
-    online_dataset.add_data(data_dict)
+    online_dataset, _ = make_new_buffer()
+    online_dataset.add_data(make_spoof_data_frames(n_episodes=4, n_frames_per_episode=2))
+
     weights = compute_sampler_weights(
         offline_dataset,
         offline_drop_n_last_frames=1,
@@ -300,4 +302,4 @@ def test_compute_sampler_weights_drop_n_last_frames():
         online_sampling_ratio=0.5,
         online_drop_n_last_frames=1,
     )
-    assert torch.equal(weights, torch.tensor([0.5, 0, 0.5, 0]))
+    assert torch.allclose(weights, torch.tensor([0.5, 0, 0.125, 0, 0.125, 0, 0.125, 0, 0.125, 0]))
