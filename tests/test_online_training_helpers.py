@@ -4,7 +4,10 @@ from uuid import uuid4
 import numpy as np
 import pytest
 import torch
+from datasets import Dataset
 
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.utils import hf_transform_to_torch
 from lerobot.scripts.online_training_helpers import OnlineBuffer, compute_sampler_weights
 
 # Some constants for OnlineBuffer tests.
@@ -202,7 +205,28 @@ def test_compute_sampler_weights_trivial(
     # Pass/skip the test if both datasets sizes are zero.
     if offline_dataset_size + online_dataset_size == 0:
         return
-    weights = compute_sampler_weights(offline_dataset_size, online_dataset_size, online_sampling_ratio)
+    # Create spoof offline dataset.
+    offline_dataset = LeRobotDataset.from_preloaded(
+        hf_dataset=Dataset.from_dict({"data": list(range(offline_dataset_size))})
+    )
+    offline_dataset.hf_dataset.set_transform(hf_transform_to_torch)
+    if offline_dataset_size == 0:
+        offline_dataset.episode_data_index = {}
+    else:
+        offline_dataset.episode_data_index = {
+            "from": torch.tensor([0]),
+            "to": torch.tensor([offline_dataset_size]),
+        }
+    # Create spoof online datset.
+    online_dataset, _ = make_new_buffer()
+    if online_dataset_size > 0:
+        online_dataset.add_data(
+            make_spoof_data_frames(n_episodes=1, n_frames_per_episode=online_dataset_size)
+        )
+
+    weights = compute_sampler_weights(
+        offline_dataset, online_dataset=online_dataset, online_sampling_ratio=online_sampling_ratio
+    )
     if offline_dataset_size == 0 or online_dataset_size == 0:
         expected_weights = torch.ones(offline_dataset_size + online_dataset_size)
     elif online_sampling_ratio == 0:
@@ -214,19 +238,66 @@ def test_compute_sampler_weights_trivial(
 
 
 def test_compute_sampler_weights_nontrivial_ratio():
-    offline_dataset_size = 2
-    online_dataset_size = 2
+    # Create spoof offline dataset.
+    offline_dataset = LeRobotDataset.from_preloaded(hf_dataset=Dataset.from_dict({"data": [0, 1]}))
+    offline_dataset.hf_dataset.set_transform(hf_transform_to_torch)
+    offline_dataset.episode_data_index = {
+        "from": torch.tensor([0]),
+        "to": torch.tensor([2]),
+    }
+    # Create spoof online datset.
+    online_dataset, _ = make_new_buffer()
+    online_dataset.add_data(make_spoof_data_frames(n_episodes=1, n_frames_per_episode=2))
+
     online_sampling_ratio = 0.8
-    weights = compute_sampler_weights(offline_dataset_size, online_dataset_size, online_sampling_ratio)
+    weights = compute_sampler_weights(
+        offline_dataset, online_dataset=online_dataset, online_sampling_ratio=online_sampling_ratio
+    )
     assert torch.equal(weights, torch.tensor([0.1, 0.1, 0.4, 0.4]))
 
 
-def test_compute_sampler_weights_nontrivial_ratio_and_online_data_mask():
-    offline_dataset_size = 2
-    online_dataset_size = 2
-    online_sampling_ratio = 0.8
-    online_data_mask = torch.tensor([True, False])
+def test_compute_sampler_weights_nontrivial_ratio_and_drop_last_n():
+    # Create spoof offline dataset.
+    offline_dataset = LeRobotDataset.from_preloaded(hf_dataset=Dataset.from_dict({"data": [0, 1]}))
+    offline_dataset.hf_dataset.set_transform(hf_transform_to_torch)
+    offline_dataset.episode_data_index = {
+        "from": torch.tensor([0]),
+        "to": torch.tensor([2]),
+    }
+    # Create spoof online datset.
+    online_dataset, _ = make_new_buffer()
+    online_dataset.add_data(make_spoof_data_frames(n_episodes=1, n_frames_per_episode=2))
     weights = compute_sampler_weights(
-        offline_dataset_size, online_dataset_size, online_sampling_ratio, online_data_mask
+        offline_dataset, online_dataset=online_dataset, online_sampling_ratio=0.8, online_drop_n_last_frames=1
     )
     assert torch.equal(weights, torch.tensor([0.1, 0.1, 0.8, 0.0]))
+
+
+def test_compute_sampler_weights_drop_n_last_frames():
+    """Note: test copied from test_sampler."""
+    fps = 10
+    length = 2
+    data_dict = {
+        "timestamp": np.arange(length) / fps,
+        "index": np.arange(length),
+        "episode_index": np.zeros(length),
+        "frame_index": np.arange(length),
+    }
+    offline_dataset = LeRobotDataset.from_preloaded(hf_dataset=Dataset.from_dict(data_dict))
+    offline_dataset.hf_dataset.set_transform(hf_transform_to_torch)
+    offline_dataset.episode_data_index = {"from": torch.tensor([0]), "to": torch.tensor([length])}
+
+    online_dataset = OnlineBuffer(
+        f"/tmp/{uuid4().hex}",
+        data_spec={},
+        buffer_capacity=len(data_dict["timestamp"]),
+    )
+    online_dataset.add_data(data_dict)
+    weights = compute_sampler_weights(
+        offline_dataset,
+        offline_drop_n_last_frames=1,
+        online_dataset=online_dataset,
+        online_sampling_ratio=0.5,
+        online_drop_n_last_frames=1,
+    )
+    assert torch.equal(weights, torch.tensor([0.5, 0, 0.5, 0]))

@@ -431,11 +431,6 @@ def _compile_episode_data(
         for key in rollout_data["observation"]:
             ep_dict[key] = rollout_data["observation"][key][ep_ix, :num_frames]
 
-        # A special key indicating if the frame is for the last observation. This can be used downstream to
-        # ignore any other keys for the last frame.
-        ep_dict["observation.last"] = torch.full(size=(num_frames,), fill_value=False)
-        ep_dict["observation.last"][-1] = True
-
         ep_dicts.append(ep_dict)
 
     data_dict = {}

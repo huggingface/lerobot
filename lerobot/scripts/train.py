@@ -461,7 +461,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             "next.reward": {"shape": (), "dtype": np.dtype("float32")},
             "next.done": {"shape": (), "dtype": np.dtype("?")},
             "next.success": {"shape": (), "dtype": np.dtype("?")},
-            "observation.last": {"shape": (), "dtype": np.dtype("?")},
         },
         buffer_capacity=cfg.training.online_buffer_capacity,
         fps=online_env.unwrapped.metadata["render_fps"],
@@ -475,10 +474,13 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # Create dataloader for online training.
     concat_dataset = torch.utils.data.ConcatDataset([offline_dataset, online_dataset])
     sampler_weights = compute_sampler_weights(
-        len(offline_dataset),
-        len(online_dataset),
-        cfg.training.online_sampling_ratio,
-        ~online_dataset.get_data_by_key("observation.last"),
+        offline_dataset,
+        offline_drop_n_last_frames=cfg.training.get("drop_n_last_frames", 0),
+        online_dataset=online_dataset,
+        # +1 because online rollouts return an extra frame for the "final observation". Note: we don't have
+        # this final observation in the offline datasets, but we might add them in future.
+        online_drop_n_last_frames=cfg.training.get("drop_n_last_frames", 0) + 1,
+        online_sampling_ratio=cfg.training.online_sampling_ratio,
     )
     sampler = torch.utils.data.WeightedRandomSampler(
         sampler_weights,
@@ -546,10 +548,13 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
                 # Update the sampling weights.
                 sampler.weights = compute_sampler_weights(
-                    len(offline_dataset),
-                    len(online_dataset),
-                    cfg.training.online_sampling_ratio,
-                    ~online_dataset.get_data_by_key("observation.last"),
+                    offline_dataset,
+                    offline_drop_n_last_frames=cfg.training.get("drop_n_last_frames", 0),
+                    online_dataset=online_dataset,
+                    # +1 because online rollouts return an extra frame for the "final observation". Note: we don't have
+                    # this final observation in the offline datasets, but we might add them in future.
+                    online_drop_n_last_frames=cfg.training.get("drop_n_last_frames", 0) + 1,
+                    online_sampling_ratio=cfg.training.online_sampling_ratio,
                 )
                 sampler.num_samples = len(concat_dataset)
 

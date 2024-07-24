@@ -1,4 +1,8 @@
-"""A collection of helper functions and classes for the online training loop in train.py"""
+"""A collection of helper functions and classes for the online training loop in train.py
+
+Note to maintainers: This duplicates some logic from LeRobotDataset and EpisodeAwareSampler. We might consider
+converging to one approach when/if this functionality moves to core.
+"""
 
 import os
 from pathlib import Path
@@ -6,6 +10,8 @@ from typing import Any
 
 import numpy as np
 import torch
+
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 
 def _make_memmap_safe(**kwargs) -> np.memmap:
@@ -80,7 +86,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
         # Tolerance in seconds used to discard loaded frames when their timestamps are not close enough from
         # the requested frames. It is only used when `delta_timestamps` is provided.
         # minus 1e-4 to account for possible numerical error
-        self.tolerance_s = 1 / self.fps - 1e-4
+        self.tolerance_s = 1 / self.fps - 1e-4 if fps is not None else None
         self._buffer_capacity = buffer_capacity
         data_spec = self._make_data_spec(data_spec, buffer_capacity)
         Path(write_dir).mkdir(parents=True, exist_ok=True)
@@ -274,43 +280,90 @@ class OnlineBuffer(torch.utils.data.Dataset):
 
 
 def compute_sampler_weights(
-    offline_dataset_size: int,
-    online_dataset_size: int,
-    online_sampling_ratio: float,
-    online_data_mask: torch.Tensor | None = None,
+    offline_dataset: LeRobotDataset,
+    offline_drop_n_last_frames: int = 0,
+    online_dataset: OnlineBuffer | None = None,
+    online_sampling_ratio: float | None = None,
+    online_drop_n_last_frames: int = 0,
 ) -> torch.Tensor:
-    """Update the weights for the online training dataloader sampler.
+    """Compute the sampling weights for the online training dataloader.
 
-    `online_data_mask` can be used to set the sampling probability for selected online samples to 0 (wherever
-    online_data_mask is False).
+    Args:
+        offline_dataset: The LeRobotDataset used for offline pre-training.
+        online_drop_n_last_frames: Number of frames to drop from the end of each offline dataset episode.
+        online_dataset: The OnlineBuffer used in online training.
+        online_sampling_ratio: The proportion of data that should be sampled from the online dataset. If an
+            online dataset is provided, this value must also be provided.
+        online_drop_n_first_frames: See `offline_drop_n_last_frames`. This is the same, but for the online
+            dataset.
+    Returns:
+        Tensor of weights for [offline_dataset; online_dataset], normalized to 1.
 
-    `online_sampling_ratio` is only respected when the offline and online dataset sizes are both non-zero.
-
-    Returns weights for [offline_dataset, online_dataset], normalized to 1.
+    Notes to maintainers:
+        - This duplicates some logic from EpisodeAwareSampler. We might consider converging to one approach
+          when/if this function moves to core. This current design is not meant to be totally general but at
+          least aims to lean in that direction. Some points to note:
+        - When used with `torch.utils.data.WeightedRandomSampler`, it could completely replace
+          `EpisodeAwareSampler` as the online dataset related arguments are optional. The only missing feature
+          is the ability to turn shuffling off.
+        - Options `drop_first_n_frames` and `episode_indices_to_use` can be added easily. They were not
+          included here to avoid adding complexity.
     """
-    if offline_dataset_size == 0 and online_dataset_size == 0:
-        raise ValueError("At least one of `offline_dataset_size` or `online_dataset_size` should be > 0.")
-    weights = []
-    if offline_dataset_size > 0:
-        weights.append(
-            torch.full(
-                size=(offline_dataset_size,),
-                fill_value=(1 - online_sampling_ratio) / offline_dataset_size,
-            )
+    if len(offline_dataset) == 0 and (online_dataset is None or len(online_dataset) == 0):
+        raise ValueError("At least one of `offline_dataset` or `online_dataset` should be contain data.")
+    if (online_dataset is None) ^ (online_sampling_ratio is None):
+        raise ValueError(
+            "`online_dataset` and `online_sampling_ratio` must be provided together or not at all."
         )
-    if online_dataset_size > 0:
-        if online_data_mask is None:
-            online_data_mask = torch.full(size=(online_dataset_size,), fill_value=True)
+    offline_sampling_ratio = 0 if online_sampling_ratio is None else 1 - online_sampling_ratio
+
+    weights = []
+
+    if len(offline_dataset) > 0:
+        offline_data_mask_indices = []
+        for start_index, end_index in zip(
+            offline_dataset.episode_data_index["from"],
+            offline_dataset.episode_data_index["to"],
+            strict=True,
+        ):
+            offline_data_mask_indices.extend(
+                range(start_index.item(), end_index.item() - offline_drop_n_last_frames)
+            )
+        offline_data_mask = torch.zeros(len(offline_dataset), dtype=torch.bool)
+        offline_data_mask[torch.tensor(offline_data_mask_indices)] = True
         weights.append(
             torch.full(
-                size=(online_dataset_size,),
+                size=(len(offline_dataset),),
+                fill_value=offline_sampling_ratio / offline_data_mask.sum(),
+            )
+            * offline_data_mask
+        )
+
+    if online_dataset is not None and len(online_dataset) > 0:
+        online_data_mask_indices = []
+        episode_indices = online_dataset.get_data_by_key("episode_index")
+        for episode_idx in torch.unique(episode_indices):
+            where_episode = torch.where(episode_indices == episode_idx)
+            start_index = where_episode[0][0]
+            end_index = where_episode[0][-1] + 1
+            online_data_mask_indices.extend(
+                range(start_index.item(), end_index.item() - online_drop_n_last_frames)
+            )
+        online_data_mask = torch.zeros(len(online_dataset), dtype=torch.bool)
+        online_data_mask[torch.tensor(online_data_mask_indices)] = True
+        weights.append(
+            torch.full(
+                size=(len(online_dataset),),
                 fill_value=online_sampling_ratio / online_data_mask.sum(),
             )
             * online_data_mask
         )
+
     weights = torch.cat(weights)
+
     if weights.sum() == 0:
         weights += 1 / len(weights)
     else:
         weights /= weights.sum()
+
     return weights
