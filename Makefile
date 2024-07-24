@@ -58,7 +58,7 @@ test-act-ete-eval:
 		device=$(DEVICE) \
 
 test-act-ete-train-accelerate-amp:
-	accelerate launch --cpu --mixed-precision=bf16 \
+	accelerate launch --cpu --mixed-precision=bf16 lerobot/scripts/train.py \
 		policy=act \
 		policy.dim_model=64 \
 		env=aloha \
