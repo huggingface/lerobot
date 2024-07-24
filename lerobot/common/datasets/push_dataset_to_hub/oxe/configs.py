@@ -49,11 +49,12 @@ class StateEncoding(IntEnum):
 # Defines Action Encoding Schemes
 class ActionEncoding(IntEnum):
     # fmt: off
-    EEF_POS = 1             # EEF Delta XYZ (3) + Roll-Pitch-Yaw (3) + Gripper Open/Close (1)
-    JOINT_POS = 2           # Joint Delta Position (7) + Gripper Open/Close (1)
-    JOINT_POS_BIMANUAL = 3  # Joint Delta Position (2 x [ Joint Delta Position (6) + Gripper Open/Close (1) ])
-    EEF_R6 = 4              # EEF Delta XYZ (3) + R6 (6) + Gripper Open/Close (1)
-    EEF_VEL = 5
+    EEF_POS_4 = 1            # EEF Delta XYZ (3) + Gripper Open/Close (1)
+    EEF_POS_7 = 1            # EEF Delta XYZ (3) + Roll-Pitch-Yaw (3) + Gripper Open/Close (1)
+    JOINT_POS = 2            # Joint Delta Position (7) + Gripper Open/Close (1)
+    JOINT_POS_BIMANUAL = 3   # Joint Delta Position (2 x [ Joint Delta Position (6) + Gripper Open/Close (1) ])
+    EEF_VEL = 5              # EEF XYZ vel (3) + angular vel (3) + Gripper Open/Close (1)
+    WHEELED = 6              # For wheeled robots
     # fmt: on
 
 
@@ -64,7 +65,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["base_pose_tool_reached", "gripper_closed"],
         "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 3,
     },
     "kuka": {
@@ -75,7 +76,7 @@ OXE_DATASET_CONFIGS = {
             "gripper_closed",
         ],
         "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10
     },
     "bridge_oxe": {  # Version of Bridge V2 in Open X-Embodiment mixture
@@ -83,7 +84,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 5,
     },
     "bridge_orig": {  # Original version of Bridge V2 from project website
@@ -91,7 +92,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 5,
     },
     "bridge_dataset": {  # Original version of Bridge V2 from project website
@@ -99,7 +100,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 5,
     },
     "taco_play": {
@@ -115,7 +116,7 @@ OXE_DATASET_CONFIGS = {
         },
         "state_obs_keys": ["state_eef", None, "state_gripper"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 15,
     },
     "jaco_play": {
@@ -127,7 +128,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["state_eef", None, "state_gripper"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "berkeley_cable_routing": {
@@ -147,7 +148,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": [None, None, None, None, None, None, None, None],
         "state_encoding": StateEncoding.NONE,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
 
     },
@@ -156,7 +157,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": [None, None, None, None, None, None, None, None],
         "state_encoding": StateEncoding.NONE,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 3,
     },
     "viola": {
@@ -168,7 +169,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["joint_states", "gripper_states"],
         "state_encoding": StateEncoding.JOINT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 20,
     },
     "berkeley_autolab_ur5": {
@@ -180,7 +181,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": "depth", "secondary": None, "wrist": None},
         "state_obs_keys": ["state"],
         "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 5,
     },
     "toto": {
@@ -196,7 +197,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["effector_translation", None, None, None, None, None, None],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "columbia_cairlab_pusht_real": {
@@ -208,7 +209,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["robot_state", None, None, None, None, None, None],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "stanford_kuka_multimodal_dataset_converted_externally_to_rlds": {
@@ -216,7 +217,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": "depth_image", "secondary": None, "wrist": None},
         "state_obs_keys": ["ee_position", "ee_orientation", None],
         "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 20,
     },
     "nyu_rot_dataset_converted_externally_to_rlds": {
@@ -224,7 +225,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["eef_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 3,
     },
     "stanford_hydra_dataset_converted_externally_to_rlds": {
@@ -236,7 +237,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["eef_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "austin_buds_dataset_converted_externally_to_rlds": {
@@ -248,7 +249,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["state"],
         "state_encoding": StateEncoding.JOINT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 20,
     },
     "nyu_franka_play_dataset_converted_externally_to_rlds": {
@@ -280,7 +281,7 @@ OXE_DATASET_CONFIGS = {
         },
         "state_obs_keys": ["tcp_pose", "gripper_state"],
         "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 20,
     },
     "furniture_bench_dataset_converted_externally_to_rlds": {
@@ -304,7 +305,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": [None, None, None, None, None, None, None, None],
         "state_encoding": StateEncoding.NONE,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "ucsd_kitchen_dataset_converted_externally_to_rlds": {
@@ -312,7 +313,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["joint_state", None],
         "state_encoding": StateEncoding.JOINT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 2,
     },
     "ucsd_pick_and_place_dataset_converted_externally_to_rlds": {
@@ -357,7 +358,7 @@ OXE_DATASET_CONFIGS = {
             "present/sensed_close",
         ],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "utokyo_pr2_opening_fridge_converted_externally_to_rlds": {
@@ -365,7 +366,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["eef_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "utokyo_pr2_tabletop_manipulation_converted_externally_to_rlds": {
@@ -373,7 +374,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["eef_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "utokyo_xarm_pick_and_place_converted_externally_to_rlds": {
@@ -385,7 +386,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["end_effector_pose", None, None],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "utokyo_xarm_bimanual_converted_externally_to_rlds": {
@@ -393,7 +394,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["pose_r", None, None],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "robo_net": {
@@ -425,7 +426,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["state", None],
         "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "stanford_mask_vit_converted_externally_to_rlds": {
@@ -433,7 +434,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["eef_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
     },
     "tokyo_u_lsmo_converted_externally_to_rlds": {
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
@@ -472,7 +473,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["eef_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 12.5,
     },
     "stanford_robocook_converted_externally_to_rlds": {
@@ -480,7 +481,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": "depth_1", "secondary": "depth_2", "wrist": None},
         "state_obs_keys": ["eef_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 5,
     },
     "imperialcollege_sawyer_wrist_cam": {
@@ -492,7 +493,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": [None, None, None, None, None, None, None, "state"],
         "state_encoding": StateEncoding.NONE,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "iamlab_cmu_pickup_insert_converted_externally_to_rlds": {
@@ -504,7 +505,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["joint_state", "gripper_state"],
         "state_encoding": StateEncoding.JOINT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 20,
     },
     "uiuc_d3field": {
@@ -512,7 +513,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": "depth_1", "secondary": "depth_2", "wrist": None},
         "state_obs_keys": [None, None, None, None, None, None, None, None],
         "state_encoding": StateEncoding.NONE,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 1,
     },
     "utaustin_mutex": {
@@ -524,7 +525,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["state"],
         "state_encoding": StateEncoding.JOINT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 20,
     },
     "berkeley_fanuc_manipulation": {
@@ -536,7 +537,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["joint_state", None, "gripper_state"],
         "state_encoding": StateEncoding.JOINT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "cmu_playing_with_food": {
@@ -548,7 +549,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["state", None, None],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "cmu_play_fusion": {
@@ -556,7 +557,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["state"],
         "state_encoding": StateEncoding.JOINT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 5,
     },
     "cmu_stretch": {
@@ -564,31 +565,31 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["eef_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10,
     },
     "berkeley_gnm_recon": {
-        "image_obs_keys": {"primary": None, "secondary": None, "wrist": "image"},
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["state", None, None],
+        "state_obs_keys": ["state", "position", "yaw"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_VEL,
+        "action_encoding": ActionEncoding.WHEELED,
         "fps": 3,
     },
     "berkeley_gnm_cory_hall": {
-        "image_obs_keys": {"primary": None, "secondary": None, "wrist": "image"},
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["state", None, None],
+        "state_obs_keys": ["state", "position", "yaw"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_VEL,
+        "action_encoding": ActionEncoding.WHEELED,
         "fps": 5,
     },
     "berkeley_gnm_sac_son": {
-        "image_obs_keys": {"primary": None, "secondary": None, "wrist": "image"},
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["state", None, None],
+        "state_obs_keys": ["state", "position", "yaw"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.WHEELED,
         "fps": 10,
     },
     "droid": {
@@ -600,7 +601,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["proprio"],
         "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 15,
     },
     "droid100": {  # For testing
@@ -612,7 +613,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["proprio"],
         "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 15,
     },
     "fmb_dataset": {
@@ -636,7 +637,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["proprio"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 3.75,
     },
     "roboset": {
@@ -660,7 +661,31 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["proprio"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
+    },
+    "usc_cloth_sim_converted_externally_to_rlds": {
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": [None, None, None],
+        "state_encoding": StateEncoding.NONE,
+        "action_encoding": ActionEncoding.EEF_POS_4,
+        "fps": 10,
+    },
+    "plex_robosuite": {
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["state", None, None],
+        "state_encoding": StateEncoding.NONE,
+        "action_encoding": ActionEncoding.EEF_POS_7,
+        "fps": 20,
+    },
+    "conq_hose_manipulation": {
+        "image_obs_keys": {"primary": "frontleft_fisheye_image", "secondary": "frontright_fisheye_image", "wrist": "hand_color_image"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["state", None, None],
+        "state_encoding": StateEncoding.NONE,
+        "action_encoding": ActionEncoding.EEF_VEL,
+        "fps": 30,
     },
     ### T-DROID datasets
     "tdroid_carrot_in_bowl": {  # "put carrot in bowl" task, 50 demos @ 5 Hz control
@@ -668,7 +693,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": "static_depth_image", "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 15,
     },
     "tdroid_pour_corn_in_pot": {  # "pour corn from red bowl into steel pot" task, 50 demos @ 5 Hz control
@@ -676,7 +701,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": "static_depth_image", "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 15,
     },
     "tdroid_flip_pot_upright": {  # "flip pot upright" task, 10 demos @ 5 Hz control
@@ -684,7 +709,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": "static_depth_image", "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 15,
     },
     "tdroid_move_object_onto_plate": {  # "move <object> onto plate" task, 150 demos @ 5 Hz control
@@ -692,7 +717,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": "static_depth_image", "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 15,
     },
     "tdroid_knock_object_over": {  # "knock <object> over" task, 70 demos @ 5 Hz control
@@ -700,7 +725,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": "static_depth_image", "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 15,
     },
     "tdroid_cover_object_with_towel": {  # "cover <object> with towel" task, 45 demos @ 5 Hz control
@@ -708,7 +733,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": "static_depth_image", "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 15,
     },
     ### DROID Finetuning datasets
@@ -721,7 +746,7 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["proprio"],
         "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
+        "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 15,
     },
 }

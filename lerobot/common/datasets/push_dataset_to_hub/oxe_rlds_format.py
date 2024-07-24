@@ -105,10 +105,17 @@ def load_from_raw(
         episodes (list[int] | None, optional): _description_. Defaults to None.
     """
     ds_builder = tfds.builder_from_directory(str(raw_dir))
-    dataset = ds_builder.as_dataset(
-        split="all",
-        decoders={"steps": tfds.decode.SkipDecoding()},
-    )
+    try:
+        dataset = ds_builder.as_dataset(
+            split="all",
+            decoders={"steps": tfds.decode.SkipDecoding()},
+        )
+    except NotImplementedError:
+         dataset = ds_builder.as_data_source(
+            split="all",
+            decoders={"steps": tfds.decode.SkipDecoding()},
+        )
+       
     dataset_info = ds_builder.info
     print("dataset_info: ", dataset_info)
 
@@ -118,7 +125,6 @@ def load_from_raw(
     # "flatten" the dataset as such we can apply trajectory level map() easily
     # each [obs][key] has a shape of (frame_size, ...)
     dataset = dataset.enumerate().map(_broadcast_metadata_rlds)
-
     # we will apply the standardization transform if the dataset_name is provided
     if oxe_dataset_name is not None:
         print(" - applying standardization transform for dataset: ", oxe_dataset_name)

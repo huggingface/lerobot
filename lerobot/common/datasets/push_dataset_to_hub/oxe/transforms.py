@@ -833,6 +833,14 @@ def rh20t_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     )
     return trajectory
 
+def usc_cloth_sim_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    return trajectory
+
+def plex_robosuite_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    return trajectory
+
+def conq_hose_manipulation_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    return trajectory
 
 def tdroid_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["action"] = tf.concat(
@@ -912,6 +920,9 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "dobbe": dobbe_dataset_transform,
     "roboset": roboset_dataset_transform,
     "rh20t": rh20t_dataset_transform,
+    "usc_cloth_sim_converted_externally_to_rlds": usc_cloth_sim_transform,
+    "plex_robosuite": plex_robosuite_transform,
+    "conq_hose_manipulation": conq_hose_manipulation_transform,
     ### T-DROID datasets
     "tdroid_carrot_in_bowl": tdroid_dataset_transform,
     "tdroid_pour_corn_in_pot": tdroid_dataset_transform,
