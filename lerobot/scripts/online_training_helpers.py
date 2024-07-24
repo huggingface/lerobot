@@ -134,7 +134,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
         complete_data_spec = {
             # _next_index will be a pointer to the next index that we should start filling from when we add
             # more data.
-            OnlineBuffer.NEXT_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (1,)},
+            OnlineBuffer.NEXT_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": ()},
             # Since the memmap is initialized with all-zeros, this keeps track of which indices are occupied
             # with real data rather than the dummy initialization.
             OnlineBuffer.OCCUPANCY_MASK_KEY: {"dtype": np.dtype("?"), "shape": (buffer_capacity,)},
@@ -163,7 +163,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
         if not all(len(data[k]) == new_data_length for k in self.data_keys):
             raise ValueError("All data items should have the same length")
 
-        next_index = self._data[OnlineBuffer.NEXT_INDEX_KEY][0]
+        next_index = self._data[OnlineBuffer.NEXT_INDEX_KEY]
 
         # Sanity check to make sure that the new data indices start from 0.
         assert data[OnlineBuffer.EPISODE_INDEX_KEY][0].item() == 0
@@ -188,9 +188,9 @@ class OnlineBuffer(torch.utils.data.Dataset):
                 self._data[OnlineBuffer.OCCUPANCY_MASK_KEY][next_index:] = True
                 self._data[k][:n_surplus] = data[k][-n_surplus:]
         if n_surplus == 0:
-            self._data[OnlineBuffer.NEXT_INDEX_KEY][0] = next_index + new_data_length
+            self._data[OnlineBuffer.NEXT_INDEX_KEY] = next_index + new_data_length
         else:
-            self._data[OnlineBuffer.NEXT_INDEX_KEY][0] = n_surplus
+            self._data[OnlineBuffer.NEXT_INDEX_KEY] = n_surplus
 
     @property
     def data_keys(self) -> list[str]:
