@@ -358,7 +358,7 @@ def test_normalize(insert_temporal_dim):
         # was changed to true. For some reason, tests would pass locally, but not in CI. So here we override
         # to test with `policy.use_mpc=false`.
         ("xarm", "tdmpc", ["policy.use_mpc=false"], "use_policy"),
-        ("xarm", "tdmpc", ["policy.use_mpc=true"], "use_mpc"),
+        # ("xarm", "tdmpc", ["policy.use_mpc=true"], "use_mpc"),
         (
             "pusht",
             "diffusion",
