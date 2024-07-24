@@ -438,6 +438,12 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         step += 1
         offline_step += 1  # noqa: SIM113
 
+    if cfg.training.online_steps == 0:
+        if eval_env:
+            eval_env.close()
+        logging.info("End of training")
+        return
+
     # Online training.
 
     # Create an env dedicated to online episodes collection from policy rollout.
