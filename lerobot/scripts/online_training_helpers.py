@@ -268,41 +268,49 @@ class OnlineBuffer(torch.utils.data.Dataset):
 
         return self._item_to_tensors(item)
 
+    def get_data_by_key(self, key: str) -> torch.Tensor:
+        """Returns all data for a given data key as a Tensor."""
+        return torch.from_numpy(self._data[key][self._data[OnlineBuffer.OCCUPANCY_MASK_KEY]])
 
-def update_online_buffer(
-    online_dataset: OnlineBuffer,
-    concat_dataset: torch.utils.data.ConcatDataset,
-    sampler: torch.utils.data.WeightedRandomSampler,
-    new_data_dict: dict[str, torch.Tensor],
+
+def compute_sampler_weights(
+    offline_dataset_size: int,
+    online_dataset_size: int,
     online_sampling_ratio: float,
-):
+    online_data_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Update the weights for the online training dataloader sampler.
+
+    `online_data_mask` can be used to set the sampling probability for selected online samples to 0 (wherever
+    online_data_mask is False).
+
+    `online_sampling_ratio` is only respected when the offline and online dataset sizes are both non-zero.
+
+    Returns weights for [offline_dataset, online_dataset], normalized to 1.
     """
-    Modifies the online_dataset, concat_dataset, and sampler in place by integrating new episodes from
-    new_data_dict into the online_dataset, updating the concatenated dataset's structure and adjusting the
-    sampling strategy based on the specified percentage of online samples.
-
-    Args:
-        online_dataset: The existing online dataset to be updated.
-        concat_dataset: The concatenated PyTorch Dataset that combines offline and online datasets (in that
-            order), used for sampling purposes.
-        sampler: A sampler that will be updated to reflect changes in the dataset sizes and specified sampling
-            weights.
-        new_data_dict: A mapping from data key to data tensor containing the new episodes to be added.
-        online_sampling_ratio: The target percentage of samples that should come from the online dataset
-            during sampling operations.
-    """
-    online_dataset.add_data(new_data_dict)
-
-    # Update the concatenated dataset length used during sampling.
-    concat_dataset.cumulative_sizes = concat_dataset.cumsum(concat_dataset.datasets)
-
-    # Update the sampling weights for each frame.
-    len_online = len(online_dataset)
-    len_offline = len(concat_dataset) - len_online
-    sampler.weights = torch.tensor(
-        [(1 - online_sampling_ratio) / len_offline] * len_offline
-        + [online_sampling_ratio / len_online] * len_online
-    )
-
-    # Update the total number of samples used during sampling
-    sampler.num_samples = len(concat_dataset)
+    if offline_dataset_size == 0 and online_dataset_size == 0:
+        raise ValueError("At least one of `offline_dataset_size` or `online_dataset_size` should be > 0.")
+    weights = []
+    if offline_dataset_size > 0:
+        weights.append(
+            torch.full(
+                size=(offline_dataset_size,),
+                fill_value=(1 - online_sampling_ratio) / offline_dataset_size,
+            )
+        )
+    if online_dataset_size > 0:
+        if online_data_mask is None:
+            online_data_mask = torch.full(size=(online_dataset_size,), fill_value=True)
+        weights.append(
+            torch.full(
+                size=(online_dataset_size,),
+                fill_value=online_sampling_ratio / online_data_mask.sum(),
+            )
+            * online_data_mask
+        )
+    weights = torch.cat(weights)
+    if weights.sum() == 0:
+        weights += 1 / len(weights)
+    else:
+        weights /= weights.sum()
+    return weights

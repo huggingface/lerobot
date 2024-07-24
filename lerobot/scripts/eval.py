@@ -409,22 +409,33 @@ def _compile_episode_data(
     ep_dicts = []
     total_frames = 0
     for ep_ix in range(rollout_data["action"].shape[0]):
-        num_frames = done_indices[ep_ix].item() + 1  # + 1 to include the first done frame
+        # + 2 to include the first done frame and the last observation frame.
+        num_frames = done_indices[ep_ix].item() + 2
         total_frames += num_frames
 
-        # TODO(rcadene): We need to add a missing last frame which is the observation
-        # of a done state. it is critical to have this frame for tdmpc to predict a "done observation/state"
+        # Here we do `num_frames - 1` as we don't want to include the last observation frame just yet.
         ep_dict = {
-            "action": rollout_data["action"][ep_ix, :num_frames],
-            "episode_index": torch.tensor([start_episode_index + ep_ix] * num_frames),
-            "frame_index": torch.arange(0, num_frames, 1),
-            "timestamp": torch.arange(0, num_frames, 1) / fps,
-            "next.done": rollout_data["done"][ep_ix, :num_frames],
-            "next.success": rollout_data["success"][ep_ix, :num_frames],
-            "next.reward": rollout_data["reward"][ep_ix, :num_frames].type(torch.float32),
+            "action": rollout_data["action"][ep_ix, : num_frames - 1],
+            "episode_index": torch.tensor([start_episode_index + ep_ix] * (num_frames - 1)),
+            "frame_index": torch.arange(0, num_frames - 1, 1),
+            "timestamp": torch.arange(0, num_frames - 1, 1) / fps,
+            "next.done": rollout_data["done"][ep_ix, : num_frames - 1],
+            "next.success": rollout_data["success"][ep_ix, : num_frames - 1],
+            "next.reward": rollout_data["reward"][ep_ix, : num_frames - 1].type(torch.float32),
         }
+
+        # For the last observation frame, all other keys will just be copy padded.
+        for k in ep_dict:
+            ep_dict[k] = torch.cat([ep_dict[k], ep_dict[k][-1:]])
+
         for key in rollout_data["observation"]:
-            ep_dict[key] = rollout_data["observation"][key][ep_ix][:num_frames]
+            ep_dict[key] = rollout_data["observation"][key][ep_ix, :num_frames]
+
+        # A special key indicating if the frame is for the last observation. This can be used downstream to
+        # ignore any other keys for the last frame.
+        ep_dict["observation.last"] = torch.full(size=(num_frames,), fill_value=False)
+        ep_dict["observation.last"][-1] = True
+
         ep_dicts.append(ep_dict)
 
     data_dict = {}

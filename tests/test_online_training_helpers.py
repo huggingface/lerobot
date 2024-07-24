@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.scripts.online_training_helpers import OnlineBuffer
+from lerobot.scripts.online_training_helpers import OnlineBuffer, compute_sampler_weights
 
 # Some constants for OnlineBuffer tests.
 data_key = "data"
@@ -91,7 +91,21 @@ def test_write_read(do_reload: bool):
 
     assert len(buffer) == n_frames_per_episode * n_episodes
     for i, item in enumerate(buffer):
+        assert all(isinstance(item[k], torch.Tensor) for k in item)
         assert np.array_equal(item[data_key].numpy(), new_data[data_key][i])
+
+
+def test_read_data_key():
+    """Tests that data can be added to a buffer and all data for a. specific key can be read back."""
+    buffer, _ = make_new_buffer()
+    n_episodes = 2
+    n_frames_per_episode = buffer_capacity // 4
+    new_data = make_spoof_data_frames(n_episodes, n_frames_per_episode)
+    buffer.add_data(new_data)
+
+    data_from_buffer = buffer.get_data_by_key(data_key)
+    assert isinstance(data_from_buffer, torch.Tensor)
+    assert np.array_equal(data_from_buffer.numpy(), new_data[data_key])
 
 
 def test_fifo():
@@ -120,6 +134,7 @@ def test_fifo():
         )
 
     for i, item in enumerate(buffer):
+        assert all(isinstance(item[k], torch.Tensor) for k in item)
         assert np.array_equal(item[data_key].numpy(), expected_data[data_key][i])
 
 
@@ -176,3 +191,42 @@ def test_delta_timestamps_outside_tolerance_outside_episode_range():
     assert torch.equal(
         is_pad, torch.tensor([True, False, False, True, True])
     ), "Padding does not match expected values"
+
+
+@pytest.mark.parametrize("offline_dataset_size", [0, 2])
+@pytest.mark.parametrize("online_dataset_size", [0, 2])
+@pytest.mark.parametrize("online_sampling_ratio", [0.0, 1.0])
+def test_compute_sampler_weights_trivial(
+    offline_dataset_size: int, online_dataset_size: int, online_sampling_ratio: float
+):
+    # Pass/skip the test if both datasets sizes are zero.
+    if offline_dataset_size + online_dataset_size == 0:
+        return
+    weights = compute_sampler_weights(offline_dataset_size, online_dataset_size, online_sampling_ratio)
+    if offline_dataset_size == 0 or online_dataset_size == 0:
+        expected_weights = torch.ones(offline_dataset_size + online_dataset_size)
+    elif online_sampling_ratio == 0:
+        expected_weights = torch.cat([torch.ones(offline_dataset_size), torch.zeros(online_dataset_size)])
+    elif online_sampling_ratio == 1:
+        expected_weights = torch.cat([torch.zeros(offline_dataset_size), torch.ones(online_dataset_size)])
+    expected_weights /= expected_weights.sum()
+    assert torch.equal(weights, expected_weights)
+
+
+def test_compute_sampler_weights_nontrivial_ratio():
+    offline_dataset_size = 2
+    online_dataset_size = 2
+    online_sampling_ratio = 0.8
+    weights = compute_sampler_weights(offline_dataset_size, online_dataset_size, online_sampling_ratio)
+    assert torch.equal(weights, torch.tensor([0.1, 0.1, 0.4, 0.4]))
+
+
+def test_compute_sampler_weights_nontrivial_ratio_and_online_data_mask():
+    offline_dataset_size = 2
+    online_dataset_size = 2
+    online_sampling_ratio = 0.8
+    online_data_mask = torch.tensor([True, False])
+    weights = compute_sampler_weights(
+        offline_dataset_size, online_dataset_size, online_sampling_ratio, online_data_mask
+    )
+    assert torch.equal(weights, torch.tensor([0.1, 0.1, 0.8, 0.0]))

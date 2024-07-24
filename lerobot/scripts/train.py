@@ -48,7 +48,7 @@ from lerobot.common.utils.utils import (
     set_global_seed,
 )
 from lerobot.scripts.eval import eval_policy
-from lerobot.scripts.online_training_helpers import OnlineBuffer, update_online_buffer
+from lerobot.scripts.online_training_helpers import OnlineBuffer, compute_sampler_weights
 
 
 def make_optimizer_and_scheduler(cfg, policy):
@@ -461,6 +461,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             "next.reward": {"shape": (), "dtype": np.dtype("float32")},
             "next.done": {"shape": (), "dtype": np.dtype("?")},
             "next.success": {"shape": (), "dtype": np.dtype("?")},
+            "observation.last": {"shape": (), "dtype": np.dtype("?")},
         },
         buffer_capacity=cfg.training.online_buffer_capacity,
         fps=online_env.unwrapped.metadata["render_fps"],
@@ -473,17 +474,16 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     # Create dataloader for online training.
     concat_dataset = torch.utils.data.ConcatDataset([offline_dataset, online_dataset])
-    if len(offline_dataset) > 0 and len(online_dataset) > 0:
-        weights = torch.tensor(
-            [(1 - cfg.training.online_sampling_ratio) / len(offline_dataset)] * len(offline_dataset)
-            + [cfg.training.online_sampling_ratio / len(online_dataset)] * len(online_dataset)
-        )
-    elif len(offline_dataset) > 0:
-        weights = torch.ones(len(offline_dataset))
-    elif len(online_dataset) > 0:
-        weights = torch.ones(len(online_dataset))
+    sampler_weights = compute_sampler_weights(
+        len(offline_dataset),
+        len(online_dataset),
+        cfg.training.online_sampling_ratio,
+        ~online_dataset.get_data_by_key("observation.last"),
+    )
     sampler = torch.utils.data.WeightedRandomSampler(
-        weights, num_samples=len(concat_dataset), replacement=True
+        sampler_weights,
+        num_samples=len(concat_dataset),
+        replacement=True,
     )
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
@@ -539,14 +539,20 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
             with lock:
                 start_update_buffer_time = time.perf_counter()
-                # Warning: the new_data_dict may be modified in place.
-                update_online_buffer(
-                    online_dataset,
-                    concat_dataset,
-                    sampler,
-                    new_data_dict=eval_info["episodes"],
-                    online_sampling_ratio=cfg.training.online_sampling_ratio,
+                online_dataset.add_data(eval_info["episodes"])
+
+                # Update the concatenated dataset length used during sampling.
+                concat_dataset.cumulative_sizes = concat_dataset.cumsum(concat_dataset.datasets)
+
+                # Update the sampling weights.
+                sampler.weights = compute_sampler_weights(
+                    len(offline_dataset),
+                    len(online_dataset),
+                    cfg.training.online_sampling_ratio,
+                    ~online_dataset.get_data_by_key("observation.last"),
                 )
+                sampler.num_samples = len(concat_dataset)
+
                 update_online_buffer_s = time.perf_counter() - start_update_buffer_time
 
             return online_rollout_s, update_online_buffer_s
