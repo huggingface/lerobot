@@ -539,7 +539,7 @@ def main(
     torch.backends.cuda.matmul.allow_tf32 = True
     set_global_seed(hydra_cfg.seed)
 
-    device = accelerator.device if accelerator else get_safe_torch_device(hydra_cfg)
+    device = accelerator.device if accelerator else get_safe_torch_device(hydra_cfg.device, log=True)
 
     log_output_dir(out_dir)
 
