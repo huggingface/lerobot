@@ -1,7 +1,24 @@
-"""A collection of helper functions and classes for the online training loop in train.py
+#!/usr/bin/env python
 
-Note to maintainers: This duplicates some logic from LeRobotDataset and EpisodeAwareSampler. We might consider
-converging to one approach when/if this functionality moves to core.
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""An online buffer for the online training loop in train.py
+
+Note to maintainers: This duplicates some logic from LeRobotDataset and EpisodeAwareSampler. We should
+consider converging to one approach. Here we have opted to use numpy.memmap to back the data buffer. It's much
+faster than using HuggingFace Datasets as there's no conversion to an intermediate non-python object. Also it
+supports in-place slicing and mutation which is very handy for a dynamic buffer.
 """
 
 import os
@@ -286,7 +303,7 @@ def compute_sampler_weights(
     online_sampling_ratio: float | None = None,
     online_drop_n_last_frames: int = 0,
 ) -> torch.Tensor:
-    """Compute the sampling weights for the online training dataloader.
+    """Compute the sampling weights for the online training dataloader in train.py.
 
     Args:
         offline_dataset: The LeRobotDataset used for offline pre-training.
@@ -300,9 +317,7 @@ def compute_sampler_weights(
         Tensor of weights for [offline_dataset; online_dataset], normalized to 1.
 
     Notes to maintainers:
-        - This duplicates some logic from EpisodeAwareSampler. We might consider converging to one approach
-          when/if this function moves to core. This current design is not meant to be totally general but at
-          least aims to lean in that direction. Some points to note:
+        - This duplicates some logic from EpisodeAwareSampler. We should consider converging to one approach.
         - When used with `torch.utils.data.WeightedRandomSampler`, it could completely replace
           `EpisodeAwareSampler` as the online dataset related arguments are optional. The only missing feature
           is the ability to turn shuffling off.

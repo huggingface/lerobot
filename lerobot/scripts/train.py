@@ -33,6 +33,7 @@ from torch.cuda.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
+from lerobot.common.datasets.online_buffer import OnlineBuffer, compute_sampler_weights
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
@@ -48,7 +49,6 @@ from lerobot.common.utils.utils import (
     set_global_seed,
 )
 from lerobot.scripts.eval import eval_policy
-from lerobot.scripts.online_training_helpers import OnlineBuffer, compute_sampler_weights
 
 
 def make_optimizer_and_scheduler(cfg, policy):
