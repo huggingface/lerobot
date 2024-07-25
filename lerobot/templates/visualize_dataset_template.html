@@ -102,6 +102,9 @@
       const video = videos[0];
       const timer = document.getElementById('timer');
 
+      // graph
+      const graph = document.getElementById('graph');
+
       // controllers
       const slider = document.getElementById('slider');
       const btnPlay = document.getElementById('btn-play');
@@ -122,7 +125,8 @@
       }
 
       let dygraphTime = 0.0;
-      const dygraph = new Dygraph(document.getElementById('graph'), '{{ ep_csv_url }}', {
+      let dygraphIndex = 0;
+      const dygraph = new Dygraph(graph, '{{ ep_csv_url }}', {
         pixelsPerPoint: 0.01,
         legend: 'always',
         labelsDiv: document.getElementById('labels'),
@@ -132,9 +136,18 @@
         }, generateDarkModeColor), // custom color palette
         pointClickCallback: (event, point) => (dygraphTime = point.xval),
         highlightCallback: (event, x, points, row, seriesName) => (dygraphTime = x),
+        drawCallback: (dygraph, is_initial) => {
+          if (is_initial) dygraph.setSelection(dygraphIndex, undefined, true, true);
+        },
       });
+
+      graph.addEventListener('mouseleave', (_e) => {
+        dygraph.setSelection(dygraphIndex, undefined, true, true);
+        dygraphTime = video.currentTime;
+      });
+
       setInterval(() => (document.getElementById("graph-timer").innerText = `Time: ${dygraphTime.toFixed(2)}s`),
-        200); // keep "graph-timer" in sync
+        50); // keep "graph-timer" in sync
 
       video.addEventListener('loadedmetadata', () => (timer.textContent = formatTime(0) + ' / ' + formatTime(video
         .duration)));
@@ -195,8 +208,8 @@
             const pc = (100 / video.duration) * video.currentTime;
             slider.value = pc;
             dygraphTime = video.currentTime;
-            const index = Math.floor(pc * dygraph.numRows() / 100);
-            dygraph.setSelection(index, undefined, true, true);
+            dygraphIndex = Math.floor(pc * dygraph.numRows() / 100)
+            dygraph.setSelection(dygraphIndex, undefined, true, true);
           }
         });
       };
