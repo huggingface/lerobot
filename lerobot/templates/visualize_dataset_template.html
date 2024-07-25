@@ -133,7 +133,7 @@
         pointClickCallback: (event, point) => (dygraphTime = point.xval),
         highlightCallback: (event, x, points, row, seriesName) => (dygraphTime = x),
       });
-      setInterval(() => (document.getElementById("graph-timer").innerText = `Time: ${dygraphTime.toFixed(3)}s`),
+      setInterval(() => (document.getElementById("graph-timer").innerText = `Time: ${dygraphTime.toFixed(2)}s`),
         200); // keep "graph-timer" in sync
 
       video.addEventListener('loadedmetadata', () => (timer.textContent = formatTime(0) + ' / ' + formatTime(video
