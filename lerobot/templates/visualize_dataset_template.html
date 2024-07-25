@@ -91,7 +91,7 @@
         </div>
         <p id="graph-timer" class="font-mono ml-14 mt-4"></p>
       </div>
-      <div id="labels" class="columns-2" style="font-size: 0rem;">
+      <div id="labels" class="{% if has_policy %}columns-3{% else %}columns-2{% endif %}" style="font-size: 0rem;">
       </div>
     </div>
   </div>
