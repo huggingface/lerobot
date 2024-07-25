@@ -357,7 +357,8 @@ def test_normalize(insert_temporal_dim):
         # TODO(alexander-soare): `policy.use_mpc=false` was previously the default in the config yaml but it
         # was changed to true. For some reason, tests would pass locally, but not in CI. So here we override
         # to test with `policy.use_mpc=false`.
-        ("xarm", "tdmpc", ["policy.use_mpc=false"], ""),
+        ("xarm", "tdmpc", ["policy.use_mpc=false"], "use_policy"),
+        # ("xarm", "tdmpc", ["policy.use_mpc=true"], "use_mpc"),
         (
             "pusht",
             "diffusion",
