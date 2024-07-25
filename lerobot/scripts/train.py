@@ -457,7 +457,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             "When online training is resumed, we load the latest online buffer from the prior run, "
             "and this might not coincide with the state of the buffer as it was at the moment the checkpoint "
             "was made. This is because the online buffer is updated on disk during training, independently "
-            "of our explicit checkpointing mechansims."
+            "of our explicit checkpointing mechanisms."
         )
     online_dataset = OnlineBuffer(
         online_buffer_path,
