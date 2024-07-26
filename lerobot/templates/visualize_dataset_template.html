@@ -2,250 +2,217 @@
 <html lang="en">
 
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.5/cdn.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dygraphs@2.2.1/dist/dygraph.min.js" type="text/javascript"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <title>{{ dataset_info.repo_id }} episode {{ episode_id }}</title>
-  <style>
-    /* css for graph legends */
-    #labels>span {
-      width: 14rem;
-      display: block;
-      font-size: 1rem;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.5/cdn.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/dygraphs@2.2.1/dist/dygraph.min.js" type="text/javascript"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <title>{{ dataset_info.repo_id }} episode {{ episode_id }}</title>
+    <style>
+        /* css for graph legends */
+        #labels>span {
+            width: 14rem;
+            display: block;
+            font-size: 1rem;
+        }
+    </style>
 </head>
 
-<body class="flex h-screen max-h-screen bg-slate-950 text-gray-200">
-  <!-- Sidebar -->
-  <div id="sidebar" class="w-60 bg-slate-900 p-5 break-words max-h-screen overflow-y-auto">
-    <h1 class="mb-4 text-xl font-semibold">{{ dataset_info.repo_id }}</h1>
+<body class="flex h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()" x-on:keydown.window="(e) => {
+    if (e.keyCode === 32 || e.key === ' ') {
+        e.preventDefault();
+        $refs.btnPause.classList.contains('hidden') ? $refs.btnPlay.click() : $refs.btnPause.click();
+      }
+}">
+    <!-- Sidebar -->
+    <div x-ref="sidebar" class="w-60 bg-slate-900 p-5 break-words max-h-screen overflow-y-auto">
+        <h1 class="mb-4 text-xl font-semibold">{{ dataset_info.repo_id }}</h1>
 
-    <ul>
-      <li>
-        Number of samples/frames: {{ dataset_info.num_samples }}
-      </li>
-      <li>
-        Number of episodes: {{ dataset_info.num_episodes }}
-      </li>
-      <li>
-        Frames per second: {{ dataset_info.fps }}
-      </li>
-    </ul>
+        <ul>
+            <li>
+                Number of samples/frames: {{ dataset_info.num_samples }}
+            </li>
+            <li>
+                Number of episodes: {{ dataset_info.num_episodes }}
+            </li>
+            <li>
+                Frames per second: {{ dataset_info.fps }}
+            </li>
+        </ul>
 
-    <p>Episodes:</p>
-    <ul class="ml-2">
-      {% for episode in episodes %}
-      <li class="font-mono text-sm mt-0.5">
-        <a href="episode_{{ episode }}" class="underline">
-          Episode {{ episode }}
-        </a>
-      </li>
-      {% endfor %}
-    </ul>
+        <p>Episodes:</p>
+        <ul class="ml-2">
+            {% for episode in episodes %}
+            <li class="font-mono text-sm mt-0.5">
+                <a href="episode_{{ episode }}" class="underline">
+                    Episode {{ episode }}
+                </a>
+            </li>
+            {% endfor %}
+        </ul>
 
-  </div>
-
-  <!-- Toggle sidebar button -->
-  <button class="flex items-center opacity-50 hover:opacity-100 mx-1" onclick="toggleSidebar()" title="Toggle sidebar">
-    <div class="bg-slate-500 w-2 h-10 rounded-full"></div>
-  </button>
-
-  <!-- Content -->
-  <div class="flex-1 max-h-screen flex flex-col gap-4 overflow-y-auto">
-    <h1 class="text-xl font-bold mt-4 font-mono">
-      Episode {{ episode_id }}
-    </h1>
-
-    <!-- Videos -->
-    <div class="flex flex-wrap gap-1">
-      {% for video_info in videos_info %}
-      <div class="max-w-96">
-        <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
-        <video type="video/mp4" class="min-w-64">
-          <source src="{{ video_info.url }}">
-          Your browser does not support the video tag.
-        </video>
-      </div>
-      {% endfor %}
     </div>
 
-    <!-- Controllers -->
-    <div class="flex gap-1 text-3xl flex-wrap">
-      <button id="btn-play" class="-rotate-90" title="Play. Toggle with Space">🔽</button>
-      <button id="btn-pause" class="hidden" title="Pause. Toggle with Space">⏸️</button>
-      <button id="btn-backward" title="Jump backward 5 seconds">⏪</button>
-      <button id="btn-forward" title="Jump forward 5 seconds">⏩</button>
-      <button id="btn-rewind" title="Rewind from start">↩️</button>
-      <div class="flex gap-2 items-center ml-4">
-        <input id="slider" max="100" min="0" step="1" type="range" value="0" class="w-80" />
-        <div id="timer" class="font-mono text-sm border border-slate-500 rounded-lg px-1 py-0.5">0:00 / 0:00</div>
-      </div>
-    </div>
+    <!-- Toggle sidebar button -->
+    <button class="flex items-center opacity-50 hover:opacity-100 mx-1"
+        x-on:click="() => ($refs.sidebar.classList.toggle('hidden'))" title="Toggle sidebar">
+        <div class="bg-slate-500 w-2 h-10 rounded-full"></div>
+    </button>
 
-    <!-- Graph -->
-    <div class="flex gap-2 mb-4">
-      <div>
-        <div id="graph">
+    <!-- Content -->
+    <div class="flex-1 max-h-screen flex flex-col gap-4 overflow-y-auto">
+        <h1 class="text-xl font-bold mt-4 font-mono">
+            Episode {{ episode_id }}
+        </h1>
+
+        <!-- Videos -->
+        <div class="flex flex-wrap gap-1">
+            {% for video_info in videos_info %}
+            <div class="max-w-96">
+                <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
+                <video type="video/mp4" class="min-w-64" x-on:timeupdate="() => {
+                    if (video.duration) {
+                      const pc = (100 / video.duration) * video.currentTime;
+                      $refs.slider.value = pc;
+                      dygraphTime = video.currentTime;
+                      dygraphIndex = Math.floor(pc * dygraph.numRows() / 100);
+                      dygraph.setSelection(dygraphIndex, undefined, true, true);
+
+                      $refs.timer.textContent = formatTime(video.currentTime) + ' / ' + formatTime(video.duration);
+
+                      // updateTableValues();
+                    }
+                }" x-on:ended="() => {
+                    $refs.btnPlay.classList.remove('hidden');
+                    $refs.btnPause.classList.add('hidden');
+                    // todo update the chart to last index
+                }"
+                    x-on:loadedmetadata="() => ($refs.timer.textContent = formatTime(0) + ' / ' + formatTime(video.duration))">
+                    <source src="{{ video_info.url }}">
+                    Your browser does not support the video tag.
+                </video>
+            </div>
+            {% endfor %}
         </div>
-        <p id="graph-timer" class="font-mono ml-14 mt-4"></p>
-      </div>
-      <div id="labels" class="{% if has_policy %}columns-3{% else %}columns-2{% endif %}" style="font-size: 0rem;">
-      </div>
+
+        <!-- Controllers -->
+        <div class="flex gap-1 text-3xl flex-wrap">
+            <button x-ref="btnPlay" class="-rotate-90" title="Play. Toggle with Space" x-on:click="() => {
+                videos.forEach(video => video.play());
+                $refs.btnPlay.classList.toggle('hidden');
+                $refs.btnPause.classList.toggle('hidden');
+            }">🔽</button>
+            <button x-ref="btnPause" class="hidden" title="Pause. Toggle with Space" x-on:click="() => {
+                videos.forEach(video => video.pause());
+                $refs.btnPlay.classList.toggle('hidden');
+                $refs.btnPause.classList.toggle('hidden');
+            }">⏸️</button>
+            <button title="Jump backward 5 seconds"
+                x-on:click="() => (videos.forEach(video => (video.currentTime -= 5)))">⏪</button>
+            <button title="Jump forward 5 seconds"
+                x-on:click="() => (videos.forEach(video => (video.currentTime += 5)))">⏩</button>
+            <button title="Rewind from start"
+                x-on:click="() => (videos.forEach(video => (video.currentTime = 0.0)))">↩️</button>
+            <div class="flex gap-2 items-center ml-4">
+                <input x-ref="slider" max="100" min="0" step="1" type="range" value="0" class="w-80" x-on:input="() => {
+                    const sliderValue = $refs.slider.value;
+                    videos.forEach(video => {
+                      const time = (video.duration * sliderValue) / 100;
+                      video.currentTime = time;
+                    });
+                }" />
+                <div x-ref="timer" class="font-mono text-sm border border-slate-500 rounded-lg px-1 py-0.5">0:00 / 0:00
+                </div>
+            </div>
+        </div>
+
+        <!-- Graph -->
+        <div class="flex gap-2 mb-4">
+            <div>
+                <div id="graph" x-on:mouseleave="() => {
+                    dygraph.setSelection(dygraphIndex, undefined, true, true);
+                    dygraphTime = video.currentTime;
+                }">
+                </div>
+                <p x-ref="graphTimer" class="font-mono ml-14 mt-4"
+                    x-init="$watch('dygraphTime', value => ($refs.graphTimer.innerText = `Time: ${dygraphTime.toFixed(2)}s`))">Time: 0.00s
+                </p>
+            </div>
+            <div id="labels" class="{% if has_policy %}columns-3{% else %}columns-2{% endif %}"
+                style="font-size: 0rem;">
+            </div>
+        </div>
     </div>
-  </div>
 
-  <script>
-    document.addEventListener('DOMContentLoaded', function () {
-      const videos = document.querySelectorAll('video');
-      const video = videos[0];
-      const timer = document.getElementById('timer');
+    <script>
+        function createAlpineData() {
+            return {
+                dygraph: null,
+                dygraphTime: 0.0,
+                dygraphIndex: 0,
+                videos: null,
+                video: null,
+                init() {
+                    this.videos = document.querySelectorAll('video');
+                    this.video = this.videos[0];
+                    this.dygraph = new Dygraph(document.getElementById("graph"), '{{ ep_csv_url }}', {
+                        pixelsPerPoint: 0.01,
+                        legend: 'always',
+                        labelsDiv: document.getElementById('labels'),
+                        labelsKMB: true,
+                        colors: Array.from({
+                            length: 100
+                        }, this.generateDarkModeColor), // custom color palette
+                        pointClickCallback: (event, point) => {
+                            this.dygraphTime = point.xval;
+                            // updateTableValues(dygraphTime);
+                        },
+                        highlightCallback: (event, x, points, row, seriesName) => {
+                            this.dygraphTime = x;
+                            // updateTableValues(dygraphTime);
+                        },
+                        drawCallback: (dygraph, is_initial) => {
+                            if (is_initial) {
+                                this.dygraph.setSelection(this.dygraphIndex, undefined, true, true);
+                            }
+                            // updateTableValues();
+                        },
+                    });
+                },
+                generateDarkModeColor() {
+                    // Function to generate a random number within a given range
+                    const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+                    // Generate hue, saturation, and lightness
+                    const hue = randomInt(0, 360); // Hue from 0 to 360
+                    const saturation = randomInt(60, 100); // High saturation for vivid colors
+                    const lightness = randomInt(50,
+                        75); // Lightness adjusted for visibility on dark backgrounds
+                    // Return the HSL color string
+                    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+                },
+                updateTableValues() {
 
-      // graph
-      const graph = document.getElementById('graph');
+                },
+                formatTime(time) {
+                    var hours = Math.floor(time / 3600);
+                    var minutes = Math.floor((time % 3600) / 60);
+                    var seconds = Math.floor(time % 60);
+                    return (hours > 0 ? hours + ':' : '') + (minutes < 10 ? '0' + minutes : minutes) + ':' + (seconds <
+                        10 ?
+                        '0' + seconds : seconds);
+                }
 
-      // controllers
-      const slider = document.getElementById('slider');
-      const btnPlay = document.getElementById('btn-play');
-      const btnPause = document.getElementById('btn-pause');
-      const btnBackward = document.getElementById('btn-backward');
-      const btnForward = document.getElementById('btn-forward');
-      const btnRewind = document.getElementById('btn-rewind');
-
-      const generateDarkModeColor = () => {
-        // Function to generate a random number within a given range
-        const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-        // Generate hue, saturation, and lightness
-        const hue = randomInt(0, 360); // Hue from 0 to 360
-        const saturation = randomInt(60, 100); // High saturation for vivid colors
-        const lightness = randomInt(50, 75); // Lightness adjusted for visibility on dark backgrounds
-        // Return the HSL color string
-        return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-      }
-
-      let dygraphTime = 0.0;
-      let dygraphIndex = 0;
-      const dygraph = new Dygraph(graph, '{{ ep_csv_url }}', {
-        pixelsPerPoint: 0.01,
-        legend: 'always',
-        labelsDiv: document.getElementById('labels'),
-        labelsKMB: true,
-        colors: Array.from({
-          length: 100
-        }, generateDarkModeColor), // custom color palette
-        pointClickCallback: (event, point) => {
-          dygraphTime = point.xval;
-          updateTableValues(dygraphTime);
-        },
-        highlightCallback: (event, x, points, row, seriesName) => {
-          dygraphTime = x;
-          updateTableValues(dygraphTime);
-        },
-        drawCallback: (dygraph, is_initial) => {
-          if (is_initial) {
-            dygraph.setSelection(dygraphIndex, undefined, true, true);
-          }
-          updateTableValues();
-        },
-      });
-
-      graph.addEventListener('mouseleave', (_e) => {
-        dygraph.setSelection(dygraphIndex, undefined, true, true);
-        dygraphTime = video.currentTime;
-      });
-
-      setInterval(() => (document.getElementById("graph-timer").innerText = `Time: ${dygraphTime.toFixed(2)}s`),
-        50); // keep "graph-timer" in sync
-
-      video.addEventListener('loadedmetadata', () => (timer.textContent = formatTime(0) + ' / ' + formatTime(video
-        .duration)));
-      video.addEventListener('timeupdate', () => (timer.textContent = formatTime(video.currentTime) + ' / ' +
-        formatTime(video.duration)));
-      const formatTime = (time) => {
-        var hours = Math.floor(time / 3600);
-        var minutes = Math.floor((time % 3600) / 60);
-        var seconds = Math.floor(time % 60);
-        return (hours > 0 ? hours + ':' : '') + (minutes < 10 ? '0' + minutes : minutes) + ':' + (seconds < 10 ?
-          '0' + seconds : seconds);
-      }
-
-      btnPlay.addEventListener('click', () => {
-        videos.forEach(video => video.play());
-        btnPlay.classList.toggle('hidden');
-        btnPause.classList.toggle('hidden');
-      });
-
-      btnPause.addEventListener('click', () => {
-        videos.forEach(video => video.pause());
-        btnPlay.classList.toggle('hidden');
-        btnPause.classList.toggle('hidden');
-      });
-
-      btnRewind.addEventListener('click', () => {
-        videos.forEach(video => (video.currentTime = 0.0));
-      });
-
-      btnBackward.addEventListener('click', () => {
-        videos.forEach(video => (video.currentTime -= 5));
-      });
-
-      btnForward.addEventListener('click', () => {
-        videos.forEach(video => (video.currentTime += 5));
-      });
-
-      videos.forEach(video => {
-        video.addEventListener('ended', () => {
-          btnPlay.classList.remove('hidden');
-          btnPause.classList.add('hidden');
-        });
-      });
-
-      // Update the video time when the slider value changes
-      slider.addEventListener('input', function () {
-        const sliderValue = slider.value;
-        videos.forEach(video => {
-          const time = (video.duration * sliderValue) / 100;
-          video.currentTime = time;
-        });
-      });
-
-      // Synchronize slider with the video's current time
-      const syncSlider = (video) => {
-        video.addEventListener('timeupdate', function () {
-          if (video.duration) {
-            const pc = (100 / video.duration) * video.currentTime;
-            slider.value = pc;
-            dygraphTime = video.currentTime;
-            dygraphIndex = Math.floor(pc * dygraph.numRows() / 100)
-            dygraph.setSelection(dygraphIndex, undefined, true, true);
-            updateTableValues();
-          }
-        });
-      };
-      videos.forEach(video => syncSlider(video));
-
-      // hit "Space" to play/pause
-      window.addEventListener('keydown', e => {
-        if (e.keyCode === 32 || e.key === ' ') {
-          e.preventDefault();
-          btnPause.classList.contains("hidden") ? btnPlay.click() : btnPause.click();
+                //   const updateTableValues = (time) => {
+                //     const pc = (100 / video.duration) * (time ?? video.currentTime);
+                //     const index = Math.floor(pc * dygraph.numRows() / 100);
+                //     const labels = dygraph.getLabels();
+                //     const values = dygraph.rawData_[index];
+                //     // const data = labels.map((label, idx) => ({label, value: values[idx]})).slice(1); // slice(1) to remove the timestamp point that we do not need
+                //     // 1. populate the table // 2. make tha table interactive
+                //   }
+            };
         }
-      });
-
-      const updateTableValues = (time) => {
-        const pc = (100 / video.duration) * (time ?? video.currentTime);
-        const index = Math.floor(pc * dygraph.numRows() / 100);
-        const labels = dygraph.getLabels();
-        const values = dygraph.rawData_[index];
-        const data = labels.map((label, idx) => ({label, value: values[idx]})).slice(1); // slice(1) to remove the timestamp point that we do not need
-        // 1. populate the table // 2. make tha table interactive
-      }
-    });
-
-    const toggleSidebar = () => (document.getElementById('sidebar').classList.toggle('hidden'));
-  </script>
+    </script>
 </body>
 
 </html>
