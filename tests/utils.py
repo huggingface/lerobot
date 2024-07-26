@@ -23,6 +23,7 @@ from lerobot.common.utils.import_utils import is_package_available
 
 # Pass this as the first argument to init_hydra_config.
 DEFAULT_CONFIG_PATH = "lerobot/configs/default.yaml"
+KOCH_ROBOT_CONFIG_PATH = "lerobot/configs/robot/koch.yaml"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -161,6 +162,7 @@ def require_koch(func):
         if request is None:
             raise ValueError("The 'request' fixture must be passed to the test function as a parameter.")
 
+        # The function `is_koch_available` is defined in `tests/conftest.py`
         if not request.getfixturevalue("is_koch_available"):
             pytest.skip("An alexander koch robot is not available.")
         return func(*args, **kwargs)

@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
+import tqdm
 from dynamixel_sdk import (
     COMM_SUCCESS,
     DXL_HIBYTE,
@@ -21,8 +22,10 @@ from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError,
 from lerobot.common.utils.utils import capture_timestamp_utc
 
 PROTOCOL_VERSION = 2.0
-BAUD_RATE = 1_000_000
+BAUDRATE = 1_000_000
 TIMEOUT_MS = 1000
+
+MAX_ID_RANGE = 252
 
 # https://emanual.robotis.com/docs/en/dxl/x/xl330-m077
 # https://emanual.robotis.com/docs/en/dxl/x/xl330-m288
@@ -86,6 +89,16 @@ X_SERIES_CONTROL_TABLE = {
     "Present_Temperature": (146, 1),
 }
 
+X_SERIES_BAUDRATE_TABLE = {
+    0: 9_600,
+    1: 57_600,
+    2: 115_200,
+    3: 1_000_000,
+    4: 2_000_000,
+    5: 3_000_000,
+    6: 4_000_000,
+}
+
 CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
 CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
 
@@ -107,7 +120,64 @@ MODEL_RESOLUTION = {
     "xm540-w270": 4096,
 }
 
+MODEL_BAUDRATE_TABLE = {
+    "x_series": X_SERIES_BAUDRATE_TABLE,
+    "xl330-m077": X_SERIES_BAUDRATE_TABLE,
+    "xl330-m288": X_SERIES_BAUDRATE_TABLE,
+    "xl430-w250": X_SERIES_BAUDRATE_TABLE,
+    "xm430-w350": X_SERIES_BAUDRATE_TABLE,
+    "xm540-w270": X_SERIES_BAUDRATE_TABLE,
+}
+
 NUM_READ_RETRY = 10
+NUM_WRITE_RETRY = 10
+
+
+def convert_indices_to_baudrates(values: np.ndarray | list[int], models: list[str]):
+    assert len(values) == len(models)
+    for i in range(len(values)):
+        model = models[i]
+        index = values[i]
+        values[i] = MODEL_BAUDRATE_TABLE[model][index]
+    return values
+
+
+def convert_baudrates_to_indices(values: np.ndarray | list[int], models: list[str]):
+    assert len(values) == len(models)
+    for i in range(len(values)):
+        model = models[i]
+        brate = values[i]
+        table_values = list(MODEL_BAUDRATE_TABLE[model].values())
+        table_keys = list(MODEL_BAUDRATE_TABLE[model].keys())
+        values[i] = table_keys[table_values.index(brate)]
+    return values
+
+
+def convert_to_bytes(value, bytes):
+    # Note: No need to convert back into unsigned int, since this byte preprocessing
+    # already handles it for us.
+    if bytes == 1:
+        data = [
+            DXL_LOBYTE(DXL_LOWORD(value)),
+        ]
+    elif bytes == 2:
+        data = [
+            DXL_LOBYTE(DXL_LOWORD(value)),
+            DXL_HIBYTE(DXL_LOWORD(value)),
+        ]
+    elif bytes == 4:
+        data = [
+            DXL_LOBYTE(DXL_LOWORD(value)),
+            DXL_HIBYTE(DXL_LOWORD(value)),
+            DXL_LOBYTE(DXL_HIWORD(value)),
+            DXL_HIBYTE(DXL_HIWORD(value)),
+        ]
+    else:
+        raise NotImplementedError(
+            f"Value of the number of bytes to be sent is expected to be in [1, 2, 4], but "
+            f"{bytes} is provided instead."
+        )
+    return data
 
 
 def get_group_sync_key(data_name, motor_names):
@@ -282,14 +352,183 @@ class DynamixelMotorsBus:
             )
             raise
 
-        self.port_handler.setBaudRate(BAUD_RATE)
-        self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
-
+        # Allow to read and write
         self.is_connected = True
 
+        self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
+
+        # Set expected baud rate for the bus
+        self.set_bus_baudrate(BAUDRATE)
+
+        if not self.are_motors_configured():
+            print(
+                r"/!\ First, verify that all the cables are connected the proper way. If you detect an issue, before making any modification, unplug the power cord to not damage the motors. Rewire correctly. Then plug the power again and relaunch the script."
+            )
+            print(
+                r"/!\ Secondly, if the cables connection look correct and it is the first time that you use these motors, follow these manual steps to configure them."
+            )
+            input("Press Enter to configure your motors...")
+            print()
+            self.configure_motors()
+
+    def reconnect(self):
+        self.port_handler = PortHandler(self.port)
+        self.packet_handler = PacketHandler(PROTOCOL_VERSION)
+        if not self.port_handler.openPort():
+            raise OSError(f"Failed to open port '{self.port}'.")
+        self.is_connected = True
+
+    def are_motors_configured(self):
+        try:
+            return (self.motor_indices == self.read("ID")).all()
+        except ConnectionError as e:
+            print(e)
+            return False
+
+    def configure_motors(self):
+        # TODO(rcadene): This script assumes motors follow the X_SERIES baudrates
+
+        print("Scanning all baudrates and motor indices")
+        all_baudrates = set(X_SERIES_BAUDRATE_TABLE.values())
+        ids_per_baudrate = {}
+        for baudrate in all_baudrates:
+            self.set_bus_baudrate(baudrate)
+            present_ids = self.find_motor_indices()
+            if len(present_ids) > 0:
+                ids_per_baudrate[baudrate] = present_ids
+        print(f"Motor indices detected: {ids_per_baudrate}")
+        print()
+
+        possible_baudrates = list(ids_per_baudrate.keys())
+        possible_ids = list({idx for sublist in ids_per_baudrate.values() for idx in sublist})
+        untaken_ids = list(set(range(MAX_ID_RANGE)) - set(possible_ids) - set(self.motor_indices))
+
+        # Connect successively one motor to the chain and write a unique random index for each
+        for i in range(len(self.motors)):
+            self.disconnect()
+            print("1. Unplug the power cord")
+            print(
+                f"2. Plug/unplug minimal number of cables to only have the first {i+1} motor(s) ({self.motor_names[:i+1]}) connected."
+            )
+            print("3. Re-plug the power cord.")
+            input("Press Enter to continue...")
+            print()
+            self.reconnect()
+
+            if i > 0:
+                try:
+                    self._read_with_motor_ids(self.motor_models, untaken_ids[:i], "ID")
+                except ConnectionError:
+                    print(f"Failed to read from {untaken_ids[:i+1]}. Make sure the power cord is plugged in.")
+                    input("Press Enter to continue...")
+                    print()
+                    self.reconnect()
+
+            print("Scanning possible baudrates and motor indices")
+            motor_found = False
+            for baudrate in possible_baudrates:
+                self.set_bus_baudrate(baudrate)
+                present_ids = self.find_motor_indices(possible_ids)
+                if len(present_ids) == 1:
+                    present_idx = present_ids[0]
+                    print(f"Detected motor with index {present_idx}")
+
+                    if baudrate != BAUDRATE:
+                        print(f"Setting its baudrate to {BAUDRATE}")
+                        baudrate_idx = list(X_SERIES_BAUDRATE_TABLE.values()).index(BAUDRATE)
+
+                        # The write can fail, so we allow retries
+                        for _ in range(NUM_WRITE_RETRY):
+                            self._write_with_motor_ids(
+                                self.motor_models, present_idx, "Baud_Rate", baudrate_idx
+                            )
+                            time.sleep(0.5)
+                            self.set_bus_baudrate(BAUDRATE)
+                            try:
+                                present_baudrate_idx = self._read_with_motor_ids(
+                                    self.motor_models, present_idx, "Baud_Rate"
+                                )
+                            except ConnectionError:
+                                print("Failed to write baudrate. Retrying.")
+                                self.set_bus_baudrate(baudrate)
+                                continue
+                            break
+                        else:
+                            raise
+
+                        if present_baudrate_idx != baudrate_idx:
+                            raise OSError("Failed to write baudrate.")
+
+                    print(f"Setting its index to a temporary untaken index ({untaken_ids[i]})")
+                    self._write_with_motor_ids(self.motor_models, present_idx, "ID", untaken_ids[i])
+
+                    present_idx = self._read_with_motor_ids(self.motor_models, untaken_ids[i], "ID")
+                    if present_idx != untaken_ids[i]:
+                        raise OSError("Failed to write index.")
+
+                    motor_found = True
+                    break
+                elif len(present_ids) > 1:
+                    raise OSError(f"More than one motor detected ({present_ids}), but only one was expected.")
+
+            if not motor_found:
+                raise OSError(
+                    "No motor found, but one new motor expected. Verify power cord is plugged in and retry."
+                )
+            print()
+
+        print(f"Setting expected motor indices: {self.motor_indices}")
+        self.set_bus_baudrate(BAUDRATE)
+        self._write_with_motor_ids(
+            self.motor_models, untaken_ids[: len(self.motors)], "ID", self.motor_indices
+        )
+        print()
+
+        if (self.read("ID") != self.motor_indices).any():
+            raise OSError("Failed to write motors indices.")
+
+        print("Configuration is done!")
+
+    def find_motor_indices(self, possible_ids=None):
+        if possible_ids is None:
+            possible_ids = range(MAX_ID_RANGE)
+
+        indices = []
+        for idx in tqdm.tqdm(possible_ids):
+            try:
+                present_idx = self._read_with_motor_ids(self.motor_models, [idx], "ID")[0]
+            except ConnectionError:
+                continue
+
+            if idx != present_idx:
+                # sanity check
+                raise OSError(
+                    "Motor index used to communicate through the bus is not the same as the one present in the motor memory. The motor memory might be damaged."
+                )
+            indices.append(idx)
+
+        return indices
+
+    def set_bus_baudrate(self, baudrate):
+        present_bus_baudrate = self.port_handler.getBaudRate()
+        if present_bus_baudrate != baudrate:
+            print(f"Setting bus baud rate to {baudrate}. Previously {present_bus_baudrate}.")
+            self.port_handler.setBaudRate(baudrate)
+
+            if self.port_handler.getBaudRate() != baudrate:
+                raise OSError("Failed to write bus baud rate.")
+
     @property
-    def motor_names(self) -> list[int]:
+    def motor_names(self) -> list[str]:
         return list(self.motors.keys())
+
+    @property
+    def motor_models(self) -> list[str]:
+        return [model for _, model in self.motors.values()]
+
+    @property
+    def motor_indices(self) -> list[int]:
+        return [idx for idx, _ in self.motors.values()]
 
     def set_calibration(self, calibration: dict[str, tuple[int, bool]]):
         self.calibration = calibration
@@ -329,26 +568,11 @@ class DynamixelMotorsBus:
             resolution = self.model_resolution[model]
             values[i] = values[i] / (resolution // 2) * 180
 
-        if (values < -180).any() or (values >= 180).any():
-            raise ValueError(
-                f"At least one of the motor has a joint value outside of its centered degree range of [-180, 180[."
-                'This "jump of range" can be caused by a hardware issue, or you might have unexpectedly completed a full rotation of the motor '
-                "during manipulation or transportation of your robot. Try to recalibrate all motors by setting a different "
-                "`calibration_path` during the instatiation of your robot. "
-                f"The values and motors: {values} {motor_names}"
-            )
-
         return values
 
     def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         if motor_names is None:
             motor_names = self.motor_names
-
-        if (values < -180).any() or (values >= 180).any():
-            raise ValueError(
-                f"At least one of the motor has a joint value outside of its centered degree range of [-180, 180[. "
-                f"The values and motors: {values} {motor_names}"
-            )
 
         # Convert from the universal float32 centered degree range [-180, 180[ to centered resolution range [-resolution, resolution[
         for i, name in enumerate(motor_names):
@@ -371,6 +595,35 @@ class DynamixelMotorsBus:
                 values[i] *= -1
 
         return values
+
+    def _read_with_motor_ids(self, motor_models, motor_ids, data_name):
+        return_list = True
+        if not isinstance(motor_ids, list):
+            return_list = False
+            motor_ids = [motor_ids]
+
+        assert_same_address(self.model_ctrl_table, self.motor_models, data_name)
+        addr, bytes = self.model_ctrl_table[motor_models[0]][data_name]
+        group = GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
+        for idx in motor_ids:
+            group.addParam(idx)
+
+        comm = group.txRxPacket()
+        if comm != COMM_SUCCESS:
+            raise ConnectionError(
+                f"Read failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "
+                f"{self.packet_handler.getTxRxResult(comm)}"
+            )
+
+        values = []
+        for idx in motor_ids:
+            value = group.getData(idx, addr, bytes)
+            values.append(value)
+
+        if return_list:
+            return values
+        else:
+            return values[0]
 
     def read(self, data_name, motor_names: str | list[str] | None = None):
         if not self.is_connected:
@@ -438,6 +691,26 @@ class DynamixelMotorsBus:
 
         return values
 
+    def _write_with_motor_ids(self, motor_models, motor_ids, data_name, values):
+        if not isinstance(motor_ids, list):
+            motor_ids = [motor_ids]
+        if not isinstance(values, list):
+            values = [values]
+
+        assert_same_address(self.model_ctrl_table, motor_models, data_name)
+        addr, bytes = self.model_ctrl_table[motor_models[0]][data_name]
+        group = GroupSyncWrite(self.port_handler, self.packet_handler, addr, bytes)
+        for idx, value in zip(motor_ids, values, strict=True):
+            data = convert_to_bytes(value, bytes)
+            group.addParam(idx, data)
+
+        comm = group.txPacket()
+        if comm != COMM_SUCCESS:
+            raise ConnectionError(
+                f"Write failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "
+                f"{self.packet_handler.getTxRxResult(comm)}"
+            )
+
     def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
@@ -480,30 +753,7 @@ class DynamixelMotorsBus:
             )
 
         for idx, value in zip(motor_ids, values, strict=True):
-            # Note: No need to convert back into unsigned int, since this byte preprocessing
-            # already handles it for us.
-            if bytes == 1:
-                data = [
-                    DXL_LOBYTE(DXL_LOWORD(value)),
-                ]
-            elif bytes == 2:
-                data = [
-                    DXL_LOBYTE(DXL_LOWORD(value)),
-                    DXL_HIBYTE(DXL_LOWORD(value)),
-                ]
-            elif bytes == 4:
-                data = [
-                    DXL_LOBYTE(DXL_LOWORD(value)),
-                    DXL_HIBYTE(DXL_LOWORD(value)),
-                    DXL_LOBYTE(DXL_HIWORD(value)),
-                    DXL_HIBYTE(DXL_HIWORD(value)),
-                ]
-            else:
-                raise NotImplementedError(
-                    f"Value of the number of bytes to be sent is expected to be in [1, 2, 4], but "
-                    f"{bytes} is provided instead."
-                )
-
+            data = convert_to_bytes(value, bytes)
             if init_group:
                 self.group_writers[group_key].addParam(idx, data)
             else:

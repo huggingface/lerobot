@@ -4,6 +4,9 @@ Examples of usage:
 - Unlimited teleoperation at highest frequency (~200 Hz is expected), to exit with CTRL+C:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate
+
+# Remove the cameras from the robot definition. They are not used in 'teleoperate' anyway.
+python lerobot/scripts/control_robot.py teleoperate '~cameras'
 ```
 
 - Unlimited teleoperation at a limited frequency of 30 Hz, to simulate data recording frequency:
@@ -14,7 +17,7 @@ python lerobot/scripts/control_robot.py teleoperate \
 
 - Record one episode in order to test replay:
 ```bash
-python lerobot/scripts/control_robot.py record_dataset \
+python lerobot/scripts/control_robot.py record \
     --fps 30 \
     --root tmp/data \
     --repo-id $USER/koch_test \
@@ -32,7 +35,7 @@ python lerobot/scripts/visualize_dataset.py \
 
 - Replay this test episode:
 ```bash
-python lerobot/scripts/control_robot.py replay_episode \
+python lerobot/scripts/control_robot.py replay \
     --fps 30 \
     --root tmp/data \
     --repo-id $USER/koch_test \
@@ -42,12 +45,11 @@ python lerobot/scripts/control_robot.py replay_episode \
 - Record a full dataset in order to train a policy, with 2 seconds of warmup,
 30 seconds of recording for each episode, and 10 seconds to reset the environment in between episodes:
 ```bash
-python lerobot/scripts/control_robot.py record_dataset \
+python lerobot/scripts/control_robot.py record \
     --fps 30 \
     --root data \
     --repo-id $USER/koch_pick_place_lego \
     --num-episodes 50 \
-    --run-compute-stats 1 \
     --warmup-time-s 2 \
     --episode-time-s 30 \
     --reset-time-s 10
@@ -74,7 +76,14 @@ DATA_DIR=data python lerobot/scripts/train.py \
 
 - Run the pretrained policy on the robot:
 ```bash
-python lerobot/scripts/control_robot.py run_policy \
+python lerobot/scripts/control_robot.py record \
+    --fps 30 \
+    --root data \
+    --repo-id $USER/eval_act_koch_real \
+    --num-episodes 10 \
+    --warmup-time-s 2 \
+    --episode-time-s 30 \
+    --reset-time-s 10
     -p outputs/train/act_koch_real/checkpoints/080000/pretrained_model
 ```
 """
@@ -758,8 +767,9 @@ if __name__ == "__main__":
             pretrained_policy_path = get_pretrained_policy_path(pretrained_policy_name_or_path)
             policy_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", overrides)
             policy = make_policy(hydra_cfg=policy_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
-
-        record(robot, policy, policy_cfg, **kwargs)
+            record(robot, policy, policy_cfg, **kwargs)
+        else:
+            record(robot, **kwargs)
 
     elif control_mode == "replay":
         replay(robot, **kwargs)
