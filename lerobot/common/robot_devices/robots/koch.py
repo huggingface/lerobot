@@ -339,7 +339,7 @@ class KochRobot:
             self.leader_arms[name].connect()
 
         # Reset the arms and load or run calibration
-        if not self.calibration_path.exists():
+        if self.calibration_path.exists():
             # Reset all arms before setting calibration
             for name in self.follower_arms:
                 reset_arm(self.follower_arms[name])
