@@ -638,7 +638,8 @@ if __name__ == "__main__":
         help="Path to robot yaml file used to instantiate the robot using `make_robot` factory function.",
     )
     base_parser.add_argument(
-        "robot_overrides",
+        "--robot-overrides",
+        type=str,
         nargs="*",
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
@@ -717,7 +718,8 @@ if __name__ == "__main__":
         ),
     )
     parser_record.add_argument(
-        "overrides",
+        "--policy-overrides",
+        type=str,
         nargs="*",
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
@@ -760,14 +762,14 @@ if __name__ == "__main__":
 
     elif control_mode == "record":
         pretrained_policy_name_or_path = args.pretrained_policy_name_or_path
-        overrides = args.overrides
+        policy_overrides = args.policy_overrides
         del kwargs["pretrained_policy_name_or_path"]
-        del kwargs["overrides"]
+        del kwargs["policy_overrides"]
 
         policy_cfg = None
         if pretrained_policy_name_or_path is not None:
             pretrained_policy_path = get_pretrained_policy_path(pretrained_policy_name_or_path)
-            policy_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", overrides)
+            policy_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", policy_overrides)
             policy = make_policy(hydra_cfg=policy_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
             record(robot, policy, policy_cfg, **kwargs)
         else:
