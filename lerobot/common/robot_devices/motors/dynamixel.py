@@ -224,7 +224,7 @@ def assert_same_address(model_ctrl_table, motor_models, data_name):
 
 def find_available_ports():
     ports = []
-    for path in Path("/dev").glob("tty*"):
+    for path in Path("/dev").glob("*"):
         ports.append(str(path))
     return ports
 
@@ -286,7 +286,6 @@ class DynamixelMotorsBus:
     >>> The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0031751.
     >>> Reconnect the usb cable.
     ```
-    To find the motor indices, use [DynamixelWizzard2](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_wizard2).
 
     Example of usage for 1 motor connected to the bus:
     ```python
@@ -300,7 +299,9 @@ class DynamixelMotorsBus:
     )
     motors_bus.connect()
 
-    motors_bus.teleop_step()
+    degrees = motors_bus.read("Present_Position")
+
+    motors_bus.write("Goal_Position", degrees + 30)
 
     # when done, consider disconnecting
     motors_bus.disconnect()
@@ -357,7 +358,7 @@ class DynamixelMotorsBus:
 
         self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
 
-        # Set expected baud rate for the bus
+        # Set expected baudrate for the bus
         self.set_bus_baudrate(BAUDRATE)
 
         if not self.are_motors_configured():

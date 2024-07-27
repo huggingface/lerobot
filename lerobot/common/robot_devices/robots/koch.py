@@ -371,7 +371,7 @@ class KochRobot:
                     "during manipulation or transportation of your robot. "
                     f"The values and motors: {values} {self.leader_arms[name].motor_names}.\n"
                     "Rotate the arm to fit the range ]-180, 180[ and relaunch the script, or recalibrate all motors by setting a different "
-                    "`calibration_path` during the instatiation of your robot."
+                    "calibration path during the instatiation of your robot (e.g. `--robot-overrides calibration_path=.cache/calibration/koch_v2.pkl`)"
                 )
 
         # Set better PID values to close the gap between recored states and actions
