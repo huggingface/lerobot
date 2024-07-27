@@ -139,13 +139,28 @@
             </div>
 
             <table>
+                <thead>
+                    <tr>
+                        <th></th>
+                        <template x-for="(_, colIndex) in [0,1,2]">
+                            <th>
+                                <input type="checkbox" x-model="columnChecked[colIndex]"
+                                    @change="toggleColumn(colIndex)">
+                            </th>
+                        </template>
+                    </tr>
+                </thead>
                 <tbody>
-                    <template x-for="row in rows">
+                    <template x-for="(row, rowIndex) in rows">
                         <tr>
-                            <template x-for="cell in row">
+                            <td>
+                                <input type="checkbox" x-model="rowChecked[rowIndex]" @change="toggleRow(rowIndex)">
+                            </td>
+                            <template x-for="(cell, colIndex) in row">
                                 <td x-show="cell">
-                                    <div x-text="cell.label"></div>
-                                    <div x-text="cell.value"></div>
+                                    <input type="checkbox" x-model="cellChecked[`${rowIndex}-${colIndex}`]"
+                                        @change="updateRowColumnChecked(rowIndex, colIndex)">
+                                    <p x-text="`${cell.label}: ${cell.value.toFixed(2)}`"></p>
                                 </td>
                             </template>
                         </tr>
@@ -163,7 +178,10 @@
         function createAlpineData() {
             return {
                 dygraph: null,
-                currentFrameData: null,
+                currentFrameData: [],
+                cellChecked: {},
+                rowChecked: {},
+                columnChecked: {},
                 dygraphTime: 0.0,
                 dygraphIndex: 0,
                 videos: null,
@@ -190,6 +208,7 @@
                         drawCallback: (dygraph, is_initial) => {
                             if (is_initial) {
                                 this.dygraph.setSelection(this.dygraphIndex, undefined, true, true);
+                                this.initCheckboxes();
                             }
                             this.updateTableValues();
                         },
@@ -215,6 +234,55 @@
                         this.currentFrameData[rowIndex + columnSize] || null,
                         this.currentFrameData[rowIndex + 2 * columnSize] || null
                     ]);
+                },
+                initCheckboxes() {
+                    this.rows.forEach((row, rowIndex) => {
+                        this.rowChecked[rowIndex] = true;
+                        row.forEach((cell, colIndex) => {
+                            if (cell) {
+                                this.cellChecked[`${rowIndex}-${colIndex}`] = true;
+                            }
+                        });
+                    });
+                    [0, 1, 2].forEach(colIndex => {
+                        this.columnChecked[colIndex] = true;
+                    });
+                },
+                toggleRow(rowIndex) {
+                    const checked = this.rowChecked[rowIndex];
+                    this.rows[rowIndex].forEach((cell, colIndex) => {
+                        if (cell) {
+                            this.cellChecked[`${rowIndex}-${colIndex}`] = checked;
+                        }
+                    });
+                    this.updateColumnChecked();
+                },
+                toggleColumn(colIndex) {
+                    const checked = this.columnChecked[colIndex];
+                    this.rows.forEach((row, rowIndex) => {
+                        if (row[colIndex]) {
+                            this.cellChecked[`${rowIndex}-${colIndex}`] = checked;
+                        }
+                    });
+                    this.updateRowChecked();
+                },
+                updateRowColumnChecked(rowIndex, colIndex) {
+                    this.updateRowChecked();
+                    this.updateColumnChecked();
+                },
+                updateRowChecked() {
+                    this.rows.forEach((row, rowIndex) => {
+                        this.rowChecked[rowIndex] = row.every((cell, colIndex) =>
+                            cell ? this.cellChecked[`${rowIndex}-${colIndex}`] : true
+                        );
+                    });
+                },
+                updateColumnChecked() {
+                    [0, 1, 2].forEach(colIndex => {
+                        this.columnChecked[colIndex] = this.rows.every((row, rowIndex) =>
+                            row[colIndex] ? this.cellChecked[`${rowIndex}-${colIndex}`] : true
+                        );
+                    });
                 },
                 updateTableValues(time) {
                     const pc = (100 / this.video.duration) * (time === undefined ? this.video.currentTime : time);
