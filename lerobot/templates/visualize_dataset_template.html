@@ -8,14 +8,6 @@
     <script src="https://cdn.jsdelivr.net/npm/dygraphs@2.2.1/dist/dygraph.min.js" type="text/javascript"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <title>{{ dataset_info.repo_id }} episode {{ episode_id }}</title>
-    <style>
-        /* css for graph legends */
-        #labels>span {
-            width: 14rem;
-            display: block;
-            font-size: 1rem;
-        }
-    </style>
 </head>
 
 <body class="flex h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()" @keydown.window="(e) => {
@@ -138,14 +130,18 @@
                 </p>
             </div>
 
-            <table class="text-sm">
+            <table class="text-sm" x-show="currentFrameData">
                 <thead>
                     <tr>
                         <th></th>
                         <template x-for="(_, colIndex) in [0,1,2]">
                             <th>
-                                <input type="checkbox" x-model="columnChecked[colIndex]"
-                                    @change="toggleColumn(colIndex)">
+
+                                <div class="flex gap-x-2">
+                                    <input type="checkbox" x-model="columnChecked[colIndex]"
+                                        @change="toggleColumn(colIndex)">
+                                    <p x-text="`${columnNames[colIndex]}`"></p>
+                                </div>
                             </th>
                         </template>
                     </tr>
@@ -154,13 +150,18 @@
                     <template x-for="(row, rowIndex) in rows">
                         <tr class="odd:bg-gray-800 even:bg-gray-900">
                             <td>
-                                <input type="checkbox" x-model="rowChecked[rowIndex]" @change="toggleRow(rowIndex)">
+                                <div class="flex gap-x-2 w-20 font-semibold">
+                                    <input type="checkbox" x-model="rowChecked[rowIndex]" @change="toggleRow(rowIndex)">
+                                    <p x-text="`Motor ${rowIndex}`"></p>
+                                </div>
                             </td>
                             <template x-for="(cell, colIndex) in row">
                                 <td x-show="cell">
-                                    <input type="checkbox" x-model="cellChecked[`${rowIndex}-${colIndex}`]"
-                                        @change="updateRowColumnChecked(rowIndex, colIndex)">
-                                    <p x-text="`${cell.label}: ${cell.value.toFixed(2)}`"></p>
+                                    <div class="flex gap-x-2 w-24">
+                                        <input type="checkbox" x-model="cellChecked[`${rowIndex}-${colIndex}`]"
+                                            @change="updateRowColumnChecked(rowIndex, colIndex)">
+                                        <p x-text="`${cell.value.toFixed(2)}`"></p>
+                                    </div>
                                 </td>
                             </template>
                         </tr>
@@ -178,10 +179,11 @@
         function createAlpineData() {
             return {
                 dygraph: null,
-                currentFrameData: [],
+                currentFrameData: null,
                 cellChecked: {},
                 rowChecked: {},
                 columnChecked: {},
+                columnNames: ["state", "action", "pred action"],
                 dygraphTime: 0.0,
                 dygraphIndex: 0,
                 videos: null,
@@ -226,6 +228,9 @@
                     return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
                 },
                 get rows() {
+                    if (!this.currentFrameData) {
+                        return [];
+                    }
                     const columnSize = Math.ceil(this.currentFrameData.length / 3);
                     return Array.from({
                         length: columnSize
@@ -285,7 +290,8 @@
                     });
                 },
                 updateTableValues(time) {
-                    const pc = (100 / this.video.duration) * (time === undefined ? this.video.currentTime : time);
+                    let pc = (100 / this.video.duration) * (time === undefined ? this.video.currentTime : time);
+                    if (isNaN(pc)) pc = 0;
                     const index = Math.floor(pc * this.dygraph.numRows() / 100);
                     const labels = this.dygraph.getLabels();
                     const values = this.dygraph.rawData_[index];
@@ -293,8 +299,6 @@
                         label,
                         value: values[idx]
                     })).slice(1); // slice(1) to remove the timestamp point that we do not need
-                    // 1. populate the table // 2. make tha table interactive
-                    console.log(this.currentFrameData)
                 },
                 formatTime(time) {
                     var hours = Math.floor(time / 3600);
