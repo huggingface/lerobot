@@ -137,7 +137,23 @@
                     Time: 0.00s
                 </p>
             </div>
-            <div id="labels" class="{% if has_policy %}columns-3{% else %}columns-2{% endif %}"
+
+            <table>
+                <tbody>
+                    <template x-for="row in rows">
+                        <tr>
+                            <template x-for="cell in row">
+                                <td x-show="cell">
+                                    <div x-text="cell.label"></div>
+                                    <div x-text="cell.value"></div>
+                                </td>
+                            </template>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+
+            <div id="labels" class="{% if has_policy %}columns-3{% else %}columns-2{% endif %} hidden"
                 style="font-size: 0rem;">
             </div>
         </div>
@@ -189,6 +205,16 @@
                         75); // Lightness adjusted for visibility on dark backgrounds
                     // Return the HSL color string
                     return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+                },
+                get rows() {
+                    const columnSize = Math.ceil(this.currentFrameData.length / 3);
+                    return Array.from({
+                        length: columnSize
+                    }, (_, rowIndex) => [
+                        this.currentFrameData[rowIndex] || null,
+                        this.currentFrameData[rowIndex + columnSize] || null,
+                        this.currentFrameData[rowIndex + 2 * columnSize] || null
+                    ]);
                 },
                 updateTableValues(time) {
                     const pc = (100 / this.video.duration) * (time === undefined ? this.video.currentTime : time);
