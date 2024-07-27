@@ -81,8 +81,9 @@ def from_raw_to_lerobot_format(
     fps: int | None = None,
     video: bool = True,
     episodes: list[int] | None = None,
+    encoding: dict | None = None,
 ):
-    if video or episodes is not None:
+    if video or episodes or encoding is not None:
         # TODO(aliberts): support this
         raise NotImplementedError
 
