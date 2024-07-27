@@ -265,7 +265,13 @@ def record_dataset(
     while timestamp < warmup_time_s:
         if not is_warmup_print:
             logging.info("Warming up (no data recording)")
-            os.system('say "Warmup" &')
+            #check if mac, linux, or windows.
+            if platform.system() == "Darwin":
+                os.system('say "Warmup" &')
+            elif platform.system() == "Linux":
+                os.system('spd-say "Warmup" &')
+            elif platform.system() == "Windows":
+                os.system('PowerShell -Command "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'Warmup\')" &')
             is_warmup_print = True
 
         now = time.perf_counter()
@@ -294,7 +300,7 @@ def record_dataset(
         logging.info("Headless environment detected. Keyboard input will not be available.")
     else:
         from pynput import keyboard
-
+        print("I get here")
         def on_press(key):
             nonlocal exit_early, rerecord_episode, stop_recording
             try:
@@ -318,17 +324,27 @@ def record_dataset(
     # Save images using threads to reach high fps (30 and more)
     # Using `with` to exist smoothly if an execption is raised.
     # Using only 4 worker threads to avoid blocking the main thread.
+    print("I get above futures")
     futures = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
-        # Start recording all episodes
+        # Start recording all episodes 
         while episode_index < num_episodes:
             logging.info(f"Recording episode {episode_index}")
-            os.system(f'say "Recording episode {episode_index}" &')
+            #check if mac, linux, or windows.
+            if platform.system() == "Darwin":
+                os.system(f'say "Recording episode {episode_index}" &')
+            elif platform.system() == "Linux":
+                os.system(f'spd-say "Recording episode {episode_index}" &')
+            elif platform.system() == "Windows":
+                os.system(f'PowerShell -Command "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'Recording episode {episode_index}\')" &')
             ep_dict = {}
             frame_index = 0
             timestamp = 0
             start_time = time.perf_counter()
+            print("above timestamp")
+            print(timestamp < episode_time_s)
             while timestamp < episode_time_s:
+                print("recording episode")
                 now = time.perf_counter()
                 observation, action = robot.teleop_step(record_data=True)
 
@@ -361,7 +377,7 @@ def record_dataset(
                 log_control_info(robot, dt_s, fps=fps)
 
                 timestamp = time.perf_counter() - start_time
-
+                print("exiting early?")
                 if exit_early:
                     exit_early = False
                     break
@@ -369,7 +385,13 @@ def record_dataset(
             if not stop_recording:
                 # Start resetting env while the executor are finishing
                 logging.info("Reset the environment")
-                os.system('say "Reset the environment" &')
+                #check if mac, linux, or windows.
+                if platform.system() == "Darwin":
+                    os.system('say "Reset the environment" &')
+                elif platform.system() == "Linux":
+                    os.system('spd-say "Reset the environment" &')
+                elif platform.system() == "Windows":
+                    os.system('PowerShell -Command "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'Reset the environment\')" &')
 
             timestamp = 0
             start_time = time.perf_counter()
@@ -447,7 +469,13 @@ def record_dataset(
     num_episodes = episode_index
 
     logging.info("Encoding videos")
-    os.system('say "Encoding videos" &')
+    #check if mac, linux, or windows.
+    if platform.system() == "Darwin":
+        os.system('say "Encoding videos" &')
+    elif platform.system() == "Linux":
+        os.system('spd-say "Encoding videos" &')
+    elif platform.system() == "Windows":
+        os.system('PowerShell -Command "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'Encoding videos\')" &')
     # Use ffmpeg to convert frames stored as png into mp4 videos
     for episode_index in tqdm.tqdm(range(num_episodes)):
         for key in image_keys:
@@ -487,9 +515,16 @@ def record_dataset(
         info=info,
         videos_dir=videos_dir,
     )
+    stats = None
     if run_compute_stats:
         logging.info("Computing dataset statistics")
-        os.system('say "Computing dataset statistics" &')
+        #check if mac, linux, or windows.
+        if platform.system() == "Darwin":
+            os.system('say "Computing dataset statistics" &')
+        elif platform.system() == "Linux":
+            os.system('spd-say "Computing dataset statistics" &')
+        elif platform.system() == "Windows":
+            os.system('PowerShell -Command "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'Computing dataset statistics\')" &')
         stats = compute_stats(lerobot_dataset)
         lerobot_dataset.stats = stats
     else:
@@ -509,7 +544,13 @@ def record_dataset(
         create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
 
     logging.info("Exiting")
-    os.system('say "Exiting" &')
+    #check if mac, linux, or windows.
+    if platform.system() == "Darwin":
+        os.system('say "Exiting" &')
+    elif platform.system() == "Linux":
+        os.system('spd-say "Exiting" &')
+    elif platform.system() == "Windows":
+        os.system('PowerShell -Command "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'Exiting\')" &')
 
     return lerobot_dataset
 
@@ -529,7 +570,13 @@ def replay_episode(robot: Robot, episode: int, fps: int | None = None, root="dat
         robot.connect()
 
     logging.info("Replaying episode")
-    os.system('say "Replaying episode"')
+    #check if mac, linux, or windows.
+    if platform.system() == "Darwin":
+        os.system('say "Replaying episode"')
+    elif platform.system() == "Linux":
+        os.system('spd-say "Replaying episode"')
+    elif platform.system() == "Windows":
+        os.system('PowerShell -Command "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'Replaying episode\')"')
 
     for idx in range(from_idx, to_idx):
         now = time.perf_counter()
