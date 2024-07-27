@@ -160,7 +160,7 @@
                                     <div class="flex gap-x-2 w-24">
                                         <input type="checkbox" x-model="cellChecked[`${rowIndex}-${colIndex}`]"
                                             @change="updateRowColumnChecked(rowIndex, colIndex)">
-                                        <p x-text="`${cell.value.toFixed(2)}`"></p>
+                                        <p x-text="`${cell.value.toFixed(2)}`" :style="`color: ${cell.color}`"></p>
                                     </div>
                                 </td>
                             </template>
@@ -295,9 +295,11 @@
                     const index = Math.floor(pc * this.dygraph.numRows() / 100);
                     const labels = this.dygraph.getLabels();
                     const values = this.dygraph.rawData_[index];
+                    const colors = this.dygraph.getColors();
                     this.currentFrameData = labels.map((label, idx) => ({
                         label,
-                        value: values[idx]
+                        value: values[idx],
+                        color: colors[idx-1],
                     })).slice(1); // slice(1) to remove the timestamp point that we do not need
                 },
                 formatTime(time) {
