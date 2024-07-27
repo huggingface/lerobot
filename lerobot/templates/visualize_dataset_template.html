@@ -79,8 +79,6 @@
                       dygraph.setSelection(dygraphIndex, undefined, true, true);
 
                       $refs.timer.textContent = formatTime(video.currentTime) + ' / ' + formatTime(video.duration);
-
-                      // updateTableValues();
                     }
                 }" @ended="() => {
                     $refs.btnPlay.classList.remove('hidden');
@@ -135,7 +133,8 @@
                 }">
                 </div>
                 <p x-ref="graphTimer" class="font-mono ml-14 mt-4"
-                    x-init="$watch('dygraphTime', value => ($refs.graphTimer.innerText = `Time: ${dygraphTime.toFixed(2)}s`))">Time: 0.00s
+                    x-init="$watch('dygraphTime', value => ($refs.graphTimer.innerText = `Time: ${dygraphTime.toFixed(2)}s`))">
+                    Time: 0.00s
                 </p>
             </div>
             <div id="labels" class="{% if has_policy %}columns-3{% else %}columns-2{% endif %}"
@@ -148,6 +147,7 @@
         function createAlpineData() {
             return {
                 dygraph: null,
+                currentFrameData: null,
                 dygraphTime: 0.0,
                 dygraphIndex: 0,
                 videos: null,
@@ -165,17 +165,17 @@
                         }, this.generateDarkModeColor), // custom color palette
                         pointClickCallback: (event, point) => {
                             this.dygraphTime = point.xval;
-                            // updateTableValues(dygraphTime);
+                            this.updateTableValues(this.dygraphTime);
                         },
                         highlightCallback: (event, x, points, row, seriesName) => {
                             this.dygraphTime = x;
-                            // updateTableValues(dygraphTime);
+                            this.updateTableValues(this.dygraphTime);
                         },
                         drawCallback: (dygraph, is_initial) => {
                             if (is_initial) {
                                 this.dygraph.setSelection(this.dygraphIndex, undefined, true, true);
                             }
-                            // updateTableValues();
+                            this.updateTableValues();
                         },
                     });
                 },
@@ -190,8 +190,17 @@
                     // Return the HSL color string
                     return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
                 },
-                updateTableValues() {
-
+                updateTableValues(time) {
+                    const pc = (100 / this.video.duration) * (time === undefined ? this.video.currentTime : time);
+                    const index = Math.floor(pc * this.dygraph.numRows() / 100);
+                    const labels = this.dygraph.getLabels();
+                    const values = this.dygraph.rawData_[index];
+                    this.currentFrameData = labels.map((label, idx) => ({
+                        label,
+                        value: values[idx]
+                    })).slice(1); // slice(1) to remove the timestamp point that we do not need
+                    // 1. populate the table // 2. make tha table interactive
+                    console.log(this.currentFrameData)
                 },
                 formatTime(time) {
                     var hours = Math.floor(time / 3600);
@@ -201,15 +210,6 @@
                         10 ?
                         '0' + seconds : seconds);
                 }
-
-                //   const updateTableValues = (time) => {
-                //     const pc = (100 / video.duration) * (time ?? video.currentTime);
-                //     const index = Math.floor(pc * dygraph.numRows() / 100);
-                //     const labels = dygraph.getLabels();
-                //     const values = dygraph.rawData_[index];
-                //     // const data = labels.map((label, idx) => ({label, value: values[idx]})).slice(1); // slice(1) to remove the timestamp point that we do not need
-                //     // 1. populate the table // 2. make tha table interactive
-                //   }
             };
         }
     </script>
