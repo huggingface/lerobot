@@ -138,7 +138,7 @@
                 </p>
             </div>
 
-            <table>
+            <table class="text-sm">
                 <thead>
                     <tr>
                         <th></th>
@@ -152,7 +152,7 @@
                 </thead>
                 <tbody>
                     <template x-for="(row, rowIndex) in rows">
-                        <tr>
+                        <tr class="odd:bg-gray-800 even:bg-gray-900">
                             <td>
                                 <input type="checkbox" x-model="rowChecked[rowIndex]" @change="toggleRow(rowIndex)">
                             </td>
