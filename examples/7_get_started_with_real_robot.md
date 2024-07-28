@@ -21,19 +21,19 @@ During data collection, you will control the follower arm by moving the leader a
 Finally, you will train a neural network to predict the future actions given the state and camera frames as input ; and deploy it to autonomously control the robot via the high frequency communication of goal positions to the follower arm.
 
 
-## 1. Order and Assemble Koch v1.1
+## 1. Order and Assemble your Koch v1.1
 
 Follow the bill of materials on the [Koch v1.1 github page](https://github.com/jess-moss/koch-v1-1) to order a leader and a follower arm. Some parts and prices are a bit different with respect to the geo location.
 
 Once the parts are received, follow this video to guide you through the assembly:
 
-## 2. Connect, configure, and calibrate Koch v1.1
+## 2. Connect, Configure, and Calibrate your Koch v1.1
 
 Connect the leader arm (the smaller one) with the 5V alimentation and the follower arm with the 12V alimentation. Then connect both arms to your computer with USB.
 
-### DynamixelMotorsBus
+### Control your motors with DynamixelMotorsBus
 
-[`DynamixelMotorsBus`](lerobot/common/robot_devices/motors/dynamixel.py) has been made to communicate with each arm. This class allows to efficiently read from and write to the motors plugged to the corresponding usb bus. Underneath, it relies on the python [dynamixel sdk](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
+[`DynamixelMotorsBus`](lerobot/common/robot_devices/motors/dynamixel.py) allows to efficiently read from and write to the motors connected as a chain to the corresponding usb bus. Underneath, it relies on the python [dynamixel sdk](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
 
 **Instantiate**
 
@@ -139,7 +139,7 @@ follower_arm.write("Goal_Position", values[0], "shoulder_pan")
 ```
 
 
-### KochRobot
+### Teleoperate your Koch v1.1 with KochRobot
 
 **Instantiate**
 ```python
@@ -169,12 +169,136 @@ print(degrees)
 
 **Teleoperate**
 
+TODO: explain in pseudo code what the telop is doing
+
 ```python
 # Teleoperate for 60 seconds if running at 200 hz
 for _ in range(60*200):
     robot.teleop_step()
 ```
 
+TODO: explain in pseudo code what the telop(record_data=True) is doing
+
 ```python
-robot.teleop_step(record_data=True)
+observation, action = robot.teleop_step(record_data=True)
+print(observation)
+>>>
+print(action)
+>>>
+```
+
+### Add your cameras with OpenCVCamera
+
+**Instantiate**
+
+The `OpenCVCamera` class allows to efficiently record images from cameras. It relies on opencv2 to communicate with the cameras. Most cameras are compatible. For more info, see the [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
+
+An `OpenCVCamera` instance requires a camera index (e.g. `OpenCVCamera(camera_index=0)`). When you only have one camera like a webcam of a laptop, the camera index is expected to be 0, but it might also be very different, and the camera index might change if you reboot your computer or re-plug your camera. This behavior depends on your operation system.
+
+To find the camera indices of your cameras, you can run our utility script that will save a few frames for each camera:
+```bash
+python lerobot/common/robot_devices/cameras/opencv.py --images-dir outputs/images_from_opencv_cameras
+>>> TODO
+```
+
+When an `OpenCVCamera` is instantiated, if no specific config is provided, the default fps, width, height and color_mode of the given camera will be used.
+
+Example of usage of the class:
+```python
+camera = OpenCVCamera(camera_index=0)
+camera.connect()
+color_image = camera.read()
+# when done using the camera, consider disconnecting
+camera.disconnect()
+```
+
+**Add to robot**
+
+TODO: explain that the cameras run asynchronously.
+
+```python
+del robot
+robot = KochRobot(
+    leader_arms={"main": leader_arm},
+    follower_arms={"main": follower_arm},
+    calibration_path=".cache/calibration/koch.pkl",
+    cameras={
+        "laptop": OpenCVCamera(0, fps=30, width=640, height=480),
+        "phone": OpenCVCamera(1, fps=30, width=640, height=480),
+    },
+)
+
+robot.connect()
+
+observation, action = robot.teleop_step(record_data=True)
+print(observation)
+>>>
+print(action)
+>>>
+```
+
+### Use `koch.yaml` and our `teleoperate` function
+
+See: `lerobot/configs/robot/koch.yaml`
+
+```bash
+python lerobot/scripts/control_robot.py teleoperate \
+  --robot lerobot/configs/robot/koch.yaml
+
+>>>
+```
+
+```bash
+python lerobot/scripts/control_robot.py teleoperate \
+  --robot lerobot/configs/robot/koch.yaml \
+  --robot-overrides \
+    leader_arms.main.port=/dev/tty.usbmodem575E0031751 \
+    follower_arms.main.port=/dev/tty.usbmodem575E0032081
+
+>>>
+```
+
+```bash
+python lerobot/scripts/control_robot.py teleoperate \
+  --robot lerobot/configs/robot/koch.yaml \
+  --robot-overrides \
+    leader_arms.main.port=/dev/tty.usbmodem575E0031751 \
+    follower_arms.main.port=/dev/tty.usbmodem575E0032081
+    '~cameras'
+```
+
+
+## 3. Record your Dataset and Visualize it
+
+TODO: ideally we could only do this
+
+```python
+from lerobot.scripts.control_robot import busy_wait
+
+fps = 30
+record_time_s = 60
+for _ in range(fps * record_time_s):
+    start_time = time.perf_counter()
+
+    observation, action = robot.teleop_step(record_data=True)
+
+    dt_s = time.perf_counter() - start_time
+    busy_wait(1 / fps - dt_s)
+```
+
+### Use `koch.yaml` and our `teleoperate` function
+
+TODO: We added ways to write the frames to disk in multiple thread
+We added warmap, reset time between episodes
+At the end we encode the frames into videos
+We consolidate the data into a LeRobotDataset and upload on the hub.
+
+
+```bash
+python lerobot/scripts/control_robot.py record \
+    --fps 30 \
+    --root tmp/data \
+    --repo-id $USER/koch_test \
+    --num-episodes 1 \
+    --run-compute-stats 0
 ```
