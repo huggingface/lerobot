@@ -439,7 +439,7 @@ def record_dataset(
 
             if is_last_episode:
                 logging.info("Done recording")
-                say("Done recording")
+                say("Done recording", blocking=True)
                 if not is_headless:
                     listener.stop()
 
