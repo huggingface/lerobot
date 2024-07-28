@@ -115,14 +115,17 @@ from lerobot.scripts.push_dataset_to_hub import push_meta_data_to_hub, push_vide
 # Utilities
 ########################################################################################
 
-def say(text):
-    #check if mac, linux, or windows.
+def say(text, blocking=False):
+    # Use the ampersand to run command in the background
+    suffix = "" if blocking else " &"
+
+    # Check if mac, linux, or windows.
     if platform.system() == "Darwin":
-        os.system(f'say "{text}" &')
+        os.system(f'say "{text}"{suffix}')
     elif platform.system() == "Linux":
-        os.system(f'spd-say "{text}" &')
+        os.system(f'spd-say "{text}"{suffix}')
     elif platform.system() == "Windows":
-        os.system(f'PowerShell -Command "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'{text}\')" &')
+        os.system(f'PowerShell -Command "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'{text}\')"{suffix}')
 
 def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
     img = Image.fromarray(img_tensor.numpy())
