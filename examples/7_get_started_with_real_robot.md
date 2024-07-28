@@ -3,11 +3,11 @@
 This tutorial explains how to get started with real robots and train a neural network to control them autonomously.
 
 It covers how to:
-- order and assemble your robot,
-- connect your robot, configure it and calibrate it,
-- record your dataset and visualize it,
-- train a policy on your data and make sure it's ready for evaluation,
-- evaluate your policy and visualize the result afterwards.
+1. order and assemble your robot,
+2. connect your robot, configure it and calibrate it,
+3. record your dataset and visualize it,
+4. train a policy on your data and make sure it's ready for evaluation,
+5. evaluate your policy and visualize the result afterwards.
 
 Following these steps, you should be able to reproduce behaviors like picking a lego block and placing it in a bin with a relatively high success rate.
 
@@ -286,19 +286,97 @@ for _ in range(fps * record_time_s):
     busy_wait(1 / fps - dt_s)
 ```
 
-### Use `koch.yaml` and our `teleoperate` function
+### Use `koch.yaml` and the `record` function
 
 TODO: We added ways to write the frames to disk in multiple thread
 We added warmap, reset time between episodes
 At the end we encode the frames into videos
 We consolidate the data into a LeRobotDataset and upload on the hub.
 
+Here is an example for 1 episode
+```bash
+python lerobot/scripts/control_robot.py record \
+    --fps 30 \
+    --root tmp/data \
+    --repo-id $USER/koch_test \
+    --num-episodes 10 \
+    --run-compute-stats 1
+```
+
+### Replay episode on your robot with the `replay` function
+
+```bash
+python lerobot/scripts/control_robot.py replay \
+    --fps 30 \
+    --root tmp/data \
+    --repo-id $USER/koch_test \
+    --episode 0
+```
+
+Note: TODO
+```bash
+export DATA_DIR=data
+```
+
+### Visualize all episodes
+
+```bash
+python lerobot/scripts/visualize_dataset.py \
+    --repo-id $USER/koch_test
+```
+
+
+## 4. Train a policy on your data
+
+### Use our `train` script
+
+```bash
+python lerobot/scripts/train.py \
+    policy=act_koch_real \
+    env=koch_real \
+    dataset_repo_id=$USER/koch_pick_place_lego \
+    hydra.run.dir=outputs/train/act_koch_real
+```
+
+TODO: image and plots of wandb
+
+```bash
+ckpt=100000
+huggingface-cli upload cadene/2024_07_27_act_koch_pick_place_1_lego_raph_nightly_${ckpt} \
+  outputs/train/2024_07_27_act_koch_pick_place_1_lego_raph_nightly/checkpoints/${ckpt}/pretrained_model
+```
+
+### Visualize predictions on training set
+
+```bash
+python lerobot/scripts/visualize_dataset.py \
+    --repo-id $USER/koch_test
+    -p TODO
+```
+
+## 5. Evaluate your policy
+
+### Use our `record` function
 
 ```bash
 python lerobot/scripts/control_robot.py record \
     --fps 30 \
     --root tmp/data \
     --repo-id $USER/koch_test \
-    --num-episodes 1 \
-    --run-compute-stats 0
+    --num-episodes 10 \
+    --run-compute-stats 1
+    -p TODO
 ```
+
+### Visualize evaluation afterwards
+
+```bash
+python lerobot/scripts/visualize_dataset.py \
+    --repo-id $USER/koch_test
+```
+
+
+## What's next?
+
+-
+- Improve the dataset
