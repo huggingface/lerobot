@@ -6,7 +6,7 @@ Examples of usage:
 python lerobot/scripts/control_robot.py teleoperate
 
 # Remove the cameras from the robot definition. They are not used in 'teleoperate' anyway.
-python lerobot/scripts/control_robot.py teleoperate '~cameras'
+python lerobot/scripts/control_robot.py teleoperate --robot-overrides '~cameras'
 ```
 
 - Unlimited teleoperation at a limited frequency of 30 Hz, to simulate data recording frequency:

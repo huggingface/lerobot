@@ -264,12 +264,12 @@ class KochRobot:
     Example of highest frequency data collection with cameras:
     ```python
     # Defines how to communicate with 2 cameras connected to the computer.
-    # Here, the webcam of the mackbookpro and the iphone (connected in USB to the macbookpro)
+    # Here, the webcam of the laptop and the phone (connected in USB to the laptop)
     # can be reached respectively using the camera indices 0 and 1. These indices can be
     # arbitrary. See the documentation of `OpenCVCamera` to find your own camera indices.
     cameras = {
-        "macbookpro": OpenCVCamera(camera_index=0, fps=30, width=640, height=480),
-        "iphone": OpenCVCamera(camera_index=1, fps=30, width=640, height=480),
+        "laptop": OpenCVCamera(camera_index=0, fps=30, width=640, height=480),
+        "phone": OpenCVCamera(camera_index=1, fps=30, width=640, height=480),
     }
 
     # Assumes leader and follower arms have been instantiated already (see first example)
