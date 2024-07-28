@@ -133,7 +133,7 @@
                 <thead>
                     <tr>
                         <th></th>
-                        <template x-for="(_, colIndex) in [0,1,2]">
+                        <template x-for="(_, colIndex) in Array.from({length: nColumns}, (_, index) => index)">
                             <th class="border border-slate-700">
                                 <div class="flex gap-x-2 justify-between px-2">
                                     <input type="checkbox" :checked="isColumnChecked(colIndex)"
@@ -168,8 +168,7 @@
                 </tbody>
             </table>
 
-            <div id="labels" class="{% if has_policy %}columns-3{% else %}columns-2{% endif %} hidden"
-                style="font-size: 0rem;">
+            <div id="labels" class="hidden">
             </div>
         </div>
     </div>
@@ -180,6 +179,7 @@
                 dygraph: null,
                 currentFrameData: null,
                 columnNames: ["state", "action", "pred action"],
+                nColumns: {% if has_policy %}3{% else %}2{% endif %},
                 checked: [],
                 dygraphTime: 0.0,
                 dygraphIndex: 0,
@@ -228,14 +228,19 @@
                     if (!this.currentFrameData) {
                         return [];
                     }
-                    const columnSize = Math.ceil(this.currentFrameData.length / 3);
+                    const columnSize = Math.ceil(this.currentFrameData.length / this.nColumns);
                     return Array.from({
                         length: columnSize
-                    }, (_, rowIndex) => [
-                        this.currentFrameData[rowIndex] || null,
-                        this.currentFrameData[rowIndex + columnSize] || null,
-                        this.currentFrameData[rowIndex + 2 * columnSize] || null
-                    ]);
+                    }, (_, rowIndex) => {
+                        const row = [
+                            this.currentFrameData[rowIndex] || null,
+                            this.currentFrameData[rowIndex + columnSize] || null,
+                        ];
+                        if(this.nColumns === 3){
+                            row.push(this.currentFrameData[rowIndex + 2 * columnSize] || null)
+                        }
+                        return row;
+                    });
                 },
                 isRowChecked(rowIndex) {
                     return this.rows[rowIndex].every(cell => cell && cell.checked);
