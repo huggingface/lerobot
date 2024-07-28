@@ -130,7 +130,40 @@
                 </p>
             </div>
 
-            <table class="text-sm" x-show="currentFrameData">
+            <table>
+                <thead>
+                    <tr>
+                        <th></th>
+                        <template x-for="(_, colIndex) in [0,1,2]">
+                            <th>
+                                <input type="checkbox" 
+                                       :checked="isColumnChecked(colIndex)"
+                                       @change="toggleColumn(colIndex)">
+                            </th>
+                        </template>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="(row, rowIndex) in rows">
+                        <tr>
+                            <td>
+                                <input type="checkbox" 
+                                       :checked="isRowChecked(rowIndex)"
+                                       @change="toggleRow(rowIndex)">
+                            </td>
+                            <template x-for="(cell, colIndex) in row">
+                                <td x-show="cell">
+                                    <input type="checkbox" 
+                                           x-model="cell.checked" @change="updateTableValues()">
+                                    <span x-text="cell.value" :style="`color: ${cell.color}`"></span>
+                                </td>
+                            </template>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+
+            <!-- <table class="text-sm" x-show="currentFrameData">
                 <thead>
                     <tr>
                         <th></th>
@@ -167,7 +200,7 @@
                         </tr>
                     </template>
                 </tbody>
-            </table>
+            </table> -->
 
             <div id="labels" class="{% if has_policy %}columns-3{% else %}columns-2{% endif %} hidden"
                 style="font-size: 0rem;">
@@ -180,10 +213,8 @@
             return {
                 dygraph: null,
                 currentFrameData: null,
-                cellChecked: {},
-                rowChecked: {},
-                columnChecked: {},
                 columnNames: ["state", "action", "pred action"],
+                checked: [],
                 dygraphTime: 0.0,
                 dygraphIndex: 0,
                 videos: null,
@@ -210,9 +241,9 @@
                         drawCallback: (dygraph, is_initial) => {
                             if (is_initial) {
                                 this.dygraph.setSelection(this.dygraphIndex, undefined, true, true);
-                                this.initCheckboxes();
+                                const colors = this.dygraph.getColors();
+                                this.checked = Array(colors.length).fill(true);
                             }
-                            this.updateTableValues();
                         },
                     });
                 },
@@ -240,67 +271,46 @@
                         this.currentFrameData[rowIndex + 2 * columnSize] || null
                     ]);
                 },
-                initCheckboxes() {
-                    this.rows.forEach((row, rowIndex) => {
-                        this.rowChecked[rowIndex] = true;
-                        row.forEach((cell, colIndex) => {
-                            if (cell) {
-                                this.cellChecked[`${rowIndex}-${colIndex}`] = true;
-                            }
-                        });
-                    });
-                    [0, 1, 2].forEach(colIndex => {
-                        this.columnChecked[colIndex] = true;
-                    });
+                isRowChecked(rowIndex) {
+                    return this.rows[rowIndex].every(cell => cell && cell.checked);
+                },
+                isColumnChecked(colIndex) {
+                    return this.rows.every(row => row[colIndex] && row[colIndex].checked);
                 },
                 toggleRow(rowIndex) {
-                    const checked = this.rowChecked[rowIndex];
-                    this.rows[rowIndex].forEach((cell, colIndex) => {
-                        if (cell) {
-                            this.cellChecked[`${rowIndex}-${colIndex}`] = checked;
-                        }
+                    const newState = !this.isRowChecked(rowIndex);
+                    this.rows[rowIndex].forEach(cell => {
+                        if (cell) cell.checked = newState;
                     });
-                    this.updateColumnChecked();
+                    this.updateTableValues();
                 },
                 toggleColumn(colIndex) {
-                    const checked = this.columnChecked[colIndex];
-                    this.rows.forEach((row, rowIndex) => {
-                        if (row[colIndex]) {
-                            this.cellChecked[`${rowIndex}-${colIndex}`] = checked;
-                        }
+                    const newState = !this.isColumnChecked(colIndex);
+                    this.rows.forEach(row => {
+                        if (row[colIndex]) row[colIndex].checked = newState;
                     });
-                    this.updateRowChecked();
-                },
-                updateRowColumnChecked(rowIndex, colIndex) {
-                    this.updateRowChecked();
-                    this.updateColumnChecked();
-                },
-                updateRowChecked() {
-                    this.rows.forEach((row, rowIndex) => {
-                        this.rowChecked[rowIndex] = row.every((cell, colIndex) =>
-                            cell ? this.cellChecked[`${rowIndex}-${colIndex}`] : true
-                        );
-                    });
-                },
-                updateColumnChecked() {
-                    [0, 1, 2].forEach(colIndex => {
-                        this.columnChecked[colIndex] = this.rows.every((row, rowIndex) =>
-                            row[colIndex] ? this.cellChecked[`${rowIndex}-${colIndex}`] : true
-                        );
-                    });
+                    this.updateTableValues();
                 },
                 updateTableValues(time) {
                     let pc = (100 / this.video.duration) * (time === undefined ? this.video.currentTime : time);
                     if (isNaN(pc)) pc = 0;
                     const index = Math.floor(pc * this.dygraph.numRows() / 100);
-                    const labels = this.dygraph.getLabels();
-                    const values = this.dygraph.rawData_[index];
+                    // slice(1) to remove the timestamp point that we do not need
+                    const labels = this.dygraph.getLabels().slice(1);
+                    const values = this.dygraph.rawData_[index].slice(1);
                     const colors = this.dygraph.getColors();
+                    const checkedNew = this.currentFrameData ? this.currentFrameData.map(cell => cell.checked) : Array(colors.length).fill(true);
                     this.currentFrameData = labels.map((label, idx) => ({
                         label,
                         value: values[idx],
-                        color: colors[idx-1],
-                    })).slice(1); // slice(1) to remove the timestamp point that we do not need
+                        color: colors[idx],
+                        checked: checkedNew[idx],
+                    }));
+                    const shouldUpdateVisibility = !this.checked.every((value, index) => value === checkedNew[index]);
+                    if(shouldUpdateVisibility){
+                        this.checked = checkedNew;
+                        this.dygraph.setVisibility(this.checked);
+                    }
                 },
                 formatTime(time) {
                     var hours = Math.floor(time / 3600);
