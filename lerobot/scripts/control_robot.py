@@ -368,7 +368,6 @@ def record_dataset(
                 log_control_info(robot, dt_s, fps=fps)
 
                 timestamp = time.perf_counter() - start_time
-                print("exiting early?")
                 if exit_early:
                     exit_early = False
                     break
