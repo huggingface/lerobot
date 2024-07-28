@@ -539,7 +539,7 @@ def replay_episode(robot: Robot, episode: int, fps: int | None = None, root="dat
         robot.connect()
 
     logging.info("Replaying episode")
-    say("Replaying episode")
+    say("Replaying episode", blocking=True)
     for idx in range(from_idx, to_idx):
         now = time.perf_counter()
 
