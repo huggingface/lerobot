@@ -3876,13 +3876,13 @@ test = ["pytest"]
 
 [[package]]
 name = "setuptools"
-version = "71.0.1"
+version = "71.0.0"
 description = "Easily download, build, install, upgrade, and uninstall Python packages"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "setuptools-71.0.1-py3-none-any.whl", hash = "sha256:1eb8ef012efae7f6acbc53ec0abde4bc6746c43087fd215ee09e1df48998711f"},
-    {file = "setuptools-71.0.1.tar.gz", hash = "sha256:c51d7fd29843aa18dad362d4b4ecd917022131425438251f4e3d766c964dd1ad"},
+    {file = "setuptools-71.0.0-py3-none-any.whl", hash = "sha256:f06fbe978a91819d250a30e0dc4ca79df713d909e24438a42d0ec300fc52247f"},
+    {file = "setuptools-71.0.0.tar.gz", hash = "sha256:98da3b8aca443b9848a209ae4165e2edede62633219afa493a58fbba57f72e2e"},
 ]
 
 [package.extras]
@@ -4569,4 +4569,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "e45efcec68a474729709b52cf15c6077b73a722d2569183cda0e7bef9b14f233"
+content-hash = "389bb9cfaeafdc48086a93b7dc0556914e83fa1f533969aa132fe07407f00dd1"
