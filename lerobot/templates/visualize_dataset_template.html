@@ -194,7 +194,13 @@
                         legend: 'always',
                         labelsDiv: document.getElementById('labels'),
                         labelsKMB: true,
-                        colors: ["hsl(226, 67%, 57%)","hsl(352, 95%, 74%)","hsl(262, 61%, 63%)","hsl(353, 65%, 62%)","hsl(295, 89%, 51%)","hsl(83, 75%, 73%)","hsl(136, 77%, 55%)","hsl(169, 98%, 56%)","hsl(38, 90%, 61%)","hsl(19, 100%, 52%)","hsl(350, 94%, 67%)","hsl(200, 62%, 50%)","hsl(141, 89%, 68%)","hsl(260, 67%, 67%)","hsl(163, 82%, 71%)","hsl(113, 99%, 54%)","hsl(70, 75%, 67%)","hsl(14, 100%, 51%)"],
+                        colors: ["hsl(226, 67%, 57%)", "hsl(352, 95%, 74%)", "hsl(262, 61%, 63%)",
+                            "hsl(353, 65%, 62%)", "hsl(295, 89%, 51%)", "hsl(83, 75%, 73%)",
+                            "hsl(136, 77%, 55%)", "hsl(169, 98%, 56%)", "hsl(38, 90%, 61%)",
+                            "hsl(19, 100%, 52%)", "hsl(350, 94%, 67%)", "hsl(200, 62%, 50%)",
+                            "hsl(141, 89%, 68%)", "hsl(260, 67%, 67%)", "hsl(163, 82%, 71%)",
+                            "hsl(113, 99%, 54%)", "hsl(70, 75%, 67%)", "hsl(14, 100%, 51%)"
+                        ],
                         pointClickCallback: (event, point) => {
                             this.dygraphTime = point.xval;
                             this.updateTableValues(this.dygraphTime);
@@ -225,7 +231,7 @@
                             this.currentFrameData[rowIndex] || null,
                             this.currentFrameData[rowIndex + columnSize] || null,
                         ];
-                        if(this.nColumns === 3){
+                        if (this.nColumns === 3) {
                             row.push(this.currentFrameData[rowIndex + 2 * columnSize] || null)
                         }
                         return row;
@@ -252,7 +258,7 @@
                     this.updateTableValues();
                 },
                 updateTableValues(time) {
-                    if(!this.colors){
+                    if (!this.colors) {
                         return;
                     }
                     let pc = (100 / this.video.duration) * (time === undefined ? this.video.currentTime : time);
