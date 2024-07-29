@@ -384,5 +384,11 @@ python lerobot/scripts/visualize_dataset.py \
 
 ## What's next?
 
--
+### More datasets
+
+Collect a slightly more difficult dataset, like grasping 5 lego blocks in a row, and co-train on it
+
+###
+
+
 - Improve the dataset
