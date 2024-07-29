@@ -64,13 +64,16 @@
                 <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
                 <video type="video/mp4" class="min-w-64" @timeupdate="() => {
                     if (video.duration) {
-                      const pc = (100 / video.duration) * video.currentTime;
+                      const time = video.currentTime;
+                      const pc = (100 / video.duration) * time;
                       $refs.slider.value = pc;
-                      dygraphTime = video.currentTime;
+                      dygraphTime = time;
                       dygraphIndex = Math.floor(pc * dygraph.numRows() / 100);
                       dygraph.setSelection(dygraphIndex, undefined, true, true);
 
-                      $refs.timer.textContent = formatTime(video.currentTime) + ' / ' + formatTime(video.duration);
+                      $refs.timer.textContent = formatTime(time) + ' / ' + formatTime(video.duration);
+
+                      updateTimeQuery(time.toFixed(2));
                     }
                 }" @ended="() => {
                     $refs.btnPlay.classList.remove('hidden');
@@ -235,6 +238,14 @@
                                 });
 
                                 this.updateTableValues();
+
+                                let url = new URL(window.location.href);
+                                let params = new URLSearchParams(url.search);
+                                let time = params.get("t");
+                                if(time){
+                                    time = parseFloat(time);
+                                    this.videos.forEach(video => (video.currentTime = time));
+                                }
                             }
                         },
                     });
@@ -300,6 +311,13 @@
                         this.checked = checkedNew;
                         this.dygraph.setVisibility(this.checked);
                     }
+                },
+                updateTimeQuery(time) {
+                    let url = new URL(window.location.href);
+                    let params = new URLSearchParams(url.search);
+                    params.set("t", time);
+                    url.search = params.toString();
+                    window.history.replaceState({}, '', url.toString());
                 },
                 formatTime(time) {
                     var hours = Math.floor(time / 3600);
