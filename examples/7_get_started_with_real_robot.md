@@ -56,7 +56,7 @@ python lerobot/common/robot_devices/motors/dynamixel.py
 >>> Reconnect the usb cable.
 ```
 
-Then you can instantiate each arm by listing their motors with their name, motor index, and model. The initial motor index from factory for every motors is `1`. However, unique indices are required for these motors to function in a chain on a common bus. To this end, we set different indices and follow the ascendant convention starting from index `1`. These indices will be written inside the persisting memory of each motor during the first connection. Here is an example of what the instantiation looks like:
+Then you can instantiate each arm by listing their motors with their name, motor index, and model. The initial motor index from factory for every motors is `1`. However, unique indices are required for these motors to function in a chain on a common bus. To this end, we set different indices and follow the ascendant convention starting from index `1` (e.g. "1, 2, 3, 4, 5, 6" ). These indices will be written inside the persisting memory of each motor during the first connection. Here is an example of what the instantiation looks like:
 ```python
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 
@@ -89,7 +89,7 @@ follower_arm = DynamixelMotorsBus(
 
 **Configure and Connect**
 
-During the first connection of the motors, `DynamixelMotorsBus` automatically detects a mismatch between the present motor indices (all `1` by default) and the specified motor indices. This triggers the configuration procedure which requires to unplug the power cord and motors, and to sequentially plug each motor again, starting from the closest to the bus. Because it is quite involved, we provide a youtube video for help. The output of the procedure looks like that:
+During the first connection of the motors, `DynamixelMotorsBus` automatically detects a mismatch between the present motor indices (all `1` by default) and the specified motor indices (e.g. "1, 2, 3, 4, 5, 6"). This triggers the configuration procedure which requires to unplug the power cord and motors, and to sequentially plug each motor again, starting from the closest to the bus. Because it is quite involved, we provide a youtube video for help. The output of the procedure looks like that:
 ```python
 leader_arm.connect()
 
@@ -243,14 +243,14 @@ See: `lerobot/configs/robot/koch.yaml`
 
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
-  --robot lerobot/configs/robot/koch.yaml
+  --robot-path lerobot/configs/robot/koch.yaml
 
 >>>
 ```
 
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
-  --robot lerobot/configs/robot/koch.yaml \
+  --robot-path lerobot/configs/robot/koch.yaml \
   --robot-overrides \
     leader_arms.main.port=/dev/tty.usbmodem575E0031751 \
     follower_arms.main.port=/dev/tty.usbmodem575E0032081
@@ -260,7 +260,7 @@ python lerobot/scripts/control_robot.py teleoperate \
 
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
-  --robot lerobot/configs/robot/koch.yaml \
+  --robot-path lerobot/configs/robot/koch.yaml \
   --robot-overrides \
     leader_arms.main.port=/dev/tty.usbmodem575E0031751 \
     follower_arms.main.port=/dev/tty.usbmodem575E0032081
@@ -291,24 +291,29 @@ for _ in range(fps * record_time_s):
 TODO: We added ways to write the frames to disk in multiple thread
 We added warmap, reset time between episodes
 At the end we encode the frames into videos
+control
+if fail, re-record episode
+checkpointing
 We consolidate the data into a LeRobotDataset and upload on the hub.
 
 Here is an example for 1 episode
 ```bash
 python lerobot/scripts/control_robot.py record \
     --fps 30 \
-    --root tmp/data \
+    --root /tmp/data \
     --repo-id $USER/koch_test \
     --num-episodes 10 \
     --run-compute-stats 1
 ```
+
+TODO: USER HF, make sure you can push
 
 ### Replay episode on your robot with the `replay` function
 
 ```bash
 python lerobot/scripts/control_robot.py replay \
     --fps 30 \
-    --root tmp/data \
+    --root /tmp/data \
     --repo-id $USER/koch_test \
     --episode 0
 ```
@@ -349,9 +354,10 @@ huggingface-cli upload cadene/2024_07_27_act_koch_pick_place_1_lego_raph_nightly
 ### Visualize predictions on training set
 
 ```bash
-python lerobot/scripts/visualize_dataset.py \
-    --repo-id $USER/koch_test
-    -p TODO
+python lerobot/scripts/visualize_dataset_html.py \
+    --repo-id lerobot/koch_pick_place_1_lego \
+    --episodes 0 1 2 \
+    -p ../lerobot/outputs/train/2024_07_29_act_koch_pick_place_1_lego_mps/checkpoints/006000/pretrained_model
 ```
 
 ## 5. Evaluate your policy
@@ -361,11 +367,11 @@ python lerobot/scripts/visualize_dataset.py \
 ```bash
 python lerobot/scripts/control_robot.py record \
     --fps 30 \
-    --root tmp/data \
-    --repo-id $USER/koch_test \
+    --root /tmp/data \
+    --repo-id $USER/eval_koch_test \
     --num-episodes 10 \
     --run-compute-stats 1
-    -p TODO
+    -p ../lerobot/outputs/train/2024_07_29_act_koch_pick_place_1_lego_mps/checkpoints/006000/pretrained_model
 ```
 
 ### Visualize evaluation afterwards

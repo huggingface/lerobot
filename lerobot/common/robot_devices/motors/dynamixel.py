@@ -224,7 +224,7 @@ def assert_same_address(model_ctrl_table, motor_models, data_name):
 
 def find_available_ports():
     ports = []
-    for path in Path("/dev").glob("*"):
+    for path in Path("/dev").glob("tty*"):
         ports.append(str(path))
     return ports
 

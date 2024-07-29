@@ -668,19 +668,19 @@ if __name__ == "__main__":
     parser_record.add_argument(
         "--warmup-time-s",
         type=int,
-        default=2,
+        default=10,
         help="Number of seconds before starting data collection. It allows the robot devices to warmup and synchronize.",
     )
     parser_record.add_argument(
         "--episode-time-s",
         type=int,
-        default=10,
+        default=60,
         help="Number of seconds for data recording for each episode.",
     )
     parser_record.add_argument(
         "--reset-time-s",
         type=int,
-        default=5,
+        default=60,
         help="Number of seconds for resetting the environment after each episode.",
     )
     parser_record.add_argument("--num-episodes", type=int, default=50, help="Number of episodes to record.")
