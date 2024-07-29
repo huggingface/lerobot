@@ -26,7 +26,11 @@ from datasets import Dataset, Features, Image, Sequence, Value
 from PIL import Image as PILImage
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
-from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, save_images_concurrently
+from lerobot.common.datasets.push_dataset_to_hub.utils import (
+    concatenate_episodes,
+    get_default_encoding,
+    save_images_concurrently,
+)
 from lerobot.common.datasets.utils import (
     calculate_episode_data_index,
     hf_transform_to_torch,
@@ -62,6 +66,7 @@ def load_from_raw(
     video: bool,
     episodes: list[int] | None = None,
     keypoints_instead_of_image: bool = False,
+    encoding: dict | None = None,
 ):
     try:
         import pymunk
@@ -172,7 +177,7 @@ def load_from_raw(
                 # encode images to a mp4 video
                 fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
                 video_path = videos_dir / fname
-                encode_video_frames(tmp_imgs_dir, video_path, fps)
+                encode_video_frames(tmp_imgs_dir, video_path, fps, **(encoding or {}))
 
                 # clean temporary images directory
                 shutil.rmtree(tmp_imgs_dir)
@@ -244,6 +249,7 @@ def from_raw_to_lerobot_format(
     fps: int | None = None,
     video: bool = True,
     episodes: list[int] | None = None,
+    encoding: dict | None = None,
 ):
     # Manually change this to True to use keypoints of the T instead of an image observation (but don't merge
     # with True). Also make sure to use video = 0 in the `push_dataset_to_hub.py` script.
@@ -255,7 +261,7 @@ def from_raw_to_lerobot_format(
     if fps is None:
         fps = 10
 
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, keypoints_instead_of_image)
+    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, keypoints_instead_of_image, encoding)
     hf_dataset = to_hf_dataset(data_dict, video, keypoints_instead_of_image)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
@@ -263,4 +269,7 @@ def from_raw_to_lerobot_format(
         "fps": fps,
         "video": video if not keypoints_instead_of_image else 0,
     }
+    if video:
+        info["encoding"] = get_default_encoding()
+
     return hf_dataset, episode_data_index, info

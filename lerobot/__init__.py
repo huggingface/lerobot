@@ -125,6 +125,10 @@ available_real_world_datasets = [
     "lerobot/aloha_static_vinh_cup_left",
     "lerobot/aloha_static_ziploc_slide",
     "lerobot/umi_cup_in_the_wild",
+    "lerobot/unitreeh1_fold_clothes",
+    "lerobot/unitreeh1_rearrange_objects",
+    "lerobot/unitreeh1_two_robot_greeting",
+    "lerobot/unitreeh1_warehouse",
 ]
 
 available_datasets = list(

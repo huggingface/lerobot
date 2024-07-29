@@ -25,12 +25,16 @@ class TDMPCConfig:
     camera observations.
 
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
-    Those are: `input_shapes`, `output_shapes`, and perhaps `max_random_shift`.
+    Those are: `input_shapes`, `output_shapes`, and perhaps `max_random_shift_ratio`.
 
     Args:
         n_action_repeats: The number of times to repeat the action returned by the planning. (hint: Google
             action repeats in Q-learning or ask your favorite chatbot)
         horizon: Horizon for model predictive control.
+        n_action_steps: Number of action steps to take from the plan given by model predictive control. This
+            is an alternative to using action repeats. If this is set to more than 1, then we require
+            `n_action_repeats == 1`, `use_mpc == True` and `n_action_steps <= horizon`. Note that this
+            approach of using multiple steps from the plan is not in the original implementation.
         input_shapes: A dictionary defining the shapes of the input data for the policy. The key represents
             the input data name, and the value is a list indicating the dimensions of the corresponding data.
             For example, "observation.image" refers to an input from a camera with dimensions [3, 96, 96],
@@ -100,6 +104,7 @@ class TDMPCConfig:
     # Input / output structure.
     n_action_repeats: int = 2
     horizon: int = 5
+    n_action_steps: int = 1
 
     input_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {
@@ -158,17 +163,18 @@ class TDMPCConfig:
         """Input validation (not exhaustive)."""
         # There should only be one image key.
         image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
-        if len(image_keys) != 1:
+        if len(image_keys) > 1:
             raise ValueError(
-                f"{self.__class__.__name__} only handles one image for now. Got image keys {image_keys}."
+                f"{self.__class__.__name__} handles at most one image for now. Got image keys {image_keys}."
             )
-        image_key = next(iter(image_keys))
-        if self.input_shapes[image_key][-2] != self.input_shapes[image_key][-1]:
-            # TODO(alexander-soare): This limitation is solely because of code in the random shift
-            # augmentation. It should be able to be removed.
-            raise ValueError(
-                f"Only square images are handled now. Got image shape {self.input_shapes[image_key]}."
-            )
+        if len(image_keys) > 0:
+            image_key = next(iter(image_keys))
+            if self.input_shapes[image_key][-2] != self.input_shapes[image_key][-1]:
+                # TODO(alexander-soare): This limitation is solely because of code in the random shift
+                # augmentation. It should be able to be removed.
+                raise ValueError(
+                    f"Only square images are handled now. Got image shape {self.input_shapes[image_key]}."
+                )
         if self.n_gaussian_samples <= 0:
             raise ValueError(
                 f"The number of guassian samples for CEM should be non-zero. Got `{self.n_gaussian_samples=}`"
@@ -179,3 +185,12 @@ class TDMPCConfig:
                 f"advised that you stick with the default. See {self.__class__.__name__} docstring for more "
                 "information."
             )
+        if self.n_action_steps > 1:
+            if self.n_action_repeats != 1:
+                raise ValueError(
+                    "If `n_action_steps > 1`, `n_action_repeats` must be left to its default value of 1."
+                )
+            if not self.use_mpc:
+                raise ValueError("If `n_action_steps > 1`, `use_mpc` must be set to `True`.")
+            if self.n_action_steps > self.horizon:
+                raise ValueError("`n_action_steps` must be less than or equal to `horizon`.")

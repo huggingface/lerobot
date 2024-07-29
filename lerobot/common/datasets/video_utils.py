@@ -166,10 +166,10 @@ def encode_video_frames(
     imgs_dir: Path,
     video_path: Path,
     fps: int,
-    video_codec: str = "libsvtav1",
-    pixel_format: str = "yuv420p",
-    group_of_pictures_size: int | None = 2,
-    constant_rate_factor: int | None = 30,
+    vcodec: str = "libsvtav1",
+    pix_fmt: str = "yuv420p",
+    g: int | None = 2,
+    crf: int | None = 30,
     fast_decode: int = 0,
     log_level: str | None = "error",
     overwrite: bool = False,
@@ -183,20 +183,20 @@ def encode_video_frames(
             ("-f", "image2"),
             ("-r", str(fps)),
             ("-i", str(imgs_dir / "frame_%06d.png")),
-            ("-vcodec", video_codec),
-            ("-pix_fmt", pixel_format),
+            ("-vcodec", vcodec),
+            ("-pix_fmt", pix_fmt),
         ]
     )
 
-    if group_of_pictures_size is not None:
-        ffmpeg_args["-g"] = str(group_of_pictures_size)
+    if g is not None:
+        ffmpeg_args["-g"] = str(g)
 
-    if constant_rate_factor is not None:
-        ffmpeg_args["-crf"] = str(constant_rate_factor)
+    if crf is not None:
+        ffmpeg_args["-crf"] = str(crf)
 
     if fast_decode:
-        key = "-svtav1-params" if video_codec == "libsvtav1" else "-tune"
-        value = f"fast-decode={fast_decode}" if video_codec == "libsvtav1" else "fastdecode"
+        key = "-svtav1-params" if vcodec == "libsvtav1" else "-tune"
+        value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
         ffmpeg_args[key] = value
 
     if log_level is not None:
