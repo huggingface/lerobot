@@ -185,6 +185,7 @@
                 dygraphIndex: 0,
                 videos: null,
                 video: null,
+                colors: null,
                 init() {
                     this.videos = document.querySelectorAll('video');
                     this.video = this.videos[0];
@@ -193,9 +194,7 @@
                         legend: 'always',
                         labelsDiv: document.getElementById('labels'),
                         labelsKMB: true,
-                        colors: Array.from({
-                            length: 100
-                        }, this.generateDarkModeColor), // custom color palette
+                        colors: ["hsl(226, 67%, 57%)","hsl(352, 95%, 74%)","hsl(262, 61%, 63%)","hsl(353, 65%, 62%)","hsl(295, 89%, 51%)","hsl(83, 75%, 73%)","hsl(136, 77%, 55%)","hsl(169, 98%, 56%)","hsl(38, 90%, 61%)","hsl(19, 100%, 52%)","hsl(350, 94%, 67%)","hsl(200, 62%, 50%)","hsl(141, 89%, 68%)","hsl(260, 67%, 67%)","hsl(163, 82%, 71%)","hsl(113, 99%, 54%)","hsl(70, 75%, 67%)","hsl(14, 100%, 51%)"],
                         pointClickCallback: (event, point) => {
                             this.dygraphTime = point.xval;
                             this.updateTableValues(this.dygraphTime);
@@ -207,22 +206,12 @@
                         drawCallback: (dygraph, is_initial) => {
                             if (is_initial) {
                                 this.dygraph.setSelection(this.dygraphIndex, undefined, true, true);
-                                const colors = this.dygraph.getColors();
-                                this.checked = Array(colors.length).fill(true);
+                                this.colors = this.dygraph.getColors();
+                                this.checked = Array(this.colors.length).fill(true);
+                                this.updateTableValues();
                             }
                         },
                     });
-                },
-                generateDarkModeColor() {
-                    // Function to generate a random number within a given range
-                    const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-                    // Generate hue, saturation, and lightness
-                    const hue = randomInt(0, 360); // Hue from 0 to 360
-                    const saturation = randomInt(60, 100); // High saturation for vivid colors
-                    const lightness = randomInt(50,
-                        75); // Lightness adjusted for visibility on dark backgrounds
-                    // Return the HSL color string
-                    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
                 },
                 get rows() {
                     if (!this.currentFrameData) {
@@ -263,19 +252,21 @@
                     this.updateTableValues();
                 },
                 updateTableValues(time) {
+                    if(!this.colors){
+                        return;
+                    }
                     let pc = (100 / this.video.duration) * (time === undefined ? this.video.currentTime : time);
                     if (isNaN(pc)) pc = 0;
                     const index = Math.floor(pc * this.dygraph.numRows() / 100);
                     // slice(1) to remove the timestamp point that we do not need
                     const labels = this.dygraph.getLabels().slice(1);
                     const values = this.dygraph.rawData_[index].slice(1);
-                    const colors = this.dygraph.getColors();
                     const checkedNew = this.currentFrameData ? this.currentFrameData.map(cell => cell.checked) : Array(
-                        colors.length).fill(true);
+                        this.colors.length).fill(true);
                     this.currentFrameData = labels.map((label, idx) => ({
                         label,
                         value: values[idx],
-                        color: colors[idx],
+                        color: this.colors[idx],
                         checked: checkedNew[idx],
                     }));
                     const shouldUpdateVisibility = !this.checked.every((value, index) => value === checkedNew[index]);
