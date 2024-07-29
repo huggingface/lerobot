@@ -35,9 +35,8 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import VideoFrame, load_from_videos
 
-# For maintainers, see lerobot/common/datasets/push_dataset_to_hub/codebase_version.md
-CODEBASE_VERSION = "v1.5"
-
+# For maintainers, see lerobot/common/datasets/push_dataset_to_hub/CODEBASE_VERSION.md
+CODEBASE_VERSION = "v1.6"
 DATA_DIR = Path(os.environ["DATA_DIR"]) if "DATA_DIR" in os.environ else None
 
 
