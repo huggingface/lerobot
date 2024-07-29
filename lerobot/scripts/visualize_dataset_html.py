@@ -107,11 +107,12 @@ def run_server(
     @app.route("/")
     def index():
         # home page redirects to the first episode page
+        [dataset_namespace, dataset_name] = dataset.repo_id.split("/")
         first_episode_id = episodes[0]
-        return redirect(url_for("show_episode", episode_id=first_episode_id))
+        return redirect(url_for("show_episode", dataset_namespace=dataset_namespace, dataset_name=dataset_name, episode_id=first_episode_id))
 
-    @app.route("/episode_<int:episode_id>")
-    def show_episode(episode_id):
+    @app.route("/<string:dataset_namespace>/<string:dataset_name>/episode_<int:episode_id>")
+    def show_episode(dataset_namespace, dataset_name, episode_id):
         dataset_info = {
             "repo_id": dataset.repo_id,
             "num_samples": dataset.num_samples,
