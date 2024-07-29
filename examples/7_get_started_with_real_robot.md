@@ -169,7 +169,7 @@ print(degrees)
 
 **Teleoperate**
 
-TODO: explain in pseudo code what the telop is doing
+TODO: explain in pseudo code what the teleop is doing
 
 ```python
 # Teleoperate for 60 seconds if running at 200 hz
@@ -177,7 +177,7 @@ for _ in range(60*200):
     robot.teleop_step()
 ```
 
-TODO: explain in pseudo code what the telop(record_data=True) is doing
+TODO: explain in pseudo code what the teleop(record_data=True) is doing
 
 ```python
 observation, action = robot.teleop_step(record_data=True)
