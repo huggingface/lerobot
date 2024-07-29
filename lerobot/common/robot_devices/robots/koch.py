@@ -179,6 +179,10 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
             homing_offset[i] = -homing_offset[i]
 
     print("Calibration is done!")
+    print(
+        rf"/!\ Please move the '{name} {arm_type}' arm to a safe rest position (same for all arms to avoid jumps during teleoperation)."
+    )
+    input("Press Enter to continue...")
 
     print("=====================================")
     print("      HOMING_OFFSET: ", " ".join([str(i) for i in homing_offset]))
