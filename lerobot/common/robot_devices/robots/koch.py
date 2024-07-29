@@ -30,8 +30,16 @@ URL_90_DEGREE_POSITION = {
 ########################################################################
 
 # In range ]-2048, 2048[
-TARGET_HORIZONTAL_POSITION = np.array([0, -1024, 1024, 0, -1024, 0])
-TARGET_90_DEGREE_POSITION = np.array([1024, 0, 0, 1024, 0, -1024])
+# TARGET_HORIZONTAL_POSITION = np.array([0, -1024, 1024, 0, -1024, 0])
+# TARGET_90_DEGREE_POSITION = np.array([1024, 0, 0, 1024, 0, -1024])
+TARGET_HORIZONTAL_POSITION = np.array([0, -1024, -1024, 1024, 1024, 0, 0, 0, 0])
+TARGET_90_DEGREE_POSITION = np.array([1024, 0, 0, 0, 0, 1024, 1024, 1024, 1024])
+
+# NULL_POSITION = np.array([0, 0, 0, 0, 0, 0])
+NULL_POSITION = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0])
+
+# NULL_DRIVE = np.array([False, False, False, False, False, False])
+NULL_DRIVE = np.array([False, False, False, False, False, False, False, False, False])
 
 # In range ]-180, 180[
 GRIPPER_OPEN = np.array([-35.156])
@@ -102,9 +110,7 @@ def compute_homing_offset(
     arm: DynamixelMotorsBus, drive_mode: list[bool], target_position: np.array
 ) -> np.array:
     # Get the present positions of the servos
-    present_positions = apply_calibration(
-        arm.read("Present_Position"), np.array([0, 0, 0, 0, 0, 0]), drive_mode
-    )
+    present_positions = apply_calibration(arm.read("Present_Position"), NULL_POSITION, drive_mode)
 
     nearest_positions = compute_nearest_rounded_positions(present_positions)
     correction = compute_corrections(nearest_positions, drive_mode, target_position)
@@ -113,9 +119,7 @@ def compute_homing_offset(
 
 def compute_drive_mode(arm: DynamixelMotorsBus, offset: np.array):
     # Get current positions
-    present_positions = apply_calibration(
-        arm.read("Present_Position"), offset, np.array([False, False, False, False, False, False])
-    )
+    present_positions = apply_calibration(arm.read("Present_Position"), offset, NULL_DRIVE)
 
     nearest_positions = compute_nearest_rounded_positions(present_positions)
 
@@ -160,9 +164,7 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
     )
     input("Press Enter to continue...")
 
-    horizontal_homing_offset = compute_homing_offset(
-        arm, [False, False, False, False, False, False], TARGET_HORIZONTAL_POSITION
-    )
+    horizontal_homing_offset = compute_homing_offset(arm, NULL_DRIVE, TARGET_HORIZONTAL_POSITION)
 
     # TODO(rcadene): document what position 2 mean
     print(
@@ -380,10 +382,10 @@ class KochRobot:
 
         # Set better PID values to close the gap between recored states and actions
         # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
-        for name in self.follower_arms:
-            self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
-            self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
-            self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
+        # for name in self.follower_arms:
+        #     self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
+        #     self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
+        #     self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
 
         # Enable torque on all motors of the follower arms
         for name in self.follower_arms:
@@ -391,9 +393,9 @@ class KochRobot:
 
         # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
         # so that we can use it as a trigger to close the gripper of the follower arms.
-        for name in self.leader_arms:
-            self.leader_arms[name].write("Torque_Enable", 1, "gripper")
-            self.leader_arms[name].write("Goal_Position", GRIPPER_OPEN, "gripper")
+        # for name in self.leader_arms:
+        #     self.leader_arms[name].write("Torque_Enable", 1, "gripper")
+        #     self.leader_arms[name].write("Goal_Position", GRIPPER_OPEN, "gripper")
 
         # Connect the cameras
         for name in self.cameras:
