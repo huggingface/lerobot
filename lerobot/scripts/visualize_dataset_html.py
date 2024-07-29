@@ -135,7 +135,7 @@ def run_server(
             has_policy=has_policy,
         )
 
-    app.run(host=host, port=port, debug=True)
+    app.run(host=host, port=port)
 
 
 def get_ep_csv_fname(episode_id: int):
