@@ -250,6 +250,9 @@ def run_inference(
                 batch["action"] = gt_action
             elif policy_method == "forward":
                 output_dict = policy.forward(batch)
+                # TODO(rcadene): Save and display all predicted actions at a given timestamp
+                # Save predicted action for the next timestamp only
+                output_dict["action"] = output_dict["action"][:, 0, :]
 
         for key in output_dict:
             if output_dict[key].ndim == 0:
@@ -287,7 +290,7 @@ def visualize_dataset_html(
     serve: bool = True,
     host: str = "127.0.0.1",
     port: int = 9090,
-    force_override: bool = True,
+    force_override: bool = False,
     policy_method: str = "select_action",
     pretrained_policy_name_or_path: str | None = None,
     overrides: list[str] | None = None,
@@ -308,8 +311,6 @@ def visualize_dataset_html(
             # Do not load previous observations or future actions, to simulate that the observations come from
             # an environment.
             dataset.delta_timestamps = None
-        elif policy_method == "forward":
-            raise NotImplementedError("TODO(rcadene): do not merge")
     else:
         dataset = LeRobotDataset(repo_id)
 
@@ -319,9 +320,18 @@ def visualize_dataset_html(
     if output_dir is None:
         output_dir = f"outputs/visualize_dataset_html/{repo_id}"
 
+        if has_policy:
+            ckpt_str = pretrained_policy_path.parts[-2]
+            exp_name = pretrained_policy_path.parts[-4]
+            output_dir += f"_{exp_name}_{ckpt_str}_{policy_method}"
+
     output_dir = Path(output_dir)
-    if force_override and output_dir.exists():
-        shutil.rmtree(output_dir)
+    if output_dir.exists():
+        if force_override:
+            shutil.rmtree(output_dir)
+        else:
+            logging.info(f"Output directory already exists. Loading from it: '{output_dir}'")
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Create a simlink from the dataset video folder containg mp4 files to the output directory
@@ -341,7 +351,7 @@ def visualize_dataset_html(
     for episode_index in tqdm.tqdm(episodes):
         inference_results = None
         if has_policy:
-            inference_results_path = output_dir / policy_method / f"episode_{episode_index}.safetensors"
+            inference_results_path = output_dir / f"episode_{episode_index}.safetensors"
             if inference_results_path.exists():
                 inference_results = load_file(inference_results_path)
             else:
@@ -357,8 +367,9 @@ def visualize_dataset_html(
             inference_results_path.parent.mkdir(parents=True, exist_ok=True)
             save_file(inference_results, inference_results_path)
 
-        # write states and actions in a csv
+        # write states and actions in a csv (it can be slow for big datasets)
         ep_csv_fname = get_ep_csv_fname(episode_index)
+        # TODO(rcadene): speedup script by loading directly from dataset, pyarrow, parquet, safetensors?
         write_episode_data_csv(static_dir, ep_csv_fname, episode_index, dataset, inference_results)
 
     if serve:
