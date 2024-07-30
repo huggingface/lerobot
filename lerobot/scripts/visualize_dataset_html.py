@@ -355,8 +355,9 @@ def visualize_dataset_html(
             inference_results_path.parent.mkdir(parents=True, exist_ok=True)
             save_file(inference_results, inference_results_path)
 
-        # write states and actions in a csv
+        # write states and actions in a csv (it can be slow for big datasets)
         ep_csv_fname = get_ep_csv_fname(episode_index)
+        # TODO(rcadene): speedup script by loading directly from dataset, pyarrow, parquet, safetensors?
         write_episode_data_csv(static_dir, ep_csv_fname, episode_index, dataset, inference_results)
 
     if serve:
