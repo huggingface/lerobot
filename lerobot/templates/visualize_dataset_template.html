@@ -16,10 +16,18 @@
 <!-- Use [dygraphs](https://dygraphs.com/), a lightweight JS charting library -->
 <body class="flex h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()" @keydown.window="(e) => {
     // Use the space bar to play and pause, instead of default action (e.g. scrolling)
-    if (e.keyCode === 32 || e.key === ' ') {
+    const { keyCode, key } = e;
+    if (keyCode === 32 || key === ' ') {
         e.preventDefault();
         $refs.btnPause.classList.contains('hidden') ? $refs.btnPlay.click() : $refs.btnPause.click();
-      }
+    }else if (key === 'ArrowDown' || key === 'ArrowUp'){
+        const nextEpisodeId = key === 'ArrowDown' ? {{ episode_id }} + 1 : {{ episode_id }} - 1;
+        const lowestEpisodeId = {{ episodes }}.at(0);
+        const highestEpisodeId = {{ episodes }}.at(-1);
+        if(nextEpisodeId >= lowestEpisodeId && nextEpisodeId <= highestEpisodeId){
+            window.location.href = `./episode_${nextEpisodeId}`;
+        }
+    }
 }">
     <!-- Sidebar -->
     <div x-ref="sidebar" class="w-60 bg-slate-900 p-5 break-words max-h-screen overflow-y-auto">
