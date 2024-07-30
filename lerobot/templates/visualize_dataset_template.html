@@ -226,7 +226,6 @@
                         legend: 'always',
                         labelsDiv: document.getElementById('labels'),
                         labelsKMB: true,
-                        colors: Array.from({ length: parseInt(1e3) }, this.generateDarkModeColor),
                         strokeWidth: 1.5,
                         pointClickCallback: (event, point) => {
                             this.dygraphTime = point.xval;
@@ -242,6 +241,22 @@
                                 this.colors = this.dygraph.getColors();
                                 this.checked = Array(this.colors.length).fill(true);
 
+                                const seriesNames = this.dygraph.getLabels().slice(1);
+                                const colors = [];
+                                const LIGHTNESS = [30, 65, 85]; // state_lightness, action_lightness, pred_action_lightness
+                                let lightnessIdx = 0;
+                                const chunkSize = Math.ceil(seriesNames.length / this.nColumns);
+                                for (let i = 0; i < seriesNames.length; i += chunkSize) {
+                                    const lightness = LIGHTNESS[lightnessIdx];
+                                    for (let hue = 0; hue < 360; hue += parseInt(360/chunkSize)) {
+                                        const color = `hsl(${hue}, 100%, ${lightness}%)`;
+                                        colors.push(color);
+                                    }
+                                    lightnessIdx += 1;
+                                }
+                                this.dygraph.updateOptions({ colors });
+                                this.colors = colors;
+
                                 this.updateTableValues();
 
                                 let url = new URL(window.location.href);
@@ -254,17 +269,6 @@
                             }
                         },
                     });
-                },
-                generateDarkModeColor() {
-                    // Function to generate a random number within a given range
-                    const randomInt = (min, max) => Math.floor(SeededRandom.random() * (max - min + 1)) + min;
-                    // Generate hue, saturation, and lightness
-                    const hue = randomInt(0, 360); // Hue from 0 to 360
-                    const saturation = randomInt(60, 100); // High saturation for vivid colors
-                    const lightness = randomInt(50,
-                        75); // Lightness adjusted for visibility on dark backgrounds
-                    // Return the HSL color string
-                    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
                 },
                 get rows() {
                     if (!this.currentFrameData) {
