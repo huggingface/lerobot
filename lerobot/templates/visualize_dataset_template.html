@@ -67,7 +67,7 @@
             {% for video_info in videos_info %}
             <div class="max-w-96">
                 <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
-                <video type="video/mp4" class="min-w-64" @timeupdate="() => {
+                <video autoplay muted loop type="video/mp4" class="min-w-64" @timeupdate="() => {
                     if (video.duration) {
                       const time = video.currentTime;
                       const pc = (100 / video.duration) * time;
@@ -83,7 +83,6 @@
                 }" @ended="() => {
                     $refs.btnPlay.classList.remove('hidden');
                     $refs.btnPause.classList.add('hidden');
-                    // todo update the chart to last index
                 }"
                     @loadedmetadata="() => ($refs.timer.textContent = formatTime(0) + ' / ' + formatTime(video.duration))">
                     <source src="{{ video_info.url }}">
@@ -95,12 +94,12 @@
 
         <!-- Controllers -->
         <div class="flex gap-1 text-3xl items-center">
-            <button x-ref="btnPlay" class="-rotate-90" title="Play. Toggle with Space" @click="() => {
+            <button x-ref="btnPlay" class="-rotate-90 hidden" class="-rotate-90" title="Play. Toggle with Space" @click="() => {
                 videos.forEach(video => video.play());
                 $refs.btnPlay.classList.toggle('hidden');
                 $refs.btnPause.classList.toggle('hidden');
             }">🔽</button>
-            <button x-ref="btnPause" class="hidden" title="Pause. Toggle with Space" @click="() => {
+            <button x-ref="btnPause" title="Pause. Toggle with Space" @click="() => {
                 videos.forEach(video => video.pause());
                 $refs.btnPlay.classList.toggle('hidden');
                 $refs.btnPause.classList.toggle('hidden');
