@@ -249,7 +249,7 @@ def run_inference(
                 output_dict = policy.forward(batch)
                 # TODO(rcadene): Save and display all predicted actions at a given timestamp
                 # Save predicted action for the next timestamp only
-                output_dict["action"] = output_dict["action"][:,0,:]
+                output_dict["action"] = output_dict["action"][:, 0, :]
 
         for key in output_dict:
             if output_dict[key].ndim == 0:
