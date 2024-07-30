@@ -49,7 +49,7 @@
         <ul class="ml-2">
             {% for episode in episodes %}
             <li class="font-mono text-sm mt-0.5">
-                <a href="episode_{{ episode }}" class="underline">
+                <a href="episode_{{ episode }}" class="underline {% if episode_id == episode %}font-bold -ml-1{% endif %}">
                     Episode {{ episode }}
                 </a>
             </li>
