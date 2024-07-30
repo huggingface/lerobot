@@ -125,6 +125,7 @@
                 @click="() => (videos.forEach(video => (video.currentTime = 0.0)))">↩️</button>
             <input x-ref="slider" max="100" min="0" step="1" type="range" value="0" class="w-80 mx-2" @input="() => {
                 const sliderValue = $refs.slider.value;
+                $refs.btnPause.click();
                 videos.forEach(video => {
                     const time = (video.duration * sliderValue) / 100;
                     video.currentTime = time;
