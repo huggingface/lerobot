@@ -247,6 +247,9 @@ def run_inference(
                 batch["action"] = gt_action
             elif policy_method == "forward":
                 output_dict = policy.forward(batch)
+                # TODO(rcadene): do not merge
+                # Use first action only
+                output_dict["action"] = output_dict["action"][:,0,:]
 
         for key in output_dict:
             if output_dict[key].ndim == 0:
@@ -305,8 +308,8 @@ def visualize_dataset_html(
             # Do not load previous observations or future actions, to simulate that the observations come from
             # an environment.
             dataset.delta_timestamps = None
-        elif policy_method == "forward":
-            raise NotImplementedError("TODO(rcadene): do not merge")
+        # elif policy_method == "forward":
+        #     raise NotImplementedError("TODO(rcadene): do not merge")
     else:
         dataset = LeRobotDataset(repo_id)
 
