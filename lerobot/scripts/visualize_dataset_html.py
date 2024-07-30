@@ -287,7 +287,7 @@ def visualize_dataset_html(
     serve: bool = True,
     host: str = "127.0.0.1",
     port: int = 9090,
-    force_override: bool = True,
+    force_override: bool = False,
     policy_method: str = "select_action",
     pretrained_policy_name_or_path: str | None = None,
     overrides: list[str] | None = None,
@@ -317,9 +317,18 @@ def visualize_dataset_html(
     if output_dir is None:
         output_dir = f"outputs/visualize_dataset_html/{repo_id}"
 
+        if has_policy:
+            ckpt_str = pretrained_policy_path.parts[-2]
+            exp_name = pretrained_policy_path.parts[-4]
+            output_dir += f"_{exp_name}_{ckpt_str}_{policy_method}"
+
     output_dir = Path(output_dir)
-    if force_override and output_dir.exists():
-        shutil.rmtree(output_dir)
+    if output_dir.exists():
+        if force_override:
+            shutil.rmtree(output_dir)
+        else:
+            logging.info(f"Output directory already exists. Loading from it: '{output_dir}'")
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Create a simlink from the dataset video folder containg mp4 files to the output directory
@@ -339,7 +348,7 @@ def visualize_dataset_html(
     for episode_index in tqdm.tqdm(episodes):
         inference_results = None
         if has_policy:
-            inference_results_path = output_dir / policy_method / f"episode_{episode_index}.safetensors"
+            inference_results_path = output_dir / f"episode_{episode_index}.safetensors"
             if inference_results_path.exists():
                 inference_results = load_file(inference_results_path)
             else:
