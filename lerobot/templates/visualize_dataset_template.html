@@ -225,24 +225,6 @@
                                 this.colors = this.dygraph.getColors();
                                 this.checked = Array(this.colors.length).fill(true);
 
-                                const seriesNames = this.dygraph.getLabels().slice(1);
-                                const seriesOptions = {};
-                                const PATTERN_OPTIONS = [null, Dygraph.DASHED_LINE, Dygraph.DOT_DASH_LINE]
-                                let patterIdx = 0;
-                                const chunkSize = Math.ceil(seriesNames.length / this.nColumns);
-                                for (let i = 0; i < seriesNames.length; i += chunkSize) {
-                                    const labelsSameType = seriesNames.slice(i, i + chunkSize);
-                                    for (const label of labelsSameType) {
-                                        seriesOptions[label] = {
-                                            strokePattern: PATTERN_OPTIONS[patterIdx]
-                                        };
-                                    }
-                                    patterIdx += 1;
-                                }
-                                this.dygraph.updateOptions({
-                                    series: seriesOptions
-                                });
-
                                 this.updateTableValues();
 
                                 let url = new URL(window.location.href);
