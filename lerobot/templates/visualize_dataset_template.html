@@ -194,6 +194,18 @@
     </div>
 
     <script>
+        class SeededRandom {
+            static seed = 42;  // Initial seed
+
+            static random() {
+                const a = 1664525;
+                const c = 1013904223;
+                const m = 2 ** 32;
+                SeededRandom.seed = (a * SeededRandom.seed + c) % m;
+                return SeededRandom.seed / m;
+            }
+        }
+
         function createAlpineData() {
             return {
                 dygraph: null,
@@ -214,14 +226,7 @@
                         legend: 'always',
                         labelsDiv: document.getElementById('labels'),
                         labelsKMB: true,
-                        colors: [
-                            "hsl(0, 100%, 30%)", "hsl(30, 100%, 30%)", "hsl(60, 100%, 30%)",
-                            "hsl(120, 100%, 30%)", "hsl(210, 100%, 30%)", "hsl(270, 100%, 30%)",
-                            "hsl(0, 100%, 65%)", "hsl(30, 100%, 65%)", "hsl(60, 100%, 65%)",
-                            "hsl(120, 100%, 65%)", "hsl(210, 100%, 65%)", "hsl(270, 100%, 65%)",
-                            "hsl(0, 100%, 85%)", "hsl(30, 100%, 85%)", "hsl(60, 100%, 85%)",
-                            "hsl(120, 100%, 85%)", "hsl(210, 100%, 85%)", "hsl(270, 100%, 85%)",
-                        ],
+                        colors: Array.from({ length: parseInt(1e3) }, this.generateDarkModeColor),
                         strokeWidth: 1.5,
                         pointClickCallback: (event, point) => {
                             this.dygraphTime = point.xval;
@@ -249,6 +254,17 @@
                             }
                         },
                     });
+                },
+                generateDarkModeColor() {
+                    // Function to generate a random number within a given range
+                    const randomInt = (min, max) => Math.floor(SeededRandom.random() * (max - min + 1)) + min;
+                    // Generate hue, saturation, and lightness
+                    const hue = randomInt(0, 360); // Hue from 0 to 360
+                    const saturation = randomInt(60, 100); // High saturation for vivid colors
+                    const lightness = randomInt(50,
+                        75); // Lightness adjusted for visibility on dark backgrounds
+                    // Return the HSL color string
+                    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
                 },
                 get rows() {
                     if (!this.currentFrameData) {
