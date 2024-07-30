@@ -100,6 +100,11 @@
             {% endfor %}
         </div>
 
+        <!-- Shortcuts info -->
+        <div class="text-sm">
+            Hotkeys: <span class="font-mono">Space</span> to pause/unpause, <span class="font-mono">Arrow Down</span> to go to next episode, <span class="font-mono">Arrow Up</span> to go to previous episode.
+        </div>
+
         <!-- Controllers -->
         <div class="flex gap-1 text-3xl items-center">
             <button x-ref="btnPlay" class="-rotate-90 hidden" class="-rotate-90" title="Play. Toggle with Space" @click="() => {
