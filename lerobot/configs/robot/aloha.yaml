@@ -1,4 +1,5 @@
 _target_: lerobot.common.robot_devices.robots.koch.KochRobot
+robot_type: aloha
 calibration_path: .cache/calibration/aloha.pkl
 leader_arms:
   left:

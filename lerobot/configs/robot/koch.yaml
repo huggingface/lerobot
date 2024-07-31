@@ -1,5 +1,6 @@
 _target_: lerobot.common.robot_devices.robots.koch.KochRobot
 calibration_path: .cache/calibration/koch.pkl
+robot_type: koch
 leader_arms:
   main:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
