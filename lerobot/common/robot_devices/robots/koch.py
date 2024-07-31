@@ -64,18 +64,6 @@ def get_rest_position(robot_type):
         return ALOHA_REST_POSITION
 
 
-def init_robot(robot):
-    if robot.robot_type == "koch":
-        # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
-        # so that we can use it as a trigger to close the gripper of the follower arms.
-        for name in robot.leader_arms:
-            robot.leader_arms[name].write("Torque_Enable", 1, "gripper")
-            robot.leader_arms[name].write("Goal_Position", KOCH_GRIPPER_OPEN, "gripper")
-
-    elif robot.robot_type == "aloha":
-        raise NotImplementedError()
-
-
 def assert_drive_mode(drive_mode):
     # `drive_mode` is in [0,1] with 0 means original rotation direction for the motor, and 1 means inverted.
     if not np.all(np.isin(drive_mode, [0, 1])):
@@ -367,7 +355,12 @@ class KochRobot:
         for name in self.follower_arms:
             self.follower_arms[name].write("Torque_Enable", 1)
 
-        init_robot(self)
+        if self.robot_type == "koch":
+            # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
+            # so that we can use it as a trigger to close the gripper of the follower arms.
+            for name in self.leader_arms:
+                self.leader_arms[name].write("Torque_Enable", 1, "gripper")
+                self.leader_arms[name].write("Goal_Position", KOCH_GRIPPER_OPEN, "gripper")
 
         # Connect the cameras
         for name in self.cameras:
