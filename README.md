@@ -65,12 +65,14 @@
 
 Download our source code:
 ```bash
-git clone https://github.com/huggingface/lerobot.git && cd lerobot
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
 ```
 
 Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 ```bash
-conda create -y -n lerobot python=3.10 && conda activate lerobot
+conda create -y -n lerobot python=3.10
+conda activate lerobot
 ```
 
 Install 🤗 LeRobot:

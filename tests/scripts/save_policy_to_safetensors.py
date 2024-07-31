@@ -108,7 +108,8 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_override
 
 if __name__ == "__main__":
     env_policies = [
-        # ("xarm", "tdmpc", ["policy.use_mpc=false"], ""),
+        # ("xarm", "tdmpc", ["policy.use_mpc=false"], "use_policy"),
+        # ("xarm", "tdmpc", ["policy.use_mpc=true"], "use_mpc"),
         # (
         #     "pusht",
         #     "diffusion",
