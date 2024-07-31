@@ -4,64 +4,62 @@ calibration_path: .cache/calibration/aloha.pkl
 leader_arms:
   left:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    #port: /dev/ttyDXL_master_left
-    port: /dev/tty.usbserial-FT89FM77
+    port: /dev/ttyDXL_master_left
+    #port: /dev/tty.usbserial-FT89FM77
     motors:  # window_x
       # name: (index, model)
-      waist_a: [1, xm430-w350]
-      waist_b: [2, xm430-w350]
-      shoulder_a: [3, xm430-w350]
-      shoulder_b: [4, xm430-w350]
-      elbow: [5, xm430-w350]
+      waist: [1, xm430-w350]
+      shoulder_a: [2, xm430-w350]
+      shoulder_b: [3, xm430-w350]
+      elbow_a: [4, xm430-w350]
+      elbow_b: [5, xm430-w350]
       forearm_roll: [6, xm430-w350]
       wrist_angle: [7, xm430-w350]
       wrist_rotate: [8, xl430-w250]
-      # gripper: [9, xl430-w250]
       gripper: [9, xc430-w150]
   right:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    #port: /dev/ttyDXL_master_right
-    port: /dev/tty.usbserial-FT891KPN
+    port: /dev/ttyDXL_master_right
+    #port: /dev/tty.usbserial-FT891KPN
     motors:  # window_x
       # name: (index, model)
-      waist_a: [1, xm430-w350]
-      waist_b: [2, xm430-w350]
-      shoulder_a: [3, xm430-w350]
-      shoulder_b: [4, xm430-w350]
-      elbow: [5, xm430-w350]
+      waist: [1, xm430-w350]
+      shoulder_a: [2, xm430-w350]
+      shoulder_b: [3, xm430-w350]
+      elbow_a: [4, xm430-w350]
+      elbow_b: [5, xm430-w350]
       forearm_roll: [6, xm430-w350]
       wrist_angle: [7, xm430-w350]
       wrist_rotate: [8, xl430-w250]
-      # gripper: [9, xl430-w250]
       gripper: [9, xc430-w150]
 
 follower_arms:
   left:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    #port: /dev/ttyDXL_puppet_left
-    port: /dev/tty.usbserial-FT891KBG
+    port: /dev/ttyDXL_puppet_left
+    #port: /dev/tty.usbserial-FT891KBG
     motors:
       # name: [index, model]
-      waist_a: [1, xm540-w270]
-      waist_b: [2, xm540-w270]
-      shoulder_a: [3, xm540-w270]
-      shoulder_b: [4, xm540-w270]
-      elbow: [5, xm540-w270]
+      waist: [1, xm540-w270]
+      shoulder_a: [2, xm540-w270]
+      shoulder_b: [3, xm540-w270]
+      elbow_a: [4, xm540-w270]
+      elbow_b: [5, xm540-w270]
       forearm_roll: [6, xm540-w270]
       wrist_angle: [7, xm540-w270]
       wrist_rotate: [8, xm430-w350]
       gripper: [9, xm430-w350]
   right:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    #port: /dev/ttyDXL_puppet_right
-    port: /dev/tty.usbserial-FT89FM09
+    port: /dev/ttyDXL_puppet_right
+    #port: /dev/tty.usbserial-FT89FM09
     motors:
       # name: [index, model]
-      waist_a: [1, xm540-w270]
-      waist_b: [2, xm540-w270]
-      shoulder_a: [3, xm540-w270]
-      shoulder_b: [4, xm540-w270]
-      elbow: [5, xm540-w270]
+      waist: [1, xm540-w270]
+      shoulder_a: [2, xm540-w270]
+      shoulder_b: [3, xm540-w270]
+      elbow_a: [4, xm540-w270]
+      elbow_b: [5, xm540-w270]
       forearm_roll: [6, xm540-w270]
       wrist_angle: [7, xm540-w270]
       wrist_rotate: [8, xm430-w350]
