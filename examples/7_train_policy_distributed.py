@@ -1,12 +1,12 @@
 """
 This script demonstrates how to train ACT policy with distributed training on the Aloha environment
-on the Insertion task, using HuggingFace accelerate.
+on the Transfer cube task, using HuggingFace accelerate.
 
 Apart from the main installation procedure, please also make sure you have installed accelerate before running this script: `pip install accelerate`.
 
 To launch it, you will have to use the accelerate launcher, for example:
-`accelerate launch examples/7_train_policy_distributed.py`. This will launch the script with default distributed parameters.
-To launch on two GPUs, you can use `accelerate launch  --num_processes 2 lerobot/examples/7_train_policy_distributed.py`.
+`python -m accelerate.commands.launch examples/7_train_policy_distributed.py`. This will launch the script with default distributed parameters.
+To launch on two GPUs, you can use `python -m accelerate.commands.launch  --num_processes 2 lerobot/examples/7_train_policy_distributed.py`.
 
 Find detailed information in the documentation: `https://github.com/huggingface/accelerate`.
 """
@@ -24,16 +24,17 @@ from lerobot.common.policies.act.modeling_act import ACTPolicy
 output_directory = Path("outputs/train/example_aloha_act_distributed")
 output_directory.mkdir(parents=True, exist_ok=True)
 
-# Number of overall offline training steps (we'll only do offline training for this example.)
+# Number of overall offline training steps
 training_steps = 5000
 log_freq = 250
+
 # The chunk size is the number of actions that the policy will predict.
 chunk_size = 100
 
 delta_timestamps = {
     "action":
-    # Load the current action, the next 100 actions to be executed, because we the policy
-    # trains to predict the next 100 actions.
+    # Load the current action, the next 100 actions to be executed, because we train the policy
+    # to predict the next 100 actions. Two frames differ by 1/50 seconds, which corresponds to the FPS of this dataset.
     [i / 50 for i in range(chunk_size)]
 }
 
@@ -48,11 +49,10 @@ def train():
     accelerator.print(f"Loaded dataset with {len(dataset)} samples.")
 
     # The policy is initialized with a configuration class, in this case `ACTConfig`.
-    # For this example, no arguments are pased, the defaults are set up for Aloha on the Insertion task.
     cfg = ACTConfig(chunk_size=chunk_size)
     policy = ACTPolicy(cfg, dataset_stats=dataset.stats)
     policy.train()
-    num_total_params = sum(p.numel() for p in policy.parameters())
+    num_total_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     accelerator.print(f"Policy initialized with {num_total_params} parameters.")
 
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-5)
@@ -66,6 +66,8 @@ def train():
         drop_last=True,
     )
 
+    # Prepare the policy, optimizer, and dataloader for distributed training. 
+    # This will wrap the policy in a DistributedDataParallel and apply torch.autocast to the forward functions.
     policy, optimizer, dataloader = accelerator.prepare(policy, optimizer, dataloader)
 
     policy.to(device)
@@ -97,7 +99,6 @@ def train():
     unwrapped_policy.save_pretrained(output_directory)
 
     accelerator.print("Finished offline training")
-    accelerator.end_training()
 
 
 # We need to add a call to the training function in order to be able to use the Accelerator.
