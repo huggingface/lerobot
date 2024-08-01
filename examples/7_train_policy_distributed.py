@@ -66,7 +66,7 @@ def train():
         drop_last=True,
     )
 
-    # Prepare the policy, optimizer, and dataloader for distributed training. 
+    # Prepare the policy, optimizer, and dataloader for distributed training.
     # This will wrap the policy in a DistributedDataParallel and apply torch.autocast to the forward functions.
     policy, optimizer, dataloader = accelerator.prepare(policy, optimizer, dataloader)
 
