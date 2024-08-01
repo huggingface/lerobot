@@ -80,6 +80,7 @@ def rollout(
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
     enable_progbar: bool = False,
+    dataset_index: int | None = None,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -110,6 +111,7 @@ def rollout(
         render_callback: Optional rendering callback to be used after the environments are reset, and after
             every step.
         enable_progbar: Enable a progress bar over rollout steps.
+        dataset_index: The index of the dataset to use for conditioning in the case of a multitask policy.
     Returns:
         The dictionary described above.
     """
@@ -144,6 +146,9 @@ def rollout(
         observation = preprocess_observation(observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
+
+        if dataset_index is not None:
+            observation["dataset_index"] = torch.tensor([dataset_index])
 
         observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
 
@@ -212,6 +217,7 @@ def eval_policy(
     start_seed: int | None = None,
     enable_progbar: bool = False,
     enable_inner_progbar: bool = False,
+    dataset_index: int | None = None,
 ) -> dict:
     """
     Args:
@@ -286,6 +292,7 @@ def eval_policy(
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
             enable_progbar=enable_inner_progbar,
+            dataset_index=dataset_index,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -458,6 +465,15 @@ def main(
     if out_dir is None:
         out_dir = f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
 
+    dataset_index = None
+    if not isinstance(hydra_cfg.dataset_repo_id, str):
+        logging.info(f"Multiple datasets were provided. The following mapping was applied during training:")
+        for i, dataset_name in enumerate(hydra_cfg.dataset_repo_id):
+            logging.info(f"{dataset_name}: {i}")
+        logging.info(f"Please provide the index of the dataset you want to use for evaluation.")
+        dataset_index = int(input("Enter the index of the dataset you want to use: "))
+
+
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     set_global_seed(hydra_cfg.seed)
@@ -494,6 +510,7 @@ def main(
             start_seed=hydra_cfg.seed,
             enable_progbar=True,
             enable_inner_progbar=True,
+            dataset_index=dataset_index,
         )
     print(info["aggregated"])
 

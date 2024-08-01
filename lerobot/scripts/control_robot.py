@@ -596,8 +596,12 @@ def run_policy(robot: Robot, policy: torch.nn.Module, hydra_cfg: DictConfig, run
                 observation[name] = observation[name].unsqueeze(0)
 
             if "dataset_index" in hydra_cfg.policy.input_shapes:
-                # pass in dataset_index=0, which is red box
-                observation["dataset_index"] = torch.tensor([0])
+                logging.info(f"Multiple datasets were provided. The following mapping was applied during training:")
+                for i, dataset_name in enumerate(hydra_cfg.dataset_repo_id):
+                    logging.info(f"{dataset_name}: {i}")
+                logging.info(f"Please provide the index of the dataset you want to use for evaluation.")
+                dataset_index = int(input("Enter the index of the dataset you want to use: "))
+                observation["dataset_index"] = torch.tensor([dataset_index])
                 
             if device.type == "mps":
                 for name in observation:
