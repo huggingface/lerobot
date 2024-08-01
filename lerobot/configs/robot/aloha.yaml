@@ -5,7 +5,7 @@ leader_arms:
   left:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
     port: /dev/ttyDXL_master_left
-    #port: /dev/tty.usbserial-FT89FM77
+    # port: /dev/tty.usbserial-FT89FM77
     motors:  # window_x
       # name: (index, model)
       waist: [1, xm430-w350]
@@ -20,7 +20,7 @@ leader_arms:
   right:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
     port: /dev/ttyDXL_master_right
-    #port: /dev/tty.usbserial-FT891KPN
+    # port: /dev/tty.usbserial-FT891KPN
     motors:  # window_x
       # name: (index, model)
       waist: [1, xm430-w350]
@@ -37,7 +37,7 @@ follower_arms:
   left:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
     port: /dev/ttyDXL_puppet_left
-    #port: /dev/tty.usbserial-FT891KBG
+    # port: /dev/tty.usbserial-FT891KBG
     motors:
       # name: [index, model]
       waist: [1, xm540-w270]
@@ -52,7 +52,7 @@ follower_arms:
   right:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
     port: /dev/ttyDXL_puppet_right
-    #port: /dev/tty.usbserial-FT89FM09
+    # port: /dev/tty.usbserial-FT89FM09
     motors:
       # name: [index, model]
       waist: [1, xm540-w270]
