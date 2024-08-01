@@ -128,12 +128,8 @@ def update_policy(
 
     grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), grad_clip_norm, error_if_nonfinite=False)
 
-    # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
-    # although it still skips optimizer.step() if the gradients contain infs or NaNs.
     with lock if lock is not None else nullcontext():
-        grad_scaler.step(optimizer)
-    # Updates the scale for next iteration.
-    grad_scaler.update()
+        optimizer.step()
 
     optimizer.zero_grad()
 
@@ -630,9 +626,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 batch,
                 optimizer,
                 cfg.training.grad_clip_norm,
-                grad_scaler=grad_scaler,
                 lr_scheduler=lr_scheduler,
-                use_amp=cfg.use_amp,
+                accelerator=accelerator,
                 lock=lock,
             )
 
