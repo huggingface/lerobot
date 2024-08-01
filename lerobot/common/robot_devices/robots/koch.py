@@ -343,17 +343,18 @@ class KochRobot:
         for name in self.leader_arms:
             self.leader_arms[name].set_calibration(calibration[f"leader_{name}"])
 
-        for name in self.leader_arms:
-            values = self.leader_arms[name].read("Present_Position")
-            # if (values < -180).any() or (values >= 180).any():
-            #     raise ValueError(
-            #         f"At least one of the motor of the {name} leader arm has a joint value outside of its centered degree range of ]-180, 180[."
-            #         'This "jump of range" can be caused by a hardware issue, or you might have unexpectedly completed a full rotation of the motor '
-            #         "during manipulation or transportation of your robot. "
-            #         f"The values and motors: {values} {self.leader_arms[name].motor_names}.\n"
-            #         "Rotate the arm to fit the range ]-180, 180[ and relaunch the script, or recalibrate all motors by setting a different "
-            #         "calibration path during the instatiation of your robot (e.g. `--robot-overrides calibration_path=.cache/calibration/koch_v2.pkl`)"
-            #     )
+        # TODO(rcadene): before merging, figure out why for Aloha, values are outside 180 degrees range on rest position
+        # for name in self.leader_arms:
+        #     values = self.leader_arms[name].read("Present_Position")
+        #     if (values < -180).any() or (values >= 180).any():
+        #         raise ValueError(
+        #             f"At least one of the motor of the {name} leader arm has a joint value outside of its centered degree range of ]-180, 180[."
+        #             'This "jump of range" can be caused by a hardware issue, or you might have unexpectedly completed a full rotation of the motor '
+        #             "during manipulation or transportation of your robot. "
+        #             f"The values and motors: {values} {self.leader_arms[name].motor_names}.\n"
+        #             "Rotate the arm to fit the range ]-180, 180[ and relaunch the script, or recalibrate all motors by setting a different "
+        #             "calibration path during the instatiation of your robot (e.g. `--robot-overrides calibration_path=.cache/calibration/koch_v2.pkl`)"
+        #         )
 
         # Enable torque on all motors of the follower arms
         for name in self.follower_arms:
