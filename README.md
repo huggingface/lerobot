@@ -65,12 +65,14 @@
 
 Download our source code:
 ```bash
-git clone https://github.com/huggingface/lerobot.git && cd lerobot
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
 ```
 
 Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 ```bash
-conda create -y -n lerobot python=3.10 && conda activate lerobot
+conda create -y -n lerobot python=3.10
+conda activate lerobot
 ```
 
 Install 🤗 LeRobot:
@@ -235,7 +237,7 @@ python lerobot/scripts/train.py \
 
 We also support training on multiple GPUs and in different precisions with [Accelerate](https://huggingface.co/docs/accelerate/basic_tutorials/launch#using-accelerate-launch)
 
-To perform distributed training you should use the `accelerate launch` command. Here’s an example of launching a training script across multiple GPUs :
+To perform distributed training you should use the `python -m accelerate.commands.launch` command. Here’s an example of launching a training script across 2 GPUs :
 (Note: Make sure you install accelerate with `pip install accelerate`, as it is optional and not installed as part of the main setup steps)
 
 ```bash
