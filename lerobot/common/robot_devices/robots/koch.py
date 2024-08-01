@@ -18,18 +18,56 @@ from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError,
 # Calibration logic
 ########################################################################
 
-URL_TEMPLATE = "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.png"
+AVAILABLE_ROBOT_TYPES = ["koch", "aloha"]
+
+URL_TEMPLATE = (
+    "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"
+)
 
 # In nominal range ]-2048, 2048[
 # First target position consists in moving koch arm to a straight horizontal position with gripper closed.
-FIRST_POSITION = np.array([0, 0, 0, 0, 0, 0], dtype=np.int32)
+KOCH_FIRST_POSITION = np.array([0, 0, 0, 0, 0, 0], dtype=np.int32)
 # Second target position consists in moving koch arm from the first target position by rotating every motor
 # by 90 degree. When the direction is ambiguous, always rotate on the right. Gripper is open, directed towards you.
-SECOND_POSITION = np.array([1024, 1024, 1024, 1024, 1024, 1024], dtype=np.int32)
+# TODO(rcadene): Take motor resolution into account instead of assuming 4096
+KOCH_SECOND_POSITION = np.array([1024, 1024, 1024, 1024, 1024, 1024], dtype=np.int32)
 
 # In nominal range ]-180, 180[
-GRIPPER_OPEN_DEGREE = 35.156
-REST_POSITION_DEGREE = np.array([0, 135, 90, 0, 0, GRIPPER_OPEN_DEGREE])
+KOCH_GRIPPER_OPEN = 35.156
+KOCH_REST_POSITION = np.array([0, 135, 90, 0, 0, KOCH_GRIPPER_OPEN])
+
+# In nominal range ]-2048, 2048[
+ALOHA_FIRST_POSITION = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=np.int32)
+ALOHA_SECOND_POSITION = np.array([1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 512], dtype=np.int32)
+# In nominal range ]-180, 180[
+ALOHA_GRIPPER_OPEN = 30
+ALOHA_REST_POSITION = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=np.int32)
+
+
+def assert_robot_type(robot_type):
+    if robot_type not in AVAILABLE_ROBOT_TYPES:
+        raise ValueError(robot_type)
+
+
+def get_first_position(robot_type):
+    if robot_type == "koch":
+        return KOCH_FIRST_POSITION
+    elif robot_type == "aloha":
+        return ALOHA_FIRST_POSITION
+
+
+def get_second_position(robot_type):
+    if robot_type == "koch":
+        return KOCH_SECOND_POSITION
+    elif robot_type == "aloha":
+        return ALOHA_SECOND_POSITION
+
+
+def get_rest_position(robot_type):
+    if robot_type == "koch":
+        return KOCH_REST_POSITION
+    elif robot_type == "aloha":
+        return ALOHA_REST_POSITION
 
 
 def assert_drive_mode(drive_mode):
@@ -47,8 +85,11 @@ def apply_drive_mode(position, drive_mode):
     return position
 
 
-def compute_nearest_rounded_position(position):
-    return np.round(position / 1024).astype(position.dtype) * 1024
+def compute_nearest_rounded_position(position, second_position):
+    # TODO(rcadene): Take motor resolution into account instead of assuming 4096
+    # Assumes 4096 steps for a full revolution for the motors
+    # Hence 90 degree is 1024 steps
+    return np.round(position / second_position).astype(position.dtype) * second_position
 
 
 def reset_arm(arm: MotorsBus):
@@ -68,29 +109,36 @@ def reset_arm(arm: MotorsBus):
     arm.write("Operating_Mode", OperatingMode.CURRENT_CONTROLLED_POSITION.value, "gripper")
 
 
-def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
+def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
     """Example of usage:
     ```python
-    run_arm_calibration(arm, "left", "follower")
+    run_arm_calibration(arm, "aloha", "left", "follower")
     ```
     """
     reset_arm(arm)
 
-    print(f"\nRunning calibration of {name} {arm_type}...")
+    print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
 
     # TODO(rcadene): document what position 1 mean
     print("\nMove arm to first target position")
-    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="first"))
+    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="first"))
     input("Press Enter to continue...")
+
+    # The first position zeros all motors, i.e. after calibration, if write goal position to be all 0,
+    # the robot will move to this first position.
+    first_position = get_first_position(robot_type)
+    # The second position rotates all motors with 90 degrees angle clock-wise from the perspective of the first motor or the preceeding motor in the chain.
+    # Note: if 90 degree rotation cannot be achieved (e.g. gripper of Aloha), then it will rotate to 45 degrees.
+    second_position = get_second_position(robot_type)
 
     # Compute homing offset so that `present_position + homing_offset ~= target_position`
     position = arm.read("Present_Position")
-    position = compute_nearest_rounded_position(position)
-    homing_offset = FIRST_POSITION - position
+    position = compute_nearest_rounded_position(position, second_position)
+    homing_offset = first_position - position
 
     # TODO(rcadene): document what position 2 mean
     print("\nMove arm to second target position")
-    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="second"))
+    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="second"))
     input("Press Enter to continue...")
 
     # Find drive mode by rotating each motor by 90 degree.
@@ -99,17 +147,17 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
     # to indicate an inverted rotation direction.
     position = arm.read("Present_Position")
     position += homing_offset
-    position = compute_nearest_rounded_position(position)
-    drive_mode = (position != SECOND_POSITION).astype(np.int32)
+    position = compute_nearest_rounded_position(position, second_position)
+    drive_mode = (position != second_position).astype(np.int32)
 
     # Re-compute homing offset to take into account drive mode
     position = arm.read("Present_Position")
     position = apply_drive_mode(position, drive_mode)
-    position = compute_nearest_rounded_position(position)
-    homing_offset = SECOND_POSITION - position
+    position = compute_nearest_rounded_position(position, second_position)
+    homing_offset = second_position - position
 
     print("\nMove arm to rest position")
-    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="rest"))
+    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rest"))
     input("Press Enter to continue...")
     print()
 
@@ -130,10 +178,14 @@ class KochRobotConfig:
     ```
     """
 
+    robot_type: str = "koch"
     # Define all components of the robot
     leader_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     follower_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
+
+    def __post_init__(self):
+        assert_robot_type(self.robot_type)
 
 
 class KochRobot:
@@ -242,6 +294,7 @@ class KochRobot:
         self.config = replace(config, **kwargs)
         self.calibration_path = Path(calibration_path)
 
+        self.robot_type = self.config.robot_type
         self.leader_arms = self.config.leader_arms
         self.follower_arms = self.config.follower_arms
         self.cameras = self.config.cameras
@@ -290,34 +343,37 @@ class KochRobot:
         for name in self.leader_arms:
             self.leader_arms[name].set_calibration(calibration[f"leader_{name}"])
 
-        for name in self.leader_arms:
-            values = self.leader_arms[name].read("Present_Position")
-            if (values < -180).any() or (values >= 180).any():
-                raise ValueError(
-                    f"At least one of the motor of the {name} leader arm has a joint value outside of its centered degree range of ]-180, 180[."
-                    'This "jump of range" can be caused by a hardware issue, or you might have unexpectedly completed a full rotation of the motor '
-                    "during manipulation or transportation of your robot. "
-                    f"The values and motors: {values} {self.leader_arms[name].motor_names}.\n"
-                    "Rotate the arm to fit the range ]-180, 180[ and relaunch the script, or recalibrate all motors by setting a different "
-                    "calibration path during the instatiation of your robot (e.g. `--robot-overrides calibration_path=.cache/calibration/koch_v2.pkl`)"
-                )
-
-        # Set better PID values to close the gap between recored states and actions
-        # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
-        for name in self.follower_arms:
-            self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
-            self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
-            self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
+        # TODO(rcadene): before merging, figure out why for Aloha, values are outside 180 degrees range on rest position
+        # for name in self.leader_arms:
+        #     values = self.leader_arms[name].read("Present_Position")
+        #     if (values < -180).any() or (values >= 180).any():
+        #         raise ValueError(
+        #             f"At least one of the motor of the {name} leader arm has a joint value outside of its centered degree range of ]-180, 180[."
+        #             'This "jump of range" can be caused by a hardware issue, or you might have unexpectedly completed a full rotation of the motor '
+        #             "during manipulation or transportation of your robot. "
+        #             f"The values and motors: {values} {self.leader_arms[name].motor_names}.\n"
+        #             "Rotate the arm to fit the range ]-180, 180[ and relaunch the script, or recalibrate all motors by setting a different "
+        #             "calibration path during the instatiation of your robot (e.g. `--robot-overrides calibration_path=.cache/calibration/koch_v2.pkl`)"
+        #         )
 
         # Enable torque on all motors of the follower arms
         for name in self.follower_arms:
             self.follower_arms[name].write("Torque_Enable", 1)
 
-        # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
-        # so that we can use it as a trigger to close the gripper of the follower arms.
-        for name in self.leader_arms:
-            self.leader_arms[name].write("Torque_Enable", 1, "gripper")
-            self.leader_arms[name].write("Goal_Position", GRIPPER_OPEN_DEGREE, "gripper")
+        # Custom setup for each robot type
+        if self.robot_type == "koch":
+            # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
+            # so that we can use it as a trigger to close the gripper of the follower arms.
+            for name in self.leader_arms:
+                self.leader_arms[name].write("Torque_Enable", 1, "gripper")
+                self.leader_arms[name].write("Goal_Position", KOCH_GRIPPER_OPEN, "gripper")
+
+            # Set better PID values to close the gap between recorded states and actions
+            # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
+            for name in self.follower_arms:
+                self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
+                self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
+                self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
 
         # Connect the cameras
         for name in self.cameras:
@@ -329,14 +385,18 @@ class KochRobot:
         calibration = {}
 
         for name in self.follower_arms:
-            homing_offset, drive_mode = run_arm_calibration(self.follower_arms[name], name, "follower")
+            homing_offset, drive_mode = run_arm_calibration(
+                self.follower_arms[name], self.robot_type, name, "follower"
+            )
 
             calibration[f"follower_{name}"] = {}
             for idx, motor_name in enumerate(self.follower_arms[name].motor_names):
                 calibration[f"follower_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
 
         for name in self.leader_arms:
-            homing_offset, drive_mode = run_arm_calibration(self.leader_arms[name], name, "leader")
+            homing_offset, drive_mode = run_arm_calibration(
+                self.leader_arms[name], self.robot_type, name, "leader"
+            )
 
             calibration[f"leader_{name}"] = {}
             for idx, motor_name in enumerate(self.leader_arms[name].motor_names):
