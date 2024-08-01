@@ -143,7 +143,7 @@ class DiffusionConfig:
     clip_sample: bool = True
     clip_sample_range: float = 1.0
     # Transformer
-    # input_dim: int
+    use_transformer: bool = True
     n_layer: int = 4
     n_head: int = 4
     p_drop_emb: float = 0.1

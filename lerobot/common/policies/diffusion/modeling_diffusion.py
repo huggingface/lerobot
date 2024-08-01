@@ -157,14 +157,14 @@ def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMSche
 
 
 class DiffusionModel(nn.Module):
-    def __init__(self, config: DiffusionConfig, using_transformer=True):
+    def __init__(self, config: DiffusionConfig):
         super().__init__()
         self.config = config
 
         self.rgb_encoder = DiffusionRgbEncoder(config)
         num_images = len([k for k in config.input_shapes if k.startswith("observation.image")])
 
-        if using_transformer:
+        if config.use_transformer:
             self.net = TransformerForDiffusion(
                 config,
                 cond_dim=(
@@ -893,7 +893,7 @@ class TransformerForDiffusion(nn.Module):
 
         # special case the position embedding parameter in the root GPT module as not decayed
         no_decay.add("pos_emb")
-        no_decay.add("_dummy_variable")
+        # no_decay.add("_dummy_variable")
         if self.cond_pos_emb is not None:
             no_decay.add("cond_pos_emb")
 
