@@ -20,7 +20,9 @@ from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError,
 
 AVAILABLE_ROBOT_TYPES = ["koch", "aloha"]
 
-URL_TEMPLATE = "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.png"
+URL_TEMPLATE = (
+    "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"
+)
 
 # In nominal range ]-2048, 2048[
 # First target position consists in moving koch arm to a straight horizontal position with gripper closed.
