@@ -467,12 +467,11 @@ def main(
 
     dataset_index = None
     if not isinstance(hydra_cfg.dataset_repo_id, str):
-        logging.info(f"Multiple datasets were provided. The following mapping was applied during training:")
+        logging.info("Multiple datasets were provided. The following mapping was applied during training:")
         for i, dataset_name in enumerate(hydra_cfg.dataset_repo_id):
             logging.info(f"{dataset_name}: {i}")
-        logging.info(f"Please provide the index of the dataset you want to use for evaluation.")
+        logging.info("Please provide the index of the dataset you want to use for evaluation.")
         dataset_index = int(input("Enter the index of the dataset you want to use: "))
-
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
