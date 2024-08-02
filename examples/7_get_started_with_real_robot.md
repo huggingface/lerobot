@@ -25,7 +25,7 @@ Finally, you will train a neural network to predict the future actions given the
 
 Follow the bill of materials on the [Koch v1.1 github page](https://github.com/jess-moss/koch-v1-1) to order a leader and a follower arm. Some parts and prices are a bit different with respect to the geo location.
 
-Once the parts are received, follow this video to guide you through the assembly:
+Once the parts are received, follow this video to guide you through the assembly: TODO
 
 ## 2. Connect, Configure, and Calibrate your Koch v1.1
 
@@ -33,7 +33,7 @@ Connect the leader arm (the smaller one) with the 5V alimentation and the follow
 
 ### Control your motors with DynamixelMotorsBus
 
-[`DynamixelMotorsBus`](lerobot/common/robot_devices/motors/dynamixel.py) allows to efficiently read from and write to the motors connected as a chain to the corresponding usb bus. Underneath, it relies on the python [dynamixel sdk](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
+[`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) allows to efficiently read from and write to the motors connected as a chain to the corresponding usb bus. Underneath, it relies on the python [dynamixel sdk](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
 
 **Instantiate**
 
@@ -89,7 +89,7 @@ follower_arm = DynamixelMotorsBus(
 
 **Configure and Connect**
 
-During the first connection of the motors, `DynamixelMotorsBus` automatically detects a mismatch between the present motor indices (all `1` by default) and the specified motor indices (e.g. "1, 2, 3, 4, 5, 6"). This triggers the configuration procedure which requires to unplug the power cord and motors, and to sequentially plug each motor again, starting from the closest to the bus. Because it is quite involved, we provide a youtube video for help. The output of the procedure looks like that:
+During the first connection of the motors, `DynamixelMotorsBus` automatically detects a mismatch between the present motor indices (all `1` by default) and the specified motor indices (e.g. "1, 2, 3, 4, 5, 6"). This triggers the configuration procedure which requires to unplug the power cord and motors, and to sequentially plug each motor again, starting from the closest to the bus. Because it is quite involved, we provide a youtube video for help. TODO(rcadene) The output of the procedure looks like that:
 ```python
 leader_arm.connect()
 

@@ -107,7 +107,7 @@ def save_images_from_cameras(
                 executor.submit(
                     save_image,
                     image,
-                    camera.index,
+                    camera.camera_index,
                     frame_index,
                     images_dir,
                 )

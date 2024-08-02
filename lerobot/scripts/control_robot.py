@@ -243,6 +243,7 @@ def record(
     force_override=False,
 ):
     # TODO(rcadene): Add option to record logs
+    # TODO(rcadene): Decompose this function in higher level functions
 
     if not video:
         raise NotImplementedError()
@@ -271,7 +272,7 @@ def record(
 
     if is_headless():
         logging.info(
-            "Headless environment detected. Display cameras on screen and keyboard inputs will not be available."
+            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
         )
 
     # Allow to exit early while recording an episode or resetting the environment,

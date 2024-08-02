@@ -146,26 +146,6 @@ def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str
     return steps
 
 
-def convert_indices_to_baudrates(values: np.ndarray | list[int], models: list[str]):
-    assert len(values) == len(models)
-    for i in range(len(values)):
-        model = models[i]
-        index = values[i]
-        values[i] = MODEL_BAUDRATE_TABLE[model][index]
-    return values
-
-
-def convert_baudrates_to_indices(values: np.ndarray | list[int], models: list[str]):
-    assert len(values) == len(models)
-    for i in range(len(values)):
-        model = models[i]
-        brate = values[i]
-        table_values = list(MODEL_BAUDRATE_TABLE[model].values())
-        table_keys = list(MODEL_BAUDRATE_TABLE[model].keys())
-        values[i] = table_keys[table_values.index(brate)]
-    return values
-
-
 def convert_to_bytes(value, bytes):
     # Note: No need to convert back into unsigned int, since this byte preprocessing
     # already handles it for us.
@@ -304,7 +284,7 @@ class DynamixelMotorsBus:
     ```python
     motor_name = "gripper"
     motor_index = 6
-    motor_model = "xl330-m077"
+    motor_model = "xl330-m288"
 
     motors_bus = DynamixelMotorsBus(
         port="/dev/tty.usbmodem575E0031751",
@@ -312,9 +292,11 @@ class DynamixelMotorsBus:
     )
     motors_bus.connect()
 
-    degrees = motors_bus.read("Present_Position")
+    position = motors_bus.read("Present_Position")
 
-    motors_bus.write("Goal_Position", degrees + 30)
+    # move from a few motor steps as an example
+    few_steps = 30
+    motors_bus.write("Goal_Position", position + few_steps)
 
     # when done, consider disconnecting
     motors_bus.disconnect()
@@ -375,13 +357,12 @@ class DynamixelMotorsBus:
         self.set_bus_baudrate(BAUDRATE)
 
         if not self.are_motors_configured():
-            print(
-                r"/!\ First, verify that all the cables are connected the proper way. If you detect an issue, before making any modification, unplug the power cord to not damage the motors. Rewire correctly. Then plug the power again and relaunch the script."
+            input(
+                "\n/!\\ A configuration issue has been detected with your motors: \n"
+                "- Verify that all the cables are connected the proper way. Before making a modification, "
+                "unplug the power cord to not damage the motors. Rewire correctly. Then plug the power again and relaunch the script.\n"
+                "- If it's the first time that you use these motors, press Enter to configure your motors..."
             )
-            print(
-                r"/!\ Secondly, if the cables connection look correct and it is the first time that you use these motors, follow these manual steps to configure them."
-            )
-            input("Press Enter to configure your motors...")
             print()
             self.configure_motors()
 
@@ -393,6 +374,8 @@ class DynamixelMotorsBus:
         self.is_connected = True
 
     def are_motors_configured(self):
+        # Only check the motor indices and not baudrate, since if the motor baudrates are incorrect,
+        # a ConnectionError will be raised anyway.
         try:
             return (self.motor_indices == self.read("ID")).all()
         except ConnectionError as e:
@@ -401,6 +384,7 @@ class DynamixelMotorsBus:
 
     def configure_motors(self):
         # TODO(rcadene): This script assumes motors follow the X_SERIES baudrates
+        # TODO(rcadene): Refactor this function with intermediate high-level functions
 
         print("Scanning all baudrates and motor indices")
         all_baudrates = set(X_SERIES_BAUDRATE_TABLE.values())
@@ -420,12 +404,13 @@ class DynamixelMotorsBus:
         # Connect successively one motor to the chain and write a unique random index for each
         for i in range(len(self.motors)):
             self.disconnect()
-            print("1. Unplug the power cord")
-            print(
-                f"2. Plug/unplug minimal number of cables to only have the first {i+1} motor(s) ({self.motor_names[:i+1]}) connected."
+            input(
+                "1. Unplug the power cord\n"
+                "2. Plug/unplug minimal number of cables to only have the first "
+                f"{i+1} motor(s) ({self.motor_names[:i+1]}) connected.\n"
+                "3. Re-plug the power cord\n"
+                "Press Enter to continue..."
             )
-            print("3. Re-plug the power cord.")
-            input("Press Enter to continue...")
             print()
             self.reconnect()
 
@@ -548,15 +533,18 @@ class DynamixelMotorsBus:
         self.calibration = calibration
 
     def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
-        """Convert from unsigned int32 joint position range [0, 2**32[ to the universal float32 centered degree range [-180.0, 180.0[
+        """Convert from unsigned int32 joint position range [0, 2**32[ to the universal float32 nominal degree range ]-180.0, 180.0[ with
+        a "zero position" at 0 degree.
+
+        Note: We say "nominal degree range" since the motors can take values outside this range. For instance, 190 degrees, if the motor
+        rotate more than a half a turn from the zero position. However, most motors can't rotate more than 180 degrees and will stay in this range.
 
         Joints values are original in [0, 2**32[ (unsigned int32). Each motor are expected to complete a full rotation
         when given a goal position that is + or - their resolution. For instance, dynamixel xl330-m077 have a resolution of 4096, and
         at any position in their original range, let's say the position 56734, they complete a full rotation clockwise by moving to 60830,
-        or anticlockwise by moving to 42638. The position in the original range is arbitrary and might change a lot between each motor.
+        or anticlockwise by moving to 52638. The position in the original range is arbitrary and might change a lot between each motor.
         To harmonize between motors of the same model, different robots, or even models of different brands, we propose to work
-        in the centered degree range [-180, 180[. This function first applies the pre-computed calibration to convert
-        from [0, 2**32[ to [-2048, 2048[, then divide by 2048.
+        in the centered nominal degree range ]-180, 180[.
         """
         if motor_names is None:
             motor_names = self.motor_names
@@ -572,10 +560,10 @@ class DynamixelMotorsBus:
             if drive_mode:
                 values[i] *= -1
 
-            # Convert from range [-2**31, 2**31[ to centered resolution range [-resolution, resolution[ (e.g. [-2048, 2048[)
+            # Convert from range [-2**31, 2**31[ to nominal range ]-resolution, resolution[ (e.g. ]-2048, 2048[)
             values[i] += homing_offset
 
-        # Convert from range [-resolution, resolution[ to the universal float32 centered degree range [-180, 180[
+        # Convert from range ]-resolution, resolution[ to the universal float32 centered degree range ]-180, 180[
         values = values.astype(np.float32)
         for i, name in enumerate(motor_names):
             _, model = self.motors[name]
@@ -585,19 +573,19 @@ class DynamixelMotorsBus:
         return values
 
     def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
+        """Inverse of `apply_calibration`."""
         if motor_names is None:
             motor_names = self.motor_names
 
-        # Convert from the universal float32 centered degree range [-180, 180[ to centered resolution range [-resolution, resolution[
+        # Convert from the universal float32 centered degree range ]-180, 180[ to resolution range ]-resolution, resolution[
         for i, name in enumerate(motor_names):
             _, model = self.motors[name]
             resolution = self.model_resolution[model]
-
             values[i] = values[i] / 180 * (resolution // 2)
 
         values = np.round(values).astype(np.int32)
 
-        # Convert from range [-resolution, resolution[ to centered signed int32 range [-2**31, 2**31[
+        # Convert from nominal range ]-resolution, resolution[ to centered signed int32 range [-2**31, 2**31[
         for i, name in enumerate(motor_names):
             homing_offset, drive_mode = self.calibration[name]
             values[i] -= homing_offset
