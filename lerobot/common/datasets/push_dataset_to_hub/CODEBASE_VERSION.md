@@ -10,7 +10,8 @@ For instance, [`lerobot/pusht`](https://huggingface.co/datasets/lerobot/pusht) h
 - [v1.2](https://huggingface.co/datasets/lerobot/pusht/tree/v1.2)
 - [v1.3](https://huggingface.co/datasets/lerobot/pusht/tree/v1.3)
 - [v1.4](https://huggingface.co/datasets/lerobot/pusht/tree/v1.4)
-- [v1.5](https://huggingface.co/datasets/lerobot/pusht/tree/v1.5) <-- last version
+- [v1.5](https://huggingface.co/datasets/lerobot/pusht/tree/v1.5)
+- [v1.6](https://huggingface.co/datasets/lerobot/pusht/tree/v1.6) <-- last version
 - [main](https://huggingface.co/datasets/lerobot/pusht/tree/main) <-- points to the last version
 
 Starting with v1.6, every dataset pushed to the hub or saved locally also have this version number in their
@@ -45,13 +46,11 @@ for repo_id in available_datasets:
     dataset_info = api.list_repo_refs(repo_id, repo_type="dataset")
     branches = [b.name for b in dataset_info.branches]
     if CODEBASE_VERSION in branches:
-        # First check if the newer version already exists.
-        print(f"Found existing branch for {repo_id}. Please contact a member of the core LeRobot team.")
-        print("Exiting early")
-        break
+        print(f"{repo_id} already @{CODEBASE_VERSION}, skipping.")
+        continue
     else:
         # Now create a branch named after the new version by branching out from "main"
         # which is expected to be the preceding version
         api.create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION, revision="main")
-        print(f"{repo_id} successfully updated")
+        print(f"{repo_id} successfully updated @{CODEBASE_VERSION}")
 ```
