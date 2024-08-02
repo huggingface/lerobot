@@ -243,7 +243,7 @@ def record(
     force_override=False,
 ):
     # TODO(rcadene): Add option to record logs
-    # TODO(rcadene): Decompose this function in higher level functions
+    # TODO(rcadene): Clean this function via decomposition in higher level functions
 
     if not video:
         raise NotImplementedError()
