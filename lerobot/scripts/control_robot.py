@@ -319,25 +319,6 @@ def record_dataset(
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
         # Start recording all episodes
         while episode_index < num_episodes:
-            timestamp = 0
-            is_warmup_print = False
-            start_time = time.perf_counter()
-            while timestamp < 1:
-                if not is_warmup_print:
-                    logging.info("Warming up (no data recording)")
-                    os.system('say "Warmup" &')
-                    is_warmup_print = True
-
-                now = time.perf_counter()
-                observation, action = robot.teleop_step(record_data=True)
-
-                dt_s = time.perf_counter() - now
-                busy_wait(1 / fps - dt_s)
-
-                dt_s = time.perf_counter() - now
-                log_control_info(robot, dt_s, fps=fps)
-
-                timestamp = time.perf_counter() - start_time
             logging.info(f"Recording episode {episode_index}")
             os.system(f'say "Recording episode {episode_index}" &')
             ep_dict = {}
@@ -508,7 +489,7 @@ def record_dataset(
     if run_compute_stats:
         logging.info("Computing dataset statistics")
         os.system('say "Computing dataset statistics" &')
-        stats = compute_stats(lerobot_dataset, num_workers=8)
+        stats = compute_stats(lerobot_dataset)
         lerobot_dataset.stats = stats
     else:
         logging.info("Skipping computation of the dataset statistrics")
@@ -592,17 +573,19 @@ def run_policy(robot: Robot, policy: torch.nn.Module, hydra_cfg: DictConfig, run
             else nullcontext(),
         ):
             # add batch dimension to 1
-            for name in observation : 
+            for name in observation:
                 observation[name] = observation[name].unsqueeze(0)
 
             if "dataset_index" in hydra_cfg.policy.input_shapes:
-                logging.info(f"Multiple datasets were provided. The following mapping was applied during training:")
+                logging.info(
+                    "Multiple datasets were provided. The following mapping was applied during training:"
+                )
                 for i, dataset_name in enumerate(hydra_cfg.dataset_repo_id):
                     logging.info(f"{dataset_name}: {i}")
-                logging.info(f"Please provide the index of the dataset you want to use for evaluation.")
+                logging.info("Please provide the index of the dataset you want to use for evaluation.")
                 dataset_index = int(input("Enter the index of the dataset you want to use: "))
                 observation["dataset_index"] = torch.tensor([dataset_index])
-                
+
             if device.type == "mps":
                 for name in observation:
                     observation[name] = observation[name].to(device)
