@@ -10,6 +10,7 @@ from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.motors.dynamixel import (
     OperatingMode,
     TorqueMode,
+    convert_degrees_to_steps,
 )
 from lerobot.common.robot_devices.motors.utils import MotorsBus
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
@@ -22,16 +23,10 @@ URL_TEMPLATE = (
     "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"
 )
 
-# In nominal range ]-2048, 2048[
-# First target position consists in moving koch arm to a straight horizontal position with gripper closed.
-FIRST_POSITION = np.array([0, 0, 0, 0, 0, 0], dtype=np.int32)
-# Second target position consists in moving koch arm from the first target position by rotating every motor
-# by 90 degree. When the direction is ambiguous, always rotate on the right. Gripper is open, directed towards you.
-SECOND_POSITION = np.array([1024, 1024, 1024, 1024, 1024, 1024], dtype=np.int32)
-
-# In nominal range ]-180, 180[
+# In nominal degree range ]-180, +180[
+ZERO_POSITION_DEGREE = 0
+ROTATED_POSITION_DEGREE = 90
 GRIPPER_OPEN_DEGREE = 35.156
-REST_POSITION_DEGREE = np.array([0, 135, 90, 0, 0, GRIPPER_OPEN_DEGREE])
 
 
 def assert_drive_mode(drive_mode):
@@ -47,10 +42,6 @@ def apply_drive_mode(position, drive_mode):
     signed_drive_mode = -(drive_mode * 2 - 1)
     position *= signed_drive_mode
     return position
-
-
-def compute_nearest_rounded_position(position):
-    return np.round(position / 1024).astype(position.dtype) * 1024
 
 
 def reset_arm(arm: MotorsBus):
@@ -71,7 +62,23 @@ def reset_arm(arm: MotorsBus):
 
 
 def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
-    """Example of usage:
+    """This function ensures that a neural network trained on data collected on a given robot
+    can work on another robot. For instance before calibration, setting a same goal position
+    for each motor of two different robots will get two very different positions. But after calibration,
+    the two robots will move to the same position.To this end, this function computes the homing offset
+    and the drive mode for each motor of a given robot.
+
+    Homing offset is used to shift the motor position to a ]-2048, +2048[ nominal range (when the motor uses 2048 steps
+    to complete a half a turn). This range is set around an arbitrary "zero position" corresponding to all motor positions
+    being 0. During the calibration process, you will need to manually move the robot to this "zero position".
+
+    Drive mode is used to invert the rotation direction of the motor. This is useful when some motors have been assembled
+    in the opposite orientation for some robots. During the calibration process, you will need to manually move the robot
+    to the "rotated position".
+
+    After calibration, the homing offsets and drive modes are stored in a cache.
+
+    Example of usage:
     ```python
     run_arm_calibration(arm, "left", "follower")
     ```
@@ -80,35 +87,52 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
 
     print(f"\nRunning calibration of {name} {arm_type}...")
 
-    # TODO(rcadene): document what position 1 mean
-    print("\nMove arm to first target position")
-    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="first"))
+    print("\nMove arm to zero position")
+    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="zero"))
     input("Press Enter to continue...")
 
-    # Compute homing offset so that `present_position + homing_offset ~= target_position`
+    # We arbitrarely choosed our zero target position to be a straight horizontal position with gripper upwards and closed.
+    # It is easy to identify and all motors are in a "quarter turn" position. Once calibration is done, this position will
+    # corresponds to every motor angle being 0. If you set all 0 as Goal Position, the arm will move in this position.
+    zero_position = convert_degrees_to_steps(ZERO_POSITION_DEGREE, arm.motor_models)
+
+    def _compute_nearest_rounded_position(position, models):
+        # TODO(rcadene): Rework this function since some motors cant physically rotate a quarter turn
+        # (e.g. the gripper of Aloha arms can only rotate ~50 degree)
+        quarter_turn_degree = 90
+        quarter_turn = convert_degrees_to_steps(quarter_turn_degree, models)
+        return np.round(position / quarter_turn).astype(position.dtype) * quarter_turn
+
+    # Compute homing offset so that `present_position + homing_offset ~= target_position`.
     position = arm.read("Present_Position")
-    position = compute_nearest_rounded_position(position)
-    homing_offset = FIRST_POSITION - position
+    position = _compute_nearest_rounded_position(position, arm.motor_models)
+    homing_offset = zero_position - position
 
-    # TODO(rcadene): document what position 2 mean
-    print("\nMove arm to second target position")
-    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="second"))
+    print("\nMove arm to rotated target position")
+    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="rotated"))
     input("Press Enter to continue...")
 
-    # Find drive mode by rotating each motor by 90 degree.
-    # After applying homing offset, if position equals target position, then drive mode is 0,
-    # to indicate an original rotation direction for the motor ; else, drive mode is 1,
-    # to indicate an inverted rotation direction.
+    # The rotated target position corresponds to a rotation of a quarter turn from the zero position.
+    # This allows to identify the rotation direction of each motor.
+    # For instance, if the motor rotates 90 degree, and its value is -90 after applying the homing offset, then we know its rotation direction
+    # is inverted. However, for the calibration being successful, we need everyone to follow the same target position.
+    # Sometimes, there is only one possible rotation direction. For instance, if the gripper is closed, there is only one direction which
+    # corresponds to opening the gripper. When the rotation direction is ambiguous, we arbitrarely rotate clockwise from the point of view
+    # of the previous motor in the kinetic chain.
+    rotated_position = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, arm.motor_models)
+
+    # Find drive mode by rotating each motor by a quarter of a turn.
+    # Drive mode indicates if the motor rotation direction should be inverted (=1) or not (=0).
     position = arm.read("Present_Position")
     position += homing_offset
-    position = compute_nearest_rounded_position(position)
-    drive_mode = (position != SECOND_POSITION).astype(np.int32)
+    position = _compute_nearest_rounded_position(position, arm.motor_models)
+    drive_mode = (position != rotated_position).astype(np.int32)
 
     # Re-compute homing offset to take into account drive mode
     position = arm.read("Present_Position")
     position = apply_drive_mode(position, drive_mode)
-    position = compute_nearest_rounded_position(position)
-    homing_offset = SECOND_POSITION - position
+    position = _compute_nearest_rounded_position(position, arm.motor_models)
+    homing_offset = rotated_position - position
 
     print("\nMove arm to rest position")
     print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="rest"))
@@ -140,7 +164,12 @@ class KochRobotConfig:
 
 class KochRobot:
     # TODO(rcadene): Implement force feedback
-    """Tau Robotics: https://tau-robotics.com
+    """This class allows to control any Koch robot of various number of motors.
+
+    A few versions are available:
+    - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow expansion, which was developed
+    by Alexander Koch from [Tau Robotics](https://tau-robotics.com): [Github for sourcing and assembly](
+    - [Koch v1.1])https://github.com/jess-moss/koch-v1-1), which was developed by Jess Moss.
 
     Example of highest frequency teleoperation without camera:
     ```python

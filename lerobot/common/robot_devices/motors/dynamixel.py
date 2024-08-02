@@ -133,6 +133,19 @@ NUM_READ_RETRY = 10
 NUM_WRITE_RETRY = 10
 
 
+def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str]):
+    """This function convert the degree range to the step range for indicating motors rotation.
+    It assums a motor achieves a full rotation by going from -180 degree position to +180.
+    The motor resolution (e.g. 4096) corresponds to the number of steps needed to achieve a full rotation.
+    """
+    if isinstance(degrees, float):
+        degrees = np.array(degrees)
+
+    resolutions = [MODEL_RESOLUTION[models] for model in models]
+    steps = degrees / 180 * np.array(resolutions) / 2
+    return steps
+
+
 def convert_indices_to_baudrates(values: np.ndarray | list[int], models: list[str]):
     assert len(values) == len(models)
     for i in range(len(values)):
