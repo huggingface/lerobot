@@ -101,7 +101,8 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
         # (e.g. the gripper of Aloha arms can only rotate ~50 degree)
         quarter_turn_degree = 90
         quarter_turn = convert_degrees_to_steps(quarter_turn_degree, models)
-        return np.round(position / quarter_turn).astype(position.dtype) * quarter_turn
+        nearest_pos = np.round(position.astype(float) / quarter_turn) * quarter_turn
+        return nearest_pos.astype(position.dtype)
 
     # Compute homing offset so that `present_position + homing_offset ~= target_position`.
     position = arm.read("Present_Position")
@@ -320,18 +321,6 @@ class KochRobot:
             self.follower_arms[name].set_calibration(calibration[f"follower_{name}"])
         for name in self.leader_arms:
             self.leader_arms[name].set_calibration(calibration[f"leader_{name}"])
-
-        for name in self.leader_arms:
-            values = self.leader_arms[name].read("Present_Position")
-            if (values < -180).any() or (values >= 180).any():
-                raise ValueError(
-                    f"At least one of the motor of the {name} leader arm has a joint value outside of its centered degree range of ]-180, 180[."
-                    'This "jump of range" can be caused by a hardware issue, or you might have unexpectedly completed a full rotation of the motor '
-                    "during manipulation or transportation of your robot. "
-                    f"The values and motors: {values} {self.leader_arms[name].motor_names}.\n"
-                    "Rotate the arm to fit the range ]-180, 180[ and relaunch the script, or recalibrate all motors by setting a different "
-                    "calibration path during the instatiation of your robot (e.g. `--robot-overrides calibration_path=.cache/calibration/koch_v2.pkl`)"
-                )
 
         # Set better PID values to close the gap between recored states and actions
         # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor

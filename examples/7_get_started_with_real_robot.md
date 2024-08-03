@@ -4,28 +4,28 @@ This tutorial explains how to get started with real robots and train a neural ne
 
 It covers how to:
 1. order and assemble your robot,
-2. connect your robot, configure it and calibrate it,
+2. connect your robot, configure and calibrate it,
 3. record your dataset and visualize it,
 4. train a policy on your data and make sure it's ready for evaluation,
 5. evaluate your policy and visualize the result afterwards.
 
-Following these steps, you should be able to reproduce behaviors like picking a lego block and placing it in a bin with a relatively high success rate.
+Following these steps, you will reproduce behaviors like picking a lego block and placing it in a bin with a relatively high success rate.
+
+TODO add video of the task
+https://x.com/RemiCadene/status/1814680760592572934
 
 While this tutorial is general and easily extendable to any type of robots by changing a configuration, it is based on the [Koch v1.1](https://github.com/jess-moss/koch-v1-1) affordable robot. Koch v1.1 is composed of a leader arm and a follower arm with 6 motors each. In addition, various cameras can record the scene and serve as visual sensors for the robot.
 
-During data collection, you will control the follower arm by moving the leader arm. This is called "teleoperation". More specifically, the present position of the motors of the leader arm is read at high frequency and sent as a goal position for the motors of the follower arm, which effectively "follow" the movements of the leader arm. While you teleoperate the robot, a few modalities are recorded:
-- the present position of the follower arm, called the "state",
-- the goal position sent to the follower arm, called the "action",
-- the video stream from the cameras.
+During data collection, you will control the follower arm by moving the leader arm. This is called "teleoperation". It is used to collect robot trajectories.
+Then, you will train a neural network to imitate these trajectories. Finally, you will deploy your neural netowrk to autonomously control your robot.
 
-Finally, you will train a neural network to predict the future actions given the state and camera frames as input ; and deploy it to autonomously control the robot via the high frequency communication of goal positions to the follower arm.
-
+Note: If you have issue at any step of the tutorial, ask for help on [Discord](https://discord.com/invite/s3KuuzsPFb).
 
 ## 1. Order and Assemble your Koch v1.1
 
-Follow the bill of materials on the [Koch v1.1 github page](https://github.com/jess-moss/koch-v1-1) to order a leader and a follower arm. Some parts and prices are a bit different with respect to the geo location.
+Follow the sourcing an assembly instructions on the [Koch v1.1 github page](https://github.com/jess-moss/koch-v1-1).
 
-Once the parts are received, follow this video to guide you through the assembly: TODO
+![Koch v1.1 leader and follower arms](../media/koch/leader_follower.webp?raw=true "Koch v1.1 leader and follower arms")
 
 ## 2. Connect, Configure, and Calibrate your Koch v1.1
 
@@ -33,30 +33,45 @@ Connect the leader arm (the smaller one) with the 5V alimentation and the follow
 
 ### Control your motors with DynamixelMotorsBus
 
-[`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) allows to efficiently read from and write to the motors connected as a chain to the corresponding usb bus. Underneath, it relies on the python [dynamixel sdk](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
+We use [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) to efficiently read from and write to the motors connected as a chain to the corresponding usb bus. Underneath, it relies on the python [dynamixel sdk](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
 
 **Instantiate**
 
-Each `DynamixelMotorsBus` requires its corresponding usb port (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`). Run our utility script for each arm to find their ports. Here is an example of what it looks like:
+You will need to instante two [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py), one for each arm, with their corresponding usb port (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`).
+
+To find their corresponding ports, run our utility script twice:
 ```bash
 python lerobot/common/robot_devices/motors/dynamixel.py
->>> Finding all available ports for the DynamixelMotorsBus.
->>> ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
->>> Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
-... **Disconnect leader arm and press Enter**
->>> The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0031751.
->>> Reconnect the usb cable.
-
-python lerobot/common/robot_devices/motors/dynamixel.py
->>> Finding all available ports for the DynamixelMotorsBus.
->>> ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
->>> Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
-... **Disconnect follower arm and press Enter**
->>> The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0032081.
->>> Reconnect the usb cable.
 ```
 
-Then you can instantiate each arm by listing their motors with their name, motor index, and model. The initial motor index from factory for every motors is `1`. However, unique indices are required for these motors to function in a chain on a common bus. To this end, we set different indices and follow the ascendant convention starting from index `1` (e.g. "1, 2, 3, 4, 5, 6" ). These indices will be written inside the persisting memory of each motor during the first connection. Here is an example of what the instantiation looks like:
+A first time to find the port `/dev/tty.usbmodem575E0031751` of the leader arm:
+```
+Finding all available ports for the DynamixelMotorsBus.
+['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
+
+**Disconnect leader arm and press Enter**
+
+The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0031751
+Reconnect the usb cable.
+```
+
+A second time to find the port `/dev/tty.usbmodem575E0032081` of the follower arm:
+```
+Finding all available ports for the DynamixelMotorsBus.
+['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
+
+**Disconnect follower arm and press Enter**
+
+The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0032081
+Reconnect the usb cable.
+```
+
+Then you will need to list their motors with their name, motor index, and model.
+Importantly, the initial motor index from factory for every motors is `1`. However, unique indices are required for these motors to function in a chain on a common bus. To this end, you will need to set different indices. We advise to follow the ascendant convention starting from index `1` (e.g. `1,2,3,4,5,6`). These indices will be written inside the persisting memory of each motor during the first connection.
+
+Update the corresponding ports of this code and run it to instantiate the Koch leader and follower arms:
 ```python
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 
@@ -87,62 +102,110 @@ follower_arm = DynamixelMotorsBus(
 )
 ```
 
+Also, update the ports of the default yaml file for Koch robot [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml). It is used to instantiate a robot in all our scripts. We will explain how this works later on.
+
 **Configure and Connect**
 
-During the first connection of the motors, `DynamixelMotorsBus` automatically detects a mismatch between the present motor indices (all `1` by default) and the specified motor indices (e.g. "1, 2, 3, 4, 5, 6"). This triggers the configuration procedure which requires to unplug the power cord and motors, and to sequentially plug each motor again, starting from the closest to the bus. Because it is quite involved, we provide a youtube video for help. TODO(rcadene) The output of the procedure looks like that:
+Then, you will need to configure your motors. During the first connection of the motors, [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) automatically detects a mismatch between the present motor indices (all `1` by factory default) and your specified motor indices (e.g. `1,2,3,4,5,6`). This triggers the configuration procedure which requires to unplug the power cord and motors, and to sequentially plug each motor again, starting from the closest to the bus.
+
+Take a look at this youtube video for help: TODO(rcadene)
+
+Run this in the same python session in your terminal to connect and configure the leader arm:
 ```python
 leader_arm.connect()
-
-TODO
-
-follower_arm.connect()
-
-TODO
 ```
 
-Congrats! Now both arms are well configured and connected. Of course, next time you connect the arms, you won't have to follow configuration procedure ever again. For instance, let's try to disconnect and connect again like that:
+Here is an example of connecting the leader arm for the first time:
+```
+Read failed due to communication error on port /dev/tty.usbmodem575E0032081 for group_key ID_shoulder_pan_shoulder_lift_elbow_flex_wrist_flex_wrist_roll_gripper: [TxRxResult] There is no status packet!
+
+/!\ A configuration issue has been detected with your motors:
+- Verify that all the cables are connected the proper way. Before making a modification, unplug the power cord to not damage the motors. Rewire correctly. Then plug the power again and relaunch the script.
+- If it's the first time that you use these motors, press Enter to configure your motors...
+
+Motor indices detected: {9600: [1]}
+
+1. Unplug the power cord
+2. Plug/unplug minimal number of cables to only have the first 1 motor(s) (['shoulder_pan']) connected.
+3. Re-plug the power cord
+Press Enter to continue...
+
+[...] *Run all the procedure*
+
+Setting expected motor indices: [1, 2, 3, 4, 5, 6]
+```
+
+Now do the same for the follower arm:
 ```python
-leader_arm.disconnect()
-leader_arm.connect()
-
-follower_arm.disconnect()
 follower_arm.connect()
 ```
+
+Congrats, now both arms are well configured and connected! You won't have to follow the configuration procedure ever again!
+
+Note: If the configuration didn't work, you might need to update the firmware using [DynamixelWizzard2](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_wizard2). You might also need to manually configure the motors. Similarly, you will need to connect each motor seperately to the bus. You will need to set correct indices and set their baudrates to `1000000`. Take a look at this youtube video for help: https://www.youtube.com/watch?v=JRRZW_l1V-U
+
 
 **Read and Write**
 
-Just to get familiar with how `DynamixelMotorsBus` is used to command the motors, let's try to read from them. You should have something like:
+Just to get familiar with how `DynamixelMotorsBus` is used to command the motors, let's try to read from them:
 ```python
-values = leader_arm.read("Present_Position")
-print(values)
->>> TODO
+position = leader_arm.read("Present_Position")
+print(position)
+>>> array([2054,  523, 3071, 1831, 3049, 2441], dtype=int32)
 
-values = follower_arm.read("Present_Position")
-print(values)
->>> TODO
+position = follower_arm.read("Present_Position")
+print(position)
+>>> array([2003, 1601,   56, 2152, 3101, 2283], dtype=int32)
 ```
 
-The full address is `X_SERIES_CONTROL_TABLE`. TODO
+Try to move the arms in various positions and see how if affects the values.
 
 Now let's try to enable torque in the follower arm:
 ```python
 from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
 
 follower_arm.write("Torque_Enable", TorqueMode.ENABLED.value)
-
-values = follower_arm.read("Present_Position")
-
-values[0] += 10  # Try with positive or negative numbers
-follower_arm.write("Goal_Position", values)
-
-follower_arm.write("Goal_Position", values[0], "shoulder_pan")
 ```
 
+The follower arm should be stuck in its current position. Don't try to manually move it while torque is enabled as it might damage the motors. Instead try to move it using the code:
+```python
+# Get the current position
+position = follower_arm.read("Present_Position")
+
+# Update first motor (shoulder_pan) position by +10 steps
+position[0] += 10
+follower_arm.write("Goal_Position", position)
+
+# Update all motors position by -30 steps
+position -= 30
+follower_arm.write("Goal_Position", position)
+
+# Update gripper by +30 steps
+position[-1] += 30
+follower_arm.write("Goal_Position", position[-1], "gripper")
+```
+
+When you are done, disable the torque by running:
+```python
+# Warning: hold your robot so that it doesn't fall
+follower_arm.write("Torque_Enable", TorqueMode.DISABLED.value)
+```
+
+And disconnect the two arms:
+```python
+leader_arm.disconnect()
+follower_arm.disconnect()
+```
+
+You can also unplug the power cord which will disable torque and disconnect.
 
 ### Teleoperate your Koch v1.1 with KochRobot
 
 **Instantiate**
+
 ```python
+from lerobot.common.robot_devices.robots.koch import KochRobot
+
 robot = KochRobot(
     leader_arms={"main": leader_arm},
     follower_arms={"main": follower_arm},
@@ -152,19 +215,25 @@ robot = KochRobot(
 
 **Calibrate and Connect**
 
-```
+```python
 robot.connect()
+
 >>>
 ```
 
 ```python
-degrees = leader_arms.read("Present_Position)
+degrees = robot.leader_arms["main"].read("Present_Position")
 print(degrees)
->>>
+>>> array([ -0.43945312, 133.94531   , 179.82422   , -18.984375  ,
+        -1.9335938 ,  34.541016  ], dtype=float32)
+```
 
-degrees = follower_arms.read("Present_Position)
+
+```python
+degrees = robot.follower_arms["main"].read("Present_Position")
 print(degrees)
->>>
+>>> array([ -1.0546875, 128.67188  , 174.90234  ,  -7.998047 ,  -5.4492188,
+        32.34375  ], dtype=float32)
 ```
 
 **Teleoperate**
@@ -172,8 +241,9 @@ print(degrees)
 TODO: explain in pseudo code what the teleop is doing
 
 ```python
-# Teleoperate for 60 seconds if running at 200 hz
-for _ in range(60*200):
+import tqdm
+# Teleoperate for 30 seconds since the arms are communicating at a frequency of 200Hz
+for _ in tqdm.tqdm(range(30*200)):
     robot.teleop_step()
 ```
 
@@ -182,9 +252,9 @@ TODO: explain in pseudo code what the teleop(record_data=True) is doing
 ```python
 observation, action = robot.teleop_step(record_data=True)
 print(observation)
->>>
+>>> {'observation.state': tensor([  7.8223, 131.1328, 165.5859, -23.4668,  -0.9668,  32.4316])}
 print(action)
->>>
+>>> {'action': tensor([  3.4277, 134.1211, 179.8242, -18.5449,  -1.5820,  34.7168])}
 ```
 
 ### Add your cameras with OpenCVCamera
@@ -392,3 +462,28 @@ Collect a slightly more difficult dataset, like grasping 5 lego blocks in a row,
 
 
 - Improve the dataset
+
+
+
+
+
+
+
+
+
+Prices
+
+ Some parts and prices from the bill of materials might differ with respect to the geo location ; but we made sure it works.
+
+
+via the high frequency communication of goal positions to the follower arm.
+
+to predict the future actions given the state and camera frames as input ; and deploy it to autonomously control the robot via the high frequency communication of goal positions to the follower arm.
+
+
+More specifically, the present position of the motors of the leader arm is read at high frequency and sent as a goal position for the motors of the follower arm, which effectively "follow" the movements of the leader arm. While you teleoperate the robot, a few modalities are recorded:
+- the present position of the follower arm, called the "state",
+- the goal position sent to the follower arm, called the "action",
+- the video stream from the cameras.
+
+Once the parts are received, follow this video to guide you through the assembly: TODO

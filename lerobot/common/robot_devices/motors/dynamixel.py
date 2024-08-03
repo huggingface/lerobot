@@ -141,8 +141,9 @@ def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str
     if isinstance(degrees, float):
         degrees = np.array(degrees)
 
-    resolutions = [MODEL_RESOLUTION[models] for model in models]
+    resolutions = [MODEL_RESOLUTION[model] for model in models]
     steps = degrees / 180 * np.array(resolutions) / 2
+    steps = steps.astype(int)
     return steps
 
 
