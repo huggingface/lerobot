@@ -37,7 +37,7 @@ We use [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.p
 
 **Instantiate**
 
-You will need to instante two [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py), one for each arm, with their corresponding usb port (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`).
+You will need to instantiate two [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py), one for each arm, with their corresponding usb port (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`).
 
 To find their corresponding ports, run our utility script twice:
 ```bash
@@ -102,11 +102,41 @@ follower_arm = DynamixelMotorsBus(
 )
 ```
 
-Also, update the ports of the default yaml file for Koch robot [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml). It is used to instantiate a robot in all our scripts. We will explain how this works later on.
+Also, update the ports of the following lines of yaml file for Koch robot [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml):
+```yaml
+[...]
+leader_arms:
+  main:
+    _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
+    port: /dev/tty.usbmodem575E0031751  # <- Update
+    motors:
+      # name: (index, model)
+      shoulder_pan: [1, "xl330-m077"]
+      shoulder_lift: [2, "xl330-m077"]
+      elbow_flex: [3, "xl330-m077"]
+      wrist_flex: [4, "xl330-m077"]
+      wrist_roll: [5, "xl330-m077"]
+      gripper: [6, "xl330-m077"]
+follower_arms:
+  main:
+    _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
+    port: /dev/tty.usbmodem575E0032081  # <- Update
+    motors:
+      # name: (index, model)
+      shoulder_pan: [1, "xl430-w250"]
+      shoulder_lift: [2, "xl430-w250"]
+      elbow_flex: [3, "xl330-m288"]
+      wrist_flex: [4, "xl330-m288"]
+      wrist_roll: [5, "xl330-m288"]
+      gripper: [6, "xl330-m288"]
+[...]
+```
+
+This file is used to instantiate your robot in all our scripts. We will explain how this works later on.
 
 **Configure and Connect**
 
-Then, you will need to configure your motors. During the first connection of the motors, [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) automatically detects a mismatch between the present motor indices (all `1` by factory default) and your specified motor indices (e.g. `1,2,3,4,5,6`). This triggers the configuration procedure which requires to unplug the power cord and motors, and to sequentially plug each motor again, starting from the closest to the bus.
+Then, you will need to configure your motors to be able to properly communicate with them. During the first connection of the motors, [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) automatically detects a mismatch between the present motor indices (all `1` by factory default) and your specified motor indices (e.g. `1,2,3,4,5,6`). This triggers the configuration procedure which requires to unplug the power cord and motors, and to sequentially plug each motor again, starting from the closest to the bus.
 
 Take a look at this youtube video for help: TODO(rcadene)
 
@@ -203,6 +233,13 @@ You can also unplug the power cord which will disable torque and disconnect.
 
 **Instantiate**
 
+Before being able to teleoperate your robot, you will need to instantiate the [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) using the previously defined `leader_arm` and `follower_arm`.
+
+For the Koch robot, we only have one leader and one follower, so we call it `"main"` and define `leader_arms={"main": leader_arm}` for the leader arm. However for other robots (e.g. Aloha), we can use two pairs of leader and follower. In this case, we would define `leader_arms={"left": left_leader_arm, "right": right_leader_arm},`. Same thing for the follower arms.
+
+You also need to provide a path to a calibration file `calibration_path=".cache/calibration/koch.pkl"`. More on this in the next section.
+
+Run this code to instantiate your robot:
 ```python
 from lerobot.common.robot_devices.robots.koch import KochRobot
 
@@ -215,55 +252,93 @@ robot = KochRobot(
 
 **Calibrate and Connect**
 
+Then, you will need to calibrate your robot so that when the leader and follower arms are in the same physical position, they have the same position values read from [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py). An important benefit of calibration is that a neural network trained on data collected on your Koch robot will transfer to another Koch robot.
+
+During the first connection of your robot, [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) detects that the calibration file is missing. This triggers the calibration procedure which requires you to move each arm in 3 different positions.
+
+For the follower arm:
+
+TODO: Add table with images
+
+For the leader arm:
+
+TODO: Add table with images
+
+Run this code to calibrate and connect your robot:
 ```python
 robot.connect()
 
->>>
+>>> TODO
 ```
 
+Now try to read the position of the leader and follower arms using `read` from [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py). It should output similar values if both arms are in a similar position.
+
+Importantly, we also convert the "step" position to degree. This is much easier to interpet and debug. In particular, the zero position used during calibration now corresponds to 0 degree for each motor. Also, the rotated position corresponds to 90 degree for each motor.
+
+Run this code to get the positions in degree:
 ```python
-degrees = robot.leader_arms["main"].read("Present_Position")
-print(degrees)
+leader_pos = robot.leader_arms["main"].read("Present_Position")
+print(leader_pos)
+follower_pos = robot.follower_arms["main"].read("Present_Position")
+print(follower_pos)
 >>> array([ -0.43945312, 133.94531   , 179.82422   , -18.984375  ,
         -1.9335938 ,  34.541016  ], dtype=float32)
-```
-
-
-```python
-degrees = robot.follower_arms["main"].read("Present_Position")
-print(degrees)
 >>> array([ -1.0546875, 128.67188  , 174.90234  ,  -7.998047 ,  -5.4492188,
         32.34375  ], dtype=float32)
 ```
 
 **Teleoperate**
 
-TODO: explain in pseudo code what the teleop is doing
+Now you can easily teleoperate your robot by reading the position from the leader arm and sending it as goal position to the follower arm.
 
+Run this code to teleoperate:
 ```python
 import tqdm
-# Teleoperate for 30 seconds since the arms are communicating at a frequency of 200Hz
+# Teleoperate for 30 seconds
+# Note: communication between the two arms is done at a frequency of ~200Hz
+for _ in tqdm.tqdm(range(30*200)):
+    leader_pos = robot.leader_arms["main"].read("Present_Position")
+    robot.follower_arms["main"].write("Goal_Position", leader_pos)
+```
+
+You can also teleoperate by using `teleop_step` from [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py).
+
+Run this code to teleoperate:
+```python
+import tqdm
 for _ in tqdm.tqdm(range(30*200)):
     robot.teleop_step()
 ```
 
-TODO: explain in pseudo code what the teleop(record_data=True) is doing
+Teleoperation is useful to record data. To this end, you can use `teleop_step` from [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) with `record_data=True`. It outputs the follower position as `"observation.state"` and the leader position as `"action"`. It also converts the numpy arrays into torch tensors, and concatenates the positions in the case of two leader and two follower arms like in Aloha.
 
+Run this code to try data recording during a teleoperation step:
 ```python
 observation, action = robot.teleop_step(record_data=True)
+leader_pos = robot.leader_arms["main"].read("Present_Position")
+follower_pos = robot.follower_arms["main"].read("Present_Position")
+print(follower_pos)
 print(observation)
->>> {'observation.state': tensor([  7.8223, 131.1328, 165.5859, -23.4668,  -0.9668,  32.4316])}
+print(leader_pos)
 print(action)
+>>> {'observation.state': tensor([  7.8223, 131.1328, 165.5859, -23.4668,  -0.9668,  32.4316])}
 >>> {'action': tensor([  3.4277, 134.1211, 179.8242, -18.5449,  -1.5820,  34.7168])}
+```
+
+Finally, `teleop_step` from [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) with `record_data=True` can also asynchrously record frames from several cameras and add them to the observation dictionnary as `"observation.images.CAMERA_NAME"`. More on this in the next section.
+
+When you are done, disconnect your robot:
+```python
+robot.disconnect()
 ```
 
 ### Add your cameras with OpenCVCamera
 
 **Instantiate**
 
-The `OpenCVCamera` class allows to efficiently record images from cameras. It relies on opencv2 to communicate with the cameras. Most cameras are compatible. For more info, see the [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
+You can efficiently record frames from cameras with the [`OpenCVCamera`](../lerobot/common/robot_devices/cameras/opencv.py) class. It relies on [`opencv2`](https://docs.opencv.org) to communicate with the cameras. Most cameras are compatible. For more info, see [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
 
-An `OpenCVCamera` instance requires a camera index (e.g. `OpenCVCamera(camera_index=0)`). When you only have one camera like a webcam of a laptop, the camera index is expected to be 0, but it might also be very different, and the camera index might change if you reboot your computer or re-plug your camera. This behavior depends on your operation system.
+To instantiate an [`OpenCVCamera`](../lerobot/common/robot_devices/cameras/opencv.py), you need a camera index (e.g. `OpenCVCamera(camera_index=0)`). When you only have one camera like a webcam of a laptop, the camera index is usually `0` but it might differ, and the camera index might change if you reboot your computer or re-plug your camera. This behavior depends on your operating system.
 
 To find the camera indices of your cameras, you can run our utility script that will save a few frames for each camera:
 ```bash
@@ -271,16 +346,40 @@ python lerobot/common/robot_devices/cameras/opencv.py --images-dir outputs/image
 >>> TODO
 ```
 
-When an `OpenCVCamera` is instantiated, if no specific config is provided, the default fps, width, height and color_mode of the given camera will be used.
-
-Example of usage of the class:
+Run this code to instantiate your camera:
 ```python
 camera = OpenCVCamera(camera_index=0)
 camera.connect()
 color_image = camera.read()
+print(color_image.shape)
+print(color_image.max())
+print(color_image.min())
 # when done using the camera, consider disconnecting
 camera.disconnect()
+>>> TODO
 ```
+
+Note that default fps, width, height and color_mode of the given camera are used. They may differ for different cameras. You can specify them during instantiation (e.g. `OpenCVCamera(camera_index=0, fps=30, width=640, height=480`).
+
+Also, update the flollowing lines of the yaml file for Koch robot [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with your cameras and their corresponding camera indices:
+```yaml
+[...]
+cameras:
+  laptop:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 0
+    fps: 30
+    width: 640
+    height: 480
+  phone:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 1
+    fps: 30
+    width: 640
+    height: 480
+```
+
+This file is used to instantiate your robot in all our scripts. We will explain how this works later on.
 
 **Add to robot**
 
