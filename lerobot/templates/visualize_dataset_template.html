@@ -195,18 +195,6 @@
     </div>
 
     <script>
-        class SeededRandom {
-            static seed = 42;  // Initial seed
-
-            static random() {
-                const a = 1664525;
-                const c = 1013904223;
-                const m = 2 ** 32;
-                SeededRandom.seed = (a * SeededRandom.seed + c) % m;
-                return SeededRandom.seed / m;
-            }
-        }
-
         function createAlpineData() {
             return {
                 dygraph: null,
