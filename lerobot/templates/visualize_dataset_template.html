@@ -197,6 +197,7 @@
     <script>
         function createAlpineData() {
             return {
+                // state
                 dygraph: null,
                 currentFrameData: null,
                 columnNames: ["state", "action", "pred action"],
@@ -207,6 +208,8 @@
                 videos: null,
                 video: null,
                 colors: null,
+
+                // alpine initialization
                 init() {
                     this.videos = document.querySelectorAll('video');
                     this.video = this.videos[0];
@@ -226,6 +229,7 @@
                         },
                         drawCallback: (dygraph, is_initial) => {
                             if (is_initial) {
+                                // dygraph initialization
                                 this.dygraph.setSelection(this.dygraphIndex, undefined, true, true);
                                 this.colors = this.dygraph.getColors();
                                 this.checked = Array(this.colors.length).fill(true);
@@ -259,6 +263,11 @@
                         },
                     });
                 },
+                
+                //#region Table Data
+
+                // turn dygraph's 1D data (at a given time t) to 2D data that whose columns names are defined in this.columnNames. 
+                // 2d data view is used to create html table element.
                 get rows() {
                     if (!this.currentFrameData) {
                         return [];
@@ -297,6 +306,8 @@
                     });
                     this.updateTableValues();
                 },
+
+                // given time t, update the values in the html table with "data[t]"
                 updateTableValues(time) {
                     if (!this.colors) {
                         return;
@@ -321,6 +332,9 @@
                         this.dygraph.setVisibility(this.checked);
                     }
                 },
+
+                //#endregion
+
                 updateTimeQuery(time) {
                     let url = new URL(window.location.href);
                     let params = new URLSearchParams(url.search);
@@ -328,6 +342,8 @@
                     url.search = params.toString();
                     window.history.replaceState({}, '', url.toString());
                 },
+
+                
                 formatTime(time) {
                     var hours = Math.floor(time / 3600);
                     var minutes = Math.floor((time % 3600) / 60);
