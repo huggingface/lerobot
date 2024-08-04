@@ -9,23 +9,22 @@ It covers how to:
 4. train a policy on your data and make sure it's ready for evaluation,
 5. evaluate your policy and visualize the result afterwards.
 
-Following these steps, you will reproduce behaviors like picking a lego block and placing it in a bin with a relatively high success rate.
-
-TODO add video of the task
-https://x.com/RemiCadene/status/1814680760592572934
+Following these steps, you will reproduce behaviors like picking a lego block and placing it in a bin with a relatively high success rate like in this video: https://x.com/RemiCadene/status/1814680760592572934
 
 While this tutorial is general and easily extendable to any type of robots by changing a configuration, it is based on the [Koch v1.1](https://github.com/jess-moss/koch-v1-1) affordable robot. Koch v1.1 is composed of a leader arm and a follower arm with 6 motors each. In addition, various cameras can record the scene and serve as visual sensors for the robot.
 
 During data collection, you will control the follower arm by moving the leader arm. This is called "teleoperation". It is used to collect robot trajectories.
-Then, you will train a neural network to imitate these trajectories. Finally, you will deploy your neural netowrk to autonomously control your robot.
+Then, you will train a neural network to imitate these trajectories. Finally, you will deploy your neural network to autonomously control your robot.
 
 Note: If you have issue at any step of the tutorial, ask for help on [Discord](https://discord.com/invite/s3KuuzsPFb).
 
 ## 1. Order and Assemble your Koch v1.1
 
-Follow the sourcing an assembly instructions on the [Koch v1.1 github page](https://github.com/jess-moss/koch-v1-1).
+Follow the sourcing and assembling instructions on the [Koch v1.1 github page](https://github.com/jess-moss/koch-v1-1) to setup the follower and leader arms shown in this picture.
 
-![Koch v1.1 leader and follower arms](../media/koch/leader_follower.webp?raw=true "Koch v1.1 leader and follower arms")
+<div style="text-align:center;">
+  <img src="../media/koch/leader_follower.webp?raw=true" alt="Koch v1.1 leader and follower arms" title="Koch v1.1 leader and follower arms" width="50%">
+</div>
 
 ## 2. Connect, Configure, and Calibrate your Koch v1.1
 
@@ -33,7 +32,7 @@ Connect the leader arm (the smaller one) with the 5V alimentation and the follow
 
 ### Control your motors with DynamixelMotorsBus
 
-We use [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) to efficiently read from and write to the motors connected as a chain to the corresponding usb bus. Underneath, it relies on the python [dynamixel sdk](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
+You can use the [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) to efficiently read from and write to the motors connected as a chain to the corresponding usb bus. Underneath, it relies on the python [dynamixel sdk](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
 
 **Instantiate**
 
@@ -44,7 +43,7 @@ To find their corresponding ports, run our utility script twice:
 python lerobot/common/robot_devices/motors/dynamixel.py
 ```
 
-A first time to find the port `/dev/tty.usbmodem575E0031751` of the leader arm:
+A first time to find the port of the leader arm (e.g. `/dev/tty.usbmodem575E0031751`):
 ```
 Finding all available ports for the DynamixelMotorsBus.
 ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
@@ -56,7 +55,7 @@ The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0031751
 Reconnect the usb cable.
 ```
 
-A second time to find the port `/dev/tty.usbmodem575E0032081` of the follower arm:
+A second time to find the port of the follower arm (e.g. `/dev/tty.usbmodem575E0032081`):
 ```
 Finding all available ports for the DynamixelMotorsBus.
 ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
@@ -71,7 +70,7 @@ Reconnect the usb cable.
 Then you will need to list their motors with their name, motor index, and model.
 Importantly, the initial motor index from factory for every motors is `1`. However, unique indices are required for these motors to function in a chain on a common bus. To this end, you will need to set different indices. We advise to follow the ascendant convention starting from index `1` (e.g. `1,2,3,4,5,6`). These indices will be written inside the persisting memory of each motor during the first connection.
 
-Update the corresponding ports of this code and run it to instantiate the Koch leader and follower arms:
+Update the corresponding ports of this code with your ports and run the code to instantiate the Koch leader and follower arms:
 ```python
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 
@@ -140,7 +139,7 @@ Then, you will need to configure your motors to be able to properly communicate 
 
 Take a look at this youtube video for help: TODO(rcadene)
 
-Run this in the same python session in your terminal to connect and configure the leader arm:
+Run the following code in the same python session in your terminal to connect and configure the leader arm:
 ```python
 leader_arm.connect()
 ```
@@ -160,7 +159,7 @@ Motor indices detected: {9600: [1]}
 3. Re-plug the power cord
 Press Enter to continue...
 
-[...] *Run all the procedure*
+*Follow the procedure*
 
 Setting expected motor indices: [1, 2, 3, 4, 5, 6]
 ```
@@ -177,14 +176,13 @@ Note: If the configuration didn't work, you might need to update the firmware us
 
 **Read and Write**
 
-Just to get familiar with how `DynamixelMotorsBus` is used to command the motors, let's try to read from them:
+Just to get familiar with how `DynamixelMotorsBus` communicates with the motors, let's try to read from them:
 ```python
-position = leader_arm.read("Present_Position")
-print(position)
+leader_pos = leader_arm.read("Present_Position")
+follower_pos = follower_arm.read("Present_Position")
+print(leader_pos)
+print(follower_pos)
 >>> array([2054,  523, 3071, 1831, 3049, 2441], dtype=int32)
-
-position = follower_arm.read("Present_Position")
-print(position)
 >>> array([2003, 1601,   56, 2152, 3101, 2283], dtype=int32)
 ```
 
@@ -233,11 +231,11 @@ You can also unplug the power cord which will disable torque and disconnect.
 
 **Instantiate**
 
-Before being able to teleoperate your robot, you will need to instantiate the [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) using the previously defined `leader_arm` and `follower_arm`.
+Before being able to teleoperate your robot, you will need to instantiate the [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) using the previously defined `leader_arm` and `follower_arm` as shown next.
 
-For the Koch robot, we only have one leader and one follower, so we call it `"main"` and define `leader_arms={"main": leader_arm}` for the leader arm. However for other robots (e.g. Aloha), we can use two pairs of leader and follower. In this case, we would define `leader_arms={"left": left_leader_arm, "right": right_leader_arm},`. Same thing for the follower arms.
+For the Koch robot, we only have one leader, so as you will see next, we call it `"main"` and define `leader_arms={"main": leader_arm}`. We do the same for the follower arm. However for other robots (e.g. Aloha), we can use two pairs of leader and follower. In this case, we would define `leader_arms={"left": left_leader_arm, "right": right_leader_arm},`. Same thing for the follower arms.
 
-You also need to provide a path to a calibration file `calibration_path=".cache/calibration/koch.pkl"`. More on this in the next section.
+We also need to provide a path to a calibration file `calibration_path=".cache/calibration/koch.pkl"`. More on this in the next section.
 
 Run this code to instantiate your robot:
 ```python
@@ -256,13 +254,39 @@ Then, you will need to calibrate your robot so that when the leader and follower
 
 During the first connection of your robot, [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) detects that the calibration file is missing. This triggers the calibration procedure which requires you to move each arm in 3 different positions.
 
-For the follower arm:
+You will follow the procedure and move the follower to these positions:
 
-TODO: Add table with images
+<div style="text-align:center; display:flex; justify-content:center;">
+  <figure style="margin: 10px;">
+    <img src="../media/koch/follower_zero.webp?raw=true" alt="Koch v1.1 follower arm zero position" title="Koch v1.1 follower arm zero position" width="100%">
+    <figcaption>1. Zero position</figcaption>
+  </figure>
+  <figure style="margin: 10px;">
+    <img src="../media/koch/follower_rotated.webp?raw=true" alt="Koch v1.1 follower arm rotated position" title="Koch v1.1 follower arm rotated position" width="100%">
+    <figcaption>2. Rotated position</figcaption>
+  </figure>
+  <figure style="margin: 10px;">
+    <img src="../media/koch/follower_rest.webp?raw=true" alt="Koch v1.1 follower arm rest position" title="Koch v1.1 follower arm rest position" width="100%">
+    <figcaption>3. Rest position</figcaption>
+  </figure>
+</div>
 
-For the leader arm:
+Then you will continue the procedure and move the leader to these positions:
 
-TODO: Add table with images
+<div style="text-align:center; display:flex; justify-content:center;">
+  <figure style="margin: 10px;">
+    <img src="../media/koch/leader_zero.webp?raw=true" alt="Koch v1.1 leader arm zero position" title="Koch v1.1 leader arm zero position" width="100%">
+    <figcaption>1. Zero position</figcaption>
+  </figure>
+  <figure style="margin: 10px;">
+    <img src="../media/koch/leader_rotated.webp?raw=true" alt="Koch v1.1 leader arm rotated position" title="Koch v1.1 leader arm rotated position" width="100%">
+    <figcaption>2. Rotated position</figcaption>
+  </figure>
+  <figure style="margin: 10px;">
+    <img src="../media/koch/leader_rest.webp?raw=true" alt="Koch v1.1 leader arm rest position" title="Koch v1.1 leader arm rest position" width="100%">
+    <figcaption>3. Rest position</figcaption>
+  </figure>
+</div>
 
 Run this code to calibrate and connect your robot:
 ```python
@@ -271,9 +295,7 @@ robot.connect()
 >>> TODO
 ```
 
-Now try to read the position of the leader and follower arms using `read` from [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py). It should output similar values if both arms are in a similar position.
-
-Importantly, we also convert the "step" position to degree. This is much easier to interpet and debug. In particular, the zero position used during calibration now corresponds to 0 degree for each motor. Also, the rotated position corresponds to 90 degree for each motor.
+Now we will see how to read the position of the leader and follower arms using `read` from [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py). If the calibration is done well, the posiiton should be the similar when both arms are in a similar position.
 
 Run this code to get the positions in degree:
 ```python
@@ -281,21 +303,21 @@ leader_pos = robot.leader_arms["main"].read("Present_Position")
 print(leader_pos)
 follower_pos = robot.follower_arms["main"].read("Present_Position")
 print(follower_pos)
->>> array([ -0.43945312, 133.94531   , 179.82422   , -18.984375  ,
-        -1.9335938 ,  34.541016  ], dtype=float32)
->>> array([ -1.0546875, 128.67188  , 174.90234  ,  -7.998047 ,  -5.4492188,
-        32.34375  ], dtype=float32)
+>>> array([-0.43945312, 133.94531, 179.82422, -18.984375, -1.9335938, 34.541016], dtype=float32)
+>>> array([-1.0546875, 128.67188, 174.90234, -7.998047, -5.4492188, 32.34375], dtype=float32)
 ```
+
+Importantly, we also converted the "step" position to degree. This is much easier to interpet and debug. In particular, the zero position used during calibration now corresponds to 0 degree for each motor. Also, the rotated position corresponds to 90 degree for each motor.
 
 **Teleoperate**
 
-Now you can easily teleoperate your robot by reading the position from the leader arm and sending it as goal position to the follower arm.
+Now you can easily teleoperate your robot by reading the positions from the leader arm and sending them as goal positions to the follower arm.
 
 Run this code to teleoperate:
 ```python
 import tqdm
 # Teleoperate for 30 seconds
-# Note: communication between the two arms is done at a frequency of ~200Hz
+# Fastest communication is done at a frequency of ~200Hz
 for _ in tqdm.tqdm(range(30*200)):
     leader_pos = robot.leader_arms["main"].read("Present_Position")
     robot.follower_arms["main"].write("Goal_Position", leader_pos)
@@ -318,11 +340,12 @@ observation, action = robot.teleop_step(record_data=True)
 leader_pos = robot.leader_arms["main"].read("Present_Position")
 follower_pos = robot.follower_arms["main"].read("Present_Position")
 print(follower_pos)
+TODO
 print(observation)
 print(leader_pos)
 print(action)
->>> {'observation.state': tensor([  7.8223, 131.1328, 165.5859, -23.4668,  -0.9668,  32.4316])}
->>> {'action': tensor([  3.4277, 134.1211, 179.8242, -18.5449,  -1.5820,  34.7168])}
+>>> {'observation.state': tensor([7.8223, 131.1328, 165.5859, -23.4668, -0.9668, 32.4316])}
+>>> {'action': tensor([3.4277, 134.1211, 179.8242, -18.5449, -1.5820, 34.7168])}
 ```
 
 Finally, `teleop_step` from [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) with `record_data=True` can also asynchrously record frames from several cameras and add them to the observation dictionnary as `"observation.images.CAMERA_NAME"`. More on this in the next section.
@@ -384,19 +407,22 @@ camera.connect()
 color_image = camera.read()
 print(color_image.shape)
 print(color_image.dtype)
-# when done using the camera, disconnect it
-camera.disconnect()
 >>> (1080, 1920, 3)
 >>> uint8
 ```
 
 Note that default fps, width, height and color_mode of the given camera are used. They may differ for different cameras. You can specify them during instantiation (e.g. `OpenCVCamera(camera_index=0, fps=30, width=640, height=480`).
 
+When done using the camera, disconnect it:
+```python
+camera.disconnect()
+```
+
 **Instantiate your robot with cameras**
 
-Similarly to previously shown, you can instantiate your robot with the leader and follower arms, but this time, you can add your cameras! As a result, `teleop_step` with `record_data=True` will return a frame for each camera following the torch convention of channel first.
+You can also instantiate your robot with your cameras!
 
-Run:
+Run this code:
 ```python
 robot = KochRobot(
     leader_arms={"main": leader_arm},
@@ -408,6 +434,12 @@ robot = KochRobot(
     },
 )
 robot.connect()
+```
+
+As a result, `teleop_step` with `record_data=True` will return a frame for each camera following the torch convention of channel first.
+
+Run this code:
+```python
 observation, action = robot.teleop_step(record_data=True)
 print(observation)
 print(action)
@@ -437,7 +469,7 @@ This file is used to instantiate your robot in all our scripts. We will explain 
 
 ### Use `koch.yaml` and our `teleoperate` function
 
-Instead of manually runnning the python code in a terminal window, you can use [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to instantiate your robot by providing the path to the robot yaml file (e.g. [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) and control your robot with various modes as explained next.
+Instead of manually running the python code in a terminal window, you can use [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to instantiate your robot by providing the path to the robot yaml file (e.g. [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) and control your robot with various modes as explained next.
 
 Run this code to teleoperate your robot:
 ```bash
@@ -497,10 +529,10 @@ However, many utilities are still missing. For instance, if you have cameras, yo
 ### Use `koch.yaml` and the `record` function
 
 You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to achieve efficient data recording. It encompasses many recording utilities:
-1. Frames from cameras are saved on disk in threads, and at the end of data recoding frames of each episode are encoded into videos.
-2. Video streams from the cameras are displayed in window so that you can verify them.
+1. Frames from cameras are saved on disk in threads, and encoded into videos at the end of recording.
+2. Video streams from cameras are displayed in window so that you can verify them.
 3. Data is stored with [`LeRobotDataset`](../lerobot/common/datasets/lerobot_dataset.py) format which is pushed to your Hugging Face page.
-4. Data is checkpointed during recording, so if you kill the process, you can resume recoding by running the same command. You can also use `--force-override 1` to start recording from scratch.
+4. Checkpoints are done during recording, so if any issue occurs, you can resume recording by re-running the same command again. You can also use `--force-override 1` to start recording from scratch.
 5. Set the flow of data recording using command line arguments:
   - `--warmup-time-s` defines the number of seconds before starting data collection. It allows the robot devices to warmup and synchronize (10 seconds by default).
   - `--episode-time-s` defines the number of seconds for data recording for each episode (60 seconds by default).
@@ -539,18 +571,18 @@ python lerobot/scripts/control_robot.py record \
 It will output something like:
 ```
 TODO
-``
+```
 
 At the end, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/koch_test) that you can obtain by running:
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/koch_test
 ```
 
-### Advices for training dataset
+### Advices for recording dataset
 
 Now that you are used to data recording, you can record a bigger dataset for training. A good hello world task consists in grasping an object at various locations and placing it in a bin. We recommend to record a minimum of 50 episodes with 10 episodes per location, to not move the cameras and to grasp with a consistent behavior.
 
-Once your neural network can grasp pretty well, you can introduce slightly more variance such as more grasp locations, various grasping behaviors, various positions for the cameras, etc.
+In the next sections, you will train your neural network. Once it can grasp pretty well, you can introduce slightly more variance in during data collection such as more grasp locations, various grasping behaviors, various positions for the cameras, etc.
 
 ### Visualize all episodes
 
@@ -561,7 +593,10 @@ python lerobot/scripts/visualize_dataset_html.py \
   --repo-id ${HF_USER}/koch_test
 ```
 
-TODO Picture
+This will launch a local web server that looks like this:
+<div style="text-align:center;">
+  <img src="../media/tutorial/visualize_dataset_html.webp?raw=true" alt="Koch v1.1 leader and follower arms" title="Koch v1.1 leader and follower arms" width="100%">
+</div>
 
 ### Replay episode on your robot with the `replay` function
 
@@ -671,8 +706,6 @@ python lerobot/scripts/visualize_dataset_html.py \
   --episodes 0 1 2 \
   -p ${HF_USER}/act_koch_test
 ```
-
-TODO
 
 ## 5. Evaluate your policy
 
