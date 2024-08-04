@@ -342,24 +342,78 @@ To instantiate an [`OpenCVCamera`](../lerobot/common/robot_devices/cameras/openc
 
 To find the camera indices of your cameras, you can run our utility script that will save a few frames for each camera:
 ```bash
-python lerobot/common/robot_devices/cameras/opencv.py --images-dir outputs/images_from_opencv_cameras
->>> TODO
+python lerobot/common/robot_devices/cameras/opencv.py \
+    --images-dir outputs/images_from_opencv_cameras
 ```
 
-Run this code to instantiate your camera:
+The output looks like this for two cameras:
+```
+Mac or Windows detected. Finding available camera indices through scanning all indices from 0 to 60
+[...]
+Camera found at index 0
+Camera found at index 1
+[...]
+Connecting cameras
+OpenCVCamera(0, fps=30.0, width=1920.0, height=1080.0, color_mode=rgb)
+OpenCVCamera(1, fps=24.0, width=1920.0, height=1080.0, color_mode=rgb)
+Saving images to outputs/images_from_opencv_cameras
+Frame: 0000	Latency (ms): 39.52
+[...]
+Frame: 0046	Latency (ms): 40.07
+Images have been saved to outputs/images_from_opencv_cameras
+```
+
+Then, look at the saved images in `outputs/images_from_opencv_cameras` to know which camera index (e.g. `0` for `camera_00` or `1` for `camera_01`) is associated to which physical camera:
+```
+camera_00_frame_000000.png
+[...]
+camera_00_frame_000047.png
+camera_01_frame_000000.png
+[...]
+camera_01_frame_000047.png
+```
+
+Note: We save a few frames since some cameras need a few seconds to warmup. The first frame can be totally black.
+
+Finally, run this code to instantiate your camera:
 ```python
+from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
+
 camera = OpenCVCamera(camera_index=0)
 camera.connect()
 color_image = camera.read()
 print(color_image.shape)
-print(color_image.max())
-print(color_image.min())
-# when done using the camera, consider disconnecting
+print(color_image.dtype)
+# when done using the camera, disconnect it
 camera.disconnect()
->>> TODO
+>>> (1080, 1920, 3)
+>>> uint8
 ```
 
 Note that default fps, width, height and color_mode of the given camera are used. They may differ for different cameras. You can specify them during instantiation (e.g. `OpenCVCamera(camera_index=0, fps=30, width=640, height=480`).
+
+**Instantiate your robot with cameras**
+
+Similarly to previously shown, you can instantiate your robot with the leader and follower arms, but this time, you can add your cameras! As a result, `teleop_step` with `record_data=True` will return a frame for each camera following the torch convention of channel first.
+
+Run:
+```python
+robot = KochRobot(
+    leader_arms={"main": leader_arm},
+    follower_arms={"main": follower_arm},
+    calibration_path=".cache/calibration/koch.pkl",
+    cameras={
+        "laptop": OpenCVCamera(0, fps=30, width=640, height=480),
+        "phone": OpenCVCamera(1, fps=30, width=640, height=480),
+    },
+)
+robot.connect()
+observation, action = robot.teleop_step(record_data=True)
+print(observation)
+print(action)
+>>> TODO
+>>> TODO
+```
 
 Also, update the flollowing lines of the yaml file for Koch robot [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with your cameras and their corresponding camera indices:
 ```yaml
@@ -379,54 +433,30 @@ cameras:
     height: 480
 ```
 
-This file is used to instantiate your robot in all our scripts. We will explain how this works later on.
-
-**Add to robot**
-
-TODO: explain that the cameras run asynchronously.
-
-```python
-del robot
-robot = KochRobot(
-    leader_arms={"main": leader_arm},
-    follower_arms={"main": follower_arm},
-    calibration_path=".cache/calibration/koch.pkl",
-    cameras={
-        "laptop": OpenCVCamera(0, fps=30, width=640, height=480),
-        "phone": OpenCVCamera(1, fps=30, width=640, height=480),
-    },
-)
-
-robot.connect()
-
-observation, action = robot.teleop_step(record_data=True)
-print(observation)
->>>
-print(action)
->>>
-```
+This file is used to instantiate your robot in all our scripts. We will explain how this works in the next section.
 
 ### Use `koch.yaml` and our `teleoperate` function
 
-See: `lerobot/configs/robot/koch.yaml`
+Instead of manually runnning the python code in a terminal window, you can use [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to instantiate your robot by providing the path to the robot yaml file (e.g. [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) and control your robot with various modes as explained next.
 
+Run this code to teleoperate your robot:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml
 
->>>
+>>> TODO
 ```
 
+Note, you can override any entry in the yaml file using `--robot-overrides` and the [Hydra synthax](https://hydra.cc/docs). If needed, you can override the ports like this:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
   --robot-overrides \
     leader_arms.main.port=/dev/tty.usbmodem575E0031751 \
     follower_arms.main.port=/dev/tty.usbmodem575E0032081
-
->>>
 ```
 
+If you don't have any camera, you can remove them dynamically with this weird hydra synthax `'~cameras'`:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
@@ -436,153 +466,282 @@ python lerobot/scripts/control_robot.py teleoperate \
     '~cameras'
 ```
 
+We advise to create a new yaml file when the command becomes too long.
 
 ## 3. Record your Dataset and Visualize it
 
-TODO: ideally we could only do this
+Using what you've learned previously, you can now easily record a dataset of states and actions for one episode. You can use `busy_wait` to control the speed of teleoperation and record at a fixed `fps` (frame per seconds).
 
+Try this code to record 30 seconds at 60 fps:
 ```python
 from lerobot.scripts.control_robot import busy_wait
 
-fps = 30
-record_time_s = 60
-for _ in range(fps * record_time_s):
-    start_time = time.perf_counter()
+record_time_s = 30
+fps = 60
 
+states = []
+actions = []
+for _ in range(record_time_s * fps):
+    start_time = time.perf_counter()
     observation, action = robot.teleop_step(record_data=True)
+
+    states.append(observation["observation.state"])
+    actions.append(action["action"])
 
     dt_s = time.perf_counter() - start_time
     busy_wait(1 / fps - dt_s)
 ```
 
+However, many utilities are still missing. For instance, if you have cameras, you will need to save the images on disk to not go out of RAM, and to do so in threads to not slow down communication with your robot. Also, you will need to store your data in a format optimized for training and web sharing like [`LeRobotDataset`](../lerobot/common/datasets/lerobot_dataset.py). More on this in the next section.
+
 ### Use `koch.yaml` and the `record` function
 
-TODO: We added ways to write the frames to disk in multiple thread
-We added warmap, reset time between episodes
-At the end we encode the frames into videos
-control
-if fail, re-record episode
-checkpointing
-We consolidate the data into a LeRobotDataset and upload on the hub.
+You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to achieve efficient data recording. It encompasses many recording utilities:
+1. Frames from cameras are saved on disk in threads, and at the end of data recoding frames of each episode are encoded into videos.
+2. Video streams from the cameras are displayed in window so that you can verify them.
+3. Data is stored with [`LeRobotDataset`](../lerobot/common/datasets/lerobot_dataset.py) format which is pushed to your Hugging Face page.
+4. Data is checkpointed during recording, so if you kill the process, you can resume recoding by running the same command. You can also use `--force-override 1` to start recording from scratch.
+5. Set the flow of data recording using command line arguments:
+  - `--warmup-time-s` defines the number of seconds before starting data collection. It allows the robot devices to warmup and synchronize (10 seconds by default).
+  - `--episode-time-s` defines the number of seconds for data recording for each episode (60 seconds by default).
+  - `--reset-time-s` defines the number of seconds for resetting the environment after each episode (60 seconds by default).
+  - `--num-episodes` defines the number of episodes to record (50 by default).
+6. Control the flow during data recording using keyboard keys:
+  - Press right arrow `->` at any time during episode recording to early stop and go to resetting. Same during resetting, to early stop and to go to the next episode recording.
+  - Press left arrow `<-` at any time during episode recording or resetting to early stop, cancel the current episode, and re-record it.
+  - Press escape `ESC` at any time during episode recording to end the session early and go straight to video encoding and dataset uploading.
+7. Similarly to `teleoperate`, you can also use `--robot-path` and `--robot-overrides` to specify your robots.
 
-Here is an example for 1 episode
+Before trying `record`, make sure you've logged in using a write-access token, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
+```bash
+huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
+```
+
+And store your Hugging Face repositery name in a variable (e.g. `cadene` or `lerobot`). For instance, run this to use your Hugging Face user name as repositery:
+```bash
+HF_USER=$(huggingface-cli whoami | head -n 1)
+echo $HF_USER
+```
+
+Now run this to record 5 episodes:
 ```bash
 python lerobot/scripts/control_robot.py record \
-    --fps 30 \
-    --root /tmp/data \
-    --repo-id $USER/koch_test \
-    --num-episodes 10 \
-    --run-compute-stats 1
+  --robot-path lerobot/configs/robot/koch.yaml \
+  --fps 30 \
+  --root data \
+  --repo-id ${HF_USER}/koch_test \
+  --warmup-time-s 5 \
+  --episode-time-s 30 \
+  --reset-time-s 30 \
+  --num-episodes 5
 ```
 
-TODO: USER HF, make sure you can push
+It will output something like:
+```
+TODO
+``
 
-### Replay episode on your robot with the `replay` function
-
+At the end, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/koch_test) that you can obtain by running:
 ```bash
-python lerobot/scripts/control_robot.py replay \
-    --fps 30 \
-    --root /tmp/data \
-    --repo-id $USER/koch_test \
-    --episode 0
+echo https://huggingface.co/datasets/${HF_USER}/koch_test
 ```
 
-Note: TODO
-```bash
-export DATA_DIR=data
-```
+### Advices for training dataset
+
+Now that you are used to data recording, you can record a bigger dataset for training. A good hello world task consists in grasping an object at various locations and placing it in a bin. We recommend to record a minimum of 50 episodes with 10 episodes per location, to not move the cameras and to grasp with a consistent behavior.
+
+Once your neural network can grasp pretty well, you can introduce slightly more variance such as more grasp locations, various grasping behaviors, various positions for the cameras, etc.
 
 ### Visualize all episodes
 
+You can visualize your dataset by running:
 ```bash
-python lerobot/scripts/visualize_dataset.py \
-    --repo-id $USER/koch_test
+python lerobot/scripts/visualize_dataset_html.py \
+  --root data \
+  --repo-id ${HF_USER}/koch_test
 ```
 
+TODO Picture
+
+### Replay episode on your robot with the `replay` function
+
+Another cool function of [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) is `replay` which allows to replay on your robot any episode that you've recorded or from any dataset out there. It's a way to test repeatability of your robot and transferability across robots of the same type.
+
+Run this to replay the first episode of the dataset you've just recorded:
+```bash
+python lerobot/scripts/control_robot.py replay \
+  --robot-path lerobot/configs/robot/koch.yaml \
+  --fps 30 \
+  --root data \
+  --repo-id ${HF_USER}/koch_test \
+  --episode 0
+```
+
+Your robot should reproduce very similar movements as what you recorded. For instance, see this video where we use `replay` on a Aloha robot from [Trossen Robotics](https://www.trossenrobotics.com): https://x.com/RemiCadene/status/1793654950905680090
 
 ## 4. Train a policy on your data
 
 ### Use our `train` script
 
-```bash
-python lerobot/scripts/train.py \
-    policy=act_koch_real \
-    env=koch_real \
-    dataset_repo_id=$USER/koch_pick_place_lego \
-    hydra.run.dir=outputs/train/act_koch_real
+Then, you can train a policy to control your robot using the [`lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required.
+
+Firstly, provide your dataset with `dataset_repo_id=${HF_USER}/koch_test`.
+
+Secondly, provide a policy with `policy=act_koch_real`. This loads configurations from [`lerobot/configs/policy/act_koch_real.yaml`](../lerobot/configs/policy/act_koch_real.yaml). Importantly, this policy uses 2 cameras as input `laptop` and `phone`. If your dataset has different cameras, update the yaml file to account for it in the following parts:
+```yaml
+...
+override_dataset_stats:
+  observation.images.laptop:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.phone:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+...
+  input_shapes:
+    observation.images.laptop: [3, 480, 640]
+    observation.images.phone: [3, 480, 640]
+...
+  input_normalization_modes:
+    observation.images.laptop: mean_std
+    observation.images.phone: mean_std
+...
 ```
 
-TODO: image and plots of wandb
+Thirdly, provide an environment with `env=koch_real`. This loads configurations from [`lerobot/configs/env/koch_real.yaml`](../lerobot/configs/env/koch_real.yaml). It looks like
+```yaml
+fps: 30
+env:
+  name: real_world
+  task: null
+  state_dim: 6
+  action_dim: 6
+  fps: ${fps}
+```
+It should match your dataset (e.g. `fps: 30`) and your robot (e.g. `state_dim: 6` and `action_dim: 6`). We are still working on simplifying this in future versions of `lerobot`.
 
+Optionnaly, you can use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots with `wandb.enable=true`. Make sure you are logged in by running `wandb login`.
+
+Finally, use `DATA_DIR=data` to access your dataset stored in your local `data` directory. If you dont provide `DATA_DIR`, your dataset will be downloaded from Hugging Face hub to your cache folder `$HOME/.cache/hugginface`. In future versions of `lerobot`, both directories will be in sync.
+
+Now, start training:
 ```bash
-ckpt=100000
-huggingface-cli upload cadene/2024_07_27_act_koch_pick_place_1_lego_raph_nightly_${ckpt} \
-  outputs/train/2024_07_27_act_koch_pick_place_1_lego_raph_nightly/checkpoints/${ckpt}/pretrained_model
+DATA_DIR=data python lerobot/scripts/train.py \
+  dataset_repo_id=${HF_USER}/koch_test \
+  policy=act_koch_real \
+  env=koch_real \
+  hydra.run.dir=outputs/train/act_koch_test \
+  hydra.job.name=act_koch_test \
+  wandb.enable=true
+```
+
+For more information on the `train` script see the previous tutorial: [`examples/4_train_policy_with_script.md`](../examples/4_train_policy_with_script.md)
+
+## Upload policy checkpoints to the hub
+
+Once training is done, upload the latest checkpoint with:
+```bash
+huggingface-cli upload ${HF_USER}/act_koch_test \
+  outputs/train/act_koch_test/checkpoints/last/pretrained_model
+```
+
+You can also upload intermediate checkpoints with:
+```bash
+CKPT=010000
+huggingface-cli upload ${HF_USER}/act_koch_test_${CKPT} \
+  outputs/train/act_koch_test/checkpoints/${CKPT}/pretrained_model
 ```
 
 ### Visualize predictions on training set
 
+Optionnaly, you can visualize the predictions of your neural network on your training data. This is a useful debugging tool. You can provide a checkpoint directory as input (e.g. `outputs/train/act_koch_test/checkpoints/last/pretrained_model`). For instance:
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
-    --repo-id lerobot/koch_pick_place_1_lego \
-    --episodes 0 1 2 \
-    -p ../lerobot/outputs/train/2024_07_29_act_koch_pick_place_1_lego_mps/checkpoints/006000/pretrained_model
+  --repo-id ${HF_USER}/koch_test \
+  --episodes 0 1 2 \
+  -p outputs/train/act_koch_test/checkpoints/last/pretrained_model
 ```
+
+You can also provide a model repository as input (e.g. `${HF_USER}/act_koch_test`). For instance:
+```bash
+python lerobot/scripts/visualize_dataset_html.py \
+  --repo-id ${HF_USER}/koch_test \
+  --episodes 0 1 2 \
+  -p ${HF_USER}/act_koch_test
+```
+
+TODO
 
 ## 5. Evaluate your policy
 
-### Use our `record` function
+Now that you have a policy checkpoint, you can easily control your robot with it using:
+- `observation = robot.capture_observation()`
+- `action = policy.select_action(observation)`
+- `robot.send_action(action)`
 
+Try this code for running inference for 60 seconds at 30 fps:
+```python
+from lerobot.common.policies.act.modeling_act import ActPolicy
+
+inference_time_s = 60
+fps = 30
+
+ckpt_path = "outputs/train/act_koch_test/checkpoints/last/pretrained_model"
+policy = ActPolicy.from_pretrained(ckpt_path)
+
+for _ in range(inference_time_s * fps):
+    start_time = time.perf_counter()
+    observation = robot.capture_observation()
+
+    # Convert to pytorch format: channel first and float32 in [0,1]
+    # with batch dimension
+    for name in observation:
+        if "image" in name:
+            observation[name] = observation[name].type(torch.float32) / 255
+            observation[name] = observation[name].permute(2, 0, 1).contiguous()
+        observation[name] = observation[name].unsqueeze(0)
+        observation[name] = observation[name].cuda()
+
+    action = policy.select_action(observation)
+    robot.send_action(action)
+
+    # remove batch dimension
+    action = action.squeeze(0)
+    action = action.to("cpu")
+
+    dt_s = time.perf_counter() - start_time
+    busy_wait(1 / fps - dt_s)
+```
+
+### Use `koch.yaml` and our `record` function
+
+Ideally, when controlling your robot with your neural network, you would want to record evaluation episodes and to be able to visualize them later on, or even train on them like in Reinforcement Learning. This pretty much corresponds to recording a new dataset but with a neural network providing the actions instead of teleoperation.
+
+To this end, you can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. Just copy the same command as previously used to record your training dataset and change two things:
+1. Add a path to your policy checkpoint with `-p` (e.g. `-p outputs/train/eval_koch_test/checkpoints/last/pretrained_model`) or a model repository (e.g. `-p ${HF_USER}/act_koch_test`).
+2. Change the dataset name to reflect you are running inference (e.g. `--repo-id ${HF_USER}/eval_koch_test`).
+
+Now run this to record 5 evaluation episodes.
 ```bash
 python lerobot/scripts/control_robot.py record \
-    --fps 30 \
-    --root /tmp/data \
-    --repo-id $USER/eval_koch_test \
-    --num-episodes 10 \
-    --run-compute-stats 1
-    -p ../lerobot/outputs/train/2024_07_29_act_koch_pick_place_1_lego_mps/checkpoints/006000/pretrained_model
+  --robot-path lerobot/configs/robot/koch.yaml \
+  --fps 30 \
+  --root data \
+  --repo-id ${HF_USER}/eval_koch_test \
+  --warmup-time-s 5 \
+  --episode-time-s 30 \
+  --reset-time-s 30 \
+  --num-episodes 5 \
+  -p outputs/train/act_koch_test/checkpoints/last/pretrained_model
 ```
 
 ### Visualize evaluation afterwards
 
+You can then visualize your evaluation dataset by running the same command as before but with the new dataset as argument:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
-    --repo-id $USER/koch_test
+  --root data \
+  --repo-id ${HF_USER}/eval_koch_test
 ```
-
-
-## What's next?
-
-### More datasets
-
-Collect a slightly more difficult dataset, like grasping 5 lego blocks in a row, and co-train on it
-
-###
-
-
-- Improve the dataset
-
-
-
-
-
-
-
-
-
-Prices
-
- Some parts and prices from the bill of materials might differ with respect to the geo location ; but we made sure it works.
-
-
-via the high frequency communication of goal positions to the follower arm.
-
-to predict the future actions given the state and camera frames as input ; and deploy it to autonomously control the robot via the high frequency communication of goal positions to the follower arm.
-
-
-More specifically, the present position of the motors of the leader arm is read at high frequency and sent as a goal position for the motors of the follower arm, which effectively "follow" the movements of the leader arm. While you teleoperate the robot, a few modalities are recorded:
-- the present position of the follower arm, called the "state",
-- the goal position sent to the follower arm, called the "action",
-- the video stream from the cameras.
-
-Once the parts are received, follow this video to guide you through the assembly: TODO

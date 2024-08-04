@@ -40,7 +40,7 @@ def find_camera_indices(raise_when_empty=False, max_index_search_range=MAX_OPENC
         possible_camera_ids = [int(port.replace("/dev/video", "")) for port in Path("/dev").glob("video*")]
     else:
         print(
-            f"Mac or Windows dtected. Finding available camera indices through scanning all indices from 0 to {MAX_OPENCV_INDEX}"
+            f"Mac or Windows detected. Finding available camera indices through scanning all indices from 0 to {MAX_OPENCV_INDEX}"
         )
         possible_camera_ids = range(max_index_search_range)
 
