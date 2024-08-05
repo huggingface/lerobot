@@ -12,6 +12,37 @@ files = [
 ]
 
 [[package]]
+name = "accelerate"
+version = "0.32.1"
+description = "Accelerate"
+optional = true
+python-versions = ">=3.8.0"
+files = [
+    {file = "accelerate-0.32.1-py3-none-any.whl", hash = "sha256:71fcf4be00872194071de561634268b71417d7f5b16b178e2fa76b6f117c52b0"},
+    {file = "accelerate-0.32.1.tar.gz", hash = "sha256:3999acff0237cd0d4f9fd98b42d5a3163544777b53fc4f1eec886b77e992d177"},
+]
+
+[package.dependencies]
+huggingface-hub = "*"
+numpy = ">=1.17,<2.0.0"
+packaging = ">=20.0"
+psutil = "*"
+pyyaml = "*"
+safetensors = ">=0.3.1"
+torch = ">=1.10.0"
+
+[package.extras]
+deepspeed = ["deepspeed (<=0.14.0)"]
+dev = ["bitsandbytes", "black (>=23.1,<24.0)", "datasets", "diffusers", "evaluate", "hf-doc-builder (>=0.3.0)", "parameterized", "pytest (>=7.2.0,<=8.0.0)", "pytest-subtests", "pytest-xdist", "rich", "ruff (>=0.2.1,<0.3.0)", "scikit-learn", "scipy", "timm", "torchpippy (>=0.2.0)", "tqdm", "transformers"]
+quality = ["black (>=23.1,<24.0)", "hf-doc-builder (>=0.3.0)", "ruff (>=0.2.1,<0.3.0)"]
+rich = ["rich"]
+sagemaker = ["sagemaker"]
+test-dev = ["bitsandbytes", "datasets", "diffusers", "evaluate", "scikit-learn", "scipy", "timm", "torchpippy (>=0.2.0)", "tqdm", "transformers"]
+test-prod = ["parameterized", "pytest (>=7.2.0,<=8.0.0)", "pytest-subtests", "pytest-xdist"]
+test-trackers = ["comet-ml", "dvclive", "tensorboard", "wandb"]
+testing = ["bitsandbytes", "datasets", "diffusers", "evaluate", "parameterized", "pytest (>=7.2.0,<=8.0.0)", "pytest-subtests", "pytest-xdist", "scikit-learn", "scipy", "timm", "torchpippy (>=0.2.0)", "tqdm", "transformers"]
+
+[[package]]
 name = "aiohttp"
 version = "3.9.5"
 description = "Async http client/server framework (asyncio)"
@@ -4472,6 +4503,7 @@ doc = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "rst.linke
 test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", "jaraco.test", "more-itertools", "pytest (>=6,!=8.1.*)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-ignore-flaky", "pytest-mypy", "pytest-ruff (>=0.2.1)"]
 
 [extras]
+accelerate = ["accelerate"]
 aloha = ["gym-aloha"]
 dev = ["debugpy", "pre-commit"]
 dora = ["gym-dora"]
@@ -4485,4 +4517,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "dfe9c6a54e0382156e62e7bd2c7aab1be6372da76d30c61b06d27232276638cb"
+content-hash = "875b1eec83819f2d577f8478d1a0f0b327c29b23b54a3c1efa23a873a2db170b"

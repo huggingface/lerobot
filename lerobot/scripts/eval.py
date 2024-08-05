@@ -44,9 +44,9 @@ https://huggingface.co/lerobot/diffusion_pusht/tree/main.
 import argparse
 import json
 import logging
+import os
 import threading
 import time
-from contextlib import nullcontext
 from copy import deepcopy
 from datetime import datetime as dt
 from pathlib import Path
@@ -447,6 +447,7 @@ def main(
     hydra_cfg_path: str | None = None,
     out_dir: str | None = None,
     config_overrides: list[str] | None = None,
+    accelerator: any = None,
 ):
     assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
     if pretrained_policy_path is not None:
@@ -457,12 +458,11 @@ def main(
     if out_dir is None:
         out_dir = f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
 
-    # Check device is available
-    device = get_safe_torch_device(hydra_cfg.device, log=True)
-
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     set_global_seed(hydra_cfg.seed)
+
+    device = accelerator.device if accelerator else get_safe_torch_device(hydra_cfg.device, log=True)
 
     log_output_dir(out_dir)
 
@@ -479,10 +479,15 @@ def main(
     assert isinstance(policy, nn.Module)
     policy.eval()
 
-    with torch.no_grad(), torch.autocast(device_type=device.type) if hydra_cfg.use_amp else nullcontext():
+    if accelerator:
+        policy = accelerator.prepare_model(policy)
+
+    policy.to(device)
+
+    with torch.no_grad():
         info = eval_policy(
             env,
-            policy,
+            policy if accelerator is None else accelerator.unwrap_model(policy, keep_fp32_wrapper=True),
             hydra_cfg.eval.n_episodes,
             max_episodes_rendered=10,
             videos_dir=Path(out_dir) / "videos",
@@ -569,8 +574,20 @@ if __name__ == "__main__":
             args.pretrained_policy_name_or_path, revision=args.revision
         )
 
-        main(
-            pretrained_policy_path=pretrained_policy_path,
-            out_dir=args.out_dir,
-            config_overrides=args.overrides,
-        )
+        if "ACCELERATE_MIXED_PRECISION" in os.environ:
+            import accelerate
+
+            accelerator = accelerate.Accelerator()
+            main(
+                pretrained_policy_path=pretrained_policy_path,
+                out_dir=args.out_dir,
+                config_overrides=args.overrides,
+                accelerator=accelerator,
+            )
+
+        else:
+            main(
+                pretrained_policy_path=pretrained_policy_path,
+                out_dir=args.out_dir,
+                config_overrides=args.overrides,
+            )

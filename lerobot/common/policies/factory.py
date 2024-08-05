@@ -19,7 +19,6 @@ import logging
 from omegaconf import DictConfig, OmegaConf
 
 from lerobot.common.policies.policy_protocol import Policy
-from lerobot.common.utils.utils import get_safe_torch_device
 
 
 def _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg):
@@ -105,7 +104,5 @@ def make_policy(
         # https://github.com/huggingface/huggingface_hub/pull/2274.
         policy = policy_cls(policy_cfg)
         policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
-
-    policy.to(get_safe_torch_device(hydra_cfg.device))
 
     return policy
