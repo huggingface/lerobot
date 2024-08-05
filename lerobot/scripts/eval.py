@@ -470,8 +470,14 @@ def main(
         logging.info("Multiple datasets were provided. The following mapping was applied during training:")
         for i, dataset_name in enumerate(hydra_cfg.dataset_repo_id):
             logging.info(f"{dataset_name}: {i}")
-        logging.info("Please provide the index of the dataset you want to use for evaluation.")
-        dataset_index = int(input("Enter the index of the dataset you want to use: "))
+        dataset_index = int(
+            input("Please provide the index of the dataset you want to use for evaluation : ")
+        )
+        assert 0 <= dataset_index < len(hydra_cfg.dataset_repo_id), "Invalid dataset index."
+        logging.info(f"The current task is {hydra_cfg.env.task}.")
+        task = input("If you wish to change it provide the new task name, otherwise press Enter: ")
+        if task:
+            hydra_cfg.env.task = task
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
