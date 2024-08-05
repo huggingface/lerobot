@@ -331,6 +331,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     )
 
     assert isinstance(policy, nn.Module)
+    policy.to(device)
+
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
@@ -431,7 +433,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     dl_iter = cycle(dataloader)
 
-    policy.to(device)
     policy.train()
     offline_step = 0
     for _ in range(step, cfg.training.offline_steps):
