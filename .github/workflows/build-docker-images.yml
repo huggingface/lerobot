@@ -14,21 +14,9 @@ env:
 jobs:
   latest-cpu:
     name: CPU
-    runs-on: ubuntu-latest
+    runs-on:
+      group: aws-general-8-plus
     steps:
-      - name: Cleanup disk
-        run: |
-          sudo df -h
-          # sudo ls -l /usr/local/lib/
-          # sudo ls -l /usr/share/
-          sudo du -sh /usr/local/lib/
-          sudo du -sh /usr/share/
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo du -sh /usr/local/lib/
-          sudo du -sh /usr/share/
-          sudo df -h
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -55,20 +43,9 @@ jobs:
 
   latest-cuda:
     name: GPU
-    runs-on: ubuntu-latest
+    runs-on:
+      group: aws-general-8-plus
     steps:
-      - name: Cleanup disk
-        run: |
-          sudo df -h
-          # sudo ls -l /usr/local/lib/
-          # sudo ls -l /usr/share/
-          sudo du -sh /usr/local/lib/
-          sudo du -sh /usr/share/
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo du -sh /usr/local/lib/
-          sudo du -sh /usr/share/
-          sudo df -h
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -95,20 +72,9 @@ jobs:
 
   latest-cuda-dev:
     name: GPU Dev
-    runs-on: ubuntu-latest
+    runs-on:
+      group: aws-general-8-plus
     steps:
-      - name: Cleanup disk
-        run: |
-          sudo df -h
-          # sudo ls -l /usr/local/lib/
-          # sudo ls -l /usr/share/
-          sudo du -sh /usr/local/lib/
-          sudo du -sh /usr/share/
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo du -sh /usr/local/lib/
-          sudo du -sh /usr/share/
-          sudo df -h
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
