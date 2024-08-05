@@ -79,7 +79,8 @@ OXE_DATASET_CONFIGS = {
         "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 10
     },
-    "bridge_oxe": {  # Version of Bridge V2 in Open X-Embodiment mixture
+    "bridge_openx": {  # Version of Bridge V2 in Open X-Embodiment mixture
+        "image_keys": ["image"],
         "image_obs_keys": {"primary": "image", "secondary": "image_1", "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", None, "gripper_state"],
@@ -226,6 +227,15 @@ OXE_DATASET_CONFIGS = {
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["eef_state", None, "gripper_state"],
+        "state_encoding": StateEncoding.POS_EULER,
+        "action_encoding": ActionEncoding.EEF_POS_7,
+        "fps": 3,
+    },
+    "io_ai_tech": {
+        "image_keys": ["image", "image_fisheye", "image_left_side", "image_right_side"],
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["state"],
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 3,
@@ -551,6 +561,7 @@ OXE_DATASET_CONFIGS = {
         "fps": 10,
     },
     "cmu_playing_with_food": {
+        "image_keys": ["image", "finger_vision_1"],
         "image_obs_keys": {
             "primary": "image",
             "secondary": None,
@@ -627,6 +638,7 @@ OXE_DATASET_CONFIGS = {
         "fps": 15,
     },
     "fmb": {
+        "image_keys": ["image_side_1", "image_side_2", "image_wrist_1", "image_wrist_2"],
         "image_obs_keys": {
             "primary": "image_side_1",
             "secondary": "image_side_2",
