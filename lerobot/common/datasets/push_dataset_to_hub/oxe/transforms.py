@@ -237,6 +237,8 @@ def roboturk_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     #     tf.shape(trajectory["observation"]["natural_language_instruction"]), ""
     # )  # delete uninformative language instruction
     trajectory["language_instruction"] = trajectory["observation"]["natural_language_instruction"]
+    trajectory["language_embedding"] = trajectory["observation"]["natural_language_embedding"]
+
     return trajectory
 
 
@@ -283,7 +285,7 @@ def viola_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
 
 def berkeley_autolab_ur5_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["observation"]["state"] = trajectory["observation"]["robot_state"][:, 6:14]
-    trajectory["observation"]["depth"] = trajectory["observation"].pop("image_with_depth")
+    #trajectory["observation"]["depth"] = trajectory["observation"].pop("image_with_depth")
 
     # make gripper action absolute action, +1 = open, 0 = close
     gripper_action = trajectory["action"]["gripper_closedness_action"]
@@ -336,6 +338,7 @@ def language_table_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, An
     trajectory["language_instruction"] = tf.strings.split(instruction_encoded, "\x00")[:, :1].to_tensor()[
         :, 0
     ]
+    #trajectory["observation"]["image"] = trajectory["observation"].pop("rgb")
     return trajectory
 
 
@@ -577,6 +580,14 @@ def robo_net_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def berkeley_mvp_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    trajectory["observation"]["state"] = tf.concat((
+        tf.cast(trajectory["observation"]["gripper"][:, None], tf.float32),
+                        trajectory["observation"]["pose"],
+                        trajectory["observation"]["joint_pos"],),
+                        axis=-1,)
+    """
+    trajectory["observation"]["gripper"] = tf.cast(trajectory["observation"]["gripper"][:, None], tf.float32)
     return trajectory
 
 
@@ -780,7 +791,7 @@ def gnm_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     return trajectory
 
 
-def fmb_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+def fmb_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     # every input feature is batched, ie has leading batch dimension
     trajectory["observation"]["proprio"] = tf.concat(
         (
@@ -789,6 +800,9 @@ def fmb_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
         ),
         axis=-1,
     )
+    #for key in trajectory["observation"].keys():
+    #    if 'image' in key:
+    #        trajectory["observations"][key] = tf.cast(trajectory["observations"][key], tf.uint8)
     return trajectory
 
 
@@ -798,9 +812,9 @@ def dobbe_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     return trajectory
 
 
-def roboset_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+def robo_set_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     # every input feature is batched, ie has leading batch dimension
-    trajectory["observation"]["proprio"] = trajectory["observation"]["state"]
+    #trajectory["observation"]["proprio"] = trajectory["observation"]["state"]
 
     # gripper action is in -1...1 --> clip to 0...1, flip
     gripper_action = trajectory["action"][:, -1:]
@@ -834,6 +848,10 @@ def rh20t_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     return trajectory
 
 def usc_cloth_sim_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    #trajectory["observation"]["image"] = tf.image.resize(
+    #                                         trajectory["observation"]["image"],
+    #                                         [64, 64, 3],
+    #                                         method=tf.image.ResizeMethod.BILINEAR)
     return trajectory
 
 def plex_robosuite_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
@@ -916,9 +934,9 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "berkeley_gnm_sac_son": gnm_dataset_transform,
     "droid": droid_baseact_transform_fn(),
     "droid100": droid_baseact_transform_fn(),  # first 100 episodes of droid
-    "fmb_dataset": fmb_dataset_transform,
+    "fmb": fmb_transform,
     "dobbe": dobbe_dataset_transform,
-    "roboset": roboset_dataset_transform,
+    "robo_set": robo_set_dataset_transform,
     "rh20t": rh20t_dataset_transform,
     "usc_cloth_sim_converted_externally_to_rlds": usc_cloth_sim_transform,
     "plex_robosuite": plex_robosuite_transform,

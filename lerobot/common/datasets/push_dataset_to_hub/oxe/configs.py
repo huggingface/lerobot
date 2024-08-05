@@ -104,6 +104,7 @@ OXE_DATASET_CONFIGS = {
         "fps": 5,
     },
     "taco_play": {
+        "image_keys":['rgb_static', 'rgb_gripper'],
         "image_obs_keys": {
             "primary": "rgb_static",
             "secondary": None,
@@ -144,6 +145,7 @@ OXE_DATASET_CONFIGS = {
         "fps": 10,
     },
     "roboturk": {
+        "image_keys": ['front_rgb'],
         "image_obs_keys": {"primary": "front_rgb", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": [None, None, None, None, None, None, None, None],
@@ -178,7 +180,7 @@ OXE_DATASET_CONFIGS = {
             "secondary": None,
             "wrist": "hand_image",
         },
-        "depth_obs_keys": {"primary": "depth", "secondary": None, "wrist": None},
+        "depth_obs_keys": {"primary": "image_with_depth", "secondary": None, "wrist": None},
         "state_obs_keys": ["state"],
         "state_encoding": StateEncoding.POS_QUAT,
         "action_encoding": ActionEncoding.EEF_POS_7,
@@ -193,7 +195,7 @@ OXE_DATASET_CONFIGS = {
         "fps": 30,
     },
     "language_table": {
-        "image_obs_keys": {"primary": "rgb", "secondary": None, "wrist": None},
+        "image_keys": ['rgb'],#{"primary": "rgb", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["effector_translation", None, None, None, None, None, None],
         "state_encoding": StateEncoding.POS_EULER,
@@ -405,10 +407,18 @@ OXE_DATASET_CONFIGS = {
         "action_encoding": ActionEncoding.EEF_VEL,
         "fps": 1,
     },
+    "robo_set": {
+        "image_obs_keys": {"primary": "image_left", "secondary": "image_right", "wrist": "image_wrist"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["state", "state_velocity", None],
+        "state_encoding": StateEncoding.JOINT,
+        "action_encoding": ActionEncoding.JOINT_POS,
+        "fps": 5,
+    },
     "berkeley_mvp_converted_externally_to_rlds": {
         "image_obs_keys": {"primary": None, "secondary": None, "wrist": "hand_image"},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["pose", "gripper"],
+        "state_obs_keys": ["gripper", "pose", "joint_pos"],
         "state_encoding": StateEncoding.POS_QUAT,
         "action_encoding": ActionEncoding.JOINT_POS,
         "fps": 5,
@@ -616,7 +626,7 @@ OXE_DATASET_CONFIGS = {
         "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 15,
     },
-    "fmb_dataset": {
+    "fmb": {
         "image_obs_keys": {
             "primary": "image_side_1",
             "secondary": "image_side_2",
@@ -639,18 +649,6 @@ OXE_DATASET_CONFIGS = {
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS_7,
         "fps": 3.75,
-    },
-    "roboset": {
-        "image_obs_keys": {
-            "primary": "image_left",
-            "secondary": "image_right",
-            "wrist": "image_wrist",
-        },
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["proprio"],
-        "state_encoding": StateEncoding.JOINT,
-        "action_encoding": ActionEncoding.JOINT_POS,
-        "fps": 5,
     },
     "rh20t": {
         "image_obs_keys": {

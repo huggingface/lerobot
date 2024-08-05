@@ -43,8 +43,7 @@ np.set_printoptions(precision=2)
 
 
 def get_cameras_keys(obs_keys):
-    return [key for key in obs_keys if "image" in key]
-
+    return [key for key in obs_keys if ("image" in key and "depth" not in key)]
 
 def tf_to_torch(data):
     return torch.from_numpy(data.numpy())
@@ -105,41 +104,63 @@ def load_from_raw(
         episodes (list[int] | None, optional): _description_. Defaults to None.
     """
     ds_builder = tfds.builder_from_directory(str(raw_dir))
+    array_record=False
     try:
         dataset = ds_builder.as_dataset(
             split="all",
             decoders={"steps": tfds.decode.SkipDecoding()},
         )
     except NotImplementedError:
-         dataset = ds_builder.as_data_source(
+        dataset = ds_builder.as_data_source(
             split="all",
             decoders={"steps": tfds.decode.SkipDecoding()},
         )
+        array_record=True
        
     dataset_info = ds_builder.info
     print("dataset_info: ", dataset_info)
 
     ds_length = len(dataset)
-    dataset = dataset.take(ds_length)
+    if not array_record:
+        dataset = dataset.take(ds_length)
 
-    # "flatten" the dataset as such we can apply trajectory level map() easily
-    # each [obs][key] has a shape of (frame_size, ...)
-    dataset = dataset.enumerate().map(_broadcast_metadata_rlds)
-    # we will apply the standardization transform if the dataset_name is provided
-    if oxe_dataset_name is not None:
-        print(" - applying standardization transform for dataset: ", oxe_dataset_name)
-        assert oxe_dataset_name in OXE_STANDARDIZATION_TRANSFORMS
-        transform_fn = OXE_STANDARDIZATION_TRANSFORMS[oxe_dataset_name]
-        dataset = dataset.map(transform_fn)
+        # "flatten" the dataset as such we can apply trajectory level map() easily
+        # each [obs][key] has a shape of (frame_size, ...)
+        dataset = dataset.enumerate().map(_broadcast_metadata_rlds)
+    
+        # we will apply the standardization transform if the dataset_name is provided
+        if oxe_dataset_name is not None:
+            print(" - applying standardization transform for dataset: ", oxe_dataset_name)
+            assert oxe_dataset_name in OXE_STANDARDIZATION_TRANSFORMS
+            transform_fn = OXE_STANDARDIZATION_TRANSFORMS[oxe_dataset_name]
+            dataset = dataset.map(transform_fn)
 
-    image_keys = get_cameras_keys(dataset_info.features["steps"]["observation"].keys())
-    lang_key = "language_instruction" if "language_instruction" in dataset.element_spec else None
+    #image_keys = get_cameras_keys(dataset_info.features["steps"]["observation"].keys())
+    image_keys = OXE_DATASET_CONFIGS[oxe_dataset_name]['image_keys']
+
+    lang_key = "language_instruction"
+    if not array_record:
+        lang_key = "language_instruction" if "language_instruction" in dataset.element_spec else None
     print(" - image_keys: ", image_keys)
     print(" - lang_key: ", lang_key)
 
     it = iter(dataset)
 
     ep_dicts = []
+    #Init temp path to save ep_dicts in case of crash
+    tmp_ep_dicts_dir = videos_dir.parent.joinpath('ep_dicts')
+    tmp_ep_dicts_dir.mkdir(parents=True, exist_ok=True)
+    
+    # check if ep_dicts have already been saved in /tmp
+    starting_ep_idx = 0
+    saved_ep_dicts = [ep.__str__() for ep in tmp_ep_dicts_dir.iterdir()]
+    if len(saved_ep_dicts) > 0:
+        saved_ep_dicts.sort()
+        # get last ep_idx number
+        starting_ep_idx = int(saved_ep_dicts[-1][-13:-3])
+        for i in range(starting_ep_idx):
+            episode = next(it)
+            ep_dicts.append(torch.load(saved_ep_dicts[i]))
 
     # if we user specified episodes, skip the ones not in the list
     if episodes is not None:
@@ -148,7 +169,7 @@ def load_from_raw(
         # convert episodes index to sorted list
         episodes = sorted(episodes)
 
-    for ep_idx in tqdm.tqdm(range(ds_length)):
+    for ep_idx in tqdm.tqdm(range(starting_ep_idx,ds_length)):
         episode = next(it)
 
         # if user specified episodes, skip the ones not in the list
@@ -161,7 +182,7 @@ def load_from_raw(
                 episodes.pop(0)
             else:
                 continue  # skip
-
+        
         num_frames = episode["action"].shape[0]
 
         ###########################################################
@@ -243,6 +264,8 @@ def load_from_raw(
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
         ep_dict["next.reward"] = rewards
         ep_dict["next.done"] = done
+
+        torch.save(ep_dict, tmp_ep_dicts_dir.joinpath('ep_dict_'+'0'*(10-len(str(ep_idx)))+str(ep_idx)+'.pt'))
 
         ep_dicts.append(ep_dict)
 

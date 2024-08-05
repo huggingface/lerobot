@@ -349,6 +349,13 @@ def main():
         help="When set to 1, resumes a previous run.",
     )
     parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        required=False,
+        default='/tmp',
+        help="Directory to store the temporary videos and images generated while creating the dataset.",
+    )
+    parser.add_argument(
         "--tests-data-dir",
         type=Path,
         help=(
