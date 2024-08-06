@@ -376,7 +376,7 @@ If you are using a built in laptop camera, or webcam you may ignore these steps.
   flatpak install flathub com.obsproject.Studio
   ```
 4. Install the DroidCam OBS plugin. Follow the steps based on your operating system. For Linux: 
-    ```python
+  ```python
   flatpak install flathub com.obsproject.Studio.Plugin.DroidCam
   ```
 5. Open OBS Studio using:
