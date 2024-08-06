@@ -18,7 +18,12 @@ from pathlib import Path
 
 import pytest
 
+from lerobot.common.datasets.factory import make_dataset
+from lerobot.common.logger import Logger
+from lerobot.common.policies.factory import make_policy
+from lerobot.common.utils.utils import init_hydra_config
 from lerobot.scripts.visualize_dataset_html import visualize_dataset_html
+from tests.utils import DEFAULT_CONFIG_PATH
 
 
 @pytest.mark.parametrize(
@@ -34,3 +39,34 @@ def test_visualize_dataset_html(tmpdir, repo_id):
         serve=False,
     )
     assert (tmpdir / "static" / "episode_0.csv").exists()
+
+
+@pytest.mark.parametrize(
+    "repo_id, policy_method",
+    [
+        ("lerobot/pusht", "select_action"),
+        ("lerobot/pusht", "forward"),
+    ],
+)
+def test_visualize_dataset_policy_ckpt_path(tmpdir, repo_id, policy_method):
+    tmpdir = Path(tmpdir)
+
+    # Create a policy
+    cfg = init_hydra_config(DEFAULT_CONFIG_PATH, overrides=["device=cpu"])
+    dataset = make_dataset(cfg)
+    policy = make_policy(cfg, dataset_stats=dataset.stats)
+
+    # Save a checkpoint
+    logger = Logger(cfg, tmpdir)
+    logger.save_model(tmpdir, policy)
+
+    visualize_dataset_html(
+        repo_id,
+        episodes=[0],
+        output_dir=tmpdir,
+        serve=False,
+        pretrained_policy_name_or_path=tmpdir,
+        policy_method=policy_method,
+    )
+    assert (tmpdir / "static" / "episode_0.csv").exists()
+    assert (tmpdir / "episode_0.safetensors").exists()
