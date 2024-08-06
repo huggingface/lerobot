@@ -26,6 +26,8 @@ Follow the sourcing and assembling instructions on the [Koch v1.1 github page](h
   <img src="../media/tutorial/koch_v1_1_leader_follower.webp?raw=true" alt="Koch v1.1 leader and follower arms" title="Koch v1.1 leader and follower arms" width="50%">
 </div>
 
+See the [video tutorial of the assembly](https://youtu.be/5mdxvMlxoos).
+
 ## 2. Connect, Configure, and Calibrate your Koch v1.1
 
 Connect the leader arm (the smaller one) with the 5V alimentation and the follower arm with the 12V alimentation. Then connect both arms to your computer with USB.
@@ -137,12 +139,12 @@ This file is used to instantiate your robot in all our scripts. We will explain 
 
 Then, you will need to configure your motors to be able to properly communicate with them. During the first connection of the motors, [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) automatically detects a mismatch between the present motor indices (all `1` by factory default) and your specified motor indices (e.g. `1,2,3,4,5,6`). This triggers the configuration procedure which requires to unplug the power cord and motors, and to sequentially plug each motor again, starting from the closest to the bus.
 
-Take a look at this youtube video for help: TODO(rcadene)
-
 Run the following code in the same python session in your terminal to connect and configure the leader arm:
 ```python
 leader_arm.connect()
 ```
+
+See the [video tutorial of the configuration procedure](https://youtu.be/U78QQ9wCdpY).
 
 Here is an example of connecting the leader arm for the first time:
 ```
@@ -253,6 +255,8 @@ robot = KochRobot(
 Then, you will need to calibrate your robot so that when the leader and follower arms are in the same physical position, they have the same position values read from [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py). An important benefit of calibration is that a neural network trained on data collected on your Koch robot will transfer to another Koch robot.
 
 During the first connection of your robot, [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) detects that the calibration file is missing. This triggers the calibration procedure which requires you to move each arm in 3 different positions.
+
+See the [video tutorial of the calibration procedure](https://youtu.be/8drnU9uRY24).
 
 You will follow the procedure and move the follower to these positions:
 
