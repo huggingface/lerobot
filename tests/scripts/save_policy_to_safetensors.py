@@ -13,6 +13,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+Save the policy tests artifacts.
+
+Note: Run on the cluster
+
+Example of usage:
+```bash
+DATA_DIR=tests/data python tests/scripts/save_policy_to_safetensors.py
+```
+"""
+
+import platform
 import shutil
 from pathlib import Path
 
@@ -54,7 +66,7 @@ def get_policy_stats(env_name, policy_name, extra_overrides):
     output_dict = {k: v for k, v in output_dict.items() if isinstance(v, torch.Tensor)}
     loss = output_dict["loss"]
 
-    loss.backward()
+    loss.mean().backward()
     grad_stats = {}
     for key, param in policy.named_parameters():
         if param.requires_grad:
@@ -96,10 +108,21 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_override
         print(f"Overwrite existing safetensors in '{env_policy_dir}':")
         print(f" - Validate with: `git add {env_policy_dir}`")
         print(f" - Revert with: `git checkout -- {env_policy_dir}`")
+
+    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name, extra_overrides)
+
+    from safetensors.torch import load_file
+
+    if (env_policy_dir / "output_dict.safetensors").exists():
+        prev_loss = load_file(env_policy_dir / "output_dict.safetensors")["loss"]
+        print(f"Previous loss={prev_loss}")
+        print(f"New loss={output_dict['loss'].mean()}")
+        print()
+
+    if env_policy_dir.exists():
         shutil.rmtree(env_policy_dir)
 
     env_policy_dir.mkdir(parents=True, exist_ok=True)
-    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name, extra_overrides)
     save_file(output_dict, env_policy_dir / "output_dict.safetensors")
     save_file(grad_stats, env_policy_dir / "grad_stats.safetensors")
     save_file(param_stats, env_policy_dir / "param_stats.safetensors")
@@ -107,27 +130,32 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_override
 
 
 if __name__ == "__main__":
+    if platform.machine() != "x86_64":
+        raise OSError("Generate policy artifacts on x86_64 machine since it is used for the unit tests. ")
+
     env_policies = [
-        # ("xarm", "tdmpc", ["policy.use_mpc=false"], "use_policy"),
-        # ("xarm", "tdmpc", ["policy.use_mpc=true"], "use_mpc"),
-        # (
-        #     "pusht",
-        #     "diffusion",
-        #     [
-        #         "policy.n_action_steps=8",
-        #         "policy.num_inference_steps=10",
-        #         "policy.down_dims=[128, 256, 512]",
-        #     ],
-        #     "",
-        # ),
-        # ("aloha", "act", ["policy.n_action_steps=10"], ""),
-        # ("aloha", "act", ["policy.n_action_steps=1000", "policy.chunk_size=1000"], "_1000_steps"),
-        # ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"], ""),
-        # ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"], ""),
+        ("xarm", "tdmpc", ["policy.use_mpc=false"], "use_policy"),
+        ("xarm", "tdmpc", ["policy.use_mpc=true"], "use_mpc"),
+        (
+            "pusht",
+            "diffusion",
+            [
+                "policy.n_action_steps=8",
+                "policy.num_inference_steps=10",
+                "policy.down_dims=[128, 256, 512]",
+            ],
+            "",
+        ),
+        ("aloha", "act", ["policy.n_action_steps=10"], ""),
+        ("aloha", "act", ["policy.n_action_steps=1000", "policy.chunk_size=1000"], "_1000_steps"),
+        ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"], ""),
+        ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"], ""),
     ]
     if len(env_policies) == 0:
         raise RuntimeError("No policies were provided!")
     for env, policy, extra_overrides, file_name_extra in env_policies:
+        print(f"env={env} policy={policy} extra_overrides={extra_overrides}")
         save_policy_to_safetensors(
             "tests/data/save_policy_to_safetensors", env, policy, extra_overrides, file_name_extra
         )
+        print()

@@ -396,51 +396,39 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
         # Compute consistency loss as MSE loss between latents predicted from the rollout and latents
         # predicted from the (target model's) observation encoder.
         consistency_loss = (
-            (
-                temporal_loss_coeffs
-                * F.mse_loss(z_preds[1:], z_targets, reduction="none").mean(dim=-1)
-                # `z_preds` depends on the current observation and the actions.
-                * ~batch["observation.state_is_pad"][0]
-                * ~batch["action_is_pad"]
-                # `z_targets` depends on the next observation.
-                * ~batch["observation.state_is_pad"][1:]
-            )
-            .sum(0)
-            .mean()
-        )
+            temporal_loss_coeffs
+            * F.mse_loss(z_preds[1:], z_targets, reduction="none").mean(dim=-1)
+            # `z_preds` depends on the current observation and the actions.
+            * ~batch["observation.state_is_pad"][0]
+            * ~batch["action_is_pad"]
+            # `z_targets` depends on the next observation.
+            * ~batch["observation.state_is_pad"][1:]
+        ).sum(0)
         # Compute the reward loss as MSE loss between rewards predicted from the rollout and the dataset
         # rewards.
         reward_loss = (
-            (
-                temporal_loss_coeffs
-                * F.mse_loss(reward_preds, reward, reduction="none")
-                * ~batch["next.reward_is_pad"]
-                # `reward_preds` depends on the current observation and the actions.
-                * ~batch["observation.state_is_pad"][0]
-                * ~batch["action_is_pad"]
-            )
-            .sum(0)
-            .mean()
-        )
+            temporal_loss_coeffs
+            * F.mse_loss(reward_preds, reward, reduction="none")
+            * ~batch["next.reward_is_pad"]
+            # `reward_preds` depends on the current observation and the actions.
+            * ~batch["observation.state_is_pad"][0]
+            * ~batch["action_is_pad"]
+        ).sum(0)
         # Compute state-action value loss (TD loss) for all of the Q functions in the ensemble.
         q_value_loss = (
-            (
-                temporal_loss_coeffs
-                * F.mse_loss(
-                    q_preds_ensemble,
-                    einops.repeat(q_targets, "t b -> e t b", e=q_preds_ensemble.shape[0]),
-                    reduction="none",
-                ).sum(0)  # sum over ensemble
-                # `q_preds_ensemble` depends on the first observation and the actions.
-                * ~batch["observation.state_is_pad"][0]
-                * ~batch["action_is_pad"]
-                # q_targets depends on the reward and the next observations.
-                * ~batch["next.reward_is_pad"]
-                * ~batch["observation.state_is_pad"][1:]
-            )
-            .sum(0)
-            .mean()
-        )
+            temporal_loss_coeffs
+            * F.mse_loss(
+                q_preds_ensemble,
+                einops.repeat(q_targets, "t b -> e t b", e=q_preds_ensemble.shape[0]),
+                reduction="none",
+            ).sum(0)  # sum over ensemble
+            # `q_preds_ensemble` depends on the first observation and the actions.
+            * ~batch["observation.state_is_pad"][0]
+            * ~batch["action_is_pad"]
+            # q_targets depends on the reward and the next observations.
+            * ~batch["next.reward_is_pad"]
+            * ~batch["observation.state_is_pad"][1:]
+        ).sum(0)
         # Compute state value loss as in eqn 3 of FOWM.
         diff = v_targets - v_preds
         # Expectile loss penalizes:
@@ -450,16 +438,12 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
             diff > 0, self.config.expectile_weight, (1 - self.config.expectile_weight)
         ) * (diff**2)
         v_value_loss = (
-            (
-                temporal_loss_coeffs
-                * raw_v_value_loss
-                # `v_targets` depends on the first observation and the actions, as does `v_preds`.
-                * ~batch["observation.state_is_pad"][0]
-                * ~batch["action_is_pad"]
-            )
-            .sum(0)
-            .mean()
-        )
+            temporal_loss_coeffs
+            * raw_v_value_loss
+            # `v_targets` depends on the first observation and the actions, as does `v_preds`.
+            * ~batch["observation.state_is_pad"][0]
+            * ~batch["action_is_pad"]
+        ).sum(0)
 
         # Calculate the advantage weighted regression loss for π as detailed in FOWM 3.1.
         # We won't need these gradients again so detach.
@@ -492,7 +476,7 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
             # `action_preds` depends on the first observation and the actions.
             * ~batch["observation.state_is_pad"][0]
             * ~batch["action_is_pad"]
-        ).mean()
+        ).sum(0)
 
         loss = (
             self.config.consistency_coeff * consistency_loss
@@ -504,13 +488,13 @@ class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
 
         info.update(
             {
-                "consistency_loss": consistency_loss.item(),
-                "reward_loss": reward_loss.item(),
-                "Q_value_loss": q_value_loss.item(),
-                "V_value_loss": v_value_loss.item(),
-                "pi_loss": pi_loss.item(),
+                "consistency_loss": consistency_loss,
+                "reward_loss": reward_loss,
+                "Q_value_loss": q_value_loss,
+                "V_value_loss": v_value_loss,
+                "pi_loss": pi_loss,
                 "loss": loss,
-                "sum_loss": loss.item() * self.config.horizon,
+                "sum_loss": loss * self.config.horizon,
             }
         )
 

@@ -56,9 +56,6 @@ import einops
 import gymnasium as gym
 import numpy as np
 import torch
-from huggingface_hub import snapshot_download
-from huggingface_hub.utils._errors import RepositoryNotFoundError
-from huggingface_hub.utils._validators import HFValidationError
 from torch import Tensor, nn
 from tqdm import trange
 
@@ -68,7 +65,7 @@ from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.logger import log_output_dir
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import Policy
-from lerobot.common.policies.utils import get_device_from_parameters
+from lerobot.common.policies.utils import get_device_from_parameters, get_pretrained_policy_path
 from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 
@@ -499,29 +496,6 @@ def main(
     env.close()
 
     logging.info("End of eval")
-
-
-def get_pretrained_policy_path(pretrained_policy_name_or_path, revision=None):
-    try:
-        pretrained_policy_path = Path(snapshot_download(pretrained_policy_name_or_path, revision=revision))
-    except (HFValidationError, RepositoryNotFoundError) as e:
-        if isinstance(e, HFValidationError):
-            error_message = (
-                "The provided pretrained_policy_name_or_path is not a valid Hugging Face Hub repo ID."
-            )
-        else:
-            error_message = (
-                "The provided pretrained_policy_name_or_path was not found on the Hugging Face Hub."
-            )
-
-        logging.warning(f"{error_message} Treating it as a local directory.")
-        pretrained_policy_path = Path(pretrained_policy_name_or_path)
-    if not pretrained_policy_path.is_dir() or not pretrained_policy_path.exists():
-        raise ValueError(
-            "The provided pretrained_policy_name_or_path is not a valid/existing Hugging Face Hub "
-            "repo ID, nor is it an existing local directory."
-        )
-    return pretrained_policy_path
 
 
 if __name__ == "__main__":

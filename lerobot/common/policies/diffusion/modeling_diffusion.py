@@ -341,7 +341,11 @@ class DiffusionModel(nn.Module):
             in_episode_bound = ~batch["action_is_pad"]
             loss = loss * in_episode_bound.unsqueeze(-1)
 
-        return loss.mean()
+        # Compute average per item in the batch
+        bsize = loss.shape[0]
+        loss = loss.reshape(bsize, -1).mean(1)
+
+        return loss
 
 
 class SpatialSoftmax(nn.Module):

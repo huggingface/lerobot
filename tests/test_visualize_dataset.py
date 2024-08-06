@@ -25,13 +25,13 @@ from lerobot.scripts.visualize_dataset import visualize_dataset
     ["lerobot/pusht"],
 )
 @pytest.mark.parametrize("root", [Path(__file__).parent / "data"])
-def test_visualize_local_dataset(tmpdir, repo_id, root):
+def test_visualize_dataset_root(tmpdir, repo_id, root):
     rrd_path = visualize_dataset(
         repo_id,
+        root=root,
         episode_index=0,
         batch_size=32,
         save=True,
         output_dir=tmpdir,
-        root=root,
     )
     assert rrd_path.exists()

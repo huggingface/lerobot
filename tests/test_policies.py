@@ -147,10 +147,11 @@ def test_policy(env_name, policy_name, extra_overrides):
     # Check that we run select_actions and get the appropriate output.
     env = make_env(cfg, n_envs=2)
 
+    batch_size = 2
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=0,
-        batch_size=2,
+        batch_size=batch_size,
         shuffle=True,
         pin_memory=DEVICE != "cpu",
         drop_last=True,
@@ -164,11 +165,18 @@ def test_policy(env_name, policy_name, extra_overrides):
 
     # Test updating the policy (and test that it does not mutate the batch)
     batch_ = deepcopy(batch)
-    policy.forward(batch)
+    out = policy.forward(batch)
     assert set(batch) == set(batch_), "Batch keys are not the same after a forward pass."
     assert all(
         torch.equal(batch[k], batch_[k]) for k in batch
     ), "Batch values are not the same after a forward pass."
+
+    # Test loss can be visualized using visualize_dataset_html.py
+    for key in out:
+        if "loss" in key:
+            assert (
+                out[key].ndim == 1 and out[key].shape[0] == batch_size
+            ), f"1 loss value per item in the batch is expected, but {out[key].shape} provided instead."
 
     # reset the policy and environment
     policy.reset()
@@ -234,6 +242,7 @@ def test_policy_defaults(policy_name: str):
     [
         ("xarm", "tdmpc"),
         ("pusht", "diffusion"),
+        ("pusht", "vqbet"),
         ("aloha", "act"),
     ],
 )
@@ -250,7 +259,7 @@ def test_yaml_matches_dataclass(env_name: str, policy_name: str):
 def test_save_and_load_pretrained(policy_name: str):
     policy_cls, _ = get_policy_and_config_classes(policy_name)
     policy: Policy = policy_cls()
-    save_dir = "/tmp/test_save_and_load_pretrained_{policy_cls.__name__}"
+    save_dir = f"/tmp/test_save_and_load_pretrained_{policy_cls.__name__}"
     policy.save_pretrained(save_dir)
     policy_ = policy_cls.from_pretrained(save_dir)
     assert all(torch.equal(p, p_) for p, p_ in zip(policy.parameters(), policy_.parameters(), strict=True))
@@ -365,6 +374,7 @@ def test_normalize(insert_temporal_dim):
             ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
             "",
         ),
+        ("pusht", "vqbet", "[]", ""),
         ("aloha", "act", ["policy.n_action_steps=10"], ""),
         ("aloha", "act", ["policy.n_action_steps=1000", "policy.chunk_size=1000"], "_1000_steps"),
         ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"], ""),
@@ -461,7 +471,3 @@ def test_act_temporal_ensembler():
         assert torch.all(offline_avg <= einops.reduce(seq_slice, "b s 1 -> b 1", "max"))
         # Selected atol=1e-4 keeping in mind actions in [-1, 1] and excepting 0.01% error.
         assert torch.allclose(online_avg, offline_avg, atol=1e-4)
-
-
-if __name__ == "__main__":
-    test_act_temporal_ensembler()

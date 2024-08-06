@@ -44,7 +44,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         repo_id: str,
-        root: Path | None = DATA_DIR,
+        root: Path | None = None,
         split: str = "train",
         image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
@@ -53,22 +53,24 @@ class LeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         self.repo_id = repo_id
         self.root = root
+        if self.root is None and DATA_DIR is not None:
+            self.root = DATA_DIR
         self.split = split
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         # load data from hub or locally when root is provided
         # TODO(rcadene, aliberts): implement faster transfer
         # https://huggingface.co/docs/huggingface_hub/en/guides/download#faster-downloads
-        self.hf_dataset = load_hf_dataset(repo_id, CODEBASE_VERSION, root, split)
+        self.hf_dataset = load_hf_dataset(repo_id, CODEBASE_VERSION, self.root, split)
         if split == "train":
             self.episode_data_index = load_episode_data_index(repo_id, CODEBASE_VERSION, root)
         else:
             self.episode_data_index = calculate_episode_data_index(self.hf_dataset)
             self.hf_dataset = reset_episode_index(self.hf_dataset)
-        self.stats = load_stats(repo_id, CODEBASE_VERSION, root)
-        self.info = load_info(repo_id, CODEBASE_VERSION, root)
+        self.stats = load_stats(repo_id, CODEBASE_VERSION, self.root)
+        self.info = load_info(repo_id, CODEBASE_VERSION, self.root)
         if self.video:
-            self.videos_dir = load_videos(repo_id, CODEBASE_VERSION, root)
+            self.videos_dir = load_videos(repo_id, CODEBASE_VERSION, self.root)
             self.video_backend = video_backend if video_backend is not None else "pyav"
 
     @property

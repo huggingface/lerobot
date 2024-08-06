@@ -120,8 +120,7 @@ def update_policy(
     policy.train()
     with torch.autocast(device_type=device.type) if use_amp else nullcontext():
         output_dict = policy.forward(batch)
-        # TODO(rcadene): policy.unnormalize_outputs(out_dict)
-        loss = output_dict["loss"]
+        loss = output_dict["loss"].mean()
     grad_scaler.scale(loss).backward()
 
     # Unscale the graident of the optimzer's assigned params in-place **prior to gradient clipping**.
@@ -150,14 +149,12 @@ def update_policy(
         policy.update()
 
     info = {
-        "loss": loss.item(),
         "grad_norm": float(grad_norm),
         "lr": optimizer.param_groups[0]["lr"],
         "update_s": time.perf_counter() - start_time,
-        **{k: v for k, v in output_dict.items() if k != "loss"},
+        **{k: v.detach().mean().item() for k, v in output_dict.items() if "loss" in k},
+        **{k: v for k, v in output_dict.items() if "loss" not in k},
     }
-    info.update({k: v for k, v in output_dict.items() if k not in info})
-
     return info
 
 
