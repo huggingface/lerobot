@@ -364,9 +364,10 @@ robot.disconnect()
 ### Add your cameras with OpenCVCamera
 
 **Setting up a Virtual Camera Port on Linux**
+
 If you are using a built in laptop camera, or webcam you may ignore these steps. However, if you would like to use your phone as a camera on Linux, you must first set up a virtual camera port.
 
-1. Install v4l2loopback-dkms, which is required for creating virtual camera devices, using the following command: 
+1. Install `v4l2loopback-dkms`, which is required for creating virtual camera devices, using the following command: 
   ```python
   sudo apt-get install v4l2loopback-dkms
   ```
@@ -379,16 +380,18 @@ If you are using a built in laptop camera, or webcam you may ignore these steps.
   ```python
   flatpak install flathub com.obsproject.Studio.Plugin.DroidCam
   ```
-5. Open OBS Studio using:
+5. Open OBS Studio. For Linux:
  ```python
 flatpak run com.obsproject.Studio
 ```
 6. Add your phone as a source. Follow the instructions [here](https://droidcam.app/obs/usage/).
 7. In OBS Studio, start the virtual camera. Follow the instructions [here](https://obsproject.com/kb/virtual-camera-guide).
-8. Use `v4l2-ctl` to ensure the virtual camera is set up correctly using `v4l2-ctl --list-devices`. The output should look like:
+8. Use `v4l2-ctl` to ensure the virtual camera is set up correctly, and check the output shows a `VirtualCam`, as in the example below.
   ```python
-VirtualCam (platform:v4l2loopback-000):
-/dev/video1
+v4l2-ctl --list-devices
+
+>>> VirtualCam (platform:v4l2loopback-000):
+>>> /dev/video1
 ```
 From here, you should be able to proceed with the rest of the tutorial.
 
