@@ -359,6 +359,35 @@ robot.disconnect()
 
 ### Add your cameras with OpenCVCamera
 
+**Setting up a Virtual Camera Port on Linux**
+If you are using a built in laptop camera, or webcam you may ignore these steps. However, if you would like to use your phone as a camera on Linux, you must first set up a virtual camera port.
+
+1. Install v4l2loopback-dkms, which is required for creating virtual camera devices, using the following command: 
+  ```python
+  sudo apt-get install v4l2loopback-dkms
+  ```
+2. Download [DroidCam](https://droidcam.app/) on your phone (available for both iOS and Android).
+3. Install `OBS Studio`. Follow the steps based on your operating system. For Linux, you can use Flatpak:
+  ```python
+  flatpak install flathub com.obsproject.Studio
+  ```
+4. Install the DroidCam OBS plugin. Follow the steps based on your operating system. For Linux: 
+    ```python
+  flatpak install flathub com.obsproject.Studio.Plugin.DroidCam
+  ```
+5. Open OBS Studio using:
+ ```python
+flatpak run com.obsproject.Studio
+```
+6. Add your phone as a source. Follow the instructions [here](https://droidcam.app/obs/usage/).
+7. In OBS Studio, start the virtual camera. Follow the instructions [here](https://obsproject.com/kb/virtual-camera-guide).
+8. Use `v4l2-ctl` to ensure the virtual camera is set up correctly using `v4l2-ctl --list-devices`. The output should look like:
+  ```python
+VirtualCam (platform:v4l2loopback-000):
+/dev/video1
+```
+From here, you should be able to proceed with the rest of the tutorial.
+
 **Instantiate**
 
 You can efficiently record frames from cameras with the [`OpenCVCamera`](../lerobot/common/robot_devices/cameras/opencv.py) class. It relies on [`opencv2`](https://docs.opencv.org) to communicate with the cameras. Most cameras are compatible. For more info, see [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).

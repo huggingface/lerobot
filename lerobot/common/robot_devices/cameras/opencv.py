@@ -37,7 +37,7 @@ def find_camera_indices(raise_when_empty=False, max_index_search_range=MAX_OPENC
     if platform.system() == "Linux":
         # Linux uses camera ports
         print("Linux detected. Finding available camera indices through scanning '/dev/video*' ports")
-        possible_camera_ids = [int(port.replace("/dev/video", "")) for port in Path("/dev").glob("video*")]
+        possible_camera_ids = [int(str(port).replace("/dev/video", "")) for port in Path("/dev").glob("video*")]
     else:
         print(
             f"Mac or Windows detected. Finding available camera indices through scanning all indices from 0 to {MAX_OPENCV_INDEX}"

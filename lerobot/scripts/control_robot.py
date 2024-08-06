@@ -329,7 +329,7 @@ def record(
     while timestamp < warmup_time_s:
         if not is_warmup_print:
             logging.info("Warming up (no data recording)")
-            os.system('say "Warmup" &')
+            if platform.system() != "Linux": os.system('say "Warmup" &')
             is_warmup_print = True
 
         now = time.perf_counter()
@@ -361,7 +361,7 @@ def record(
         # Start recording all episodes
         while episode_index < num_episodes:
             logging.info(f"Recording episode {episode_index}")
-            os.system(f'say "Recording episode {episode_index}" &')
+            if platform.system() != "Linux": os.system(f'say "Recording episode {episode_index}" &')
             ep_dict = {}
             frame_index = 0
             timestamp = 0
@@ -444,7 +444,7 @@ def record(
             if not stop_recording:
                 # Start resetting env while the executor are finishing
                 logging.info("Reset the environment")
-                os.system('say "Reset the environment" &')
+                if platform.system() != "Linux": os.system('say "Reset the environment" &')
 
             timestamp = 0
             start_time = time.perf_counter()
@@ -508,7 +508,7 @@ def record(
 
             if is_last_episode:
                 logging.info("Done recording")
-                os.system('say "Done recording"')
+                if platform.system() != "Linux": os.system('say "Done recording"')
                 if not is_headless():
                     listener.stop()
 
@@ -526,7 +526,7 @@ def record(
     num_episodes = episode_index
 
     logging.info("Encoding videos")
-    os.system('say "Encoding videos" &')
+    if platform.system() != "Linux": os.system('say "Encoding videos" &')
     # Use ffmpeg to convert frames stored as png into mp4 videos
     for episode_index in tqdm.tqdm(range(num_episodes)):
         for key in image_keys:
@@ -570,7 +570,7 @@ def record(
     )
     if run_compute_stats:
         logging.info("Computing dataset statistics")
-        os.system('say "Computing dataset statistics" &')
+        if platform.system() != "Linux": os.system('say "Computing dataset statistics" &')
         stats = compute_stats(lerobot_dataset)
         lerobot_dataset.stats = stats
     else:
@@ -591,7 +591,7 @@ def record(
         create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
 
     logging.info("Exiting")
-    os.system('say "Exiting" &')
+    if platform.system() != "Linux": os.system('say "Exiting" &')
 
     return lerobot_dataset
 
@@ -611,7 +611,7 @@ def replay(robot: Robot, episode: int, fps: int | None = None, root="data", repo
         robot.connect()
 
     logging.info("Replaying episode")
-    os.system('say "Replaying episode"')
+    if platform.system() != "Linux": os.system('say "Replaying episode"')
 
     for idx in range(from_idx, to_idx):
         now = time.perf_counter()
