@@ -1,5 +1,18 @@
 #!/usr/bin/env python
 
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 For https://github.com/google-deepmind/open_x_embodiment (OXE) datasets.
 
@@ -25,7 +38,7 @@ import tqdm
 from datasets import Dataset, Features, Image, Sequence, Value
 from PIL import Image as PILImage
 
-from lerobot.common.datasets.push_dataset_to_hub.oxe.configs import OXE_DATASET_CONFIGS
+#from lerobot.common.datasets.push_dataset_to_hub.oxe.configs import OXE_DATASET_CONFIGS
 from lerobot.common.datasets.push_dataset_to_hub.oxe.transforms import OXE_STANDARDIZATION_TRANSFORMS
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
 from lerobot.common.datasets.push_dataset_to_hub.utils import (
@@ -41,9 +54,11 @@ from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
 np.set_printoptions(precision=2)
 
-
-def get_cameras_keys(obs_keys):
-    return [key for key in obs_keys if ("image" in key and "depth" not in key)]
+# load OXE_DATASET_CONFIGS from yaml file
+import yaml
+with open('lerobot/common/datasets/push_dataset_to_hub/oxe/configs.yaml', 'r') as f:
+    _oxe_list = yaml.safe_load(f)
+OXE_DATASET_CONFIGS = _oxe_list['OXE_DATASET_CONFIGS']
 
 def tf_to_torch(data):
     return torch.from_numpy(data.numpy())
@@ -135,10 +150,9 @@ def load_from_raw(
             transform_fn = OXE_STANDARDIZATION_TRANSFORMS[oxe_dataset_name]
             dataset = dataset.map(transform_fn)
 
-    #image_keys = get_cameras_keys(dataset_info.features["steps"]["observation"].keys())
-    image_keys = OXE_DATASET_CONFIGS[oxe_dataset_name]['image_keys']
-
+    image_keys = OXE_DATASET_CONFIGS[oxe_dataset_name]['image_obs_keys']
     lang_key = "language_instruction"
+ 
     if not array_record:
         lang_key = "language_instruction" if "language_instruction" in dataset.element_spec else None
     print(" - image_keys: ", image_keys)
@@ -325,18 +339,13 @@ def from_raw_to_lerobot_format(
     oxe_dataset_name: str | None = None,
 ):
     """This is a test impl for rlds conversion"""
-    if fps is None:
-        if oxe_dataset_name is not None:
-            if "fps" not in OXE_DATASET_CONFIGS[oxe_dataset_name]:
-                raise ValueError(
-                    "fps for this dataset is not specified in oxe/configs.py yet,"
-                    "means it is not yet tested"
-                )
-            fps = OXE_DATASET_CONFIGS[oxe_dataset_name]["fps"]
-        else:
-            print(" - WARNING: fps is not provided, using default value of 5 fps")
-            fps = 5
-
+    if "fps" not in OXE_DATASET_CONFIGS[oxe_dataset_name]:
+        raise ValueError(
+            "fps for this dataset is not specified in oxe/configs.py yet,"
+            "means it is not yet tested"
+        )
+    fps = OXE_DATASET_CONFIGS[oxe_dataset_name]["fps"]
+        
     data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding, oxe_dataset_name)
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
@@ -352,7 +361,7 @@ def from_raw_to_lerobot_format(
 
 
 if __name__ == "__main__":
-    # NOTE (YL): This mainly serves as a unit test
+    # This mainly serves as a unit test
     # austin_buds_dataset_converted_externally_to_rlds is a smaller dataset in
     # open x embodiment datasets.
     raw_dir = Path("/hdd/tensorflow_datasets/austin_buds_dataset_converted_externally_to_rlds/0.1.0/")

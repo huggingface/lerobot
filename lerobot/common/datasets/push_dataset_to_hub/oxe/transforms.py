@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 NOTE(YL): Adapted from:
     OpenVLA: https://github.com/openvla/openvla
@@ -35,13 +50,6 @@ def droid_baseact_transform_fn():
     from lerobot.common.datasets.push_dataset_to_hub.oxe.droid_utils import droid_baseact_transform
 
     return droid_baseact_transform
-
-
-def droid_finetuning_transform_fn():
-    from lerobot.common.datasets.push_dataset_to_hub.oxe.droid_utils import droid_finetuning_transform
-
-    return droid_finetuning_transform
-
 
 def bridge_oxe_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -872,7 +880,7 @@ def tdroid_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["observation"]["gripper_state"] = trajectory["observation"]["gripper_position"][:, -1:]
     return trajectory
 
-def pass_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+def identity_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     return trajectory
 
 
@@ -936,7 +944,7 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "berkeley_gnm_cory_hall": gnm_dataset_transform,
     "berkeley_gnm_sac_son": gnm_dataset_transform,
     "droid": droid_baseact_transform_fn(),
-    "droid100": droid_baseact_transform_fn(),  # first 100 episodes of droid
+    "droid_100": droid_baseact_transform_fn(),  # first 100 episodes of droid
     "fmb": fmb_transform,
     "dobbe": dobbe_dataset_transform,
     "robo_set": robo_set_dataset_transform,
@@ -944,14 +952,6 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "usc_cloth_sim_converted_externally_to_rlds": usc_cloth_sim_transform,
     "plex_robosuite": plex_robosuite_transform,
     "conq_hose_manipulation": conq_hose_manipulation_transform,
-    ### T-DROID datasets
-    "tdroid_carrot_in_bowl": tdroid_dataset_transform,
-    "tdroid_pour_corn_in_pot": tdroid_dataset_transform,
-    "tdroid_flip_pot_upright": tdroid_dataset_transform,
-    "tdroid_move_object_onto_plate": tdroid_dataset_transform,
-    "tdroid_knock_object_over": tdroid_dataset_transform,
-    "tdroid_cover_object_with_towel": tdroid_dataset_transform,
-    ### DROID Finetuning datasets
-    "droid_wipe": droid_finetuning_transform_fn(),
-    "io_ai_tech": pass_transform,
+    "io_ai_tech": identity_transform,
+    "spoc": identity_transform,
 }
