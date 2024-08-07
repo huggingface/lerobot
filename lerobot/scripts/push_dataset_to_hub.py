@@ -72,6 +72,8 @@ def get_from_raw_to_lerobot_format_fn(raw_format: str):
         from lerobot.common.datasets.push_dataset_to_hub.xarm_pkl_format import from_raw_to_lerobot_format
     elif raw_format == "cam_png":
         from lerobot.common.datasets.push_dataset_to_hub.cam_png_format import from_raw_to_lerobot_format
+    elif raw_format == "rlbench":
+        from lerobot.common.datasets.push_dataset_to_hub.rlbench_format import from_raw_to_lerobot_format
     else:
         raise ValueError(
             f"The selected {raw_format} can't be found. Did you add it to `lerobot/scripts/push_dataset_to_hub.py::get_from_raw_to_lerobot_format_fn`?"

@@ -1,0 +1,16 @@
+# @package _global_
+
+fps: 10
+
+env:
+  name: rlbench
+  task: reach_target-vision-v0
+  state_dim: 8
+  action_dim: 8
+  fps: ${fps}
+  episode_length: 200
+  gym_vector:
+    context: spawn
+
+eval:
+  use_async_envs: true

@@ -2106,6 +2106,21 @@ files = [
 dill = ">=0.3.8"
 
 [[package]]
+name = "natsort"
+version = "8.4.0"
+description = "Simple yet flexible natural sorting in Python."
+optional = true
+python-versions = ">=3.7"
+files = [
+    {file = "natsort-8.4.0-py3-none-any.whl", hash = "sha256:4732914fb471f56b5cce04d7bae6f164a592c7712e1c85f9ef585e197299521c"},
+    {file = "natsort-8.4.0.tar.gz", hash = "sha256:45312c4a0e5507593da193dedd04abb1469253b601ecaf63445ad80f0a1ea581"},
+]
+
+[package.extras]
+fast = ["fastnumbers (>=2.0.0)"]
+icu = ["PyICU (>=1.0.0)"]
+
+[[package]]
 name = "networkx"
 version = "3.3"
 description = "Python package for creating and manipulating graphs and networks"
@@ -3444,6 +3459,33 @@ typing-extensions = ">=4.5"
 [package.extras]
 notebook = ["rerun-notebook (==0.17.0)"]
 tests = ["pytest (==7.1.2)"]
+
+[[package]]
+name = "rlbench"
+version = "1.2.0"
+description = "RLBench"
+optional = true
+python-versions = "*"
+files = []
+develop = false
+
+[package.dependencies]
+natsort = "*"
+numpy = "*"
+Pillow = "*"
+pyquaternion = "*"
+pyrep = {git = "https://github.com/eugeneteoh/PyRep.git", rev = "ee4137ed903ca293f68e519ce47edb03642724a3"}
+scipy = "*"
+
+[package.extras]
+dev = ["pytest"]
+gym = ["gymnasium (==1.0.0a2)"]
+
+[package.source]
+type = "git"
+url = "https://github.com/eugeneteoh/RLBench.git"
+reference = "gymnasium"
+resolved_reference = "97839dde1aca1dc72b3336d009aae346bc5f7083"
 
 [[package]]
 name = "safetensors"

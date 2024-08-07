@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import importlib
 
 import gymnasium as gym
 from omegaconf import DictConfig
@@ -29,19 +28,9 @@ def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv
 
     if cfg.env.name == "real_world":
         return
-
-    package_name = f"gym_{cfg.env.name}"
-
-    try:
-        importlib.import_module(package_name)
-    except ModuleNotFoundError as e:
-        print(
-            f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.env.name}]'`"
-        )
-        raise e
-
-    gym_handle = f"{package_name}/{cfg.env.task}"
+    gym_handle = f"{cfg.env.name}:{cfg.env.name}/{cfg.env.task}"
     gym_kwgs = dict(cfg.env.get("gym", {}))
+    gym_vector_kwgs = dict(cfg.env.get("gym_vector", {}))
 
     if cfg.env.get("episode_length"):
         gym_kwgs["max_episode_steps"] = cfg.env.episode_length
@@ -52,7 +41,8 @@ def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv
         [
             lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs)
             for _ in range(n_envs if n_envs is not None else cfg.eval.batch_size)
-        ]
+        ],
+        **gym_vector_kwgs,
     )
 
     return env
