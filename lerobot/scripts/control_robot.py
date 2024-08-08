@@ -115,6 +115,17 @@ from lerobot.scripts.push_dataset_to_hub import push_meta_data_to_hub, push_vide
 # Utilities
 ########################################################################################
 
+def say(text, blocking=False):
+    # Use the ampersand to run command in the background
+    suffix = "" if blocking else " &"
+
+    # Check if mac, linux, or windows.
+    if platform.system() == "Darwin":
+        os.system(f'say "{text}"{suffix}')
+    elif platform.system() == "Linux":
+        os.system(f'spd-say "{text}"{suffix}')
+    elif platform.system() == "Windows":
+        os.system(f'PowerShell -Command "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'{text}\')"{suffix}')
 
 def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
     img = Image.fromarray(img_tensor.numpy())
@@ -265,7 +276,7 @@ def record_dataset(
     while timestamp < warmup_time_s:
         if not is_warmup_print:
             logging.info("Warming up (no data recording)")
-            os.system('say "Warmup" &')
+            say("Warming up")
             is_warmup_print = True
 
         now = time.perf_counter()
@@ -294,7 +305,6 @@ def record_dataset(
         logging.info("Headless environment detected. Keyboard input will not be available.")
     else:
         from pynput import keyboard
-
         def on_press(key):
             nonlocal exit_early, rerecord_episode, stop_recording
             try:
@@ -320,10 +330,10 @@ def record_dataset(
     # Using only 4 worker threads to avoid blocking the main thread.
     futures = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
-        # Start recording all episodes
+        # Start recording all episodes 
         while episode_index < num_episodes:
             logging.info(f"Recording episode {episode_index}")
-            os.system(f'say "Recording episode {episode_index}" &')
+            say(f"Recording episode {episode_index}")
             ep_dict = {}
             frame_index = 0
             timestamp = 0
@@ -361,7 +371,6 @@ def record_dataset(
                 log_control_info(robot, dt_s, fps=fps)
 
                 timestamp = time.perf_counter() - start_time
-
                 if exit_early:
                     exit_early = False
                     break
@@ -369,8 +378,7 @@ def record_dataset(
             if not stop_recording:
                 # Start resetting env while the executor are finishing
                 logging.info("Reset the environment")
-                os.system('say "Reset the environment" &')
-
+                say("Reset the environment")
             timestamp = 0
             start_time = time.perf_counter()
 
@@ -433,7 +441,7 @@ def record_dataset(
 
             if is_last_episode:
                 logging.info("Done recording")
-                os.system('say "Done recording"')
+                say("Done recording", blocking=True)
                 if not is_headless:
                     listener.stop()
 
@@ -447,7 +455,7 @@ def record_dataset(
     num_episodes = episode_index
 
     logging.info("Encoding videos")
-    os.system('say "Encoding videos" &')
+    say("Encoding videos")
     # Use ffmpeg to convert frames stored as png into mp4 videos
     for episode_index in tqdm.tqdm(range(num_episodes)):
         for key in image_keys:
@@ -489,9 +497,10 @@ def record_dataset(
         info=info,
         videos_dir=videos_dir,
     )
+    stats = None
     if run_compute_stats:
         logging.info("Computing dataset statistics")
-        os.system('say "Computing dataset statistics" &')
+        say("Computing dataset statistics")
         stats = compute_stats(lerobot_dataset)
         lerobot_dataset.stats = stats
     else:
@@ -511,8 +520,7 @@ def record_dataset(
         create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
 
     logging.info("Exiting")
-    os.system('say "Exiting" &')
-
+    say("Exiting")
     return lerobot_dataset
 
 
@@ -531,8 +539,7 @@ def replay_episode(robot: Robot, episode: int, fps: int | None = None, root="dat
         robot.connect()
 
     logging.info("Replaying episode")
-    os.system('say "Replaying episode"')
-
+    say("Replaying episode", blocking=True)
     for idx in range(from_idx, to_idx):
         now = time.perf_counter()
 

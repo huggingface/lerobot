@@ -1,3 +1,4 @@
+import os
 import pickle
 import time
 from dataclasses import dataclass, field, replace
@@ -310,7 +311,7 @@ class KochRobot:
         # Overwrite config arguments using kwargs
         self.config = replace(config, **kwargs)
         self.calibration_path = Path(calibration_path)
-
+        self.receiving_actions = False
         self.leader_arms = self.config.leader_arms
         self.follower_arms = self.config.follower_arms
         self.cameras = self.config.cameras
@@ -327,11 +328,15 @@ class KochRobot:
             raise ValueError(
                 "KochRobot doesn't have any device to connect. See example of usage in docstring of the class."
             )
+        
+        if not self.leader_arms and self.follower_arms:
+            print("no leader arms detected, using follower arms as leader arms")
 
         # Connect the arms
         for name in self.follower_arms:
             self.follower_arms[name].connect()
-            self.leader_arms[name].connect()
+            if name in self.leader_arms:
+                self.leader_arms[name].connect()
 
         # Reset the arms and load or run calibration
         if self.calibration_path.exists():
@@ -364,9 +369,12 @@ class KochRobot:
             self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
             self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
 
-        # Enable torque on all motors of the follower arms
+        # Enable torque on all motors of the follower arms unless they are also leader arms.
         for name in self.follower_arms:
-            self.follower_arms[name].write("Torque_Enable", 1)
+            if name not in self.leader_arms:
+                self.follower_arms[name].write("Torque_Enable", 0)
+            else:
+                self.follower_arms[name].write("Torque_Enable", 1)
 
         # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
         # so that we can use it as a trigger to close the gripper of the follower arms.
@@ -406,22 +414,32 @@ class KochRobot:
             raise RobotDeviceNotConnectedError(
                 "KochRobot is not connected. You need to run `robot.connect()`."
             )
+        #follower arms that are also leader arms only have torque enabled when receiving actions
+        self.receiving_actions = False
+        
+        recorded_subjects : dict[str, MotorsBus] = {}
+        for name in self.follower_arms:
+            if name not in self.leader_arms:
+                recorded_subjects[name] = self.follower_arms[name]
+        for name in self.leader_arms:
+            recorded_subjects[name] = self.leader_arms[name]
 
         # Prepare to assign the positions of the leader to the follower
         leader_pos = {}
-        for name in self.leader_arms:
+        for name in recorded_subjects:
             now = time.perf_counter()
-            leader_pos[name] = self.leader_arms[name].read("Present_Position")
+            leader_pos[name] = recorded_subjects[name].read("Present_Position")
             self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - now
 
         follower_goal_pos = {}
-        for name in self.leader_arms:
+        for name in recorded_subjects:
             follower_goal_pos[name] = leader_pos[name]
 
         # Send action
         for name in self.follower_arms:
             now = time.perf_counter()
-            self.follower_arms[name].write("Goal_Position", follower_goal_pos[name])
+            if name in self.leader_arms:
+                self.follower_arms[name].write("Goal_Position", follower_goal_pos[name])
             self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - now
 
         # Early exit when recording data is not requested
@@ -506,6 +524,12 @@ class KochRobot:
             img = img.permute(2, 0, 1).contiguous()
             obs_dict[f"observation.images.{name}"] = img
         return obs_dict
+    
+    def ready_to_receive(self):
+        if(not self.receiving_actions):
+            for name in self.follower_arms:
+                self.follower_arms[name].write("Torque_Enable", TorqueMode.ENABLED.value)
+            self.receiving_actions = True
 
     def send_action(self, action: torch.Tensor):
         """The provided action is expected to be a vector."""
@@ -513,6 +537,7 @@ class KochRobot:
             raise RobotDeviceNotConnectedError(
                 "KochRobot is not connected. You need to run `robot.connect()`."
             )
+        self.ready_to_receive()
 
         from_idx = 0
         to_idx = 0
