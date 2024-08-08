@@ -413,14 +413,14 @@ flatpak run com.obsproject.Studio
 6. Add your phone as a source. Follow the instructions [here](https://droidcam.app/obs/usage). Be sure to set the resolution to `640x480`.
 7. Go to `File>Settings>Video`. Change the `Base(Canvas) Resolution` and the `Output(Scaled) Resolution` to `640x480` by manually typing it in.
 8. In OBS Studio, start the virtual camera. Follow the instructions [here](https://obsproject.com/kb/virtual-camera-guide).
-9.  Use `v4l2-ctl` to ensure the virtual camera is set up correctly, and check the output shows a `VirtualCam`, as in the example below.
+9. Use `v4l2-ctl` to ensure the virtual camera is set up correctly, and check the output shows a `VirtualCam`, as in the example below.
 ```python
 v4l2-ctl --list-devices
 
 >>> VirtualCam (platform:v4l2loopback-000):
 >>> /dev/video1
 ```
-10.  Check that your Virtual camera output resolution is `640x480` as shown below. Note: If the resolution is not correct you will have to delete the Virtual Camera port and try again as it cannot be changed.
+10. Use `v4l2-ctl` to check that your Virtual camera output resolution is `640x480` as shown below. Change `/dev/video1` to the port of your virtual camera from the output of `v4l2-ctl --list-devices`. Note: If the resolution is not correct you will have to delete the Virtual Camera port and try again as it cannot be changed.
 ```python
 v4l2-ctl -d /dev/video1 --get-fmt-video
 
