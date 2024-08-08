@@ -103,7 +103,6 @@ from pathlib import Path
 import cv2
 import torch
 import tqdm
-from huggingface_hub import create_branch
 from omegaconf import DictConfig
 from PIL import Image
 from termcolor import colored
@@ -113,7 +112,7 @@ from lerobot.common.datasets.compute_stats import compute_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format import to_hf_dataset
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, get_default_encoding
-from lerobot.common.datasets.utils import calculate_episode_data_index
+from lerobot.common.datasets.utils import calculate_episode_data_index, create_branch
 from lerobot.common.datasets.video_utils import encode_video_frames
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.factory import make_robot
