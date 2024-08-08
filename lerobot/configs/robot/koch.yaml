@@ -3,7 +3,7 @@ calibration_path: .cache/calibration/koch.pkl
 leader_arms:
   main:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    port: /dev/tty.usbmodem575E0031751
+    port: /dev/tty.usbmodem575E0029051
     motors:
       # name: (index, model)
       shoulder_pan: [1, "xl330-m077"]
@@ -15,7 +15,7 @@ leader_arms:
 follower_arms:
   main:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    port: /dev/tty.usbmodem575E0032081
+    port: /dev/tty.usbmodem575E0031691
     motors:
       # name: (index, model)
       shoulder_pan: [1, "xl430-w250"]
