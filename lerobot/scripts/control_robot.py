@@ -552,6 +552,7 @@ def record(
             fname = f"{key}_episode_{episode_index:06d}.mp4"
             video_path = local_dir / "videos" / fname
             if video_path.exists():
+                # Skip if video is already encoded. Could be the case when resuming data recording.
                 continue
             # note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
             # since video encoding with ffmpeg is already using multithreading.
