@@ -119,42 +119,30 @@ def load_from_raw(
         episodes (list[int] | None, optional): _description_. Defaults to None.
     """
     ds_builder = tfds.builder_from_directory(str(raw_dir))
-    array_record=False
-    try:
-        dataset = ds_builder.as_dataset(
-            split="all",
-            decoders={"steps": tfds.decode.SkipDecoding()},
-        )
-    except NotImplementedError:
-        dataset = ds_builder.as_data_source(
-            split="all",
-            decoders={"steps": tfds.decode.SkipDecoding()},
-        )
-        array_record=True
+    dataset = ds_builder.as_dataset(
+        split="all",
+        decoders={"steps": tfds.decode.SkipDecoding()},
+    )
        
     dataset_info = ds_builder.info
     print("dataset_info: ", dataset_info)
 
     ds_length = len(dataset)
-    if not array_record:
-        dataset = dataset.take(ds_length)
+    dataset = dataset.take(ds_length)
+    # "flatten" the dataset as such we can apply trajectory level map() easily
+    # each [obs][key] has a shape of (frame_size, ...)
+    dataset = dataset.enumerate().map(_broadcast_metadata_rlds)
 
-        # "flatten" the dataset as such we can apply trajectory level map() easily
-        # each [obs][key] has a shape of (frame_size, ...)
-        dataset = dataset.enumerate().map(_broadcast_metadata_rlds)
-    
-        # we will apply the standardization transform if the dataset_name is provided
-        if oxe_dataset_name is not None:
-            print(" - applying standardization transform for dataset: ", oxe_dataset_name)
-            assert oxe_dataset_name in OXE_STANDARDIZATION_TRANSFORMS
-            transform_fn = OXE_STANDARDIZATION_TRANSFORMS[oxe_dataset_name]
-            dataset = dataset.map(transform_fn)
+    # we will apply the standardization transform if the dataset_name is provided
+    if oxe_dataset_name is not None:
+        print(" - applying standardization transform for dataset: ", oxe_dataset_name)
+        assert oxe_dataset_name in OXE_STANDARDIZATION_TRANSFORMS
+        transform_fn = OXE_STANDARDIZATION_TRANSFORMS[oxe_dataset_name]
+        dataset = dataset.map(transform_fn)
 
     image_keys = OXE_DATASET_CONFIGS[oxe_dataset_name]['image_obs_keys']
-    lang_key = "language_instruction"
- 
-    if not array_record:
-        lang_key = "language_instruction" if "language_instruction" in dataset.element_spec else None
+    lang_key = "language_instruction" if "language_instruction" in dataset.element_spec else None
+    
     print(" - image_keys: ", image_keys)
     print(" - lang_key: ", lang_key)
 
