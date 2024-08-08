@@ -352,7 +352,7 @@ def main():
         "--cache-dir",
         type=Path,
         required=False,
-        default='/tmp',
+        default="/tmp",
         help="Directory to store the temporary videos and images generated while creating the dataset.",
     )
     parser.add_argument(
