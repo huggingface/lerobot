@@ -164,9 +164,6 @@ def kuka_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     )
     gripper_value = tf.io.decode_raw(gripper_value, tf.float32)
     trajectory["observation"]["gripper_closed"] = tf.reshape(gripper_value, (-1, 1))
-    # trajectory["language_instruction"] = tf.fill(
-    #     tf.shape(trajectory["observation"]["natural_language_instruction"]), ""
-    # )  # delete uninformative language instruction
     trajectory["language_instruction"] = trajectory["observation"]["natural_language_instruction"]
     return trajectory
 
@@ -220,9 +217,6 @@ def berkeley_cable_routing_dataset_transform(trajectory: Dict[str, Any]) -> Dict
         ),
         axis=-1,
     )
-    # trajectory["language_instruction"] = tf.fill(
-    #     tf.shape(trajectory["observation"]["natural_language_instruction"]), ""
-    # )  # delete uninformative language instruction
     trajectory["language_instruction"] = trajectory["observation"]["natural_language_instruction"]
     return trajectory
 
@@ -241,12 +235,8 @@ def roboturk_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
         ),
         axis=-1,
     )
-    # trajectory["language_instruction"] = tf.fill(
-    #     tf.shape(trajectory["observation"]["natural_language_instruction"]), ""
-    # )  # delete uninformative language instruction
     trajectory["language_instruction"] = trajectory["observation"]["natural_language_instruction"]
     trajectory["language_embedding"] = trajectory["observation"]["natural_language_embedding"]
-
     return trajectory
 
 
@@ -263,9 +253,6 @@ def nyu_door_opening_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, 
         ),
         axis=-1,
     )
-    # trajectory["language_instruction"] = tf.fill(
-    #     tf.shape(trajectory["observation"]["natural_language_instruction"]), ""
-    # )  # delete uninformative language instruction
     trajectory["language_instruction"] = trajectory["observation"]["natural_language_instruction"]
     return trajectory
 
@@ -284,16 +271,12 @@ def viola_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
         ),
         axis=-1,
     )
-    # trajectory["language_instruction"] = tf.fill(
-    #     tf.shape(trajectory["observation"]["natural_language_instruction"]), ""
-    # )  # delete uninformative language instruction
     trajectory["language_instruction"] = trajectory["observation"]["natural_language_instruction"]
     return trajectory
 
 
 def berkeley_autolab_ur5_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["observation"]["state"] = trajectory["observation"]["robot_state"][:, 6:14]
-    #trajectory["observation"]["depth"] = trajectory["observation"].pop("image_with_depth")
 
     # make gripper action absolute action, +1 = open, 0 = close
     gripper_action = trajectory["action"]["gripper_closedness_action"]
@@ -320,9 +303,6 @@ def toto_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
         ),
         axis=-1,
     )
-    # trajectory["language_instruction"] = tf.fill(
-    #     tf.shape(trajectory["observation"]["natural_language_instruction"]), ""
-    # )  # delete uninformative language instruction
     trajectory["language_instruction"] = trajectory["observation"]["natural_language_instruction"]
     return trajectory
 
@@ -346,7 +326,6 @@ def language_table_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, An
     trajectory["language_instruction"] = tf.strings.split(instruction_encoded, "\x00")[:, :1].to_tensor()[
         :, 0
     ]
-    #trajectory["observation"]["image"] = trajectory["observation"].pop("rgb")
     return trajectory
 
 
@@ -401,9 +380,6 @@ def stanford_hydra_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, An
         axis=-1,
     )
     trajectory["observation"]["gripper_state"] = trajectory["observation"]["state"][:, -3:-2]
-    # trajectory["language_instruction"] = tf.fill(
-    #     tf.shape(trajectory["language_instruction"]), ""
-    # )  # delete uninformative language instruction
     return trajectory
 
 
@@ -418,9 +394,6 @@ def austin_buds_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     trajectory["observation"]["state"] = trajectory["observation"]["state"][:, :8]
-    # trajectory["language_instruction"] = tf.fill(
-    #     tf.shape(trajectory["language_instruction"]), ""
-    # )  # delete uninformative language instruction
     return trajectory
 
 
@@ -439,10 +412,6 @@ def nyu_franka_play_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, A
         ),
         axis=-1,
     )
-
-    # trajectory["language_instruction"] = tf.fill(
-    #     tf.shape(trajectory["language_instruction"]), ""
-    # )  # delete uninformative language instruction
     return trajectory
 
 
@@ -508,10 +477,6 @@ def austin_sailor_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any
         ),
         axis=-1,
     )
-
-    # trajectory["language_instruction"] = tf.fill(
-    #     tf.shape(trajectory["language_instruction"]), ""
-    # )  # delete uninformative language instruction
     return trajectory
 
 
@@ -524,10 +489,6 @@ def austin_sirius_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any
         ),
         axis=-1,
     )
-
-    # trajectory["language_instruction"] = tf.fill(
-    #     tf.shape(trajectory["language_instruction"]), ""
-    # )  # delete uninformative language instruction
     return trajectory
 
 
@@ -555,10 +516,6 @@ def tokyo_pr2_tabletop_manipulation_dataset_transform(trajectory: Dict[str, Any]
     trajectory["observation"]["eef_state"] = trajectory["observation"]["state"][:, :6]
     trajectory["observation"]["gripper_state"] = trajectory["observation"]["state"][:, -1:]
     trajectory["action"] = trajectory["action"][..., :-1]
-    return trajectory
-
-
-def utokyo_xarm_pick_place_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     return trajectory
 
 
@@ -599,10 +556,6 @@ def berkeley_mvp_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]
     return trajectory
 
 
-def berkeley_rpt_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
-    return trajectory
-
-
 def kaist_nonprehensible_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["observation"]["state"] = trajectory["observation"]["state"][:, -7:]
     trajectory["action"] = tf.concat(
@@ -638,10 +591,6 @@ def stanford_mask_vit_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str,
 def tokyo_lsmo_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["observation"]["eef_state"] = trajectory["observation"]["state"][:, :6]
     trajectory["observation"]["gripper_state"] = trajectory["observation"]["state"][:, -1:]
-    return trajectory
-
-
-def dlr_sara_pour_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     return trajectory
 
 
@@ -718,10 +667,6 @@ def utaustin_mutex_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, An
         ),
         axis=-1,
     )
-
-    # trajectory["language_instruction"] = tf.fill(
-    #     tf.shape(trajectory["language_instruction"]), ""
-    # )  # delete uninformative language instruction
     return trajectory
 
 
@@ -808,9 +753,6 @@ def fmb_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
         ),
         axis=-1,
     )
-    #for key in trajectory["observation"].keys():
-    #    if 'image' in key:
-    #        trajectory["observations"][key] = tf.cast(trajectory["observations"][key], tf.uint8)
     return trajectory
 
 
@@ -821,9 +763,6 @@ def dobbe_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def robo_set_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
-    # every input feature is batched, ie has leading batch dimension
-    #trajectory["observation"]["proprio"] = trajectory["observation"]["state"]
-
     # gripper action is in -1...1 --> clip to 0...1, flip
     gripper_action = trajectory["action"][:, -1:]
     gripper_action = invert_gripper_actions(tf.clip_by_value(gripper_action, 0, 1))
@@ -835,49 +774,6 @@ def robo_set_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
         ),
         axis=-1,
     )
-    return trajectory
-
-
-def rh20t_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
-    trajectory["action"] = tf.concat(
-        (
-            trajectory["action"]["tcp_base"],
-            tf.cast(trajectory["action"]["gripper"][:, None], tf.float32),
-        ),
-        axis=-1,
-    )
-    trajectory["observation"]["proprio"] = tf.concat(
-        (
-            trajectory["observation"]["tcp_base"],
-            trajectory["observation"]["gripper_width"][..., None],
-        ),
-        axis=-1,
-    )
-    return trajectory
-
-def usc_cloth_sim_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
-    #trajectory["observation"]["image"] = tf.image.resize(
-    #                                         trajectory["observation"]["image"],
-    #                                         [64, 64, 3],
-    #                                         method=tf.image.ResizeMethod.BILINEAR)
-    return trajectory
-
-def plex_robosuite_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
-    return trajectory
-
-def conq_hose_manipulation_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
-    return trajectory
-
-def tdroid_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
-    trajectory["action"] = tf.concat(
-        [
-            trajectory["action"][:, :6],
-            binarize_gripper_actions(trajectory["action"][:, -1])[:, None],
-        ],
-        axis=1,
-    )
-    trajectory["observation"]["EEF_state"] = trajectory["observation"]["cartesian_position"][:, :6]
-    trajectory["observation"]["gripper_state"] = trajectory["observation"]["gripper_position"][:, -1:]
     return trajectory
 
 def identity_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
@@ -919,15 +815,15 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "bc_z": bc_z_dataset_transform,
     "utokyo_pr2_opening_fridge_converted_externally_to_rlds": tokyo_pr2_opening_fridge_dataset_transform,
     "utokyo_pr2_tabletop_manipulation_converted_externally_to_rlds": tokyo_pr2_tabletop_manipulation_dataset_transform,
-    "utokyo_xarm_pick_and_place_converted_externally_to_rlds": utokyo_xarm_pick_place_dataset_transform,
+    "utokyo_xarm_pick_and_place_converted_externally_to_rlds": identity_transform,
     "utokyo_xarm_bimanual_converted_externally_to_rlds": utokyo_xarm_bimanual_dataset_transform,
     "robo_net": robo_net_dataset_transform,
     "berkeley_mvp_converted_externally_to_rlds": berkeley_mvp_dataset_transform,
-    "berkeley_rpt_converted_externally_to_rlds": berkeley_rpt_dataset_transform,
+    "berkeley_rpt_converted_externally_to_rlds": identity_transform,
     "kaist_nonprehensile_converted_externally_to_rlds": kaist_nonprehensible_dataset_transform,
     "stanford_mask_vit_converted_externally_to_rlds": stanford_mask_vit_dataset_transform,
     "tokyo_u_lsmo_converted_externally_to_rlds": tokyo_lsmo_dataset_transform,
-    "dlr_sara_pour_converted_externally_to_rlds": dlr_sara_pour_dataset_transform,
+    "dlr_sara_pour_converted_externally_to_rlds": identity_transform,
     "dlr_sara_grid_clamp_converted_externally_to_rlds": dlr_sara_grid_clamp_dataset_transform,
     "dlr_edan_shared_control_converted_externally_to_rlds": dlr_edan_shared_control_dataset_transform,
     "asu_table_top_converted_externally_to_rlds": asu_table_top_dataset_transform,
@@ -948,10 +844,9 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "fmb": fmb_transform,
     "dobbe": dobbe_dataset_transform,
     "robo_set": robo_set_dataset_transform,
-    "rh20t": rh20t_dataset_transform,
-    "usc_cloth_sim_converted_externally_to_rlds": usc_cloth_sim_transform,
-    "plex_robosuite": plex_robosuite_transform,
-    "conq_hose_manipulation": conq_hose_manipulation_transform,
+    "usc_cloth_sim_converted_externally_to_rlds": identity_transform,
+    "plex_robosuite": identity_transform,
+    "conq_hose_manipulation": identity_transform,
     "io_ai_tech": identity_transform,
     "spoc": identity_transform,
 }

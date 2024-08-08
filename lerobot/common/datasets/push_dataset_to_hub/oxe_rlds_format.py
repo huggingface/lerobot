@@ -35,12 +35,12 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import torch
 import tqdm
+import yaml
 from datasets import Dataset, Features, Image, Sequence, Value
 from PIL import Image as PILImage
 
-#from lerobot.common.datasets.push_dataset_to_hub.oxe.configs import OXE_DATASET_CONFIGS
-from lerobot.common.datasets.push_dataset_to_hub.oxe.transforms import OXE_STANDARDIZATION_TRANSFORMS
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
+from lerobot.common.datasets.push_dataset_to_hub.oxe.transforms import OXE_STANDARDIZATION_TRANSFORMS
 from lerobot.common.datasets.push_dataset_to_hub.utils import (
     concatenate_episodes,
     get_default_encoding,
@@ -52,8 +52,6 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
-# load OXE_DATASET_CONFIGS from yaml file
-import yaml
 with open('lerobot/common/datasets/push_dataset_to_hub/oxe/configs.yaml', 'r') as f:
     _oxe_list = yaml.safe_load(f)
 OXE_DATASET_CONFIGS = _oxe_list['OXE_DATASET_CONFIGS']
