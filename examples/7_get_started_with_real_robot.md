@@ -340,7 +340,7 @@ for _ in tqdm.tqdm(range(30*200)):
 
 Teleoperation is useful to record data. To this end, you can use `teleop_step` from [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) with `record_data=True`. It outputs the follower position as `"observation.state"` and the leader position as `"action"`. It also converts the numpy arrays into torch tensors, and concatenates the positions in the case of two leader and two follower arms like in Aloha.
 
-Run this code to try data recording during a teleoperation step:
+Run this code several time to see how (slowly) moving the leader arm affects the observation and action:
 ```python
 observation, action = robot.teleop_step(record_data=True)
 leader_pos = robot.leader_arms["main"].read("Present_Position")
@@ -363,7 +363,7 @@ robot.disconnect()
 
 ### Add your cameras with OpenCVCamera
 
-**Setting up a Virtual Camera Port on Linux**
+**(Optional) Use your phone as camera on Linux**
 
 If you are using a built in laptop camera, or webcam you may ignore these steps. However, if you would like to use your phone as a camera on Linux, you must first set up a virtual camera port.
 
@@ -394,6 +394,17 @@ v4l2-ctl --list-devices
 >>> /dev/video1
 ```
 From here, you should be able to proceed with the rest of the tutorial.
+
+**(Optional) Use your iPhone as a camera on MacOS**
+
+If not already the case, enable the Continuity Camera feature:
+- Make sure your Mac has macOS 13 or later and your iPhone has iOS 16 or later.
+- Sign in both devices with the same Apple ID.
+- Connect with a USB cable for a wired connection or turn on Wi-Fi and Bluetooth on both devices.
+
+For more info, see [Apple support](https://support.apple.com/en-gb/guide/mac-help/mchl77879b8a/mac).
+
+Your iPhone should be detected in the next section.
 
 **Instantiate**
 
@@ -517,7 +528,7 @@ python lerobot/scripts/control_robot.py teleoperate \
 >>> TODO
 ```
 
-Note, you can override any entry in the yaml file using `--robot-overrides` and the [Hydra synthax](https://hydra.cc/docs). If needed, you can override the ports like this:
+Note: you can override any entry in the yaml file using `--robot-overrides` and the [Hydra synthax](https://hydra.cc/docs). If needed, you can override the ports like this:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
@@ -526,13 +537,11 @@ python lerobot/scripts/control_robot.py teleoperate \
     follower_arms.main.port=/dev/tty.usbmodem575E0032081
 ```
 
-If you don't have any camera, you can remove them dynamically with this weird hydra synthax `'~cameras'`:
+Importantly: If you don't have any camera, you can remove them dynamically with this [hydra.cc](https://hydra.cc/docs/advanced/override_grammar/basic) syntax `'~cameras'`:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
   --robot-overrides \
-    leader_arms.main.port=/dev/tty.usbmodem575E0031751 \
-    follower_arms.main.port=/dev/tty.usbmodem575E0032081
     '~cameras'
 ```
 
@@ -544,6 +553,7 @@ Using what you've learned previously, you can now easily record a dataset of sta
 
 Try this code to record 30 seconds at 60 fps:
 ```python
+import time
 from lerobot.scripts.control_robot import busy_wait
 
 record_time_s = 30
@@ -611,6 +621,10 @@ It will output something like:
 TODO
 ```
 
+TODO add a video tutorial
+
+Note: Remember to add `--robot-overrides '~cameras'` if you don't have any cameras and you still use the default `koch.yaml` configuration.
+
 At the end, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/koch_test) that you can obtain by running:
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/koch_test
@@ -620,7 +634,11 @@ echo https://huggingface.co/datasets/${HF_USER}/koch_test
 
 Now that you are used to data recording, you can record a bigger dataset for training. A good hello world task consists in grasping an object at various locations and placing it in a bin. We recommend to record a minimum of 50 episodes with 10 episodes per location, to not move the cameras and to grasp with a consistent behavior.
 
-In the next sections, you will train your neural network. Once it can grasp pretty well, you can introduce slightly more variance in during data collection such as more grasp locations, various grasping behaviors, various positions for the cameras, etc.
+In the next sections, you will train your neural network. Once it can grasp pretty well, you can introduce slightly more variance during data collection such as more grasp locations, various grasping behaviors, various positions for the cameras, etc.
+
+Don't be greedy or it won't work!
+
+In the coming months, we plan to add a fundational model for robotics. We expect that finetuning it will lead to stronger generalization abilities.
 
 ### Visualize all episodes
 
@@ -656,9 +674,9 @@ Your robot should reproduce very similar movements as what you recorded. For ins
 
 ### Use our `train` script
 
-Then, you can train a policy to control your robot using the [`lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required.
+Then, you can train a policy to control your robot by running [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. We give an example command later on.
 
-Firstly, provide your dataset with `dataset_repo_id=${HF_USER}/koch_test`.
+Firstly, provide your dataset as argument with `dataset_repo_id=${HF_USER}/koch_test`.
 
 Secondly, provide a policy with `policy=act_koch_real`. This loads configurations from [`lerobot/configs/policy/act_koch_real.yaml`](../lerobot/configs/policy/act_koch_real.yaml). Importantly, this policy uses 2 cameras as input `laptop` and `phone`. If your dataset has different cameras, update the yaml file to account for it in the following parts:
 ```yaml
@@ -683,7 +701,7 @@ override_dataset_stats:
 ...
 ```
 
-Thirdly, provide an environment with `env=koch_real`. This loads configurations from [`lerobot/configs/env/koch_real.yaml`](../lerobot/configs/env/koch_real.yaml). It looks like
+Thirdly, provide an environment as argument with `env=koch_real`. This loads configurations from [`lerobot/configs/env/koch_real.yaml`](../lerobot/configs/env/koch_real.yaml). It looks like
 ```yaml
 fps: 30
 env:
@@ -695,9 +713,9 @@ env:
 ```
 It should match your dataset (e.g. `fps: 30`) and your robot (e.g. `state_dim: 6` and `action_dim: 6`). We are still working on simplifying this in future versions of `lerobot`.
 
-Optionnaly, you can use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots with `wandb.enable=true`. Make sure you are logged in by running `wandb login`.
+Optionnaly, you can use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots with `wandb.enable=true` as agument. Make sure you are logged in by running `wandb login`.
 
-Finally, use `DATA_DIR=data` to access your dataset stored in your local `data` directory. If you dont provide `DATA_DIR`, your dataset will be downloaded from Hugging Face hub to your cache folder `$HOME/.cache/hugginface`. In future versions of `lerobot`, both directories will be in sync.
+Finally, add `DATA_DIR=data` before `python lerobot/scripts/train.py` to access your dataset stored in your local `data` directory. If you dont provide `DATA_DIR`, your dataset will be downloaded from Hugging Face hub to your cache folder `$HOME/.cache/hugginface`. In future versions of `lerobot`, both directories will be in sync.
 
 Now, start training:
 ```bash
