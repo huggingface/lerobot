@@ -37,10 +37,14 @@ def find_camera_indices(raise_when_empty=False, max_index_search_range=MAX_OPENC
     if platform.system() == "Linux":
         # Linux uses camera ports
         print("Linux detected. Finding available camera indices through scanning '/dev/video*' ports")
-        possible_camera_ids = [int(str(port).replace("/dev/video", "")) for port in Path("/dev").glob("video*")]
+        possible_camera_ids = []
+        for port in Path("/dev").glob("video*"):
+            camera_idx = int(str(port).replace("/dev/video", ""))
+            possible_camera_ids.append(camera_idx)
     else:
         print(
-            f"Mac or Windows detected. Finding available camera indices through scanning all indices from 0 to {MAX_OPENCV_INDEX}"
+            "Mac or Windows detected. Finding available camera indices through "
+            f"scanning all indices from 0 to {MAX_OPENCV_INDEX}"
         )
         possible_camera_ids = range(max_index_search_range)
 
@@ -56,7 +60,8 @@ def find_camera_indices(raise_when_empty=False, max_index_search_range=MAX_OPENC
 
     if raise_when_empty and len(camera_ids) == 0:
         raise OSError(
-            "Not a single camera was detected. Try re-plugging, or re-installing `opencv2`, or your camera driver, or make sure your camera is compatible with opencv2."
+            "Not a single camera was detected. Try re-plugging, or re-installing `opencv2`, "
+            "or your camera driver, or make sure your camera is compatible with opencv2."
         )
 
     return camera_ids
@@ -81,7 +86,8 @@ def save_images_from_cameras(
         camera = OpenCVCamera(cam_idx, fps=fps, width=width, height=height)
         camera.connect()
         print(
-            f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
+            f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, "
+            f"height={camera.height}, color_mode={camera.color_mode})"
         )
         cameras.append(camera)
 

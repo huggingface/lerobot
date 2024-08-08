@@ -367,7 +367,7 @@ robot.disconnect()
 
 If you are using a built in laptop camera, or webcam you may ignore these steps. However, if you would like to use your phone as a camera on Linux, you must first set up a virtual camera port.
 
-1. Install `v4l2loopback-dkms`, which is required for creating virtual camera devices, using the following command: 
+1. Install `v4l2loopback-dkms`, which is required for creating virtual camera devices, using the following command:
   ```python
   sudo apt-get install v4l2loopback-dkms
   ```
@@ -376,7 +376,7 @@ If you are using a built in laptop camera, or webcam you may ignore these steps.
   ```python
   flatpak install flathub com.obsproject.Studio
   ```
-4. Install the DroidCam OBS plugin. Follow the steps based on your operating system. For Linux: 
+4. Install the DroidCam OBS plugin. Follow the steps based on your operating system. For Linux:
   ```python
   flatpak install flathub com.obsproject.Studio.Plugin.DroidCam
   ```
