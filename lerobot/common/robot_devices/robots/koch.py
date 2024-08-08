@@ -309,9 +309,11 @@ class KochRobot:
             with open(self.calibration_path, "rb") as f:
                 calibration = pickle.load(f)
         else:
+            print(f"Missing calibration file '{self.calibration_path}'. Starting calibration precedure.")
             # Run calibration process which begins by reseting all arms
             calibration = self.run_calibration()
 
+            print(f"Calibration is done! Saving calibration file '{self.calibration_path}'")
             self.calibration_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.calibration_path, "wb") as f:
                 pickle.dump(calibration, f)
