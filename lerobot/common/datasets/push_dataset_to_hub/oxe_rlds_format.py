@@ -52,13 +52,13 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
-np.set_printoptions(precision=2)
-
 # load OXE_DATASET_CONFIGS from yaml file
 import yaml
 with open('lerobot/common/datasets/push_dataset_to_hub/oxe/configs.yaml', 'r') as f:
     _oxe_list = yaml.safe_load(f)
 OXE_DATASET_CONFIGS = _oxe_list['OXE_DATASET_CONFIGS']
+
+np.set_printoptions(precision=2)
 
 def tf_to_torch(data):
     return torch.from_numpy(data.numpy())
@@ -142,7 +142,7 @@ def load_from_raw(
 
     image_keys = OXE_DATASET_CONFIGS[oxe_dataset_name]['image_obs_keys']
     lang_key = "language_instruction" if "language_instruction" in dataset.element_spec else None
-    
+
     print(" - image_keys: ", image_keys)
     print(" - lang_key: ", lang_key)
 
