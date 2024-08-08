@@ -66,6 +66,8 @@ def get_from_raw_to_lerobot_format_fn(raw_format: str):
         from lerobot.common.datasets.push_dataset_to_hub.umi_zarr_format import from_raw_to_lerobot_format
     elif raw_format == "aloha_hdf5":
         from lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format import from_raw_to_lerobot_format
+    elif "oxe_rlds" in raw_format:
+        from lerobot.common.datasets.push_dataset_to_hub.oxe_rlds_format import from_raw_to_lerobot_format
     elif raw_format == "dora_parquet":
         from lerobot.common.datasets.push_dataset_to_hub.dora_parquet_format import from_raw_to_lerobot_format
     elif raw_format == "xarm_pkl":
@@ -189,9 +191,27 @@ def push_dataset_to_hub(
 
     # convert dataset from original raw format to LeRobot format
     from_raw_to_lerobot_format = get_from_raw_to_lerobot_format_fn(raw_format)
-    hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(
-        raw_dir, videos_dir, fps, video, episodes, encoding
-    )
+
+    if "oxe_rlds" in raw_format:
+        # User could provide official OXE dataset name to convert it to LeRobot format
+        # the raw_format str is as such:
+        # oxe_rlds (default)
+        # oxe_rlds.bridge_orig: (with bridge_orig as oxe_dataset_name)
+        splited_raw_format = raw_format.split(".")
+        assert len(splited_raw_format) <= 2, f"Invalid raw_format: {raw_format}"
+        if len(splited_raw_format) == 2:
+            oxe_dataset_name = splited_raw_format[1]
+            print(f"Converting dataset [{oxe_dataset_name}] from 'oxe_rlds' to LeRobot format.")
+        else:
+            oxe_dataset_name = None
+
+        hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(
+            raw_dir, videos_dir, fps, video, episodes, encoding, oxe_dataset_name=oxe_dataset_name
+        )
+    else:
+        hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(
+            raw_dir, videos_dir, fps, video, episodes, encoding
+        )
 
     lerobot_dataset = LeRobotDataset.from_preloaded(
         repo_id=repo_id,
@@ -319,6 +339,13 @@ def main():
         type=int,
         default=0,
         help="When set to 1, resumes a previous run.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        required=False,
+        default="/tmp",
+        help="Directory to store the temporary videos and images generated while creating the dataset.",
     )
     parser.add_argument(
         "--tests-data-dir",

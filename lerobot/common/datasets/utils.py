@@ -61,17 +61,35 @@ def unflatten_dict(d, sep="/"):
     return outdict
 
 
-def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
+def hf_transform_to_torch(
+    items_dict: dict[torch.Tensor | None],
+    lang_tokenizer_name: str = "t5-small",
+):
     """Get a transform function that convert items from Hugging Face dataset (pyarrow)
     to torch tensors. Importantly, images are converted from PIL, which corresponds to
     a channel last representation (h w c) of uint8 type, to a torch image representation
     with channel first (c h w) of float32 type in range [0,1].
     """
+    # tokenize language instructions if it exists
+    if "language_instruction" in items_dict:
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(lang_tokenizer_name)
+        tokenizer_kwargs = {
+            "max_length": 64,  # NOTE: adjust this value accordingly
+            "padding": "max_length",
+            "truncation": True,
+            "return_tensors": "pt",
+        }
+
     for key in items_dict:
         first_item = items_dict[key][0]
         if isinstance(first_item, PILImage.Image):
             to_tensor = transforms.ToTensor()
             items_dict[key] = [to_tensor(img) for img in items_dict[key]]
+        elif isinstance(first_item, str):
+            # convert str to lang embeddings via language tokenizer
+            items_dict[key] = [tokenizer.encode(x, **tokenizer_kwargs) for x in items_dict[key]]
         elif isinstance(first_item, dict) and "path" in first_item and "timestamp" in first_item:
             # video frame will be processed downstream
             pass
