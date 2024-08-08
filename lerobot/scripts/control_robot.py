@@ -366,6 +366,8 @@ def record(
             cv2.waitKey(1)
 
         dt_s = time.perf_counter() - now
+        if fps is None:
+            fps = 30  # or any reasonable default value
         busy_wait(1 / fps - dt_s)
 
         dt_s = time.perf_counter() - now

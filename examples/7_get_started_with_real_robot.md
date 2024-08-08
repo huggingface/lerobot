@@ -398,7 +398,7 @@ If you are using a built in laptop camera, or webcam you may ignore these steps.
 sudo apt-get install v4l2loopback-dkms
 ```
 2. Download [DroidCam](https://droidcam.app) on your phone (available for both iOS and Android).
-3. Install `OBS Studio`. Follow the steps based on your operating system. For Linux, you can use Flatpak:
+3. Install [OBS Studio](https://obsproject.com/). Follow the steps based on your operating system. For Linux, you can use [Flatpak](https://flatpak.org/):
 ```python
 flatpak install flathub com.obsproject.Studio
 ```
@@ -410,14 +410,23 @@ flatpak install flathub com.obsproject.Studio.Plugin.DroidCam
 ```python
 flatpak run com.obsproject.Studio
 ```
-6. Add your phone as a source. Follow the instructions [here](https://droidcam.app/obs/usage).
-7. In OBS Studio, start the virtual camera. Follow the instructions [here](https://obsproject.com/kb/virtual-camera-guide).
-8. Use `v4l2-ctl` to ensure the virtual camera is set up correctly, and check the output shows a `VirtualCam`, as in the example below.
+6. Add your phone as a source. Follow the instructions [here](https://droidcam.app/obs/usage). Be sure to set the resolution to `640x480`.
+7. Go to `File>Settings>Video`. Change the `Base(Canvas) Resolution` and the `Output(Scaled) Resolution` to `640x480` by manually typing it in.
+8. In OBS Studio, start the virtual camera. Follow the instructions [here](https://obsproject.com/kb/virtual-camera-guide).
+9.  Use `v4l2-ctl` to ensure the virtual camera is set up correctly, and check the output shows a `VirtualCam`, as in the example below.
 ```python
 v4l2-ctl --list-devices
 
 >>> VirtualCam (platform:v4l2loopback-000):
 >>> /dev/video1
+```
+10.  Check that your Virtual camera output resolution is `640x480` as shown below. Note: If the resolution is not correct you will have to delete the Virtual Camera port and try again as it cannot be changed.
+```python
+v4l2-ctl -d /dev/video1 --get-fmt-video
+
+>>> Format Video Capture:
+>>>	Width/Height      : 640/480
+>>>	Pixel Format      : 'YUYV' (YUYV 4:2:2)
 ```
 From here, you should be able to proceed with the rest of the tutorial.
 
