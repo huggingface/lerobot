@@ -51,6 +51,7 @@ def droid_baseact_transform_fn():
 
     return droid_baseact_transform
 
+
 def bridge_oxe_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     """
     Applies to version of Bridge V2 in Open X-Embodiment mixture.
@@ -775,6 +776,7 @@ def robo_set_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
         axis=-1,
     )
     return trajectory
+
 
 def identity_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     return trajectory

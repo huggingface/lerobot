@@ -52,11 +52,13 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
-with open('lerobot/common/datasets/push_dataset_to_hub/oxe/configs.yaml', 'r') as f:
+with open("lerobot/common/datasets/push_dataset_to_hub/oxe/configs.yaml", "r") as f:
     _oxe_list = yaml.safe_load(f)
-OXE_DATASET_CONFIGS = _oxe_list['OXE_DATASET_CONFIGS']
+
+OXE_DATASET_CONFIGS = _oxe_list["OXE_DATASET_CONFIGS"]
 
 np.set_printoptions(precision=2)
+
 
 def tf_to_torch(data):
     return torch.from_numpy(data.numpy())
@@ -121,7 +123,7 @@ def load_from_raw(
         split="all",
         decoders={"steps": tfds.decode.SkipDecoding()},
     )
-       
+
     dataset_info = ds_builder.info
     print("dataset_info: ", dataset_info)
 
@@ -138,7 +140,7 @@ def load_from_raw(
         transform_fn = OXE_STANDARDIZATION_TRANSFORMS[oxe_dataset_name]
         dataset = dataset.map(transform_fn)
 
-    image_keys = OXE_DATASET_CONFIGS[oxe_dataset_name]['image_obs_keys']
+    image_keys = OXE_DATASET_CONFIGS[oxe_dataset_name]["image_obs_keys"]
     lang_key = "language_instruction" if "language_instruction" in dataset.element_spec else None
 
     print(" - image_keys: ", image_keys)
@@ -147,10 +149,10 @@ def load_from_raw(
     it = iter(dataset)
 
     ep_dicts = []
-    #Init temp path to save ep_dicts in case of crash
-    tmp_ep_dicts_dir = videos_dir.parent.joinpath('ep_dicts')
+    # Init temp path to save ep_dicts in case of crash
+    tmp_ep_dicts_dir = videos_dir.parent.joinpath("ep_dicts")
     tmp_ep_dicts_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # check if ep_dicts have already been saved in /tmp
     starting_ep_idx = 0
     saved_ep_dicts = [ep.__str__() for ep in tmp_ep_dicts_dir.iterdir()]
@@ -169,7 +171,7 @@ def load_from_raw(
         # convert episodes index to sorted list
         episodes = sorted(episodes)
 
-    for ep_idx in tqdm.tqdm(range(starting_ep_idx,ds_length)):
+    for ep_idx in tqdm.tqdm(range(starting_ep_idx, ds_length)):
         episode = next(it)
 
         # if user specified episodes, skip the ones not in the list
@@ -182,7 +184,7 @@ def load_from_raw(
                 episodes.pop(0)
             else:
                 continue  # skip
-        
+
         num_frames = episode["action"].shape[0]
 
         ###########################################################
@@ -265,7 +267,10 @@ def load_from_raw(
         ep_dict["next.reward"] = rewards
         ep_dict["next.done"] = done
 
-        torch.save(ep_dict, tmp_ep_dicts_dir.joinpath('ep_dict_'+'0'*(10-len(str(ep_idx)))+str(ep_idx)+'.pt'))
+        torch.save(
+            ep_dict,
+            tmp_ep_dicts_dir.joinpath("ep_dict_" + "0" * (10 - len(str(ep_idx))) + str(ep_idx) + ".pt"),
+        )
 
         ep_dicts.append(ep_dict)
 
@@ -325,13 +330,15 @@ def from_raw_to_lerobot_format(
     oxe_dataset_name: str | None = None,
 ):
     """This is a test impl for rlds conversion"""
-    if "fps" not in OXE_DATASET_CONFIGS[oxe_dataset_name]:
+    if oxe_dataset_name is None:
+        # set a default rlds frame rate if the dataset is not from oxe
+        fps = 5
+    elif "fps" not in OXE_DATASET_CONFIGS[oxe_dataset_name]:
         raise ValueError(
-            "fps for this dataset is not specified in oxe/configs.py yet,"
-            "means it is not yet tested"
+            "fps for this dataset is not specified in oxe/configs.py yet," "means it is not yet tested"
         )
     fps = OXE_DATASET_CONFIGS[oxe_dataset_name]["fps"]
-        
+
     data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding, oxe_dataset_name)
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
@@ -342,7 +349,7 @@ def from_raw_to_lerobot_format(
     }
     if video:
         info["encoding"] = get_default_encoding()
-    
+
     return hf_dataset, episode_data_index, info
 
 
