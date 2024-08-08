@@ -745,24 +745,6 @@ huggingface-cli upload ${HF_USER}/act_koch_test_${CKPT} \
   outputs/train/act_koch_test/checkpoints/${CKPT}/pretrained_model
 ```
 
-### Visualize predictions on training set
-
-Optionnaly, you can visualize the predictions of your neural network on your training data. This is a useful debugging tool. You can provide a checkpoint directory as input (e.g. `outputs/train/act_koch_test/checkpoints/last/pretrained_model`). For instance:
-```bash
-python lerobot/scripts/visualize_dataset_html.py \
-  --repo-id ${HF_USER}/koch_test \
-  --episodes 0 1 2 \
-  -p outputs/train/act_koch_test/checkpoints/last/pretrained_model
-```
-
-You can also provide a model repository as input (e.g. `${HF_USER}/act_koch_test`). For instance:
-```bash
-python lerobot/scripts/visualize_dataset_html.py \
-  --repo-id ${HF_USER}/koch_test \
-  --episodes 0 1 2 \
-  -p ${HF_USER}/act_koch_test
-```
-
 ## 5. Evaluate your policy
 
 Now that you have a policy checkpoint, you can easily control your robot with it using:
