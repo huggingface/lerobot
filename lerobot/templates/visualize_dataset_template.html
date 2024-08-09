@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- # TODO(rcadene, mishig25): store the js files locally -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.5/cdn.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/dygraphs@2.2.1/dist/dygraph.min.js" type="text/javascript"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <title>{{ dataset_info.repo_id }} episode {{ episode_id }}</title>
+</head>
+
+<!-- Use [Alpin.js](https://alpinejs.dev), a lightweight and easy to learn JS framework -->
+<!-- Use [tailwindcss](https://tailwindcss.com/), CSS classes for styling html -->
+<!-- Use [dygraphs](https://dygraphs.com/), a lightweight JS charting library -->
+<body class="flex h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()" @keydown.window="(e) => {
+    // Use the space bar to play and pause, instead of default action (e.g. scrolling)
+    const { keyCode, key } = e;
+    if (keyCode === 32 || key === ' ') {
+        e.preventDefault();
+        $refs.btnPause.classList.contains('hidden') ? $refs.btnPlay.click() : $refs.btnPause.click();
+    }else if (key === 'ArrowDown' || key === 'ArrowUp'){
+        const nextEpisodeId = key === 'ArrowDown' ? {{ episode_id }} + 1 : {{ episode_id }} - 1;
+        const lowestEpisodeId = {{ episodes }}.at(0);
+        const highestEpisodeId = {{ episodes }}.at(-1);
+        if(nextEpisodeId >= lowestEpisodeId && nextEpisodeId <= highestEpisodeId){
+            window.location.href = `./episode_${nextEpisodeId}`;
+        }
+    }
+}">
+    <!-- Sidebar -->
+    <div x-ref="sidebar" class="w-60 bg-slate-900 p-5 break-words max-h-screen overflow-y-auto">
+        <h1 class="mb-4 text-xl font-semibold">{{ dataset_info.repo_id }}</h1>
+
+        <ul>
+            <li>
+                Number of samples/frames: {{ dataset_info.num_samples }}
+            </li>
+            <li>
+                Number of episodes: {{ dataset_info.num_episodes }}
+            </li>
+            <li>
+                Frames per second: {{ dataset_info.fps }}
+            </li>
+        </ul>
+
+        <p>Episodes:</p>
+        <ul class="ml-2">
+            {% for episode in episodes %}
+            <li class="font-mono text-sm mt-0.5">
+                <a href="episode_{{ episode }}" class="underline {% if episode_id == episode %}font-bold -ml-1{% endif %}">
+                    Episode {{ episode }}
+                </a>
+            </li>
+            {% endfor %}
+        </ul>
+
+    </div>
+
+    <!-- Toggle sidebar button -->
+    <button class="flex items-center opacity-50 hover:opacity-100 mx-1"
+        @click="() => ($refs.sidebar.classList.toggle('hidden'))" title="Toggle sidebar">
+        <div class="bg-slate-500 w-2 h-10 rounded-full"></div>
+    </button>
+
+    <!-- Content -->
+    <div class="flex-1 max-h-screen flex flex-col gap-4 overflow-y-auto">
+        <h1 class="text-xl font-bold mt-4 font-mono">
+            Episode {{ episode_id }}
+        </h1>
+
+        <!-- Videos -->
+        <div class="flex flex-wrap gap-1">
+            {% for video_info in videos_info %}
+            <div class="max-w-96">
+                <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
+                <video autoplay muted loop type="video/mp4" class="min-w-64" @timeupdate="() => {
+                    if (video.duration) {
+                      const time = video.currentTime;
+                      const pc = (100 / video.duration) * time;
+                      $refs.slider.value = pc;
+                      dygraphTime = time;
+                      dygraphIndex = Math.floor(pc * dygraph.numRows() / 100);
+                      dygraph.setSelection(dygraphIndex, undefined, true, true);
+
+                      $refs.timer.textContent = formatTime(time) + ' / ' + formatTime(video.duration);
+
+                      updateTimeQuery(time.toFixed(2));
+                    }
+                }" @ended="() => {
+                    $refs.btnPlay.classList.remove('hidden');
+                    $refs.btnPause.classList.add('hidden');
+                }"
+                    @loadedmetadata="() => ($refs.timer.textContent = formatTime(0) + ' / ' + formatTime(video.duration))">
+                    <source src="{{ video_info.url }}">
+                    Your browser does not support the video tag.
+                </video>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Shortcuts info -->
+        <div class="text-sm hidden md:block">
+            Hotkeys: <span class="font-mono">Space</span> to pause/unpause, <span class="font-mono">Arrow Down</span> to go to next episode, <span class="font-mono">Arrow Up</span> to go to previous episode.
+        </div>
+
+        <!-- Controllers -->
+        <div class="flex gap-1 text-3xl items-center">
+            <button x-ref="btnPlay" class="-rotate-90 hidden" class="-rotate-90" title="Play. Toggle with Space" @click="() => {
+                videos.forEach(video => video.play());
+                $refs.btnPlay.classList.toggle('hidden');
+                $refs.btnPause.classList.toggle('hidden');
+            }">🔽</button>
+            <button x-ref="btnPause" title="Pause. Toggle with Space" @click="() => {
+                videos.forEach(video => video.pause());
+                $refs.btnPlay.classList.toggle('hidden');
+                $refs.btnPause.classList.toggle('hidden');
+            }">⏸️</button>
+            <button title="Jump backward 5 seconds"
+                @click="() => (videos.forEach(video => (video.currentTime -= 5)))">⏪</button>
+            <button title="Jump forward 5 seconds"
+                @click="() => (videos.forEach(video => (video.currentTime += 5)))">⏩</button>
+            <button title="Rewind from start"
+                @click="() => (videos.forEach(video => (video.currentTime = 0.0)))">↩️</button>
+            <input x-ref="slider" max="100" min="0" step="1" type="range" value="0" class="w-80 mx-2" @input="() => {
+                const sliderValue = $refs.slider.value;
+                $refs.btnPause.click();
+                videos.forEach(video => {
+                    const time = (video.duration * sliderValue) / 100;
+                    video.currentTime = time;
+                });
+            }" />
+            <div x-ref="timer" class="font-mono text-sm border border-slate-500 rounded-lg px-1 py-0.5 shrink-0">0:00 /
+                0:00
+            </div>
+        </div>
+
+        <!-- Graph -->
+        <div class="flex gap-2 mb-4 flex-wrap">
+            <div>
+                <div id="graph" @mouseleave="() => {
+                    dygraph.setSelection(dygraphIndex, undefined, true, true);
+                    dygraphTime = video.currentTime;
+                }">
+                </div>
+                <p x-ref="graphTimer" class="font-mono ml-14 mt-4"
+                    x-init="$watch('dygraphTime', value => ($refs.graphTimer.innerText = `Time: ${dygraphTime.toFixed(2)}s`))">
+                    Time: 0.00s
+                </p>
+            </div>
+
+            <table class="text-sm border-collapse border border-slate-700" x-show="currentFrameData">
+                <thead>
+                    <tr>
+                        <th></th>
+                        <template x-for="(_, colIndex) in Array.from({length: nColumns}, (_, index) => index)">
+                            <th class="border border-slate-700">
+                                <div class="flex gap-x-2 justify-between px-2">
+                                    <input type="checkbox" :checked="isColumnChecked(colIndex)"
+                                        @change="toggleColumn(colIndex)">
+                                    <p x-text="`${columnNames[colIndex]}`"></p>
+                                </div>
+                            </th>
+                        </template>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="(row, rowIndex) in rows">
+                        <tr class="odd:bg-gray-800 even:bg-gray-900">
+                            <td class="border border-slate-700">
+                                <div class="flex gap-x-2 w-24 font-semibold px-1">
+                                    <input type="checkbox" :checked="isRowChecked(rowIndex)"
+                                        @change="toggleRow(rowIndex)">
+                                    <p x-text="`Motor ${rowIndex}`"></p>
+                                </div>
+                            </td>
+                            <template x-for="(cell, colIndex) in row">
+                                <td x-show="cell" class="border border-slate-700">
+                                    <div class="flex gap-x-2 w-24 justify-between px-2">
+                                        <input type="checkbox" x-model="cell.checked" @change="updateTableValues()">
+                                        <span x-text="`${cell.value.toFixed(2)}`"
+                                            :style="`color: ${cell.color}`"></span>
+                                    </div>
+                                </td>
+                            </template>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+
+            <div id="labels" class="hidden">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function createAlpineData() {
+            return {
+                // state
+                dygraph: null,
+                currentFrameData: null,
+                columnNames: ["state", "action", "pred action"],
+                nColumns: {% if has_policy %}3{% else %}2{% endif %},
+                checked: [],
+                dygraphTime: 0.0,
+                dygraphIndex: 0,
+                videos: null,
+                video: null,
+                colors: null,
+
+                // alpine initialization
+                init() {
+                    this.videos = document.querySelectorAll('video');
+                    this.video = this.videos[0];
+                    this.dygraph = new Dygraph(document.getElementById("graph"), '{{ ep_csv_url }}', {
+                        pixelsPerPoint: 0.01,
+                        legend: 'always',
+                        labelsDiv: document.getElementById('labels'),
+                        labelsKMB: true,
+                        strokeWidth: 1.5,
+                        pointClickCallback: (event, point) => {
+                            this.dygraphTime = point.xval;
+                            this.updateTableValues(this.dygraphTime);
+                        },
+                        highlightCallback: (event, x, points, row, seriesName) => {
+                            this.dygraphTime = x;
+                            this.updateTableValues(this.dygraphTime);
+                        },
+                        drawCallback: (dygraph, is_initial) => {
+                            if (is_initial) {
+                                // dygraph initialization
+                                this.dygraph.setSelection(this.dygraphIndex, undefined, true, true);
+                                this.colors = this.dygraph.getColors();
+                                this.checked = Array(this.colors.length).fill(true);
+
+                                const seriesNames = this.dygraph.getLabels().slice(1);
+                                const colors = [];
+                                const LIGHTNESS = [30, 65, 85]; // state_lightness, action_lightness, pred_action_lightness
+                                let lightnessIdx = 0;
+                                const chunkSize = Math.ceil(seriesNames.length / this.nColumns);
+                                for (let i = 0; i < seriesNames.length; i += chunkSize) {
+                                    const lightness = LIGHTNESS[lightnessIdx];
+                                    for (let hue = 0; hue < 360; hue += parseInt(360/chunkSize)) {
+                                        const color = `hsl(${hue}, 100%, ${lightness}%)`;
+                                        colors.push(color);
+                                    }
+                                    lightnessIdx += 1;
+                                }
+                                this.dygraph.updateOptions({ colors });
+                                this.colors = colors;
+
+                                this.updateTableValues();
+
+                                let url = new URL(window.location.href);
+                                let params = new URLSearchParams(url.search);
+                                let time = params.get("t");
+                                if(time){
+                                    time = parseFloat(time);
+                                    this.videos.forEach(video => (video.currentTime = time));
+                                }
+                            }
+                        },
+                    });
+                },
+
+                //#region Table Data
+
+                // turn dygraph's 1D data (at a given time t) to 2D data that whose columns names are defined in this.columnNames.
+                // 2d data view is used to create html table element.
+                get rows() {
+                    if (!this.currentFrameData) {
+                        return [];
+                    }
+                    const columnSize = Math.ceil(this.currentFrameData.length / this.nColumns);
+                    return Array.from({
+                        length: columnSize
+                    }, (_, rowIndex) => {
+                        const row = [
+                            this.currentFrameData[rowIndex] || null,
+                            this.currentFrameData[rowIndex + columnSize] || null,
+                        ];
+                        if (this.nColumns === 3) {
+                            row.push(this.currentFrameData[rowIndex + 2 * columnSize] || null)
+                        }
+                        return row;
+                    });
+                },
+                isRowChecked(rowIndex) {
+                    return this.rows[rowIndex].every(cell => cell && cell.checked);
+                },
+                isColumnChecked(colIndex) {
+                    return this.rows.every(row => row[colIndex] && row[colIndex].checked);
+                },
+                toggleRow(rowIndex) {
+                    const newState = !this.isRowChecked(rowIndex);
+                    this.rows[rowIndex].forEach(cell => {
+                        if (cell) cell.checked = newState;
+                    });
+                    this.updateTableValues();
+                },
+                toggleColumn(colIndex) {
+                    const newState = !this.isColumnChecked(colIndex);
+                    this.rows.forEach(row => {
+                        if (row[colIndex]) row[colIndex].checked = newState;
+                    });
+                    this.updateTableValues();
+                },
+
+                // given time t, update the values in the html table with "data[t]"
+                updateTableValues(time) {
+                    if (!this.colors) {
+                        return;
+                    }
+                    let pc = (100 / this.video.duration) * (time === undefined ? this.video.currentTime : time);
+                    if (isNaN(pc)) pc = 0;
+                    const index = Math.floor(pc * this.dygraph.numRows() / 100);
+                    // slice(1) to remove the timestamp point that we do not need
+                    const labels = this.dygraph.getLabels().slice(1);
+                    const values = this.dygraph.rawData_[index].slice(1);
+                    const checkedNew = this.currentFrameData ? this.currentFrameData.map(cell => cell.checked) : Array(
+                        this.colors.length).fill(true);
+                    this.currentFrameData = labels.map((label, idx) => ({
+                        label,
+                        value: values[idx],
+                        color: this.colors[idx],
+                        checked: checkedNew[idx],
+                    }));
+                    const shouldUpdateVisibility = !this.checked.every((value, index) => value === checkedNew[index]);
+                    if (shouldUpdateVisibility) {
+                        this.checked = checkedNew;
+                        this.dygraph.setVisibility(this.checked);
+                    }
+                },
+
+                //#endregion
+
+                updateTimeQuery(time) {
+                    let url = new URL(window.location.href);
+                    let params = new URLSearchParams(url.search);
+                    params.set("t", time);
+                    url.search = params.toString();
+                    window.history.replaceState({}, '', url.toString());
+                },
+
+
+                formatTime(time) {
+                    var hours = Math.floor(time / 3600);
+                    var minutes = Math.floor((time % 3600) / 60);
+                    var seconds = Math.floor(time % 60);
+                    return (hours > 0 ? hours + ':' : '') + (minutes < 10 ? '0' + minutes : minutes) + ':' + (seconds <
+                        10 ?
+                        '0' + seconds : seconds);
+                }
+            };
+        }
+    </script>
+</body>
+
+</html>

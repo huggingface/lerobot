@@ -16,7 +16,8 @@ jobs:
     name: CPU
     strategy:
       fail-fast: false
-    runs-on: ubuntu-latest
+    runs-on:
+      group: aws-general-8-plus
     container:
       image: huggingface/lerobot-cpu:latest
       options: --shm-size "16gb"
@@ -43,7 +44,8 @@ jobs:
     name: GPU
     strategy:
       fail-fast: false
-    runs-on: [single-gpu, nvidia-gpu, t4, ci]
+    runs-on:
+      group: aws-g6-4xlarge-plus
     env:
       CUDA_VISIBLE_DEVICES: "0"
       TEST_TYPE: "single_gpu"

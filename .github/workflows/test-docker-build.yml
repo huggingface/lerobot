@@ -42,26 +42,14 @@ jobs:
   build_modified_dockerfiles:
     name: Build modified Docker images
     needs: get_changed_files
-    runs-on: ubuntu-latest
+    runs-on:
+      group: aws-general-8-plus
     if: ${{ needs.get_changed_files.outputs.matrix }} != ''
     strategy:
       fail-fast: false
       matrix:
         docker-file: ${{ fromJson(needs.get_changed_files.outputs.matrix) }}
     steps:
-      - name: Cleanup disk
-        run: |
-          sudo df -h
-          # sudo ls -l /usr/local/lib/
-          # sudo ls -l /usr/share/
-          sudo du -sh /usr/local/lib/
-          sudo du -sh /usr/share/
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo du -sh /usr/local/lib/
-          sudo du -sh /usr/share/
-          sudo df -h
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

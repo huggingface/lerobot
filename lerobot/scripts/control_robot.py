@@ -211,7 +211,8 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None, fps=None
 
 @cache
 def is_headless():
-    if platform.system() == "Linux":
+    """Detects if python is running without a monitor."""
+    if platform.system() in ["Linux", "Darwin"]:
         display = os.environ.get("DISPLAY")
         if display is None or display == "":
             return True
@@ -365,6 +366,8 @@ def record(
             cv2.waitKey(1)
 
         dt_s = time.perf_counter() - now
+        if fps is None:
+            fps = 30  # or any reasonable default value
         busy_wait(1 / fps - dt_s)
 
         dt_s = time.perf_counter() - now
@@ -552,6 +555,7 @@ def record(
             fname = f"{key}_episode_{episode_index:06d}.mp4"
             video_path = local_dir / "videos" / fname
             if video_path.exists():
+                # Skip if video is already encoded. Could be the case when resuming data recording.
                 continue
             # note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
             # since video encoding with ffmpeg is already using multithreading.

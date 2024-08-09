@@ -173,7 +173,7 @@ follower_arm.connect()
 
 Congrats, now both arms are well configured and connected! You won't have to follow the configuration procedure ever again!
 
-Note: If the configuration didn't work, you might need to update the firmware using [DynamixelWizzard2](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_wizard2). You might also need to manually configure the motors. Similarly, you will need to connect each motor seperately to the bus. You will need to set correct indices and set their baudrates to `1000000`. Take a look at this youtube video for help: https://www.youtube.com/watch?v=JRRZW_l1V-U
+Note: If the configuration didn't work, you might need to update the firmware using [DynamixelWizzard2](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_wizard2). You might also need to manually configure the motors. Similarly, you will need to connect each motor seperately to the bus. You will need to set correct indices and set their baudrates to `1000000`. Take a look at this video for help: https://www.youtube.com/watch?v=JRRZW_l1V-U
 
 
 **Read and Write**
@@ -297,20 +297,45 @@ Then you will continue the procedure and move the leader to these positions:
 Run this code to calibrate and connect your robot:
 ```python
 robot.connect()
-
->>> TODO
 ```
 
-Now we will see how to read the position of the leader and follower arms using `read` from [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py). If the calibration is done well, the posiiton should be the similar when both arms are in a similar position.
+The output will look like:
+```
+Connecting main follower arm
+Connecting main leader arm
+Missing calibration file '.cache/calibration/koch.pkl'. Starting calibration procedure.
+
+Running calibration of main follower...
+
+Move arm to zero position
+[...]
+Move arm to rotated position
+[...]
+Move arm to rest position
+[...]
+
+Running calibration of main leader...
+
+Move arm to zero position
+[...]
+Move arm to rotated position
+[...]
+Move arm to rest position
+[...]
+
+Calibration is done! Saving calibration file '.cache/calibration/koch.pkl'
+```
+
+Now we will see how to read the position of the leader and follower arms using `read` from [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py). If the calibration is done well, the position should be similar when both arms are in a similar position.
 
 Run this code to get the positions in degree:
 ```python
 leader_pos = robot.leader_arms["main"].read("Present_Position")
-print(leader_pos)
 follower_pos = robot.follower_arms["main"].read("Present_Position")
+print(leader_pos)
 print(follower_pos)
 >>> array([-0.43945312, 133.94531, 179.82422, -18.984375, -1.9335938, 34.541016], dtype=float32)
->>> array([-1.0546875, 128.67188, 174.90234, -7.998047, -5.4492188, 32.34375], dtype=float32)
+>>> array([-0.58723712, 131.72314, 174.98743, -16.872612, 0.786213, 35.271973], dtype=float32)
 ```
 
 Importantly, we also converted the "step" position to degree. This is much easier to interpet and debug. In particular, the zero position used during calibration now corresponds to 0 degree for each motor. Also, the rotated position corresponds to 90 degree for each motor.
@@ -346,11 +371,12 @@ observation, action = robot.teleop_step(record_data=True)
 leader_pos = robot.leader_arms["main"].read("Present_Position")
 follower_pos = robot.follower_arms["main"].read("Present_Position")
 print(follower_pos)
-TODO
 print(observation)
 print(leader_pos)
 print(action)
+>>> array([7.8223, 131.1328, 165.5859, -23.4668, -0.9668, 32.4316], dtype=float32)
 >>> {'observation.state': tensor([7.8223, 131.1328, 165.5859, -23.4668, -0.9668, 32.4316])}
+>>> array([3.4277, 134.1211, 179.8242, -18.5449, -1.5820, 34.7168], dtype=float32)
 >>> {'action': tensor([3.4277, 134.1211, 179.8242, -18.5449, -1.5820, 34.7168])}
 ```
 
@@ -368,43 +394,52 @@ robot.disconnect()
 If you are using a built in laptop camera, or webcam you may ignore these steps. However, if you would like to use your phone as a camera on Linux, you must first set up a virtual camera port.
 
 1. Install `v4l2loopback-dkms`, which is required for creating virtual camera devices, using the following command:
-  ```python
-  sudo apt-get install v4l2loopback-dkms
-  ```
-2. Download [DroidCam](https://droidcam.app/) on your phone (available for both iOS and Android).
-3. Install `OBS Studio`. Follow the steps based on your operating system. For Linux, you can use Flatpak:
-  ```python
-  flatpak install flathub com.obsproject.Studio
-  ```
+```python
+sudo apt-get install v4l2loopback-dkms
+```
+2. Download [DroidCam](https://droidcam.app) on your phone (available for both iOS and Android).
+3. Install [OBS Studio](https://obsproject.com/). Follow the steps based on your operating system. For Linux, you can use [Flatpak](https://flatpak.org/):
+```python
+flatpak install flathub com.obsproject.Studio
+```
 4. Install the DroidCam OBS plugin. Follow the steps based on your operating system. For Linux:
-  ```python
-  flatpak install flathub com.obsproject.Studio.Plugin.DroidCam
-  ```
+```python
+flatpak install flathub com.obsproject.Studio.Plugin.DroidCam
+```
 5. Open OBS Studio. For Linux:
- ```python
+```python
 flatpak run com.obsproject.Studio
 ```
-6. Add your phone as a source. Follow the instructions [here](https://droidcam.app/obs/usage/).
-7. In OBS Studio, start the virtual camera. Follow the instructions [here](https://obsproject.com/kb/virtual-camera-guide).
-8. Use `v4l2-ctl` to ensure the virtual camera is set up correctly, and check the output shows a `VirtualCam`, as in the example below.
-  ```python
+6. Add your phone as a source. Follow the instructions [here](https://droidcam.app/obs/usage). Be sure to set the resolution to `640x480`.
+7. Go to `File>Settings>Video`. Change the `Base(Canvas) Resolution` and the `Output(Scaled) Resolution` to `640x480` by manually typing it in.
+8. In OBS Studio, start the virtual camera. Follow the instructions [here](https://obsproject.com/kb/virtual-camera-guide).
+9. Use `v4l2-ctl` to ensure the virtual camera is set up correctly, and check the output shows a `VirtualCam`, as in the example below.
+```python
 v4l2-ctl --list-devices
 
 >>> VirtualCam (platform:v4l2loopback-000):
 >>> /dev/video1
 ```
+10. Use `v4l2-ctl` to check that your Virtual camera output resolution is `640x480` as shown below. Change `/dev/video1` to the port of your virtual camera from the output of `v4l2-ctl --list-devices`. Note: If the resolution is not correct you will have to delete the Virtual Camera port and try again as it cannot be changed.
+```python
+v4l2-ctl -d /dev/video1 --get-fmt-video
+
+>>> Format Video Capture:
+>>>	Width/Height      : 640/480
+>>>	Pixel Format      : 'YUYV' (YUYV 4:2:2)
+```
 From here, you should be able to proceed with the rest of the tutorial.
 
 **(Optional) Use your iPhone as a camera on MacOS**
 
-If not already the case, enable the Continuity Camera feature:
+For using your iPhone as a camera on MacOS, enable the Continuity Camera feature:
 - Make sure your Mac has macOS 13 or later and your iPhone has iOS 16 or later.
 - Sign in both devices with the same Apple ID.
 - Connect with a USB cable for a wired connection or turn on Wi-Fi and Bluetooth on both devices.
 
 For more info, see [Apple support](https://support.apple.com/en-gb/guide/mac-help/mchl77879b8a/mac).
 
-Your iPhone should be detected in the next section.
+Your iPhone should be detected using our script in the next section.
 
 **Instantiate**
 
@@ -445,7 +480,7 @@ camera_01_frame_000000.png
 camera_01_frame_000047.png
 ```
 
-Note: We save a few frames since some cameras need a few seconds to warmup. The first frame can be totally black.
+Note: We save a few frames since some cameras need a few seconds to warmup. The first frame can be totally black or green.
 
 Finally, run this code to instantiate your camera:
 ```python
@@ -471,7 +506,7 @@ camera.disconnect()
 
 You can also instantiate your robot with your cameras!
 
-Run this code:
+Adjust this code with the names and configurations of your cameras and run it:
 ```python
 robot = KochRobot(
     leader_arms={"main": leader_arm},
@@ -485,18 +520,22 @@ robot = KochRobot(
 robot.connect()
 ```
 
-As a result, `teleop_step` with `record_data=True` will return a frame for each camera following the torch convention of channel first.
+As a result, `teleop_step` with `record_data=True` will return a frame for each camera following the pytorch convention: channel first with pixels in range [0,1]
 
-Run this code:
+Adjust this code with the names of your cameras and run it:
 ```python
 observation, action = robot.teleop_step(record_data=True)
-print(observation)
-print(action)
->>> TODO
->>> TODO
+print(observation["observation.images.laptop"].shape)
+print(observation["observation.images.phone"].shape)
+print(observation["observation.images.laptop"].min().item())
+print(observation["observation.images.laptop"].max().item())
+>>> torch.Size([3, 480, 640])
+>>> torch.Size([3, 480, 640])
+>>> 0.13137255012989044
+>>> 0.98237823197230911
 ```
 
-Also, update the flollowing lines of the yaml file for Koch robot [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with your cameras and their corresponding camera indices:
+Also, update the flollowing lines of the yaml file for Koch robot [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with the names and configurations of your cameras:
 ```yaml
 [...]
 cameras:
@@ -520,7 +559,7 @@ This file is used to instantiate your robot in all our scripts. We will explain 
 
 Instead of manually running the python code in a terminal window, you can use [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to instantiate your robot by providing the path to the robot yaml file (e.g. [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) and control your robot with various modes as explained next.
 
-Run this code to teleoperate your robot:
+Try running this code to teleoperate your robot:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml
@@ -528,7 +567,7 @@ python lerobot/scripts/control_robot.py teleoperate \
 >>> TODO
 ```
 
-Note: you can override any entry in the yaml file using `--robot-overrides` and the [Hydra synthax](https://hydra.cc/docs). If needed, you can override the ports like this:
+Note: you can override any entry in the yaml file using `--robot-overrides` and the [hydra.cc](https://hydra.cc/docs/advanced/override_grammar/basic) syntax. If needed, you can override the ports like this:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
@@ -620,8 +659,6 @@ It will output something like:
 ```
 TODO
 ```
-
-TODO add a video tutorial
 
 Note: Remember to add `--robot-overrides '~cameras'` if you don't have any cameras and you still use the default `koch.yaml` configuration.
 
@@ -743,24 +780,6 @@ You can also upload intermediate checkpoints with:
 CKPT=010000
 huggingface-cli upload ${HF_USER}/act_koch_test_${CKPT} \
   outputs/train/act_koch_test/checkpoints/${CKPT}/pretrained_model
-```
-
-### Visualize predictions on training set
-
-Optionnaly, you can visualize the predictions of your neural network on your training data. This is a useful debugging tool. You can provide a checkpoint directory as input (e.g. `outputs/train/act_koch_test/checkpoints/last/pretrained_model`). For instance:
-```bash
-python lerobot/scripts/visualize_dataset_html.py \
-  --repo-id ${HF_USER}/koch_test \
-  --episodes 0 1 2 \
-  -p outputs/train/act_koch_test/checkpoints/last/pretrained_model
-```
-
-You can also provide a model repository as input (e.g. `${HF_USER}/act_koch_test`). For instance:
-```bash
-python lerobot/scripts/visualize_dataset_html.py \
-  --repo-id ${HF_USER}/koch_test \
-  --episodes 0 1 2 \
-  -p ${HF_USER}/act_koch_test
 ```
 
 ## 5. Evaluate your policy
