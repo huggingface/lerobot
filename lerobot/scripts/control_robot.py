@@ -215,7 +215,7 @@ def is_headless():
     if platform.system() in ["Linux", "Darwin"]:
         display = os.environ.get("DISPLAY")
         if display is None or display == "":
-            return True
+            return False
     return False
 
 
