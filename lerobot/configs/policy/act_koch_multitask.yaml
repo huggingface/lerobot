@@ -4,7 +4,11 @@ seed: 1000
 dataset_repo_id: [m1b/koch_pick_lego_red_box, m1b/koch_pick_lego_green_box]
 
 override_dataset_stats:
-  observation.images.top:
+  observation.images.laptop:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.phone:
     # stats from imagenet, since we use a pretrained vision model
     mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
     std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
@@ -41,7 +45,8 @@ policy:
 
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
-    observation.images.top: [3, 480, 640]
+    observation.images.laptop: [3, 480, 640]
+    observation.images.phone: [3, 480, 640]
     observation.state: ["${env.state_dim}"]
     dataset_index: [1]
   output_shapes:
@@ -49,7 +54,8 @@ policy:
 
   # Normalization / Unnormalization
   input_normalization_modes:
-    observation.images.top: mean_std
+    observation.images.laptop: mean_std
+    observation.images.phone: mean_std
     observation.state: mean_std
   output_normalization_modes:
     action: mean_std
