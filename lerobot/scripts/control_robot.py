@@ -341,6 +341,14 @@ def record(
         # override fps using policy fps
         fps = hydra_cfg.env.fps
 
+
+        logging.info(
+            "Multiple datasets were provided. The following mapping was applied during training:"
+        )
+        for i, dataset_name in enumerate(hydra_cfg.dataset_repo_id):
+            logging.info(f"{dataset_name}: {i}")
+        dataset_index = int(input("Please provide the index of the dataset you want to use for evaluation: "))
+
     # Execute a few seconds without recording data, to give times
     # to the robot devices to connect and start synchronizing.
     timestamp = 0
@@ -419,11 +427,11 @@ def record(
 
                 if policy is not None:
                     with (
-                        torch.inference_mode(),
-                        torch.autocast(device_type=device.type)
-                        if device.type == "cuda" and hydra_cfg.use_amp
-                        else nullcontext(),
+                        torch.inference_mode()
                     ):
+                        if "dataset_index" in hydra_cfg.policy.input_shapes:
+                            observation["dataset_index"] = torch.tensor([dataset_index])
+
                         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
                         for name in observation:
                             if "image" in name:
