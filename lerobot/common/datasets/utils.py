@@ -385,3 +385,18 @@ def cycle(iterable):
             yield next(iterator)
         except StopIteration:
             iterator = iter(iterable)
+
+
+def create_branch(repo_id, *, branch: str, repo_type: str | None = None):
+    """Create a branch on a existing Hugging Face repo. Delete the branch if it already
+    exists before creating it.
+    """
+    api = HfApi()
+
+    branches = api.list_repo_refs(repo_id, repo_type=repo_type).branches
+    refs = [branch.ref for branch in branches]
+    ref = f"refs/heads/{branch}"
+    if ref in refs:
+        api.delete_branch(repo_id, repo_type=repo_type, branch=branch)
+
+    api.create_branch(repo_id, repo_type=repo_type, branch=branch)

@@ -15,7 +15,9 @@
 # limitations under the License.
 import pytest
 
-from .utils import DEVICE
+from lerobot.common.utils.utils import init_hydra_config
+
+from .utils import DEVICE, KOCH_ROBOT_CONFIG_PATH
 
 
 def pytest_collection_finish():
@@ -27,11 +29,12 @@ def is_koch_available():
     try:
         from lerobot.common.robot_devices.robots.factory import make_robot
 
-        robot = make_robot("koch")
+        robot_cfg = init_hydra_config(KOCH_ROBOT_CONFIG_PATH)
+        robot = make_robot(robot_cfg)
         robot.connect()
         del robot
         return True
     except Exception as e:
-        print("An alexander koch robot is not available.")
+        print("A koch robot is not available.")
         print(e)
         return False

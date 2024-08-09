@@ -56,7 +56,7 @@ from safetensors.torch import save_file
 from lerobot.common.datasets.compute_stats import compute_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.push_dataset_to_hub.utils import check_repo_id
-from lerobot.common.datasets.utils import flatten_dict
+from lerobot.common.datasets.utils import create_branch, flatten_dict
 
 
 def get_from_raw_to_lerobot_format_fn(raw_format: str):
@@ -215,8 +215,7 @@ def push_dataset_to_hub(
         push_meta_data_to_hub(repo_id, meta_data_dir, revision="main")
         if video:
             push_videos_to_hub(repo_id, videos_dir, revision="main")
-        api = HfApi()
-        api.create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
+        create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
 
     if tests_data_dir:
         # get the first episode

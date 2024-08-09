@@ -23,6 +23,7 @@ import einops
 import pytest
 import torch
 from datasets import Dataset
+from huggingface_hub import HfApi
 from safetensors.torch import load_file
 
 import lerobot
@@ -34,6 +35,7 @@ from lerobot.common.datasets.compute_stats import (
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
 from lerobot.common.datasets.utils import (
+    create_branch,
     flatten_dict,
     hf_transform_to_torch,
     load_previous_and_future_frames,
@@ -385,3 +387,29 @@ def test_aggregate_stats():
         for agg_fn in ["mean", "min", "max"]:
             assert torch.allclose(stats[data_key][agg_fn], einops.reduce(data, "n -> 1", agg_fn))
         assert torch.allclose(stats[data_key]["std"], torch.std(data, correction=0))
+
+
+@pytest.mark.skip("Requires internet access")
+def test_create_branch():
+    api = HfApi()
+
+    repo_id = "cadene/test_create_branch"
+    repo_type = "dataset"
+    branch = "test"
+    ref = f"refs/heads/{branch}"
+
+    # Prepare a repo with a test branch
+    api.delete_repo(repo_id, repo_type=repo_type, missing_ok=True)
+    api.create_repo(repo_id, repo_type=repo_type)
+    create_branch(repo_id, repo_type=repo_type, branch=branch)
+
+    # Make sure the test branch exists
+    branches = api.list_repo_refs(repo_id, repo_type=repo_type).branches
+    refs = [branch.ref for branch in branches]
+    assert ref in refs
+
+    # Overwrite it
+    create_branch(repo_id, repo_type=repo_type, branch=branch)
+
+    # Clean
+    api.delete_repo(repo_id, repo_type=repo_type)

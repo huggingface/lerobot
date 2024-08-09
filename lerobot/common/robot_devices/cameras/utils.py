@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Protocol
 
 import cv2
+import einops
 import numpy as np
 
 
@@ -37,6 +38,16 @@ def save_depth_image(depth, path, write_shape=False):
     if write_shape:
         write_shape_on_image_inplace(depth_image)
     cv2.imwrite(str(path), depth_image)
+
+
+def convert_torch_image_to_cv2(tensor, rgb_to_bgr=True):
+    assert tensor.ndim == 3
+    c, h, w = tensor.shape
+    assert c < h and c < w
+    color_image = einops.rearrange(tensor, "c h w -> h w c").numpy()
+    if rgb_to_bgr:
+        color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+    return color_image
 
 
 # Defines a camera type

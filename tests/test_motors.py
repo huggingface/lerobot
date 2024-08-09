@@ -1,33 +1,54 @@
+# TODO(rcadene): measure fps in nightly?
+# TODO(rcadene): test logs
+# TODO(rcadene): test calibration
+# TODO(rcadene): add compatibility with other motors bus
+
 import time
 
+import hydra
 import numpy as np
 import pytest
 
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import require_koch
+from lerobot.common.utils.utils import init_hydra_config
+from tests.utils import KOCH_ROBOT_CONFIG_PATH, require_koch
+
+
+def make_motors_bus():
+    robot_cfg = init_hydra_config(KOCH_ROBOT_CONFIG_PATH)
+    # Instantiating a common motors structure.
+    # Here the one from Alexander Koch follower arm.
+    motors_bus = hydra.utils.instantiate(robot_cfg.leader_arms.main)
+    return motors_bus
+
+
+@require_koch
+def test_find_port(request):
+    from lerobot.common.robot_devices.motors.dynamixel import find_port
+
+    find_port()
+
+
+@require_koch
+def test_configure_motors_all_ids_1(request):
+    # This test expect the configuration was already correct.
+    motors_bus = make_motors_bus()
+    motors_bus.connect()
+    motors_bus.write("Baud_Rate", [0] * len(motors_bus.motors))
+    motors_bus.set_bus_baudrate(9_600)
+    motors_bus.write("ID", [1] * len(motors_bus.motors))
+    del motors_bus
+
+    # Test configure
+    motors_bus = make_motors_bus()
+    motors_bus.connect()
+    assert motors_bus.are_motors_configured()
+    del motors_bus
 
 
 @require_koch
 def test_motors_bus(request):
-    # TODO(rcadene): measure fps in nightly?
-    # TODO(rcadene): test logs
-    # TODO(rcadene): test calibration
-    # TODO(rcadene): add compatibility with other motors bus
-    from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
-
-    # Test instantiating a common motors structure.
-    # Here the one from Alexander Koch follower arm.
-    port = "/dev/tty.usbmodem575E0032081"
-    motors = {
-        # name: (index, model)
-        "shoulder_pan": (1, "xl430-w250"),
-        "shoulder_lift": (2, "xl430-w250"),
-        "elbow_flex": (3, "xl330-m288"),
-        "wrist_flex": (4, "xl330-m288"),
-        "wrist_roll": (5, "xl330-m288"),
-        "gripper": (6, "xl330-m288"),
-    }
-    motors_bus = DynamixelMotorsBus(port, motors)
+    motors_bus = make_motors_bus()
 
     # Test reading and writting before connecting raises an error
     with pytest.raises(RobotDeviceNotConnectedError):
@@ -41,7 +62,7 @@ def test_motors_bus(request):
     del motors_bus
 
     # Test connecting
-    motors_bus = DynamixelMotorsBus(port, motors)
+    motors_bus = make_motors_bus()
     motors_bus.connect()
 
     # Test connecting twice raises an error
@@ -52,7 +73,7 @@ def test_motors_bus(request):
     motors_bus.write("Torque_Enable", 0)
     values = motors_bus.read("Torque_Enable")
     assert isinstance(values, np.ndarray)
-    assert len(values) == len(motors)
+    assert len(values) == len(motors_bus.motors)
     assert (values == 0).all()
 
     # Test writing torque on a specific motor
@@ -83,10 +104,3 @@ def test_motors_bus(request):
     time.sleep(1)
     new_values = motors_bus.read("Present_Position")
     assert (new_values == values).all()
-
-
-@require_koch
-def test_find_port(request):
-    from lerobot.common.robot_devices.motors.dynamixel import find_port
-
-    find_port()
