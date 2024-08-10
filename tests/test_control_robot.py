@@ -3,7 +3,7 @@ from pathlib import Path
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.utils.utils import init_hydra_config
-from lerobot.scripts.control_robot import record, replay, teleoperate
+from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, KOCH_ROBOT_CONFIG_PATH, require_koch
 
 
@@ -19,6 +19,13 @@ def test_teleoperate(request):
     teleoperate(robot, teleop_time_s=1)
     teleoperate(robot, fps=30, teleop_time_s=1)
     teleoperate(robot, fps=60, teleop_time_s=1)
+    del robot
+
+
+@require_koch
+def test_calibrate(request):
+    robot = make_robot_()
+    calibrate(robot)
     del robot
 
 

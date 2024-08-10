@@ -684,6 +684,18 @@ class DynamixelMotorsBus:
         if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
             values = self.apply_calibration(values, motor_names)
 
+            # We expect our motors to stay in a nominal range of [-180, 180] degrees
+            # which corresponds to a half turn rotation.
+            # However, some motors can turn a bit more, hence we extend the nominal range to [-270, 270]
+            # which is less than a full 360 degree rotation.
+            if not np.all((values > -270) & (values < 270)):
+                raise ValueError(
+                    f"Wrong motor position range detected. "
+                    f"Expected to be in [-270, +270] but in [{values.min()}, {values.max()}]. "
+                    "This might be due to a cable connection issue creating an artificial 360 degrees jump in motor values. "
+                    "You need to recalibrate by running: `python lerobot/scripts/control_robot.py calibrate`"
+                )
+
         # log the number of seconds it took to read the data from the motors
         delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
         self.logs[delta_ts_name] = time.perf_counter() - start_time

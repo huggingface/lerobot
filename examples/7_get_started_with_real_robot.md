@@ -139,12 +139,19 @@ This file is used to instantiate your robot in all our scripts. We will explain 
 
 Then, you will need to configure your motors to be able to properly communicate with them. During the first connection of the motors, [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) automatically detects a mismatch between the present motor indices (all `1` by factory default) and your specified motor indices (e.g. `1,2,3,4,5,6`). This triggers the configuration procedure which requires to unplug the power cord and motors, and to sequentially plug each motor again, starting from the closest to the bus.
 
+See the [video tutorial of the configuration procedure](https://youtu.be/U78QQ9wCdpY).
+
 Run the following code in the same python session in your terminal to connect and configure the leader arm:
 ```python
 leader_arm.connect()
 ```
 
-See the [video tutorial of the configuration procedure](https://youtu.be/U78QQ9wCdpY).
+Pro tip: Instead of copy pasting python commands, you can also run the script to teleoperate which will automatically detect a wrong configuration and start the configuration procedure:
+```bash
+python lerobot/scripts/control_robot.py teleoperate \
+  --robot-path lerobot/configs/robot/koch.yaml \
+  --robot-overrides '~cameras'  # do not instantiate the cameras
+```
 
 Here is an example of connecting the leader arm for the first time:
 ```
@@ -256,8 +263,6 @@ Then, you will need to calibrate your robot so that when the leader and follower
 
 During the first connection of your robot, [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) detects that the calibration file is missing. This triggers the calibration procedure which requires you to move each arm in 3 different positions.
 
-See the [video tutorial of the calibration procedure](https://youtu.be/8drnU9uRY24).
-
 You will follow the procedure and move the follower to these positions:
 
 <div style="display:flex; justify-content:center;">
@@ -294,9 +299,18 @@ Then you will continue the procedure and move the leader to these positions:
 </div>
 
 
+See the [video tutorial of the calibration procedure](https://youtu.be/8drnU9uRY24).
+
 Run this code to calibrate and connect your robot:
 ```python
 robot.connect()
+```
+
+Pro tip: Instead of copy pasting python commands, you can also run the script to teleoperate which will automatically detect a missing calibration and start the calibration procedure:
+```bash
+python lerobot/scripts/control_robot.py teleoperate \
+  --robot-path lerobot/configs/robot/koch.yaml \
+  --robot-overrides '~cameras'  # do not instantiate the cameras
 ```
 
 The output will look like:

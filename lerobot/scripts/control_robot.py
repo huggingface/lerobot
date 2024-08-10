@@ -1,5 +1,15 @@
 """
+Utilities to control a robot.
+
+Useful to record a dataset, replay a recorded episode, run the policy on your robot
+and record an evaluation dataset, and to recalibrate your robot if needed.
+
 Examples of usage:
+
+- Recalibrate your robot:
+```bash
+python lerobot/scripts/control_robot.py calibrate
+```
 
 - Unlimited teleoperation at highest frequency (~200 Hz is expected), to exit with CTRL+C:
 ```bash
@@ -222,6 +232,19 @@ def is_headless():
 ########################################################################################
 # Control modes
 ########################################################################################
+
+
+def calibrate(robot: Robot):
+    if robot.calibration_path.exists():
+        print(f"Removing '{robot.calibration_path}'")
+        robot.calibration_path.unlink()
+
+    if robot.is_connected:
+        robot.disconnect()
+
+    # Calling `connect` automatically runs calibration
+    # when the calibration file is missing
+    robot.connect()
 
 
 def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | None = None):
@@ -663,6 +686,8 @@ if __name__ == "__main__":
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
 
+    parser_calib = subparsers.add_parser("calibrate", parents=[base_parser])
+
     parser_teleop = subparsers.add_parser("teleoperate", parents=[base_parser])
     parser_teleop.add_argument(
         "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
@@ -776,7 +801,10 @@ if __name__ == "__main__":
     robot_cfg = init_hydra_config(robot_path, robot_overrides)
     robot = make_robot(robot_cfg)
 
-    if control_mode == "teleoperate":
+    if control_mode == "calibrate":
+        calibrate(robot, **kwargs)
+
+    elif control_mode == "teleoperate":
         teleoperate(robot, **kwargs)
 
     elif control_mode == "record":
