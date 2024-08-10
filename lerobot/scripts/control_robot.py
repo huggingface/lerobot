@@ -212,10 +212,10 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None, fps=None
 @cache
 def is_headless():
     """Detects if python is running without a monitor."""
-    if platform.system() in ["Linux", "Darwin"]:
+    if platform.system() == "Linux":
         display = os.environ.get("DISPLAY")
         if display is None or display == "":
-            return False
+            return True
     return False
 
 
