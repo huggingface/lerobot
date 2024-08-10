@@ -28,9 +28,20 @@ Follow the sourcing and assembling instructions on the [Koch v1.1 github page](h
 
 See the [video tutorial of the assembly](https://youtu.be/5mdxvMlxoos).
 
-## 2. Connect, Configure, and Calibrate your Koch v1.1
+## 2. Configure motors, Calibrate arms, Teleoperate your Koch v1.1
 
 Connect the leader arm (the smaller one) with the 5V alimentation and the follower arm with the 12V alimentation. Then connect both arms to your computer with USB.
+
+**Pro tip**: In the next sections, you will understand how our code work by playing with python codes that you will copy past in your terminal. If you are new to this tutorial, we highly recommend to go through this. Next time, when you are more familiar, you can instead run the teleoperate script which will automatically:
+- detect a wrong configuration for the motors, and run the configuration procedure (explained after),
+- detect a missing calibration and start the calibration procedure (explained after),
+- connect the robot and start teleoperation (explained after).
+```bash
+python lerobot/scripts/control_robot.py teleoperate \
+  --robot-path lerobot/configs/robot/koch.yaml \
+  --robot-overrides '~cameras'  # do not instantiate the cameras
+```
+
 
 ### Control your motors with DynamixelMotorsBus
 
@@ -147,13 +158,6 @@ See the [video tutorial of the configuration procedure](https://youtu.be/U78QQ9w
 Run the following code in the same python session in your terminal to connect and configure the leader arm:
 ```python
 leader_arm.connect()
-```
-
-Pro tip: Instead of copy pasting python commands, you can also run the script to teleoperate which will automatically detect a wrong configuration and start the configuration procedure:
-```bash
-python lerobot/scripts/control_robot.py teleoperate \
-  --robot-path lerobot/configs/robot/koch.yaml \
-  --robot-overrides '~cameras'  # do not instantiate the cameras
 ```
 
 Here is an example of connecting the leader arm for the first time:
@@ -309,13 +313,6 @@ Run this code to calibrate and connect your robot:
 robot.connect()
 ```
 
-Pro tip: Instead of copy pasting python commands, you can also run the script to teleoperate which will automatically detect a missing calibration and start the calibration procedure:
-```bash
-python lerobot/scripts/control_robot.py teleoperate \
-  --robot-path lerobot/configs/robot/koch.yaml \
-  --robot-overrides '~cameras'  # do not instantiate the cameras
-```
-
 The output will look like:
 ```
 Connecting main follower arm
@@ -384,9 +381,9 @@ Teleoperation is useful to record data. To this end, you can use `teleop_step` f
 
 Run this code several time to see how (slowly) moving the leader arm affects the observation and action:
 ```python
-observation, action = robot.teleop_step(record_data=True)
 leader_pos = robot.leader_arms["main"].read("Present_Position")
 follower_pos = robot.follower_arms["main"].read("Present_Position")
+observation, action = robot.teleop_step(record_data=True)
 print(follower_pos)
 print(observation)
 print(leader_pos)
@@ -589,10 +586,10 @@ INFO 2024-08-10 11:15:03 ol_robot.py:209 dt: 5.12 (195.1hz) dtRlead: 4.93 (203.0
 
 It contains
 - `2024-08-10 11:15:03` which is the date and time of the call to the print function.
-- `ol_robot.py:209` which is the file name and line number where the print function is called  (`lerobot/scripts/control_robot.py` line `209`).
+- `ol_robot.py:209` which is the end of the file name and the line number where the print function is called  (`lerobot/scripts/control_robot.py` line `209`).
 - `dt: 5.12 (195.1hz)` which is the "delta time" or the number of milliseconds spent between the previous call to `robot.teleop_step()` and the current one, associated with the frequency (5.12 ms equals 195.1 Hz) ; note that you can control the maximum frequency by adding fps as argument such as `--fps 30`.
-- `dtRlead: 4.93 (203.0hz)` which is the delta time of reading the present position of the leader arm.
-- `dtWfoll: 0.22 (4446.9hz)` which is the delta time of writing the goal position on the follower arm ; writing is asynchronous so it takes less time than reading.
+- `dtRlead: 4.93 (203.0hz)` which is the number of milliseconds it took to read the position of the leader arm using `leader_arm.read("Present_Position")`.
+- `dtWfoll: 0.22 (4446.9hz)` which is the number of milliseconds it took to set a new goal position for the follower arm using `follower_arm.write("Goal_position", leader_pos)` ; note that writing is done asynchronously so it takes less time than reading.
 
 Note: you can override any entry in the yaml file using `--robot-overrides` and the [hydra.cc](https://hydra.cc/docs/advanced/override_grammar/basic) syntax. If needed, you can override the ports like this:
 ```bash
@@ -636,16 +633,21 @@ for _ in range(record_time_s * fps):
 
     dt_s = time.perf_counter() - start_time
     busy_wait(1 / fps - dt_s)
+
+# Note that observation and action are saved in RAM.
+# We could potentially store them on disk with pickle or hdf5.
+# Instead, in this tutorial we will store them using a format
+# optimized for robotics data: LeRobotDataset
 ```
 
-However, many utilities are still missing. For instance, if you have cameras, you will need to save the images on disk to not go out of RAM, and to do so in threads to not slow down communication with your robot. Also, you will need to store your data in a format optimized for training and web sharing like [`LeRobotDataset`](../lerobot/common/datasets/lerobot_dataset.py). More on this in the next section.
+Importantly, many utilities are still missing. For instance, if you have cameras, you will need to save the images on disk to not go out of RAM, and to do so in threads to not slow down communication with your robot. Also, you will need to store your data in a format optimized for training and web sharing like [`LeRobotDataset`](../lerobot/common/datasets/lerobot_dataset.py). More on this in the next section.
 
 ### Use `koch.yaml` and the `record` function
 
 You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to achieve efficient data recording. It encompasses many recording utilities:
 1. Frames from cameras are saved on disk in threads, and encoded into videos at the end of recording.
 2. Video streams from cameras are displayed in window so that you can verify them.
-3. Data is stored with [`LeRobotDataset`](../lerobot/common/datasets/lerobot_dataset.py) format which is pushed to your Hugging Face page.
+3. Data is stored with [`LeRobotDataset`](../lerobot/common/datasets/lerobot_dataset.py) format which is pushed to your Hugging Face page (unless `--push-to-hub 0` is provided).
 4. Checkpoints are done during recording, so if any issue occurs, you can resume recording by re-running the same command again. You can also use `--force-override 1` to start recording from scratch.
 5. Set the flow of data recording using command line arguments:
   - `--warmup-time-s` defines the number of seconds before starting data collection. It allows the robot devices to warmup and synchronize (10 seconds by default).
@@ -658,16 +660,16 @@ You can use the `record` function from [`lerobot/scripts/control_robot.py`](../l
   - Press escape `ESC` at any time during episode recording to end the session early and go straight to video encoding and dataset uploading.
 7. Similarly to `teleoperate`, you can also use `--robot-path` and `--robot-overrides` to specify your robots.
 
-Before trying `record`, make sure you've logged in using a write-access token, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
+Before trying `record`, if you want to push your dataset to the hub, make sure you've logged in using a write-access token, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
 ```bash
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
-
-And store your Hugging Face repositery name in a variable (e.g. `cadene` or `lerobot`). For instance, run this to use your Hugging Face user name as repositery:
+Also, store your Hugging Face repositery name in a variable (e.g. `cadene` or `lerobot`). For instance, run this to use your Hugging Face user name as repositery:
 ```bash
 HF_USER=$(huggingface-cli whoami | head -n 1)
 echo $HF_USER
 ```
+If you don't want to push to hub, use `--push-to-hub 0`.
 
 Now run this to record 5 episodes:
 ```bash
@@ -690,7 +692,7 @@ INFO 2024-08-10 15:02:58 ol_robot.py:219 dt:33.34 (30.0hz) dtRlead: 5.06 (197.5h
 ```
 It contains:
 - `2024-08-10 15:02:58` which is the date and time of the call to the print function,
-- `ol_robot.py:219` which is is the file name and line number where the print function is called  (`lerobot/scripts/control_robot.py` line `219`).
+- `ol_robot.py:219` which is the end of the file name and the line number where the print function is called  (`lerobot/scripts/control_robot.py` line `219`).
 - `dt:33.34 (30.0hz)` which is the "delta time" or the number of milliseconds spent between the previous call to `robot.teleop_step(record_data=True)` and the current one, associated with the frequency (33.34 ms equals 30.0 Hz) ; note that we use `--fps 30` so we expect 30.0 Hz ; when a step takes more time, the line appears in yellow.
 - `dtRlead: 5.06 (197.5hz)` which is the delta time of reading the present position of the leader arm.
 - `dtWfoll: 0.25 (3963.7hz)` which is the delta time of writing the goal position on the follower arm ; writing is asynchronous so it takes less time than reading.
