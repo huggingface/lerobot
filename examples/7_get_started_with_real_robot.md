@@ -559,13 +559,24 @@ This file is used to instantiate your robot in all our scripts. We will explain 
 
 Instead of manually running the python code in a terminal window, you can use [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to instantiate your robot by providing the path to the robot yaml file (e.g. [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) and control your robot with various modes as explained next.
 
-Try running this code to teleoperate your robot:
+Try running this code to teleoperate your robot (if you dont have a camera, keep reading):
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml
-
->>> TODO
 ```
+
+The output will look like:
+```
+Connecting main follower arm.
+Connecting main leader arm.
+INFO 2024-08-10 11:15:03 ol_robot.py:209 dt: 5.12 (195.1hz) dtRlead: 4.93 (203.0hz) dtRfoll: 0.19 (5239.0hz)
+```
+with the last line being printed at high frequency. It contains:
+- `2024-08-10 11:15:03` is the date and time of the call to the print function,
+- `ol_robot.py:209` is the file name and line number where the print function is called  (`lerobot/scripts/control_robot.py` line `209`),
+- `dt: 5.12 (195.1hz)` is the "delta time" or the number of milliseconds spent between the previous call to `robot.teleop_step()` and the current one, and the convertion in frequency (5.12 ms equals 195.1 Hz)
+- `dtRlead: 4.93 (203.0hz)` is the delta time of reading the present position of the leader arm,
+- `dtWfoll: 0.22 (4446.9hz)` is the delta time of writing the goal position on the follower arm ; writing is asynchronous so it takes less time than reading.
 
 Note: you can override any entry in the yaml file using `--robot-overrides` and the [hydra.cc](https://hydra.cc/docs/advanced/override_grammar/basic) syntax. If needed, you can override the ports like this:
 ```bash

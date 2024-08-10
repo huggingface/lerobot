@@ -190,11 +190,11 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None, fps=None
     for name in robot.follower_arms:
         key = f"write_follower_{name}_goal_pos_dt_s"
         if key in robot.logs:
-            log_dt("dtRfoll", robot.logs[key])
+            log_dt("dtWfoll", robot.logs[key])
 
         key = f"read_follower_{name}_pos_dt_s"
         if key in robot.logs:
-            log_dt("dtWfoll", robot.logs[key])
+            log_dt("dtRfoll", robot.logs[key])
 
     for name in robot.cameras:
         key = f"read_camera_{name}_dt_s"
@@ -229,19 +229,19 @@ def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | Non
     if not robot.is_connected:
         robot.connect()
 
-    start_time = time.perf_counter()
+    start_teleop_t = time.perf_counter()
     while True:
-        now = time.perf_counter()
+        start_loop_t = time.perf_counter()
         robot.teleop_step()
 
         if fps is not None:
-            dt_s = time.perf_counter() - now
+            dt_s = time.perf_counter() - start_loop_t
             busy_wait(1 / fps - dt_s)
 
-        dt_s = time.perf_counter() - now
+        dt_s = time.perf_counter() - start_loop_t
         log_control_info(robot, dt_s, fps=fps)
 
-        if teleop_time_s is not None and time.perf_counter() - start_time > teleop_time_s:
+        if teleop_time_s is not None and time.perf_counter() - start_teleop_t > teleop_time_s:
             break
 
 
@@ -344,7 +344,7 @@ def record(
     # Execute a few seconds without recording data, to give times
     # to the robot devices to connect and start synchronizing.
     timestamp = 0
-    start_time = time.perf_counter()
+    start_warmup_t = time.perf_counter()
     is_warmup_print = False
     while timestamp < warmup_time_s:
         if not is_warmup_print:
@@ -352,7 +352,7 @@ def record(
             say("Warming up")
             is_warmup_print = True
 
-        now = time.perf_counter()
+        start_loop_t = time.perf_counter()
 
         if policy is None:
             observation, action = robot.teleop_step(record_data=True)
@@ -365,15 +365,13 @@ def record(
                 cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
             cv2.waitKey(1)
 
-        dt_s = time.perf_counter() - now
-        if fps is None:
-            fps = 30  # or any reasonable default value
+        dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
 
-        dt_s = time.perf_counter() - now
+        dt_s = time.perf_counter() - start_loop_t
         log_control_info(robot, dt_s, fps=fps)
 
-        timestamp = time.perf_counter() - start_time
+        timestamp = time.perf_counter() - start_warmup_t
 
     # Save images using threads to reach high fps (30 and more)
     # Using `with` to exist smoothly if an execption is raised.
@@ -387,9 +385,9 @@ def record(
             ep_dict = {}
             frame_index = 0
             timestamp = 0
-            start_time = time.perf_counter()
+            start_episode_t = time.perf_counter()
             while timestamp < episode_time_s:
-                now = time.perf_counter()
+                start_loop_t = time.perf_counter()
 
                 if policy is None:
                     observation, action = robot.teleop_step(record_data=True)
@@ -451,13 +449,13 @@ def record(
 
                 frame_index += 1
 
-                dt_s = time.perf_counter() - now
+                dt_s = time.perf_counter() - start_loop_t
                 busy_wait(1 / fps - dt_s)
 
-                dt_s = time.perf_counter() - now
+                dt_s = time.perf_counter() - start_loop_t
                 log_control_info(robot, dt_s, fps=fps)
 
-                timestamp = time.perf_counter() - start_time
+                timestamp = time.perf_counter() - start_episode_t
                 if exit_early:
                     exit_early = False
                     break
@@ -468,7 +466,7 @@ def record(
                 say("Reset the environment")
 
             timestamp = 0
-            start_time = time.perf_counter()
+            start_vencod_t = time.perf_counter()
 
             # During env reset we save the data and encode the videos
             num_frames = frame_index
@@ -514,7 +512,7 @@ def record(
             with tqdm.tqdm(total=reset_time_s, desc="Waiting") as pbar:
                 while timestamp < reset_time_s and not is_last_episode:
                     time.sleep(1)
-                    timestamp = time.perf_counter() - start_time
+                    timestamp = time.perf_counter() - start_vencod_t
                     pbar.update(1)
                     if exit_early:
                         exit_early = False
@@ -634,15 +632,15 @@ def replay(robot: Robot, episode: int, fps: int | None = None, root="data", repo
     logging.info("Replaying episode")
     say("Replaying episode", blocking=True)
     for idx in range(from_idx, to_idx):
-        now = time.perf_counter()
+        start_episode_t = time.perf_counter()
 
         action = items[idx]["action"]
         robot.send_action(action)
 
-        dt_s = time.perf_counter() - now
+        dt_s = time.perf_counter() - start_episode_t
         busy_wait(1 / fps - dt_s)
 
-        dt_s = time.perf_counter() - now
+        dt_s = time.perf_counter() - start_episode_t
         log_control_info(robot, dt_s, fps=fps)
 
 

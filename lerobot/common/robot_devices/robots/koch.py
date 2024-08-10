@@ -377,9 +377,9 @@ class KochRobot:
         # Prepare to assign the position of the leader to the follower
         leader_pos = {}
         for name in self.leader_arms:
-            now = time.perf_counter()
+            before_lread_t = time.perf_counter()
             leader_pos[name] = self.leader_arms[name].read("Present_Position")
-            self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - now
+            self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - before_lread_t
 
         follower_goal_pos = {}
         for name in self.leader_arms:
@@ -387,9 +387,9 @@ class KochRobot:
 
         # Send action
         for name in self.follower_arms:
-            now = time.perf_counter()
+            before_fwrite_t = time.perf_counter()
             self.follower_arms[name].write("Goal_Position", follower_goal_pos[name])
-            self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - now
+            self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
         # Early exit when recording data is not requested
         if not record_data:
@@ -399,9 +399,9 @@ class KochRobot:
         # Read follower position
         follower_pos = {}
         for name in self.follower_arms:
-            now = time.perf_counter()
+            before_fread_t = time.perf_counter()
             follower_pos[name] = self.follower_arms[name].read("Present_Position")
-            self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - now
+            self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
         # Create state by concatenating follower current position
         state = []
@@ -420,10 +420,10 @@ class KochRobot:
         # Capture images from cameras
         images = {}
         for name in self.cameras:
-            now = time.perf_counter()
+            before_camread_t = time.perf_counter()
             images[name] = self.cameras[name].async_read()
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
-            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - now
+            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
         # Populate output dictionnaries and format to pytorch
         obs_dict, action_dict = {}, {}
@@ -444,9 +444,9 @@ class KochRobot:
         # Read follower position
         follower_pos = {}
         for name in self.follower_arms:
-            now = time.perf_counter()
+            before_fread_t = time.perf_counter()
             follower_pos[name] = self.follower_arms[name].read("Present_Position")
-            self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - now
+            self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
         # Create state by concatenating follower current position
         state = []
@@ -458,10 +458,10 @@ class KochRobot:
         # Capture images from cameras
         images = {}
         for name in self.cameras:
-            now = time.perf_counter()
+            before_camread_t = time.perf_counter()
             images[name] = self.cameras[name].async_read()
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
-            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - now
+            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
         # Populate output dictionnaries and format to pytorch
         obs_dict = {}
