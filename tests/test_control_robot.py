@@ -7,13 +7,14 @@ from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, KOCH_ROBOT_CONFIG_PATH, require_koch
 
 
-def make_robot_():
-    robot_cfg = init_hydra_config(KOCH_ROBOT_CONFIG_PATH)
+def make_robot_(overrides=None):
+    robot_cfg = init_hydra_config(KOCH_ROBOT_CONFIG_PATH, overrides)
     robot = make_robot(robot_cfg)
     return robot
 
 
 @require_koch
+# `require_koch` uses `request` to access `is_koch_available` fixture
 def test_teleoperate(request):
     robot = make_robot_()
     teleoperate(robot, teleop_time_s=1)
@@ -27,6 +28,15 @@ def test_calibrate(request):
     robot = make_robot_()
     calibrate(robot)
     del robot
+
+
+@require_koch
+def test_record_without_cameras(tmpdir, request):
+    root = Path(tmpdir)
+    repo_id = "lerobot/debug"
+
+    robot = make_robot_(overrides=["~cameras"])
+    record(robot, fps=30, root=root, repo_id=repo_id, warmup_time_s=1, episode_time_s=1, num_episodes=2)
 
 
 @require_koch
