@@ -76,8 +76,11 @@ Update the corresponding ports of this code with your ports and run the code to 
 ```python
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 
+leader_port = "/dev/tty.usbmodem575E0031751"
+follower_port = "/dev/tty.usbmodem575E0032081"
+
 leader_arm = DynamixelMotorsBus(
-    port="/dev/tty.usbmodem575E0031751",
+    port=leader_port,
     motors={
         # name: (index, model)
         "shoulder_pan": (1, "xl330-m077"),
@@ -90,7 +93,7 @@ leader_arm = DynamixelMotorsBus(
 )
 
 follower_arm = DynamixelMotorsBus(
-    port="/dev/tty.usbmodem575E0032081",
+    port=follower_port,
     motors={
         # name: (index, model)
         "shoulder_pan": (1, "xl430-w250"),
