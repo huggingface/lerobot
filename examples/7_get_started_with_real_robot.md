@@ -695,8 +695,6 @@ It contains:
 - `dtRlaptop:32.57 (30.7hz) ` which is the delta time of capturing an image from the laptop camera in the thread running asynchrously.
 - `dtRphone:33.84 (29.5hz)` which is the delta time of capturing an image from the phone camera in the thread running asynchrously.
 
-
-
 At the end, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/koch_test) that you can obtain by running:
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/koch_test
