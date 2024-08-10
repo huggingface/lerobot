@@ -579,18 +579,17 @@ python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml
 ```
 
-The output will look like:
+You will see a lot of lines appearing like this one:
 ```
-Connecting main follower arm.
-Connecting main leader arm.
 INFO 2024-08-10 11:15:03 ol_robot.py:209 dt: 5.12 (195.1hz) dtRlead: 4.93 (203.0hz) dtRfoll: 0.19 (5239.0hz)
 ```
-with the last line being printed at high frequency. It contains:
-- `2024-08-10 11:15:03` is the date and time of the call to the print function,
-- `ol_robot.py:209` is the file name and line number where the print function is called  (`lerobot/scripts/control_robot.py` line `209`),
-- `dt: 5.12 (195.1hz)` is the "delta time" or the number of milliseconds spent between the previous call to `robot.teleop_step()` and the current one, and the convertion in frequency (5.12 ms equals 195.1 Hz)
-- `dtRlead: 4.93 (203.0hz)` is the delta time of reading the present position of the leader arm,
-- `dtWfoll: 0.22 (4446.9hz)` is the delta time of writing the goal position on the follower arm ; writing is asynchronous so it takes less time than reading.
+
+It contains
+- `2024-08-10 11:15:03` which is the date and time of the call to the print function.
+- `ol_robot.py:209` which is the file name and line number where the print function is called  (`lerobot/scripts/control_robot.py` line `209`).
+- `dt: 5.12 (195.1hz)` which is the "delta time" or the number of milliseconds spent between the previous call to `robot.teleop_step()` and the current one, associated with the frequency (5.12 ms equals 195.1 Hz) ; note that you can control the maximum frequency by adding fps as argument such as `--fps 30`.
+- `dtRlead: 4.93 (203.0hz)` which is the delta time of reading the present position of the leader arm.
+- `dtWfoll: 0.22 (4446.9hz)` which is the delta time of writing the goal position on the follower arm ; writing is asynchronous so it takes less time than reading.
 
 Note: you can override any entry in the yaml file using `--robot-overrides` and the [hydra.cc](https://hydra.cc/docs/advanced/override_grammar/basic) syntax. If needed, you can override the ports like this:
 ```bash
@@ -680,12 +679,23 @@ python lerobot/scripts/control_robot.py record \
   --num-episodes 5
 ```
 
-It will output something like:
-```
-TODO
-```
-
 Note: Remember to add `--robot-overrides '~cameras'` if you don't have any cameras and you still use the default `koch.yaml` configuration.
+
+You will see a lot of lines appearing like this one:
+```
+INFO 2024-08-10 15:02:58 ol_robot.py:219 dt:33.34 (30.0hz) dtRlead: 5.06 (197.5hz) dtWfoll: 0.25 (3963.7hz) dtRfoll: 6.22 (160.7hz) dtRlaptop: 32.57 (30.7hz) dtRphone: 33.84 (29.5hz)
+```
+It contains:
+- `2024-08-10 15:02:58` which is the date and time of the call to the print function,
+- `ol_robot.py:219` which is is the file name and line number where the print function is called  (`lerobot/scripts/control_robot.py` line `219`).
+- `dt:33.34 (30.0hz)` which is the "delta time" or the number of milliseconds spent between the previous call to `robot.teleop_step(record_data=True)` and the current one, associated with the frequency (33.34 ms equals 30.0 Hz) ; note that we use `--fps 30` so we expect 30.0 Hz ; when a step takes more time, the line appears in yellow.
+- `dtRlead: 5.06 (197.5hz)` which is the delta time of reading the present position of the leader arm.
+- `dtWfoll: 0.25 (3963.7hz)` which is the delta time of writing the goal position on the follower arm ; writing is asynchronous so it takes less time than reading.
+- `dtRfoll: 6.22 (160.7hz)` which is the delta time of reading the present position on the follower arm.
+- `dtRlaptop:32.57 (30.7hz) ` which is the delta time of capturing an image from the laptop camera in the thread running asynchrously.
+- `dtRphone:33.84 (29.5hz)` which is the delta time of capturing an image from the phone camera in the thread running asynchrously.
+
+
 
 At the end, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/koch_test) that you can obtain by running:
 ```bash
