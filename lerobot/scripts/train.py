@@ -98,6 +98,10 @@ def make_optimizer_and_scheduler(cfg, policy):
 
         optimizer = VQBeTOptimizer(policy, cfg)
         lr_scheduler = VQBeTScheduler(optimizer, cfg)
+    elif policy.name == "florence_policy":
+        params = filter(lambda p: p.requires_grad, policy.parameters())
+        optimizer = torch.optim.Adam(params, cfg.training.lr)
+        lr_scheduler = None
     else:
         raise NotImplementedError()
 

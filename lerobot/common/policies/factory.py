@@ -66,6 +66,11 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
         from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
         return VQBeTPolicy, VQBeTConfig
+    elif name == "florence_policy":
+        from lerobot.common.policies.florence_policy.configuration_florence_policy import FlorencePolicyConfig
+        from lerobot.common.policies.florence_policy.modeling_florence_policy import FlorencePolicy
+
+        return FlorencePolicy, FlorencePolicyConfig
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
