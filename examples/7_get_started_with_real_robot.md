@@ -305,8 +305,14 @@ Then you will continue the procedure and move the leader to these positions:
   </div>
 </div>
 
-
 See the [video tutorial of the calibration procedure](https://youtu.be/8drnU9uRY24).
+
+Importantly, you don't need to be super accurate. When moving the arm to what we defined as the zero position, you are not "setting" the zero position. Our calibration procedure just counts the number of full 360 degrees rotations that your motors achieved since their birth from the factory. After calibration, all koch arms worldwide will move to the same zero position when their owner command them to go to position zero.
+
+Regarding the 90 degrees rotated position, we use it to determine the direction of rotation of the motors. Did the number of steps decreased or increased when moving 90 degrees? After calibration, all koch arms worldwide will move to the same rotated 90 degrees position when their owner command them so.
+
+Finally, the rest position is used for safety, so that when the calibration is done, the follower and leader arms are roughly in the same position. As a result, at the start of teleoperation, the follower won't "jump" to match the leader position, risking to damage the motors.
+
 
 Run this code to calibrate and connect your robot:
 ```python
@@ -634,10 +640,9 @@ for _ in range(record_time_s * fps):
     dt_s = time.perf_counter() - start_time
     busy_wait(1 / fps - dt_s)
 
-# Note that observation and action are saved in RAM.
-# We could potentially store them on disk with pickle or hdf5.
-# Instead, in this tutorial we will store them using a format
-# optimized for robotics data: LeRobotDataset
+# Note that observation and action are available in RAM, but
+# you could potentially store them on disk with pickle/hdf5 or
+# our optimized format `LeRobotDataset`. More on this next.
 ```
 
 Importantly, many utilities are still missing. For instance, if you have cameras, you will need to save the images on disk to not go out of RAM, and to do so in threads to not slow down communication with your robot. Also, you will need to store your data in a format optimized for training and web sharing like [`LeRobotDataset`](../lerobot/common/datasets/lerobot_dataset.py). More on this in the next section.
@@ -681,7 +686,7 @@ python lerobot/scripts/control_robot.py record \
   --warmup-time-s 5 \
   --episode-time-s 30 \
   --reset-time-s 30 \
-  --num-episodes 5
+  --num-episodes 2
 ```
 
 Note: Remember to add `--robot-overrides '~cameras'` if you don't have any cameras and you still use the default `koch.yaml` configuration.
@@ -700,7 +705,19 @@ It contains:
 - `dtRlaptop:32.57 (30.7hz) ` which is the delta time of capturing an image from the laptop camera in the thread running asynchrously.
 - `dtRphone:33.84 (29.5hz)` which is the delta time of capturing an image from the phone camera in the thread running asynchrously.
 
-At the end, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/koch_test) that you can obtain by running:
+Troubleshooting:
+- On Linux, if you encounter a hanging issue when using cameras, uninstall opencv and re-install it with conda:
+```bash
+pip uninstall opencv-python
+conda install -c conda-forge opencv=4.10.0
+```
+- On Linux, if you encounter any issue during video encoding with `ffmpeg: unknown encoder libsvtav1`, you can:
+  - install with conda-forge by running `conda install -c conda-forge ffmpeg` (it should be compiled with `libsvtav1`),
+  - or, install [Homebrew](https://brew.sh) and run `brew install ffmpeg` (it should be compiled with `libsvtav1`),
+  - or, install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1),
+  - and, make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
+
+At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/koch_test) that you can obtain by running:
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/koch_test
 ```
@@ -713,7 +730,7 @@ In the next sections, you will train your neural network. Once it can grasp pret
 
 Don't be greedy or it won't work!
 
-In the coming months, we plan to add a fundational model for robotics. We expect that finetuning it will lead to stronger generalization abilities.
+In the coming months, we plan to add a fundational model for robotics. We expect that finetuning it will lead to stronger generalization abilities so you won't have to be so careful about adding variations in your data collection.
 
 ### Visualize all episodes
 
@@ -891,3 +908,8 @@ python lerobot/scripts/visualize_dataset.py \
   --root data \
   --repo-id ${HF_USER}/eval_koch_test
 ```
+
+
+## Next step
+
+Join our [Discord](https://discord.com/invite/s3KuuzsPFb) to coordinate on community-driven data collection and training foundational models for robotics!
