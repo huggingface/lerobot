@@ -30,6 +30,15 @@ See the [video tutorial of the assembly](https://youtu.be/5mdxvMlxoos).
 
 ## 2. Configure motors, Calibrate arms, Teleoperate your Koch v1.1
 
+Install the extra dependencies for Kochv v1.1:
+```bash
+pip install -e ".[koch]"
+```
+or if you use poetry:
+```bash
+poetry install --sync --extras "koch"
+```
+
 Connect the leader arm (the smaller one) with the 5V alimentation and the follower arm with the 12V alimentation. Then connect both arms to your computer with USB.
 
 **Pro tip**: In the next sections, you will understand how our code work by playing with python codes that you will copy past in your terminal. If you are new to this tutorial, we highly recommend to go through this. Next time, when you are more familiar, you can instead run the teleoperate script which will automatically:
@@ -716,6 +725,7 @@ conda install -c conda-forge opencv=4.10.0
   - or, install [Homebrew](https://brew.sh) and run `brew install ffmpeg` (it should be compiled with `libsvtav1`),
   - or, install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1),
   - and, make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
+- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
 
 At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/koch_test) that you can obtain by running:
 ```bash

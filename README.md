@@ -77,7 +77,7 @@ conda activate lerobot
 
 Install 🤗 LeRobot:
 ```bash
-pip install .
+pip install -e .
 ```
 
 > **NOTE:** Depending on your platform, If you encounter any build errors during this step
@@ -91,7 +91,7 @@ For simulations, 🤗 LeRobot comes with gymnasium environments that can be inst
 
 For instance, to install 🤗 LeRobot with aloha and pusht, use:
 ```bash
-pip install ".[aloha, pusht]"
+pip install -e ".[aloha, pusht]"
 ```
 
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
