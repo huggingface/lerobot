@@ -29,23 +29,23 @@ from torch import Tensor, nn
 
 from transformers import AutoProcessor, AutoModelForCausalLM
 
-from lerobot.common.policies.florence_policy.configuration_florence_policy import FlorencePolicyConfig
+from lerobot.common.policies.florence.configuration_florence import FlorenceConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.utils import populate_queues
 
-class FlorencePolicy(nn.Module, PyTorchModelHubMixin):
+class Florence(nn.Module, PyTorchModelHubMixin):
     """
-    FlorencePolicy uses Microsoft's Florence2 VLM as the backbone and connects it with linear or diffusion action heads.
+    Florence uses Microsoft's Florence2 VLM as the backbone and connects it with linear or diffusion action heads.
     Florence2 is heavily pretrained with 900M images, and supports VQA, OCR, object detection and segmentation tasks.
     Thus, it can be a useful prerained network for robotics policy. Compared with OpenVLA/RT-2, it's smaller with 0.2/0.7B params.
     For details: https://github.com/EDiRobotics/mimictest
     """
 
-    name = "florence_policy"
+    name = "florence"
 
     def __init__(
         self,
-        config: FlorencePolicyConfig | None = None,
+        config: FlorenceConfig | None = None,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
@@ -57,7 +57,7 @@ class FlorencePolicy(nn.Module, PyTorchModelHubMixin):
         """
         super().__init__()
         if config is None:
-            config = FlorencePolicyConfig()
+            config = FlorenceConfig()
         self.config = config
         self.normalize_inputs = Normalize(
             config.input_shapes, config.input_normalization_modes, dataset_stats

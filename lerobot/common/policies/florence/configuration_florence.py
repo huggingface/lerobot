@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class FlorencePolicyConfig:
+class FlorenceConfig:
     """Configuration class for Florence policy.
 
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.
