@@ -106,6 +106,7 @@ import os
 import platform
 import shutil
 import time
+import traceback
 from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
@@ -222,10 +223,13 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None, fps=None
 @cache
 def is_headless():
     """Detects if python is running without a monitor."""
-    from screeninfo import get_monitors
+    try:
+        import pynput  # noqa
 
-    monitors = get_monitors()
-    return len(monitors) == 0
+        return False
+    except Exception:
+        traceback.print_exc()
+        return True
 
 
 ########################################################################################
