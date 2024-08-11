@@ -47,7 +47,7 @@ eval:
   batch_size: 50
 
 policy:
-  name: florence_policy
+  name: florence
 
   # Input / output structure.
   n_obs_steps: 2

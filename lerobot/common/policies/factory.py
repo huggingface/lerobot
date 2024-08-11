@@ -67,8 +67,8 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
 
         return VQBeTPolicy, VQBeTConfig
     elif name == "florence":
-        from lerobot.common.policies.florence_policy.configuration_florence import FlorenceConfig
-        from lerobot.common.policies.florence_policy.modeling_florence import Florence
+        from lerobot.common.policies.florence.configuration_florence import FlorenceConfig
+        from lerobot.common.policies.florence.modeling_florence import Florence
 
         return Florence, FlorenceConfig
     else:
