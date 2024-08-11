@@ -1,98 +1,108 @@
-# Robots in the real-world
+# Getting Started with Real-World Robots
 
-This tutorial explains how to get started with real robots and train a neural network to control them autonomously.
+This tutorial will guide you through the process of setting up and training a neural network to autonomously control a real robot.
 
-It covers how to:
-1. order and assemble your robot,
-2. connect your robot, configure and calibrate it,
-3. record your dataset and visualize it,
-4. train a policy on your data and make sure it's ready for evaluation,
-5. evaluate your policy and visualize the result afterwards.
+**What You'll Learn:**
+1. How to order and assemble your robot.
+2. How to connect, configure, and calibrate your robot.
+3. How to record and visualize your dataset.
+4. How to train a policy using your data and prepare it for evaluation.
+5. How to evaluate your policy and visualize the results.
 
-Following these steps, you will reproduce behaviors like picking a lego block and placing it in a bin with a relatively high success rate like in this video: https://x.com/RemiCadene/status/1814680760592572934
+By following these steps, you'll be able to replicate tasks like picking up a Lego block and placing it in a bin with a high success rate, as demonstrated in [this video](https://x.com/RemiCadene/status/1814680760592572934).
 
-While this tutorial is general and easily extendable to any type of robots by changing a configuration, it is based on the [Koch v1.1](https://github.com/jess-moss/koch-v1-1) affordable robot. Koch v1.1 is composed of a leader arm and a follower arm with 6 motors each. In addition, various cameras can record the scene and serve as visual sensors for the robot.
+Although this tutorial is general and can be easily adapted to various types of robots by changing the configuration, it is specifically based on the [Koch v1.1](https://github.com/jess-moss/koch-v1-1), an affordable robot. The Koch v1.1 consists of a leader arm and a follower arm, each with 6 motors. It also includes multiple cameras to record the scene, which serve as visual sensors for the robot.
 
-During data collection, you will control the follower arm by moving the leader arm. This is called "teleoperation". It is used to collect robot trajectories.
-Then, you will train a neural network to imitate these trajectories. Finally, you will deploy your neural network to autonomously control your robot.
+During the data collection phase, you'll control the follower arm by moving the leader arm, a process known as "teleoperation." This technique is used to collect robot trajectories. Afterward, you'll train a neural network to imitate these trajectories and deploy the network to enable your robot to operate autonomously.
 
-Note: If you have issue at any step of the tutorial, ask for help on [Discord](https://discord.com/invite/s3KuuzsPFb).
+If you encounter any issues at any step of the tutorial, feel free to seek help on [Discord](https://discord.com/invite/s3KuuzsPFb).
 
 ## 1. Order and Assemble your Koch v1.1
 
-Follow the sourcing and assembling instructions on the [Koch v1.1 github page](https://github.com/jess-moss/koch-v1-1) to setup the follower and leader arms shown in this picture.
+Follow the sourcing and assembling instructions provided on the [Koch v1.1 Github page](https://github.com/jess-moss/koch-v1-1). This will guide you through setting up both the follower and leader arms, as shown in the image below.
 
 <div style="text-align:center;">
   <img src="../media/tutorial/koch_v1_1_leader_follower.webp?raw=true" alt="Koch v1.1 leader and follower arms" title="Koch v1.1 leader and follower arms" width="50%">
 </div>
 
-See the [video tutorial of the assembly](https://youtu.be/5mdxvMlxoos).
+For a visual walkthrough of the assembly process, you can refer to [this video tutorial](https://youtu.be/5mdxvMlxoos).
 
 ## 2. Configure motors, Calibrate arms, Teleoperate your Koch v1.1
 
-Install the extra dependencies for Kochv v1.1:
+First, install the additional dependencies required for Koch v1.1 by running one of the following commands.
+
+Using `pip`:
 ```bash
 pip install -e ".[koch]"
 ```
-or if you use poetry:
+
+Or using `poetry`:
 ```bash
 poetry install --sync --extras "koch"
 ```
 
-Connect the leader arm (the smaller one) with the 5V alimentation and the follower arm with the 12V alimentation. Then connect both arms to your computer with USB.
+Next, connect the leader arm (the smaller one) to a 5V power supply and the follower arm to a 12V power supply. Then, connect both arms to your computer via USB.
 
-**Pro tip**: In the next sections, you will understand how our code work by playing with python codes that you will copy past in your terminal. If you are new to this tutorial, we highly recommend to go through this. Next time, when you are more familiar, you can instead run the teleoperate script which will automatically:
-- detect a wrong configuration for the motors, and run the configuration procedure (explained after),
-- detect a missing calibration and start the calibration procedure (explained after),
-- connect the robot and start teleoperation (explained after).
+**Pro tip**
+
+In the upcoming sections, you'll learn how our code functions by experimenting with Python scripts in your terminal. If this is your first time using the tutorial, we highly recommend going through these steps. Once you're more familiar, you can streamline the process by directly running the teleoperate script:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
   --robot-overrides '~cameras'  # do not instantiate the cameras
 ```
 
+It will automatically:
+- Detect and help you correct any motor configurations issue.
+- Identify any missing calibrations and initiate the calibration procedure.
+- Connect the robot and start teleoperation.
 
 ### Control your motors with DynamixelMotorsBus
 
-You can use the [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) to efficiently read from and write to the motors connected as a chain to the corresponding usb bus. Underneath, it relies on the python [dynamixel sdk](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
+You can use the [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) to communicate with the motors connected as a chain to the corresponding USB bus. This class leverages the Python [Dynamixel SDK](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20) to facilitate reading from and writing to the motors.
 
-**Instantiate**
+**Instantiate the DynamixelMotorsBus**
 
-You will need to instantiate two [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py), one for each arm, with their corresponding usb port (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`).
+To begin, you'll need to create two instances of the  [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py), one for each arm, using their corresponding USB ports (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`).
 
-To find their corresponding ports, run our utility script twice:
+To find the correct ports for each arm, run the utility script twice:
 ```bash
 python lerobot/common/robot_devices/motors/dynamixel.py
 ```
 
-A first time to find the port of the leader arm (e.g. `/dev/tty.usbmodem575E0031751`):
+*First Run: Identify the Leader Arm's Port*
+
+Example output when identifying the leader arm's port (e.g., /dev/tty.usbmodem575E0031751):
 ```
 Finding all available ports for the DynamixelMotorsBus.
 ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
 Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
 
-**Disconnect leader arm and press Enter**
+[...Disconnect leader arm and press Enter...]
 
 The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0031751
 Reconnect the usb cable.
 ```
 
-A second time to find the port of the follower arm (e.g. `/dev/tty.usbmodem575E0032081`):
+*Second Run: Identify the Follower Arm's Port*
+
+Example output when identifying the follower arm's port (e.g., /dev/tty.usbmodem575E0032081):
 ```
 Finding all available ports for the DynamixelMotorsBus.
 ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
 Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
 
-**Disconnect follower arm and press Enter**
+[...Disconnect follower arm and press Enter...]
 
 The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0032081
 Reconnect the usb cable.
 ```
 
-Then you will need to list their motors with their name, motor index, and model.
-Importantly, the initial motor index from factory for every motors is `1`. However, unique indices are required for these motors to function in a chain on a common bus. To this end, you will need to set different indices. We advise to follow the ascendant convention starting from index `1` (e.g. `1,2,3,4,5,6`). These indices will be written inside the persisting memory of each motor during the first connection.
+*Listing and Configuring Motors*
 
-Update the corresponding ports of this code with your ports and run the code to instantiate the Koch leader and follower arms:
+Next, you'll need to list the motors for each arm, including their name, index, and model. Initially, each motor is assigned the factory default index 1. Since each motor requires a unique index to function correctly when connected in a chain on a common bus, you'll need to assign different indices. It's recommended to use an ascending index order, starting from 1 (e.g., 1, 2, 3, 4, 5, 6). These indices will be saved in the persistent memory of each motor during the first connection.
+
+Here's how you can instantiate the Koch leader and follower arms. Replace the `port` values with the ones you identified earlier:
 ```python
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 
@@ -126,7 +136,9 @@ follower_arm = DynamixelMotorsBus(
 )
 ```
 
-Also, update the ports of the following lines of yaml file for Koch robot [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml):
+*Updating the YAML Configuration File*
+
+Finally, update the port values in the YAML configuration file for the Koch robot at [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with the ports you've identified:
 ```yaml
 [...]
 leader_arms:
@@ -156,20 +168,24 @@ follower_arms:
 [...]
 ```
 
-This file is used to instantiate your robot in all our scripts. We will explain how this works later on.
+This configuration file is used to instantiate your robot across all scripts. We'll cover how this works later on.
 
-**Configure and Connect**
+**Connect and Configure your Motors**
 
-Then, you will need to configure your motors to be able to properly communicate with them. During the first connection of the motors, [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) automatically detects a mismatch between the present motor indices (all `1` by factory default) and your specified motor indices (e.g. `1,2,3,4,5,6`). This triggers the configuration procedure which requires to unplug the power cord and motors, and to sequentially plug each motor again, starting from the closest to the bus.
+Before you can start using your motors, you'll need to configure them to ensure proper communication. When you first connect the motors, the [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) automatically detects any mismatch between the current motor indices (factory set to `1`) and the specified indices (e.g., `1, 2, 3, 4, 5, 6`). This triggers a configuration procedure that requires you to unplug the power cord and motors, then reconnect each motor sequentially, starting from the one closest to the bus.
 
-See the [video tutorial of the configuration procedure](https://youtu.be/U78QQ9wCdpY).
+For a visual guide, refer to the [video tutorial of the configuration procedure](https://youtu.be/U78QQ9wCdpY).
 
-Run the following code in the same python session in your terminal to connect and configure the leader arm:
+*Connecting and Configuring the Leader Arm*
+
+To connect and configure the leader arm, run the following code in your terminal within the same Python session:
 ```python
 leader_arm.connect()
 ```
 
-Here is an example of connecting the leader arm for the first time:
+*Example of First-Time Connection for the Leader Arm*
+
+When you connect the leader arm for the first time, you might see an output similar to this:
 ```
 Read failed due to communication error on port /dev/tty.usbmodem575E0032081 for group_key ID_shoulder_pan_shoulder_lift_elbow_flex_wrist_flex_wrist_roll_gripper: [TxRxResult] There is no status packet!
 
@@ -189,29 +205,39 @@ Press Enter to continue...
 Setting expected motor indices: [1, 2, 3, 4, 5, 6]
 ```
 
-Now do the same for the follower arm:
+*Connecting and Configuring the Follower Arm*
+
+Once the leader arm is configured, repeat the process for the follower arm by running:
 ```python
 follower_arm.connect()
 ```
 
-Congrats, now both arms are well configured and connected! You won't have to follow the configuration procedure ever again!
+*Finalizing Configuration*
 
-Note: If the configuration didn't work, you might need to update the firmware using [DynamixelWizzard2](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_wizard2). You might also need to manually configure the motors. Similarly, you will need to connect each motor seperately to the bus. You will need to set correct indices and set their baudrates to `1000000`. Take a look at this video for help: https://www.youtube.com/watch?v=JRRZW_l1V-U
+Congratulations! Both arms are now properly configured and connected. You won't need to go through the configuration procedure again in the future.
+
+Troubleshooting: If the configuration process fails, you may need to update the firmware using [DynamixelWizzard2](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_wizard2). You might also need to manually configure the motors by connecting each one separately to the bus, setting the correct indices, and adjusting their baud rates to `1000000`. For additional help, check out [this video](https://www.youtube.com/watch?v=JRRZW_l1V-U).
 
 
-**Read and Write**
+**Read and Write with DynamixelMotorsBus**
 
-Just to get familiar with how `DynamixelMotorsBus` communicates with the motors, let's try to read from them:
+To get familiar with how `DynamixelMotorsBus` communicates with the motors, you can start by reading data from them. Here's how you can do it:
 ```python
 leader_pos = leader_arm.read("Present_Position")
 follower_pos = follower_arm.read("Present_Position")
 print(leader_pos)
 print(follower_pos)
->>> array([2054,  523, 3071, 1831, 3049, 2441], dtype=int32)
->>> array([2003, 1601,   56, 2152, 3101, 2283], dtype=int32)
 ```
 
-Try to move the arms in various positions and see how if affects the values.
+Expected output might look like:
+```
+array([2054,  523, 3071, 1831, 3049, 2441], dtype=int32)
+array([2003, 1601,   56, 2152, 3101, 2283], dtype=int32)
+```
+
+Try moving the arms to various positions and observe how the values change.
+
+*Enabling Torque on the Follower Arm*
 
 Now let's try to enable torque in the follower arm:
 ```python
@@ -220,7 +246,11 @@ from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
 follower_arm.write("Torque_Enable", TorqueMode.ENABLED.value)
 ```
 
-The follower arm should be stuck in its current position. Don't try to manually move it while torque is enabled as it might damage the motors. Instead try to move it using the code:
+With torque enabled, the follower arm will be locked in its current position. Do not attempt to manually move the arm while torque is enabled, as this could damage the motors.
+
+*Moving the Follower Arm Programmatically*
+
+Now, let's move the arm using the following code:
 ```python
 # Get the current position
 position = follower_arm.read("Present_Position")
@@ -238,31 +268,33 @@ position[-1] += 30
 follower_arm.write("Goal_Position", position[-1], "gripper")
 ```
 
-When you are done, disable the torque by running:
+*Disabling Torque and Disconnecting*
+
+When you're done, make sure to disable the torque to avoid any potential issues:
 ```python
 # Warning: hold your robot so that it doesn't fall
 follower_arm.write("Torque_Enable", TorqueMode.DISABLED.value)
 ```
 
-And disconnect the two arms:
+Finally, disconnect the arms:
 ```python
 leader_arm.disconnect()
 follower_arm.disconnect()
 ```
 
-You can also unplug the power cord which will disable torque and disconnect.
+Alternatively, you can unplug the power cord, which will automatically disable torque and disconnect the motors.
 
 ### Teleoperate your Koch v1.1 with KochRobot
 
-**Instantiate**
+**Instantiate the KochRobot**
 
-Before being able to teleoperate your robot, you will need to instantiate the [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) using the previously defined `leader_arm` and `follower_arm` as shown next.
+Before you can teleoperate your robot, you need to instantiate the  [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) using the previously defined `leader_arm` and `follower_arm`.
 
-For the Koch robot, we only have one leader, so as you will see next, we call it `"main"` and define `leader_arms={"main": leader_arm}`. We do the same for the follower arm. However for other robots (e.g. Aloha), we can use two pairs of leader and follower. In this case, we would define `leader_arms={"left": left_leader_arm, "right": right_leader_arm},`. Same thing for the follower arms.
+For the Koch robot, we only have one leader, so we refer to it as `"main"` and define it as `leader_arms={"main": leader_arm}`. We do the same for the follower arm. For other robots (like the Aloha), which may have two pairs of leader and follower arms, you would define them like this: `leader_arms={"left": left_leader_arm, "right": right_leader_arm},`. Same thing for the follower arms.
 
-We also need to provide a path to a calibration file `calibration_path=".cache/calibration/koch.pkl"`. More on this in the next section.
+You also need to provide a path to a calibration file, such as  `calibration_path=".cache/calibration/koch.pkl"`. More on this in the next section.
 
-Run this code to instantiate your robot:
+Run the following code to instantiate your Koch robot:
 ```python
 from lerobot.common.robot_devices.robots.koch import KochRobot
 
@@ -273,13 +305,13 @@ robot = KochRobot(
 )
 ```
 
-**Calibrate and Connect**
+**Calibrate and Connect the KochRobot**
 
-Then, you will need to calibrate your robot so that when the leader and follower arms are in the same physical position, they have the same position values read from [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py). An important benefit of calibration is that a neural network trained on data collected on your Koch robot will transfer to another Koch robot.
+Next, you'll need to calibrate your robot to ensure that the leader and follower arms have the same position values when they are in the same physical position. This calibration is essential because it allows a neural network trained on one Koch robot to work on another.
 
-During the first connection of your robot, [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) detects that the calibration file is missing. This triggers the calibration procedure which requires you to move each arm in 3 different positions.
+When you connect your robot for the first time, the [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) will detect if the calibration file is missing and trigger the calibration procedure. During this process, you will be guided to move each arm to three different positions.
 
-You will follow the procedure and move the follower to these positions:
+Here are the positions you'll move the follower arm to:
 
 <div style="display:flex; justify-content:center;">
   <div style="width:30%; margin:10px;">
@@ -297,7 +329,7 @@ You will follow the procedure and move the follower to these positions:
 </div>
 
 
-Then you will continue the procedure and move the leader to these positions:
+And here are the corresponding positions for the leader arm:
 
 <div style="display:flex; justify-content:center;">
   <div style="width:30%; margin:10px;">
@@ -314,21 +346,18 @@ Then you will continue the procedure and move the leader to these positions:
   </div>
 </div>
 
-See the [video tutorial of the calibration procedure](https://youtu.be/8drnU9uRY24).
+You can watch a [video tutorial of the calibration procedure](https://youtu.be/8drnU9uRY24) for more details.
 
-Importantly, you don't need to be super accurate. When moving the arm to what we defined as the zero position, you are not "setting" the zero position. Our calibration procedure just counts the number of full 360 degrees rotations that your motors achieved since their birth from the factory. After calibration, all koch arms worldwide will move to the same zero position when their owner command them to go to position zero.
+During calibration, the robot doesn't actually "set" the zero or rotated positions; instead, it counts the number of full 360-degree rotations each motor has made since it was first used. This allows all Koch robots to move to the same positions (zero and 90 degrees) when commanded, regardless of the specific robot.
 
-Regarding the 90 degrees rotated position, we use it to determine the direction of rotation of the motors. Did the number of steps decreased or increased when moving 90 degrees? After calibration, all koch arms worldwide will move to the same rotated 90 degrees position when their owner command them so.
+Finally, the rest position ensures that the follower and leader arms are roughly aligned after calibration, preventing sudden movements that could damage the motors when starting teleoperation.
 
-Finally, the rest position is used for safety, so that when the calibration is done, the follower and leader arms are roughly in the same position. As a result, at the start of teleoperation, the follower won't "jump" to match the leader position, risking to damage the motors.
-
-
-Run this code to calibrate and connect your robot:
+Run the following code to calibrate and connect your robot:
 ```python
 robot.connect()
 ```
 
-The output will look like:
+The output will look like this:
 ```
 Connecting main follower arm
 Connecting main leader arm
@@ -355,134 +384,162 @@ Move arm to rest position
 Calibration is done! Saving calibration file '.cache/calibration/koch.pkl'
 ```
 
-Now we will see how to read the position of the leader and follower arms using `read` from [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py). If the calibration is done well, the position should be similar when both arms are in a similar position.
+*Verifying Calibration*
 
-Run this code to get the positions in degree:
+Once calibration is complete, you can check the positions of the leader and follower arms to ensure they match. If the calibration was successful, the positions should be very similar.
+
+Run this code to get the positions in degrees:
 ```python
 leader_pos = robot.leader_arms["main"].read("Present_Position")
 follower_pos = robot.follower_arms["main"].read("Present_Position")
+
 print(leader_pos)
 print(follower_pos)
->>> array([-0.43945312, 133.94531, 179.82422, -18.984375, -1.9335938, 34.541016], dtype=float32)
->>> array([-0.58723712, 131.72314, 174.98743, -16.872612, 0.786213, 35.271973], dtype=float32)
 ```
 
-Importantly, we also converted the "step" position to degree. This is much easier to interpet and debug. In particular, the zero position used during calibration now corresponds to 0 degree for each motor. Also, the rotated position corresponds to 90 degree for each motor.
+Example output:
+```
+array([-0.43945312, 133.94531, 179.82422, -18.984375, -1.9335938, 34.541016], dtype=float32)
+array([-0.58723712, 131.72314, 174.98743, -16.872612, 0.786213, 35.271973], dtype=float32)
+```
 
-**Teleoperate**
+These values are in degrees, which makes them easier to interpret and debug. The zero position used during calibration should roughly correspond to 0 degrees for each motor, and the rotated position should roughly correspond to 90 degrees for each motor.
 
-Now you can easily teleoperate your robot by reading the positions from the leader arm and sending them as goal positions to the follower arm.
+**Teleoperate your Koch v1.1**
 
-Run this code to teleoperate:
+You can easily teleoperate your robot by reading the positions from the leader arm and sending them as goal positions to the follower arm.
+
+To teleoperate your robot for 30 seconds at a frequency of approximately 200Hz, run the following code:
 ```python
 import tqdm
-# Teleoperate for 30 seconds
-# Fastest communication is done at a frequency of ~200Hz
-for _ in tqdm.tqdm(range(30*200)):
+seconds = 30
+frequency = 200
+for _ in tqdm.tqdm(range(seconds*frequency)):
     leader_pos = robot.leader_arms["main"].read("Present_Position")
     robot.follower_arms["main"].write("Goal_Position", leader_pos)
 ```
 
-You can also teleoperate by using `teleop_step` from [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py).
+*Using `teleop_step` for Teleoperation*
+
+Alternatively, you can teleoperate the robot using the `teleop_step` method from [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py).
 
 Run this code to teleoperate:
 ```python
-import tqdm
-for _ in tqdm.tqdm(range(30*200)):
+for _ in tqdm.tqdm(range(seconds*frequency)):
     robot.teleop_step()
 ```
 
-Teleoperation is useful to record data. To this end, you can use `teleop_step` from [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) with `record_data=True`. It outputs the follower position as `"observation.state"` and the leader position as `"action"`. It also converts the numpy arrays into torch tensors, and concatenates the positions in the case of two leader and two follower arms like in Aloha.
+*Recording data during Teleoperation*
 
-Run this code several time to see how (slowly) moving the leader arm affects the observation and action:
+Teleoperation is particularly useful for recording data. You can use the `teleop_step(record_data=True)` to returns both the follower arm's position as `"observation.state"` and the leader arm's position as `"action"`. This function also converts the numpy arrays into PyTorch tensors. If you're working with a robot that has two leader and two follower arms (like the Aloha), the positions are concatenated.
+
+Run the following code to see how slowly moving the leader arm affects the observation and action:
 ```python
 leader_pos = robot.leader_arms["main"].read("Present_Position")
 follower_pos = robot.follower_arms["main"].read("Present_Position")
 observation, action = robot.teleop_step(record_data=True)
+
 print(follower_pos)
 print(observation)
 print(leader_pos)
 print(action)
->>> array([7.8223, 131.1328, 165.5859, -23.4668, -0.9668, 32.4316], dtype=float32)
->>> {'observation.state': tensor([7.8223, 131.1328, 165.5859, -23.4668, -0.9668, 32.4316])}
->>> array([3.4277, 134.1211, 179.8242, -18.5449, -1.5820, 34.7168], dtype=float32)
->>> {'action': tensor([3.4277, 134.1211, 179.8242, -18.5449, -1.5820, 34.7168])}
 ```
 
-Finally, `teleop_step` from [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) with `record_data=True` can also asynchrously record frames from several cameras and add them to the observation dictionnary as `"observation.images.CAMERA_NAME"`. More on this in the next section.
+Expected output:
+```
+array([7.8223, 131.1328, 165.5859, -23.4668, -0.9668, 32.4316], dtype=float32)
+{'observation.state': tensor([7.8223, 131.1328, 165.5859, -23.4668, -0.9668, 32.4316])}
+array([3.4277, 134.1211, 179.8242, -18.5449, -1.5820, 34.7168], dtype=float32)
+{'action': tensor([3.4277, 134.1211, 179.8242, -18.5449, -1.5820, 34.7168])}
+```
 
-When you are done, disconnect your robot:
+*Asynchronous Frame Recording*
+
+Additionally, `teleop_step` can asynchronously record frames from multiple cameras and include them in the observation dictionary as `"observation.images.CAMERA_NAME"`. This feature will be covered in more detail in the next section.
+
+*Disconnecting the Robot*
+
+When you're finished, make sure to disconnect your robot by running:
 ```python
 robot.disconnect()
 ```
+
+Alternatively, you can unplug the power cord, but it will also disable torque.
 
 ### Add your cameras with OpenCVCamera
 
 **(Optional) Use your phone as camera on Linux**
 
-If you are using a built in laptop camera, or webcam you may ignore these steps. However, if you would like to use your phone as a camera on Linux, you must first set up a virtual camera port.
+If you want to use your phone as a camera on Linux, follow these steps to set up a virtual camera
 
-1. Install `v4l2loopback-dkms`, which is required for creating virtual camera devices, using the following command:
+1. *Install `v4l2loopback-dkms`*. This package is required to create virtual camera devices. Install it using:
 ```python
 sudo apt-get install v4l2loopback-dkms
 ```
-2. Download [DroidCam](https://droidcam.app) on your phone (available for both iOS and Android).
-3. Install [OBS Studio](https://obsproject.com/). Follow the steps based on your operating system. For Linux, you can use [Flatpak](https://flatpak.org/):
+2. *Install [DroidCam](https://droidcam.app) on your phone*. This app is available for both iOS and Android.
+3. *Install [OBS Studio](https://obsproject.com)*. This software will help you manage the camera feed. Install it using [Flatpak](https://flatpak.org):
 ```python
 flatpak install flathub com.obsproject.Studio
 ```
-4. Install the DroidCam OBS plugin. Follow the steps based on your operating system. For Linux:
+4. *Install the DroidCam OBS plugin*. This plugin integrates DroidCam with OBS Studio. Install it with:
 ```python
 flatpak install flathub com.obsproject.Studio.Plugin.DroidCam
 ```
-5. Open OBS Studio. For Linux:
+5. *Start OBS Studio*. Launch with:
 ```python
 flatpak run com.obsproject.Studio
 ```
-6. Add your phone as a source. Follow the instructions [here](https://droidcam.app/obs/usage). Be sure to set the resolution to `640x480`.
-7. Go to `File>Settings>Video`. Change the `Base(Canvas) Resolution` and the `Output(Scaled) Resolution` to `640x480` by manually typing it in.
-8. In OBS Studio, start the virtual camera. Follow the instructions [here](https://obsproject.com/kb/virtual-camera-guide).
-9. Use `v4l2-ctl` to ensure the virtual camera is set up correctly, and check the output shows a `VirtualCam`, as in the example below.
+6. *Add your phone as a source*. Follow the instructions [here](https://droidcam.app/obs/usage). Be sure to set the resolution to `640x480`.
+7. *Adjust resolution settings*. In OBS Studio, go to `File > Settings > Video`. Change the `Base(Canvas) Resolution` and the `Output(Scaled) Resolution` to `640x480` by manually typing it in.
+8. *Start virtual camera*. In OBS Studio, follow the instructions [here](https://obsproject.com/kb/virtual-camera-guide).
+9. *Verify the virtual camera setup*. Use `v4l2-ctl` to list the devices:
 ```python
 v4l2-ctl --list-devices
-
->>> VirtualCam (platform:v4l2loopback-000):
->>> /dev/video1
 ```
-10. Use `v4l2-ctl` to check that your Virtual camera output resolution is `640x480` as shown below. Change `/dev/video1` to the port of your virtual camera from the output of `v4l2-ctl --list-devices`. Note: If the resolution is not correct you will have to delete the Virtual Camera port and try again as it cannot be changed.
+You should see an entry like:
+```
+VirtualCam (platform:v4l2loopback-000):
+/dev/video1
+```
+10. *Check the camera resolution*. Use `v4l2-ctl` to ensure that the virtual camera output resolution is `640x480`. Change `/dev/video1` to the port of your virtual camera from the output of `v4l2-ctl --list-devices`.
 ```python
 v4l2-ctl -d /dev/video1 --get-fmt-video
-
+```
+You should see an entry like:
+```
 >>> Format Video Capture:
 >>>	Width/Height      : 640/480
 >>>	Pixel Format      : 'YUYV' (YUYV 4:2:2)
 ```
-From here, you should be able to proceed with the rest of the tutorial.
+
+Troubleshooting: If the resolution is not correct you will have to delete the Virtual Camera port and try again as it cannot be changed.
+
+If everything is set up correctly, you can proceed with the rest of the tutorial.
 
 **(Optional) Use your iPhone as a camera on MacOS**
 
-For using your iPhone as a camera on MacOS, enable the Continuity Camera feature:
-- Make sure your Mac has macOS 13 or later and your iPhone has iOS 16 or later.
+To use your iPhone as a camera on macOS, enable the Continuity Camera feature:
+- Ensure your Mac is running macOS 13 or later, and your iPhone is on iOS 16 or later.
 - Sign in both devices with the same Apple ID.
-- Connect with a USB cable for a wired connection or turn on Wi-Fi and Bluetooth on both devices.
+- Connect your devices with a USB cable or turn on Wi-Fi and Bluetooth for a wireless connection.
 
-For more info, see [Apple support](https://support.apple.com/en-gb/guide/mac-help/mchl77879b8a/mac).
+For more details, visit [Apple support](https://support.apple.com/en-gb/guide/mac-help/mchl77879b8a/mac).
 
-Your iPhone should be detected using our script in the next section.
+Your iPhone should be detected automatically when running the camera setup script in the next section.
 
-**Instantiate**
+**Instantiate an OpenCVCamera**
 
-You can efficiently record frames from cameras with the [`OpenCVCamera`](../lerobot/common/robot_devices/cameras/opencv.py) class. It relies on [`opencv2`](https://docs.opencv.org) to communicate with the cameras. Most cameras are compatible. For more info, see [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
+The [`OpenCVCamera`](../lerobot/common/robot_devices/cameras/opencv.py) class allows you to efficiently record frames from most cameras using the [`opencv2`](https://docs.opencv.org) library.  For more details on compatibility, see [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
 
 To instantiate an [`OpenCVCamera`](../lerobot/common/robot_devices/cameras/opencv.py), you need a camera index (e.g. `OpenCVCamera(camera_index=0)`). When you only have one camera like a webcam of a laptop, the camera index is usually `0` but it might differ, and the camera index might change if you reboot your computer or re-plug your camera. This behavior depends on your operating system.
 
-To find the camera indices of your cameras, you can run our utility script that will save a few frames for each camera:
+To find the camera indices, run the following utility script, which will save a few frames from each detected camera:
 ```bash
 python lerobot/common/robot_devices/cameras/opencv.py \
     --images-dir outputs/images_from_opencv_cameras
 ```
 
-The output looks like this for two cameras:
+The output will look something like this if you have two cameras connected:
 ```
 Mac or Windows detected. Finding available camera indices through scanning all indices from 0 to 60
 [...]
@@ -499,7 +556,7 @@ Frame: 0046	Latency (ms): 40.07
 Images have been saved to outputs/images_from_opencv_cameras
 ```
 
-Then, look at the saved images in `outputs/images_from_opencv_cameras` to know which camera index (e.g. `0` for `camera_00` or `1` for `camera_01`) is associated to which physical camera:
+Check the saved images in `outputs/images_from_opencv_cameras` to identify which camera index corresponds to which physical camera (e.g. `0` for `camera_00` or `1` for `camera_01`):
 ```
 camera_00_frame_000000.png
 [...]
@@ -509,33 +566,51 @@ camera_01_frame_000000.png
 camera_01_frame_000047.png
 ```
 
-Note: We save a few frames since some cameras need a few seconds to warmup. The first frame can be totally black or green.
+Note: Some cameras may take a few seconds to warm up, and the first frame might be black or green.
 
-Finally, run this code to instantiate your camera:
+Finally, run this code to instantiate and connectyour camera:
 ```python
 from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
 
 camera = OpenCVCamera(camera_index=0)
 camera.connect()
 color_image = camera.read()
+
 print(color_image.shape)
 print(color_image.dtype)
->>> (1080, 1920, 3)
->>> uint8
 ```
 
-Note that default fps, width, height and color_mode of the given camera are used. They may differ for different cameras. You can specify them during instantiation (e.g. `OpenCVCamera(camera_index=0, fps=30, width=640, height=480`).
+Expected output for a laptop camera on MacBookPro:
+```
+(1080, 1920, 3)
+uint8
+```
 
-When done using the camera, disconnect it:
+Or like this if you followed our tutorial to set a virtual camera:
+```
+(480, 640, 3)
+uint8
+```
+
+With certain camera, you can also specify additional parameters like frame rate, resolution, and color mode during instantiation. For instance:
+```python
+camera = OpenCVCamera(camera_index=0, fps=30, width=640, height=480)
+```
+
+If the provided arguments are not compatible with the camera, an exception will be raised.
+
+*Disconnecting the camera*
+
+When you're done using the camera, disconnect it by running:
 ```python
 camera.disconnect()
 ```
 
 **Instantiate your robot with cameras**
 
-You can also instantiate your robot with your cameras!
+Additionaly, you can set up your robot to work with your cameras.
 
-Adjust this code with the names and configurations of your cameras and run it:
+Modify the following Python code with the appropriate camera names and configurations:
 ```python
 robot = KochRobot(
     leader_arms={"main": leader_arm},
@@ -549,22 +624,26 @@ robot = KochRobot(
 robot.connect()
 ```
 
-As a result, `teleop_step` with `record_data=True` will return a frame for each camera following the pytorch convention: channel first with pixels in range [0,1]
+As a result, `teleop_step(record_data=True` will return a frame for each camera following the pytorch convention: channel first with pixels in range [0,1].
 
-Adjust this code with the names of your cameras and run it:
+Modify this code with the names of your cameras and run it:
 ```python
 observation, action = robot.teleop_step(record_data=True)
 print(observation["observation.images.laptop"].shape)
 print(observation["observation.images.phone"].shape)
 print(observation["observation.images.laptop"].min().item())
 print(observation["observation.images.laptop"].max().item())
->>> torch.Size([3, 480, 640])
->>> torch.Size([3, 480, 640])
->>> 0.13137255012989044
->>> 0.98237823197230911
 ```
 
-Also, update the flollowing lines of the yaml file for Koch robot [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with the names and configurations of your cameras:
+The output should look like this:
+```
+torch.Size([3, 480, 640])
+torch.Size([3, 480, 640])
+0.13137255012989044
+0.98237823197230911
+```
+
+Also, update the following lines of the yaml file for Koch robot [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with the names and configurations of your cameras:
 ```yaml
 [...]
 cameras:
@@ -586,7 +665,7 @@ This file is used to instantiate your robot in all our scripts. We will explain 
 
 ### Use `koch.yaml` and our `teleoperate` function
 
-Instead of manually running the python code in a terminal window, you can use [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to instantiate your robot by providing the path to the robot yaml file (e.g. [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) and control your robot with various modes as explained next.
+Instead of manually running the python code in a terminal window, you can use [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to instantiate your robot by providing the path to the robot yaml file (e.g. [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml)) and control your robot with various modes as explained next.
 
 Try running this code to teleoperate your robot (if you dont have a camera, keep reading):
 ```bash
@@ -698,7 +777,7 @@ python lerobot/scripts/control_robot.py record \
   --num-episodes 2
 ```
 
-Note: Remember to add `--robot-overrides '~cameras'` if you don't have any cameras and you still use the default `koch.yaml` configuration.
+Remember to add `--robot-overrides '~cameras'` if you don't have any cameras and you still use the default `koch.yaml` configuration.
 
 You will see a lot of lines appearing like this one:
 ```
@@ -734,13 +813,13 @@ echo https://huggingface.co/datasets/${HF_USER}/koch_test
 
 ### Advices for recording dataset
 
-Now that you are used to data recording, you can record a bigger dataset for training. A good hello world task consists in grasping an object at various locations and placing it in a bin. We recommend to record a minimum of 50 episodes with 10 episodes per location, to not move the cameras and to grasp with a consistent behavior.
+Once you're comfortable with data recording, it's time to create a larger dataset for training. A good starting task is grasping an object at different locations and placing it in a bin. We suggest recording at least 50 episodes, with 10 episodes per location. Keep the cameras fixed and maintain consistent grasping behavior throughout the recordings.
 
-In the next sections, you will train your neural network. Once it can grasp pretty well, you can introduce slightly more variance during data collection such as more grasp locations, various grasping behaviors, various positions for the cameras, etc.
+In the following sections, you’ll train your neural network. After achieving reliable grasping performance, you can start introducing more variations during data collection, such as additional grasp locations, different grasping techniques, and altering camera positions.
 
-Don't be greedy or it won't work!
+Avoid adding too much variation too quickly, as it may hinder your results.
 
-In the coming months, we plan to add a fundational model for robotics. We expect that finetuning it will lead to stronger generalization abilities so you won't have to be so careful about adding variations in your data collection.
+In the coming months, we plan to release a foundational model for robotics. We anticipate that fine-tuning this model will enhance generalization, reducing the need for strict consistency during data collection.
 
 ### Visualize all episodes
 
@@ -758,9 +837,9 @@ This will launch a local web server that looks like this:
 
 ### Replay episode on your robot with the `replay` function
 
-Another cool function of [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) is `replay` which allows to replay on your robot any episode that you've recorded or from any dataset out there. It's a way to test repeatability of your robot and transferability across robots of the same type.
+A useful feature of [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) is the `replay` function, which allows to replay on your robot any episode that you've recorded or episodes from any dataset out there. This function helps you test the repeatability of your robot's actions and assess transferability across robots of the same model.
 
-Run this to replay the first episode of the dataset you've just recorded:
+To replay the first episode of the dataset you just recorded, run the following command:
 ```bash
 python lerobot/scripts/control_robot.py replay \
   --robot-path lerobot/configs/robot/koch.yaml \
@@ -770,17 +849,26 @@ python lerobot/scripts/control_robot.py replay \
   --episode 0
 ```
 
-Your robot should reproduce very similar movements as what you recorded. For instance, see this video where we use `replay` on a Aloha robot from [Trossen Robotics](https://www.trossenrobotics.com): https://x.com/RemiCadene/status/1793654950905680090
+Your robot should replicate movements similar to those you recorded. For example, check out [this video](https://x.com/RemiCadene/status/1793654950905680090) where we use `replay` on a Aloha robot from [Trossen Robotics](https://www.trossenrobotics.com).
 
 ## 4. Train a policy on your data
 
-### Use our `train` script
+### Use the `train` script
 
-Then, you can train a policy to control your robot by running [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. We give an example command later on.
+To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+```bash
+DATA_DIR=data python lerobot/scripts/train.py \
+  dataset_repo_id=${HF_USER}/koch_test \
+  policy=act_koch_real \
+  env=koch_real \
+  hydra.run.dir=outputs/train/act_koch_test \
+  hydra.job.name=act_koch_test \
+  wandb.enable=true
+```
 
-Firstly, provide your dataset as argument with `dataset_repo_id=${HF_USER}/koch_test`.
-
-Secondly, provide a policy with `policy=act_koch_real`. This loads configurations from [`lerobot/configs/policy/act_koch_real.yaml`](../lerobot/configs/policy/act_koch_real.yaml). Importantly, this policy uses 2 cameras as input `laptop` and `phone`. If your dataset has different cameras, update the yaml file to account for it in the following parts:
+Let's explain it:
+1. We provided the dataset as argument with `dataset_repo_id=${HF_USER}/koch_test`.
+2. We provided the policy with `policy=act_koch_real`. This loads configurations from [`lerobot/configs/policy/act_koch_real.yaml`](../lerobot/configs/policy/act_koch_real.yaml). Importantly, this policy uses 2 cameras as input `laptop` and `phone`. If your dataset has different cameras, update the yaml file to account for it in the following parts:
 ```yaml
 ...
 override_dataset_stats:
@@ -802,8 +890,7 @@ override_dataset_stats:
     observation.images.phone: mean_std
 ...
 ```
-
-Thirdly, provide an environment as argument with `env=koch_real`. This loads configurations from [`lerobot/configs/env/koch_real.yaml`](../lerobot/configs/env/koch_real.yaml). It looks like
+3. We provided an environment as argument with `env=koch_real`. This loads configurations from [`lerobot/configs/env/koch_real.yaml`](../lerobot/configs/env/koch_real.yaml). It looks like
 ```yaml
 fps: 30
 env:
@@ -814,25 +901,12 @@ env:
   fps: ${fps}
 ```
 It should match your dataset (e.g. `fps: 30`) and your robot (e.g. `state_dim: 6` and `action_dim: 6`). We are still working on simplifying this in future versions of `lerobot`.
-
-Optionnaly, you can use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots with `wandb.enable=true` as agument. Make sure you are logged in by running `wandb login`.
-
-Finally, add `DATA_DIR=data` before `python lerobot/scripts/train.py` to access your dataset stored in your local `data` directory. If you dont provide `DATA_DIR`, your dataset will be downloaded from Hugging Face hub to your cache folder `$HOME/.cache/hugginface`. In future versions of `lerobot`, both directories will be in sync.
-
-Now, start training:
-```bash
-DATA_DIR=data python lerobot/scripts/train.py \
-  dataset_repo_id=${HF_USER}/koch_test \
-  policy=act_koch_real \
-  env=koch_real \
-  hydra.run.dir=outputs/train/act_koch_test \
-  hydra.job.name=act_koch_test \
-  wandb.enable=true
-```
+4. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
+5. We added `DATA_DIR=data` to access your dataset stored in your local `data` directory. If you dont provide `DATA_DIR`, your dataset will be downloaded from Hugging Face hub to your cache folder `$HOME/.cache/hugginface`. In future versions of `lerobot`, both directories will be in sync.
 
 For more information on the `train` script see the previous tutorial: [`examples/4_train_policy_with_script.md`](../examples/4_train_policy_with_script.md)
 
-## Upload policy checkpoints to the hub
+## (Optional) Upload policy checkpoints to the hub
 
 Once training is done, upload the latest checkpoint with:
 ```bash
@@ -849,10 +923,7 @@ huggingface-cli upload ${HF_USER}/act_koch_test_${CKPT} \
 
 ## 5. Evaluate your policy
 
-Now that you have a policy checkpoint, you can easily control your robot with it using:
-- `observation = robot.capture_observation()`
-- `action = policy.select_action(observation)`
-- `robot.send_action(action)`
+Now that you have a policy checkpoint, you can easily control your robot with it using methods from [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) and the policy.
 
 Try this code for running inference for 60 seconds at 30 fps:
 ```python
@@ -866,6 +937,8 @@ policy = ActPolicy.from_pretrained(ckpt_path)
 
 for _ in range(inference_time_s * fps):
     start_time = time.perf_counter()
+
+    # Read the follower state and access the frames from the cameras
     observation = robot.capture_observation()
 
     # Convert to pytorch format: channel first and float32 in [0,1]
@@ -877,26 +950,27 @@ for _ in range(inference_time_s * fps):
         observation[name] = observation[name].unsqueeze(0)
         observation[name] = observation[name].cuda()
 
+    # Compute the next action with the policy
+    # based on the current observation
     action = policy.select_action(observation)
-    robot.send_action(action)
 
-    # remove batch dimension
+    # Remove batch dimension
     action = action.squeeze(0)
     action = action.to("cpu")
+
+    # Order the robot to move
+    robot.send_action(action)
 
     dt_s = time.perf_counter() - start_time
     busy_wait(1 / fps - dt_s)
 ```
 
+
 ### Use `koch.yaml` and our `record` function
 
 Ideally, when controlling your robot with your neural network, you would want to record evaluation episodes and to be able to visualize them later on, or even train on them like in Reinforcement Learning. This pretty much corresponds to recording a new dataset but with a neural network providing the actions instead of teleoperation.
 
-To this end, you can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. Just copy the same command as previously used to record your training dataset and change two things:
-1. Add a path to your policy checkpoint with `-p` (e.g. `-p outputs/train/eval_koch_test/checkpoints/last/pretrained_model`) or a model repository (e.g. `-p ${HF_USER}/act_koch_test`).
-2. Change the dataset name to reflect you are running inference (e.g. `--repo-id ${HF_USER}/eval_koch_test`).
-
-Now run this to record 5 evaluation episodes.
+To this end, you can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 5 evaluation episodes:
 ```bash
 python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/koch.yaml \
@@ -910,16 +984,19 @@ python lerobot/scripts/control_robot.py record \
   -p outputs/train/act_koch_test/checkpoints/last/pretrained_model
 ```
 
+As you can see, it's almost the same command as previously used to record your training dataset. Two things changed:
+1. There is an additional `-p` argument which indicates the path to your policy checkpoint with  (e.g. `-p outputs/train/eval_koch_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `-p ${HF_USER}/act_koch_test`).
+2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `--repo-id ${HF_USER}/eval_koch_test`).
+
 ### Visualize evaluation afterwards
 
-You can then visualize your evaluation dataset by running the same command as before but with the new dataset as argument:
+You can then visualize your evaluation dataset by running the same command as before but with the new inference dataset as argument:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
   --root data \
   --repo-id ${HF_USER}/eval_koch_test
 ```
 
-
 ## Next step
 
-Join our [Discord](https://discord.com/invite/s3KuuzsPFb) to coordinate on community-driven data collection and training foundational models for robotics!
+Join our [Discord](https://discord.com/invite/s3KuuzsPFb) to collaborate on data collection and help us train a fully open-source foundational models for robotics!
