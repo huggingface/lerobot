@@ -231,9 +231,11 @@ def is_headless():
         print(
             "Error trying to import pynput. Switching to headless mode. "
             "As a result, the video stream from the cameras won't be shown, "
-            "and you won't be able to change the control flow with keyboards.\n"
+            "and you won't be able to change the control flow with keyboards. "
+            "For more info, see traceback below.\n"
         )
         traceback.print_exc()
+        print()
         return True
 
 
