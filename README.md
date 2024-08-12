@@ -251,6 +251,13 @@ checkpoints
 │   └── training_state.pth  # optimizer/scheduler/rng state and training step
 ```
 
+To resume training from a checkpoint, you can add these to the `train.py` python command:
+```bash
+    hydra.run.dir=your/original/experiment/dir resume=true
+```
+
+It will load the pretrained model, optimizer and scheduler states for training.
+
 To use wandb for logging training and evaluation curves, make sure you've run `wandb login` as a one-time setup step. Then, when running the training command above, enable WandB in the configuration by adding:
 
 ```bash
