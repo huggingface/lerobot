@@ -834,3 +834,7 @@ if __name__ == "__main__":
 
     elif control_mode == "replay":
         replay(robot, **kwargs)
+
+    # Disconnect manually to avoid a "Core dump" during process
+    # termination due to camera threads not properly exiting.
+    robot.disconnect()
