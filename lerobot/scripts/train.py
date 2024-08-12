@@ -212,16 +212,19 @@ def log_eval_info(logger, info, step, cfg, dataset, is_online):
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
     log_items = [
-        f"step:{format_big_number(step)}",
+        f"step:{step}",
         # number of samples seen during training
-        f"smpl:{format_big_number(num_samples)}",
+        f"number of seen samples:{num_samples}",
         # number of episodes seen during training
-        f"ep:{format_big_number(num_episodes)}",
+        f"number of seen episodes:{num_episodes}",
         # number of time all unique samples are seen
-        f"epch:{num_epochs:.2f}",
-        f"∑rwrd:{avg_sum_reward:.3f}",
-        f"success:{pc_success:.1f}%",
-        f"eval_s:{eval_s:.3f}",
+        f"epoch:{num_epochs:.2f}",
+        f"loss:{loss:.3f}",
+        f"grad norm:{grad_norm:.3f}",
+        f"lr:{lr:0.1e}",
+        # in seconds
+        f"policy update time:{update_s:.3f}",
+        f"data loading time:{dataloading_s:.3f}",  # if not ~0, you are bottlenecked by cpu or io
     ]
     logging.info(" ".join(log_items))
 
