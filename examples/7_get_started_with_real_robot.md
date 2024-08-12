@@ -41,11 +41,11 @@ Or using `poetry`:
 poetry install --sync --extras "koch"
 ```
 
-Next, connect the leader arm (the smaller one) to a 5V power supply and the follower arm to a 12V power supply. Then, connect both arms to your computer via USB.
+Next, connect the leader arm (the smaller one) to the 5V power supply and the follower arm to the 12V power supply. Then, connect both arms to your computer via USB.
 
 **Pro tip**
 
-In the upcoming sections, you'll learn how our code functions by experimenting with Python scripts in your terminal. If this is your first time using the tutorial, we highly recommend going through these steps. Once you're more familiar, you can streamline the process by directly running the teleoperate script:
+In the upcoming sections, you'll learn how our code functions by experimenting with Python scripts in your terminal. If this is your first time using the tutorial, we highly recommend going through these steps. Once you're more familiar, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
@@ -53,9 +53,9 @@ python lerobot/scripts/control_robot.py teleoperate \
 ```
 
 It will automatically:
-- Detect and help you correct any motor configurations issue.
-- Identify any missing calibrations and initiate the calibration procedure.
-- Connect the robot and start teleoperation.
+1. Detect and help you correct any motor configurations issue.
+2. Identify any missing calibrations and initiate the calibration procedure.
+3. Connect the robot and start teleoperation.
 
 ### a. Control your motors with DynamixelMotorsBus
 
@@ -70,9 +70,7 @@ To find the correct ports for each arm, run the utility script twice:
 python lerobot/common/robot_devices/motors/dynamixel.py
 ```
 
-*First Run: Identify the Leader Arm's Port*
-
-Example output when identifying the leader arm's port (e.g., /dev/tty.usbmodem575E0031751):
+Example output when identifying the leader arm's port (e.g., `/dev/tty.usbmodem575E0031751` on Mac, or possibly `/dev/ttyACM0` on Linux):
 ```
 Finding all available ports for the DynamixelMotorsBus.
 ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
@@ -84,9 +82,7 @@ The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0031751
 Reconnect the usb cable.
 ```
 
-*Second Run: Identify the Follower Arm's Port*
-
-Example output when identifying the follower arm's port (e.g., /dev/tty.usbmodem575E0032081):
+Example output when identifying the follower arm's port (e.g., `/dev/tty.usbmodem575E0032081`, or possibly `/dev/ttyACM1` on Linux):
 ```
 Finding all available ports for the DynamixelMotorsBus.
 ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
@@ -100,7 +96,7 @@ Reconnect the usb cable.
 
 *Listing and Configuring Motors*
 
-Next, you'll need to list the motors for each arm, including their name, index, and model. Initially, each motor is assigned the factory default index 1. Since each motor requires a unique index to function correctly when connected in a chain on a common bus, you'll need to assign different indices. It's recommended to use an ascending index order, starting from 1 (e.g., 1, 2, 3, 4, 5, 6). These indices will be saved in the persistent memory of each motor during the first connection.
+Next, you'll need to list the motors for each arm, including their name, index, and model. Initially, each motor is assigned the factory default index `1`. Since each motor requires a unique index to function correctly when connected in a chain on a common bus, you'll need to assign different indices. It's recommended to use an ascending index order, starting from `1` (e.g., `1, 2, 3, 4, 5, 6`). These indices will be saved in the persistent memory of each motor during the first connection.
 
 Here's how you can instantiate the Koch leader and follower arms. Replace the `port` values with the ones you identified earlier:
 ```python
@@ -176,14 +172,10 @@ Before you can start using your motors, you'll need to configure them to ensure 
 
 For a visual guide, refer to the [video tutorial of the configuration procedure](https://youtu.be/U78QQ9wCdpY).
 
-*Connecting and Configuring the Leader Arm*
-
 To connect and configure the leader arm, run the following code in your terminal within the same Python session:
 ```python
 leader_arm.connect()
 ```
-
-*Example of First-Time Connection for the Leader Arm*
 
 When you connect the leader arm for the first time, you might see an output similar to this:
 ```
@@ -205,18 +197,14 @@ Press Enter to continue...
 Setting expected motor indices: [1, 2, 3, 4, 5, 6]
 ```
 
-*Connecting and Configuring the Follower Arm*
-
 Once the leader arm is configured, repeat the process for the follower arm by running:
 ```python
 follower_arm.connect()
 ```
 
-*Finalizing Configuration*
-
 Congratulations! Both arms are now properly configured and connected. You won't need to go through the configuration procedure again in the future.
 
-Troubleshooting: If the configuration process fails, you may need to update the firmware using [DynamixelWizzard2](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_wizard2). You might also need to manually configure the motors by connecting each one separately to the bus, setting the correct indices, and adjusting their baud rates to `1000000`. For additional help, check out [this video](https://www.youtube.com/watch?v=JRRZW_l1V-U).
+*Troubleshooting*: If the configuration process fails, you may need to update the firmware using [DynamixelWizzard2](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_wizard2). You might also need to manually configure the motors by connecting each one separately to the bus, setting the correct indices, and adjusting their baud rates to `1000000`. For additional help, check out [this video](https://www.youtube.com/watch?v=JRRZW_l1V-U).
 
 
 **Read and Write with DynamixelMotorsBus**
@@ -237,8 +225,6 @@ array([2003, 1601,   56, 2152, 3101, 2283], dtype=int32)
 
 Try moving the arms to various positions and observe how the values change.
 
-*Enabling Torque on the Follower Arm*
-
 Now let's try to enable torque in the follower arm:
 ```python
 from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
@@ -248,9 +234,7 @@ follower_arm.write("Torque_Enable", TorqueMode.ENABLED.value)
 
 With torque enabled, the follower arm will be locked in its current position. Do not attempt to manually move the arm while torque is enabled, as this could damage the motors.
 
-*Moving the Follower Arm Programmatically*
-
-Now, let's move the arm using the following code:
+Now, to get more familiar with reading and writing, let's move the arm programmatically using the following example code:
 ```python
 # Get the current position
 position = follower_arm.read("Present_Position")
@@ -268,9 +252,7 @@ position[-1] += 30
 follower_arm.write("Goal_Position", position[-1], "gripper")
 ```
 
-*Disabling Torque and Disconnecting*
-
-When you're done, make sure to disable the torque to avoid any potential issues:
+When you're done playing, make sure to disable the torque to avoid any potential issues:
 ```python
 # Warning: hold your robot so that it doesn't fall
 follower_arm.write("Torque_Enable", TorqueMode.DISABLED.value)
@@ -327,7 +309,6 @@ Here are the positions you'll move the follower arm to:
     <p style="text-align:center;">3. Rest position</p>
   </div>
 </div>
-
 
 And here are the corresponding positions for the leader arm:
 
