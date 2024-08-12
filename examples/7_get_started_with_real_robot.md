@@ -252,9 +252,8 @@ position[-1] += 30
 follower_arm.write("Goal_Position", position[-1], "gripper")
 ```
 
-When you're done playing, make sure to disable the torque to avoid any potential issues:
+When you're done playing, you can try to disable the torque, but make sure you hold your robot so that it doesn't fall:
 ```python
-# Warning: hold your robot so that it doesn't fall
 follower_arm.write("Torque_Enable", TorqueMode.DISABLED.value)
 ```
 
@@ -265,6 +264,8 @@ follower_arm.disconnect()
 ```
 
 Alternatively, you can unplug the power cord, which will automatically disable torque and disconnect the motors.
+
+/!\ Warning: Make sure you unplug the power cord when you are done using your robot to avoid any over heating issue.
 
 ### b. Teleoperate your Koch v1.1 with KochRobot
 
@@ -445,7 +446,9 @@ When you're finished, make sure to disconnect your robot by running:
 robot.disconnect()
 ```
 
-Alternatively, you can unplug the power cord, but it will also disable torque.
+Alternatively, you can unplug the power cord, which will also disable torque.
+
+/!\ Warning: Make sure you unplug the power cord when you are done using your robot to avoid any over heating issue.
 
 ### c. Add your cameras with OpenCVCamera
 
