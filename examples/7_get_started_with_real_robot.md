@@ -57,7 +57,7 @@ It will automatically:
 - Identify any missing calibrations and initiate the calibration procedure.
 - Connect the robot and start teleoperation.
 
-### Control your motors with DynamixelMotorsBus
+### a. Control your motors with DynamixelMotorsBus
 
 You can use the [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) to communicate with the motors connected as a chain to the corresponding USB bus. This class leverages the Python [Dynamixel SDK](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20) to facilitate reading from and writing to the motors.
 
@@ -284,7 +284,7 @@ follower_arm.disconnect()
 
 Alternatively, you can unplug the power cord, which will automatically disable torque and disconnect the motors.
 
-### Teleoperate your Koch v1.1 with KochRobot
+### b. Teleoperate your Koch v1.1 with KochRobot
 
 **Instantiate the KochRobot**
 
@@ -466,7 +466,7 @@ robot.disconnect()
 
 Alternatively, you can unplug the power cord, but it will also disable torque.
 
-### Add your cameras with OpenCVCamera
+### c. Add your cameras with OpenCVCamera
 
 **(Optional) Use your phone as camera on Linux**
 
@@ -663,7 +663,7 @@ cameras:
 
 This file is used to instantiate your robot in all our scripts. We will explain how this works in the next section.
 
-### Use `koch.yaml` and our `teleoperate` function
+### d. Use `koch.yaml` and our `teleoperate` function
 
 Instead of manually running the python code in a terminal window, you can use [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to instantiate your robot by providing the path to the robot yaml file (e.g. [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml)) and control your robot with various modes as explained next.
 
@@ -735,7 +735,7 @@ for _ in range(record_time_s * fps):
 
 Importantly, many utilities are still missing. For instance, if you have cameras, you will need to save the images on disk to not go out of RAM, and to do so in threads to not slow down communication with your robot. Also, you will need to store your data in a format optimized for training and web sharing like [`LeRobotDataset`](../lerobot/common/datasets/lerobot_dataset.py). More on this in the next section.
 
-### Use `koch.yaml` and the `record` function
+### a. Use `koch.yaml` and the `record` function
 
 You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to achieve efficient data recording. It encompasses many recording utilities:
 1. Frames from cameras are saved on disk in threads, and encoded into videos at the end of recording.
@@ -743,14 +743,14 @@ You can use the `record` function from [`lerobot/scripts/control_robot.py`](../l
 3. Data is stored with [`LeRobotDataset`](../lerobot/common/datasets/lerobot_dataset.py) format which is pushed to your Hugging Face page (unless `--push-to-hub 0` is provided).
 4. Checkpoints are done during recording, so if any issue occurs, you can resume recording by re-running the same command again. You can also use `--force-override 1` to start recording from scratch.
 5. Set the flow of data recording using command line arguments:
-  - `--warmup-time-s` defines the number of seconds before starting data collection. It allows the robot devices to warmup and synchronize (10 seconds by default).
-  - `--episode-time-s` defines the number of seconds for data recording for each episode (60 seconds by default).
-  - `--reset-time-s` defines the number of seconds for resetting the environment after each episode (60 seconds by default).
-  - `--num-episodes` defines the number of episodes to record (50 by default).
+   - `--warmup-time-s` defines the number of seconds before starting data collection. It allows the robot devices to warmup and synchronize (10 seconds by default).
+   - `--episode-time-s` defines the number of seconds for data recording for each episode (60 seconds by default).
+   - `--reset-time-s` defines the number of seconds for resetting the environment after each episode (60 seconds by default).
+   - `--num-episodes` defines the number of episodes to record (50 by default).
 6. Control the flow during data recording using keyboard keys:
-  - Press right arrow `->` at any time during episode recording to early stop and go to resetting. Same during resetting, to early stop and to go to the next episode recording.
-  - Press left arrow `<-` at any time during episode recording or resetting to early stop, cancel the current episode, and re-record it.
-  - Press escape `ESC` at any time during episode recording to end the session early and go straight to video encoding and dataset uploading.
+   - Press right arrow `->` at any time during episode recording to early stop and go to resetting. Same during resetting, to early stop and to go to the next episode recording.
+   - Press left arrow `<-` at any time during episode recording or resetting to early stop, cancel the current episode, and re-record it.
+   - Press escape `ESC` at any time during episode recording to end the session early and go straight to video encoding and dataset uploading.
 7. Similarly to `teleoperate`, you can also use `--robot-path` and `--robot-overrides` to specify your robots.
 
 Before trying `record`, if you want to push your dataset to the hub, make sure you've logged in using a write-access token, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
@@ -811,7 +811,7 @@ At the end of data recording, your dataset will be uploaded on your Hugging Face
 echo https://huggingface.co/datasets/${HF_USER}/koch_test
 ```
 
-### Advices for recording dataset
+### b. Advices for recording dataset
 
 Once you're comfortable with data recording, it's time to create a larger dataset for training. A good starting task is grasping an object at different locations and placing it in a bin. We suggest recording at least 50 episodes, with 10 episodes per location. Keep the cameras fixed and maintain consistent grasping behavior throughout the recordings.
 
@@ -821,7 +821,7 @@ Avoid adding too much variation too quickly, as it may hinder your results.
 
 In the coming months, we plan to release a foundational model for robotics. We anticipate that fine-tuning this model will enhance generalization, reducing the need for strict consistency during data collection.
 
-### Visualize all episodes
+### c. Visualize all episodes
 
 You can visualize your dataset by running:
 ```bash
@@ -835,7 +835,7 @@ This will launch a local web server that looks like this:
   <img src="../media/tutorial/visualize_dataset_html.webp?raw=true" alt="Koch v1.1 leader and follower arms" title="Koch v1.1 leader and follower arms" width="100%">
 </div>
 
-### Replay episode on your robot with the `replay` function
+### d. Replay episode on your robot with the `replay` function
 
 A useful feature of [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) is the `replay` function, which allows to replay on your robot any episode that you've recorded or episodes from any dataset out there. This function helps you test the repeatability of your robot's actions and assess transferability across robots of the same model.
 
@@ -853,7 +853,7 @@ Your robot should replicate movements similar to those you recorded. For example
 
 ## 4. Train a policy on your data
 
-### Use the `train` script
+### a. Use the `train` script
 
 To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
@@ -906,7 +906,7 @@ It should match your dataset (e.g. `fps: 30`) and your robot (e.g. `state_dim: 6
 
 For more information on the `train` script see the previous tutorial: [`examples/4_train_policy_with_script.md`](../examples/4_train_policy_with_script.md)
 
-## (Optional) Upload policy checkpoints to the hub
+### b. (Optional) Upload policy checkpoints to the hub
 
 Once training is done, upload the latest checkpoint with:
 ```bash
@@ -966,7 +966,7 @@ for _ in range(inference_time_s * fps):
 ```
 
 
-### Use `koch.yaml` and our `record` function
+### a. Use `koch.yaml` and our `record` function
 
 Ideally, when controlling your robot with your neural network, you would want to record evaluation episodes and to be able to visualize them later on, or even train on them like in Reinforcement Learning. This pretty much corresponds to recording a new dataset but with a neural network providing the actions instead of teleoperation.
 
@@ -988,7 +988,7 @@ As you can see, it's almost the same command as previously used to record your t
 1. There is an additional `-p` argument which indicates the path to your policy checkpoint with  (e.g. `-p outputs/train/eval_koch_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `-p ${HF_USER}/act_koch_test`).
 2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `--repo-id ${HF_USER}/eval_koch_test`).
 
-### Visualize evaluation afterwards
+### b. Visualize evaluation afterwards
 
 You can then visualize your evaluation dataset by running the same command as before but with the new inference dataset as argument:
 ```bash
@@ -997,6 +997,6 @@ python lerobot/scripts/visualize_dataset.py \
   --repo-id ${HF_USER}/eval_koch_test
 ```
 
-## Next step
+## 6. Next step
 
 Join our [Discord](https://discord.com/invite/s3KuuzsPFb) to collaborate on data collection and help us train a fully open-source foundational models for robotics!
