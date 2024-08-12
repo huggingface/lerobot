@@ -847,6 +847,7 @@ DATA_DIR=data python lerobot/scripts/train.py \
   env=koch_real \
   hydra.run.dir=outputs/train/act_koch_test \
   hydra.job.name=act_koch_test \
+  device=cuda \
   wandb.enable=true
 ```
 
@@ -885,8 +886,9 @@ env:
   fps: ${fps}
 ```
 It should match your dataset (e.g. `fps: 30`) and your robot (e.g. `state_dim: 6` and `action_dim: 6`). We are still working on simplifying this in future versions of `lerobot`.
-4. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
-5. We added `DATA_DIR=data` to access your dataset stored in your local `data` directory. If you dont provide `DATA_DIR`, your dataset will be downloaded from Hugging Face hub to your cache folder `$HOME/.cache/hugginface`. In future versions of `lerobot`, both directories will be in sync.
+4. We provided `device=cuda` since we are training on a Nvidia GPU, but you could use `device=mps` to train on Apple silicon.
+5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
+6. We added `DATA_DIR=data` to access your dataset stored in your local `data` directory. If you dont provide `DATA_DIR`, your dataset will be downloaded from Hugging Face hub to your cache folder `$HOME/.cache/hugginface`. In future versions of `lerobot`, both directories will be in sync.
 
 For more information on the `train` script see the previous tutorial: [`examples/4_train_policy_with_script.md`](../examples/4_train_policy_with_script.md)
 
@@ -948,7 +950,6 @@ for _ in range(inference_time_s * fps):
     dt_s = time.perf_counter() - start_time
     busy_wait(1 / fps - dt_s)
 ```
-
 
 ### a. Use `koch.yaml` and our `record` function
 
