@@ -11,7 +11,7 @@ This tutorial will guide you through the process of setting up and training a ne
 
 By following these steps, you'll be able to replicate tasks like picking up a Lego block and placing it in a bin with a high success rate, as demonstrated in [this video](https://x.com/RemiCadene/status/1814680760592572934).
 
-Although this tutorial is general and can be easily adapted to various types of robots by changing the configuration, it is specifically based on the [Koch v1.1](https://github.com/jess-moss/koch-v1-1), an affordable robot. The Koch v1.1 consists of a leader arm and a follower arm, each with 6 motors. It also includes multiple cameras to record the scene, which serve as visual sensors for the robot.
+Although this tutorial is general and can be easily adapted to various types of robots by changing the configuration, it is specifically based on the [Koch v1.1](https://github.com/jess-moss/koch-v1-1), an affordable robot. The Koch v1.1 consists of a leader arm and a follower arm, each with 6 motors. It can work with one or several cameras to record the scene, which serve as visual sensors for the robot.
 
 During the data collection phase, you'll control the follower arm by moving the leader arm, a process known as "teleoperation." This technique is used to collect robot trajectories. Afterward, you'll train a neural network to imitate these trajectories and deploy the network to enable your robot to operate autonomously.
 
