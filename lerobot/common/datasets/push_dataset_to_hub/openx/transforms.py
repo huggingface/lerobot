@@ -38,7 +38,7 @@ from typing import Any, Dict
 
 import tensorflow as tf
 
-from lerobot.common.datasets.push_dataset_to_hub.oxe.data_utils import (
+from lerobot.common.datasets.push_dataset_to_hub.openx.data_utils import (
     binarize_gripper_actions,
     invert_gripper_actions,
     rel2abs_gripper_actions,
@@ -47,12 +47,12 @@ from lerobot.common.datasets.push_dataset_to_hub.oxe.data_utils import (
 
 
 def droid_baseact_transform_fn():
-    from lerobot.common.datasets.push_dataset_to_hub.oxe.droid_utils import droid_baseact_transform
+    from lerobot.common.datasets.push_dataset_to_hub.openx.droid_utils import droid_baseact_transform
 
     return droid_baseact_transform
 
 
-def bridge_oxe_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+def bridge_openx_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     """
     Applies to version of Bridge V2 in Open X-Embodiment mixture.
 
@@ -783,8 +783,8 @@ def identity_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # === Registry ===
-OXE_STANDARDIZATION_TRANSFORMS = {
-    "bridge_oxe": bridge_oxe_dataset_transform,
+OPENX_STANDARDIZATION_TRANSFORMS = {
+    "bridge_openx": bridge_openx_dataset_transform,
     "bridge_orig": bridge_orig_dataset_transform,
     "bridge_dataset": bridge_orig_dataset_transform,
     "ppgm": ppgm_dataset_transform,

@@ -14,16 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-For https://github.com/google-deepmind/open_x_embodiment (OXE) datasets.
+For https://github.com/google-deepmind/open_x_embodiment (OPENX) datasets.
 
 Example:
     python lerobot/scripts/push_dataset_to_hub.py \
         --raw-dir /hdd/tensorflow_datasets/bridge_dataset/1.0.0/ \
         --repo-id youliangtan/sampled_bridge_data_v2 \
-        --raw-format oxe_rlds.bridge_orig \
+        --raw-format openx_rlds.bridge_orig \
         --episodes 3 4 5 8 9
 
-Exact dataset fps defined in oxe/config.py, obtained from:
+Exact dataset fps defined in openx/config.py, obtained from:
     https://docs.google.com/spreadsheets/d/1rPBD77tk60AEIGZrGSODwyyzs5FgCU9Uz3h-3_t2A9g/edit?gid=0#gid=0&range=R:R
 """
 
@@ -40,7 +40,7 @@ from datasets import Dataset, Features, Image, Sequence, Value
 from PIL import Image as PILImage
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
-from lerobot.common.datasets.push_dataset_to_hub.oxe.transforms import OXE_STANDARDIZATION_TRANSFORMS
+from lerobot.common.datasets.push_dataset_to_hub.openx.transforms import OPENX_STANDARDIZATION_TRANSFORMS
 from lerobot.common.datasets.push_dataset_to_hub.utils import (
     concatenate_episodes,
     get_default_encoding,
@@ -52,10 +52,10 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
-with open("lerobot/common/datasets/push_dataset_to_hub/oxe/configs.yaml", "r") as f:
-    _oxe_list = yaml.safe_load(f)
+with open("lerobot/common/datasets/push_dataset_to_hub/openx/configs.yaml", "r") as f:
+    _openx_list = yaml.safe_load(f)
 
-OXE_DATASET_CONFIGS = _oxe_list["OXE_DATASET_CONFIGS"]
+OPENX_DATASET_CONFIGS = _openx_list["openx_DATASET_CONFIGS"]
 
 np.set_printoptions(precision=2)
 
@@ -108,7 +108,7 @@ def load_from_raw(
     video: bool,
     episodes: list[int] | None = None,
     encoding: dict | None = None,
-    oxe_dataset_name: str | None = None,
+    openx_dataset_name: str | None = None,
 ):
     """
     Args:
@@ -134,13 +134,13 @@ def load_from_raw(
     dataset = dataset.enumerate().map(_broadcast_metadata_rlds)
 
     # we will apply the standardization transform if the dataset_name is provided
-    if oxe_dataset_name is not None:
-        print(" - applying standardization transform for dataset: ", oxe_dataset_name)
-        assert oxe_dataset_name in OXE_STANDARDIZATION_TRANSFORMS
-        transform_fn = OXE_STANDARDIZATION_TRANSFORMS[oxe_dataset_name]
+    if openx_dataset_name is not None:
+        print(" - applying standardization transform for dataset: ", openx_dataset_name)
+        assert openx_dataset_name in OPENX_STANDARDIZATION_TRANSFORMS
+        transform_fn = OPENX_STANDARDIZATION_TRANSFORMS[openx_dataset_name]
         dataset = dataset.map(transform_fn)
 
-    image_keys = OXE_DATASET_CONFIGS[oxe_dataset_name]["image_obs_keys"]
+    image_keys = OPENX_DATASET_CONFIGS[openx_dataset_name]["image_obs_keys"]
     lang_key = "language_instruction" if "language_instruction" in dataset.element_spec else None
 
     print(" - image_keys: ", image_keys)
@@ -199,9 +199,9 @@ def load_from_raw(
         image_array_dict = {key: [] for key in image_keys}
 
         # We will create the state observation tensor by stacking the state
-        # obs keys defined in the oxe/configs.py
-        if oxe_dataset_name is not None:
-            state_obs_keys = OXE_DATASET_CONFIGS[oxe_dataset_name]["state_obs_keys"]
+        # obs keys defined in the openx/configs.py
+        if openx_dataset_name is not None:
+            state_obs_keys = OPENX_DATASET_CONFIGS[openx_dataset_name]["state_obs_keys"]
             # stack the state observations, if is None, pad with zeros
             states = []
             for key in state_obs_keys:
@@ -266,12 +266,6 @@ def load_from_raw(
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
         ep_dict["next.reward"] = rewards
         ep_dict["next.done"] = done
-
-        torch.save(
-            ep_dict,
-            tmp_ep_dicts_dir.joinpath("ep_dict_" + "0" * (10 - len(str(ep_idx))) + str(ep_idx) + ".pt"),
-        )
-
         ep_dicts.append(ep_dict)
 
     data_dict = concatenate_episodes(ep_dicts)
@@ -327,19 +321,19 @@ def from_raw_to_lerobot_format(
     video: bool = True,
     episodes: list[int] | None = None,
     encoding: dict | None = None,
-    oxe_dataset_name: str | None = None,
+    openx_dataset_name: str | None = None,
 ):
     """This is a test impl for rlds conversion"""
-    if oxe_dataset_name is None:
-        # set a default rlds frame rate if the dataset is not from oxe
-        fps = 5
-    elif "fps" not in OXE_DATASET_CONFIGS[oxe_dataset_name]:
+    if openx_dataset_name is None:
+        # set a default rlds frame rate if the dataset is not from openx
+        fps = 30
+    elif "fps" not in OPENX_DATASET_CONFIGS[openx_dataset_name]:
         raise ValueError(
-            "fps for this dataset is not specified in oxe/configs.py yet," "means it is not yet tested"
+            "fps for this dataset is not specified in openx/configs.py yet," "means it is not yet tested"
         )
-    fps = OXE_DATASET_CONFIGS[oxe_dataset_name]["fps"]
+    fps = OPENX_DATASET_CONFIGS[openx_dataset_name]["fps"]
 
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding, oxe_dataset_name)
+    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding, openx_dataset_name)
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
@@ -351,21 +345,3 @@ def from_raw_to_lerobot_format(
         info["encoding"] = get_default_encoding()
 
     return hf_dataset, episode_data_index, info
-
-
-if __name__ == "__main__":
-    # This mainly serves as a unit test
-    # austin_buds_dataset_converted_externally_to_rlds is a smaller dataset in
-    # open x embodiment datasets.
-    raw_dir = Path("/hdd/tensorflow_datasets/austin_buds_dataset_converted_externally_to_rlds/0.1.0/")
-    videos_dir = Path("/hdd/tmp/")
-    hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(
-        raw_dir,
-        videos_dir,
-        fps=50,
-        video=True,
-        episodes=[2, 3],
-    )
-    print(hf_dataset)
-    print(episode_data_index)
-    print(info)

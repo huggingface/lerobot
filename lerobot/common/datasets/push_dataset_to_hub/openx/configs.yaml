@@ -13,7 +13,7 @@ ActionEncoding:
   EEF_VEL: 5              # EEF XYZ vel (3) + angular vel (3) + Gripper Open/Close (1)
   WHEELED: 6              # For wheeled robots
 
-OXE_DATASET_CONFIGS:
+OPENX_DATASET_CONFIGS:
   fractal20220817_data:
     image_obs_keys:
       - image
@@ -38,7 +38,7 @@ OXE_DATASET_CONFIGS:
     action_encoding: EEF_POS_7
     fps: 10
   
-  bridge_oxe:
+  bridge_openx:
     image_obs_keys:
       - image
     depth_obs_keys:
@@ -264,13 +264,13 @@ OXE_DATASET_CONFIGS:
   furniture_bench_dataset_converted_externally_to_rlds:
     image_obs_keys:
       - image
-      - wrist
+      - wrist_image
     depth_obs_keys:
       - null
     state_obs_keys:
       - state
     state_encoding: POS_QUAT
-    action_encoding: EEF_VEL
+    actionencoding: EEF_VEL
     fps: 10
 
   cmu_franka_exploration_dataset_converted_externally_to_rlds:
