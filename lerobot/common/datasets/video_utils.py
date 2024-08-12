@@ -16,6 +16,7 @@
 import logging
 import subprocess
 import warnings
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
@@ -69,7 +70,7 @@ def decode_video_frames_torchvision(
     tolerance_s: float,
     backend: str = "pyav",
     log_loaded_timestamps: bool = False,
-):
+) -> torch.Tensor:
     """Loads frames associated to the requested timestamps of a video
 
     The backend can be either "pyav" (default) or "video_reader".
@@ -77,9 +78,8 @@ def decode_video_frames_torchvision(
     https://github.com/pytorch/vision/blob/main/torchvision/csrc/io/decoder/gpu/README.rst
     (note that you need to compile against ffmpeg<4.3)
 
-    While both use cpu, "video_reader" is faster than "pyav" but requires additional setup.
-    See our benchmark results for more info on performance:
-    https://github.com/huggingface/lerobot/pull/220
+    While both use cpu, "video_reader" is supposedly faster than "pyav" but requires additional setup.
+    For more info on video decoding, see `benchmark/video/README.md`
 
     See torchvision doc for more info on these two backends:
     https://pytorch.org/vision/0.18/index.html?highlight=backend#torchvision.set_video_backend
@@ -142,6 +142,10 @@ def decode_video_frames_torchvision(
         "It means that the closest frame that can be loaded from the video is too far away in time."
         "This might be due to synchronization issues with timestamps during data collection."
         "To be safe, we advise to ignore this item during training."
+        f"\nqueried timestamps: {query_ts}"
+        f"\nloaded timestamps: {loaded_ts}"
+        f"\nvideo: {video_path}"
+        f"\nbackend: {backend}"
     )
 
     # get closest frames to the query timestamps
@@ -158,22 +162,53 @@ def decode_video_frames_torchvision(
     return closest_frames
 
 
-def encode_video_frames(imgs_dir: Path, video_path: Path, fps: int):
-    """More info on ffmpeg arguments tuning on `lerobot/common/datasets/_video_benchmark/README.md`"""
+def encode_video_frames(
+    imgs_dir: Path,
+    video_path: Path,
+    fps: int,
+    vcodec: str = "libsvtav1",
+    pix_fmt: str = "yuv420p",
+    g: int | None = 2,
+    crf: int | None = 30,
+    fast_decode: int = 0,
+    log_level: str | None = "error",
+    overwrite: bool = False,
+) -> None:
+    """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
     video_path = Path(video_path)
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    ffmpeg_cmd = (
-        f"ffmpeg -r {fps} "
-        "-f image2 "
-        "-loglevel error "
-        f"-i {str(imgs_dir / 'frame_%06d.png')} "
-        "-vcodec libx264 "
-        "-g 2 "
-        "-pix_fmt yuv444p "
-        f"{str(video_path)}"
+    ffmpeg_args = OrderedDict(
+        [
+            ("-f", "image2"),
+            ("-r", str(fps)),
+            ("-i", str(imgs_dir / "frame_%06d.png")),
+            ("-vcodec", vcodec),
+            ("-pix_fmt", pix_fmt),
+        ]
     )
-    subprocess.run(ffmpeg_cmd.split(" "), check=True)
+
+    if g is not None:
+        ffmpeg_args["-g"] = str(g)
+
+    if crf is not None:
+        ffmpeg_args["-crf"] = str(crf)
+
+    if fast_decode:
+        key = "-svtav1-params" if vcodec == "libsvtav1" else "-tune"
+        value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
+        ffmpeg_args[key] = value
+
+    if log_level is not None:
+        ffmpeg_args["-loglevel"] = str(log_level)
+
+    ffmpeg_args = [item for pair in ffmpeg_args.items() for item in pair]
+    if overwrite:
+        ffmpeg_args.append("-y")
+
+    ffmpeg_cmd = ["ffmpeg"] + ffmpeg_args + [str(video_path)]
+    # redirect stdin to subprocess.DEVNULL to prevent reading random keyboard inputs from terminal
+    subprocess.run(ffmpeg_cmd, check=True, stdin=subprocess.DEVNULL)
 
 
 @dataclass

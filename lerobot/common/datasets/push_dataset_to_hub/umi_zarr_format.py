@@ -25,8 +25,13 @@ import zarr
 from datasets import Dataset, Features, Image, Sequence, Value
 from PIL import Image as PILImage
 
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
 from lerobot.common.datasets.push_dataset_to_hub._umi_imagecodecs_numcodecs import register_codecs
-from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, save_images_concurrently
+from lerobot.common.datasets.push_dataset_to_hub.utils import (
+    concatenate_episodes,
+    get_default_encoding,
+    save_images_concurrently,
+)
 from lerobot.common.datasets.utils import (
     calculate_episode_data_index,
     hf_transform_to_torch,
@@ -59,7 +64,14 @@ def check_format(raw_dir) -> bool:
     assert all(nb_frames == zarr_data[dataset].shape[0] for dataset in required_datasets)
 
 
-def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episodes: list[int] | None = None):
+def load_from_raw(
+    raw_dir: Path,
+    videos_dir: Path,
+    fps: int,
+    video: bool,
+    episodes: list[int] | None = None,
+    encoding: dict | None = None,
+):
     zarr_path = raw_dir / "cup_in_the_wild.zarr"
     zarr_data = zarr.open(zarr_path, mode="r")
 
@@ -87,49 +99,61 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
         to_ids.append(to_idx)
         from_idx = to_idx
 
+    ep_dicts_dir = videos_dir / "ep_dicts"
+    ep_dicts_dir.mkdir(exist_ok=True, parents=True)
     ep_dicts = []
+
     ep_ids = episodes if episodes else range(num_episodes)
     for ep_idx, selected_ep_idx in tqdm.tqdm(enumerate(ep_ids)):
-        from_idx = from_ids[selected_ep_idx]
-        to_idx = to_ids[selected_ep_idx]
-        num_frames = to_idx - from_idx
+        ep_dict_path = ep_dicts_dir / f"{ep_idx}"
+        if not ep_dict_path.is_file():
+            from_idx = from_ids[selected_ep_idx]
+            to_idx = to_ids[selected_ep_idx]
+            num_frames = to_idx - from_idx
 
-        # TODO(rcadene): save temporary images of the episode?
+            # TODO(rcadene): save temporary images of the episode?
 
-        state = states[from_idx:to_idx]
+            state = states[from_idx:to_idx]
 
-        ep_dict = {}
+            ep_dict = {}
 
-        # load 57MB of images in RAM (400x224x224x3 uint8)
-        imgs_array = zarr_data["data/camera0_rgb"][from_idx:to_idx]
-        img_key = "observation.image"
-        if video:
-            # save png images in temporary directory
-            tmp_imgs_dir = videos_dir / "tmp_images"
-            save_images_concurrently(imgs_array, tmp_imgs_dir)
+            # load 57MB of images in RAM (400x224x224x3 uint8)
+            imgs_array = zarr_data["data/camera0_rgb"][from_idx:to_idx]
+            img_key = "observation.image"
+            if video:
+                fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
+                video_path = videos_dir / fname
+                if not video_path.is_file():
+                    # save png images in temporary directory
+                    tmp_imgs_dir = videos_dir / "tmp_images"
+                    save_images_concurrently(imgs_array, tmp_imgs_dir)
 
-            # encode images to a mp4 video
-            fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
-            video_path = videos_dir / fname
-            encode_video_frames(tmp_imgs_dir, video_path, fps)
+                    # encode images to a mp4 video
+                    encode_video_frames(tmp_imgs_dir, video_path, fps, **(encoding or {}))
 
-            # clean temporary images directory
-            shutil.rmtree(tmp_imgs_dir)
+                    # clean temporary images directory
+                    shutil.rmtree(tmp_imgs_dir)
 
-            # store the reference to the video frame
-            ep_dict[img_key] = [{"path": f"videos/{fname}", "timestamp": i / fps} for i in range(num_frames)]
+                # store the reference to the video frame
+                ep_dict[img_key] = [
+                    {"path": f"videos/{fname}", "timestamp": i / fps} for i in range(num_frames)
+                ]
+            else:
+                ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
+
+            ep_dict["observation.state"] = state
+            ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int64)
+            ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
+            ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
+            ep_dict["episode_data_index_from"] = torch.tensor([from_idx] * num_frames)
+            ep_dict["episode_data_index_to"] = torch.tensor([from_idx + num_frames] * num_frames)
+            ep_dict["end_pose"] = end_pose[from_idx:to_idx]
+            ep_dict["start_pos"] = start_pos[from_idx:to_idx]
+            ep_dict["gripper_width"] = gripper_width[from_idx:to_idx]
+            torch.save(ep_dict, ep_dict_path)
         else:
-            ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
+            ep_dict = torch.load(ep_dict_path)
 
-        ep_dict["observation.state"] = state
-        ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int64)
-        ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
-        ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
-        ep_dict["episode_data_index_from"] = torch.tensor([from_idx] * num_frames)
-        ep_dict["episode_data_index_to"] = torch.tensor([from_idx + num_frames] * num_frames)
-        ep_dict["end_pose"] = end_pose[from_idx:to_idx]
-        ep_dict["start_pos"] = start_pos[from_idx:to_idx]
-        ep_dict["gripper_width"] = gripper_width[from_idx:to_idx]
         ep_dicts.append(ep_dict)
 
     data_dict = concatenate_episodes(ep_dicts)
@@ -182,6 +206,7 @@ def from_raw_to_lerobot_format(
     fps: int | None = None,
     video: bool = True,
     episodes: list[int] | None = None,
+    encoding: dict | None = None,
 ):
     # sanity check
     check_format(raw_dir)
@@ -195,11 +220,15 @@ def from_raw_to_lerobot_format(
             "Generating UMI dataset without `video=True` creates ~150GB on disk and requires ~80GB in RAM."
         )
 
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes)
+    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding)
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
+        "codebase_version": CODEBASE_VERSION,
         "fps": fps,
         "video": video,
     }
+    if video:
+        info["encoding"] = get_default_encoding()
+
     return hf_dataset, episode_data_index, info
