@@ -20,16 +20,17 @@ override_dataset_stats:
     max: [511.0, 511.0]
 
 training:
+  num_workers: 16
   offline_steps: 250000
   online_steps: 0
-  eval_freq: 500
-  save_freq: 500
-  log_freq: 50
+  eval_freq: 5000
+  save_freq: 5000
+  log_freq: 1
   save_checkpoint: true
 
-  batch_size: 432
+  batch_size: 64
   grad_clip_norm: 10
-  lr: 1.0e-4
+  lr: 1.0e-5
   lr_scheduler: cosine
   lr_warmup_steps: 500
   adam_betas: [0.95, 0.999]

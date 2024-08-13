@@ -164,7 +164,7 @@ class FlorenceLinearWrapper(nn.Module):
     TODO: the introduction
     """
 
-    def __init__(self, config: FlorencePolicyConfig):
+    def __init__(self, config: FlorenceConfig):
         super().__init__()
 
         self.use_images = any(k.startswith("observation.image") for k in config.input_shapes)
