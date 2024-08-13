@@ -453,6 +453,7 @@ def main(
         hydra_cfg = init_hydra_config(str(pretrained_policy_path / "config.yaml"), config_overrides)
     else:
         hydra_cfg = init_hydra_config(hydra_cfg_path, config_overrides)
+    logging.info(hydra_cfg)
 
     if out_dir is None:
         out_dir = f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
