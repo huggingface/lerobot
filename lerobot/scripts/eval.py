@@ -487,8 +487,8 @@ def main(
             max_episodes_rendered=10,
             videos_dir=Path(out_dir) / "videos",
             start_seed=hydra_cfg.seed,
-            enable_progbar=True,
-            enable_inner_progbar=True,
+            enable_progbar=hydra_cfg.eval.episode_progbar,
+            enable_inner_progbar=hydra_cfg.eval.step_inside_episode_progbar,
         )
     print(info["aggregated"])
 

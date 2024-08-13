@@ -121,6 +121,8 @@ eval:
   batch_size: 1
   # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
   use_async_envs: true
+  episode_progbar: true
+  step_inside_episode_progbar: true
 
 wandb:
   enable: false
