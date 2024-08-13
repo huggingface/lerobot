@@ -18,7 +18,13 @@ from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 output_directory = Path("outputs/eval/example_pusht_diffusion")
 output_directory.mkdir(parents=True, exist_ok=True)
 
-device = torch.device("cuda")
+# Check if GPU is available
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+    print("GPU is available. Device set to:", device)
+else:
+    device = torch.device("cpu")
+    print("GPU is not available. Device set to:", device)
 
 # Download the diffusion policy for pusht environment
 pretrained_policy_path = Path(snapshot_download("lerobot/diffusion_pusht"))
