@@ -158,6 +158,13 @@ def init_hydra_config(config_path: str, overrides: list[str] | None = None) -> D
         version_base="1.2",
     )
     cfg = hydra.compose(Path(config_path).stem, overrides)
+    if cfg.eval.n_episodes < cfg.eval.batch_size:
+        print("init_hydra_config: eval.batch_size ({}) > eval.n_episodes ({}), set eval.batch_size to {}").format(
+            cfg.eval.batch_size,
+            cfg.eval.n_episodes,
+            cfg.eval.n_episodes,
+        )
+        cfg.eval.batch_size = cfg.eval.n_episodes
     return cfg
 
 
