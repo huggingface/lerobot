@@ -210,8 +210,8 @@ def eval_policy(
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
-    enable_progbar: bool = True,
-    enable_inner_progbar: bool = True,
+    enable_progbar: bool = False,
+    enable_inner_progbar: bool = False,
 ) -> dict:
     """
     Args:
