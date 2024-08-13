@@ -2,6 +2,12 @@
 
 fps: 15
 
+eval:
+  # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
+  # set it to false to avoid EGL problem of the ACT env
+  # https://github.com/huggingface/lerobot/pull/358#discussion_r1714089788
+  use_async_envs: false
+
 env:
   name: xarm
   task: XarmLift-v0
