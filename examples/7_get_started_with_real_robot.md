@@ -754,7 +754,7 @@ echo $HF_USER
 ```
 If you don't want to push to hub, use `--push-to-hub 0`.
 
-Now run this to record 5 episodes:
+Now run this to record 2 episodes:
 ```bash
 python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/koch.yaml \
@@ -766,6 +766,8 @@ python lerobot/scripts/control_robot.py record \
   --reset-time-s 30 \
   --num-episodes 2
 ```
+
+This will write your dataset to `{root}/{repo-id}` (e.g. `data/cadene/koch_test`).
 
 Remember to add `--robot-overrides '~cameras'` if you don't have any cameras and you still use the default `koch.yaml` configuration.
 
@@ -919,13 +921,15 @@ Now that you have a policy checkpoint, you can easily control your robot with it
 
 Try this code for running inference for 60 seconds at 30 fps:
 ```python
-from lerobot.common.policies.act.modeling_act import ActPolicy
+from lerobot.common.policies.act.modeling_act import ACTPolicy
 
 inference_time_s = 60
 fps = 30
+device = "cuda"  # TODO: On Mac, use "mps" or "cpu"
 
 ckpt_path = "outputs/train/act_koch_test/checkpoints/last/pretrained_model"
-policy = ActPolicy.from_pretrained(ckpt_path)
+policy = ACTPolicy.from_pretrained(ckpt_path)
+policy.to(device)
 
 for _ in range(inference_time_s * fps):
     start_time = time.perf_counter()
@@ -940,16 +944,15 @@ for _ in range(inference_time_s * fps):
             observation[name] = observation[name].type(torch.float32) / 255
             observation[name] = observation[name].permute(2, 0, 1).contiguous()
         observation[name] = observation[name].unsqueeze(0)
-        observation[name] = observation[name].cuda()
+        observation[name] = observation[name].to(device)
 
     # Compute the next action with the policy
     # based on the current observation
     action = policy.select_action(observation)
-
     # Remove batch dimension
     action = action.squeeze(0)
+    # Move to cpu, if not already the case
     action = action.to("cpu")
-
     # Order the robot to move
     robot.send_action(action)
 
