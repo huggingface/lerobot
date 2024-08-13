@@ -303,6 +303,8 @@ def test_flatten_unflatten_dict():
         "lerobot/pusht",
         "lerobot/aloha_sim_insertion_human",
         "lerobot/xarm_lift_medium",
+        "lerobot/nyu_franka_play_dataset",
+        "lerobot/berkeley_cable_routing",
     ],
 )
 def test_backward_compatibility(repo_id):

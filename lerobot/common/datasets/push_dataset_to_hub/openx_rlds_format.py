@@ -55,7 +55,7 @@ from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 with open("lerobot/common/datasets/push_dataset_to_hub/openx/configs.yaml", "r") as f:
     _openx_list = yaml.safe_load(f)
 
-OPENX_DATASET_CONFIGS = _openx_list["openx_DATASET_CONFIGS"]
+OPENX_DATASET_CONFIGS = _openx_list["OPENX_DATASET_CONFIGS"]
 
 np.set_printoptions(precision=2)
 
@@ -266,6 +266,7 @@ def load_from_raw(
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
         ep_dict["next.reward"] = rewards
         ep_dict["next.done"] = done
+
         ep_dicts.append(ep_dict)
 
     data_dict = concatenate_episodes(ep_dicts)
