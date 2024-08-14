@@ -159,11 +159,7 @@ def init_hydra_config(config_path: str, overrides: list[str] | None = None) -> D
     )
     cfg = hydra.compose(Path(config_path).stem, overrides)
     if cfg.eval.n_episodes < cfg.eval.batch_size:
-        print("init_hydra_config: eval.batch_size ({}) > eval.n_episodes ({}), set eval.batch_size to {}").format(
-            cfg.eval.batch_size,
-            cfg.eval.n_episodes,
-            cfg.eval.n_episodes,
-        )
+        # Then we don't need some useless environments that comsume time and resources
         cfg.eval.batch_size = cfg.eval.n_episodes
     return cfg
 

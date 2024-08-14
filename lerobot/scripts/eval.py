@@ -453,7 +453,6 @@ def main(
         hydra_cfg = init_hydra_config(str(pretrained_policy_path / "config.yaml"), config_overrides)
     else:
         hydra_cfg = init_hydra_config(hydra_cfg_path, config_overrides)
-    logging.info(hydra_cfg)
 
     if out_dir is None:
         out_dir = f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
@@ -488,8 +487,8 @@ def main(
             max_episodes_rendered=10,
             videos_dir=Path(out_dir) / "videos",
             start_seed=hydra_cfg.seed,
-            enable_progbar=hydra_cfg.eval.episode_progbar,
-            enable_inner_progbar=hydra_cfg.eval.step_inside_episode_progbar,
+            enable_progbar=True,
+            enable_inner_progbar=True,
         )
     print(info["aggregated"])
 
