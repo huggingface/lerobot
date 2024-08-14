@@ -210,8 +210,30 @@ follower_arm.connect()
 
 Congratulations! Both arms are now properly configured and connected. You won't need to go through the configuration procedure again in the future.
 
-*Troubleshooting*: If the configuration process fails, you may need to update the firmware using [DynamixelWizzard2](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_wizard2). You might also need to manually configure the motors by connecting each one separately to the bus, setting the correct indices, and adjusting their baud rates to `1000000`. For additional help, check out [this video](https://www.youtube.com/watch?v=JRRZW_l1V-U).
+**Troubleshooting**:
 
+If the configuration process fails, you may need to do the configuration process via the Dynamixel Wizard.
+
+Known failure modes:
+- Calling `arm.connect()` raises `OSError: No motor found, but one new motor expected. Verify power cord is plugged in and retry` on Ubuntu 22.
+
+Steps:
+1. Visit https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_wizard2/#connect-dynamixel.
+2. Follow the software installation instructions in section 3 of the web page.
+3. Launch the software.
+4. Configure the device scanning options in the menu under `Tools` > `Options` > `Scan`. Check only Protocol 2.0, select only the USB port identifier of interest, select all baudrates, set the ID range to `[0, 10]`. _While this step was not strictly necessary, it greatly speeds up scanning_.
+5. For each motor in turn:
+    - Disconnect the power to the driver board.
+    - Connect **only** the motor of interest to the driver board, making sure to disconnect it from any other motors.
+    - Reconnect the power to the driver board.
+    - From the software menu select `Device` > `Scan` and let the scan run. A device should appear.
+    - If the device has an asterisk (*) near it, it means the firmware is indeed outdated. From the software menu, select `Tools` > `Firmware Update`. Follow the prompts.
+    - The main panel should have table with various parameters of the device (refer to the web page, section 5). Select the row with `ID`, and then set the desired ID on the bottom right panel by selecting and clicking `Save`.
+    - Just like you did with the ID, also set the `Baud Rate` to 1 Mbps.
+6. Check everything has been done right:
+   - Rewire the arms in their final configuration and power both of them.
+   - Scan for devices. All 12 motors should appear.
+   - Select the motors one by one and move the arm. Check that the graphical indicator near the top right shows the movement.
 
 **Read and Write with DynamixelMotorsBus**
 
