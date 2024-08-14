@@ -336,9 +336,11 @@ And here are the corresponding positions for the leader arm:
 
 You can watch a [video tutorial of the calibration procedure](https://youtu.be/8drnU9uRY24) for more details.
 
-During calibration, the robot doesn't actually "set" the zero or rotated positions; instead, it counts the number of full 360-degree rotations each motor has made since it was first used. This allows all Koch robots to move to the same positions (zero and 90 degrees) when commanded, regardless of the specific robot.
+During calibration, we count the number of full 360-degree rotations your motors have made since they were first used. That's why we ask yo to move to this arbitrary "zero" position. We don't actually "set" the zero position, so you don't need to be accurate. After calculating these "offsets" to shift the motor values around 0, we need to assess the rotation direction of each motor, which might differ. That's why we ask you to rotate all motors to roughly 90 degrees, to mesure if the values changed negatively or positively.
 
 Finally, the rest position ensures that the follower and leader arms are roughly aligned after calibration, preventing sudden movements that could damage the motors when starting teleoperation.
+
+Importantly, once calibrated, all Koch robots will move to the same positions (e.g. zero and rotated position) when commanded.
 
 Run the following code to calibrate and connect your robot:
 ```python
