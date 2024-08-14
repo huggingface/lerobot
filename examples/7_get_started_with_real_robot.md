@@ -462,9 +462,9 @@ Alternatively, you can unplug the power cord, which will also disable torque.
 
 If you want to use your phone as a camera on Linux, follow these steps to set up a virtual camera
 
-1. *Install `v4l2loopback-dkms`*. This package is required to create virtual camera devices. Install it using:
+1. *Install `v4l2loopback-dkms` and `v4l-utils`*. Those packages are required to create virtual camera devices (`v4l2loopback`) and verify their settings with the `v4l2-ctl` utility from `v4l-utils`. Install them using:
 ```python
-sudo apt-get install v4l2loopback-dkms
+sudo apt install v4l2loopback-dkms v4l-utils
 ```
 2. *Install [DroidCam](https://droidcam.app) on your phone*. This app is available for both iOS and Android.
 3. *Install [OBS Studio](https://obsproject.com)*. This software will help you manage the camera feed. Install it using [Flatpak](https://flatpak.org):
@@ -614,7 +614,7 @@ robot = KochRobot(
 robot.connect()
 ```
 
-As a result, `teleop_step(record_data=True` will return a frame for each camera following the pytorch convention: channel first with pixels in range [0,1].
+As a result, `teleop_step(record_data=True` will return a frame for each camera following the pytorch "channel first" convention but we keep images in `uint8` with pixels in range [0,255] to easily save them.
 
 Modify this code with the names of your cameras and run it:
 ```python
@@ -629,8 +629,8 @@ The output should look like this:
 ```
 torch.Size([3, 480, 640])
 torch.Size([3, 480, 640])
-0.13137255012989044
-0.98237823197230911
+0
+255
 ```
 
 Also, update the following lines of the yaml file for Koch robot [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with the names and configurations of your cameras:
