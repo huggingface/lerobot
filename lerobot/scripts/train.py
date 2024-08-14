@@ -375,7 +375,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         if cfg.training.validation_freq > 0 and step % cfg.training.validation_freq == 0:
             # Run validation loop
             with torch.inference_mode():
-                policy.eval()
+                #policy.eval()
                 loss_cumsum = 0
                 for batch in val_dataloader:
                     batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
@@ -388,7 +388,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             info = {"val_loss": average_loss}
 
             log_validation_info(logger, info, step, cfg, offline_dataset, is_offline=True)
-            policy.train()
+            #policy.train()
 
         if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")

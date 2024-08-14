@@ -25,7 +25,7 @@ training:
   offline_steps: 200000
   online_steps: 0
   eval_freq: 5000
-  validation_freq: 100
+  validation_freq: 250
   validation_split_ratio: 0.2
   save_freq: 5000
   log_freq: 250
@@ -105,3 +105,9 @@ policy:
 
   # Loss computation
   do_mask_loss_for_padding: false
+
+
+
+wandb:
+  enable: true
+  disable_artifact: true

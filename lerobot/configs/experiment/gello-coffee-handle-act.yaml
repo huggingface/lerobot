@@ -1,23 +1,43 @@
-# @package _global_
+#@package _global_
+
+# Use `act_real_no_state.yaml` to train on real-world Aloha/Aloha2 datasets when cameras are moving (e.g. wrist cameras)
+# Compared to `act_real.yaml`, it is camera only and does not use the state as input which is vector of robot joint positions.
+# We validated experimentaly that not using state reaches better success rate. Our hypothesis is that `act_real.yaml` might
+# overfits to the state, because the images are more complex to learn from since they are moving.
+#
+# Example of usage for training:
+# ```bash
+# python lerobot/scripts/train.py \
+#   policy=act_real_no_state \
+#   env=dora_aloha_real
+# ```
+
+defaults:
+  - override /policy: act
+  - override /env: ur5e.yaml
 
 seed: 1000
-dataset_repo_id: lerobot/aloha_sim_insertion_human
+dataset_repo_id: tlpss/open-coffee-handle-no-tactile
+
 
 override_dataset_stats:
-  observation.images.top:
+  observation.images.wrist.rgb:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.base.rgb:
     # stats from imagenet, since we use a pretrained vision model
     mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
     std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
 
+
 training:
   offline_steps: 80000
   online_steps: 0
-  eval_freq: 5000
-  validation_freq: 250
-  validation_split_ratio: 0.2
-  save_freq: 100000
-  log_freq: 250
-  save_checkpoint: false
+  eval_freq: -1
+  save_freq: 10000
+  log_freq: 500
+  save_checkpoint: true
 
   batch_size: 8
   lr: 1e-5
@@ -39,19 +59,21 @@ policy:
 
   # Input / output structure.
   n_obs_steps: 1
-  chunk_size: 100 # chunk_size
-  n_action_steps: 100
+  chunk_size: 60 # chunk_size
+  n_action_steps: 20
 
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
-    observation.images.top: [3, 480, 640]
-    observation.state: ["${env.state_dim}"]
+    observation.images.wrist.rgb: [3, 480, 640]
+    #observation.images.base.rgb: [3, 480, 640]
+    observation.state: [40]
   output_shapes:
     action: ["${env.action_dim}"]
 
   # Normalization / Unnormalization
   input_normalization_modes:
-    observation.images.top: mean_std
+    observation.images.wrist.rgb: mean_std
+    #observation.images.base.rgb: mean_std
     observation.state: mean_std
   output_normalization_modes:
     action: mean_std
@@ -65,13 +87,13 @@ policy:
   pre_norm: false
   dim_model: 512
   n_heads: 8
-  dim_feedforward: 3200
+  dim_feedforward: 1024
   feedforward_activation: relu
   n_encoder_layers: 4
   # Note: Although the original ACT implementation has 7 for `n_decoder_layers`, there is a bug in the code
   # that means only the first layer is used. Here we match the original implementation by setting this to 1.
   # See this issue https://github.com/tonyzhaozh/act/issues/25#issue-2258740521.
-  n_decoder_layers: 1
+  n_decoder_layers: 2
   # VAE.
   use_vae: true
   latent_dim: 32
@@ -88,3 +110,8 @@ policy:
 wandb:
   enable: true
   disable_artifact: true
+
+# project name
+hydra:
+  job:
+    name: ur5e-coffee-handle-no-tactile-act
