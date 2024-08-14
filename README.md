@@ -264,7 +264,7 @@ To use wandb for logging training and evaluation curves, make sure you've run `w
     wandb.enable=true
 ```
 
-A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of what they look like in your browser:
+A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of what they look like in your browser. Please also check [here](https://github.com/huggingface/lerobot/blob/main/examples/4_train_policy_with_script.md) for the explaination of some commonly used metrics in logs.
 
 ![](media/wandb.png)
 
