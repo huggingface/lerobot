@@ -298,6 +298,12 @@ def record(
     # TODO(rcadene): Add option to record logs
     # TODO(rcadene): Clean this function via decomposition in higher level functions
 
+    _, dataset_name = repo_id.split("/")
+    if dataset_name.startswith("eval_") and policy is None:
+        raise ValueError(
+            f"Your dataset name begins by 'eval_' ({dataset_name}) but no policy is provided ({policy})."
+        )
+
     if not video:
         raise NotImplementedError()
 

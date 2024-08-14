@@ -964,7 +964,7 @@ for _ in range(inference_time_s * fps):
 
 Ideally, when controlling your robot with your neural network, you would want to record evaluation episodes and to be able to visualize them later on, or even train on them like in Reinforcement Learning. This pretty much corresponds to recording a new dataset but with a neural network providing the actions instead of teleoperation.
 
-To this end, you can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 5 evaluation episodes:
+To this end, you can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
 ```bash
 python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/koch.yaml \
@@ -974,7 +974,7 @@ python lerobot/scripts/control_robot.py record \
   --warmup-time-s 5 \
   --episode-time-s 30 \
   --reset-time-s 30 \
-  --num-episodes 5 \
+  --num-episodes 10 \
   -p outputs/train/act_koch_test/checkpoints/last/pretrained_model
 ```
 
