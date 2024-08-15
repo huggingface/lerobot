@@ -788,6 +788,7 @@ python lerobot/scripts/control_robot.py record \
   --fps 30 \
   --root data \
   --repo-id ${HF_USER}/koch_test \
+  --tags tutorial \
   --warmup-time-s 5 \
   --episode-time-s 30 \
   --reset-time-s 30 \
@@ -998,6 +999,7 @@ python lerobot/scripts/control_robot.py record \
   --fps 30 \
   --root data \
   --repo-id ${HF_USER}/eval_koch_test \
+  --tags tutorial eval \
   --warmup-time-s 5 \
   --episode-time-s 30 \
   --reset-time-s 30 \
