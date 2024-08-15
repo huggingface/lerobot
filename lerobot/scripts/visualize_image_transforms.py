@@ -25,7 +25,7 @@ Increase hue jitter
 ```
 python lerobot/scripts/visualize_image_transforms.py \
     dataset_repo_id=lerobot/aloha_mobile_shrimp \
-    training.image_transforms.hue.min_max=[-0.25,0.25]
+    training.image_transforms.hue.min_max="[-0.25,0.25]"
 ```
 
 Increase brightness & brightness weight
@@ -33,7 +33,7 @@ Increase brightness & brightness weight
 python lerobot/scripts/visualize_image_transforms.py \
     dataset_repo_id=lerobot/aloha_mobile_shrimp \
     training.image_transforms.brightness.weight=10.0 \
-    training.image_transforms.brightness.min_max=[1.0,2.0]
+    training.image_transforms.brightness.min_max="[1.0,2.0]"
 ```
 
 Blur images and disable saturation & hue
@@ -41,7 +41,7 @@ Blur images and disable saturation & hue
 python lerobot/scripts/visualize_image_transforms.py \
     dataset_repo_id=lerobot/aloha_mobile_shrimp \
     training.image_transforms.sharpness.weight=10.0 \
-    training.image_transforms.sharpness.min_max=[0.0,1.0] \
+    training.image_transforms.sharpness.min_max="[0.0,1.0]" \
     training.image_transforms.saturation.weight=0.0 \
     training.image_transforms.hue.weight=0.0
 ```
@@ -172,4 +172,4 @@ def visualize_transforms_cli(cfg):
 
 
 if __name__ == "__main__":
-    visualize_transforms()
+    visualize_transforms_cli()

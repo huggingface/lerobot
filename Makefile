@@ -26,6 +26,7 @@ test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-train
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train
+	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train-with-online
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-default-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-act-pusht-tutorial
@@ -113,7 +114,6 @@ test-diffusion-ete-eval:
 		env.episode_length=8 \
 		device=$(DEVICE) \
 
-# TODO(alexander-soare): Restore online_steps to 2 when it is reinstated.
 test-tdmpc-ete-train:
 	python lerobot/scripts/train.py \
 		policy=tdmpc \
@@ -132,6 +132,28 @@ test-tdmpc-ete-train:
 		training.batch_size=2 \
 		training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/tdmpc/
+
+test-tdmpc-ete-train-with-online:
+	python lerobot/scripts/train.py \
+		env=pusht \
+		env.gym.obs_type=environment_state_agent_pos \
+		policy=tdmpc_pusht_keypoints \
+		eval.n_episodes=1 \
+		eval.batch_size=1 \
+		env.episode_length=10 \
+		device=$(DEVICE) \
+		training.offline_steps=2 \
+		training.online_steps=20 \
+		training.save_checkpoint=false \
+		training.save_freq=10 \
+		training.batch_size=2 \
+		training.online_rollout_n_episodes=2 \
+		training.online_rollout_batch_size=2 \
+		training.online_steps_between_rollouts=10 \
+		training.online_buffer_capacity=15 \
+		eval.use_async_envs=true \
+		hydra.run.dir=tests/outputs/tdmpc_online/
+
 
 test-tdmpc-ete-eval:
 	python lerobot/scripts/eval.py \
