@@ -46,7 +46,6 @@ from lerobot.common.policies.utils import (
 class DiffusionPolicy(nn.Module, PyTorchModelHubMixin,
                       library_name="lerobot",
                       repo_url="https://github.com/huggingface/lerobot",
-                      docs_url="https://github.com/huggingface/lerobot/",
                       tags=["robotics"],
                     ):
     """
