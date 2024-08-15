@@ -636,7 +636,7 @@ def record(
         lerobot_dataset.stats = stats
     else:
         stats = {}
-        logging.info("Skipping computation of the dataset statistrics")
+        logging.info("Skipping computation of the dataset statistics")
 
     hf_dataset = hf_dataset.with_format(None)  # to remove transforms that cant be saved
     hf_dataset.save_to_disk(str(local_dir / "train"))

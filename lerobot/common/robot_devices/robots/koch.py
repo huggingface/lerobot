@@ -44,7 +44,7 @@ def apply_drive_mode(position, drive_mode):
     return position
 
 
-def reset_arm(arm: MotorsBus):
+def reset_torque_mode(arm: MotorsBus):
     # To be configured, all servos must be in "torque disable" mode
     arm.write("Torque_Enable", TorqueMode.DISABLED.value)
 
@@ -56,8 +56,11 @@ def reset_arm(arm: MotorsBus):
     if len(all_motors_except_gripper) > 0:
         arm.write("Operating_Mode", OperatingMode.EXTENDED_POSITION.value, all_motors_except_gripper)
 
-    # TODO(rcadene): why?
-    # Use 'position control current based' for gripper
+    # Use 'position control current based' for gripper to be limited by the limit of the current.
+    # For the follower gripper, it means it can grasp an object without forcing too much even tho,
+    # it's goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
+    # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
+    # to make it move, and it will move back to its original target position when we release the force.
     arm.write("Operating_Mode", OperatingMode.CURRENT_CONTROLLED_POSITION.value, "gripper")
 
 
@@ -83,7 +86,7 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
     run_arm_calibration(arm, "left", "follower")
     ```
     """
-    reset_arm(arm)
+    reset_torque_mode(arm)
 
     print(f"\nRunning calibration of {name} {arm_type}...")
 
@@ -302,9 +305,9 @@ class KochRobot:
         if self.calibration_path.exists():
             # Reset all arms before setting calibration
             for name in self.follower_arms:
-                reset_arm(self.follower_arms[name])
+                reset_torque_mode(self.follower_arms[name])
             for name in self.leader_arms:
-                reset_arm(self.leader_arms[name])
+                reset_torque_mode(self.leader_arms[name])
 
             with open(self.calibration_path, "rb") as f:
                 calibration = pickle.load(f)
@@ -333,6 +336,7 @@ class KochRobot:
 
         # Enable torque on all motors of the follower arms
         for name in self.follower_arms:
+            print(f"Activating torque on {name} follower arm.")
             self.follower_arms[name].write("Torque_Enable", 1)
 
         # Enable torque on the gripper of the leader arms, and move it to 45 degrees,

@@ -41,11 +41,15 @@ Or using `poetry`:
 poetry install --sync --extras "koch"
 ```
 
-Next, connect the leader arm (the smaller one) to the 5V power supply and the follower arm to the 12V power supply. Then, connect both arms to your computer via USB.
+You are now ready to plug the 5V power supply to the motor bus of the leader arm (the smaller one) since all its motors only require 5V.
 
-**Pro tip**
+Then plug the 12V power supply to the motor bus of the follower arm. It has two motors that need 12V, and the rest will be powered with 5V through the voltage convertor.
 
-In the upcoming sections, you'll learn how our code functions by experimenting with Python scripts in your terminal. If this is your first time using the tutorial, we highly recommend going through these steps. Once you're more familiar, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
+Finally, connect both arms to your computer via USB. Note that the USB doesn't provide any power, and both arms need to be plugged in with their associated power supply to be detected by your computer.
+
+*Copy pasting python code*
+
+In the upcoming sections, you'll learn about our classes and functions by running some python code, in an interactive session, or by copy-pasting it in a python file. If it's your first time using the tutorial, we highly recommend going through these steps to get deeper intuition about how things work. Once you're more familiar, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
@@ -140,7 +144,7 @@ follower_arm = DynamixelMotorsBus(
 
 *Updating the YAML Configuration File*
 
-Finally, update the port values in the YAML configuration file for the Koch robot at [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with the ports you've identified:
+Then, update the port values in the YAML configuration file for the Koch robot at [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with the ports you've identified:
 ```yaml
 [...]
 leader_arms:
@@ -178,7 +182,7 @@ Before you can start using your motors, you'll need to configure them to ensure 
 
 For a visual guide, refer to the [video tutorial of the configuration procedure](https://youtu.be/U78QQ9wCdpY).
 
-To connect and configure the leader arm, run the following code in your terminal within the same Python session:
+To connect and configure the leader arm, run the following code in the same Python interactive session as earlier in the tutorial:
 ```python
 leader_arm.connect()
 ```
@@ -188,8 +192,7 @@ When you connect the leader arm for the first time, you might see an output simi
 Read failed due to communication error on port /dev/tty.usbmodem575E0032081 for group_key ID_shoulder_pan_shoulder_lift_elbow_flex_wrist_flex_wrist_roll_gripper: [TxRxResult] There is no status packet!
 
 /!\ A configuration issue has been detected with your motors:
-- Verify that all the cables are connected the proper way. Before making a modification, unplug the power cord to not damage the motors. Rewire correctly. Then plug the power again and relaunch the script.
-- If it's the first time that you use these motors, press Enter to configure your motors...
+If it's the first time that you use these motors, press enter to configure your motors... but before verify that all the cables are connected the proper way. If you find an issue, before making a modification, kill the python process, unplug the power cord to not damage the motors, rewire correctly, then plug the power again and relaunch the script.
 
 Motor indices detected: {9600: [1]}
 
@@ -237,7 +240,7 @@ Steps:
 
 **Read and Write with DynamixelMotorsBus**
 
-To get familiar with how `DynamixelMotorsBus` communicates with the motors, you can start by reading data from them. Here's how you can do it:
+To get familiar with how `DynamixelMotorsBus` communicates with the motors, you can start by reading data from them. Copy past this code in the same interactive python session:
 ```python
 leader_pos = leader_arm.read("Present_Position")
 follower_pos = follower_arm.read("Present_Position")
@@ -253,7 +256,7 @@ array([2003, 1601,   56, 2152, 3101, 2283], dtype=int32)
 
 Try moving the arms to various positions and observe how the values change.
 
-Now let's try to enable torque in the follower arm:
+Now let's try to enable torque in the follower arm by copy pasting this code:
 ```python
 from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
 
@@ -262,7 +265,7 @@ follower_arm.write("Torque_Enable", TorqueMode.ENABLED.value)
 
 With torque enabled, the follower arm will be locked in its current position. Do not attempt to manually move the arm while torque is enabled, as this could damage the motors.
 
-Now, to get more familiar with reading and writing, let's move the arm programmatically using the following example code:
+Now, to get more familiar with reading and writing, let's move the arm programmatically copy pasting the following example code:
 ```python
 # Get the current position
 position = follower_arm.read("Present_Position")
@@ -293,7 +296,7 @@ follower_arm.disconnect()
 
 Alternatively, you can unplug the power cord, which will automatically disable torque and disconnect the motors.
 
-/!\ Warning: Make sure you unplug the power cord when you are done using your robot to avoid any over heating issue.
+*/!\ Warning*: These motors tend to overheat, especially under torque or if left plugged in for too long. Unplug after use.
 
 ### b. Teleoperate your Koch v1.1 with KochRobot
 
@@ -478,7 +481,7 @@ robot.disconnect()
 
 Alternatively, you can unplug the power cord, which will also disable torque.
 
-/!\ Warning: Make sure you unplug the power cord when you are done using your robot to avoid any over heating issue.
+*/!\ Warning*: These motors tend to overheat, especially under torque or if left plugged in for too long. Unplug after use.
 
 ### c. Add your cameras with OpenCVCamera
 

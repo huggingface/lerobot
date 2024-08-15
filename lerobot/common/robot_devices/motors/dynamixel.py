@@ -360,9 +360,10 @@ class DynamixelMotorsBus:
         if not self.are_motors_configured():
             input(
                 "\n/!\\ A configuration issue has been detected with your motors: \n"
-                "- Verify that all the cables are connected the proper way. Before making a modification, "
-                "unplug the power cord to not damage the motors. Rewire correctly. Then plug the power again and relaunch the script.\n"
-                "- If it's the first time that you use these motors, press Enter to configure your motors..."
+                "If it's the first time that you use these motors, press enter to configure your motors... but before "
+                "verify that all the cables are connected the proper way. If you find an issue, before making a modification, "
+                "kill the python process, unplug the power cord to not damage the motors, rewire correctly, then plug the power "
+                "again and relaunch the script.\n"
             )
             print()
             self.configure_motors()
