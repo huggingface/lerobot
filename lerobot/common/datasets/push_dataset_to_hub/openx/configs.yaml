@@ -1,18 +1,3 @@
-StateEncoding:
-  NONE: -1               # No Proprioceptive State
-  POS_EULER: 1           # EEF XYZ (3) + Roll-Pitch-Yaw (3) + <PAD> (1) + Gripper Open/Close (1)
-  POS_QUAT: 2            # EEF XYZ (3) + Quaternion (4) + Gripper Open/Close (1)
-  JOINT: 3               # Joint Angles (7, <PAD> if fewer) + Gripper Open/Close (1)
-  JOINT_BIMANUAL: 4      # Joint Angles (2 x [ Joint Angles (6) + Gripper Open/Close (1) ])
-
-ActionEncoding:
-  EEF_POS_4: 1            # EEF Delta XYZ (3) + Gripper Open/Close (1)
-  EEF_POS_7: 2            # EEF Delta XYZ (3) + Roll-Pitch-Yaw (3) + Gripper Open/Close (1)
-  JOINT_POS: 3            # Joint Delta Position (7) + Gripper Open/Close (1)
-  JOINT_POS_BIMANUAL: 4   # Joint Delta Position (2 x [ Joint Delta Position (6) + Gripper Open/Close (1) ])
-  EEF_VEL: 5              # EEF XYZ vel (3) + angular vel (3) + Gripper Open/Close (1)
-  WHEELED: 6              # For wheeled robots
-
 OPENX_DATASET_CONFIGS:
   fractal20220817_data:
     image_obs_keys:
@@ -22,8 +7,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - base_pose_tool_reached
       - gripper_closed
-    state_encoding: POS_QUAT
-    action_encoding: EEF_POS_7
     fps: 3
   
   kuka:
@@ -34,8 +17,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - clip_function_input/base_pose_tool_reached
       - gripper_closed
-    state_encoding: POS_QUAT
-    action_encoding: EEF_POS_7
     fps: 10
   
   bridge_openx:
@@ -46,8 +27,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - EEF_state
       - gripper_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 5
   
   taco_play:
@@ -60,8 +39,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state_eef
       - state_gripper
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 15
   
   jaco_play:
@@ -73,8 +50,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state_eef
       - state_gripper
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 10
   
   berkeley_cable_routing:
@@ -86,8 +61,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - robot_state
-    state_encoding: JOINT
-    action_encoding: EEF_VEL
     fps: 10
 
   roboturk:
@@ -97,8 +70,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - null
-    state_encoding: None
-    action_encoding: EEF_POS_7
     fps: 10
   
   nyu_door_opening_surprising_effectiveness:
@@ -108,8 +79,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - null
-    state_encoding: None
-    action_encoding: EEF_POS_7
     fps: 3
 
   viola:
@@ -121,8 +90,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - joint_states
       - gripper_states
-    state_encoding: JOINT
-    action_encoding: EEF_POS_7
     fps: 20
 
   berkeley_autolab_ur5:
@@ -133,8 +100,6 @@ OPENX_DATASET_CONFIGS:
       - image_with_depth
     state_obs_keys:
       - state
-    state_encoding: POS_QUAT
-    action_encoding: EEF_POS_7
     fps: 5
 
   toto:
@@ -144,8 +109,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: JOINT
-    action_encoding: JOINT_POS
     fps: 30
 
   language_table:
@@ -155,8 +118,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - effector_translation
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 10
 
   columbia_cairlab_pusht_real:
@@ -167,8 +128,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - robot_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 10
 
   stanford_kuka_multimodal_dataset_converted_externally_to_rlds:
@@ -179,8 +138,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - ee_position
       - ee_orientation
-    state_encoding: POS_QUAT
-    action_encoding: EEF_POS_7
     fps: 20
 
   nyu_rot_dataset_converted_externally_to_rlds:
@@ -191,8 +148,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - eef_state
       - gripper_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 3
 
   io_ai_tech:
@@ -205,8 +160,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 3
 
   stanford_hydra_dataset_converted_externally_to_rlds:
@@ -218,8 +171,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - eef_state
       - gripper_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 10
 
   austin_buds_dataset_converted_externally_to_rlds:
@@ -230,8 +181,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: JOINT
-    action_encoding: EEF_POS_7
     fps: 20
 
   nyu_franka_play_dataset_converted_externally_to_rlds:
@@ -243,8 +192,6 @@ OPENX_DATASET_CONFIGS:
       - depth_additional_view
     state_obs_keys:
       - eef_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_VEL
     fps: 3
 
   maniskill_dataset_converted_externally_to_rlds:
@@ -257,8 +204,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - tcp_pose
       - gripper_state
-    state_encoding: POS_QUAT
-    action_encoding: EEF_POS_7
     fps: 20
 
   furniture_bench_dataset_converted_externally_to_rlds:
@@ -269,8 +214,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: POS_QUAT
-    actionencoding: EEF_VEL
     fps: 10
 
   cmu_franka_exploration_dataset_converted_externally_to_rlds:
@@ -280,8 +223,6 @@ OPENX_DATASET_CONFIGS:
       - null  
     state_obs_keys:
       - null
-    state_encoding: NONE
-    action_encoding: EEF_POS_7
     fps: 10
 
   ucsd_kitchen_dataset_converted_externally_to_rlds:
@@ -291,8 +232,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - joint_state
-    state_encoding: JOINT
-    action_encoding: EEF_POS_7
     fps: 2
   
   ucsd_pick_and_place_dataset_converted_externally_to_rlds:
@@ -303,8 +242,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - eef_state
       - gripper_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_VEL
     fps: 3
   
   spoc:
@@ -315,8 +252,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - null
-    state_encoding: POS_EULER
-    action_encoding: EEF_VEL
     fps: 3
   
   austin_sailor_dataset_converted_externally_to_rlds:
@@ -327,8 +262,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: POS_QUAT
-    action_encoding: EEF_VEL
     fps: 20
   
   austin_sirius_dataset_converted_externally_to_rlds:
@@ -339,8 +272,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: POS_QUAT
-    action_encoding: EEF_VEL
     fps: 20
   
   bc_z:
@@ -352,8 +283,6 @@ OPENX_DATASET_CONFIGS:
       - present/xyz
       - present/axis_angle
       - present/sensed_close
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 10
   
   utokyo_pr2_opening_fridge_converted_externally_to_rlds:
@@ -364,8 +293,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - eef_state
       - gripper_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 10
   
   utokyo_pr2_tabletop_manipulation_converted_externally_to_rlds:
@@ -376,8 +303,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - eef_state
       - gripper_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 10
   
   utokyo_xarm_pick_and_place_converted_externally_to_rlds:
@@ -389,8 +314,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - end_effector_pose
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 10
   
   utokyo_xarm_bimanual_converted_externally_to_rlds:
@@ -400,8 +323,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - pose_r
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 10
   
   robo_net:
@@ -413,8 +334,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - eef_state
       - gripper_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_VEL
     fps: 1
   
   robo_set:
@@ -427,8 +346,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state
       - state_velocity
-    state_encoding: JOINT
-    action_encoding: JOINT_POS
     fps: 5
   
   berkeley_mvp_converted_externally_to_rlds:
@@ -440,8 +357,6 @@ OPENX_DATASET_CONFIGS:
       - gripper
       - pose
       - joint_pos
-    state_encoding: POS_QUAT
-    action_encoding: JOINT_POS
     fps: 5
   
   berkeley_rpt_converted_externally_to_rlds:
@@ -452,8 +367,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - joint_pos
       - gripper
-    state_encoding: JOINT
-    action_encoding: JOINT_POS
     fps: 30
   
   kaist_nonprehensile_converted_externally_to_rlds:
@@ -463,8 +376,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: POS_QUAT
-    action_encoding: EEF_POS_7
     fps: 10
   
   stanford_mask_vit_converted_externally_to_rlds:
@@ -475,8 +386,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - eef_state
       - gripper_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
   
   tokyo_u_lsmo_converted_externally_to_rlds:
     image_obs_keys:
@@ -486,8 +395,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - eef_state
       - gripper_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_VEL
     fps: 10
   
   dlr_sara_pour_converted_externally_to_rlds:
@@ -497,8 +404,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: POS_EULER
-    action_encoding: EEF_VEL
     fps: 10
   
   dlr_sara_grid_clamp_converted_externally_to_rlds:
@@ -507,9 +412,7 @@ OPENX_DATASET_CONFIGS:
     depth_obs_keys:
       - null
     state_obs_keys:
-      - state
-    state_encoding: POS_EULER
-    action_encoding: EEF_VEL
+      - state  
     fps: 10
   
   dlr_edan_shared_control_converted_externally_to_rlds:
@@ -519,8 +422,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: POS_EULER
-    action_encoding: EEF_VEL
     fps: 5
   
   asu_table_top_converted_externally_to_rlds:
@@ -531,8 +432,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - eef_state
       - gripper_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 12.5
 
   stanford_robocook_converted_externally_to_rlds:
@@ -545,8 +444,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - eef_state
       - gripper_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 5
 
   imperialcollege_sawyer_wrist_cam:
@@ -557,8 +454,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: NONE
-    action_encoding: EEF_POS_7
     fps: 10
 
   iamlab_cmu_pickup_insert_converted_externally_to_rlds:
@@ -570,8 +465,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - joint_state
       - gripper_state
-    state_encoding: JOINT
-    action_encoding: EEF_POS_7
     fps: 20
 
   uiuc_d3field:
@@ -583,8 +476,6 @@ OPENX_DATASET_CONFIGS:
       - depth_2
     state_obs_keys:
       - null
-    state_encoding: NONE
-    action_encoding: EEF_POS_7
     fps: 1
   
   utaustin_mutex:
@@ -595,8 +486,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: JOINT
-    action_encoding: EEF_POS_7
     fps: 20
   
   berkeley_fanuc_manipulation:
@@ -608,8 +497,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - joint_state
       - gripper_state
-    state_encoding: JOINT
-    action_encoding: EEF_POS_7
     fps: 10
   
   cmu_playing_with_food:
@@ -620,8 +507,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 10
   
   cmu_play_fusion:
@@ -631,8 +516,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: JOINT
-    action_encoding: EEF_POS_7
     fps: 5
   
   cmu_stretch:
@@ -643,8 +526,6 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - eef_state
       - gripper_state
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 10
   
   berkeley_gnm_recon:
@@ -656,8 +537,6 @@ OPENX_DATASET_CONFIGS:
       - state
       - position
       - yaw
-    state_encoding: POS_EULER
-    action_encoding: WHEELED
     fps: 3
  
   berkeley_gnm_cory_hall:
@@ -669,8 +548,6 @@ OPENX_DATASET_CONFIGS:
       - state
       - position
       - yaw
-    state_encoding: POS_EULER
-    action_encoding: WHEELED
     fps: 5
  
   berkeley_gnm_sac_son:
@@ -682,8 +559,6 @@ OPENX_DATASET_CONFIGS:
       - state
       - position
       - yaw
-    state_encoding: POS_EULER
-    action_encoding: WHEELED
     fps: 10
   
   droid:
@@ -695,8 +570,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - proprio
-    state_encoding: POS_QUAT
-    action_encoding: EEF_POS_7
     fps: 15
   
   droid_100:
@@ -708,8 +581,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - proprio
-    state_encoding: POS_QUAT
-    action_encoding: EEF_POS_7
     fps: 15
   
   fmb:
@@ -725,8 +596,6 @@ OPENX_DATASET_CONFIGS:
       - image_wrist_2_depth
     state_obs_keys:
       - proprio
-    state_encoding: POS_EULER
-    action_encoding: EEF_VEL
     fps: 10
   
   dobbe:
@@ -736,8 +605,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - proprio
-    state_encoding: POS_EULER
-    action_encoding: EEF_POS_7
     fps: 3.75
   
   usc_cloth_sim_converted_externally_to_rlds:
@@ -747,8 +614,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - null
-    state_encoding: NONE
-    action_encoding: EEF_POS_4
     fps: 10
   
   plex_robosuite:
@@ -759,8 +624,6 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: NONE
-    action_encoding: EEF_POS_7
     fps: 20
   
   conq_hose_manipulation:
@@ -772,7 +635,5 @@ OPENX_DATASET_CONFIGS:
       - null
     state_obs_keys:
       - state
-    state_encoding: NONE
-    action_encoding: EEF_VEL
     fps: 30
   
