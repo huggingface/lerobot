@@ -48,7 +48,6 @@ class DiffusionPolicy(
     PyTorchModelHubMixin,
     library_name="lerobot",
     repo_url="https://github.com/huggingface/lerobot",
-    docs_url="https://github.com/huggingface/lerobot/",
     tags=["robotics"],
 ):
     """
@@ -118,17 +117,18 @@ class DiffusionPolicy(
         Schematically this looks like:
             ----------------------------------------------------------------------------------------------
             (legend: o = n_obs_steps, h = horizon, a = n_action_steps)
-            |timestep            | n-o+1 | n-o+2 | ..... | n     | ..... | n+a-1 | n+a   | ..... |n-o+1+h|
-            |observation is used | YES   | YES   | YES   | NO    | NO    | NO    | NO    | NO    | NO    |
+            |timestep            | n-o+1 | n-o+2 | ..... | n     | ..... | n+a-1 | n+a   | ..... | n-o+h |
+            |observation is used | YES   | YES   | YES   | YES   | NO    | NO    | NO    | NO    | NO    |
             |action is generated | YES   | YES   | YES   | YES   | YES   | YES   | YES   | YES   | YES   |
             |action is used      | NO    | NO    | NO    | YES   | YES   | YES   | NO    | NO    | NO    |
             ----------------------------------------------------------------------------------------------
-        Note that this means we require: `n_action_steps < horizon - n_obs_steps + 1`. Also, note that
+        Note that this means we require: `n_action_steps <= horizon - n_obs_steps + 1`. Also, note that
         "horizon" may not the best name to describe what the variable actually means, because this period is
         actually measured from the first observation which (if `n_obs_steps` > 1) happened in the past.
         """
         batch = self.normalize_inputs(batch)
         if len(self.expected_image_keys) > 0:
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
         # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
@@ -150,6 +150,7 @@ class DiffusionPolicy(
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         if len(self.expected_image_keys) > 0:
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)

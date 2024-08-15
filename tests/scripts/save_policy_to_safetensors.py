@@ -108,7 +108,8 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_override
 
 if __name__ == "__main__":
     env_policies = [
-        # ("xarm", "tdmpc", ["policy.use_mpc=false"], ""),
+        # ("xarm", "tdmpc", ["policy.use_mpc=false"], "use_policy"),
+        # ("xarm", "tdmpc", ["policy.use_mpc=true"], "use_mpc"),
         # (
         #     "pusht",
         #     "diffusion",
@@ -119,9 +120,10 @@ if __name__ == "__main__":
         #     ],
         #     "",
         # ),
+        # ("aloha", "act", ["policy.n_action_steps=10"], ""),
         # ("aloha", "act", ["policy.n_action_steps=1000", "policy.chunk_size=1000"], "_1000_steps"),
-        # ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"]),
-        # ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"]),
+        # ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"], ""),
+        # ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"], ""),
     ]
     if len(env_policies) == 0:
         raise RuntimeError("No policies were provided!")
