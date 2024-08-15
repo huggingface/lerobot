@@ -42,7 +42,7 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin,
                 library_name="lerobot",
                 repo_url="https://github.com/huggingface/lerobot",
                 docs_url="https://github.com/huggingface/lerobot/",
-                tags=["robotics"],
+                tags=["act-policy", "robotics"],
                 ):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
