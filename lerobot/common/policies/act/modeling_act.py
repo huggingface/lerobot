@@ -41,7 +41,6 @@ from lerobot.common.policies.normalize import Normalize, Unnormalize
 class ACTPolicy(nn.Module, PyTorchModelHubMixin, 
                 library_name="lerobot",
                 repo_url="https://github.com/huggingface/lerobot",
-                docs_url="https://github.com/huggingface/lerobot/",
                 tags=["act-policy", "robotics"],
                 ):
     """
