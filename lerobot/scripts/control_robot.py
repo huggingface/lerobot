@@ -130,7 +130,12 @@ from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
-from lerobot.scripts.push_dataset_to_hub import push_meta_data_to_hub, push_videos_to_hub, save_meta_data
+from lerobot.scripts.push_dataset_to_hub import (
+    push_dataset_card_to_hub,
+    push_meta_data_to_hub,
+    push_videos_to_hub,
+    save_meta_data,
+)
 
 ########################################################################################
 # Utilities
@@ -292,6 +297,7 @@ def record(
     video=True,
     run_compute_stats=True,
     push_to_hub=True,
+    tags=None,
     num_image_writers=8,
     force_override=False,
 ):
@@ -647,6 +653,7 @@ def record(
     if push_to_hub:
         hf_dataset.push_to_hub(repo_id, revision="main")
         push_meta_data_to_hub(repo_id, meta_data_dir, revision="main")
+        push_dataset_card_to_hub(repo_id, revision="main", tags=tags)
         if video:
             push_videos_to_hub(repo_id, videos_dir, revision="main")
         create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
@@ -757,6 +764,12 @@ if __name__ == "__main__":
         type=int,
         default=1,
         help="Upload dataset to Hugging Face hub.",
+    )
+    parser_record.add_argument(
+        "--tags",
+        type=str,
+        nargs="*",
+        help="Add tags to your dataset on the hub.",
     )
     parser_record.add_argument(
         "--num-image-writers",
