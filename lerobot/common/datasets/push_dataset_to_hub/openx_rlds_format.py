@@ -134,13 +134,19 @@ def load_from_raw(
     dataset = dataset.enumerate().map(_broadcast_metadata_rlds)
 
     # we will apply the standardization transform if the dataset_name is provided
+    # if the dataset name is not provided and the goal is to convert any rlds formatted dataset
+    # search for 'image' keys in the observations
     if openx_dataset_name is not None:
         print(" - applying standardization transform for dataset: ", openx_dataset_name)
         assert openx_dataset_name in OPENX_STANDARDIZATION_TRANSFORMS
         transform_fn = OPENX_STANDARDIZATION_TRANSFORMS[openx_dataset_name]
         dataset = dataset.map(transform_fn)
 
-    image_keys = OPENX_DATASET_CONFIGS[openx_dataset_name]["image_obs_keys"]
+        image_keys = OPENX_DATASET_CONFIGS[openx_dataset_name]["image_obs_keys"]
+    else:
+        obs_keys = dataset_info.features["steps"]["observation"].keys()
+        image_keys = [key for key in obs_keys if "image" in key]
+
     lang_key = "language_instruction" if "language_instruction" in dataset.element_spec else None
 
     print(" - image_keys: ", image_keys)

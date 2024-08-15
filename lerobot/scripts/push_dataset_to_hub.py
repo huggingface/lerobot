@@ -200,26 +200,24 @@ def push_dataset_to_hub(
     # convert dataset from original raw format to LeRobot format
     from_raw_to_lerobot_format = get_from_raw_to_lerobot_format_fn(raw_format)
 
-    if "openx_rlds" in raw_format:
-        # User could provide official OpenX dataset name to convert it to LeRobot format
-        # the raw_format str is as such:
-        # openx_rlds (default)
-        # openx_rlds.bridge_orig: (with bridge_orig as openx_dataset_name)
-        splited_raw_format = raw_format.split(".")
-        assert len(splited_raw_format) <= 2, f"Invalid raw_format: {raw_format}"
-        if len(splited_raw_format) == 2:
-            openx_dataset_name = splited_raw_format[1]
-            print(f"Converting dataset [{openx_dataset_name}] from 'openx_rlds' to LeRobot format.")
-        else:
-            openx_dataset_name = None
+    fmt_kwgs = {
+        "raw_dir": raw_dir,
+        "videos_dir": videos_dir,
+        "fps": fps,
+        "video": video,
+        "episodes": episodes,
+        "encoding": encoding,
+    }
 
-        hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(
-            raw_dir, videos_dir, fps, video, episodes, encoding, openx_dataset_name=openx_dataset_name
-        )
-    else:
-        hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(
-            raw_dir, videos_dir, fps, video, episodes, encoding
-        )
+    if "openx_rlds." in raw_format:
+        # Support for official OXE dataset name inside `raw_format`.
+        # For instance, `raw_format="oxe_rlds"` uses the default formating (TODO what does that mean?),
+        # and `raw_format="oxe_rlds.bridge_orig"` uses the brdige_orig formating
+        _, openx_dataset_name = raw_format.split(".")
+        print(f"Converting dataset [{openx_dataset_name}] from 'openx_rlds' to LeRobot format.")
+        fmt_kwgs["openx_dataset_name"] = openx_dataset_name
+
+    hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(**fmt_kwgs)
 
     lerobot_dataset = LeRobotDataset.from_preloaded(
         repo_id=repo_id,
