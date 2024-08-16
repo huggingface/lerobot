@@ -795,7 +795,9 @@ python lerobot/scripts/control_robot.py record \
   --num-episodes 2
 ```
 
-This will write your dataset to `{root}/{repo-id}` (e.g. `data/cadene/koch_test`).
+This will write your dataset locally to `{root}/{repo-id}` (e.g. `data/cadene/koch_test`) and push it on the hub at `https://huggingface.co/datasets/{HF_USER}/{repo-id}`. Your dataset will be automatically tagged with `LeRobot` for the community to find it easily, and you can also add custom tags (in this case `tutorial` for example).
+
+You can look for other LeRobot datasets on the hub by searching for `LeRobot` tags: https://huggingface.co/datasets?other=LeRobot
 
 Remember to add `--robot-overrides '~cameras'` if you don't have any cameras and you still use the default `koch.yaml` configuration.
 
