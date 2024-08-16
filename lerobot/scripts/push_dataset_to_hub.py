@@ -56,7 +56,7 @@ from safetensors.torch import save_file
 from lerobot.common.datasets.compute_stats import compute_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.push_dataset_to_hub.utils import check_repo_id
-from lerobot.common.datasets.utils import create_branch, flatten_dict
+from lerobot.common.datasets.utils import create_branch, create_lerobot_dataset_card, flatten_dict
 
 
 def get_from_raw_to_lerobot_format_fn(raw_format: str):
@@ -112,6 +112,14 @@ def push_meta_data_to_hub(repo_id: str, meta_data_dir: str | Path, revision: str
         revision=revision,
         repo_type="dataset",
     )
+
+
+def push_dataset_card_to_hub(
+    repo_id: str, revision: str | None, tags: list | None = None, text: str | None = None
+):
+    """Creates and pushes a LeRobotDataset Card with appropriate tags to easily find it on the hub."""
+    card = create_lerobot_dataset_card(tags=tags, text=text)
+    card.push_to_hub(repo_id=repo_id, repo_type="dataset", revision=revision)
 
 
 def push_videos_to_hub(repo_id: str, videos_dir: str | Path, revision: str | None):
@@ -213,6 +221,7 @@ def push_dataset_to_hub(
     if push_to_hub:
         hf_dataset.push_to_hub(repo_id, revision="main")
         push_meta_data_to_hub(repo_id, meta_data_dir, revision="main")
+        push_dataset_card_to_hub(repo_id, revision="main")
         if video:
             push_videos_to_hub(repo_id, videos_dir, revision="main")
         create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
