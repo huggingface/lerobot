@@ -4,8 +4,7 @@ fps: 50
 
 eval:
   # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
-  # set it to false to avoid some problems of the ACT env
-  # https://github.com/huggingface/lerobot/pull/358#discussion_r1716501659
+  # set it to false to avoid some problems of the aloha env
   use_async_envs: false
 
 env:
