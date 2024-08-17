@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import os
 import os.path as osp
 import random
 from contextlib import contextmanager
@@ -25,6 +26,11 @@ import hydra
 import numpy as np
 import torch
 from omegaconf import DictConfig
+
+
+def inside_slurm():
+    """Check whether we are inside a slurm cluster"""
+    return "SLURM_JOB_ID" in os.environ
 
 
 def get_safe_torch_device(cfg_device: str, log: bool = False) -> torch.device:

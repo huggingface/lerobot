@@ -360,8 +360,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
-                    enable_progbar=True,
-                    enable_inner_progbar=True,
                 )
             log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_online=is_online)
             if cfg.wandb.enable:
@@ -545,8 +543,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     start_seed=(
                         rollout_start_seed := (rollout_start_seed + cfg.training.batch_size) % 1000000
                     ),
-                    enable_progbar=True,
-                    enable_inner_progbar=True,
                 )
             online_rollout_s = time.perf_counter() - start_rollout_time
 
