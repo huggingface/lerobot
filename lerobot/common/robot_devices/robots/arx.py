@@ -1,7 +1,5 @@
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from pathlib import Path
-import pickle
 import time
 
 import arx5_interface as arx5
@@ -9,12 +7,6 @@ import arx5_interface as arx5
 import numpy as np
 
 from lerobot.common.robot_devices.cameras.utils import Camera
-from lerobot.common.robot_devices.motors.dynamixel import (
-    OperatingMode,
-    TorqueMode,
-    convert_degrees_to_steps,
-)
-from lerobot.common.robot_devices.motors.utils import MotorsBus
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 
 class ARXArmModel(Enum):
@@ -316,8 +308,8 @@ class ARXRobot:
         for name in self.leader_arms:
             self.leader_arms[name].disconnect()
 
-        for name in self.cameras:
-            self.cameras[name].disconnect()
+        # for name in self.cameras:
+        #     self.cameras[name].disconnect()
 
         self.is_connected = False
 
