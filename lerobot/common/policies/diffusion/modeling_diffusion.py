@@ -48,7 +48,7 @@ class DiffusionPolicy(
     PyTorchModelHubMixin,
     library_name="lerobot",
     repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "policy"],
+    tags=["robotics", "diffusion-policy"],
 ):
     """
     Diffusion Policy as per "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion"
