@@ -51,6 +51,7 @@ class ARXArm:
         self.joint_controller = None
 
     def connect(self):
+        print(self.config)
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
                 "ARXArm is already connected. Do not run `robot.connect()` twice."
@@ -73,8 +74,10 @@ class ARXArm:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
+        self.joint_controller.send_recv_once()
         self.joint_controller.reset_to_home()
         self.joint_controller.enable_gravity_compensation(self.config.urdf_path)
+        self.joint_controller.send_recv_once()
 
     def get_state(self) -> arx5.JointState:
         if not self.is_connected:
@@ -113,12 +116,12 @@ class ARXRobot:
 
         self.leader_arms = {}
         self.follower_arms = {}
-        for key, arm_config in self.config.leader_arms.values():
+        for key, arm_config in self.config.leader_arms.items():
             self.leader_arms[key] = ARXArm(arm_config)
-        for key, arm_config in self.config.follower_arms.values():
+        for key, arm_config in self.config.follower_arms.items():
             self.follower_arms[key] = ARXArm(arm_config)
 
-        # self.cameras = self.config.cameras
+        self.cameras = {}
         self.is_connected = False
         self.logs = {}
 
@@ -128,10 +131,10 @@ class ARXRobot:
                 "ARXRobot is already connected. Do not run `robot.connect()` twice."
             )
 
-        if not self.leader_arms and not self.follower_arms and not self.cameras:
-            raise ValueError(
-                "ARXRobot doesn't have any device to connect. See example of usage in docstring of the class."
-            )
+        # if not self.leader_arms and not self.follower_arms and not self.cameras:
+        #     raise ValueError(
+        #         "ARXRobot doesn't have any device to connect. See example of usage in docstring of the class."
+        #     )
 
         # Connect the arms
         for name in self.follower_arms:
@@ -141,8 +144,8 @@ class ARXRobot:
             print(f"Connecting {name} leader arm.")
             self.leader_arms[name].connect()
 
-            # Run calibration process which begins by resetting all arms
-            self.run_calibration()
+        # Run calibration process which begins by resetting all arms
+        self.run_calibration()
 
         # Connect the cameras
         # for name in self.cameras:
@@ -155,9 +158,9 @@ class ARXRobot:
         for name in self.follower_arms:
             print(f"Calibrating {name} follower arm.")
             self.follower_arms[name].reset()
-        for name in self.leader_arms:
-            print(f"Calibrating {name} leader arm.")
-            self.leader_arms[name].reset()
+        # for name in self.leader_arms:
+        #     print(f"Calibrating {name} leader arm.")
+        #     self.leader_arms[name].reset()
 
     def teleop_step(
         self, record_data=False
@@ -172,25 +175,25 @@ class ARXRobot:
         for name in self.leader_arms:
             before_lread_t = time.perf_counter()
             joint_state = self.leader_arms[name].get_state()
-            leader_pos[name] = np.concatenate(joint_state.pos().copy(), np.array([joint_state.gripper_pos]))
+            leader_pos[name] = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
             self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - before_lread_t
         follower_goal_pos = {}
         for name in self.leader_arms:
             follower_goal_pos[name] = leader_pos[name]
 
-        # Send action
-        if name in self.follower_arms:
-            before_fwrite_t = time.perf_counter()
+            # Send action
+            if name in self.follower_arms:
+                before_fwrite_t = time.perf_counter()
 
-            action = leader_pos[name]
-            dof = self.config.follower_arms[name].dof
+                action = leader_pos[name]
+                dof = self.config.follower_arms[name].dof
 
-            cmd = arx5.JointState(dof)
-            cmd.pos() = action[0:dof]
-            cmd.gripper_pos = action[dof]    # TODO: does the gripper need special calibration?
-            self.follower_arms[name].send_command(cmd)
+                cmd = arx5.JointState(dof)
+                cmd.pos()[0:dof] = action[0:dof]
+                cmd.gripper_pos = action[dof]    # TODO: does the gripper need special calibration?
+                self.follower_arms[name].send_command(cmd)
 
-            self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
+                self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
         # Early exit when recording data is not requested
         if not record_data:
@@ -202,7 +205,7 @@ class ARXRobot:
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
             joint_state = self.follower_arms[name].get_state()
-            follower_pos[name] = np.concatenate(joint_state.pos().copy(), np.array([joint_state.gripper_pos]))
+            follower_pos[name] = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
             self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
         # Create state by concatenating follower current position
@@ -248,7 +251,7 @@ class ARXRobot:
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
             joint_state = self.follower_arms[name].get_state()
-            follower_pos[name] = np.concatenate(joint_state.pos().copy(), np.array([joint_state.gripper_pos]))
+            follower_pos[name] = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
             self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
         # Create state by concatenating follower current position
@@ -287,7 +290,7 @@ class ARXRobot:
             if name in self.follower_arms:
                 to_idx += len(self.config.follower_arms[name].dof)
                 cmd = arx5.JointState(self.config.follower_arms[name].dof)
-                cmd.pos() = action[from_idx:to_idx]
+                cmd.pos()[0:self.config.follower_arms[name].dof] = action[from_idx:to_idx]
                 cmd.gripper_pos = action[to_idx]    # TODO: does the gripper need special calibration?
                 follower_goal_pos[name] = cmd
                 

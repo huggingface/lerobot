@@ -111,12 +111,19 @@ from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
 
+
+# Set LD_LIBRARY_PATH to what it is in your interactive environment
+# os.environ['LD_LIBRARY_PATH'] = '/opt/ros/noetic/lib'
+# print(os.environ["LD_LIBRARY_PATH"])
+from lerobot.common.robot_devices.robots.arx import ARXRobot
+
 import cv2
 import torch
 import tqdm
 from omegaconf import DictConfig
 from PIL import Image
 from termcolor import colored
+
 
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.compute_stats import compute_stats
