@@ -50,6 +50,7 @@ class ARXArm:
             child_state_pipe,
             child_command_pipe,
             child_close_pipe,
+            is_master,
         ):
         """
         The arm commands need to be run in a separate process to work around a shared memory issue in the ARX5 SDK.
@@ -57,7 +58,7 @@ class ARXArm:
         """
         joint_controller = arx5.Arx5JointController(self.config.model, self.config.interface_name)
         joint_controller.enable_background_send_recv()
-        # joint_controller.reset_to_home()
+        joint_controller.reset_to_home()
         joint_controller.enable_gravity_compensation(self.config.urdf_path)
 
         should_stop = False
@@ -74,7 +75,12 @@ class ARXArm:
                 if pipe == child_reset_pipe:
                     # Handle reset command
                     _ = pipe.recv()
-                    joint_controller.reset_to_home()
+                    # joint_controller.reset_to_home()
+                    if is_master:
+                        joint_controller.set_to_damping()
+                        gain = joint_controller.get_gain()
+                        gain.kd()[:] *= 0.1
+                        joint_controller.set_gain(gain)  # set to passive
                     pipe.send(True)
 
                 elif pipe == child_state_pipe:
@@ -88,7 +94,7 @@ class ARXArm:
                     # Handle a command
                     action = pipe.recv()
                     dof = self.config.dof
-                    cmd = arx5.JointState()
+                    cmd = arx5.JointState(dof)
                     cmd.pos()[0:dof] = action[0:dof]
                     cmd.gripper_pos = action[dof]
 
@@ -106,9 +112,11 @@ class ARXArm:
     def __init__(
         self,
         config: ARXArmConfig,
+        is_master: bool,
     ):
         self.config = config
         self.is_connected = False
+        self.is_master = is_master
 
         # multi-processing tools, required to work around a bug in the arx5 sdk
         self.parent_reset_pipe, self.child_reset_pipe = multiprocessing.Pipe()
@@ -129,6 +137,7 @@ class ARXArm:
             self.child_state_pipe, 
             self.child_command_pipe,
             self.child_close_pipe,
+            self.is_master,
         ))
         self.proc.start()
         time.sleep(2)
@@ -191,9 +200,9 @@ class ARXRobot:
         self.leader_arms = {}
         self.follower_arms = {}
         for key, arm_config in self.config.leader_arms.items():
-            self.leader_arms[key] = ARXArm(arm_config)
+            self.leader_arms[key] = ARXArm(arm_config, True)
         for key, arm_config in self.config.follower_arms.items():
-            self.follower_arms[key] = ARXArm(arm_config)
+            self.follower_arms[key] = ARXArm(arm_config, False)
 
         self.cameras = {}
         self.is_connected = False
