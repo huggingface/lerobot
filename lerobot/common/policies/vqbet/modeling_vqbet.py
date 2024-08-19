@@ -38,7 +38,13 @@ from lerobot.common.policies.vqbet.vqbet_utils import GPT, ResidualVQ
 # ruff: noqa: N806
 
 
-class VQBeTPolicy(nn.Module, PyTorchModelHubMixin):
+class VQBeTPolicy(
+    nn.Module,
+    PyTorchModelHubMixin,
+    library_name="lerobot",
+    repo_url="https://github.com/huggingface/lerobot",
+    tags=["robotics", "vqbet"],
+):
     """
     VQ-BeT Policy as per "Behavior Generation with Latent Actions"
     """
@@ -289,7 +295,7 @@ class VQBeTModel(nn.Module):
 
         # To input state and observation features into GPT layers, we first project the features to fit the shape of input size of GPT.
         self.state_projector = MLP(
-            config.output_shapes["action"][0], hidden_channels=[self.config.gpt_input_dim]
+            config.input_shapes["observation.state"][0], hidden_channels=[self.config.gpt_input_dim]
         )
         self.rgb_feature_projector = MLP(
             self.rgb_encoder.feature_dim, hidden_channels=[self.config.gpt_input_dim]

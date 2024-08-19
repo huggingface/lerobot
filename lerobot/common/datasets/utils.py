@@ -23,10 +23,18 @@ from typing import Dict
 import datasets
 import torch
 from datasets import load_dataset, load_from_disk
-from huggingface_hub import HfApi, hf_hub_download, snapshot_download
+from huggingface_hub import DatasetCard, HfApi, hf_hub_download, snapshot_download
 from PIL import Image as PILImage
 from safetensors.torch import load_file
 from torchvision import transforms
+
+DATASET_CARD_TEMPLATE = """
+---
+# Metadata will go there
+---
+This dataset was created using [🤗 LeRobot](https://github.com/huggingface/lerobot).
+
+"""
 
 
 def flatten_dict(d, parent_key="", sep="/"):
@@ -385,3 +393,29 @@ def cycle(iterable):
             yield next(iterator)
         except StopIteration:
             iterator = iter(iterable)
+
+
+def create_branch(repo_id, *, branch: str, repo_type: str | None = None):
+    """Create a branch on a existing Hugging Face repo. Delete the branch if it already
+    exists before creating it.
+    """
+    api = HfApi()
+
+    branches = api.list_repo_refs(repo_id, repo_type=repo_type).branches
+    refs = [branch.ref for branch in branches]
+    ref = f"refs/heads/{branch}"
+    if ref in refs:
+        api.delete_branch(repo_id, repo_type=repo_type, branch=branch)
+
+    api.create_branch(repo_id, repo_type=repo_type, branch=branch)
+
+
+def create_lerobot_dataset_card(tags: list | None = None, text: str | None = None) -> DatasetCard:
+    card = DatasetCard(DATASET_CARD_TEMPLATE)
+    card.data.task_categories = ["robotics"]
+    card.data.tags = ["LeRobot"]
+    if tags is not None:
+        card.data.tags += tags
+    if text is not None:
+        card.text += text
+    return card

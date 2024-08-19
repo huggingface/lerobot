@@ -41,7 +41,13 @@ from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.utils import get_device_from_parameters, populate_queues
 
 
-class TDMPCPolicy(nn.Module, PyTorchModelHubMixin):
+class TDMPCPolicy(
+    nn.Module,
+    PyTorchModelHubMixin,
+    library_name="lerobot",
+    repo_url="https://github.com/huggingface/lerobot",
+    tags=["robotics", "tdmpc"],
+):
     """Implementation of TD-MPC learning + inference.
 
     Please note several warnings for this policy.

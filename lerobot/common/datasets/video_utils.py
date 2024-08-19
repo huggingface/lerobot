@@ -210,6 +210,12 @@ def encode_video_frames(
     # redirect stdin to subprocess.DEVNULL to prevent reading random keyboard inputs from terminal
     subprocess.run(ffmpeg_cmd, check=True, stdin=subprocess.DEVNULL)
 
+    if not video_path.exists():
+        raise OSError(
+            f"Video encoding did not work. File not found: {video_path}. "
+            f"Try running the command manually to debug: `{''.join(ffmpeg_cmd)}`"
+        )
+
 
 @dataclass
 class VideoFrame:
