@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field, replace
 from enum import Enum
+import multiprocessing
+from multiprocessing.connection import wait
 import time
 
 import arx5_interface as arx5
@@ -41,62 +43,114 @@ class ARXRobotConfig:
 class ARXArm:
     """
     Class for controlling a single ARX arm."""
-    
+
+    def run_in_process(self):
+        """
+        The arm commands need to be run in a separate process to work around a shared memory issue in the ARX5 SDK.
+        Once the issue is resolved, this code can be simplified.
+        """
+        joint_controller = arx5.Arx5JointController(self.config.model, self.config.interface_name)
+
+        while not self.should_stop:
+            # Wait for messages from any of the pipes
+            ready_pipes = wait([
+                self.child_reset_pipe, 
+                self.child_state_pipe, 
+                self.child_command_pipe
+            ])
+
+            for pipe in ready_pipes:
+                if pipe == self.child_reset_pipe:
+                    # Handle reset command
+                    _ = pipe.recv()
+                    joint_controller.enable_background_send_recv()
+                    joint_controller.reset_to_home()
+                    joint_controller.enable_gravity_compensation(self.config.urdf_path)
+                    pipe.send(True)
+
+                elif pipe == self.child_state_pipe:
+                    # Handle state request command
+                    _ = pipe.recv()
+                    state = joint_controller.get_state()
+                    pipe.send(state)  # Send the state back to the parent
+
+                elif pipe == self.child_command_pipe:
+                    # Handle a general command
+                    command = pipe.recv()
+                    # Process command, e.g., move joints
+                    joint_controller.set_joint_cmd(command)
+                    pipe.send(True)
+        
+        # safely shut down the arm
+        joint_controller.reset_to_home()
+        joint_controller.set_to_damping()
+
     def __init__(
         self,
         config: ARXArmConfig,
     ):
         self.config = config
         self.is_connected = False
-        self.joint_controller = None
+
+        # multi-processing tools, required to work around a bug in the arx5 sdk
+        self.should_stop = False
+        self.parent_reset_pipe, self.child_reset_pipe = multiprocessing.Pipe()
+        self.parent_state_pipe, self.child_state_pipe = multiprocessing.Pipe()
+        self.parent_command_pipe, self.child_command_pipe = multiprocessing.Pipe()
 
     def connect(self):
-        print(self.config)
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
                 "ARXArm is already connected. Do not run `robot.connect()` twice."
             )
-        self.joint_controller = arx5.Arx5JointController(self.config.model, self.config.interface_name)
         self.is_connected = True
+        self.should_stop = False
+
+        # start a background process for the arm
+        self.proc = multiprocessing.Process(target=self.run_in_process)
+        self.proc.start()
 
     def disconnect(self):
         if not self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
                 "ARXArm is not connected. Do not run `robot.disconnect()` twice."
             )
-        self.joint_controller.reset_to_home()
-        self.joint_controller.set_to_damping()
-        self.joint_controller = None
+        # notify the arm process of imminent shutdown
         self.is_connected = False
+        self.should_stop = True
+
+        # join the arm process
+        self.proc.join()
+        self.proc = None
 
     def reset(self):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
-        self.joint_controller.enable_background_send_recv()
-        self.joint_controller.reset_to_home()
-        self.joint_controller.enable_gravity_compensation(self.config.urdf_path)
+        self.parent_reset_pipe.send(True)
+        _ = self.parent_reset_pipe.recv()
 
     def get_state(self) -> arx5.JointState:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
-        return self.joint_controller.get_state()
+        self.parent_state_pipe.send(True)
+        state = self.parent_state_pipe.recv()
+        return state
     
     def send_command(self, cmd: arx5.JointState):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
-        self.joint_controller.set_joint_cmd(cmd)
+        self.parent_command_pipe.send(cmd)
+        _ = self.parent_command_pipe.recv()
 
 class ARXRobot:
     """
     A class for controlling a robot consisting of one or more ARX arms.
-    
-    TODO(villekuosmanen): add support for multithreaded controls
     """
 
     def __init__(
