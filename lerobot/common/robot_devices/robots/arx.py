@@ -7,6 +7,7 @@ from typing import Tuple
 
 import arx5_interface as arx5
 import numpy as np
+import torch
 
 from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
@@ -91,11 +92,11 @@ class ARXArm:
                     _ = pipe.recv()
                     joint_state = joint_controller.get_state()
                     state = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
-                    pipe.send((state, joint_state.gripper_vel))  # Send the state back to the parent
+                    pipe.send(state)  # Send the state back to the parent
 
                 elif pipe == child_command_pipe:
                     # Handle a command
-                    (action, gripper_vel) = pipe.recv()
+                    action = pipe.recv()
                     dof = self.config.dof
                     cmd = arx5.JointState(dof)
                     cmd.pos()[0:dof] = action[0:dof]
@@ -104,7 +105,6 @@ class ARXArm:
                     if action[dof] > robot_config.gripper_width:
                         action[dof] = robot_config.gripper_width
                     cmd.gripper_pos = action[dof]
-                    cmd.gripper_vel = gripper_vel
 
                     # Process command, e.g., move joints
                     joint_controller.set_joint_cmd(cmd)
@@ -114,8 +114,12 @@ class ARXArm:
                     should_stop = True
         
         # safely shut down the arm
-        joint_controller.reset_to_home()
+        if is_master:
+            gain = joint_controller.get_gain()
+            gain.kd()[:] *= 10
+            joint_controller.set_gain(gain)
         joint_controller.set_to_damping()
+        joint_controller.reset_to_home()
 
     def __init__(
         self,
@@ -171,28 +175,27 @@ class ARXArm:
         self.parent_reset_pipe.send(True)
         _ = self.parent_reset_pipe.recv()
 
-    def get_state(self) -> Tuple[np.ndarray, float]:
+    def get_state(self) -> np.ndarray:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
         self.parent_state_pipe.send(True)
-        (state, gripper_vel) = self.parent_state_pipe.recv()
+        state = self.parent_state_pipe.recv()
         if self.is_master:
             state[-1] *= 3.85
-            gripper_vel *= 3.85
 
         state_name = "master" if self.is_master else "puppet"
         print(f"Gripper ({state_name}): {state[-1]}")
 
-        return (state, gripper_vel)
+        return state
     
-    def send_command(self, cmd: np.ndarray, gripper_vel: float):
+    def send_command(self, cmd: np.ndarray):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
-        self.parent_command_pipe.send((cmd, gripper_vel))
+        self.parent_command_pipe.send(cmd)
         _ = self.parent_command_pipe.recv()
 
 class ARXRobot:
@@ -262,7 +265,7 @@ class ARXRobot:
 
     def teleop_step(
         self, record_data=False
-    ) -> None | tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARXRobot is not connected. You need to run `robot.connect()`."
@@ -270,10 +273,9 @@ class ARXRobot:
         
         # Prepare to assign the position of the leader to the follower
         leader_pos = {}
-        leader_gripper_vel = {}
         for name in self.leader_arms:
             before_lread_t = time.perf_counter()
-            (leader_pos[name], leader_gripper_vel[name]) = self.leader_arms[name].get_state()
+            leader_pos[name] = self.leader_arms[name].get_state()
             self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - before_lread_t
         
         follower_goal_pos = {}
@@ -286,14 +288,14 @@ class ARXRobot:
 
                 action = leader_pos[name]
                 dof = self.config.follower_arms[name].dof
-                self.follower_arms[name].send_command(action[0:dof + 1], leader_gripper_vel[name])
+                self.follower_arms[name].send_command(action[0:dof + 1])
 
                 self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
         # for logging, TODO remove
         for name in self.follower_arms:
             before_lread_t = time.perf_counter()
-            (_, _) = self.follower_arms[name].get_state()
+            _ = self.follower_arms[name].get_state()
 
         # Early exit when recording data is not requested
         if not record_data:
@@ -302,10 +304,9 @@ class ARXRobot:
         # TODO(rcadene): Add velocity and other info
         # Read follower position
         follower_pos = {}
-        follower_gripper_vel = {}
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
-            (follower_pos[name], follower_gripper_vel[name]) = self.follower_arms[name].get_state()
+            follower_pos[name] = self.follower_arms[name].get_state()
             self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
         # Create state by concatenating follower current position
@@ -314,12 +315,6 @@ class ARXRobot:
             if name in follower_pos:
                 state.append(follower_pos[name])
         state = np.concatenate(state)
-
-        velocities = []
-        for name in self.follower_arms:
-            if name in follower_gripper_vel:
-                velocities.append(follower_gripper_vel[name])
-        velocities = np.concatenate(velocities)
 
         # Create action by concatenating follower goal position
         action = []
@@ -338,9 +333,8 @@ class ARXRobot:
 
         # Populate output dictionnaries and format to pytorch
         obs_dict, action_dict = {}, {}
-        obs_dict["observation.state"] = state
-        obs_dict["observation.gripper_vel"] = velocities
-        action_dict["action"] = action
+        obs_dict["observation.state"] = torch.from_numpy(state)
+        action_dict["action"] = torch.from_numpy(action)
         # for name in self.cameras:
         #     obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
 
@@ -357,7 +351,7 @@ class ARXRobot:
         follower_pos = {}
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
-            (follower_pos[name], _) = self.follower_arms[name].get_state()
+            follower_pos[name] = self.follower_arms[name].get_state()
             self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
         # Create state by concatenating follower current position
@@ -382,19 +376,20 @@ class ARXRobot:
         #     obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
         return obs_dict
 
-    def send_action(self, action: np.ndarray):
+    def send_action(self, action: torch.Tensor):
         """The provided action is expected to be a vector."""
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARXRobot is not connected. You need to run `robot.connect()`."
             )
+        action = action.numpy()
 
         from_idx = 0
         to_idx = 0
         follower_goal_pos = {}
         for name in self.follower_arms:
             if name in self.follower_arms:
-                to_idx += len(self.config.follower_arms[name].dof)
+                to_idx += self.config.follower_arms[name].dof
                 follower_goal_pos[name] = action[from_idx:to_idx + 1]
                 from_idx = to_idx + 1
 

@@ -299,7 +299,7 @@ def record(
     root="data",
     repo_id="lerobot/debug",
     warmup_time_s=2,
-    episode_time_s=10,
+    episode_time_s=20,
     reset_time_s=5,
     num_episodes=50,
     video=True,
