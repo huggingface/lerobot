@@ -56,6 +56,9 @@ class ARXArm:
         Once the issue is resolved, this code can be simplified.
         """
         joint_controller = arx5.Arx5JointController(self.config.model, self.config.interface_name)
+        joint_controller.enable_background_send_recv()
+        # joint_controller.reset_to_home()
+        joint_controller.enable_gravity_compensation(self.config.urdf_path)
 
         should_stop = False
         while not should_stop:
@@ -71,9 +74,7 @@ class ARXArm:
                 if pipe == child_reset_pipe:
                     # Handle reset command
                     _ = pipe.recv()
-                    joint_controller.enable_background_send_recv()
                     joint_controller.reset_to_home()
-                    joint_controller.enable_gravity_compensation(self.config.urdf_path)
                     pipe.send(True)
 
                 elif pipe == child_state_pipe:
@@ -117,14 +118,14 @@ class ARXArm:
         self.is_connected = True
 
         # start a background process for the arm
-        pipes = (
+        self.proc = multiprocessing.Process(target=self.run_in_process, args=(
             self.child_reset_pipe, 
             self.child_state_pipe, 
             self.child_command_pipe,
             self.child_close_pipe,
-        )
-        self.proc = multiprocessing.Process(target=self.run_in_process, args=(pipes,))
+        ))
         self.proc.start()
+        time.sleep(2)
 
     def disconnect(self):
         if not self.is_connected:
