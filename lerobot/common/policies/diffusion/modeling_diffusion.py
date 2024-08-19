@@ -43,7 +43,13 @@ from lerobot.common.policies.utils import (
 )
 
 
-class DiffusionPolicy(nn.Module, PyTorchModelHubMixin):
+class DiffusionPolicy(
+    nn.Module,
+    PyTorchModelHubMixin,
+    library_name="lerobot",
+    repo_url="https://github.com/huggingface/lerobot",
+    tags=["robotics", "diffusion-policy"],
+):
     """
     Diffusion Policy as per "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion"
     (paper: https://arxiv.org/abs/2303.04137, code: https://github.com/real-stanford/diffusion_policy).
