@@ -278,6 +278,7 @@ def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | Non
     while True:
         start_loop_t = time.perf_counter()
         robot.teleop_step()
+        time.sleep(0.01)
 
         if fps is not None:
             dt_s = time.perf_counter() - start_loop_t

@@ -74,17 +74,15 @@ class ARXArm:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
-        self.joint_controller.send_recv_once()
+        self.joint_controller.enable_background_send_recv()
         self.joint_controller.reset_to_home()
         self.joint_controller.enable_gravity_compensation(self.config.urdf_path)
-        self.joint_controller.send_recv_once()
 
     def get_state(self) -> arx5.JointState:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
-        self.joint_controller.send_recv_once()
         return self.joint_controller.get_state()
     
     def send_command(self, cmd: arx5.JointState):
@@ -93,7 +91,6 @@ class ARXArm:
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
         self.joint_controller.set_joint_cmd(cmd)
-        self.joint_controller.send_recv_once()
 
 class ARXRobot:
     """
@@ -156,11 +153,11 @@ class ARXRobot:
     def run_calibration(self):
         # TODO: there's no "calibration" here - rather we just reset the arm back to its home position. Is that ok?
         for name in self.follower_arms:
-            print(f"Calibrating {name} follower arm.")
+            print(f"Calibrating {name} follower arm: {self.follower_arms[name]}")
             self.follower_arms[name].reset()
-        # for name in self.leader_arms:
-        #     print(f"Calibrating {name} leader arm.")
-        #     self.leader_arms[name].reset()
+        for name in self.leader_arms:
+            print(f"Calibrating {name} leader arm: {self.leader_arms[name]}")
+            self.leader_arms[name].reset()
 
     def teleop_step(
         self, record_data=False
