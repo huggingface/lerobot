@@ -44,23 +44,31 @@ class ARXArm:
     """
     Class for controlling a single ARX arm."""
 
-    def run_in_process(self):
+    def run_in_process(
+            self,
+            child_reset_pipe,
+            child_state_pipe,
+            child_command_pipe,
+            child_close_pipe,
+        ):
         """
         The arm commands need to be run in a separate process to work around a shared memory issue in the ARX5 SDK.
         Once the issue is resolved, this code can be simplified.
         """
         joint_controller = arx5.Arx5JointController(self.config.model, self.config.interface_name)
 
-        while not self.should_stop:
+        should_stop = False
+        while not should_stop:
             # Wait for messages from any of the pipes
             ready_pipes = wait([
-                self.child_reset_pipe, 
-                self.child_state_pipe, 
-                self.child_command_pipe
+                child_reset_pipe, 
+                child_state_pipe, 
+                child_command_pipe,
+                child_close_pipe,
             ])
 
             for pipe in ready_pipes:
-                if pipe == self.child_reset_pipe:
+                if pipe == child_reset_pipe:
                     # Handle reset command
                     _ = pipe.recv()
                     joint_controller.enable_background_send_recv()
@@ -68,18 +76,21 @@ class ARXArm:
                     joint_controller.enable_gravity_compensation(self.config.urdf_path)
                     pipe.send(True)
 
-                elif pipe == self.child_state_pipe:
+                elif pipe == child_state_pipe:
                     # Handle state request command
                     _ = pipe.recv()
                     state = joint_controller.get_state()
                     pipe.send(state)  # Send the state back to the parent
 
-                elif pipe == self.child_command_pipe:
+                elif pipe == child_command_pipe:
                     # Handle a general command
                     command = pipe.recv()
                     # Process command, e.g., move joints
                     joint_controller.set_joint_cmd(command)
                     pipe.send(True)
+                elif pipe == child_close_pipe:
+                    # handle close request
+                    should_stop = True
         
         # safely shut down the arm
         joint_controller.reset_to_home()
@@ -93,10 +104,10 @@ class ARXArm:
         self.is_connected = False
 
         # multi-processing tools, required to work around a bug in the arx5 sdk
-        self.should_stop = False
         self.parent_reset_pipe, self.child_reset_pipe = multiprocessing.Pipe()
         self.parent_state_pipe, self.child_state_pipe = multiprocessing.Pipe()
         self.parent_command_pipe, self.child_command_pipe = multiprocessing.Pipe()
+        self.parent_close_pipe, self.child_close_pipe = multiprocessing.Pipe()
 
     def connect(self):
         if self.is_connected:
@@ -104,10 +115,15 @@ class ARXArm:
                 "ARXArm is already connected. Do not run `robot.connect()` twice."
             )
         self.is_connected = True
-        self.should_stop = False
 
         # start a background process for the arm
-        self.proc = multiprocessing.Process(target=self.run_in_process)
+        pipes = (
+            self.child_reset_pipe, 
+            self.child_state_pipe, 
+            self.child_command_pipe,
+            self.child_close_pipe,
+        )
+        self.proc = multiprocessing.Process(target=self.run_in_process, args=(pipes,))
         self.proc.start()
 
     def disconnect(self):
@@ -117,7 +133,7 @@ class ARXArm:
             )
         # notify the arm process of imminent shutdown
         self.is_connected = False
-        self.should_stop = True
+        self.parent_close_pipe.send(True)
 
         # join the arm process
         self.proc.join()
