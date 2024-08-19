@@ -46,7 +46,7 @@ class TDMPCPolicy(
     PyTorchModelHubMixin,
     library_name="lerobot",
     repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "tdmpc-policy"],
+    tags=["robotics", "tdmpc"],
 ):
     """Implementation of TD-MPC learning + inference.
 
