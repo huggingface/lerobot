@@ -43,7 +43,7 @@ class VQBeTPolicy(
     PyTorchModelHubMixin,
     library_name="lerobot",
     repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "policy", "vqbet"],
+    tags=["robotics", "vqbet-policy"],
 ):
     """
     VQ-BeT Policy as per "Behavior Generation with Latent Actions"
