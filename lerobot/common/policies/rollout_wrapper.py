@@ -9,6 +9,9 @@ from torch import Tensor
 
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.policies.utils import get_device_from_parameters
+from lerobot.common.utils.timer import Timer
+
+MICROSEC = 1_000_000
 
 
 class PolicyRolloutWrapper:
@@ -53,9 +56,9 @@ class PolicyRolloutWrapper:
                 inference run.
         """
         self.policy = policy
-        self.period_ms = int(round(1000 * (1 / fps)))
+        self.period_us = int(round(MICROSEC * (1 / fps)))
         # We'll allow half a clock cycle of tolerance on timestamp retrieval.
-        self.timestamp_tolerance_ms = int(round(1000 * (1 / fps / 2)))
+        self.timestamp_tolerance_us = int(round(MICROSEC * (1 / fps / 2)))
         self.n_action_buffer = n_action_buffer
 
         # Set up async related logic.
@@ -87,27 +90,28 @@ class PolicyRolloutWrapper:
 
     def run_inference(
         self,
-        observation_timestamp_ms: int,
-        action_timestamp_ms: int,
+        observation_timestamp_us: int,
+        action_timestamp_us: int,
         strict_observation_timestamps: bool = False,
     ):
         """
         Construct an observation sequence from the observation cache, use that as input for running inference,
         and update the action cache with the result.
         """
+        start_inference_t = time.perf_counter()
         # Stack relevant observations into a sequence.
-        observation_timestamps_ms = torch.tensor(
-            [action_timestamp_ms + i * self.period_ms for i in range(1 - self.policy.n_obs_steps, 1)]
+        observation_timestamps_us = torch.tensor(
+            [action_timestamp_us + i * self.period_us for i in range(1 - self.policy.n_obs_steps, 1)]
         )
         with self._thread_lock:
-            observation_cache_timestamps_ms = torch.tensor(sorted(self._observation_cache.keys()))
+            observation_cache_timestamps_us = torch.tensor(sorted(self._observation_cache.keys()))
         dist = torch.cdist(
-            observation_timestamps_ms.unsqueeze(-1).float(),
-            observation_cache_timestamps_ms.unsqueeze(-1).float(),
+            observation_timestamps_us.unsqueeze(-1).float(),
+            observation_cache_timestamps_us.unsqueeze(-1).float(),
             p=1,
         ).int()
         min_, argmin_ = dist.min(dim=1)
-        if torch.any(min_ > self.timestamp_tolerance_ms):
+        if torch.any(min_ > self.timestamp_tolerance_us):
             msg = "Couldn't find observations within the required timestamp tolerance."
             if strict_observation_timestamps:
                 raise RuntimeError(msg)
@@ -118,7 +122,7 @@ class PolicyRolloutWrapper:
                 k: torch.stack(
                     [
                         self._observation_cache[ts.item()][k]
-                        for ts in observation_cache_timestamps_ms[argmin_]
+                        for ts in observation_cache_timestamps_us[argmin_]
                     ],
                     dim=1,
                 )
@@ -141,38 +145,41 @@ class PolicyRolloutWrapper:
         with self._thread_lock:
             self._action_cache.update(
                 {
-                    observation_timestamp_ms + i * self.period_ms: action
+                    observation_timestamp_us + i * self.period_us: action
                     for i, action in enumerate(actions.transpose(1, 0))
                 }
             )
 
-    def _get_contiguous_action_sequence_from_cache(self, first_action_timestamp_ms: float) -> Tensor | None:
-        with self._thread_lock:
-            action_cache = deepcopy(self._action_cache)
-        if len(action_cache) == 0:
-            return None
-        action_cache_timestamps_ms = torch.tensor(sorted(action_cache))
-        action_timestamps_ms = (
-            torch.arange(0, action_cache_timestamps_ms.max() + self.period_ms, self.period_ms)
-            + first_action_timestamp_ms
-        )
-        dist = torch.cdist(
-            action_timestamps_ms.unsqueeze(-1).float(),
-            action_cache_timestamps_ms.unsqueeze(-1).float(),
-            p=1,
-        ).int()
-        min_, argmin_ = dist.min(dim=1)
-        if min_[0] > self.timestamp_tolerance_ms:
-            return None
-        # Get contiguous sequence of argmins_ starting from 0.
-        where_jump = torch.where(argmin_.diff() != 1)[0]
-        if len(where_jump) > 0:
-            argmin_ = argmin_[: where_jump[0] + 1]
-        # Retrieve and stack the actions.
-        action_sequence = torch.stack(
-            [action_cache[ts.item()] for ts in action_cache_timestamps_ms[argmin_]],
-            dim=0,
-        )
+        logging.info(f"Inference time: {(time.perf_counter() - start_inference_t) * 1000 :.0f} ms")
+
+    def _get_contiguous_action_sequence_from_cache(self, first_action_timestamp_us: float) -> Tensor | None:
+        with Timer.time("get_action_seq"):
+            with self._thread_lock:
+                action_cache = deepcopy(self._action_cache)
+            if len(action_cache) == 0:
+                return None
+            action_cache_timestamps_us = torch.tensor(sorted(action_cache))
+            action_timestamps_us = torch.arange(
+                first_action_timestamp_us, action_cache_timestamps_us.max() + self.period_us, self.period_us
+            )
+            dist = torch.cdist(
+                action_timestamps_us.unsqueeze(-1).float(),
+                action_cache_timestamps_us.unsqueeze(-1).float(),
+                p=1,
+            ).int()
+            min_, argmin_ = dist.min(dim=1)
+            where_outside_tolerance = torch.where(min_ > self.timestamp_tolerance_us)[0]
+            if min_[0] > self.timestamp_tolerance_us:
+                return None
+            if len(where_outside_tolerance) > 0:
+                if where_outside_tolerance[0] == 0:
+                    return None  # couldn't even get the first timestamp
+                argmin_ = argmin_[: where_outside_tolerance[0] + 1]
+            # Retrieve and stack the actions.
+            action_sequence = torch.stack(
+                [action_cache[ts.item()] for ts in action_cache_timestamps_us[argmin_]],
+                dim=0,
+            )
         return action_sequence
 
     def provide_observation_get_actions(
@@ -206,18 +213,18 @@ class PolicyRolloutWrapper:
             first_action_timestamp: The timestamp of the first action in the requested action sequence.
             strict_observation_timestamps: Whether to raise a RuntimeError if there are no observations in the
                 cache with the timestamps needed to construct the inference inputs (ie there are no
-                observations within `self.timestamp_tolerance_ms`).
+                observations within `self.timestamp_tolerance_us`).
         Returns:
-            A (sequence, batch, action_dime) tensor for a sequence of actions starting from the requested
+            A (sequence, batch, action_dim) tensor for a sequence of actions starting from the requested
             `first_action_timestamp` and spaced by `1/fps` or None if the `timeout` is reached and there is no
             first action available.
         """
         start = time.perf_counter()
-        # Immediately convert timestamps to integer milliseconds (so that hashing them for the cache keys
+        # Immediately convert timestamps to integer microseconds (so that hashing them for the cache keys
         # isn't susceptible to floating point issues).
-        observation_timestamp_ms = int(round(observation_timestamp * 1000))
+        observation_timestamp_us = int(round(observation_timestamp * MICROSEC))
         del observation_timestamp  # defensive against accidentally using the seconds version
-        first_action_timestamp_ms = int(round(first_action_timestamp * 1000))
+        first_action_timestamp_us = int(round(first_action_timestamp * MICROSEC))
         del first_action_timestamp  # defensive against accidentally using the seconds version
 
         # Update observation cache.
@@ -226,25 +233,25 @@ class PolicyRolloutWrapper:
                 f"Missing observation_keys: {set(self.policy.input_keys).difference(set(observation_batch))}"
             )
         with self._thread_lock:
-            self._observation_cache[observation_timestamp_ms] = observation_batch
+            self._observation_cache[observation_timestamp_us] = observation_batch
 
         ret = None  # placeholder for this function's return value
 
         # Try retrieving an action sequence from the cache starting from `first_action_timestamp` and spaced
         # by `1 / fps`. While doing so remove stale actions (those which are older and outside tolerance).
         with self._thread_lock:
-            action_cache_timestamps_ms = torch.tensor(sorted(self._action_cache))
-        if len(action_cache_timestamps_ms) > 0:
-            diff = action_cache_timestamps_ms - first_action_timestamp_ms
-            to_delete = torch.where(torch.bitwise_and(diff < 0, diff.abs() > self.timestamp_tolerance_ms))[0]
+            action_cache_timestamps_us = torch.tensor(sorted(self._action_cache))
+        if len(action_cache_timestamps_us) > 0:
+            diff = action_cache_timestamps_us - first_action_timestamp_us
+            to_delete = torch.where(torch.bitwise_and(diff < 0, diff.abs() > self.timestamp_tolerance_us))[0]
             for ix in to_delete:
                 with self._thread_lock:
-                    del self._action_cache[action_cache_timestamps_ms[ix.item()].item()]
+                    del self._action_cache[action_cache_timestamps_us[ix.item()].item()]
             # If the first action is in the cache, construct the action sequence.
-            if diff.abs().argmin() <= self.timestamp_tolerance_ms:
-                ret = self._get_contiguous_action_sequence_from_cache(first_action_timestamp_ms)
+            if diff.abs().argmin() <= self.timestamp_tolerance_us:
+                ret = self._get_contiguous_action_sequence_from_cache(first_action_timestamp_us)
 
-        if first_action_timestamp_ms < observation_timestamp_ms:
+        if first_action_timestamp_us < observation_timestamp_us:
             raise RuntimeError("No action could be found in the cache, and we can't generate a past action.")
 
         # We would like to run inference if we don't have many actions left in the cache.
@@ -268,8 +275,8 @@ class PolicyRolloutWrapper:
         # Start the inference job.
         self._future = self._threadpool_executor.submit(
             self.run_inference,
-            observation_timestamp_ms,
-            first_action_timestamp_ms,
+            observation_timestamp_us,
+            first_action_timestamp_us,
             strict_observation_timestamps,
         )
 
@@ -291,4 +298,4 @@ class PolicyRolloutWrapper:
         if self._future.running() and ret is not None:
             return ret
 
-        return self._get_contiguous_action_sequence_from_cache(first_action_timestamp_ms)
+        return self._get_contiguous_action_sequence_from_cache(first_action_timestamp_us)

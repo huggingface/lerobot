@@ -3,6 +3,8 @@ import logging
 import time
 from contextlib import nullcontext
 
+import cv2
+import numpy as np
 import torch
 from torch import nn
 
@@ -25,25 +27,31 @@ def busy_wait(seconds: float):
         time.sleep(0.0001)
 
 
-def rollout(robot: KochRobot, policy: Policy, fps: float, warmup_s: float = 5.0):
+def rollout(robot: KochRobot, policy: Policy, fps: float, warmup_s: float = 5.0, visualize: bool = False):
     assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
     device = get_device_from_parameters(policy)
-    policy_rollout_wrapper = PolicyRolloutWrapper(policy, fps=fps, n_action_buffer=0)
+    policy_rollout_wrapper = PolicyRolloutWrapper(policy, fps=fps, n_action_buffer=5)
 
     policy_rollout_wrapper.reset()
 
     step = 0
-    start_t = time.perf_counter()
-    period = 1 / fps
-    buffer = 0.001
-    while True:
-        start_step_t = time.perf_counter() - start_t
+    start_time = time.perf_counter()
 
+    def to_relative_time(t):
+        return t - start_time
+
+    period = 1 / fps
+    to_visualize = {}
+    while True:
+        is_dropped_cycle = False
+        start_step_time = to_relative_time(time.perf_counter())
         observation: dict[str, torch.Tensor] = robot.capture_observation()
 
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
             if name.startswith("observation.image"):
+                if visualize:
+                    to_visualize[name] = observation[name].numpy()
                 observation[name] = observation[name].type(torch.float32) / 255
                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
             observation[name] = observation[name].unsqueeze(0)
@@ -52,16 +60,28 @@ def rollout(robot: KochRobot, policy: Policy, fps: float, warmup_s: float = 5.0)
         # Compute the next action with the policy
         # based on the current observation
         with torch.inference_mode():
+            timeout = (
+                period - (to_relative_time(time.perf_counter()) - start_step_time) - 0.005
+                if step > 0
+                else None
+            )
             action_sequence = policy_rollout_wrapper.provide_observation_get_actions(
                 observation,
-                observation_timestamp=start_step_t,
-                first_action_timestamp=start_step_t,
+                observation_timestamp=start_step_time,
+                first_action_timestamp=start_step_time,
                 strict_observation_timestamps=step > 0,
-                timeout=period - (time.perf_counter() - start_step_t) - buffer if step > 0 else None,
+                timeout=timeout,
             )
+            elapsed = to_relative_time(time.perf_counter()) - start_step_time
+            if elapsed > period:
+                logging.warning(f"C: Step took too long! {elapsed=}")
+                # print(Timer.render_timing_statistics())
+
             if action_sequence is not None:
-                action_sequence = action_sequence.numpy()
-                action_sequence = action_sequence.squeeze(0)
+                action_sequence = action_sequence.squeeze(1)  # remove batch dim
+            # for k in observation:
+            #     observation[k].to(device)
+            # action = policy.select_action(observation).cpu().squeeze(0)
 
         if step == 0:
             # On the first step we should just use the first action. We are guaranteed that action_sequence is
@@ -70,28 +90,57 @@ def rollout(robot: KochRobot, policy: Policy, fps: float, warmup_s: float = 5.0)
             # We also need to store the next action. If the next action is not available, we adopt the
             # strategy of repeating the current action.
             if len(action_sequence) > 1:
-                next_action = action_sequence[1].copy()
+                next_action = action_sequence[1].clone()
             else:
-                next_action = action.copy()
+                next_action = action.clone()
                 is_dropped_cycle = True
         else:
             # All steps after  the first must use the `next_action` from the previous step.
-            action = next_action.copy()
+            action = next_action.clone()
             if action_sequence is not None and len(action_sequence) > 1:
-                next_action = action_sequence[1].copy()
+                next_action = action_sequence[1].clone()
             else:
-                next_action = action.copy()
+                next_action = action.clone()
                 is_dropped_cycle = True
 
+        if visualize:
+            for name in to_visualize:
+                if is_dropped_cycle:
+                    red = np.array([255, 0, 0], dtype=np.uint8)
+                    to_visualize[name][:10] = red
+                    to_visualize[name][-10:] = red
+                    to_visualize[name][:, :10] = red
+                    to_visualize[name][:, -10:] = red
+                cv2.imshow(name, cv2.cvtColor(to_visualize[name], cv2.COLOR_RGB2BGR))
+                k = cv2.waitKey(1)
+                if k == ord("q"):
+                    return
+
+        elapsed = to_relative_time(time.perf_counter()) - start_step_time
+        if elapsed > period:
+            logging.warning(f"B: Step took too long! {elapsed=}")
+
         # Order the robot to move
-        if start_step_t - start_t >= warmup_s:
-            robot.send_action(action)
+        if start_step_time < warmup_s:
+            policy_rollout_wrapper.reset()
+            logging.info("Warming up.")
+        else:
+            robot_pos = torch.tensor(robot.follower_arms["main"].read("Present_Position"))
+            # Cap action magnitude at 10 degrees
+            diff = action - robot_pos
+            diff[:5] = torch.clamp(diff[:5], -10, 10)
+            diff[5:] = torch.clamp(diff[5:], -15, 15)
+            safe_action = robot_pos + torch.clamp(diff, -10, 10)
+            if not torch.equal(safe_action, action):
+                logging.warning("Action had to be clamped to be safe.")
+            robot.send_action(safe_action)
 
-        this_step_t = time.perf_counter() - start_step_t
-        if this_step_t > period:
-            logging.warning(f"Step took too long! {this_step_t=}")
+        elapsed = to_relative_time(time.perf_counter()) - start_step_time
+        if elapsed > period:
+            logging.warning(f"Step took too long! {elapsed=}")
+        else:
+            busy_wait(period - elapsed - 0.001)
 
-        busy_wait(period - this_step_t)
         step += 1
 
 
@@ -126,6 +175,7 @@ if __name__ == "__main__":
         nargs="*",
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
+    parser.add_argument("-v", "--visualize", action="store_true")
 
     args = parser.parse_args()
 
@@ -154,7 +204,7 @@ if __name__ == "__main__":
         policy.eval()
 
         with torch.no_grad(), torch.autocast(device_type=device.type) if hydra_cfg.use_amp else nullcontext():
-            rollout(robot, policy, args.fps, warmup_s=args.warmup_time_s)
+            rollout(robot, policy, args.fps, warmup_s=args.warmup_time_s, visualize=args.visualize)
 
         logging.info("End of eval")
     finally:

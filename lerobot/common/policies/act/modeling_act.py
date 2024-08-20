@@ -135,14 +135,20 @@ class ACTPolicy(nn.Module, PyTorchModelHubMixin):
 
     @torch.no_grad
     def run_inference(self, observation_batch: dict[str, Tensor]) -> Tensor:
+        self.eval()
         observation_batch = self.normalize_inputs(observation_batch)
+        # TODO(now): fix this. Removing temporal dim here as model can't take it. Dunno how it snuck in.
+        observation_batch = dict(observation_batch)
+        for k in observation_batch:
+            observation_batch[k] = observation_batch[k].squeeze(dim=1)
         if len(self.expected_image_keys) > 0:
+            observation_batch = dict(observation_batch)
             observation_batch["observation.images"] = torch.stack(
                 [observation_batch[k] for k in self.expected_image_keys], dim=-4
             )
         actions = self.model(observation_batch)[0]
         actions = self.unnormalize_outputs({"action": actions})["action"]
-        return actions
+        return actions[:, : self.config.n_action_steps]
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
