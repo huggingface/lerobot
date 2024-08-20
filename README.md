@@ -23,7 +23,7 @@
 </div>
 
 <h2 align="center">
-    <p>Hot News: <a href="https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md">New tutorial: Getting starting with Real-World Robots</a></p>
+    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md">Hot new tutorial: Getting started with real-world robots</a></p>
 </h2>
 
 <div align="center">
@@ -31,11 +31,12 @@
     <p>We just dropped an in-depth tutorial on how to build your own robot!</p>
     <p>Teach it new skills by showing it a few moves with just a laptop.</p>
     <p>Then watch your homemade robot act autonomously 🤯</p>
+    <p>For more info, see [our thread on X](https://x.com/RemiCadene/status/1825455895561859185) or [our tutorial page](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md).</p>
 </div>
 
 
 <h3 align="center">
-    <p>State-of-the-art Machine Learning for real-world robotics</p>
+    <p>State-of-the-art AI for real-world robotics</p>
 </h3>
 
 ---
