@@ -25,7 +25,7 @@ Follow the sourcing and assembling instructions provided on the [Koch v1.1 Githu
   <img src="../media/tutorial/koch_v1_1_leader_follower.webp?raw=true" alt="Koch v1.1 leader and follower arms" title="Koch v1.1 leader and follower arms" width="50%">
 </div>
 
-For a visual walkthrough of the assembly process, you can refer to [this video tutorial](https://youtu.be/5mdxvMlxoos).
+For a visual walkthrough of the assembly process, you can refer to [this video tutorial](https://youtu.be/8nQIg9BwwTk).
 
 ## 2. Configure motors, Calibrate arms, Teleoperate your Koch v1.1
 
