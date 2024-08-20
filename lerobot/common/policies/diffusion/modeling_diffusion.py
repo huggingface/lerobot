@@ -405,14 +405,16 @@ class DiffusionRgbEncoder(nn.Module):
         self.backbone = nn.Sequential(*(list(backbone_model.children())[:-2]))
         if config.use_group_norm:
             if config.pretrained_backbone_weights:
-                raise ValueError(
-                    "You can't replace BatchNorm in a pretrained model without ruining the weights!"
+                pass
+                # raise ValueError(
+                #     "You can't replace BatchNorm in a pretrained model without ruining the weights!"
+                # )
+            else:
+                self.backbone = _replace_submodules(
+                    root_module=self.backbone,
+                    predicate=lambda x: isinstance(x, nn.BatchNorm2d),
+                    func=lambda x: nn.GroupNorm(num_groups=x.num_features // 16, num_channels=x.num_features),
                 )
-            self.backbone = _replace_submodules(
-                root_module=self.backbone,
-                predicate=lambda x: isinstance(x, nn.BatchNorm2d),
-                func=lambda x: nn.GroupNorm(num_groups=x.num_features // 16, num_channels=x.num_features),
-            )
 
         # Set up pooling and final layers.
         # Use a dry run to get the feature map shape.
