@@ -327,37 +327,15 @@ When you connect your robot for the first time, the [`KochRobot`](../lerobot/com
 
 Here are the positions you'll move the follower arm to:
 
-<div style="display:flex; justify-content:center;">
-  <div style="width:30%; margin:10px;">
-    <img src="../media/koch/follower_zero.webp?raw=true" alt="Koch v1.1 follower arm zero position" title="Koch v1.1 follower arm zero position" style="width:100%;">
-    <p style="text-align:center;">1. Zero position</p>
-  </div>
-  <div style="width:30%; margin:10px;">
-    <img src="../media/koch/follower_rotated.webp?raw=true" alt="Koch v1.1 follower arm rotated position" title="Koch v1.1 follower arm rotated position" style="width:100%;">
-    <p style="text-align:center;">2. Rotated position</p>
-  </div>
-  <div style="width:30%; margin:10px;">
-    <img src="../media/koch/follower_rest.webp?raw=true" alt="Koch v1.1 follower arm rest position" title="Koch v1.1 follower arm rest position" style="width:100%;">
-    <p style="text-align:center;">3. Rest position</p>
-  </div>
-</div>
+| 1. Zero position | 2. Rotated position | 3. Rest position |
+|---|---|---|
+| <img src="../media/koch/follower_zero.webp?raw=true" alt="Koch v1.1 follower arm zero position" title="Koch v1.1 follower arm zero position" style="width:100%;"> | <img src="../media/koch/follower_rotated.webp?raw=true" alt="Koch v1.1 follower arm rotated position" title="Koch v1.1 follower arm rotated position" style="width:100%;"> | <img src="../media/koch/follower_rest.webp?raw=true" alt="Koch v1.1 follower arm rest position" title="Koch v1.1 follower arm rest position" style="width:100%;"> |
 
 And here are the corresponding positions for the leader arm:
 
-<div style="display:flex; justify-content:center;">
-  <div style="width:30%; margin:10px;">
-    <img src="../media/koch/leader_zero.webp?raw=true" alt="Koch v1.1 leader arm zero position" title="Koch v1.1 leader arm zero position" style="width:100%;">
-    <p style="text-align:center;">1. Zero position</p>
-  </div>
-  <div style="width:30%; margin:10px;">
-    <img src="../media/koch/leader_rotated.webp?raw=true" alt="Koch v1.1 leader arm rotated position" title="Koch v1.1 leader arm rotated position" style="width:100%;">
-    <p style="text-align:center;">2. Rotated position</p>
-  </div>
-  <div style="width:30%; margin:10px;">
-    <img src="../media/koch/leader_rest.webp?raw=true" alt="Koch v1.1 leader arm rest position" title="Koch v1.1 leader arm rest position" style="width:100%;">
-    <p style="text-align:center;">3. Rest position</p>
-  </div>
-</div>
+| 1. Zero position | 2. Rotated position | 3. Rest position |
+|---|---|---|
+| <img src="../media/koch/leader_zero.webp?raw=true" alt="Koch v1.1 leader arm zero position" title="Koch v1.1 leader arm zero position" style="width:100%;"> | <img src="../media/koch/leader_rotated.webp?raw=true" alt="Koch v1.1 leader arm rotated position" title="Koch v1.1 leader arm rotated position" style="width:100%;"> | <img src="../media/koch/leader_rest.webp?raw=true" alt="Koch v1.1 leader arm rest position" title="Koch v1.1 leader arm rest position" style="width:100%;"> |
 
 You can watch a [video tutorial of the calibration procedure](https://youtu.be/8drnU9uRY24) for more details.
 
