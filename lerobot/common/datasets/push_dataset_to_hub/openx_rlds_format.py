@@ -155,8 +155,6 @@ def load_from_raw(
     it = iter(dataset)
 
     ep_dicts = []
-
-    ep_dicts = []
     # Init temp path to save ep_dicts in case of crash
     tmp_ep_dicts_dir = videos_dir.parent.joinpath("ep_dicts")
     tmp_ep_dicts_dir.mkdir(parents=True, exist_ok=True)
