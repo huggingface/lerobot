@@ -13,9 +13,9 @@ By following these steps, you'll be able to replicate tasks like picking up a Le
 
 Although this tutorial is general and can be easily adapted to various types of robots by changing the configuration, it is specifically based on the [Koch v1.1](https://github.com/jess-moss/koch-v1-1), an affordable robot. The Koch v1.1 consists of a leader arm and a follower arm, each with 6 motors. It can work with one or several cameras to record the scene, which serve as visual sensors for the robot.
 
-During the data collection phase, you'll control the follower arm by moving the leader arm, a process known as "teleoperation." This technique is used to collect robot trajectories. Afterward, you'll train a neural network to imitate these trajectories and deploy the network to enable your robot to operate autonomously.
+During the data collection phase, you will control the follower arm by moving the leader arm. This process is known as "teleoperation." This technique is used to collect robot trajectories. Afterward, you'll train a neural network to imitate these trajectories and deploy the network to enable your robot to operate autonomously.
 
-If you encounter any issues at any step of the tutorial, feel free to seek help on [Discord](https://discord.com/invite/s3KuuzsPFb).
+If you encounter any issues at any step of the tutorial, feel free to seek help on [Discord](https://discord.com/invite/s3KuuzsPFb) or don't hesitate to iterate with us on the tutorial by creating issues or pull requests. Thanks!
 
 ## 1. Order and Assemble your Koch v1.1
 
@@ -49,7 +49,7 @@ Finally, connect both arms to your computer via USB. Note that the USB doesn't p
 
 *Copy pasting python code*
 
-In the upcoming sections, you'll learn about our classes and functions by running some python code, in an interactive session, or by copy-pasting it in a python file. If it's your first time using the tutorial, we highly recommend going through these steps to get deeper intuition about how things work. Once you're more familiar, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
+In the upcoming sections, you'll learn about our classes and functions by running some python code, in an interactive session, or by copy-pasting it in a python file. If this is your first time using the tutorial., we highly recommend going through these steps to get deeper intuition about how things work. Once you're more familiar, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
@@ -57,7 +57,7 @@ python lerobot/scripts/control_robot.py teleoperate \
 ```
 
 It will automatically:
-1. Detect and help you correct any motor configurations issue.
+1. Detect and help you correct any motor configuration issues.
 2. Identify any missing calibrations and initiate the calibration procedure.
 3. Connect the robot and start teleoperation.
 
@@ -67,7 +67,7 @@ You can use the [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dy
 
 **Instantiate the DynamixelMotorsBus**
 
-To begin, you'll need to create two instances of the  [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py), one for each arm, using their corresponding USB ports (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`).
+To begin, create two instances of the  [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py), one for each arm, using their corresponding USB ports (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`).
 
 To find the correct ports for each arm, run the utility script twice:
 ```bash
@@ -144,7 +144,7 @@ follower_arm = DynamixelMotorsBus(
 
 *Updating the YAML Configuration File*
 
-Then, update the port values in the YAML configuration file for the Koch robot at [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with the ports you've identified:
+Next, update the port values in the YAML configuration file for the Koch robot at [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with the ports you've identified:
 ```yaml
 [...]
 leader_arms:
@@ -192,7 +192,7 @@ When you connect the leader arm for the first time, you might see an output simi
 Read failed due to communication error on port /dev/tty.usbmodem575E0032081 for group_key ID_shoulder_pan_shoulder_lift_elbow_flex_wrist_flex_wrist_roll_gripper: [TxRxResult] There is no status packet!
 
 /!\ A configuration issue has been detected with your motors:
-If it's the first time that you use these motors, press enter to configure your motors... but before verify that all the cables are connected the proper way. If you find an issue, before making a modification, kill the python process, unplug the power cord to not damage the motors, rewire correctly, then plug the power again and relaunch the script.
+If this is the first time you are using these motors, press enter to configure your motors... but before verify that all the cables are connected the proper way. If you find an issue, before making a modification, kill the python process, unplug the power cord to not damage the motors, rewire correctly, then plug the power again and relaunch the script.
 
 Motor indices detected: {9600: [1]}
 
