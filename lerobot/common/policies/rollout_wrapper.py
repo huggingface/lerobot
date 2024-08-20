@@ -9,7 +9,6 @@ from torch import Tensor
 
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.policies.utils import get_device_from_parameters
-from lerobot.common.utils.timer import Timer
 
 MICROSEC = 1_000_000
 
@@ -153,33 +152,32 @@ class PolicyRolloutWrapper:
         logging.info(f"Inference time: {(time.perf_counter() - start_inference_t) * 1000 :.0f} ms")
 
     def _get_contiguous_action_sequence_from_cache(self, first_action_timestamp_us: float) -> Tensor | None:
-        with Timer.time("get_action_seq"):
-            with self._thread_lock:
-                action_cache = deepcopy(self._action_cache)
-            if len(action_cache) == 0:
-                return None
-            action_cache_timestamps_us = torch.tensor(sorted(action_cache))
-            action_timestamps_us = torch.arange(
-                first_action_timestamp_us, action_cache_timestamps_us.max() + self.period_us, self.period_us
-            )
-            dist = torch.cdist(
-                action_timestamps_us.unsqueeze(-1).float(),
-                action_cache_timestamps_us.unsqueeze(-1).float(),
-                p=1,
-            ).int()
-            min_, argmin_ = dist.min(dim=1)
-            where_outside_tolerance = torch.where(min_ > self.timestamp_tolerance_us)[0]
-            if min_[0] > self.timestamp_tolerance_us:
-                return None
-            if len(where_outside_tolerance) > 0:
-                if where_outside_tolerance[0] == 0:
-                    return None  # couldn't even get the first timestamp
-                argmin_ = argmin_[: where_outside_tolerance[0] + 1]
-            # Retrieve and stack the actions.
-            action_sequence = torch.stack(
-                [action_cache[ts.item()] for ts in action_cache_timestamps_us[argmin_]],
-                dim=0,
-            )
+        with self._thread_lock:
+            action_cache = deepcopy(self._action_cache)
+        if len(action_cache) == 0:
+            return None
+        action_cache_timestamps_us = torch.tensor(sorted(action_cache))
+        action_timestamps_us = torch.arange(
+            first_action_timestamp_us, action_cache_timestamps_us.max() + self.period_us, self.period_us
+        )
+        dist = torch.cdist(
+            action_timestamps_us.unsqueeze(-1).float(),
+            action_cache_timestamps_us.unsqueeze(-1).float(),
+            p=1,
+        ).int()
+        min_, argmin_ = dist.min(dim=1)
+        where_outside_tolerance = torch.where(min_ > self.timestamp_tolerance_us)[0]
+        if min_[0] > self.timestamp_tolerance_us:
+            return None
+        if len(where_outside_tolerance) > 0:
+            if where_outside_tolerance[0] == 0:
+                return None  # couldn't even get the first timestamp
+            argmin_ = argmin_[: where_outside_tolerance[0] + 1]
+        # Retrieve and stack the actions.
+        action_sequence = torch.stack(
+            [action_cache[ts.item()] for ts in action_cache_timestamps_us[argmin_]],
+            dim=0,
+        )
         return action_sequence
 
     def provide_observation_get_actions(
