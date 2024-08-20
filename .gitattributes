@@ -6,3 +6,6 @@
 *.json filter=lfs diff=lfs merge=lfs -text
 tests/data/save_dataset_to_safetensors/lerobot/nyu_franka_play_dataset/ filter=lfs diff=lfs merge=lfs -text
 tests/data/save_dataset_to_safetensors/lerobot/berkeley_cable_routing filter=lfs diff=lfs merge=lfs -text
+tests/data/lerobot/lerobot/berkeley_cable_routingâ filter=lfs diff=lfs merge=lfs -text
+tests/data/lerobot/lerobot/nyu_franka_play_dataset filter=lfs diff=lfs merge=lfs -text
+tests/data/lerobot/lerobot/berkeley_cable_routing/ filter=lfs diff=lfs merge=lfs -text

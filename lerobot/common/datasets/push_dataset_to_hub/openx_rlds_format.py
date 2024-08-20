@@ -156,6 +156,22 @@ def load_from_raw(
 
     ep_dicts = []
 
+    ep_dicts = []
+    # Init temp path to save ep_dicts in case of crash
+    tmp_ep_dicts_dir = videos_dir.parent.joinpath("ep_dicts")
+    tmp_ep_dicts_dir.mkdir(parents=True, exist_ok=True)
+
+    # check if ep_dicts have already been saved in /tmp
+    starting_ep_idx = 0
+    saved_ep_dicts = [ep.__str__() for ep in tmp_ep_dicts_dir.iterdir()]
+    if len(saved_ep_dicts) > 0:
+        saved_ep_dicts.sort()
+        # get last ep_idx number
+        starting_ep_idx = int(saved_ep_dicts[-1][-13:-3])
+        for i in range(starting_ep_idx):
+            episode = next(it)
+            ep_dicts.append(torch.load(saved_ep_dicts[i]))
+
     # if we user specified episodes, skip the ones not in the list
     if episodes is not None:
         if ds_length == 0:
@@ -163,7 +179,7 @@ def load_from_raw(
         # convert episodes index to sorted list
         episodes = sorted(episodes)
 
-    for ep_idx in tqdm.tqdm(range(ds_length)):
+    for ep_idx in tqdm.tqdm(range(starting_ep_idx, ds_length)):
         episode = next(it)
 
         # if user specified episodes, skip the ones not in the list
@@ -258,6 +274,11 @@ def load_from_raw(
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
         ep_dict["next.reward"] = rewards
         ep_dict["next.done"] = done
+
+        path_ep_dict = tmp_ep_dicts_dir.joinpath(
+            "ep_dict_" + "0" * (10 - len(str(ep_idx))) + str(ep_idx) + ".pt"
+        )
+        torch.save(ep_dict, path_ep_dict)
 
         ep_dicts.append(ep_dict)
 
