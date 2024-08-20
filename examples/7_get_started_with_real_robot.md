@@ -27,7 +27,7 @@ Follow the sourcing and assembling instructions provided on the [Koch v1.1 Githu
 
 For a visual walkthrough of the assembly process, you can refer to [this video tutorial](https://youtu.be/8nQIg9BwwTk).
 
-## 2. Configure motors, Calibrate arms, Teleoperate your Koch v1.1
+## 2. Configure motors, calibrate arms, teleoperate your Koch v1.1
 
 First, install the additional dependencies required for Koch v1.1 by running one of the following commands.
 
