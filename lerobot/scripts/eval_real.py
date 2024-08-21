@@ -136,8 +136,9 @@ def rollout(
             # Cap action magnitude at 10 degrees
             diff = action - robot_pos
             safe_diff = diff.clone()
-            safe_diff[:5] = torch.clamp(diff[:5], -10, 10)
-            safe_diff[5:] = torch.clamp(diff[5:], -15, 15)
+            maximum_diff = torch.tensor([10, 10, 10, 10, 10, 15])
+            safe_diff = torch.minimum(diff, maximum_diff)
+            safe_diff = torch.maximum(diff, -maximum_diff)
             safe_action = robot_pos + safe_diff
             if not torch.equal(safe_action, action):
                 logging.warning(
