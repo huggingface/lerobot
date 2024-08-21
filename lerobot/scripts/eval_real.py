@@ -27,10 +27,17 @@ def busy_wait(seconds: float):
         time.sleep(0.0001)
 
 
-def rollout(robot: KochRobot, policy: Policy, fps: float, warmup_s: float = 5.0, visualize: bool = False):
+def rollout(
+    robot: KochRobot,
+    policy: Policy,
+    fps: float,
+    n_action_buffer: int = 0,
+    warmup_s: float = 5.0,
+    visualize: bool = False,
+):
     assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
     device = get_device_from_parameters(policy)
-    policy_rollout_wrapper = PolicyRolloutWrapper(policy, fps=fps, n_action_buffer=5)
+    policy_rollout_wrapper = PolicyRolloutWrapper(policy, fps=fps, n_action_buffer=n_action_buffer)
 
     policy_rollout_wrapper.reset()
 
@@ -128,11 +135,16 @@ def rollout(robot: KochRobot, policy: Policy, fps: float, warmup_s: float = 5.0,
             robot_pos = torch.tensor(robot.follower_arms["main"].read("Present_Position"))
             # Cap action magnitude at 10 degrees
             diff = action - robot_pos
-            diff[:5] = torch.clamp(diff[:5], -10, 10)
-            diff[5:] = torch.clamp(diff[5:], -15, 15)
-            safe_action = robot_pos + torch.clamp(diff, -10, 10)
+            safe_diff = diff.clone()
+            safe_diff[:5] = torch.clamp(diff[:5], -10, 10)
+            safe_diff[5:] = torch.clamp(diff[5:], -15, 15)
+            safe_action = robot_pos + safe_diff
             if not torch.equal(safe_action, action):
-                logging.warning("Action had to be clamped to be safe.")
+                logging.warning(
+                    "Action diff had to be clamped to be safe.\n"
+                    f"  requested diff: {diff}\n"
+                    f"       safe diff: {safe_diff}"
+                )
             robot.send_action(safe_action)
 
         elapsed = to_relative_time(time.perf_counter()) - start_step_time
@@ -148,6 +160,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--fps", type=float)
+    parser.add_argument("--n-action-buffer", type=int, default=0)
     parser.add_argument(
         "--robot-path",
         type=str,
@@ -204,7 +217,14 @@ if __name__ == "__main__":
         policy.eval()
 
         with torch.no_grad(), torch.autocast(device_type=device.type) if hydra_cfg.use_amp else nullcontext():
-            rollout(robot, policy, args.fps, warmup_s=args.warmup_time_s, visualize=args.visualize)
+            rollout(
+                robot,
+                policy,
+                args.fps,
+                n_action_buffer=args.n_action_buffer,
+                warmup_s=args.warmup_time_s,
+                visualize=args.visualize,
+            )
 
         logging.info("End of eval")
     finally:
