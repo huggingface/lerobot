@@ -752,7 +752,7 @@ Before trying `record`, if you want to push your dataset to the hub, make sure y
 ```bash
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
-Also, store your Hugging Face repositery name in a variable (e.g. `cadene` or `lerobot`). For instance, run this to use your Hugging Face user name as repositery:
+Also, store your Hugging Face repository name in a variable (e.g. `cadene` or `lerobot`). For instance, run this to use your Hugging Face user name as repository:
 ```bash
 HF_USER=$(huggingface-cli whoami | head -n 1)
 echo $HF_USER
