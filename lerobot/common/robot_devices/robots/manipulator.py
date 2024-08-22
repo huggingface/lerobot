@@ -336,7 +336,7 @@ class ManipulatorRobot:
         elif self.robot_type == "aloha":
             self.set_aloha_robot_preset()
         else:
-            warnings.warn(f"No preset found for robot type: {self.robot_type}")
+            warnings.warn(f"No preset found for robot type: {self.robot_type}", stacklevel=1)
 
         # Enable torque on all motors of the follower arms
         for name in self.follower_arms:
