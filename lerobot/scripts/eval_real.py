@@ -51,8 +51,14 @@ def rollout(
     to_visualize = {}
     while True:
         is_dropped_cycle = False
+        over_time = False
         start_step_time = to_relative_time(time.perf_counter())
         observation: dict[str, torch.Tensor] = robot.capture_observation()
+
+        elapsed = to_relative_time(time.perf_counter()) - start_step_time
+        if elapsed > period:
+            over_time = True
+            logging.warning(f"Over time after capturing observation! {elapsed=}")
 
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
@@ -68,7 +74,7 @@ def rollout(
         # based on the current observation
         with torch.inference_mode():
             timeout = (
-                period - (to_relative_time(time.perf_counter()) - start_step_time) - 0.005
+                period - (to_relative_time(time.perf_counter()) - start_step_time) - 0.01
                 if step > 0
                 else None
             )
@@ -79,10 +85,6 @@ def rollout(
                 strict_observation_timestamps=step > 0,
                 timeout=timeout,
             )
-            elapsed = to_relative_time(time.perf_counter()) - start_step_time
-            if elapsed > period:
-                logging.warning(f"C: Step took too long! {elapsed=}")
-                # print(Timer.render_timing_statistics())
 
             if action_sequence is not None:
                 action_sequence = action_sequence.squeeze(1)  # remove batch dim
@@ -118,29 +120,33 @@ def rollout(
                     to_visualize[name][-10:] = red
                     to_visualize[name][:, :10] = red
                     to_visualize[name][:, -10:] = red
+                if over_time:
+                    purple = np.array([255, 0, 255], dtype=np.uint8)
+                    to_visualize[name][:20] = purple
+                    to_visualize[name][-20:] = purple
+                    to_visualize[name][:, :20] = purple
+                    to_visualize[name][:, -20:] = purple
                 cv2.imshow(name, cv2.cvtColor(to_visualize[name], cv2.COLOR_RGB2BGR))
                 k = cv2.waitKey(1)
                 if k == ord("q"):
                     return
 
         elapsed = to_relative_time(time.perf_counter()) - start_step_time
-        if elapsed > period:
-            logging.warning(f"B: Step took too long! {elapsed=}")
 
         # Order the robot to move
-        if start_step_time < warmup_s:
+        if start_step_time <= warmup_s:
             policy_rollout_wrapper.reset()
             logging.info("Warming up.")
         else:
-            robot_pos = torch.tensor(robot.follower_arms["main"].read("Present_Position"))
-            # Cap action magnitude at 10 degrees
+            robot_pos = observation["observation.state"].cpu().squeeze(0)
+            # Cap action magnitude.
             diff = action - robot_pos
             safe_diff = diff.clone()
             maximum_diff = torch.tensor([10, 10, 10, 10, 10, 15])
             safe_diff = torch.minimum(diff, maximum_diff)
-            safe_diff = torch.maximum(diff, -maximum_diff)
+            safe_diff = torch.maximum(safe_diff, -maximum_diff)
             safe_action = robot_pos + safe_diff
-            if not torch.equal(safe_action, action):
+            if not torch.allclose(safe_action, action):
                 logging.warning(
                     "Action diff had to be clamped to be safe.\n"
                     f"  requested diff: {diff}\n"
@@ -154,7 +160,8 @@ def rollout(
         else:
             busy_wait(period - elapsed - 0.001)
 
-        step += 1
+        if start_step_time > warmup_s:
+            step += 1
 
 
 if __name__ == "__main__":

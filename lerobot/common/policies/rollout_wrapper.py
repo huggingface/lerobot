@@ -55,7 +55,7 @@ class PolicyRolloutWrapper:
                 inference run.
         """
         self.policy = policy
-        self.period_us = int(round(MICROSEC * (1 / fps)))
+        self.period_us = int(round(MICROSEC * 1 / fps))
         # We'll allow half a clock cycle of tolerance on timestamp retrieval.
         self.timestamp_tolerance_us = int(round(MICROSEC * (1 / fps / 2)))
         self.n_action_buffer = n_action_buffer
@@ -149,7 +149,14 @@ class PolicyRolloutWrapper:
                 }
             )
 
-        logging.info(f"Inference time: {(time.perf_counter() - start_inference_t) * 1000 :.0f} ms")
+        inference_time = time.perf_counter() - start_inference_t
+        # logging.info(f"Inference time: {inference_time * 1000 :.0f} ms")
+        if inference_time > (self.n_action_buffer * self.period_us + self.period_us) / MICROSEC:
+            logging.warning(
+                "Inference is taking longer than your buffer.\n"
+                f"  Buffer time   : {self.n_action_buffer * self.period_us + self.period_us / 1000=} ms\n"
+                f"  Inference time: {inference_time * 1000 :.0f} ms"
+            )
 
     def _get_contiguous_action_sequence_from_cache(self, first_action_timestamp_us: float) -> Tensor | None:
         with self._thread_lock:
