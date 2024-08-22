@@ -510,8 +510,8 @@ def record(
                         )
 
                     # Order the robot to move
-                    robot.send_action(action)
-                    action = {"action": action}
+                    robot.send_action(safe_action)
+                    action = {"action": safe_action}
 
                 for key in action:
                     if key not in ep_dict:
