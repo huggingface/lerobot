@@ -15,17 +15,16 @@ pytest -sx tests/test_motors.py::test_motors_bus
 
 import time
 
-import hydra
 import numpy as np
 import pytest
 
 from lerobot import available_robots
+from lerobot.common.robot_devices.motors.utils import MotorsBus
+from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import init_hydra_config
-from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.robot_devices.motors.utils import MotorsBus
-
 from tests.utils import ROBOT_CONFIG_PATH_TEMPLATE, require_robot
+
 
 def make_motors_bus(robot_type: str) -> MotorsBus:
     # Instantiate a robot and return one of its leader arms
@@ -37,9 +36,7 @@ def make_motors_bus(robot_type: str) -> MotorsBus:
     return motors_bus
 
 
-@pytest.mark.parametrize(
-    "robot_type", available_robots
-)
+@pytest.mark.parametrize("robot_type", available_robots)
 @require_robot
 def test_find_port(request, robot_type):
     from lerobot.common.robot_devices.motors.dynamixel import find_port
@@ -47,9 +44,7 @@ def test_find_port(request, robot_type):
     find_port()
 
 
-@pytest.mark.parametrize(
-    "robot_type", available_robots
-)
+@pytest.mark.parametrize("robot_type", available_robots)
 @require_robot
 def test_configure_motors_all_ids_1(request, robot_type):
     input("Are you sure you want to re-configure the motors? Press enter to continue...")
@@ -68,9 +63,7 @@ def test_configure_motors_all_ids_1(request, robot_type):
     del motors_bus
 
 
-@pytest.mark.parametrize(
-    "robot_type", available_robots
-)
+@pytest.mark.parametrize("robot_type", available_robots)
 @require_robot
 def test_motors_bus(request, robot_type):
     motors_bus = make_motors_bus(robot_type)

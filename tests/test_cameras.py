@@ -24,9 +24,8 @@ MAX_PIXEL_DIFFERENCE = 25
 def compute_max_pixel_difference(first_image, second_image):
     return np.abs(first_image.astype(float) - second_image.astype(float)).max()
 
-@pytest.mark.parametrize(
-    "robot_type", available_robots
-)
+
+@pytest.mark.parametrize("robot_type", available_robots)
 @require_robot
 def test_camera(request, robot_type):
     """Test assumes that `camera.read()` returns the same image when called multiple times in a row.
@@ -132,9 +131,7 @@ def test_camera(request, robot_type):
     del camera
 
 
-@pytest.mark.parametrize(
-    "robot_type", available_robots
-)
+@pytest.mark.parametrize("robot_type", available_robots)
 @require_robot
 def test_save_images_from_cameras(tmpdir, request, robot_type):
     save_images_from_cameras(tmpdir, record_time_s=1)

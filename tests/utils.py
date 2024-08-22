@@ -156,7 +156,7 @@ def require_robot(func):
     Decorator that skips the test if a robot is not available
 
     The decorated function must have two arguments `request` and `robot_type`.
-    
+
     Example of usage:
     ```python
     @pytest.mark.parametrize(

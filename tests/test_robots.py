@@ -19,6 +19,7 @@ from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError,
 from lerobot.common.utils.utils import init_hydra_config
 from tests.utils import ROBOT_CONFIG_PATH_TEMPLATE, require_robot
 
+
 def make_robot(robot_type: str, overrides: list[str] | None = None) -> Robot:
     config_path = ROBOT_CONFIG_PATH_TEMPLATE.format(robot=robot_type)
     robot_cfg = init_hydra_config(config_path, overrides)
@@ -26,9 +27,7 @@ def make_robot(robot_type: str, overrides: list[str] | None = None) -> Robot:
     return robot
 
 
-@pytest.mark.parametrize(
-    "robot_type", available_robots
-)
+@pytest.mark.parametrize("robot_type", available_robots)
 @require_robot
 def test_robot(tmpdir, request, robot_type):
     # TODO(rcadene): measure fps in nightly?

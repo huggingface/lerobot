@@ -1,8 +1,8 @@
 import pickle
 import time
+import warnings
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-import warnings
 
 import numpy as np
 import torch
@@ -145,6 +145,7 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     print()
 
     return homing_offset, drive_mode
+
 
 ########################################################################
 # Manipulator robot
@@ -352,21 +353,25 @@ class ManipulatorRobot:
         calibration = {}
 
         for name in self.follower_arms:
-            homing_offset, drive_mode = run_arm_calibration(self.follower_arms[name], self.robot_type, name, "follower")
+            homing_offset, drive_mode = run_arm_calibration(
+                self.follower_arms[name], self.robot_type, name, "follower"
+            )
 
             calibration[f"follower_{name}"] = {}
             for idx, motor_name in enumerate(self.follower_arms[name].motor_names):
                 calibration[f"follower_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
 
         for name in self.leader_arms:
-            homing_offset, drive_mode = run_arm_calibration(self.leader_arms[name], self.robot_type, name, "leader")
+            homing_offset, drive_mode = run_arm_calibration(
+                self.leader_arms[name], self.robot_type, name, "leader"
+            )
 
             calibration[f"leader_{name}"] = {}
             for idx, motor_name in enumerate(self.leader_arms[name].motor_names):
                 calibration[f"leader_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
 
         return calibration
-    
+
     def set_koch_robot_preset(self):
         # Set better PID values to close the gap between recored states and actions
         # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor

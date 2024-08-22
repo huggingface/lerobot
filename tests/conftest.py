@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import traceback
+
 import pytest
 
 from lerobot.common.utils.utils import init_hydra_config
