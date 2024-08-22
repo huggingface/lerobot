@@ -315,7 +315,7 @@ def record(
         raise NotImplementedError()
 
     if policy_action_safety_cap is None and policy is not None:
-        policy_action_safety_cap = torch.tensor([10.0, 10.0, 10.0, 10.0, 10.0, 15.0])
+        policy_action_safety_cap = torch.tensor([10.0, 10.0, 10.0, 10.0, 10.0, 16.0])
         logging.info(
             "Actions from the policy will be clamped such that they result in a maximum relative positional "
             f"target magnitude of no greater than {policy_action_safety_cap.tolist()}. This is for safety "
