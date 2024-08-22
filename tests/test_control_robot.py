@@ -1,53 +1,53 @@
 from pathlib import Path
 
+import pytest
+
+from lerobot import available_robots
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.utils.utils import init_hydra_config
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, KOCH_ROBOT_CONFIG_PATH, require_koch
+from tests.test_robots import make_robot
+from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_robot
 
 
-def make_robot_(overrides=None):
-    robot_cfg = init_hydra_config(KOCH_ROBOT_CONFIG_PATH, overrides)
-    robot = make_robot(robot_cfg)
-    return robot
-
-
-@require_koch
-# `require_koch` uses `request` to access `is_koch_available` fixture
-def test_teleoperate(request):
-    robot = make_robot_()
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_robot
+def test_teleoperate(request, robot_type):
+    robot = make_robot(robot_type)
     teleoperate(robot, teleop_time_s=1)
     teleoperate(robot, fps=30, teleop_time_s=1)
     teleoperate(robot, fps=60, teleop_time_s=1)
     del robot
 
 
-@require_koch
-def test_calibrate(request):
-    robot = make_robot_()
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_robot
+def test_calibrate(request, robot_type):
+    robot = make_robot(robot_type)
     calibrate(robot)
     del robot
 
 
-@require_koch
-def test_record_without_cameras(tmpdir, request):
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_robot
+def test_record_without_cameras(tmpdir, request, robot_type):
     root = Path(tmpdir)
     repo_id = "lerobot/debug"
 
-    robot = make_robot_(overrides=["~cameras"])
+    robot = make_robot(robot_type, overrides=["~cameras"])
     record(robot, fps=30, root=root, repo_id=repo_id, warmup_time_s=1, episode_time_s=1, num_episodes=2)
 
 
-@require_koch
-def test_record_and_replay_and_policy(tmpdir, request):
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_robot
+def test_record_and_replay_and_policy(tmpdir, request, robot_type):
     env_name = "koch_real"
     policy_name = "act_koch_real"
 
     root = Path(tmpdir)
     repo_id = "lerobot/debug"
 
-    robot = make_robot_()
+    robot = make_robot(robot_type)
     dataset = record(
         robot, fps=30, root=root, repo_id=repo_id, warmup_time_s=1, episode_time_s=1, num_episodes=2
     )

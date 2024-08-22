@@ -62,7 +62,7 @@ def test_robot(tmpdir, request, robot_type):
     del robot
 
     # Test connecting
-    robot = make_robot(robot_type, overrides=f"calibration_path={calibration_path}")
+    robot = make_robot(robot_type, overrides=[f"calibration_path={calibration_path}"])
     robot.connect()  # run the manual calibration precedure
     assert robot.is_connected
 
@@ -74,7 +74,7 @@ def test_robot(tmpdir, request, robot_type):
     del robot
 
     # Test teleop can run
-    robot = make_robot(robot_type, overrides=f"calibration_path={calibration_path}")
+    robot = make_robot(robot_type, overrides=[f"calibration_path={calibration_path}"])
     robot.calibration_path = calibration_path
     robot.connect()
     robot.teleop_step()
