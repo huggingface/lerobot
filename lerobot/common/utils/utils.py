@@ -29,7 +29,8 @@ from omegaconf import DictConfig
 
 
 def inside_slurm():
-    """Check whether we are inside a slurm cluster"""
+    """Check whether the python process was launched through slurm"""
+    # TODO(rcadene): return False for interactive mode `--pty bash`
     return "SLURM_JOB_ID" in os.environ
 
 
