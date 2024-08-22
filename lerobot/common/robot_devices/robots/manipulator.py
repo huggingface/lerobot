@@ -2,6 +2,7 @@ import pickle
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+import warnings
 
 import numpy as np
 import torch
@@ -26,7 +27,7 @@ URL_TEMPLATE = (
 # In nominal degree range ]-180, +180[
 ZERO_POSITION_DEGREE = 0
 ROTATED_POSITION_DEGREE = 90
-GRIPPER_OPEN_DEGREE = 35.156
+KOCH_GRIPPER_OPEN_DEGREE = 35.156
 
 
 def assert_drive_mode(drive_mode):
@@ -64,7 +65,7 @@ def reset_torque_mode(arm: MotorsBus):
     arm.write("Operating_Mode", OperatingMode.CURRENT_CONTROLLED_POSITION.value, "gripper")
 
 
-def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
+def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
     """This function ensures that a neural network trained on data collected on a given robot
     can work on another robot. For instance before calibration, setting a same goal position
     for each motor of two different robots will get two very different positions. But after calibration,
@@ -83,15 +84,15 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
 
     Example of usage:
     ```python
-    run_arm_calibration(arm, "left", "follower")
+    run_arm_calibration(arm, "koch", "left", "follower")
     ```
     """
     reset_torque_mode(arm)
 
-    print(f"\nRunning calibration of {name} {arm_type}...")
+    print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
 
     print("\nMove arm to zero position")
-    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="zero"))
+    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="zero"))
     input("Press Enter to continue...")
 
     # We arbitrarely choosed our zero target position to be a straight horizontal position with gripper upwards and closed.
@@ -113,7 +114,7 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
     homing_offset = zero_position - position
 
     print("\nMove arm to rotated target position")
-    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="rotated"))
+    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rotated"))
     input("Press Enter to continue...")
 
     # The rotated target position corresponds to a rotation of a quarter turn from the zero position.
@@ -139,36 +140,36 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
     homing_offset = rotated_position - position
 
     print("\nMove arm to rest position")
-    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="rest"))
+    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rest"))
     input("Press Enter to continue...")
     print()
 
     return homing_offset, drive_mode
 
-
 ########################################################################
-# Alexander Koch robot arm
+# Manipulator robot
 ########################################################################
 
 
 @dataclass
-class KochRobotConfig:
+class ManipulatorRobotConfig:
     """
     Example of usage:
     ```python
-    KochRobotConfig()
+    ManipulatorRobotConfig()
     ```
     """
 
     # Define all components of the robot
+    robot_type: str | None = None
     leader_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     follower_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
 
 
-class KochRobot:
+class ManipulatorRobot:
     # TODO(rcadene): Implement force feedback
-    """This class allows to control any Koch robot of various number of motors.
+    """This class allows to control any manipulator robot of various number of motors.
 
     A few versions are available:
     - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow expansion, which was developed
@@ -206,7 +207,7 @@ class KochRobot:
             },
         ),
     }
-    robot = KochRobot(leader_arms, follower_arms)
+    robot = ManipulatorRobot(leader_arms, follower_arms)
 
     # Connect motors buses and cameras if any (Required)
     robot.connect()
@@ -218,7 +219,7 @@ class KochRobot:
     Example of highest frequency data collection without camera:
     ```python
     # Assumes leader and follower arms have been instantiated already (see first example)
-    robot = KochRobot(leader_arms, follower_arms)
+    robot = ManipulatorRobot(leader_arms, follower_arms)
     robot.connect()
     while True:
         observation, action = robot.teleop_step(record_data=True)
@@ -236,7 +237,7 @@ class KochRobot:
     }
 
     # Assumes leader and follower arms have been instantiated already (see first example)
-    robot = KochRobot(leader_arms, follower_arms, cameras)
+    robot = ManipulatorRobot(leader_arms, follower_arms, cameras)
     robot.connect()
     while True:
         observation, action = robot.teleop_step(record_data=True)
@@ -245,7 +246,7 @@ class KochRobot:
     Example of controlling the robot with a policy (without running multiple policies in parallel to ensure highest frequency):
     ```python
     # Assumes leader and follower arms + cameras have been instantiated already (see previous example)
-    robot = KochRobot(leader_arms, follower_arms, cameras)
+    robot = ManipulatorRobot(leader_arms, follower_arms, cameras)
     robot.connect()
     while True:
         # Uses the follower arms and cameras to capture an observation
@@ -267,16 +268,17 @@ class KochRobot:
 
     def __init__(
         self,
-        config: KochRobotConfig | None = None,
+        config: ManipulatorRobotConfig | None = None,
         calibration_path: Path = ".cache/calibration/koch.pkl",
         **kwargs,
     ):
         if config is None:
-            config = KochRobotConfig()
+            config = ManipulatorRobotConfig()
         # Overwrite config arguments using kwargs
         self.config = replace(config, **kwargs)
         self.calibration_path = Path(calibration_path)
 
+        self.robot_type = self.config.robot_type
         self.leader_arms = self.config.leader_arms
         self.follower_arms = self.config.follower_arms
         self.cameras = self.config.cameras
@@ -286,12 +288,12 @@ class KochRobot:
     def connect(self):
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
-                "KochRobot is already connected. Do not run `robot.connect()` twice."
+                "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
             )
 
         if not self.leader_arms and not self.follower_arms and not self.cameras:
             raise ValueError(
-                "KochRobot doesn't have any device to connect. See example of usage in docstring of the class."
+                "ManipulatorRobot doesn't have any device to connect. See example of usage in docstring of the class."
             )
 
         # Connect the arms
@@ -327,23 +329,18 @@ class KochRobot:
         for name in self.leader_arms:
             self.leader_arms[name].set_calibration(calibration[f"leader_{name}"])
 
-        # Set better PID values to close the gap between recored states and actions
-        # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
-        for name in self.follower_arms:
-            self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
-            self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
-            self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
+        # Set robot preset (e.g. torque in leader gripper for Koch v1.1)
+        if self.robot_type == "koch":
+            self.set_koch_robot_preset()
+        elif self.robot_type == "aloha":
+            self.set_aloha_robot_preset()
+        else:
+            warnings.warn(f"No preset found for robot type: {self.robot_type}")
 
         # Enable torque on all motors of the follower arms
         for name in self.follower_arms:
             print(f"Activating torque on {name} follower arm.")
             self.follower_arms[name].write("Torque_Enable", 1)
-
-        # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
-        # so that we can use it as a trigger to close the gripper of the follower arms.
-        for name in self.leader_arms:
-            self.leader_arms[name].write("Torque_Enable", 1, "gripper")
-            self.leader_arms[name].write("Goal_Position", GRIPPER_OPEN_DEGREE, "gripper")
 
         # Connect the cameras
         for name in self.cameras:
@@ -355,27 +352,60 @@ class KochRobot:
         calibration = {}
 
         for name in self.follower_arms:
-            homing_offset, drive_mode = run_arm_calibration(self.follower_arms[name], name, "follower")
+            homing_offset, drive_mode = run_arm_calibration(self.follower_arms[name], self.robot_type, name, "follower")
 
             calibration[f"follower_{name}"] = {}
             for idx, motor_name in enumerate(self.follower_arms[name].motor_names):
                 calibration[f"follower_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
 
         for name in self.leader_arms:
-            homing_offset, drive_mode = run_arm_calibration(self.leader_arms[name], name, "leader")
+            homing_offset, drive_mode = run_arm_calibration(self.leader_arms[name], self.robot_type, name, "leader")
 
             calibration[f"leader_{name}"] = {}
             for idx, motor_name in enumerate(self.leader_arms[name].motor_names):
                 calibration[f"leader_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
 
         return calibration
+    
+    def set_koch_robot_preset(self):
+        # Set better PID values to close the gap between recored states and actions
+        # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
+        for name in self.follower_arms:
+            self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
+            self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
+            self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
+
+        # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
+        # so that we can use it as a trigger to close the gripper of the follower arms.
+        for name in self.leader_arms:
+            self.leader_arms[name].write("Torque_Enable", 1, "gripper")
+            self.leader_arms[name].write("Goal_Position", KOCH_GRIPPER_OPEN_DEGREE, "gripper")
+
+    def set_aloha_robot_preset(self):
+        # Set secondary/shadow ID for shoulder and elbow. These joints have two motors.
+        # As a result, if only one of them is required to move to a certain position,
+        # the other will follow. This is to avoid breaking the motors.
+        for name in self.follower_arms:
+            shoulder_idx = self.follower_arms[name].read("ID", "shoulder")
+            elbow_idx = self.follower_arms[name].read("ID", "elbow")
+            self.follower_arms[name].write("Secondary_ID", shoulder_idx, "shoulder_shadow")
+            self.follower_arms[name].write("Secondary_ID", elbow_idx, "elbow_shadow")
+
+            # Also set a velocity limit of 131 as advised by Trossen Robotics
+            self.follower_arms[name].write("Velocity_Limit", 131)
+
+        for name in self.leader_arms:
+            shoulder_idx = self.leader_arms[name].read("ID", "shoulder")
+            elbow_idx = self.leader_arms[name].read("ID", "elbow")
+            self.leader_arms[name].write("Secondary_ID", shoulder_idx, "shoulder_shadow")
+            self.leader_arms[name].write("Secondary_ID", elbow_idx, "elbow_shadow")
 
     def teleop_step(
         self, record_data=False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "KochRobot is not connected. You need to run `robot.connect()`."
+                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
         # Prepare to assign the position of the leader to the follower
@@ -442,7 +472,7 @@ class KochRobot:
         """The returned observations do not have a batch dimension."""
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "KochRobot is not connected. You need to run `robot.connect()`."
+                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
         # Read follower position
@@ -478,7 +508,7 @@ class KochRobot:
         """The provided action is expected to be a vector."""
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "KochRobot is not connected. You need to run `robot.connect()`."
+                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
         from_idx = 0
@@ -496,7 +526,7 @@ class KochRobot:
     def disconnect(self):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "KochRobot is not connected. You need to run `robot.connect()` before disconnecting."
+                "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
             )
 
         for name in self.follower_arms:

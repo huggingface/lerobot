@@ -32,6 +32,7 @@ MAX_ID_RANGE = 252
 # https://emanual.robotis.com/docs/en/dxl/x/xl430-w250
 # https://emanual.robotis.com/docs/en/dxl/x/xm430-w350
 # https://emanual.robotis.com/docs/en/dxl/x/xm540-w270
+# https://emanual.robotis.com/docs/en/dxl/x/xc430-w150
 
 # data_name: (address, size_byte)
 X_SERIES_CONTROL_TABLE = {
@@ -109,6 +110,7 @@ MODEL_CONTROL_TABLE = {
     "xl430-w250": X_SERIES_CONTROL_TABLE,
     "xm430-w350": X_SERIES_CONTROL_TABLE,
     "xm540-w270": X_SERIES_CONTROL_TABLE,
+    "xc430-w150": X_SERIES_CONTROL_TABLE,
 }
 
 MODEL_RESOLUTION = {
@@ -118,6 +120,7 @@ MODEL_RESOLUTION = {
     "xl430-w250": 4096,
     "xm430-w350": 4096,
     "xm540-w270": 4096,
+    "xc430-w150": 4096,
 }
 
 MODEL_BAUDRATE_TABLE = {
@@ -127,6 +130,7 @@ MODEL_BAUDRATE_TABLE = {
     "xl430-w250": X_SERIES_BAUDRATE_TABLE,
     "xm430-w350": X_SERIES_BAUDRATE_TABLE,
     "xm540-w270": X_SERIES_BAUDRATE_TABLE,
+    "xc430-w150": X_SERIES_BAUDRATE_TABLE,
 }
 
 NUM_READ_RETRY = 10

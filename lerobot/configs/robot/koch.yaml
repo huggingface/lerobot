@@ -1,4 +1,5 @@
-_target_: lerobot.common.robot_devices.robots.koch.KochRobot
+_target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
+robot_type: koch
 calibration_path: .cache/calibration/koch.pkl
 leader_arms:
   main:

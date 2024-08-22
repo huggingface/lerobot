@@ -11,7 +11,7 @@ This tutorial will guide you through the process of setting up and training a ne
 
 By following these steps, you'll be able to replicate tasks like picking up a Lego block and placing it in a bin with a high success rate, as demonstrated in [this video](https://x.com/RemiCadene/status/1814680760592572934).
 
-Although this tutorial is general and can be easily adapted to various types of robots by changing the configuration, it is specifically based on the [Koch v1.1](https://github.com/jess-moss/koch-v1-1), an affordable robot. The Koch v1.1 consists of a leader arm and a follower arm, each with 6 motors. It can work with one or several cameras to record the scene, which serve as visual sensors for the robot.
+This tutorial is specifically made for the affordable [Koch v1.1](https://github.com/jess-moss/koch-v1-1) robot, but it contains additional information to be easily adapted to various types of robots like [Aloha bimanual robot](aloha-2.github.io) by changing some configurations. The Koch v1.1 consists of a leader arm and a follower arm, each with 6 motors. It can work with one or several cameras to record the scene, which serve as visual sensors for the robot.
 
 During the data collection phase, you will control the follower arm by moving the leader arm. This process is known as "teleoperation." This technique is used to collect robot trajectories. Afterward, you'll train a neural network to imitate these trajectories and deploy the network to enable your robot to operate autonomously.
 
@@ -147,6 +147,7 @@ follower_arm = DynamixelMotorsBus(
 Next, update the port values in the YAML configuration file for the Koch robot at [`lerobot/configs/robot/koch.yaml`](../lerobot/configs/robot/koch.yaml) with the ports you've identified:
 ```yaml
 [...]
+robot_type: koch
 leader_arms:
   main:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
@@ -173,6 +174,8 @@ follower_arms:
       gripper: [6, "xl330-m288"]
 [...]
 ```
+
+Don't forget to set `robot_type: aloha` if you follow this tutorial with [Aloha bimanual robot](aloha-2.github.io) instead of Koch v1.1
 
 This configuration file is used to instantiate your robot across all scripts. We'll cover how this works later on.
 
@@ -298,32 +301,35 @@ Alternatively, you can unplug the power cord, which will automatically disable t
 
 */!\ Warning*: These motors tend to overheat, especially under torque or if left plugged in for too long. Unplug after use.
 
-### b. Teleoperate your Koch v1.1 with KochRobot
+### b. Teleoperate your Koch v1.1 with ManipulatorRobot
 
-**Instantiate the KochRobot**
+**Instantiate the ManipulatorRobot**
 
-Before you can teleoperate your robot, you need to instantiate the  [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) using the previously defined `leader_arm` and `follower_arm`.
+Before you can teleoperate your robot, you need to instantiate the  [`ManipulatorRobot`](../lerobot/common/robot_devices/robots/manipulator.py) using the previously defined `leader_arm` and `follower_arm`.
 
-For the Koch robot, we only have one leader, so we refer to it as `"main"` and define it as `leader_arms={"main": leader_arm}`. We do the same for the follower arm. For other robots (like the Aloha), which may have two pairs of leader and follower arms, you would define them like this: `leader_arms={"left": left_leader_arm, "right": right_leader_arm},`. Same thing for the follower arms.
+For the Koch v1.1 robot, we only have one leader, so we refer to it as `"main"` and define it as `leader_arms={"main": leader_arm}`. We do the same for the follower arm. For other robots (like the Aloha), which may have two pairs of leader and follower arms, you would define them like this: `leader_arms={"left": left_leader_arm, "right": right_leader_arm},`. Same thing for the follower arms.
 
 You also need to provide a path to a calibration file, such as  `calibration_path=".cache/calibration/koch.pkl"`. More on this in the next section.
 
-Run the following code to instantiate your Koch robot:
+Run the following code to instantiate your manipulator robot:
 ```python
-from lerobot.common.robot_devices.robots.koch import KochRobot
+from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
-robot = KochRobot(
+robot = ManipulatorRobot(
+    robot_type="koch",
     leader_arms={"main": leader_arm},
     follower_arms={"main": follower_arm},
     calibration_path=".cache/calibration/koch.pkl",
 )
 ```
 
-**Calibrate and Connect the KochRobot**
+The `robot_type="koch"` is used to set the associated settings and calibration process. For instance, we activate the torque of the gripper of the leader Koch v1.1 arm and position it at a 40 degree angle to use it as a trigger. For the [Aloha bimanual robot](https://aloha-2.github.io), we would set different settings with `robot_type="aloha"`.
+
+**Calibrate and Connect the ManipulatorRobot**
 
 Next, you'll need to calibrate your robot to ensure that the leader and follower arms have the same position values when they are in the same physical position. This calibration is essential because it allows a neural network trained on one Koch robot to work on another.
 
-When you connect your robot for the first time, the [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) will detect if the calibration file is missing and trigger the calibration procedure. During this process, you will be guided to move each arm to three different positions.
+When you connect your robot for the first time, the [`ManipulatorRobot`](../lerobot/common/robot_devices/robots/manipulator.py) will detect if the calibration file is missing and trigger the calibration procedure. During this process, you will be guided to move each arm to three different positions.
 
 Here are the positions you'll move the follower arm to:
 
@@ -414,7 +420,7 @@ for _ in tqdm.tqdm(range(seconds*frequency)):
 
 *Using `teleop_step` for Teleoperation*
 
-Alternatively, you can teleoperate the robot using the `teleop_step` method from [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py).
+Alternatively, you can teleoperate the robot using the `teleop_step` method from [`ManipulatorRobot`](../lerobot/common/robot_devices/robots/manipulator.py).
 
 Run this code to teleoperate:
 ```python
@@ -607,7 +613,7 @@ Additionaly, you can set up your robot to work with your cameras.
 
 Modify the following Python code with the appropriate camera names and configurations:
 ```python
-robot = KochRobot(
+robot = ManipulatorRobot(
     leader_arms={"main": leader_arm},
     follower_arms={"main": follower_arm},
     calibration_path=".cache/calibration/koch.pkl",
@@ -925,7 +931,7 @@ huggingface-cli upload ${HF_USER}/act_koch_test_${CKPT} \
 
 ## 5. Evaluate your policy
 
-Now that you have a policy checkpoint, you can easily control your robot with it using methods from [`KochRobot`](../lerobot/common/robot_devices/robots/koch.py) and the policy.
+Now that you have a policy checkpoint, you can easily control your robot with it using methods from [`ManipulatorRobot`](../lerobot/common/robot_devices/robots/manipulator.py) and the policy.
 
 Try this code for running inference for 60 seconds at 30 fps:
 ```python
