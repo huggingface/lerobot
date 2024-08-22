@@ -22,8 +22,22 @@
 
 </div>
 
+<h2 align="center">
+    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md">Hot new tutorial: Getting started with real-world robots</a></p>
+</h2>
+
+<div align="center">
+    <img src="media/tutorial/koch_v1_1_leader_follower.webp?raw=true" alt="Koch v1.1 leader and follower arms" title="Koch v1.1 leader and follower arms" width="50%">
+    <p>We just dropped an in-depth tutorial on how to build your own robot!</p>
+    <p>Teach it new skills by showing it a few moves with just a laptop.</p>
+    <p>Then watch your homemade robot act autonomously 🤯</p>
+    <p>For more info, see <a href="https://x.com/RemiCadene/status/1825455895561859185">our thread on X</a> or <a href="https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md">our tutorial page</a>.</p>
+</div>
+
+<br/>
+
 <h3 align="center">
-    <p>State-of-the-art Machine Learning for real-world robotics</p>
+    <p>LeRobot: State-of-the-art AI for real-world robotics</p>
 </h3>
 
 ---
@@ -77,7 +91,7 @@ conda activate lerobot
 
 Install 🤗 LeRobot:
 ```bash
-pip install .
+pip install -e .
 ```
 
 > **NOTE:** Depending on your platform, If you encounter any build errors during this step
@@ -91,7 +105,7 @@ For simulations, 🤗 LeRobot comes with gymnasium environments that can be inst
 
 For instance, to install 🤗 LeRobot with aloha and pusht, use:
 ```bash
-pip install ".[aloha, pusht]"
+pip install -e ".[aloha, pusht]"
 ```
 
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
@@ -116,10 +130,12 @@ wandb login
 |   |   ├── datasets       # various datasets of human demonstrations: aloha, pusht, xarm
 |   |   ├── envs           # various sim environments: aloha, pusht, xarm
 |   |   ├── policies       # various policies: act, diffusion, tdmpc
+|   |   ├── robot_devices  # various real devices: dynamixel motors, opencv cameras, koch robots
 |   |   └── utils          # various utilities
 |   └── scripts          # contains functions to execute via command line
 |       ├── eval.py                 # load policy and evaluate it on an environment
 |       ├── train.py                # train a policy via imitation learning and/or reinforcement learning
+|       ├── control_robot.py        # teleoperate a real robot, record data, run a policy
 |       ├── push_dataset_to_hub.py  # convert your dataset into LeRobot dataset format and upload it to the Hugging Face hub
 |       └── visualize_dataset.py    # load a dataset and render its demonstrations
 ├── outputs               # contains results of scripts execution: logs, videos, model checkpoints
