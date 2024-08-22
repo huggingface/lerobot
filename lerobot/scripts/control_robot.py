@@ -287,6 +287,7 @@ def record(
     robot: Robot,
     policy: torch.nn.Module | None = None,
     hydra_cfg: DictConfig | None = None,
+    policy_action_safety_cap: torch.Tensor | None = None,
     fps: int | None = None,
     root="data",
     repo_id="lerobot/debug",
@@ -312,6 +313,15 @@ def record(
 
     if not video:
         raise NotImplementedError()
+
+    if policy_action_safety_cap is None and policy is not None:
+        policy_action_safety_cap = torch.tensor([10.0, 10.0, 10.0, 10.0, 10.0, 15.0])
+        logging.info(
+            "Actions from the policy will be clamped such that they result in a maximum relative positional "
+            f"target magnitude of no greater than {policy_action_safety_cap.tolist()}. This is for safety "
+            "reasons (mostly to avoid damaging your motors). Any instances of capping will be logged. You "
+            "may override these values by passing `policy_action_safety_cap`."
+        )
 
     if not robot.is_connected:
         robot.connect()
@@ -484,6 +494,20 @@ def record(
 
                         # Move to cpu, if not already the case
                         action = action.to("cpu")
+
+                    # Cap relative action target magnitude for safety.
+                    current_pos = observation["observation.state"].cpu()
+                    diff = action - current_pos
+                    safe_diff = diff.clone()
+                    safe_diff = torch.minimum(diff, policy_action_safety_cap)
+                    safe_diff = torch.maximum(diff, -policy_action_safety_cap)
+                    safe_action = current_pos + safe_diff
+                    if not torch.allclose(safe_action, action):
+                        logging.warning(
+                            "Relative action magnitude had to be clamped to be safe.\n"
+                            f"  requested relative action target: {diff}\n"
+                            f"    clamped relative action target: {safe_diff}"
+                        )
 
                     # Order the robot to move
                     robot.send_action(action)
