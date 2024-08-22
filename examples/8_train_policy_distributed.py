@@ -5,7 +5,7 @@ on the Transfer cube task, using HuggingFace accelerate.
 Apart from the main installation procedure, please also make sure you have installed accelerate before running this script: `pip install accelerate`.
 
 To launch it, you will have to use the accelerate launcher, for example:
-`python -m accelerate.commands.launch examples/7_train_policy_distributed.py`. This will launch the script with default distributed parameters.
+`python -m accelerate.commands.launch examples/8_train_policy_distributed.py`. This will launch the script with default distributed parameters.
 To launch on two GPUs, you can use `python -m accelerate.commands.launch  --num_processes 2 lerobot/examples/7_train_policy_distributed.py`.
 
 Find detailed information in the documentation: `https://github.com/huggingface/accelerate`.

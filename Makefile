@@ -59,7 +59,7 @@ test-act-ete-eval:
 		device=$(DEVICE) \
 
 test-act-ete-train-accelerate-amp:
-	accelerate launch --cpu --mixed-precision=bf16 lerobot/scripts/train.py \
+	python -m accelerate.commands.launch --cpu --mixed-precision=fp16 lerobot/scripts/train.py \
 		policy=act \
 		policy.dim_model=64 \
 		env=aloha \
@@ -78,7 +78,7 @@ test-act-ete-train-accelerate-amp:
 		training.image_transforms.enable=true
 
 test-act-ete-eval-accelerate-amp:
-	accelerate launch --cpu --mixed-precision=bf16 lerobot/scripts/eval.py \
+	python -m accelerate.commands.launch --cpu --mixed-precision=fp16 lerobot/scripts/eval.py \
 		-p tests/outputs/act_amp/checkpoints/000002/pretrained_model \
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
