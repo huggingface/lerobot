@@ -241,6 +241,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         raise NotImplementedError()
 
     init_logging()
+    logging.info(pformat(OmegaConf.to_container(cfg)))
 
     if cfg.training.online_steps > 0 and isinstance(cfg.dataset_repo_id, ListConfig):
         raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
