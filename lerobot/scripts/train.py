@@ -288,6 +288,16 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             "you meant to resume training, please use `resume=true` in your command or yaml configuration."
         )
 
+    if cfg.eval.batch_size > cfg.eval.n_episodes:
+        raise ValueError(
+            "The eval batch size is greater than the number of eval episodes "
+            f"({cfg.eval.batch_size} > {cfg.eval.n_episodes}). As a result, {cfg.eval.batch_size} "
+            f"eval environments will be instantiated, but only {cfg.eval.n_episodes} will be used. "
+            "This might significantly slow down evaluation. To fix this, you should update your command "
+            f"to increase the number of episodes to match the batch size (e.g. `eval.n_episodes={cfg.eval.batch_size}`), "
+            f"or lower the batch size (e.g. `eval.batch_size={cfg.eval.n_episodes}`)."
+        )
+
     # log metrics to terminal and wandb
     logger = Logger(cfg, out_dir, wandb_job_name=job_name)
 
