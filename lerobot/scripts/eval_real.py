@@ -14,6 +14,7 @@ from lerobot.common.policies.rollout_wrapper import PolicyRolloutWrapper
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.koch import KochRobot
+from lerobot.common.utils.digital_twin import DigitalTwin
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 
@@ -35,6 +36,7 @@ def rollout(
     warmup_s: float = 5.0,
     visualize: bool = False,
 ):
+    digital_twin = DigitalTwin()
     assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
     device = get_device_from_parameters(policy)
     policy_rollout_wrapper = PolicyRolloutWrapper(policy, fps=fps, n_action_buffer=n_action_buffer)
@@ -54,6 +56,7 @@ def rollout(
         over_time = False
         start_step_time = to_relative_time(time.perf_counter())
         observation: dict[str, torch.Tensor] = robot.capture_observation()
+        follower_pos = observation["observation.state"].numpy()
 
         elapsed = to_relative_time(time.perf_counter()) - start_step_time
         if elapsed > period:
@@ -91,6 +94,9 @@ def rollout(
             # for k in observation:
             #     observation[k].to(device)
             # action = policy.select_action(observation).cpu().squeeze(0)
+
+        if action_sequence is not None:
+            digital_twin.set_twin_pose(follower_pos, action_sequence.numpy())
 
         if step == 0:
             # On the first step we should just use the first action. We are guaranteed that action_sequence is
@@ -159,6 +165,9 @@ def rollout(
             logging.warning(f"Step took too long! {elapsed=}")
         else:
             busy_wait(period - elapsed - 0.001)
+
+        if digital_twin.quit_signal_is_set():
+            break
 
         if start_step_time > warmup_s:
             step += 1
