@@ -3,6 +3,7 @@ import time
 import traceback
 from copy import deepcopy
 from pathlib import Path
+from serial.tools import list_ports
 
 import numpy as np
 import tqdm
@@ -218,8 +219,9 @@ def assert_same_address(model_ctrl_table, motor_models, data_name):
 
 def find_available_ports():
     ports = []
-    for path in Path("/dev").glob("tty*"):
-        ports.append(str(path))
+    for portInfo in list_ports.comports():
+        ports.append(portInfo[0])
+
     return ports
 
 
