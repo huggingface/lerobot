@@ -77,13 +77,10 @@ class ARXArm:
             )
         # notify the arm process of imminent shutdown
         self.is_connected = False
-        # safely shut down the arm
-        if self.is_master:
-            gain = self.joint_controller.get_gain()
-            gain.kd()[:] *= 10
-            self.joint_controller.set_gain(gain)
-        self.joint_controller.set_to_damping()
-        self.joint_controller.reset_to_home()
+        # safely shut down the follower arm
+        if not self.is_master:
+            self.joint_controller.reset_to_home()
+            self.joint_controller.set_to_damping()
         self.joint_controller = None
 
     def reset(self):
@@ -106,10 +103,6 @@ class ARXArm:
         state = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
         if self.is_master:
             state[-1] *= 3.85
-
-        state_name = "master" if self.is_master else "puppet"
-        print(f"Gripper ({state_name}): {state[-1]}")
-
         return state
     
     def send_command(self, action: np.ndarray):
@@ -223,11 +216,6 @@ class ARXRobot:
 
                 self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
-        # for logging, TODO remove
-        for name in self.follower_arms:
-            before_lread_t = time.perf_counter()
-            _ = self.follower_arms[name].get_state()
-
         # Early exit when recording data is not requested
         if not record_data:
             return
@@ -249,7 +237,7 @@ class ARXRobot:
 
         # Create action by concatenating follower goal position
         action = []
-        for name in self.follower_arms:
+        for name in self.leader_arms:
             if name in follower_goal_pos:
                 action.append(follower_goal_pos[name])
         action = np.concatenate(action)

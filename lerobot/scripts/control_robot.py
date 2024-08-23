@@ -299,7 +299,7 @@ def record(
     root="data",
     repo_id="lerobot/debug",
     warmup_time_s=2,
-    episode_time_s=20,
+    episode_time_s=30,
     reset_time_s=5,
     num_episodes=50,
     video=True,
@@ -409,6 +409,7 @@ def record(
 
         if policy is None:
             observation, action = robot.teleop_step(record_data=True)
+            # print(f"- Observation: {observation}\n- Action: {action}")
         else:
             observation = robot.capture_observation()
 
@@ -425,16 +426,19 @@ def record(
         log_control_info(robot, dt_s, fps=fps)
 
         timestamp = time.perf_counter() - start_warmup_t
+        print(timestamp)
 
     # Save images using threads to reach high fps (30 and more)
-    # Using `with` to exist smoothly if an execption is raised.
+    # Using `with` to exit smoothly if an execption is raised.
     # Using only 4 worker threads to avoid blocking the main thread.
     futures = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
         # Start recording all episodes
         while episode_index < num_episodes:
+            # print("-----------------------------------")
             logging.info(f"Recording episode {episode_index}")
             say(f"Recording episode {episode_index}")
+            # print("-----------------------------------")
             ep_dict = {}
             frame_index = 0
             timestamp = 0
@@ -692,6 +696,8 @@ def replay(robot: Robot, episode: int, fps: int | None = None, root="data", repo
 
         action = items[idx]["action"]
         robot.send_action(action)
+        obs = robot.capture_observation()
+        print(f"- Observation: {obs}\n- Action sent: {action}")
 
         dt_s = time.perf_counter() - start_episode_t
         busy_wait(1 / fps - dt_s)
@@ -745,7 +751,7 @@ if __name__ == "__main__":
     parser_record.add_argument(
         "--warmup-time-s",
         type=int,
-        default=10,
+        default=2,
         help="Number of seconds before starting data collection. It allows the robot devices to warmup and synchronize.",
     )
     parser_record.add_argument(
