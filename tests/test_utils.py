@@ -90,5 +90,5 @@ def test_reset_episode_index():
 def test_init_hydra_config_empty():
     test_file = f"/tmp/test_init_hydra_config_empty_{uuid4().hex}.yaml"
     with open(test_file, "w") as f:
-        f.write("empty: true")
+        f.write("\n")
     init_hydra_config(test_file)
