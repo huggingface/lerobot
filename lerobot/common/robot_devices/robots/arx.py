@@ -156,10 +156,10 @@ class ARXRobot:
                 "ARXRobot is already connected. Do not run `robot.connect()` twice."
             )
 
-        # if not self.leader_arms and not self.follower_arms and not self.cameras:
-        #     raise ValueError(
-        #         "ARXRobot doesn't have any device to connect. See example of usage in docstring of the class."
-        #     )
+        if not self.leader_arms and not self.follower_arms and not self.cameras:
+            raise ValueError(
+                "ARXRobot doesn't have any device to connect. See example of usage in docstring of the class."
+            )
 
         # Connect the arms
         for name in self.follower_arms:
@@ -173,8 +173,8 @@ class ARXRobot:
         self.run_calibration()
 
         # Connect the cameras
-        # for name in self.cameras:
-        #     self.cameras[name].connect()
+        for name in self.cameras:
+            self.cameras[name].connect()
 
         self.is_connected = True
 
@@ -243,19 +243,19 @@ class ARXRobot:
         action = np.concatenate(action)
 
         # Capture images from cameras
-        # images = {}
-        # for name in self.cameras:
-        #     before_camread_t = time.perf_counter()
-        #     images[name] = self.cameras[name].async_read()
-        #     self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
-        #     self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
+        images = {}
+        for name in self.cameras:
+            before_camread_t = time.perf_counter()
+            images[name] = self.cameras[name].async_read()
+            self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
+            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
         # Populate output dictionnaries and format to pytorch
         obs_dict, action_dict = {}, {}
         obs_dict["observation.state"] = torch.from_numpy(state)
         action_dict["action"] = torch.from_numpy(action)
-        # for name in self.cameras:
-        #     obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
+        for name in self.cameras:
+            obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
 
         return obs_dict, action_dict
 
@@ -281,18 +281,18 @@ class ARXRobot:
         state = np.concatenate(state)
 
         # Capture images from cameras
-        # images = {}
-        # for name in self.cameras:
-        #     before_camread_t = time.perf_counter()
-        #     images[name] = self.cameras[name].async_read()
-        #     self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
-        #     self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
+        images = {}
+        for name in self.cameras:
+            before_camread_t = time.perf_counter()
+            images[name] = self.cameras[name].async_read()
+            self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
+            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
         # Populate output dictionaries
         obs_dict = {}
         obs_dict["observation.state"] = state
-        # for name in self.cameras:
-        #     obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
+        for name in self.cameras:
+            obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
         return obs_dict
 
     def send_action(self, action: torch.Tensor):
@@ -327,8 +327,8 @@ class ARXRobot:
         for name in self.leader_arms:
             self.leader_arms[name].disconnect()
 
-        # for name in self.cameras:
-        #     self.cameras[name].disconnect()
+        for name in self.cameras:
+            self.cameras[name].disconnect()
 
         self.is_connected = False
 
