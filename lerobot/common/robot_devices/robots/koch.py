@@ -208,7 +208,15 @@ class KochRobot:
             },
         ),
     }
-    robot = KochRobot(leader_arms, follower_arms)
+    robot = KochRobot(
+        leader_arms=leader_arms,
+        follower_arms=follower_arms,
+        max_relative_target=[10, 10, 10, 10, 10, 15],
+    )
+
+    Notice the parameter `max_relative_target`. This is a safety measure that prevents someone from providing
+    a positional target that is too far from the current robot position (which would then cause the robot to
+    move too quickly, potentially burning out the motors or making violent impact with another object).
 
     # Connect motors buses and cameras if any (Required)
     robot.connect()
@@ -220,7 +228,11 @@ class KochRobot:
     Example of highest frequency data collection without camera:
     ```python
     # Assumes leader and follower arms have been instantiated already (see first example)
-    robot = KochRobot(leader_arms, follower_arms)
+    robot = KochRobot(
+        leader_arms=leader_arms,
+        follower_arms=follower_arms,
+        max_relative_target=[10, 10, 10, 10, 10, 15],
+    )
     robot.connect()
     while True:
         observation, action = robot.teleop_step(record_data=True)
@@ -238,7 +250,12 @@ class KochRobot:
     }
 
     # Assumes leader and follower arms have been instantiated already (see first example)
-    robot = KochRobot(leader_arms, follower_arms, cameras)
+    robot = KochRobot(
+        leader_arms=leader_arms,
+        follower_arms=follower_arms,
+        cameras=cameras,
+        max_relative_target=[10, 10, 10, 10, 10, 15],
+    )
     robot.connect()
     while True:
         observation, action = robot.teleop_step(record_data=True)
@@ -247,7 +264,12 @@ class KochRobot:
     Example of controlling the robot with a policy (without running multiple policies in parallel to ensure highest frequency):
     ```python
     # Assumes leader and follower arms + cameras have been instantiated already (see previous example)
-    robot = KochRobot(leader_arms, follower_arms, cameras)
+    robot = KochRobot(
+        leader_arms=leader_arms,
+        follower_arms=follower_arms,
+        cameras=cameras,
+        max_relative_target=[10, 10, 10, 10, 10, 15],
+    )
     robot.connect()
     while True:
         # Uses the follower arms and cameras to capture an observation
