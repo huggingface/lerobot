@@ -165,7 +165,7 @@ class KochRobotConfig:
     leader_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     follower_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
-    max_relative_target: list[float] | None = None
+    max_relative_target: list[float] | float | None = None
 
 
 class KochRobot:
@@ -529,6 +529,8 @@ class KochRobot:
             this_action = action[from_idx:to_idx]
 
             if self.config.max_relative_target is not None:
+                if not isinstance(self.config.max_relative_target, list):
+                    max_relative_target = [self.config.max_relative_target for _ in range(from_idx, to_idx)]
                 max_relative_target = torch.tensor(self.config.max_relative_target)
                 # Cap relative action target magnitude for safety.
                 current_pos = torch.tensor(self.follower_arms[name].read("Present_Position"))
