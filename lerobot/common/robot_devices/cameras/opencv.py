@@ -13,6 +13,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Thread
 
+# TODO: remove this
+from lerobot.common.robot_devices.robots.arx5 import ARXRobot
+
 import cv2
 import numpy as np
 from PIL import Image
@@ -75,7 +78,7 @@ def save_image(img_array, camera_index, frame_index, images_dir):
 
 
 def save_images_from_cameras(
-    images_dir: Path, camera_ids: list[int] | None = None, fps=None, width=None, height=None, record_time_s=2
+    images_dir: Path, camera_ids: list[int] | None = None, fps=None, width=None, height=None, record_time_s=10
 ):
     if camera_ids is None:
         camera_ids = find_camera_indices()
@@ -108,19 +111,25 @@ def save_images_from_cameras(
             for camera in cameras:
                 # If we use async_read when fps is None, the loop will go full speed, and we will endup
                 # saving the same images from the cameras multiple times until the RAM/disk is full.
-                image = camera.read() if fps is None else camera.async_read()
+                try:
+                    image = camera.read() if fps is None else camera.async_read()
+                    print("read")
+                except:
+                    print(f"Could not capture image in camera {camera.camera_index}")
+                    continue
 
-                executor.submit(
-                    save_image,
-                    image,
-                    camera.camera_index,
-                    frame_index,
-                    images_dir,
-                )
+                # executor.submit(
+                #     save_image,
+                #     image,
+                #     camera.camera_index,
+                #     frame_index,
+                #     images_dir,
+                # )
 
             if fps is not None:
                 dt_s = time.perf_counter() - now
-                busy_wait(1 / fps - dt_s)
+                if (1 / fps) > dt_s:
+                    busy_wait(1 / fps - dt_s)
 
             if time.perf_counter() - start_time > record_time_s:
                 break
@@ -224,7 +233,7 @@ class OpenCVCamera:
 
         if platform.system() == "Linux":
             # Linux uses ports for connecting to cameras
-            tmp_camera = cv2.VideoCapture(f"/dev/video{self.camera_index}")
+            tmp_camera = cv2.VideoCapture(f"/dev/video{self.camera_index}", apiPreference=cv2.CAP_V4L2)
         else:
             tmp_camera = cv2.VideoCapture(self.camera_index)
 
@@ -252,6 +261,9 @@ class OpenCVCamera:
             self.camera = cv2.VideoCapture(f"/dev/video{self.camera_index}")
         else:
             self.camera = cv2.VideoCapture(self.camera_index)
+
+        if not self.camera.isOpened():
+            raise OSError(f"Camera {self.camera_index} could not be opened.")
 
         if self.fps is not None:
             self.camera.set(cv2.CAP_PROP_FPS, self.fps)
