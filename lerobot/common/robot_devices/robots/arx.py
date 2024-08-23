@@ -1,7 +1,5 @@
 from dataclasses import dataclass, field, replace
 from enum import Enum
-import multiprocessing
-from multiprocessing.connection import wait
 import time
 from typing import Tuple
 
@@ -43,83 +41,8 @@ class ARXRobotConfig:
 
 class ARXArm:
     """
-    Class for controlling a single ARX arm."""
-
-    def run_in_process(
-            self,
-            child_reset_pipe,
-            child_state_pipe,
-            child_command_pipe,
-            child_close_pipe,
-            is_master,
-        ):
-        """
-        The arm commands need to be run in a separate process to work around a shared memory issue in the ARX5 SDK.
-        Once the issue is resolved, this code can be simplified.
-        """
-        joint_controller = arx5.Arx5JointController(self.config.model, self.config.interface_name)
-        joint_controller.enable_background_send_recv()
-        joint_controller.reset_to_home()
-        joint_controller.enable_gravity_compensation(self.config.urdf_path)
-
-        robot_config = joint_controller.get_robot_config()
-        print(f"Gripper max width: {robot_config.gripper_width}")
-
-        should_stop = False
-        while not should_stop:
-            # Wait for messages from any of the pipes
-            ready_pipes = wait([
-                child_reset_pipe, 
-                child_state_pipe, 
-                child_command_pipe,
-                child_close_pipe,
-            ])
-
-            for pipe in ready_pipes:
-                if pipe == child_reset_pipe:
-                    # Handle reset command
-                    _ = pipe.recv()
-
-                    if is_master:
-                        joint_controller.set_to_damping()
-                        gain = joint_controller.get_gain()
-                        gain.kd()[:] *= 0.1
-                        joint_controller.set_gain(gain)
-                    pipe.send(True)
-
-                elif pipe == child_state_pipe:
-                    # Handle state request command
-                    _ = pipe.recv()
-                    joint_state = joint_controller.get_state()
-                    state = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
-                    pipe.send(state)  # Send the state back to the parent
-
-                elif pipe == child_command_pipe:
-                    # Handle a command
-                    action = pipe.recv()
-                    dof = self.config.dof
-                    cmd = arx5.JointState(dof)
-                    cmd.pos()[0:dof] = action[0:dof]
-                    # if action[dof] < 0:
-                    #     action[dof] = 0
-                    if action[dof] > robot_config.gripper_width:
-                        action[dof] = robot_config.gripper_width
-                    cmd.gripper_pos = action[dof]
-
-                    # Process command, e.g., move joints
-                    joint_controller.set_joint_cmd(cmd)
-                    pipe.send(True)
-                elif pipe == child_close_pipe:
-                    # handle close request
-                    should_stop = True
-        
-        # safely shut down the arm
-        if is_master:
-            gain = joint_controller.get_gain()
-            gain.kd()[:] *= 10
-            joint_controller.set_gain(gain)
-        joint_controller.set_to_damping()
-        joint_controller.reset_to_home()
+    Class for controlling a single ARX arm.
+    """
 
     def __init__(
         self,
@@ -130,11 +53,7 @@ class ARXArm:
         self.is_connected = False
         self.is_master = is_master
 
-        # multi-processing tools, required to work around a bug in the arx5 sdk
-        self.parent_reset_pipe, self.child_reset_pipe = multiprocessing.Pipe()
-        self.parent_state_pipe, self.child_state_pipe = multiprocessing.Pipe()
-        self.parent_command_pipe, self.child_command_pipe = multiprocessing.Pipe()
-        self.parent_close_pipe, self.child_close_pipe = multiprocessing.Pipe()
+        self.joint_controller = None
 
     def connect(self):
         if self.is_connected:
@@ -143,16 +62,13 @@ class ARXArm:
             )
         self.is_connected = True
 
-        # start a background process for the arm
-        self.proc = multiprocessing.Process(target=self.run_in_process, args=(
-            self.child_reset_pipe, 
-            self.child_state_pipe, 
-            self.child_command_pipe,
-            self.child_close_pipe,
-            self.is_master,
-        ))
-        self.proc.start()
-        time.sleep(2)
+        self.joint_controller = arx5.Arx5JointController(self.config.model, self.config.interface_name)
+        self.joint_controller.enable_background_send_recv()
+        self.joint_controller.reset_to_home()
+        self.joint_controller.enable_gravity_compensation(self.config.urdf_path)
+
+        self.robot_config = self.joint_controller.get_robot_config()
+        print(f"Gripper max width: {self.robot_config.gripper_width}")
 
     def disconnect(self):
         if not self.is_connected:
@@ -161,27 +77,33 @@ class ARXArm:
             )
         # notify the arm process of imminent shutdown
         self.is_connected = False
-        self.parent_close_pipe.send(True)
-
-        # join the arm process
-        self.proc.join()
-        self.proc = None
+        # safely shut down the arm
+        if self.is_master:
+            gain = self.joint_controller.get_gain()
+            gain.kd()[:] *= 10
+            self.joint_controller.set_gain(gain)
+        self.joint_controller.set_to_damping()
+        self.joint_controller.reset_to_home()
+        self.joint_controller = None
 
     def reset(self):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
-        self.parent_reset_pipe.send(True)
-        _ = self.parent_reset_pipe.recv()
+        if self.is_master:
+            self.joint_controller.set_to_damping()
+            gain = self.joint_controller.get_gain()
+            gain.kd()[:] *= 0.1
+            self.joint_controller.set_gain(gain)
 
     def get_state(self) -> np.ndarray:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
-        self.parent_state_pipe.send(True)
-        state = self.parent_state_pipe.recv()
+        joint_state = self.joint_controller.get_state()
+        state = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
         if self.is_master:
             state[-1] *= 3.85
 
@@ -190,13 +112,22 @@ class ARXArm:
 
         return state
     
-    def send_command(self, cmd: np.ndarray):
+    def send_command(self, action: np.ndarray):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
-        self.parent_command_pipe.send(cmd)
-        _ = self.parent_command_pipe.recv()
+        dof = self.config.dof
+        cmd = arx5.JointState(dof)
+        cmd.pos()[0:dof] = action[0:dof]
+        # if action[dof] < 0:
+        #     action[dof] = 0
+        if action[dof] > self.robot_config.gripper_width:
+            action[dof] = self.robot_config.gripper_width
+        cmd.gripper_pos = action[dof]
+
+        # Process command, e.g., move joints
+        self.joint_controller.set_joint_cmd(cmd)
 
 class ARXRobot:
     """
