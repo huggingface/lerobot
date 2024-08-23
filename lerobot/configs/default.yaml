@@ -32,6 +32,13 @@ video_backend: pyav
 
 training:
   offline_steps: ???
+  # Whether to cache the offline dataset into a numpy memmap (uses the OnlineBuffer class). This can be
+  # useful if you are using large batch sizes or many observation steps with images as loading from the
+  # LeRobotDataset can be a bottleneck.
+  # The first time you run the training, the LeRobotDataset contents are siphoned into an OnlineBuffer which
+  # is stored in your /tmp directory. Then for subsequent runs using the same dataset, the cache is loaded
+  # directly from disk.
+  use_offline_dataset_cache: false
 
   # Number of workers for the offline training dataloader.
   num_workers: 4

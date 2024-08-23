@@ -25,17 +25,20 @@ from threading import Lock
 import hydra
 import numpy as np
 import torch
+import torch.utils
 from deepdiff import DeepDiff
 from omegaconf import DictConfig, ListConfig, OmegaConf
 from termcolor import colored
 from torch import nn
 from torch.cuda.amp import GradScaler
+from tqdm import tqdm
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
-from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, MultiLeRobotDataset
 from lerobot.common.datasets.online_buffer import OnlineBuffer, compute_sampler_weights
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
+from lerobot.common.datasets.video_utils import load_from_videos
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
@@ -381,6 +384,77 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             )
             logging.info("Resume training")
 
+    resolve_delta_timestamps(cfg)  # will be needed by OnlineBuffer
+    offline_dataset_cache = None
+    if cfg.training.use_offline_dataset_cache:
+        offline_dataset_cache = OnlineBuffer(
+            (
+                f"/tmp/{offline_dataset.repo_id.replace('/', '__')}_{CODEBASE_VERSION}_"
+                f"{str(offline_dataset.root).replace('/', '__')}_{offline_dataset.split}"
+            ),
+            data_spec={
+                **{
+                    k: {"shape": v, "dtype": np.dtype("float32")}
+                    for k, v in policy.config.input_shapes.items()
+                },
+                **{
+                    k: {"shape": v, "dtype": np.dtype("float32")}
+                    for k, v in policy.config.output_shapes.items()
+                },
+                "next.reward": {"shape": (), "dtype": np.dtype("float32")},
+                "next.done": {"shape": (), "dtype": np.dtype("?")},
+                "next.success": {"shape": (), "dtype": np.dtype("?")},
+            },
+            buffer_capacity=len(offline_dataset),
+            fps=offline_dataset.fps,
+            image_transforms=offline_dataset.image_transforms,
+            delta_timestamps=cfg.training.delta_timestamps,
+        )
+        # Temporarily disable transforms in offline dataset while we iterate through it.
+        offline_dataset.image_transforms = None
+        episode_index = 0
+        episode_frames = []
+        logging.info(
+            "Populating offline dataset cache. If a segmentation fault happens afterwards (and it's the first "
+            "time creating the cache) just rerun."
+        )
+        # Build up episode_data dictionaries from episodes one at a time and add them to the cache.
+        for i in tqdm(
+            range(len(offline_dataset.hf_dataset)),
+            total=len(offline_dataset),
+            desc="Populate offline dataset cache",
+        ):
+            if offline_dataset_cache.num_samples > i:
+                # Already cached.
+                continue
+            frame = offline_dataset.hf_dataset[i]
+            frame = load_from_videos(
+                frame,
+                offline_dataset.video_frame_keys,
+                offline_dataset.videos_dir,
+                offline_dataset.tolerance_s,
+                offline_dataset.video_backend,
+            )
+            episode_frames.append(frame)
+            # Add data to the cache when a full episode has been gathered.
+            if frame["episode_index"] > episode_index or i == len(offline_dataset) - 1:
+                episode_data = {}
+                for k in episode_frames[0]:
+                    episode_data[k] = torch.stack([frame[k] for frame in episode_frames])
+                # Zero the episode index and data index. This is a requirement of the `add_data` method.
+                episode_data[OnlineBuffer.EPISODE_INDEX_KEY] *= 0
+                episode_data[OnlineBuffer.INDEX_KEY] = (
+                    episode_data[OnlineBuffer.INDEX_KEY] - episode_data[OnlineBuffer.INDEX_KEY][0]
+                )
+                offline_dataset_cache.add_data(episode_data)
+                episode_index += 1
+                episode_frames = []
+        # Sanity check to make sure we copied all data.
+        assert offline_dataset_cache.num_samples == len(offline_dataset)
+        # Re-enable image transforms in offline dataset (which we disabled before to siphon the
+        # untransformed images into the cache).
+        offline_dataset.image_transforms = offline_dataset_cache.image_transforms
+
     # create dataloader for offline training
     if cfg.training.get("drop_n_last_frames"):
         shuffle = False
@@ -393,7 +467,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         shuffle = True
         sampler = None
     dataloader = torch.utils.data.DataLoader(
-        offline_dataset,
+        offline_dataset_cache if cfg.training.use_offline_dataset_cache else offline_dataset,
         num_workers=cfg.training.num_workers,
         batch_size=cfg.training.batch_size,
         shuffle=shuffle,
@@ -448,7 +522,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     # Create an env dedicated to online episodes collection from policy rollout.
     online_env = make_env(cfg, n_envs=cfg.training.online_rollout_batch_size)
-    resolve_delta_timestamps(cfg)
     online_buffer_path = logger.log_dir / "online_buffer"
     if cfg.resume and not online_buffer_path.exists():
         # If we are resuming a run, we default to the data shapes and buffer capacity from the saved online

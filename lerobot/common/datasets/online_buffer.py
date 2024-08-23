@@ -23,7 +23,7 @@ supports in-place slicing and mutation which is very handy for a dynamic buffer.
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import torch
@@ -76,6 +76,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
         data_spec: dict[str, Any] | None,
         buffer_capacity: int | None,
         fps: float | None = None,
+        image_transforms: Callable | None = None,
         delta_timestamps: dict[str, list[float]] | dict[str, np.ndarray] | None = None,
     ):
         """
@@ -115,6 +116,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
                 mode="r+" if (Path(write_dir) / k).exists() else "w+",
                 shape=tuple(v["shape"]) if v is not None else None,
             )
+        self.image_transforms = image_transforms
 
     @property
     def delta_timestamps(self) -> dict[str, np.ndarray] | None:
@@ -244,6 +246,11 @@ class OnlineBuffer(torch.utils.data.Dataset):
                 item_[k] = torch.tensor(v)
         return item_
 
+    @property
+    def camera_keys(self) -> list[str]:
+        """Keys to access image and video stream from cameras."""
+        return [k for k in self._data if k.startswith("observation.image")]
+
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         if idx >= len(self) or idx < -len(self):
             raise IndexError
@@ -288,6 +295,10 @@ class OnlineBuffer(torch.utils.data.Dataset):
             item[data_key] = self._data[data_key][episode_data_indices[argmin_]]
 
             item[f"{data_key}{OnlineBuffer.IS_PAD_POSTFIX}"] = is_pad
+
+        if self.image_transforms is not None:
+            for cam in self.camera_keys:
+                item[cam] = self.image_transforms(item[cam])
 
         return self._item_to_tensors(item)
 
