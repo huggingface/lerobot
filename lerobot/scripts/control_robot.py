@@ -498,7 +498,6 @@ def record(
                     # Cap relative action target magnitude for safety.
                     current_pos = observation["observation.state"].cpu().squeeze(0)
                     diff = action - current_pos
-                    safe_diff = diff.clone()
                     safe_diff = torch.minimum(diff, policy_action_safety_cap)
                     safe_diff = torch.maximum(safe_diff, -policy_action_safety_cap)
                     safe_action = current_pos + safe_diff
