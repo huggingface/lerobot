@@ -165,15 +165,6 @@ def init_hydra_config(config_path: str, overrides: list[str] | None = None) -> D
         version_base="1.2",
     )
     cfg = hydra.compose(Path(config_path).stem, overrides)
-    if cfg.eval.batch_size > cfg.eval.n_episodes:
-        raise ValueError(
-            "The eval batch size is greater than the number of eval episodes "
-            f"({cfg.eval.batch_size} > {cfg.eval.n_episodes}). As a result, {cfg.eval.batch_size} "
-            f"eval environments will be instantiated, but only {cfg.eval.n_episodes} will be used. "
-            "This might significantly slow down evaluation. To fix this, you should update your command "
-            f"to increase the number of episodes to match the batch size (e.g. `eval.n_episodes={cfg.eval.batch_size}`), "
-            f"or lower the batch size (e.g. `eval.batch_size={cfg.eval.n_episodes}`)."
-        )
     return cfg
 
 
