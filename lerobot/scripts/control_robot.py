@@ -115,7 +115,7 @@ from pathlib import Path
 # Set LD_LIBRARY_PATH to what it is in your interactive environment
 # os.environ['LD_LIBRARY_PATH'] = '/opt/ros/noetic/lib'
 # print(os.environ["LD_LIBRARY_PATH"])
-from lerobot.common.robot_devices.robots.arx import ARXRobot
+from lerobot.common.robot_devices.robots.arx5 import ARXRobot
 
 import cv2
 import torch
