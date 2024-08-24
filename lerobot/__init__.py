@@ -169,6 +169,13 @@ available_real_world_datasets = [
     "lerobot/stanford_robocook",
     "lerobot/toto",
     "lerobot/fmb",
+    "lerobot/droid_100",
+    "lerobot/berkeley_rpt",
+    "lerobot/stanford_kuka_multimodal_dataset",
+    "lerobot/iamlab_cmu_pickup_insert",
+    "lerobot/taco_play",
+    "lerobot/berkeley_gnm_cory_hall",
+    "lerobot/usc_cloth_sim",
 ]
 
 available_datasets = list(

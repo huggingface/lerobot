@@ -40,12 +40,12 @@ def get_stats_einops_patterns(dataset, num_workers=0):
 
     stats_patterns = {}
     for key, feats_type in dataset.features.items():
-        # sanity check that tensors are not float64
-        assert batch[key].dtype != torch.float64
-
         # NOTE: skip language_instruction embedding in stats computation
         if key == "language_instruction":
             continue
+
+        # sanity check that tensors are not float64
+        assert batch[key].dtype != torch.float64
 
         if isinstance(feats_type, (VideoFrame, Image)):
             # sanity check that images are channel first

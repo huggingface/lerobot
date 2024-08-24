@@ -557,6 +557,11 @@ def berkeley_mvp_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]
     return trajectory
 
 
+def berkeley_rpt_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    trajectory["observation"]["gripper"] = tf.cast(trajectory["observation"]["gripper"][:, None], tf.float32)
+    return trajectory
+
+
 def kaist_nonprehensible_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["observation"]["state"] = trajectory["observation"]["state"][:, -7:]
     trajectory["action"] = tf.concat(
@@ -821,7 +826,7 @@ OPENX_STANDARDIZATION_TRANSFORMS = {
     "utokyo_xarm_bimanual_converted_externally_to_rlds": utokyo_xarm_bimanual_dataset_transform,
     "robo_net": robo_net_dataset_transform,
     "berkeley_mvp_converted_externally_to_rlds": berkeley_mvp_dataset_transform,
-    "berkeley_rpt_converted_externally_to_rlds": identity_transform,
+    "berkeley_rpt_converted_externally_to_rlds": berkeley_rpt_dataset_transform,
     "kaist_nonprehensile_converted_externally_to_rlds": kaist_nonprehensible_dataset_transform,
     "stanford_mask_vit_converted_externally_to_rlds": stanford_mask_vit_dataset_transform,
     "tokyo_u_lsmo_converted_externally_to_rlds": tokyo_lsmo_dataset_transform,

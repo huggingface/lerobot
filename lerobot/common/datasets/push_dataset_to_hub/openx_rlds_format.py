@@ -165,7 +165,7 @@ def load_from_raw(
     if len(saved_ep_dicts) > 0:
         saved_ep_dicts.sort()
         # get last ep_idx number
-        starting_ep_idx = int(saved_ep_dicts[-1][-13:-3])
+        starting_ep_idx = int(saved_ep_dicts[-1][-13:-3]) + 1
         for i in range(starting_ep_idx):
             episode = next(it)
             ep_dicts.append(torch.load(saved_ep_dicts[i]))
