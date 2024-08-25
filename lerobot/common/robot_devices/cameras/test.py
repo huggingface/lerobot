@@ -8,10 +8,10 @@ cap2 = cv2.VideoCapture('/dev/video6')
 if not cap1.isOpened():
     print("Failed to open camera 4")
 if not cap2.isOpened():
-    print("Failed to open camera 5")
+    print("Failed to open camera 6")
 
-cap1.set(cv2.CAP_PROP_FPS, 2)
-cap2.set(cv2.CAP_PROP_FPS, 2)
+cap1.set(cv2.CAP_PROP_FPS, 5)
+cap2.set(cv2.CAP_PROP_FPS, 5)
 
 # Read from cameras
 for i in range(100):

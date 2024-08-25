@@ -13,9 +13,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Thread
 
-# TODO: remove this
-from lerobot.common.robot_devices.robots.arx5 import ARXRobot
-
 import cv2
 import numpy as np
 from PIL import Image
@@ -118,13 +115,13 @@ def save_images_from_cameras(
                     print(f"Could not capture image in camera {camera.camera_index}")
                     continue
 
-                # executor.submit(
-                #     save_image,
-                #     image,
-                #     camera.camera_index,
-                #     frame_index,
-                #     images_dir,
-                # )
+                executor.submit(
+                    save_image,
+                    image,
+                    camera.camera_index,
+                    frame_index,
+                    images_dir,
+                )
 
             if fps is not None:
                 dt_s = time.perf_counter() - now

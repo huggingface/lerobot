@@ -27,17 +27,17 @@ class ARXArmConfig:
     dof: int = 6    # degrees of freedom. Defaults to 6.
 
 @dataclass
-class ARXRobotConfig:
+class ARX5RobotConfig:
     """
     Example of usage:
     ```python
-    ARXRobotConfig()
+    ARX5RobotConfig()
     ```
     """
     # Define all components of the robot
     leader_arms: dict[str, ARXArmConfig] = field(default_factory=lambda: {})
     follower_arms: dict[str, ARXArmConfig] = field(default_factory=lambda: {})
-    # cameras: dict[str, Camera] = field(default_factory=lambda: {})
+    cameras: dict[str, Camera] = field(default_factory=lambda: {})
 
 class ARXArm:
     """
@@ -66,6 +66,7 @@ class ARXArm:
         self.joint_controller.enable_background_send_recv()
         self.joint_controller.reset_to_home()
         self.joint_controller.enable_gravity_compensation(self.config.urdf_path)
+        # self.joint_controller.set_log_level(arx5.LogLevel.DEBUG)
 
         self.robot_config = self.joint_controller.get_robot_config()
         print(f"Gripper max width: {self.robot_config.gripper_width}")
@@ -103,6 +104,9 @@ class ARXArm:
         state = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
         if self.is_master:
             state[-1] *= 3.85
+
+        # name = "master" if self.is_master else "puppet"
+        # print(f"arm ({name}): {state[-3:-1]}")
         return state
     
     def send_command(self, action: np.ndarray):
@@ -122,19 +126,19 @@ class ARXArm:
         # Process command, e.g., move joints
         self.joint_controller.set_joint_cmd(cmd)
 
-class ARXRobot:
+class ARX5Robot:
     """
     A class for controlling a robot consisting of one or more ARX arms.
     """
 
     def __init__(
         self,
-        config: ARXRobotConfig | None = None,
+        config: ARX5RobotConfig | None = None,
         # calibration_path: Path = ".cache/calibration/koch.pkl",
         **kwargs,
     ):
         if config is None:
-            config = ARXRobotConfig()
+            config = ARX5RobotConfig()
         # Overwrite config arguments using kwargs
         self.config = replace(config, **kwargs)
         # self.calibration_path = Path(calibration_path)
@@ -146,19 +150,19 @@ class ARXRobot:
         for key, arm_config in self.config.follower_arms.items():
             self.follower_arms[key] = ARXArm(arm_config, False)
 
-        self.cameras = {}
+        self.cameras = self.config.cameras
         self.is_connected = False
         self.logs = {}
 
     def connect(self):
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
-                "ARXRobot is already connected. Do not run `robot.connect()` twice."
+                "ARX5Robot is already connected. Do not run `robot.connect()` twice."
             )
 
         if not self.leader_arms and not self.follower_arms and not self.cameras:
             raise ValueError(
-                "ARXRobot doesn't have any device to connect. See example of usage in docstring of the class."
+                "ARX5Robot doesn't have any device to connect. See example of usage in docstring of the class."
             )
 
         # Connect the arms
@@ -192,7 +196,7 @@ class ARXRobot:
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "ARXRobot is not connected. You need to run `robot.connect()`."
+                "ARX5Robot is not connected. You need to run `robot.connect()`."
             )
         
         # Prepare to assign the position of the leader to the follower
@@ -215,6 +219,10 @@ class ARXRobot:
                 self.follower_arms[name].send_command(action[0:dof + 1])
 
                 self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
+
+        # TODO remove - debug only
+        for name in self.follower_arms:
+            leader_pos[name] = self.follower_arms[name].get_state()
 
         # Early exit when recording data is not requested
         if not record_data:
@@ -263,7 +271,7 @@ class ARXRobot:
         """The returned observations do not have a batch dimension."""
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "ARXRobot is not connected. You need to run `robot.connect()`."
+                "ARX5Robot is not connected. You need to run `robot.connect()`."
             )
 
         # Read follower position
@@ -299,7 +307,7 @@ class ARXRobot:
         """The provided action is expected to be a vector."""
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "ARXRobot is not connected. You need to run `robot.connect()`."
+                "ARX5Robot is not connected. You need to run `robot.connect()`."
             )
         action = action.numpy()
 
@@ -318,7 +326,7 @@ class ARXRobot:
     def disconnect(self):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "ARXRobot is not connected. You need to run `robot.connect()` before disconnecting."
+                "ARX5Robot is not connected. You need to run `robot.connect()` before disconnecting."
             )
 
         for name in self.follower_arms:

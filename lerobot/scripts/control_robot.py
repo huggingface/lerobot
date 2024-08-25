@@ -111,12 +111,6 @@ from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
 
-
-# Set LD_LIBRARY_PATH to what it is in your interactive environment
-# os.environ['LD_LIBRARY_PATH'] = '/opt/ros/noetic/lib'
-# print(os.environ["LD_LIBRARY_PATH"])
-from lerobot.common.robot_devices.robots.arx5 import ARXRobot
-
 import cv2
 import torch
 import tqdm
@@ -409,15 +403,15 @@ def record(
 
         if policy is None:
             observation, action = robot.teleop_step(record_data=True)
-            # print(f"- Observation: {observation}\n- Action: {action}")
+            print(f"- Action: {action}")
         else:
             observation = robot.capture_observation()
 
         if not is_headless():
             image_keys = [key for key in observation if "image" in key]
-            for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+            # for key in image_keys:
+            #     cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+            # cv2.waitKey(1)
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
@@ -463,9 +457,9 @@ def record(
 
                 if not is_headless():
                     image_keys = [key for key in observation if "image" in key]
-                    for key in image_keys:
-                        cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-                    cv2.waitKey(1)
+                    # for key in image_keys:
+                    #     cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+                    # cv2.waitKey(1)
 
                 for key in not_image_keys:
                     if key not in ep_dict:
