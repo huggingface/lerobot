@@ -57,6 +57,7 @@ OPENX_DATASET_CONFIGS:
       - image
       - top_image
       - wrist45_image
+      - wrist225_image
     depth_obs_keys:
       - null
     state_obs_keys:
