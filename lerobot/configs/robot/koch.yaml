@@ -37,6 +37,10 @@ cameras:
     fps: 30
     width: 640
     height: 480
+# `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+# Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+# the number of motors in your follower arms.
+max_relative_target: null
 # Sets the leader arm in torque mode with the gripper motor set to this angle. This makes it possible
 # to squeeze the gripper and have it spring back to an open position on its own.
 gripper_open_degree: 35.156
