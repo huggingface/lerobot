@@ -164,12 +164,27 @@ class KochRobotConfig:
     leader_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     follower_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
+
+    # Optionally limit the magnitude of the relative positional target vector for safety purposes.
+    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length
+    # as the number of motors in your follower arms (assumes all follower arms have the same number of
+    # motors).
     max_relative_target: list[float] | float | None = None
 
     # Optionally set the leader arm in torque mode with the gripper motor set to this angle. This makes it
     # possible to squeeze the gripper and have it spring back to an open position on its own. If None, the
     # gripper is not put in torque mode.
     gripper_open_degree: float | None = None
+
+    def __post_init__(self):
+        if self.max_relative_target is not None and isinstance(self.max_relative_target, list):
+            n_expected_motors = len(self.max_relative_target)
+            for name in self.follower_arms:
+                if len(self.follower_arms[name]["motors"]) != n_expected_motors:
+                    raise ValueError(
+                        f"{len(self.max_relative_target)=} but {len(self.follower_arms[name]['motors'])=}."
+                        "Please make sure the lengths match."
+                    )
 
 
 class KochRobot:
@@ -215,12 +230,7 @@ class KochRobot:
     robot = KochRobot(
         leader_arms=leader_arms,
         follower_arms=follower_arms,
-        max_relative_target=[10, 10, 10, 10, 10, 15],
     )
-
-    Notice the parameter `max_relative_target`. This is a safety measure that prevents someone from providing
-    a positional target that is too far from the current robot position (which would then cause the robot to
-    move too quickly, potentially burning out the motors or making violent impact with another object).
 
     # Connect motors buses and cameras if any (Required)
     robot.connect()
@@ -235,7 +245,6 @@ class KochRobot:
     robot = KochRobot(
         leader_arms=leader_arms,
         follower_arms=follower_arms,
-        max_relative_target=[10, 10, 10, 10, 10, 15],
     )
     robot.connect()
     while True:
@@ -258,7 +267,6 @@ class KochRobot:
         leader_arms=leader_arms,
         follower_arms=follower_arms,
         cameras=cameras,
-        max_relative_target=[10, 10, 10, 10, 10, 15],
     )
     robot.connect()
     while True:
@@ -272,7 +280,6 @@ class KochRobot:
         leader_arms=leader_arms,
         follower_arms=follower_arms,
         cameras=cameras,
-        max_relative_target=[10, 10, 10, 10, 10, 15],
     )
     robot.connect()
     while True:

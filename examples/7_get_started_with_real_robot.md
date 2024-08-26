@@ -316,11 +316,8 @@ robot = KochRobot(
     leader_arms={"main": leader_arm},
     follower_arms={"main": follower_arm},
     calibration_path=".cache/calibration/koch.pkl",
-    max_relative_target=[10, 10, 10, 10, 10, 15],
 )
 ```
-
-Notice the parameter `max_relative_target`. This is a safety measure that prevents someone from providing a positional target that is too far from the current robot position (which would then cause the robot to move too quickly, potentially burning out the motors or making violent impact with another object).
 
 **Calibrate and Connect the KochRobot**
 
@@ -618,7 +615,6 @@ robot = KochRobot(
         "laptop": OpenCVCamera(0, fps=30, width=640, height=480),
         "phone": OpenCVCamera(1, fps=30, width=640, height=480),
     },
-    max_relative_target=[10, 10, 10, 10, 10, 15],
 )
 robot.connect()
 ```
