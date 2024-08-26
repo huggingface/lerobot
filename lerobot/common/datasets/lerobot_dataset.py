@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from copy import deepcopy
 import logging
 import os
 import shutil
@@ -649,7 +650,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
-        item = self.hf_dataset[idx]
+        item = deepcopy(self.hf_dataset[idx])
         ep_idx = item["episode_index"].item()
 
         query_indices = None
