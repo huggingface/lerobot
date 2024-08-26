@@ -4,7 +4,7 @@ calibration_path: .cache/calibration/aloha.pkl
 leader_arms:
   left:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    port: /dev/ttyDXL_master_left
+    port: /dev/ttyDXL_leader_left
     # port: /dev/tty.usbserial-FT89FM77
     motors:  # window_x
       # name: (index, model)
@@ -19,7 +19,7 @@ leader_arms:
       gripper: [9, xc430-w150]
   right:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    port: /dev/ttyDXL_master_right
+    port: /dev/ttyDXL_leader_right
     # port: /dev/tty.usbserial-FT891KPN
     motors:  # window_x
       # name: (index, model)
@@ -36,7 +36,7 @@ leader_arms:
 follower_arms:
   left:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    port: /dev/ttyDXL_puppet_left
+    port: /dev/ttyDXL_follower_left
     # port: /dev/tty.usbserial-FT891KBG
     motors:
       # name: [index, model]
@@ -51,7 +51,7 @@ follower_arms:
       gripper: [9, xm430-w350]
   right:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    port: /dev/ttyDXL_puppet_right
+    port: /dev/ttyDXL_follower_right
     # port: /dev/tty.usbserial-FT89FM09
     motors:
       # name: [index, model]
@@ -66,26 +66,26 @@ follower_arms:
       gripper: [9, xm430-w350]
 cameras:
   cam_high:
-    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 0
+    _target_: lerobot.common.robot_devices.cameras.realsense_trossen.IntelRealSenseCamera
+    camera_index: 128422271347
     fps: 30
     width: 640
     height: 480
   cam_low:
-    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 1
+    _target_: lerobot.common.robot_devices.cameras.realsense_trossen.IntelRealSenseCamera
+    camera_index: 130322270656
     fps: 30
     width: 640
     height: 480
   cam_left_wrist:
-    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 2
+    _target_: lerobot.common.robot_devices.cameras.realsense_trossen.IntelRealSenseCamera
+    camera_index: 218622272670
     fps: 30
     width: 640
     height: 480
   cam_right_wrist:
-    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 3
+    _target_: lerobot.common.robot_devices.cameras.realsense_trossen.IntelRealSenseCamera
+    camera_index: 130322272300
     fps: 30
     width: 640
     height: 480

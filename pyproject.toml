@@ -64,6 +64,7 @@ scikit-image = {version = ">=0.23.2", optional = true}
 pandas = {version = ">=2.2.2", optional = true}
 dynamixel-sdk = {version = ">=3.7.31", optional = true}
 pynput = {version = ">=1.7.7", optional = true}
+pyrealsense2 = "*"
 
 
 

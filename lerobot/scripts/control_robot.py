@@ -238,12 +238,12 @@ def record(
     num_episodes=50,
     video=True,
     run_compute_stats=True,
-    push_to_hub=True,
+    push_to_hub=False,
     num_image_writers=8,
     force_override=False,
 ):
     # TODO(rcadene): Add option to record logs
-
+    print("Starting to record")
     if not video:
         raise NotImplementedError()
 
@@ -338,11 +338,11 @@ def record(
         else:
             observation = robot.capture_observation()
 
-        if not is_headless():
-            image_keys = [key for key in observation if "image" in key]
-            for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+        # if not is_headless():
+        #     image_keys = [key for key in observation if "image" in key]
+        #     for key in image_keys:
+        #         cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+        #     cv2.waitKey(1)
 
         dt_s = time.perf_counter() - now
         busy_wait(1 / fps - dt_s)
@@ -365,80 +365,81 @@ def record(
             frame_index = 0
             timestamp = 0
             start_time = time.perf_counter()
-            while timestamp < episode_time_s:
-                now = time.perf_counter()
+            with tqdm.tqdm(total=episode_time_s, desc="Recording episode") as pbar:
+                while timestamp < episode_time_s:
+                    now = time.perf_counter()
 
-                if policy is None:
-                    observation, action = robot.teleop_step(record_data=True)
-                else:
-                    observation = robot.capture_observation()
+                    if policy is None:
+                        observation, action = robot.teleop_step(record_data=True)
+                    else:
+                        observation = robot.capture_observation()
 
-                image_keys = [key for key in observation if "image" in key]
-                not_image_keys = [key for key in observation if "image" not in key]
-
-                for key in image_keys:
-                    futures += [
-                        executor.submit(
-                            save_image, observation[key], key, frame_index, episode_index, videos_dir
-                        )
-                    ]
-
-                if not is_headless():
                     image_keys = [key for key in observation if "image" in key]
+                    not_image_keys = [key for key in observation if "image" not in key]
+
                     for key in image_keys:
-                        cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-                    cv2.waitKey(1)
+                        futures += [
+                            executor.submit(
+                                save_image, observation[key], key, frame_index, episode_index, videos_dir
+                            )
+                        ]
 
-                for key in not_image_keys:
-                    if key not in ep_dict:
-                        ep_dict[key] = []
-                    ep_dict[key].append(observation[key])
+                    # Uncommenting the below code halts the program for infinite time
+                    # if not is_headless():
+                    #     image_keys = [key for key in observation if "image" in key]
+                    #     for key in image_keys:
+                    #         cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+                    #     cv2.waitKey(1)
 
-                if policy is not None:
-                    with (
-                        torch.inference_mode(),
-                        torch.autocast(device_type=device.type)
-                        if device.type == "cuda" and hydra_cfg.use_amp
-                        else nullcontext(),
-                    ):
-                        # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
-                        for name in observation:
-                            if "image" in name:
-                                observation[name] = observation[name].type(torch.float32) / 255
-                                observation[name] = observation[name].permute(2, 0, 1).contiguous()
-                            observation[name] = observation[name].unsqueeze(0)
+                    for key in not_image_keys:
+                        if key not in ep_dict:
+                            ep_dict[key] = []
+                        ep_dict[key].append(observation[key])
 
-                        if device.type == "mps":
+                    if policy is not None:
+                        with (
+                            torch.inference_mode(),
+                            torch.autocast(device_type=device.type)
+                            if device.type == "cuda" and hydra_cfg.use_amp
+                            else nullcontext(),
+                        ):
+                            # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
                             for name in observation:
-                                observation[name] = observation[name].to(device)
+                                if "image" in name:
+                                    observation[name] = observation[name].type(torch.float32) / 255
+                                    observation[name] = observation[name].permute(2, 0, 1).contiguous()
+                                observation[name] = observation[name].unsqueeze(0)
 
-                        action = policy.select_action(observation)
+                            if device.type == "mps":
+                                for name in observation:
+                                    observation[name] = observation[name].to(device)
 
-                        # remove batch dimension
-                        action = action.squeeze(0)
-                        action = action.to("cpu")
+                            action = policy.select_action(observation)
 
-                    robot.send_action(action)
-                    action = {"action": action}
+                            # remove batch dimension
+                            action = action.squeeze(0)
+                            action = action.to("cpu")
 
-                for key in action:
-                    if key not in ep_dict:
-                        ep_dict[key] = []
-                    ep_dict[key].append(action[key])
+                        robot.send_action(action)
+                        action = {"action": action}
 
-                frame_index += 1
+                    for key in action:
+                        if key not in ep_dict:
+                            ep_dict[key] = []
+                        ep_dict[key].append(action[key])
 
-                dt_s = time.perf_counter() - now
-                busy_wait(1 / fps - dt_s)
+                    frame_index += 1
 
-                dt_s = time.perf_counter() - now
-                log_control_info(robot, dt_s, fps=fps)
+                    dt_s = time.perf_counter() - now
+                    busy_wait(1 / fps - dt_s)
 
-                timestamp = time.perf_counter() - start_time
+                    dt_s = time.perf_counter() - now
+                    log_control_info(robot, dt_s, fps=fps)
 
-                if exit_early:
-                    exit_early = False
-                    break
+                    timestamp = time.perf_counter() - start_time
+                    if exit_early:
+                        exit_early = False
+                        break
 
             if not stop_recording:
                 # Start resetting env while the executor are finishing
@@ -582,12 +583,12 @@ def record(
     meta_data_dir = local_dir / "meta_data"
     save_meta_data(info, stats, episode_data_index, meta_data_dir)
 
-    if push_to_hub:
-        hf_dataset.push_to_hub(repo_id, revision="main")
-        push_meta_data_to_hub(repo_id, meta_data_dir, revision="main")
-        if video:
-            push_videos_to_hub(repo_id, videos_dir, revision="main")
-        create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
+    # if push_to_hub:
+    #     hf_dataset.push_to_hub(repo_id, revision="main")
+    #     push_meta_data_to_hub(repo_id, meta_data_dir, revision="main")
+    #     if video:
+    #         push_videos_to_hub(repo_id, videos_dir, revision="main")
+    #     create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
 
     logging.info("Exiting")
     os.system('say "Exiting" &')

@@ -459,6 +459,7 @@ class KochRobot:
         images = {}
         for name in self.cameras:
             now = time.perf_counter()
+
             images[name] = self.cameras[name].async_read()
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - now
@@ -501,7 +502,7 @@ class KochRobot:
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - now
 
-        # Populate output dictionnaries and format to pytorch
+        # Populate output dictionaries and format to pytorch
         obs_dict = {}
         obs_dict["observation.state"] = torch.from_numpy(state)
         for name in self.cameras:
