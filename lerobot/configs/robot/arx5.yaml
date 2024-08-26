@@ -25,5 +25,6 @@ cameras:
     width: 640
     height: 480
 
-# python lerobot/scripts/control_robot.py record --robot-path lerobot/configs/robot/arx5.yaml --fps 50 --root tmp/data --num-episodes 1 --run-compute-stats 0
+# python lerobot/scripts/control_robot.py record --robot-path lerobot/configs/robot/arx5.yaml --fps 50 --root data --repo-id villekuosmanen/pick_coffee_prop_test --num-episodes 5
 # python lerobot/scripts/control_robot.py teleoperate --robot-path lerobot/configs/robot/arx5.yaml --fps 50
+# DATA_DIR=data python lerobot/scripts/train.py dataset_repo_id=villekuosmanen/pick_coffee_prop_test policy=act_arx5_real env=arx5_real hydra.run.dir=outputs/train/act_arx5_test hydra.job.name=act_arx5_test device=cuda wandb.enable=true

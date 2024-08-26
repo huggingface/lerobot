@@ -91,6 +91,7 @@ def decode_video_frames_torchvision(
     can be adjusted during encoding to take into account decoding time and video size in bytes.
     """
     video_path = str(video_path)
+    tolerance_s = 0.2
 
     # set backend
     keyframes_only = False

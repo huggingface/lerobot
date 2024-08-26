@@ -112,6 +112,7 @@ from functools import cache
 from pathlib import Path
 
 import cv2
+import numpy as np
 import torch
 import tqdm
 from omegaconf import DictConfig
@@ -478,6 +479,8 @@ def record(
                             if "image" in name:
                                 observation[name] = observation[name].type(torch.float32) / 255
                                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
+                            if isinstance(observation[name], np.ndarray):
+                                observation[name] = torch.from_numpy(observation[name]).type(torch.float32)
                             observation[name] = observation[name].unsqueeze(0)
                             observation[name] = observation[name].to(device)
 
@@ -601,6 +604,8 @@ def record(
     say("Encoding videos")
     # Use ffmpeg to convert frames stored as png into mp4 videos
     for episode_index in tqdm.tqdm(range(num_episodes)):
+        if episode_index < 50:
+            continue
         for key in image_keys:
             tmp_imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
             fname = f"{key}_episode_{episode_index:06d}.mp4"
@@ -757,7 +762,7 @@ if __name__ == "__main__":
     parser_record.add_argument(
         "--reset-time-s",
         type=int,
-        default=60,
+        default=45,
         help="Number of seconds for resetting the environment after each episode.",
     )
     parser_record.add_argument("--num-episodes", type=int, default=50, help="Number of episodes to record.")
