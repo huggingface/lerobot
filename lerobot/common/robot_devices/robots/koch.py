@@ -3,6 +3,7 @@ import pickle
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 import torch
@@ -176,15 +177,18 @@ class KochRobotConfig:
     # gripper is not put in torque mode.
     gripper_open_degree: float | None = None
 
-    def __post_init__(self):
-        if self.max_relative_target is not None and isinstance(self.max_relative_target, list):
-            n_expected_motors = len(self.max_relative_target)
+    def __setattr__(self, prop: str, val):
+        if prop == "max_relative_target" and val is not None and isinstance(val, Sequence):
             for name in self.follower_arms:
-                if len(self.follower_arms[name]["motors"]) != n_expected_motors:
+                if len(self.follower_arms[name].motors) != len(val):
                     raise ValueError(
-                        f"{len(self.max_relative_target)=} but {len(self.follower_arms[name]['motors'])=}."
-                        "Please make sure the lengths match."
+                        f"len(max_relative_target)={len(val)} but the follower arm with name {name} has "
+                        f"{len(self.follower_arms[name].motors)} motors. Please make sure that the "
+                        f"`max_relative_target` list has as many parameters as there are motors per arm. "
+                        "Note: This feature does not yet work with robots where different follower arms have "
+                        "different numbers of motors."
                     )
+        super().__setattr__(prop, val)
 
 
 class KochRobot:
