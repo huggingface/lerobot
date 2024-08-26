@@ -45,6 +45,7 @@ def concatenate_episodes(ep_dicts):
     return data_dict
 
 
+# deprecated, use `save_images_to_video` instead
 def save_images_concurrently(imgs_array: numpy.array, out_dir: Path, max_workers: int = 4):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

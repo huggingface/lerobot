@@ -16,8 +16,7 @@ import pytest
 import torch
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.push_dataset_to_hub.utils import save_images_concurrently
-from lerobot.common.datasets.video_utils import encode_video_frames
+from lerobot.common.datasets.video_utils import save_images_to_video
 from lerobot.scripts.push_dataset_to_hub import push_dataset_to_hub
 from tests.utils import require_package_arg
 
@@ -206,12 +205,9 @@ def _mock_download_raw_dora(raw_dir, num_frames=6, num_episodes=3, fps=30):
     for ep_idx in range(num_episodes):
         imgs_array = np.random.randint(0, 255, size=(num_frames // num_episodes, 480, 640, 3), dtype=np.uint8)
 
-        tmp_imgs_dir = raw_dir / "tmp_images"
-        save_images_concurrently(imgs_array, tmp_imgs_dir)
-
         fname = f"{cam_key}_episode_{ep_idx:06d}.mp4"
         video_path = raw_dir / "videos" / fname
-        encode_video_frames(tmp_imgs_dir, video_path, fps, vcodec="libx264")
+        save_images_to_video(imgs_array, video_path, fps, imgs_array[0].shape[1], imgs_array[0].shape[0], vcodec="libx264")
 
 
 def _mock_download_raw(raw_dir, repo_id):

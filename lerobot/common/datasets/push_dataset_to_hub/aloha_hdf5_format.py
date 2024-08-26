@@ -18,7 +18,6 @@ Contains utilities to process raw data format of HDF5 files like in: https://git
 """
 
 import gc
-import shutil
 from pathlib import Path
 
 import h5py
@@ -33,12 +32,11 @@ from lerobot.common.datasets.push_dataset_to_hub.utils import (
     calculate_episode_data_index,
     concatenate_episodes,
     get_default_encoding,
-    save_images_concurrently,
 )
 from lerobot.common.datasets.utils import (
     hf_transform_to_torch,
 )
-from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
+from lerobot.common.datasets.video_utils import VideoFrame, save_images_to_video
 
 
 def get_cameras(hdf5_data):
@@ -127,17 +125,10 @@ def load_from_raw(
                     imgs_array = ep[f"/observations/images/{camera}"][:]
 
                 if video:
-                    # save png images in temporary directory
-                    tmp_imgs_dir = videos_dir / "tmp_images"
-                    save_images_concurrently(imgs_array, tmp_imgs_dir)
-
                     # encode images to a mp4 video
                     fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
                     video_path = videos_dir / fname
-                    encode_video_frames(tmp_imgs_dir, video_path, fps, **(encoding or {}))
-
-                    # clean temporary images directory
-                    shutil.rmtree(tmp_imgs_dir)
+                    save_images_to_video(imgs_array, video_path, fps, imgs_array[0].shape[1], imgs_array[0].shape[0], **(encoding or {}))
 
                     # store the reference to the video frame
                     ep_dict[img_key] = [
