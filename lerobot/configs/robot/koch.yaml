@@ -37,3 +37,6 @@ cameras:
     fps: 30
     width: 640
     height: 480
+# Sets the leader arm in torque mode with the gripper motor set to this angle. This makes it possible
+# to squeeze the gripper and have it spring back to an open position on its own.
+gripper_open_degree: 35.156
