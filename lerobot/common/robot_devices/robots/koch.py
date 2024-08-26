@@ -26,7 +26,6 @@ URL_TEMPLATE = (
 # In nominal degree range ]-180, +180[
 ZERO_POSITION_DEGREE = 0
 ROTATED_POSITION_DEGREE = 90
-GRIPPER_OPEN_DEGREE = 35.156
 
 
 def assert_drive_mode(drive_mode):
@@ -164,6 +163,11 @@ class KochRobotConfig:
     leader_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     follower_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
+
+    # Optionally set the leader arm in torque mode with the gripper motor set to this angle. This makes it
+    # possible to squeeze the gripper and have it spring back to an open position on its own. If None, the
+    # gripper is not put in torque mode.
+    gripper_open_degree: float | None = None
 
 
 class KochRobot:
@@ -339,11 +343,12 @@ class KochRobot:
             print(f"Activating torque on {name} follower arm.")
             self.follower_arms[name].write("Torque_Enable", 1)
 
-        # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
-        # so that we can use it as a trigger to close the gripper of the follower arms.
-        for name in self.leader_arms:
-            self.leader_arms[name].write("Torque_Enable", 1, "gripper")
-            self.leader_arms[name].write("Goal_Position", GRIPPER_OPEN_DEGREE, "gripper")
+        if self.config.gripper_open_degree is not None:
+            # Set the leader arm in torque mode with the gripper motor set to an angle. This makes it possible
+            # to squeeze the gripper and have it spring back to an open position on its own.
+            for name in self.leader_arms:
+                self.leader_arms[name].write("Torque_Enable", 1, "gripper")
+                self.leader_arms[name].write("Goal_Position", self.config.gripper_open_degree, "gripper")
 
         # Connect the cameras
         for name in self.cameras:
