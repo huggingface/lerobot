@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import os
 import os.path as osp
 import random
 from contextlib import contextmanager
@@ -25,6 +26,12 @@ import hydra
 import numpy as np
 import torch
 from omegaconf import DictConfig
+
+
+def inside_slurm():
+    """Check whether the python process was launched through slurm"""
+    # TODO(rcadene): return False for interactive mode `--pty bash`
+    return "SLURM_JOB_ID" in os.environ
 
 
 def get_safe_torch_device(cfg_device: str, log: bool = False) -> torch.device:
@@ -158,7 +165,6 @@ def init_hydra_config(config_path: str, overrides: list[str] | None = None) -> D
         version_base="1.2",
     )
     cfg = hydra.compose(Path(config_path).stem, overrides)
-
     return cfg
 
 

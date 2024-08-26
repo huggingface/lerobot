@@ -241,6 +241,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         raise NotImplementedError()
 
     init_logging()
+    logging.info(pformat(OmegaConf.to_container(cfg)))
 
     if cfg.training.online_steps > 0 and isinstance(cfg.dataset_repo_id, ListConfig):
         raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
@@ -285,6 +286,16 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         raise RuntimeError(
             f"The configured output directory {Logger.get_last_checkpoint_dir(out_dir)} already exists. If "
             "you meant to resume training, please use `resume=true` in your command or yaml configuration."
+        )
+
+    if cfg.eval.batch_size > cfg.eval.n_episodes:
+        raise ValueError(
+            "The eval batch size is greater than the number of eval episodes "
+            f"({cfg.eval.batch_size} > {cfg.eval.n_episodes}). As a result, {cfg.eval.batch_size} "
+            f"eval environments will be instantiated, but only {cfg.eval.n_episodes} will be used. "
+            "This might significantly slow down evaluation. To fix this, you should update your command "
+            f"to increase the number of episodes to match the batch size (e.g. `eval.n_episodes={cfg.eval.batch_size}`), "
+            f"or lower the batch size (e.g. `eval.batch_size={cfg.eval.n_episodes}`)."
         )
 
     # log metrics to terminal and wandb

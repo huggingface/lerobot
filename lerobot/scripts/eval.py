@@ -71,7 +71,13 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.policies.rollout_wrapper import PolicyRolloutWrapper
 from lerobot.common.utils.io_utils import write_video
-from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
+from lerobot.common.utils.utils import (
+    get_safe_torch_device,
+    init_hydra_config,
+    init_logging,
+    inside_slurm,
+    set_global_seed,
+)
 
 
 def rollout(
@@ -155,7 +161,7 @@ def rollout(
     progbar = trange(
         max_steps,
         desc=f"Running rollout with at most {max_steps} steps",
-        disable=not enable_progbar,
+        disable=inside_slurm(),  # we dont want progress bar when we use slurm, since it clutters the logs
         leave=False,
     )
     while not np.all(done):
@@ -360,7 +366,8 @@ def eval_policy(
     if return_episode_data:
         episode_data: dict | None = None
 
-    progbar = trange(n_batches, desc="Stepping through eval batches", disable=not enable_progbar)
+    # we dont want progress bar when we use slurm, since it clutters the logs
+    progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm())
     for batch_ix in progbar:
         # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
         # step.
@@ -549,6 +556,16 @@ def main(
         hydra_cfg = init_hydra_config(str(pretrained_policy_path / "config.yaml"), config_overrides)
     else:
         hydra_cfg = init_hydra_config(hydra_cfg_path, config_overrides)
+
+    if hydra_cfg.eval.batch_size > hydra_cfg.eval.n_episodes:
+        raise ValueError(
+            "The eval batch size is greater than the number of eval episodes "
+            f"({hydra_cfg.eval.batch_size} > {hydra_cfg.eval.n_episodes}). As a result, {hydra_cfg.eval.batch_size} "
+            f"eval environments will be instantiated, but only {hydra_cfg.eval.n_episodes} will be used. "
+            "This might significantly slow down evaluation. To fix this, you should update your command "
+            f"to increase the number of episodes to match the batch size (e.g. `eval.n_episodes={hydra_cfg.eval.batch_size}`), "
+            f"or lower the batch size (e.g. `eval.batch_size={hydra_cfg.eval.n_episodes}`)."
+        )
 
     if out_dir is None:
         out_dir = f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
