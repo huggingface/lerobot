@@ -162,10 +162,12 @@ def write_episode_data_csv(output_dir, file_name, episode_index, dataset):
         columns += ["action"]
 
     data = dataset.hf_dataset.select(range(from_idx, to_idx)).with_format("numpy").select_columns(columns)
-    rows = np.hstack((np.expand_dims(data['timestamp'], axis=1), *[data[col] for col in columns[1:]])).tolist()
+    rows = np.hstack(
+        (np.expand_dims(data["timestamp"], axis=1), *[data[col] for col in columns[1:]])
+    ).tolist()
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    with open(output_dir / file_name, "w", newline='') as csvfile:
+    with open(output_dir / file_name, "w", newline="") as csvfile:
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(header)
         csvwriter.writerows(rows)
