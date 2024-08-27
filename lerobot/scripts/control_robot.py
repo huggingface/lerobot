@@ -238,7 +238,7 @@ def record(
     num_episodes=50,
     video=True,
     run_compute_stats=True,
-    push_to_hub=False,
+    push_to_hub=True,
     num_image_writers=8,
     force_override=False,
 ):
@@ -583,12 +583,12 @@ def record(
     meta_data_dir = local_dir / "meta_data"
     save_meta_data(info, stats, episode_data_index, meta_data_dir)
 
-    # if push_to_hub:
-    #     hf_dataset.push_to_hub(repo_id, revision="main")
-    #     push_meta_data_to_hub(repo_id, meta_data_dir, revision="main")
-    #     if video:
-    #         push_videos_to_hub(repo_id, videos_dir, revision="main")
-    #     create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
+    if push_to_hub:
+        hf_dataset.push_to_hub(repo_id, revision="main")
+        push_meta_data_to_hub(repo_id, meta_data_dir, revision="main")
+        if video:
+            push_videos_to_hub(repo_id, videos_dir, revision="main")
+        create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
 
     logging.info("Exiting")
     os.system('say "Exiting" &')
