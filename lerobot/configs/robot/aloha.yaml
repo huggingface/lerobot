@@ -66,25 +66,25 @@ follower_arms:
       gripper: [9, xm430-w350]
 cameras:
   cam_high:
-    _target_: lerobot.common.robot_devices.cameras.realsense_trossen.IntelRealSenseCamera
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
     camera_index: 128422271347
     fps: 30
     width: 640
     height: 480
   cam_low:
-    _target_: lerobot.common.robot_devices.cameras.realsense_trossen.IntelRealSenseCamera
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
     camera_index: 130322270656
     fps: 30
     width: 640
     height: 480
   cam_left_wrist:
-    _target_: lerobot.common.robot_devices.cameras.realsense_trossen.IntelRealSenseCamera
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
     camera_index: 218622272670
     fps: 30
     width: 640
     height: 480
   cam_right_wrist:
-    _target_: lerobot.common.robot_devices.cameras.realsense_trossen.IntelRealSenseCamera
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
     camera_index: 130322272300
     fps: 30
     width: 640

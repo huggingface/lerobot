@@ -2,24 +2,24 @@
 This file contains utilities for recording frames from cameras. For more info look at `OpenCVCamera` docstring.
 """
 
+
+
+from dataclasses import dataclass, replace
+from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.utils.utils import capture_timestamp_utc
+from lerobot.scripts.control_robot import busy_wait
+from pathlib import Path
+from PIL import Image
+from threading import Thread
 import argparse
 import concurrent.futures
+import cv2
 import math
+import numpy as np
 import platform
 import shutil
 import threading
 import time
-from dataclasses import dataclass, replace
-from pathlib import Path
-from threading import Thread
-
-import cv2
-import numpy as np
-from PIL import Image
-
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from lerobot.common.utils.utils import capture_timestamp_utc
-from lerobot.scripts.control_robot import busy_wait
 
 # Use 1 thread to avoid blocking the main thread. Especially useful during data collection
 # when other threads are used to save the images.
