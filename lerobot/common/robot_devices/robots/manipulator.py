@@ -9,7 +9,6 @@ import torch
 
 from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.motors.dynamixel import (
-    OperatingMode,
     TorqueMode,
     convert_degrees_to_steps,
 )
@@ -24,10 +23,13 @@ URL_TEMPLATE = (
     "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"
 )
 
-# In nominal degree range ]-180, +180[
+# The following positions are provided in nominal degree range ]-180, +180[
+# For more info on these constants, see comments in the code where they get used.
 ZERO_POSITION_DEGREE = 0
-ROTATED_POSITION_DEGREE = 90
+ROTATED_POSITION_DEGREE = 45
+DELTA_POSITION_DEGREE = 45
 KOCH_GRIPPER_OPEN_DEGREE = 35.156
+ALOHA_GRIPPER_OPEN_DEGREE = 20
 
 
 def assert_drive_mode(drive_mode):
@@ -43,26 +45,6 @@ def apply_drive_mode(position, drive_mode):
     signed_drive_mode = -(drive_mode * 2 - 1)
     position *= signed_drive_mode
     return position
-
-
-def reset_torque_mode(arm: MotorsBus):
-    # To be configured, all servos must be in "torque disable" mode
-    arm.write("Torque_Enable", TorqueMode.DISABLED.value)
-
-    # Use 'extended position mode' for all motors except gripper, because in joint mode the servos can't
-    # rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling the arm,
-    # you could end up with a servo with a position 0 or 4095 at a crucial point See [
-    # https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11]
-    all_motors_except_gripper = [name for name in arm.motor_names if name != "gripper"]
-    if len(all_motors_except_gripper) > 0:
-        arm.write("Operating_Mode", OperatingMode.EXTENDED_POSITION.value, all_motors_except_gripper)
-
-    # Use 'position control current based' for gripper to be limited by the limit of the current.
-    # For the follower gripper, it means it can grasp an object without forcing too much even tho,
-    # it's goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
-    # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
-    # to make it move, and it will move back to its original target position when we release the force.
-    arm.write("Operating_Mode", OperatingMode.CURRENT_CONTROLLED_POSITION.value, "gripper")
 
 
 def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
@@ -87,7 +69,8 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     run_arm_calibration(arm, "koch", "left", "follower")
     ```
     """
-    reset_torque_mode(arm)
+    # To be configured, all servos must be in "torque disable" mode
+    arm.write("Torque_Enable", TorqueMode.DISABLED.value)
 
     print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
 
@@ -101,11 +84,8 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     zero_position = convert_degrees_to_steps(ZERO_POSITION_DEGREE, arm.motor_models)
 
     def _compute_nearest_rounded_position(position, models):
-        # TODO(rcadene): Rework this function since some motors cant physically rotate a quarter turn
-        # (e.g. the gripper of Aloha arms can only rotate ~50 degree)
-        quarter_turn_degree = 90
-        quarter_turn = convert_degrees_to_steps(quarter_turn_degree, models)
-        nearest_pos = np.round(position.astype(float) / quarter_turn) * quarter_turn
+        delta_turn = convert_degrees_to_steps(DELTA_POSITION_DEGREE, models)
+        nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
         return nearest_pos.astype(position.dtype)
 
     # Compute homing offset so that `present_position + homing_offset ~= target_position`.
@@ -308,9 +288,9 @@ class ManipulatorRobot:
         if self.calibration_path.exists():
             # Reset all arms before setting calibration
             for name in self.follower_arms:
-                reset_torque_mode(self.follower_arms[name])
+                self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
             for name in self.leader_arms:
-                reset_torque_mode(self.leader_arms[name])
+                self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
 
             with open(self.calibration_path, "rb") as f:
                 calibration = pickle.load(f)
@@ -373,16 +353,40 @@ class ManipulatorRobot:
         return calibration
 
     def set_koch_robot_preset(self):
-        # Set better PID values to close the gap between recored states and actions
-        # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
+        def set_operating_mode_(arm):
+            arm.write("Torque_Enable", TorqueMode.DISABLED.value)
+
+            # Use 'extended position mode' for all motors except gripper, because in joint mode the servos can't
+            # rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling the arm,
+            # you could end up with a servo with a position 0 or 4095 at a crucial point See [
+            # https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11]
+            all_motors_except_gripper = [name for name in arm.motor_names if name != "gripper"]
+            if len(all_motors_except_gripper) > 0:
+                # 4 corresponds to Extended Position on Koch motors
+                arm.write("Operating_Mode", 4, all_motors_except_gripper)
+
+            # Use 'position control current based' for gripper to be limited by the limit of the current.
+            # For the follower gripper, it means it can grasp an object without forcing too much even tho,
+            # it's goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
+            # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
+            # to make it move, and it will move back to its original target position when we release the force.
+            # 5 corresponds to Current Controlled Position on Koch gripper motors "xl330-m077, xl330-m288"
+            arm.write("Operating_Mode", 5, "gripper")
+
         for name in self.follower_arms:
+            set_operating_mode_(self.follower_arms[name])
+
+            # Set better PID values to close the gap between recorded states and actions
+            # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
             self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
             self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
             self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
 
-        # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
-        # so that we can use it as a trigger to close the gripper of the follower arms.
         for name in self.leader_arms:
+            set_operating_mode_(self.leader_arms[name])
+
+            # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
+            # so that we can use it as a trigger to close the gripper of the follower arms.
             self.leader_arms[name].write("Torque_Enable", 1, "gripper")
             self.leader_arms[name].write("Goal_Position", KOCH_GRIPPER_OPEN_DEGREE, "gripper")
 
@@ -391,19 +395,35 @@ class ManipulatorRobot:
         # As a result, if only one of them is required to move to a certain position,
         # the other will follow. This is to avoid breaking the motors.
         for name in self.follower_arms:
-            shoulder_idx = self.follower_arms[name].read("ID", "shoulder")
-            elbow_idx = self.follower_arms[name].read("ID", "elbow")
-            self.follower_arms[name].write("Secondary_ID", shoulder_idx, "shoulder_shadow")
-            self.follower_arms[name].write("Secondary_ID", elbow_idx, "elbow_shadow")
+            if "shoulder_shadow" in self.follower_arms[name].motor_names:
+                shoulder_idx = self.follower_arms[name].read("ID", "shoulder")
+                self.follower_arms[name].write("Secondary_ID", shoulder_idx, "shoulder_shadow")
 
-            # Also set a velocity limit of 131 as advised by Trossen Robotics
-            self.follower_arms[name].write("Velocity_Limit", 131)
+            if "elbow_shadow" in self.follower_arms[name].motor_names:
+                elbow_idx = self.follower_arms[name].read("ID", "elbow")
+                self.follower_arms[name].write("Secondary_ID", elbow_idx, "elbow_shadow")
 
         for name in self.leader_arms:
-            shoulder_idx = self.leader_arms[name].read("ID", "shoulder")
-            elbow_idx = self.leader_arms[name].read("ID", "elbow")
-            self.leader_arms[name].write("Secondary_ID", shoulder_idx, "shoulder_shadow")
-            self.leader_arms[name].write("Secondary_ID", elbow_idx, "elbow_shadow")
+            if "shoulder_shadow" in self.leader_arms[name].motor_names:
+                shoulder_idx = self.leader_arms[name].read("ID", "shoulder")
+                self.leader_arms[name].write("Secondary_ID", shoulder_idx, "shoulder_shadow")
+
+            if "elbow_shadow" in self.leader_arms[name].motor_names:
+                elbow_idx = self.leader_arms[name].read("ID", "elbow")
+                self.leader_arms[name].write("Secondary_ID", elbow_idx, "elbow_shadow")
+
+        for name in self.follower_arms:
+            # Set a velocity limit of 131 as advised by Trossen Robotics
+            self.follower_arms[name].write("Velocity_Limit", 131)
+
+            # Use 'position control current based' for follower gripper to be limited by the limit of the current.
+            # It can grasp an object without forcing too much even tho,
+            # it's goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
+            # 5 corresponds to Current Controlled Position on Aloha gripper follower "xm430-w350"
+            self.follower_arms[name].write("Operating_Mode", 5, "gripper")
+
+            # Note: We can't enable torque on the leader gripper since "xc430-w150" doesn't have
+            # a Current Controlled Position mode.
 
     def teleop_step(
         self, record_data=False

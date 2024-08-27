@@ -254,15 +254,6 @@ class TorqueMode(enum.Enum):
     DISABLED = 0
 
 
-class OperatingMode(enum.Enum):
-    VELOCITY = 1
-    POSITION = 3
-    EXTENDED_POSITION = 4
-    CURRENT_CONTROLLED_POSITION = 5
-    PWM = 16
-    UNKNOWN = -1
-
-
 class DriveMode(enum.Enum):
     NON_INVERTED = 0
     INVERTED = 1
