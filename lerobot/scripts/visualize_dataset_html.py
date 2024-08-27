@@ -53,10 +53,12 @@ python lerobot/scripts/visualize_dataset_html.py \
 """
 
 import argparse
+import csv
 import logging
 import shutil
 from pathlib import Path
 
+import numpy as np
 import torch
 import tqdm
 from flask import Flask, redirect, render_template, url_for
@@ -159,22 +161,14 @@ def write_episode_data_csv(output_dir, file_name, episode_index, dataset):
     if has_action:
         columns += ["action"]
 
-    rows = []
-    data = dataset.hf_dataset.select_columns(columns)
-    for i in range(from_idx, to_idx):
-        row = [data[i]["timestamp"].item()]
-        if has_state:
-            row += data[i]["observation.state"].tolist()
-        if has_action:
-            row += data[i]["action"].tolist()
-        rows.append(row)
+    data = dataset.hf_dataset.select(range(from_idx, to_idx)).with_format("numpy").select_columns(columns)
+    rows = np.hstack((np.expand_dims(data['timestamp'], axis=1), *[data[col] for col in columns[1:]])).tolist()
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    with open(output_dir / file_name, "w") as f:
-        f.write(",".join(header) + "\n")
-        for row in rows:
-            row_str = [str(col) for col in row]
-            f.write(",".join(row_str) + "\n")
+    with open(output_dir / file_name, "w", newline='') as csvfile:
+        csvwriter = csv.writer(csvfile)
+        csvwriter.writerow(header)
+        csvwriter.writerows(rows)
 
 
 def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]:
