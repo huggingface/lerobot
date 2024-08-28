@@ -57,7 +57,6 @@ import logging
 import shutil
 from pathlib import Path
 
-import torch
 import tqdm
 from flask import Flask, redirect, render_template, url_for
 
