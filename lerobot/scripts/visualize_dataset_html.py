@@ -161,7 +161,7 @@ def write_episode_data_csv(output_dir, file_name, episode_index, dataset):
     if has_action:
         columns += ["action"]
 
-    data = dataset.hf_dataset.select(range(from_idx, to_idx)).with_format("numpy").select_columns(columns)
+    data = dataset.hf_dataset.select(range(from_idx, to_idx)).select_columns(columns).with_format("numpy")
     rows = np.hstack(
         (np.expand_dims(data["timestamp"], axis=1), *[data[col] for col in columns[1:]])
     ).tolist()
