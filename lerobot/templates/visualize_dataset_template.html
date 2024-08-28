@@ -96,16 +96,17 @@
                     <source src="{{ video_info.url }}">
                     Your browser does not support the video tag.
                 </video>
-                <!-- Language Instruction (only if it exists) -->
-                {% if video_info.language_instruction %}
-                <p class="text-sm font-bold mt-2">
-                    Language Instruction: <em>{{ video_info.language_instruction }}</em>
-                </p>
-                <hr class="my-4 border-gray-600">
-                {% endif %}
             </div>
             {% endfor %}
         </div>
+
+        <!-- Language instruction -->
+        {% if videos_info[0].language_instruction %}
+        <div class="text-sm font-bold mt-2">
+            Language Instruction: <em>{{ videos_info[0].language_instruction }}</em>
+        </div>
+        <hr class="my-4 border-gray-600">
+        {% endif %}
 
         <!-- Shortcuts info -->
         <div class="text-sm hidden md:block">
