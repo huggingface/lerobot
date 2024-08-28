@@ -112,10 +112,14 @@ def run_server(
             "fps": dataset.fps,
         }
         video_paths = get_episode_video_paths(dataset, episode_id)
+        language_instruction = get_episode_language_instruction(dataset, episode_id)
         videos_info = [
             {"url": url_for("static", filename=video_path), "filename": Path(video_path).name}
             for video_path in video_paths
         ]
+        if language_instruction:
+            videos_info[0]["language_instruction"] = language_instruction
+
         ep_csv_url = url_for("static", filename=get_ep_csv_fname(episode_id))
         return render_template(
             "visualize_dataset_template.html",
@@ -184,6 +188,22 @@ def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]
         dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"]
         for key in dataset.video_frame_keys
     ]
+
+
+def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> list[str]:
+    # check if the dataset has language instructions
+    if "language_instruction" not in dataset.hf_dataset.features:
+        return None
+
+    # get first frame index
+    first_frame_idx = dataset.episode_data_index["from"][ep_index].item()
+
+    language_instruction = dataset.hf_dataset[first_frame_idx]["language_instruction"]
+    # hack to remove the prefix and suffix in open x that were badly stored
+    language_instruction = language_instruction.removeprefix("tf.Tensor(b'").removesuffix(
+        "', shape=(), dtype=string)"
+    )
+    return language_instruction
 
 
 def visualize_dataset_html(
