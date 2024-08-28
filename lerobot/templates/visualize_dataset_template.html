@@ -102,10 +102,9 @@
 
         <!-- Language instruction -->
         {% if videos_info[0].language_instruction %}
-        <div class="text-sm font-bold mt-2">
-            Language Instruction: <em>{{ videos_info[0].language_instruction }}</em>
-        </div>
-        <hr class="my-4 border-gray-600">
+        <p class="font-medium mt-2">
+            Language Instruction: <span class="italic">{{ videos_info[0].language_instruction }}</span>
+        </p>
         {% endif %}
 
         <!-- Shortcuts info -->
