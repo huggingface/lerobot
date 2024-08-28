@@ -65,19 +65,6 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.utils.utils import init_logging
 
 
-class EpisodeSampler(torch.utils.data.Sampler):
-    def __init__(self, dataset, episode_index):
-        from_idx = dataset.episode_data_index["from"][episode_index].item()
-        to_idx = dataset.episode_data_index["to"][episode_index].item()
-        self.frame_ids = range(from_idx, to_idx)
-
-    def __iter__(self):
-        return iter(self.frame_ids)
-
-    def __len__(self):
-        return len(self.frame_ids)
-
-
 def run_server(
     dataset: LeRobotDataset,
     episodes: list[int],
