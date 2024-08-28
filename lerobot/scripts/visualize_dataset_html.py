@@ -201,10 +201,7 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
     language_instruction = dataset.hf_dataset[first_frame_idx]["language_instruction"]
     # TODO (michel-aractingi) hack to get the sentence, some strings in openx are badly stored
     # with the tf.tensor appearing in the string
-    language_instruction = language_instruction \
-                .removeprefix("tf.Tensor(b'") \
-                .removesuffix("', shape=(), dtype=string)")
-    return language_instruction
+    return language_instruction.removeprefix("tf.Tensor(b'").removesuffix("', shape=(), dtype=string)")
 
 
 def visualize_dataset_html(
