@@ -446,9 +446,10 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 offline_dataset.tolerance_s,
                 offline_dataset.video_backend,
             )
-            episode_frames.append(frame)
             # Add data to the cache when a full episode has been gathered.
             if frame["episode_index"] > episode_index or i == len(offline_dataset) - 1:
+                if i == len(offline_dataset) - 1:
+                    episode_frames.append(frame)
                 episode_data = {}
                 for k in episode_frames[0]:
                     episode_data[k] = torch.stack([frame[k] for frame in episode_frames])
@@ -460,6 +461,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 offline_dataset_cache.add_data(episode_data)
                 episode_index += 1
                 episode_frames = []
+            episode_frames.append(frame)
         # Sanity check to make sure we copied all data.
         assert offline_dataset_cache.num_samples == len(offline_dataset)
         # Re-enable image transforms in offline dataset (which we disabled before to siphon the
