@@ -536,6 +536,56 @@ class DynamixelMotorsBus:
     def set_calibration(self, calibration: dict[str, list]):
         self.calibration = calibration
 
+    def apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
+        try:
+            values = self.apply_calibration(values, motor_names)
+        except ValueError:
+            self.autocorrect_calibration(values, motor_names)
+            values = self.apply_calibration(values, motor_names)
+        return values
+
+    def autocorrect_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
+        if motor_names is None:
+            motor_names = self.motor_names
+
+        # Convert from unsigned int32 original range [0, 2**32[ to centered signed int32 range [-2**31, 2**31[
+        values = values.astype(np.float32)
+
+        for i, name in enumerate(motor_names):
+            calib_idx = self.calibration["motor_names"].index(name)
+            calib_mode = self.calibration["calib_mode"][calib_idx]
+
+            if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
+                drive_mode = self.calibration["drive_mode"][calib_idx]
+                homing_offset = self.calibration["homing_offset"][calib_idx]
+                _, model = self.motors[name]
+                resolution = self.model_resolution[model]
+
+                if drive_mode:
+                    values[i] *= -1
+
+                # values[i] = (values[i] + homing_offset + resolution * factor) / (resolution // 2) * 180
+                # - 180 <= (values[i] + homing_offset + resolution * factor) / (resolution // 2) * 180 <= 180
+                # (- 180 / 180 * (resolution // 2) - values[i] + homing_offset) / resolution <= factor <= (180 / 180 * (resolution // 2) - values[i] + homing_offset) / resolution
+                low_factor = (-180 / 180 * (resolution // 2) - values[i] + homing_offset) / resolution
+                upp_factor = (180 / 180 * (resolution // 2) - values[i] + homing_offset) / resolution
+
+            elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
+                start_pos = self.calibration["start_pos"][calib_idx]
+                end_pos = self.calibration["end_pos"][calib_idx]
+
+                # values[i] = (values[i] - start_pos + resolution * factor) / (end_pos + resolution * factor - start_pos - resolution * factor) * 100
+                # values[i] = (values[i] - start_pos + resolution * factor) / (end_pos - start_pos) * 100
+                # 0 <= (values[i] - start_pos + resolution * factor) / (end_pos - start_pos) * 100 <= 100
+                # (start_pos - values[i]) / resolution <= factor <= (end_pos - values[i]) / resolution
+                low_factor = (start_pos - values[i]) / resolution
+                upp_factor = (end_pos - values[i]) / resolution
+
+            if low_factor != upp_factor:
+                raise ValueError(f"{low_factor=} {upp_factor=}")
+
+            self.calibration["homing_offset"][calib_idx] += resolution * low_factor
+
     def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         """Convert from unsigned int32 joint position range [0, 2**32[ to the universal float32 nominal degree range ]-180.0, 180.0[ with
         a "zero position" at 0 degree.
@@ -554,10 +604,7 @@ class DynamixelMotorsBus:
             motor_names = self.motor_names
 
         # Convert from unsigned int32 original range [0, 2**32[ to centered signed int32 range [-2**31, 2**31[
-        values = values.astype(np.int32)
-
-        drive_mode = np.ones(len(values), dtype=np.int32)
-        homing_offset = np.zeros(len(values), dtype=np.int32)
+        values = values.astype(np.float32)
 
         for i, name in enumerate(motor_names):
             calib_idx = self.calibration["motor_names"].index(name)
@@ -566,6 +613,8 @@ class DynamixelMotorsBus:
             if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
                 drive_mode = self.calibration["drive_mode"][calib_idx]
                 homing_offset = self.calibration["homing_offset"][calib_idx]
+                _, model = self.motors[name]
+                resolution = self.model_resolution[model]
 
                 # Update direction of rotation of the motor to match between leader and follower.
                 # In fact, the motor of the leader for a given joint can be assembled in an
@@ -576,16 +625,6 @@ class DynamixelMotorsBus:
                 # Convert from range [-2**31, 2**31[ to
                 # nominal range ]-resolution, resolution[ (e.g. ]-2048, 2048[)
                 values[i] += homing_offset
-
-        values = values.astype(np.float32)
-
-        for i, name in enumerate(motor_names):
-            calib_idx = self.calibration["motor_names"].index(name)
-            calib_mode = self.calibration["calib_mode"][calib_idx]
-
-            if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
-                _, model = self.motors[name]
-                resolution = self.model_resolution[model]
 
                 # Convert from range ]-resolution, resolution[ to
                 # universal float32 centered degree range ]-180, 180[
@@ -632,9 +671,17 @@ class DynamixelMotorsBus:
             calib_mode = self.calibration["calib_mode"][calib_idx]
 
             if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
+                drive_mode = self.calibration["drive_mode"][calib_idx]
+                homing_offset = self.calibration["homing_offset"][calib_idx]
                 _, model = self.motors[name]
                 resolution = self.model_resolution[model]
+
+                # Convert from nominal range ]-resolution, resolution[ to centered signed int32 range [-2**31, 2**31[
                 values[i] = values[i] / 180 * (resolution // 2)
+
+                values[i] -= homing_offset
+                if drive_mode:
+                    values[i] *= -1
 
             elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
                 start_pos = self.calibration["start_pos"][calib_idx]
@@ -642,19 +689,6 @@ class DynamixelMotorsBus:
                 values[i] = values[i] / 100 * (end_pos - start_pos) + start_pos
 
         values = np.round(values).astype(np.int32)
-
-        # Convert from nominal range ]-resolution, resolution[ to centered signed int32 range [-2**31, 2**31[
-        for i, name in enumerate(motor_names):
-            calib_idx = self.calibration["motor_names"].index(name)
-            calib_mode = self.calibration["calib_mode"][calib_idx]
-
-            if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
-                drive_mode = self.calibration["drive_mode"][calib_idx]
-                homing_offset = self.calibration["homing_offset"][calib_idx]
-                values[i] -= homing_offset
-                if drive_mode:
-                    values[i] *= -1
-
         return values
 
     def _read_with_motor_ids(self, motor_models, motor_ids, data_name):
