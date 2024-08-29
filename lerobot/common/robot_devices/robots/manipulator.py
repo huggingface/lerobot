@@ -1,4 +1,4 @@
-import pickle
+import json
 import time
 import warnings
 from dataclasses import dataclass, field, replace
@@ -9,6 +9,7 @@ import torch
 
 from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.motors.dynamixel import (
+    CalibrationMode,
     TorqueMode,
     convert_degrees_to_steps,
 )
@@ -26,10 +27,12 @@ URL_TEMPLATE = (
 # The following positions are provided in nominal degree range ]-180, +180[
 # For more info on these constants, see comments in the code where they get used.
 ZERO_POSITION_DEGREE = 0
-ROTATED_POSITION_DEGREE = 45
-DELTA_POSITION_DEGREE = 45
+ROTATED_POSITION_DEGREE = 90
 KOCH_GRIPPER_OPEN_DEGREE = 35.156
-ALOHA_GRIPPER_OPEN_DEGREE = 20
+
+
+def get_arm_id(name, arm_type):
+    return f"{name}_{arm_type}"
 
 
 def assert_drive_mode(drive_mode):
@@ -69,8 +72,8 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     run_arm_calibration(arm, "koch", "left", "follower")
     ```
     """
-    # To be configured, all servos must be in "torque disable" mode
-    arm.write("Torque_Enable", TorqueMode.DISABLED.value)
+    if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
+        raise ValueError("To run calibration, the torque must be disabled on all motors.")
 
     print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
 
@@ -81,21 +84,17 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     # We arbitrarely choosed our zero target position to be a straight horizontal position with gripper upwards and closed.
     # It is easy to identify and all motors are in a "quarter turn" position. Once calibration is done, this position will
     # corresponds to every motor angle being 0. If you set all 0 as Goal Position, the arm will move in this position.
-    zero_position = convert_degrees_to_steps(ZERO_POSITION_DEGREE, arm.motor_models)
+    zero_target_pos = convert_degrees_to_steps(ZERO_POSITION_DEGREE, arm.motor_models)
 
     def _compute_nearest_rounded_position(position, models):
-        delta_turn = convert_degrees_to_steps(DELTA_POSITION_DEGREE, models)
+        delta_turn = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, models)
         nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
         return nearest_pos.astype(position.dtype)
 
     # Compute homing offset so that `present_position + homing_offset ~= target_position`.
-    position = arm.read("Present_Position")
-    position = _compute_nearest_rounded_position(position, arm.motor_models)
-    homing_offset = zero_position - position
-
-    print("\nMove arm to rotated target position")
-    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rotated"))
-    input("Press Enter to continue...")
+    zero_pos = arm.read("Present_Position")
+    zero_nearest_pos = _compute_nearest_rounded_position(zero_pos, arm.motor_models)
+    homing_offset = zero_target_pos - zero_nearest_pos
 
     # The rotated target position corresponds to a rotation of a quarter turn from the zero position.
     # This allows to identify the rotation direction of each motor.
@@ -104,27 +103,44 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     # Sometimes, there is only one possible rotation direction. For instance, if the gripper is closed, there is only one direction which
     # corresponds to opening the gripper. When the rotation direction is ambiguous, we arbitrarely rotate clockwise from the point of view
     # of the previous motor in the kinetic chain.
-    rotated_position = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, arm.motor_models)
+    print("\nMove arm to rotated target position")
+    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rotated"))
+    input("Press Enter to continue...")
+
+    rotated_target_pos = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, arm.motor_models)
 
     # Find drive mode by rotating each motor by a quarter of a turn.
     # Drive mode indicates if the motor rotation direction should be inverted (=1) or not (=0).
-    position = arm.read("Present_Position")
-    position += homing_offset
-    position = _compute_nearest_rounded_position(position, arm.motor_models)
-    drive_mode = (position != rotated_position).astype(np.int32)
+    rotated_pos = arm.read("Present_Position")
+    drive_mode = (rotated_pos < zero_pos).astype(np.int32)
 
     # Re-compute homing offset to take into account drive mode
-    position = arm.read("Present_Position")
-    position = apply_drive_mode(position, drive_mode)
-    position = _compute_nearest_rounded_position(position, arm.motor_models)
-    homing_offset = rotated_position - position
+    rotated_drived_pos = apply_drive_mode(rotated_pos, drive_mode)
+    rotated_nearest_pos = _compute_nearest_rounded_position(rotated_drived_pos, arm.motor_models)
+    homing_offset = rotated_target_pos - rotated_nearest_pos
 
     print("\nMove arm to rest position")
     print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rest"))
     input("Press Enter to continue...")
     print()
 
-    return homing_offset, drive_mode
+    # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
+    calib_mode = [CalibrationMode.DEGREE.name] * len(arm.motor_names)
+
+    if robot_type == "aloha" and "gripper" in arm.motor_names:
+        # Joints with linear motions (like gripper of Aloha) are experessed in nominal range of [0, 100]
+        calib_idx = arm.motor_names.index("gripper")
+        calib_mode[calib_idx] = CalibrationMode.LINEAR.name
+
+    calib_data = {
+        "homing_offset": homing_offset.tolist(),
+        "drive_mode": drive_mode.tolist(),
+        "start_pos": zero_pos.tolist(),
+        "end_pos": rotated_pos.tolist(),
+        "calib_mode": calib_mode,
+        "motor_names": arm.motor_names,
+    }
+    return calib_data
 
 
 ########################################################################
@@ -250,14 +266,14 @@ class ManipulatorRobot:
     def __init__(
         self,
         config: ManipulatorRobotConfig | None = None,
-        calibration_path: Path = ".cache/calibration/koch.pkl",
+        calibration_dir: Path = ".cache/calibration/koch",
         **kwargs,
     ):
         if config is None:
             config = ManipulatorRobotConfig()
         # Overwrite config arguments using kwargs
         self.config = replace(config, **kwargs)
-        self.calibration_path = Path(calibration_path)
+        self.calibration_dir = Path(calibration_dir)
 
         self.robot_type = self.config.robot_type
         self.leader_arms = self.config.leader_arms
@@ -284,31 +300,14 @@ class ManipulatorRobot:
             print(f"Connecting {name} leader arm.")
             self.leader_arms[name].connect()
 
-        # Reset the arms and load or run calibration
-        if self.calibration_path.exists():
-            # Reset all arms before setting calibration
-            for name in self.follower_arms:
-                self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
-            for name in self.leader_arms:
-                self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
-
-            with open(self.calibration_path, "rb") as f:
-                calibration = pickle.load(f)
-        else:
-            print(f"Missing calibration file '{self.calibration_path}'. Starting calibration precedure.")
-            # Run calibration process which begins by reseting all arms
-            calibration = self.run_calibration()
-
-            print(f"Calibration is done! Saving calibration file '{self.calibration_path}'")
-            self.calibration_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.calibration_path, "wb") as f:
-                pickle.dump(calibration, f)
-
-        # Set calibration
+        # We assume that at connection time, arms are in a rest position, and torque can
+        # be safely disabled to run calibration and/or set robot preset configurations.
         for name in self.follower_arms:
-            self.follower_arms[name].set_calibration(calibration[f"follower_{name}"])
+            self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
         for name in self.leader_arms:
-            self.leader_arms[name].set_calibration(calibration[f"leader_{name}"])
+            self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+
+        self.activate_calibration()
 
         # Set robot preset (e.g. torque in leader gripper for Koch v1.1)
         if self.robot_type == "koch":
@@ -329,32 +328,43 @@ class ManipulatorRobot:
 
         self.is_connected = True
 
-    def run_calibration(self):
-        calibration = {}
+    def activate_calibration(self):
+        """After calibration all motors function in human interpretable ranges.
+        Rotations are expressed in degrees in nominal range of [-180, 180],
+        and linear motions (like gripper of Aloha) in nominal range of [0, 100].
+        """
 
-        for name in self.follower_arms:
-            homing_offset, drive_mode = run_arm_calibration(
-                self.follower_arms[name], self.robot_type, name, "follower"
-            )
+        def load_or_run_calibration_(name, arm, arm_type):
+            arm_id = get_arm_id(name, arm_type)
+            arm_calib_path = self.calibration_dir / f"{arm_id}.json"
 
-            calibration[f"follower_{name}"] = {}
-            for idx, motor_name in enumerate(self.follower_arms[name].motor_names):
-                calibration[f"follower_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
+            if arm_calib_path.exists():
+                with open(arm_calib_path) as f:
+                    calibration = json.load(f)
+            else:
+                print(
+                    f"Missing calibration file '{arm_calib_path}'. Starting calibration precedure for {name} {arm_type}."
+                )
+                calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
 
-        for name in self.leader_arms:
-            homing_offset, drive_mode = run_arm_calibration(
-                self.leader_arms[name], self.robot_type, name, "leader"
-            )
+                print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
+                arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(arm_calib_path, "w") as f:
+                    json.dump(calibration, f)
 
-            calibration[f"leader_{name}"] = {}
-            for idx, motor_name in enumerate(self.leader_arms[name].motor_names):
-                calibration[f"leader_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
+            return calibration
 
-        return calibration
+        for name, arm in self.follower_arms.items():
+            calibration = load_or_run_calibration_(name, arm, "follower")
+            arm.set_calibration(calibration)
+        for name, arm in self.leader_arms.items():
+            calibration = load_or_run_calibration_(name, arm, "leader")
+            arm.set_calibration(calibration)
 
     def set_koch_robot_preset(self):
         def set_operating_mode_(arm):
-            arm.write("Torque_Enable", TorqueMode.DISABLED.value)
+            if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
+                raise ValueError("To run set robot preset, the torque must be disabled on all motors.")
 
             # Use 'extended position mode' for all motors except gripper, because in joint mode the servos can't
             # rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling the arm,
@@ -391,26 +401,23 @@ class ManipulatorRobot:
             self.leader_arms[name].write("Goal_Position", KOCH_GRIPPER_OPEN_DEGREE, "gripper")
 
     def set_aloha_robot_preset(self):
-        # Set secondary/shadow ID for shoulder and elbow. These joints have two motors.
-        # As a result, if only one of them is required to move to a certain position,
-        # the other will follow. This is to avoid breaking the motors.
-        for name in self.follower_arms:
-            if "shoulder_shadow" in self.follower_arms[name].motor_names:
-                shoulder_idx = self.follower_arms[name].read("ID", "shoulder")
-                self.follower_arms[name].write("Secondary_ID", shoulder_idx, "shoulder_shadow")
+        def set_shadow_(arm):
+            # Set secondary/shadow ID for shoulder and elbow. These joints have two motors.
+            # As a result, if only one of them is required to move to a certain position,
+            # the other will follow. This is to avoid breaking the motors.
+            if "shoulder_shadow" in arm.motor_names:
+                shoulder_idx = arm.read("ID", "shoulder")
+                arm.write("Secondary_ID", shoulder_idx, "shoulder_shadow")
 
-            if "elbow_shadow" in self.follower_arms[name].motor_names:
-                elbow_idx = self.follower_arms[name].read("ID", "elbow")
-                self.follower_arms[name].write("Secondary_ID", elbow_idx, "elbow_shadow")
+            if "elbow_shadow" in arm.motor_names:
+                elbow_idx = arm.read("ID", "elbow")
+                arm.write("Secondary_ID", elbow_idx, "elbow_shadow")
+
+        for name in self.follower_arms:
+            set_shadow_(self.follower_arms[name])
 
         for name in self.leader_arms:
-            if "shoulder_shadow" in self.leader_arms[name].motor_names:
-                shoulder_idx = self.leader_arms[name].read("ID", "shoulder")
-                self.leader_arms[name].write("Secondary_ID", shoulder_idx, "shoulder_shadow")
-
-            if "elbow_shadow" in self.leader_arms[name].motor_names:
-                elbow_idx = self.leader_arms[name].read("ID", "elbow")
-                self.leader_arms[name].write("Secondary_ID", elbow_idx, "elbow_shadow")
+            set_shadow_(self.leader_arms[name])
 
         for name in self.follower_arms:
             # Set a velocity limit of 131 as advised by Trossen Robotics

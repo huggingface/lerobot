@@ -127,6 +127,7 @@ from lerobot.common.datasets.utils import calculate_episode_data_index, create_b
 from lerobot.common.datasets.video_utils import encode_video_frames
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.factory import make_robot
+from lerobot.common.robot_devices.robots.manipulator import get_arm_id
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
@@ -249,10 +250,38 @@ def is_headless():
 ########################################################################################
 
 
-def calibrate(robot: Robot):
-    if robot.calibration_path.exists():
-        print(f"Removing '{robot.calibration_path}'")
-        robot.calibration_path.unlink()
+def calibrate(robot: Robot, arms: list[str] | None):
+    available_arms = []
+    for name in robot.follower_arms:
+        arm_id = get_arm_id(name, "follower")
+        available_arms.append(arm_id)
+    for name in robot.leader_arms:
+        arm_id = get_arm_id(name, "leader")
+        available_arms.append(arm_id)
+
+    unknown_arms = [arm_id for arm_id in arms if arm_id not in available_arms]
+
+    available_arms_str = " ".join(available_arms)
+    unknown_arms_str = " ".join(unknown_arms)
+
+    if arms is None or len(arms) == 0:
+        raise ValueError(
+            "No arm provided. Use `--arms` as argument with one or more available arms.\n"
+            f"For instance, to recalibrate all arms add: `--arms {available_arms_str}`"
+        )
+
+    if len(unknown_arms) > 0:
+        raise ValueError(
+            f"Unknown arms provided ('{unknown_arms_str}'). Available arms are `{available_arms_str}`."
+        )
+
+    for arm_id in arms:
+        arm_calib_path = robot.calibration_dir / f"{arm_id}.json"
+        if arm_calib_path.exists():
+            print(f"Removing '{arm_calib_path}'")
+            arm_calib_path.unlink()
+        else:
+            print(f"Calibration file not found '{arm_calib_path}'")
 
     if robot.is_connected:
         robot.disconnect()
@@ -260,6 +289,8 @@ def calibrate(robot: Robot):
     # Calling `connect` automatically runs calibration
     # when the calibration file is missing
     robot.connect()
+    robot.disconnect()
+    print("Calibration is done! You can now teleoperate and record datasets!")
 
 
 def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | None = None):
@@ -712,6 +743,12 @@ if __name__ == "__main__":
     )
 
     parser_calib = subparsers.add_parser("calibrate", parents=[base_parser])
+    parser_calib.add_argument(
+        "--arms",
+        type=int,
+        nargs="*",
+        help="List of arms to calibrate (e.g. `--arms left_follower right_follower left_leader`)",
+    )
 
     parser_teleop = subparsers.add_parser("teleoperate", parents=[base_parser])
     parser_teleop.add_argument(

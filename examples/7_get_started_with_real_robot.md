@@ -309,7 +309,7 @@ Before you can teleoperate your robot, you need to instantiate the  [`Manipulato
 
 For the Koch v1.1 robot, we only have one leader, so we refer to it as `"main"` and define it as `leader_arms={"main": leader_arm}`. We do the same for the follower arm. For other robots (like the Aloha), which may have two pairs of leader and follower arms, you would define them like this: `leader_arms={"left": left_leader_arm, "right": right_leader_arm},`. Same thing for the follower arms.
 
-You also need to provide a path to a calibration file, such as  `calibration_path=".cache/calibration/koch.pkl"`. More on this in the next section.
+You also need to provide a path to a calibration directory, such as  `calibration_dir=".cache/calibration/koch"`. More on this in the next section.
 
 Run the following code to instantiate your manipulator robot:
 ```python
@@ -319,7 +319,7 @@ robot = ManipulatorRobot(
     robot_type="koch",
     leader_arms={"main": leader_arm},
     follower_arms={"main": follower_arm},
-    calibration_path=".cache/calibration/koch.pkl",
+    calibration_dir=".cache/calibration/koch",
 )
 ```
 
@@ -616,7 +616,7 @@ Modify the following Python code with the appropriate camera names and configura
 robot = ManipulatorRobot(
     leader_arms={"main": leader_arm},
     follower_arms={"main": follower_arm},
-    calibration_path=".cache/calibration/koch.pkl",
+    calibration_dir=".cache/calibration/koch",
     cameras={
         "laptop": OpenCVCamera(0, fps=30, width=640, height=480),
         "phone": OpenCVCamera(1, fps=30, width=640, height=480),

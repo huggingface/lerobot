@@ -1,6 +1,6 @@
 _target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
 robot_type: aloha
-calibration_path: .cache/calibration/aloha.pkl
+calibration_dir: .cache/calibration/aloha
 leader_arms:
   left:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus

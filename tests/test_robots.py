@@ -37,7 +37,7 @@ def test_robot(tmpdir, request, robot_type):
 
     # Save calibration preset
     tmpdir = Path(tmpdir)
-    calibration_path = tmpdir / f"{robot_type}.pkl"
+    calibration_dir = tmpdir / robot_type
 
     # Test connecting without devices raises an error
     robot = ManipulatorRobot()
@@ -62,7 +62,7 @@ def test_robot(tmpdir, request, robot_type):
     del robot
 
     # Test connecting
-    robot = make_robot(robot_type, overrides=[f"calibration_path={calibration_path}"])
+    robot = make_robot(robot_type, overrides=[f"calibration_dir={calibration_dir}"])
     robot.connect()  # run the manual calibration precedure
     assert robot.is_connected
 
@@ -74,8 +74,8 @@ def test_robot(tmpdir, request, robot_type):
     del robot
 
     # Test teleop can run
-    robot = make_robot(robot_type, overrides=[f"calibration_path={calibration_path}"])
-    robot.calibration_path = calibration_path
+    robot = make_robot(robot_type, overrides=[f"calibration_dir={calibration_dir}"])
+    robot.calibration_dir = calibration_dir
     robot.connect()
     robot.teleop_step()
 
