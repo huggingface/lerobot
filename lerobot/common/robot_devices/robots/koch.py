@@ -554,14 +554,16 @@ class KochRobot:
                 safe_diff = torch.minimum(diff, max_relative_target)
                 safe_diff = torch.maximum(safe_diff, -max_relative_target)
                 safe_action = current_pos + safe_diff
-                if not torch.allclose(safe_action, action):
+                if not torch.allclose(safe_action, this_action):
                     logging.warning(
                         "Relative action magnitude had to be clamped to be safe.\n"
                         f"  requested relative action target: {diff}\n"
                         f"    clamped relative action target: {safe_diff}"
                     )
+                follower_goal_pos[name] = safe_action.numpy()
+            else:
+                follower_goal_pos[name] = this_action.numpy()
 
-            follower_goal_pos[name] = safe_action.numpy()
             from_idx = to_idx
 
         for name in self.follower_arms:
