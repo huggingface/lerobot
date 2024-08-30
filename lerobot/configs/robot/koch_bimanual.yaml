@@ -1,7 +1,18 @@
 _target_: lerobot.common.robot_devices.robots.koch.KochRobot
-calibration_path: .cache/calibration/koch.pkl
+calibration_path: .cache/calibration/koch_bimanual.pkl
 leader_arms:
-  main:
+  left:
+    _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
+    port: /dev/tty.usbmodem585A0085511
+    motors:
+      # name: (index, model)
+      shoulder_pan: [1, "xl330-m077"]
+      shoulder_lift: [2, "xl330-m077"]
+      elbow_flex: [3, "xl330-m077"]
+      wrist_flex: [4, "xl330-m077"]
+      wrist_roll: [5, "xl330-m077"]
+      gripper: [6, "xl330-m077"]
+  right:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
     port: /dev/tty.usbmodem575E0031751
     motors:
@@ -13,7 +24,18 @@ leader_arms:
       wrist_roll: [5, "xl330-m077"]
       gripper: [6, "xl330-m077"]
 follower_arms:
-  main:
+  left:
+    _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
+    port: /dev/tty.usbmodem585A0076891
+    motors:
+      # name: (index, model)
+      shoulder_pan: [1, "xl430-w250"]
+      shoulder_lift: [2, "xl430-w250"]
+      elbow_flex: [3, "xl330-m288"]
+      wrist_flex: [4, "xl330-m288"]
+      wrist_roll: [5, "xl330-m288"]
+      gripper: [6, "xl330-m288"]
+  right:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
     port: /dev/tty.usbmodem575E0032081
     motors:

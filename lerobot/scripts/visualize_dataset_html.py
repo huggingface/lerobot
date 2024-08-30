@@ -57,25 +57,11 @@ import logging
 import shutil
 from pathlib import Path
 
-import torch
 import tqdm
 from flask import Flask, redirect, render_template, url_for
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.utils.utils import init_logging
-
-
-class EpisodeSampler(torch.utils.data.Sampler):
-    def __init__(self, dataset, episode_index):
-        from_idx = dataset.episode_data_index["from"][episode_index].item()
-        to_idx = dataset.episode_data_index["to"][episode_index].item()
-        self.frame_ids = range(from_idx, to_idx)
-
-    def __iter__(self):
-        return iter(self.frame_ids)
-
-    def __len__(self):
-        return len(self.frame_ids)
 
 
 def run_server(
@@ -112,10 +98,14 @@ def run_server(
             "fps": dataset.fps,
         }
         video_paths = get_episode_video_paths(dataset, episode_id)
+        language_instruction = get_episode_language_instruction(dataset, episode_id)
         videos_info = [
             {"url": url_for("static", filename=video_path), "filename": Path(video_path).name}
             for video_path in video_paths
         ]
+        if language_instruction:
+            videos_info[0]["language_instruction"] = language_instruction
+
         ep_csv_url = url_for("static", filename=get_ep_csv_fname(episode_id))
         return render_template(
             "visualize_dataset_template.html",
@@ -184,6 +174,20 @@ def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]
         dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"]
         for key in dataset.video_frame_keys
     ]
+
+
+def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> list[str]:
+    # check if the dataset has language instructions
+    if "language_instruction" not in dataset.hf_dataset.features:
+        return None
+
+    # get first frame index
+    first_frame_idx = dataset.episode_data_index["from"][ep_index].item()
+
+    language_instruction = dataset.hf_dataset[first_frame_idx]["language_instruction"]
+    # TODO (michel-aractingi) hack to get the sentence, some strings in openx are badly stored
+    # with the tf.tensor appearing in the string
+    return language_instruction.removeprefix("tf.Tensor(b'").removesuffix("', shape=(), dtype=string)")
 
 
 def visualize_dataset_html(

@@ -75,7 +75,7 @@
             {% for video_info in videos_info %}
             <div class="max-w-96">
                 <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
-                <video autoplay muted loop type="video/mp4" class="min-w-64" @timeupdate="() => {
+                <video muted loop type="video/mp4" class="min-w-64" @canplay="videoCanPlay" @timeupdate="() => {
                     if (video.duration) {
                       const time = video.currentTime;
                       const pc = (100 / video.duration) * time;
@@ -100,6 +100,13 @@
             {% endfor %}
         </div>
 
+        <!-- Language instruction -->
+        {% if videos_info[0].language_instruction %}
+        <p class="font-medium mt-2">
+            Language Instruction: <span class="italic">{{ videos_info[0].language_instruction }}</span>
+        </p>
+        {% endif %}
+
         <!-- Shortcuts info -->
         <div class="text-sm hidden md:block">
             Hotkeys: <span class="font-mono">Space</span> to pause/unpause, <span class="font-mono">Arrow Down</span> to go to next episode, <span class="font-mono">Arrow Up</span> to go to previous episode.
@@ -107,12 +114,12 @@
 
         <!-- Controllers -->
         <div class="flex gap-1 text-3xl items-center">
-            <button x-ref="btnPlay" class="-rotate-90 hidden" class="-rotate-90" title="Play. Toggle with Space" @click="() => {
+            <button x-ref="btnPlay" class="-rotate-90" class="-rotate-90" title="Play. Toggle with Space" @click="() => {
                 videos.forEach(video => video.play());
                 $refs.btnPlay.classList.toggle('hidden');
                 $refs.btnPause.classList.toggle('hidden');
             }">🔽</button>
-            <button x-ref="btnPause" title="Pause. Toggle with Space" @click="() => {
+            <button x-ref="btnPause" class="hidden" title="Pause. Toggle with Space" @click="() => {
                 videos.forEach(video => video.pause());
                 $refs.btnPlay.classList.toggle('hidden');
                 $refs.btnPause.classList.toggle('hidden');
@@ -125,7 +132,6 @@
                 @click="() => (videos.forEach(video => (video.currentTime = 0.0)))">↩️</button>
             <input x-ref="slider" max="100" min="0" step="1" type="range" value="0" class="w-80 mx-2" @input="() => {
                 const sliderValue = $refs.slider.value;
-                $refs.btnPause.click();
                 videos.forEach(video => {
                     const time = (video.duration * sliderValue) / 100;
                     video.currentTime = time;
@@ -208,6 +214,8 @@
                 videos: null,
                 video: null,
                 colors: null,
+                nVideos: {{ videos_info | length }},
+                nVideoReadyToPlay: 0,
 
                 // alpine initialization
                 init() {
@@ -343,7 +351,6 @@
                     window.history.replaceState({}, '', url.toString());
                 },
 
-
                 formatTime(time) {
                     var hours = Math.floor(time / 3600);
                     var minutes = Math.floor((time % 3600) / 60);
@@ -351,6 +358,14 @@
                     return (hours > 0 ? hours + ':' : '') + (minutes < 10 ? '0' + minutes : minutes) + ':' + (seconds <
                         10 ?
                         '0' + seconds : seconds);
+                },
+
+                videoCanPlay() {
+                    this.nVideoReadyToPlay += 1;
+                    if(this.nVideoReadyToPlay == this.nVideos) {
+                        // start autoplay all videos in sync
+                        this.$refs.btnPlay.click();
+                    }
                 }
             };
         }

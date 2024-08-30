@@ -1,5 +1,6 @@
 import random
 from typing import Callable
+from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -13,6 +14,7 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.utils.utils import (
     get_global_random_state,
+    init_hydra_config,
     seeded_context,
     set_global_random_state,
     set_global_seed,
@@ -83,3 +85,10 @@ def test_reset_episode_index():
     correct_episode_index = [0, 0, 1, 2, 2, 2]
     dataset = reset_episode_index(dataset)
     assert dataset["episode_index"] == correct_episode_index
+
+
+def test_init_hydra_config_empty():
+    test_file = f"/tmp/test_init_hydra_config_empty_{uuid4().hex}.yaml"
+    with open(test_file, "w") as f:
+        f.write("\n")
+    init_hydra_config(test_file)
