@@ -560,8 +560,10 @@ class KochRobot:
                         f"  requested relative action target: {diff}\n"
                         f"    clamped relative action target: {safe_diff}"
                     )
+                follower_goal_pos[name] = safe_action.numpy()
+            else:
+                follower_goal_pos[name] = this_action.numpy()
 
-            follower_goal_pos[name] = safe_action.numpy()
             from_idx = to_idx
 
         for name in self.follower_arms:
