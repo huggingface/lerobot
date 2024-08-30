@@ -35,7 +35,7 @@ def check_format(raw_dir: Path) -> bool:
         raise ValueError
 
 
-def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, episodes: list[int] | None = None):
+def load_from_raw(raw_dir: Path, fps: int, episodes: list[int] | None = None):
     if episodes is not None:
         # TODO(aliberts): add support for multi-episodes.
         raise NotImplementedError()
@@ -43,7 +43,7 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, episodes: list[int]
     ep_dict = {}
     ep_idx = 0
 
-    image_paths = sorted(videos_dir.glob("frame_*.png"))
+    image_paths = sorted(raw_dir.glob("frame_*.png"))
     num_frames = len(image_paths)
 
     ep_dict["observation.image"] = [PILImage.open(x) for x in image_paths]
@@ -83,9 +83,9 @@ def from_raw_to_lerobot_format(
     episodes: list[int] | None = None,
     encoding: dict | None = None,
 ):
-    # if video or episodes or encoding is not None:
-    #     # TODO(aliberts): support this
-    #     raise NotImplementedError
+    if video or episodes or encoding is not None:
+        # TODO(aliberts): support this
+        raise NotImplementedError
 
     # sanity check
     check_format(videos_dir)
@@ -93,7 +93,7 @@ def from_raw_to_lerobot_format(
     if fps is None:
         fps = 30
 
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes)
+    data_dict = load_from_raw(videos_dir, fps, video, episodes)
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {

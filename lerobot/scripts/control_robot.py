@@ -119,7 +119,6 @@ from omegaconf import DictConfig
 from PIL import Image
 from termcolor import colored
 
-
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.compute_stats import compute_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
@@ -273,7 +272,6 @@ def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | Non
     while True:
         start_loop_t = time.perf_counter()
         robot.teleop_step()
-        time.sleep(0.01)
 
         if fps is not None:
             dt_s = time.perf_counter() - start_loop_t
@@ -294,7 +292,7 @@ def record(
     root="data",
     repo_id="lerobot/debug",
     warmup_time_s=2,
-    episode_time_s=30,
+    episode_time_s=10,
     reset_time_s=5,
     num_episodes=50,
     video=True,
@@ -404,15 +402,14 @@ def record(
 
         if policy is None:
             observation, action = robot.teleop_step(record_data=True)
-            print(f"- Action: {action}")
         else:
             observation = robot.capture_observation()
 
         if not is_headless():
             image_keys = [key for key in observation if "image" in key]
-            # for key in image_keys:
-            #     cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-            # cv2.waitKey(1)
+            for key in image_keys:
+                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+            cv2.waitKey(1)
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
@@ -456,9 +453,9 @@ def record(
 
                 if not is_headless():
                     image_keys = [key for key in observation if "image" in key]
-                    # for key in image_keys:
-                    #     cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-                    # cv2.waitKey(1)
+                    for key in image_keys:
+                        cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+                    cv2.waitKey(1)
 
                 for key in not_image_keys:
                     if key not in ep_dict:
@@ -602,8 +599,6 @@ def record(
     say("Encoding videos")
     # Use ffmpeg to convert frames stored as png into mp4 videos
     for episode_index in tqdm.tqdm(range(num_episodes)):
-        if episode_index < 150:
-            continue
         for key in image_keys:
             tmp_imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
             fname = f"{key}_episode_{episode_index:06d}.mp4"
@@ -748,7 +743,7 @@ if __name__ == "__main__":
     parser_record.add_argument(
         "--warmup-time-s",
         type=int,
-        default=2,
+        default=10,
         help="Number of seconds before starting data collection. It allows the robot devices to warmup and synchronize.",
     )
     parser_record.add_argument(
@@ -760,7 +755,7 @@ if __name__ == "__main__":
     parser_record.add_argument(
         "--reset-time-s",
         type=int,
-        default=45,
+        default=60,
         help="Number of seconds for resetting the environment after each episode.",
     )
     parser_record.add_argument("--num-episodes", type=int, default=50, help="Number of episodes to record.")
