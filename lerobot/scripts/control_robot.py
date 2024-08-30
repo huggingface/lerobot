@@ -430,10 +430,8 @@ def record(
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
         # Start recording all episodes
         while episode_index < num_episodes:
-            # print("-----------------------------------")
             logging.info(f"Recording episode {episode_index}")
             say(f"Recording episode {episode_index}")
-            # print("-----------------------------------")
             ep_dict = {}
             frame_index = 0
             timestamp = 0
@@ -553,7 +551,7 @@ def record(
             ep_dict["next.done"] = done
 
             ep_path = episodes_dir / f"episode_{episode_index}.pth"
-            print("Saving episode dictionary...")
+            print(f"Saving episode dictionary {episode_index}...")
             torch.save(ep_dict, ep_path)
 
             rec_info = {
@@ -604,7 +602,7 @@ def record(
     say("Encoding videos")
     # Use ffmpeg to convert frames stored as png into mp4 videos
     for episode_index in tqdm.tqdm(range(num_episodes)):
-        if episode_index < 50:
+        if episode_index < 150:
             continue
         for key in image_keys:
             tmp_imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
