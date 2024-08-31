@@ -74,6 +74,10 @@ follower_arms:
       wrist_angle: [7, xm540-w270]
       wrist_rotate: [8, xm430-w350]
       gripper: [9, xm430-w350]
+
+# Troubleshooting: If one of your IntelRealSense cameras freeze during
+# data recording due to bandwidth limit, you might need to plug the camera
+# on another USB hub or PCIe card.
 cameras:
   cam_high:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
