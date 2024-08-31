@@ -16,6 +16,7 @@ from lerobot.common.robot_devices.motors.dynamixel import (
     convert_degrees_to_steps,
 )
 from lerobot.common.robot_devices.motors.utils import MotorsBus
+from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 
 ########################################################################
@@ -30,10 +31,6 @@ URL_TEMPLATE = (
 # For more info on these constants, see comments in the code where they get used.
 ZERO_POSITION_DEGREE = 0
 ROTATED_POSITION_DEGREE = 90
-
-
-def get_arm_id(name, arm_type):
-    return f"{name}_{arm_type}"
 
 
 def assert_drive_mode(drive_mode):
