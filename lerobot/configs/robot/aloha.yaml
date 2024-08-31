@@ -1,6 +1,16 @@
 _target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
 robot_type: aloha
 calibration_dir: .cache/calibration/aloha
+
+# /!\ YOU NEED TO READ FOR SAFETY /!\
+# `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+# Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+# the number of motors in your follower arms.
+# For Aloha, which is heavy, we cap motor rotations to 5 degrees by default.
+# When you feel more confident with teleoperation or running the policy, you can extend
+# this safety limit and even removing it by setting it to `null`.
+max_relative_target: 5
+
 leader_arms:
   left:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
@@ -67,29 +77,25 @@ follower_arms:
 cameras:
   cam_high:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 2
+    camera_index: 10
     fps: 30
     width: 640
     height: 480
-  # cam_low:
-  #   _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-  #   camera_index: 1
-  #   fps: 30
-  #   width: 640
-  #   height: 480
+  cam_low:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 22
+    fps: 30
+    width: 640
+    height: 480
   cam_left_wrist:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 8
+    camera_index: 16
     fps: 30
     width: 640
     height: 480
   cam_right_wrist:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 14
+    camera_index: 4
     fps: 30
     width: 640
     height: 480
-# `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
-# Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
-# the number of motors in your follower arms.
-max_relative_target: 20

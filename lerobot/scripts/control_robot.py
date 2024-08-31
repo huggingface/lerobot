@@ -129,6 +129,7 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.manipulator import get_arm_id
 from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 from lerobot.scripts.push_dataset_to_hub import (
@@ -168,15 +169,6 @@ def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
     path = videos_dir / f"{key}_episode_{episode_index:06d}" / f"frame_{frame_index:06d}.png"
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(path), quality=100)
-
-
-def busy_wait(seconds):
-    # Significantly more accurate than `time.sleep`, and mendatory for our use case,
-    # but it consumes CPU cycles.
-    # TODO(rcadene): find an alternative: from python 11, time.sleep is precise
-    end_time = time.perf_counter() + seconds
-    while time.perf_counter() < end_time:
-        pass
 
 
 def none_or_int(value):

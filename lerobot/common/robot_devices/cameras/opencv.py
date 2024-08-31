@@ -17,9 +17,12 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.robot_devices.utils import (
+    RobotDeviceAlreadyConnectedError,
+    RobotDeviceNotConnectedError,
+    busy_wait,
+)
 from lerobot.common.utils.utils import capture_timestamp_utc
-from lerobot.scripts.control_robot import busy_wait
 
 # Use 1 thread to avoid blocking the main thread. Especially useful during data collection
 # when other threads are used to save the images.
