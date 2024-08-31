@@ -1,6 +1,10 @@
 from typing import Protocol
 
 
+def get_arm_id(name, arm_type):
+    return f"{name}_{arm_type}"
+
+
 class Robot(Protocol):
     def init_teleop(self): ...
     def run_calibration(self): ...
