@@ -73,7 +73,7 @@
 - Thanks to Nicklas Hansen, Yunhai Feng and colleagues for open sourcing TDMPC policy, Simxarm environments and datasets. Ours are adapted from [TDMPC](https://github.com/nicklashansen/tdmpc) and [FOWM](https://www.yunhaifeng.com/FOWM).
 - Thanks to Antonio Loquercio and Ashish Kumar for their early support.
 - Thanks to [Seungjae (Jay) Lee](https://sjlee.cc/), [Mahi Shafiullah](https://mahis.life/) and colleagues for open sourcing [VQ-BeT](https://sjlee.cc/vq-bet/) policy and helping us adapt the codebase to our repository. The policy is adapted from [VQ-BeT repo](https://github.com/jayLEE0301/vq_bet_official).
-
+- Thanks to [Lirui (Leroy) Wang](https://liruiw.github.io/) and colleagues for open sourcing [HPT](https://liruiw.github.io/hpt/) policy and helping us adapt the codebase to our repository. The policy is adapted from [HPT Transfer repo](https://github.com/liruiw/HPT-Transfer).
 
 ## Installation
 
@@ -415,5 +415,15 @@ Additionally, if you are using any of the particular policy architecture, pretra
   author={Lee, Seungjae and Wang, Yibin and Etukuru, Haritheja and Kim, H Jin and Shafiullah, Nur Muhammad Mahi and Pinto, Lerrel},
   journal={arXiv preprint arXiv:2403.03181},
   year={2024}
+}
+```
+
+- [HPT](https://liruiw.github.io/hpt/)
+```bibtex
+@article{wang2024hpt,
+author    = {Lirui Wang, Xinlei Chen, Jialiang Zhao, Kaiming He, Russ Tedrake},
+title     = {Scaling Proprioceptive-Visual Learning with Heterogeneous Pre-trained Transformers},
+booktitle = {arXiv preprint arXiv:},
+year      = {2024}
 }
 ```
