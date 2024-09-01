@@ -66,6 +66,11 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
         from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
         return VQBeTPolicy, VQBeTConfig
+    elif name == "hpt":
+        from lerobot.common.policies.hpt.configuration_hpt import HPTConfig
+        from lerobot.common.policies.hpt.modeling_hpt import HPTPolicy
+
+        return HPTPolicy, HPTConfig
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
