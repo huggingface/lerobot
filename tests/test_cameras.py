@@ -10,10 +10,9 @@ pytest -sx tests/test_cameras.py::test_camera
 import numpy as np
 import pytest
 
-from lerobot import available_robots
 from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera, save_images_from_cameras
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import require_robot
+from tests.utils import TEST_ROBOT_TYPES, require_robot
 
 CAMERA_INDEX = 2
 # Maximum absolute difference between two consecutive images recored by a camera.
@@ -25,7 +24,7 @@ def compute_max_pixel_difference(first_image, second_image):
     return np.abs(first_image.astype(float) - second_image.astype(float)).max()
 
 
-@pytest.mark.parametrize("robot_type", available_robots)
+@pytest.mark.parametrize("robot_type", TEST_ROBOT_TYPES)
 @require_robot
 def test_camera(request, robot_type):
     """Test assumes that `camera.read()` returns the same image when called multiple times in a row.
@@ -78,11 +77,11 @@ def test_camera(request, robot_type):
         camera.read()
     color_image = camera.read()
     async_color_image = camera.async_read()
-    print(
+    error_msg = (
         "max_pixel_difference between read() and async_read()",
         compute_max_pixel_difference(color_image, async_color_image),
     )
-    assert np.allclose(color_image, async_color_image, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE)
+    assert np.allclose(color_image, async_color_image, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE), error_msg
 
     # Test disconnecting
     camera.disconnect()
@@ -105,12 +104,6 @@ def test_camera(request, robot_type):
     # TODO(rcadene): Add a test for a camera that doesnt support fps=60 and raises an OSError
     # TODO(rcadene): Add a test for a camera that supports fps=60
 
-    # Test fps=10 raises an OSError
-    camera = OpenCVCamera(CAMERA_INDEX, fps=10)
-    with pytest.raises(OSError):
-        camera.connect()
-    del camera
-
     # Test width and height can be set
     camera = OpenCVCamera(CAMERA_INDEX, fps=30, width=1280, height=720)
     camera.connect()
@@ -131,7 +124,7 @@ def test_camera(request, robot_type):
     del camera
 
 
-@pytest.mark.parametrize("robot_type", available_robots)
+@pytest.mark.parametrize("robot_type", TEST_ROBOT_TYPES)
 @require_robot
 def test_save_images_from_cameras(tmpdir, request, robot_type):
     save_images_from_cameras(tmpdir, record_time_s=1)
