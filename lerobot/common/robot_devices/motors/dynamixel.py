@@ -29,9 +29,17 @@ TIMEOUT_MS = 1000
 
 MAX_ID_RANGE = 252
 
-# Maximal joints range after applying calibration
+# The following bounds define the lower and upper joints range (after calibration).
+# For joints in degree (i.e. most joints), their nominal range is [-180, 180] degrees
+# which corresponds to a half rotation on the left and half rotation on the right.
+# Some joints might require higher range, so we allow up to [-270, 270] degrees until
+# an error is raised.
 LOWER_BOUND_DEGREE = -270
 UPPER_BOUND_DEGREE = 270
+# For joints in percentage (i.e. joints that move linearly like a parallel gripper),
+# their nominal range is [0, 100] %. For instance, for Aloha gripper, 0% is fully
+# closed, and 100% is fully open. To account for slight calibration issue, we allow up to
+# [-10, 110] until an error is raised.
 LOWER_BOUND_LINEAR = -10
 UPPER_BOUND_LINEAR = 110
 
@@ -147,14 +155,11 @@ NUM_READ_RETRY = 10
 NUM_WRITE_RETRY = 10
 
 
-def convert_degrees_to_steps(degrees: int | float | np.ndarray, models: str | list[str]):
+def convert_degrees_to_steps(degrees: int | float | np.ndarray, models: str | list[str]) -> np.ndarray:
     """This function convert the degree range to the step range for indicating motors rotation.
     It assums a motor achieves a full rotation by going from -180 degree position to +180.
     The motor resolution (e.g. 4096) corresponds to the number of steps needed to achieve a full rotation.
     """
-    if isinstance(degrees, (float, int)):
-        degrees = np.array(degrees)
-
     resolutions = [MODEL_RESOLUTION[model] for model in models]
     steps = degrees / 180 * np.array(resolutions) / 2
     steps = steps.astype(int)
@@ -613,7 +618,7 @@ class DynamixelMotorsBus:
                     raise JointOutOfRangeError(
                         f"Wrong motor position range detected for {name}. "
                         f"Expected to be in nominal range of [-{HALF_TURN_DEGREE}, {HALF_TURN_DEGREE}] degrees (a full rotation), "
-                        f"with a maximum range of [{LOWER_BOUND_DEGREE}, {UPPER_BOUND_DEGREE}] degrees to account for joints that can rotatate a bit more, "
+                        f"with a maximum range of [{LOWER_BOUND_DEGREE}, {UPPER_BOUND_DEGREE}] degrees to account for joints that can rotate a bit more, "
                         f"but present value is {values[i]} degree. "
                         "This might be due to a cable connection issue creating an artificial 360 degrees jump in motor values. "
                         "You need to recalibrate by running: `python lerobot/scripts/control_robot.py calibrate`"
