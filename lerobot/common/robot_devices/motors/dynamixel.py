@@ -156,8 +156,8 @@ NUM_WRITE_RETRY = 10
 
 
 def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str]) -> np.ndarray:
-    """This function convert the degree range to the step range for indicating motors rotation.
-    It assums a motor achieves a full rotation by going from -180 degree position to +180.
+    """This function converts the degree range to the step range for indicating motors rotation.
+    It assumes a motor achieves a full rotation by going from -180 degree position to +180.
     The motor resolution (e.g. 4096) corresponds to the number of steps needed to achieve a full rotation.
     """
     resolutions = [MODEL_RESOLUTION[model] for model in models]

@@ -79,9 +79,9 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="zero"))
     input("Press Enter to continue...")
 
-    # We arbitrarely choosed our zero target position to be a straight horizontal position with gripper upwards and closed.
+    # We arbitrarily chose our zero target position to be a straight horizontal position with gripper upwards and closed.
     # It is easy to identify and all motors are in a "quarter turn" position. Once calibration is done, this position will
-    # corresponds to every motor angle being 0. If you set all 0 as Goal Position, the arm will move in this position.
+    # correspond to every motor angle being 0. If you set all 0 as Goal Position, the arm will move in this position.
     zero_target_pos = convert_degrees_to_steps(ZERO_POSITION_DEGREE, arm.motor_models)
 
     def _compute_nearest_rounded_position(position, models):
