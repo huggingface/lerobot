@@ -25,7 +25,7 @@ training:
   delta_timestamps:
     observation.environment_state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
     observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
-    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.action_horizon})]"
+    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.action_chunk_size})]"
 
   drop_n_last_frames: 7
 
@@ -87,13 +87,8 @@ policy:
   state_num_of_copy: 1
 
   # head
-  action_horizon: 16
+  action_chunk_size: 16
   n_action_steps: 8
-  head_input_dim: "${policy.embed_dim}"
-  head_tanh_end: True # normalized action output
-  head_action_dim: "${env.action_dim}" # overwrite based on dataset
-  head_dropout: False
-  head_widths: [1024, 512, 256]
 
   # Diffusion Head
   down_dims: [256, 512, 1024]
