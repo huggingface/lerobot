@@ -666,9 +666,9 @@ class ManipulatorRobot:
                 present_pos = torch.from_numpy(present_pos)
                 goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
 
+            action_sent.append(goal_pos)
             goal_pos = goal_pos.numpy().astype(np.int32)
             self.follower_arms[name].write("Goal_Position", goal_pos)
-            action_sent.append(goal_pos)
 
         return torch.cat(action_sent)
 
