@@ -76,6 +76,7 @@ class ACTConfig:
             documentation in the policy class).
         latent_dim: The VAE's latent dimension.
         n_vae_encoder_layers: The number of transformer layers to use for the VAE's encoder.
+        use_joint_state_bottleneck_layer: When true, adds a bottleneck layer after encoding the joint states to try and reduce overfitting to proprioception.
         temporal_ensemble_coeff: Coefficient for the exponential weighting scheme to apply for temporal
             ensembling. Defaults to None which means temporal ensembling is not used. `n_action_steps` must be
             1 when using this feature, as inference needs to happen at every step to form an ensemble. For
@@ -135,6 +136,7 @@ class ACTConfig:
     use_vae: bool = True
     latent_dim: int = 32
     n_vae_encoder_layers: int = 4
+    use_joint_state_bottleneck_layer: bool = False
 
     # Inference.
     # Note: the value used in ACT when temporal ensembling is enabled is 0.01.

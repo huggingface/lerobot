@@ -37,7 +37,6 @@ from torchvision.ops.misc import FrozenBatchNorm2d
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 
-
 class ACTPolicy(
     nn.Module,
     PyTorchModelHubMixin,
@@ -300,9 +299,18 @@ class ACT(nn.Module):
             self.vae_encoder_cls_embed = nn.Embedding(1, config.dim_model)
             # Projection layer for joint-space configuration to hidden dimension.
             if self.use_robot_state:
-                self.vae_encoder_robot_state_input_proj = nn.Linear(
-                    config.input_shapes["observation.state"][0], config.dim_model
-                )
+                if config.use_joint_state_bottleneck_layer:
+                    self.vae_encoder_robot_state_input_proj = nn.Sequential(
+                        nn.Linear(config.input_shapes["observation.state"][0], config.dim_model),  # First linear layer
+                        nn.ReLU(),  # Activation function after the first layer
+                        nn.Linear(config.dim_model, 4),  # Bottleneck layer with reduced dimensionality
+                        nn.ReLU(),  # Activation function after the bottleneck layer
+                        nn.Linear(4, config.dim_model)  # Expanding back to the original desired dimensionality
+                    )
+                else:
+                    self.vae_encoder_robot_state_input_proj = nn.Linear(
+                        config.input_shapes["observation.state"][0], config.dim_model
+                    )
             # Projection layer for action (joint-space target) to hidden dimension.
             self.vae_encoder_action_input_proj = nn.Linear(
                 config.output_shapes["action"][0], config.dim_model
