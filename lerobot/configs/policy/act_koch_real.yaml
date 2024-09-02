@@ -93,6 +93,7 @@ policy:
   use_vae: true
   latent_dim: 32
   n_vae_encoder_layers: 4
+  use_joint_state_bottleneck_layer: False
 
   # Inference.
   temporal_ensemble_momentum: null
