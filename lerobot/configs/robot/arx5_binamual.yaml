@@ -5,10 +5,20 @@ leader_arms:
     interface_name: enx5c5310ecc0ec
     urdf_path: lerobot/models/arx5.urdf
     dof: 6
+  right:
+    model: L5
+    interface_name: enx5c5310ec6299
+    urdf_path: lerobot/models/arx5.urdf
+    dof: 6
 follower_arms:
   left:
     model: L5
     interface_name: enx5c5310ecc38c
+    urdf_path: lerobot/models/arx5.urdf
+    dof: 6
+  right:
+    model: L5
+    interface_name: enx5c5310ecc90b
     urdf_path: lerobot/models/arx5.urdf
     dof: 6
 cameras:
@@ -18,9 +28,15 @@ cameras:
     fps: 30
     width: 640
     height: 480
-  wrist:
+  left_wrist:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
     camera_index: 2
+    fps: 30
+    width: 640
+    height: 480
+  right_wrist:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 4
     fps: 30
     width: 640
     height: 480

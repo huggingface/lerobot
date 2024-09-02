@@ -92,7 +92,8 @@ class ARXArm:
         if self.is_master:
             self.joint_controller.set_to_damping()
             gain = self.joint_controller.get_gain()
-            gain.kd()[:] *= 0.1
+            gain.kd()[:3] *= 0.05
+            gain.kd()[3:] *= 0.1
             self.joint_controller.set_gain(gain)
 
     def get_state(self) -> np.ndarray:
