@@ -69,6 +69,7 @@ policy:
   drop_path: 0.0
   no_trunk: False
   load_pretrained: "" # load pre-trained model
+  freeze_trunk: False
 
   # stem network (projectors) for different modalities
   modalities: ['image', 'state']
@@ -127,3 +128,13 @@ policy:
 
   # Loss computation
   do_mask_loss_for_padding: false
+
+
+  # ACT Head
+  dim_model: "${policy.embed_dim}"
+  n_heads: 8
+  dim_feedforward: 3200
+  feedforward_activation: "relu"
+  n_decoder_layers: 1
+  dropout: 0.1
+  pre_norm: False

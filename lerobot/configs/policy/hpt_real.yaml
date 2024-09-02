@@ -107,6 +107,7 @@ policy:
   drop_path: 0.0
   no_trunk: False
   load_pretrained: "" # load pre-trained model
+  freeze_trunk: False
 
   # stem network (projectors) for different modalities
   modalities: ['image', 'state']
@@ -137,11 +138,6 @@ policy:
   # head
   action_horizon: 100
   n_action_steps: 50
-  head_input_dim: "${policy.embed_dim}"
-  head_tanh_end: True # normalized action output
-  head_action_dim: "${env.action_dim}" # overwrite based on dataset
-  head_dropout: True
-  head_widths: [256, 128]
 
   # ACT Head
   dim_model: "${policy.embed_dim}"

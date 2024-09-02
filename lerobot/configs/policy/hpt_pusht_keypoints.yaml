@@ -65,6 +65,7 @@ policy:
   drop_path: 0.0
   no_trunk: False
   load_pretrained: "" # load pre-trained model
+  freeze_trunk: False
 
   # stem network (projectors) for different modalities
   modalities: ['state']
