@@ -125,6 +125,7 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
     calib_mode = [CalibrationMode.DEGREE.name] * len(arm.motor_names)
 
+    # TODO(rcadene): make type of joints (DEGREE or LINEAR) configurable from yaml?
     if robot_type == "aloha" and "gripper" in arm.motor_names:
         # Joints with linear motions (like gripper of Aloha) are experessed in nominal range of [0, 100]
         calib_idx = arm.motor_names.index("gripper")
@@ -213,10 +214,11 @@ class ManipulatorRobot:
     # TODO(rcadene): Implement force feedback
     """This class allows to control any manipulator robot of various number of motors.
 
-    A few versions are available:
-    - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow expansion, which was developed
-    by Alexander Koch from [Tau Robotics](https://tau-robotics.com): [Github for sourcing and assembly](
-    - [Koch v1.1])https://github.com/jess-moss/koch-v1-1), which was developed by Jess Moss.
+    Non exaustive list of robots:
+    - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow expansion, developed
+    by Alexander Koch from [Tau Robotics](https://tau-robotics.com)
+    - [Koch v1.1](https://github.com/jess-moss/koch-v1-1) developed by Jess Moss
+    - [Aloha](https://www.trossenrobotics.com/aloha-kits) developed by Trossen Robotics
 
     Example of highest frequency teleoperation without camera:
     ```python
@@ -250,6 +252,8 @@ class ManipulatorRobot:
         ),
     }
     robot = ManipulatorRobot(
+        robot_type="koch",
+        calibration_dir=".cache/calibration/koch",
         leader_arms=leader_arms,
         follower_arms=follower_arms,
     )
@@ -265,6 +269,8 @@ class ManipulatorRobot:
     ```python
     # Assumes leader and follower arms have been instantiated already (see first example)
     robot = ManipulatorRobot(
+        robot_type="koch",
+        calibration_dir=".cache/calibration/koch",
         leader_arms=leader_arms,
         follower_arms=follower_arms,
     )
@@ -286,6 +292,8 @@ class ManipulatorRobot:
 
     # Assumes leader and follower arms have been instantiated already (see first example)
     robot = ManipulatorRobot(
+        robot_type="koch",
+        calibration_dir=".cache/calibration/koch",
         leader_arms=leader_arms,
         follower_arms=follower_arms,
         cameras=cameras,
@@ -299,6 +307,8 @@ class ManipulatorRobot:
     ```python
     # Assumes leader and follower arms + cameras have been instantiated already (see previous example)
     robot = ManipulatorRobot(
+        robot_type="koch",
+        calibration_dir=".cache/calibration/koch",
         leader_arms=leader_arms,
         follower_arms=follower_arms,
         cameras=cameras,
