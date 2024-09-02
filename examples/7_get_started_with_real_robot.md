@@ -325,7 +325,7 @@ robot = ManipulatorRobot(
 
 The `robot_type="koch"` is used to set the associated settings and calibration process. For instance, we activate the torque of the gripper of the leader Koch v1.1 arm and position it at a 40 degree angle to use it as a trigger.
 
-For the [Aloha bimanual robot](https://aloha-2.github.io), we would use `robot_type="aloha"` to set different settings such as setting secondary ID for shadow joints (shoulder, elbow). Specific to Aloha, LeRobot comes with default calibration files stored in in `.cache/calibration/aloha_default`. Assuming the motors have been properly assembled, no manual calibration step is expected. If you need to run manual calibration, simply update `calibration_dir` to `.cache/calibration/aloha`.
+For the [Aloha bimanual robot](https://aloha-2.github.io), we would use `robot_type="aloha"` to set different settings such as a secondary ID for shadow joints (shoulder, elbow). Specific to Aloha, LeRobot comes with default calibration files stored in in `.cache/calibration/aloha_default`. Assuming the motors have been properly assembled, no manual calibration step is expected. If you need to run manual calibration, simply update `calibration_dir` to `.cache/calibration/aloha`.
 
 **Calibrate and Connect the ManipulatorRobot**
 
@@ -362,27 +362,26 @@ The output will look like this:
 ```
 Connecting main follower arm
 Connecting main leader arm
-Missing calibration file '.cache/calibration/koch.pkl'. Starting calibration procedure.
 
-Running calibration of main follower...
-
+Missing calibration file '.cache/calibration/koch/main_follower.json'
+Running calibration of koch main follower...
 Move arm to zero position
 [...]
 Move arm to rotated position
 [...]
 Move arm to rest position
 [...]
+Calibration is done! Saving calibration file '.cache/calibration/koch/main_follower.json'
 
-Running calibration of main leader...
-
+Missing calibration file '.cache/calibration/koch/main_leader.json'
+Running calibration of koch main leader...
 Move arm to zero position
 [...]
 Move arm to rotated position
 [...]
 Move arm to rest position
 [...]
-
-Calibration is done! Saving calibration file '.cache/calibration/koch.pkl'
+Calibration is done! Saving calibration file '.cache/calibration/koch/main_leader.json'
 ```
 
 *Verifying Calibration*

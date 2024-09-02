@@ -418,9 +418,7 @@ class ManipulatorRobot:
                 with open(arm_calib_path) as f:
                     calibration = json.load(f)
             else:
-                print(
-                    f"Missing calibration file '{arm_calib_path}'. Starting calibration precedure for {name} {arm_type}."
-                )
+                print(f"Missing calibration file '{arm_calib_path}'")
                 calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
 
                 print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
