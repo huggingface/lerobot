@@ -48,6 +48,12 @@ def apply_drive_mode(position, drive_mode):
     return position
 
 
+def compute_nearest_rounded_position(position, models):
+    delta_turn = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, models)
+    nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
+    return nearest_pos.astype(position.dtype)
+
+
 def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
     """This function ensures that a neural network trained on data collected on a given robot
     can work on another robot. For instance before calibration, setting a same goal position
@@ -84,14 +90,9 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     # correspond to every motor angle being 0. If you set all 0 as Goal Position, the arm will move in this position.
     zero_target_pos = convert_degrees_to_steps(ZERO_POSITION_DEGREE, arm.motor_models)
 
-    def _compute_nearest_rounded_position(position, models):
-        delta_turn = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, models)
-        nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
-        return nearest_pos.astype(position.dtype)
-
     # Compute homing offset so that `present_position + homing_offset ~= target_position`.
     zero_pos = arm.read("Present_Position")
-    zero_nearest_pos = _compute_nearest_rounded_position(zero_pos, arm.motor_models)
+    zero_nearest_pos = compute_nearest_rounded_position(zero_pos, arm.motor_models)
     homing_offset = zero_target_pos - zero_nearest_pos
 
     # The rotated target position corresponds to a rotation of a quarter turn from the zero position.
@@ -114,7 +115,7 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
 
     # Re-compute homing offset to take into account drive mode
     rotated_drived_pos = apply_drive_mode(rotated_pos, drive_mode)
-    rotated_nearest_pos = _compute_nearest_rounded_position(rotated_drived_pos, arm.motor_models)
+    rotated_nearest_pos = compute_nearest_rounded_position(rotated_drived_pos, arm.motor_models)
     homing_offset = rotated_target_pos - rotated_nearest_pos
 
     print("\nMove arm to rest position")
@@ -644,20 +645,14 @@ class ManipulatorRobot:
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
-        # Get goal position of each follower arm by splitting the action vector
         from_idx = 0
         to_idx = 0
-        follower_goal_pos = {}
-        for name in self.follower_arms:
-            if name in self.follower_arms:
-                to_idx += len(self.follower_arms[name].motor_names)
-                follower_goal_pos[name] = action[from_idx:to_idx]
-                from_idx = to_idx
-
-        # Send goal position to each follower
         action_sent = []
         for name in self.follower_arms:
-            goal_pos = follower_goal_pos[name]
+            # Get goal position of each follower arm by splitting the action vector
+            to_idx += len(self.follower_arms[name].motor_names)
+            goal_pos = action[from_idx:to_idx]
+            from_idx = to_idx
 
             # Cap goal position when too far away from present position.
             # Slower fps expected due to reading from the follower.
@@ -666,7 +661,10 @@ class ManipulatorRobot:
                 present_pos = torch.from_numpy(present_pos)
                 goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
 
+            # Save tensor to concat and return
             action_sent.append(goal_pos)
+
+            # Send goal position to each follower
             goal_pos = goal_pos.numpy().astype(np.int32)
             self.follower_arms[name].write("Goal_Position", goal_pos)
 
