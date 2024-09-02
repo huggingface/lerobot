@@ -58,7 +58,7 @@ training:
     observation.images.cam_high: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
     observation.images.cam_low: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
     observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
-    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.action_horizon})]"
+    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.action_chunk_size})]"
 
 
 eval:
@@ -136,7 +136,7 @@ policy:
   state_num_of_copy: 1
 
   # head
-  action_horizon: 100
+  action_chunk_size: 100
   n_action_steps: 50
 
   # ACT Head

@@ -88,7 +88,7 @@ class HPTConfig:
         head_input_dim (int): Input dimension for the head network.
         head_tanh_end (bool): Whether to apply tanh to normalize action output.
         head_action_dim (int): Output dimension for the head network, should be overwritten based on the environment action dimension.
-        action_horizon (int): Action horizon, should be overwritten based on the dataset.
+        action_chunk_size (int): Action horizon, should be overwritten based on the dataset.
         n_action_steps (int): Number of steps for action generation.
         head_dropout (bool): Whether to add dropout to the head network.
         head_widths (tuple[int]): Widths of the layers for the head network.
@@ -147,6 +147,9 @@ class HPTConfig:
     domain_name: str = "robotics"
     vision_backbone: str = "resnet18"
     head_architecture: str = "diffusion"
+    action_chunk_size: int = 8
+    n_action_steps: int = 4
+    n_obs_steps: int = 2
 
     # Network configuration
     # Trunk Transformer
@@ -163,6 +166,7 @@ class HPTConfig:
     freeze_trunk: bool = False
 
     # Stem network (projectors) for different modalities
+    freeze_encoders: False
     modalities: tuple = ("image", "state")
     modality_embed_dim: int = 256
     normalize_state: bool = True
@@ -171,7 +175,6 @@ class HPTConfig:
     crossattn_dim_head: int = 64
     crossattn_heads: int = 8
     crossattn_modality_dropout: float = 0.1
-    n_obs_steps: int = 2
     random_horizon_masking: bool = True
     add_pos_embedding_to_state: bool = False
 
@@ -195,8 +198,6 @@ class HPTConfig:
     head_input_dim: int = 256
     head_tanh_end: bool = True
     head_action_dim: int = 14
-    action_horizon: int = 8
-    n_action_steps: int = 4
     head_dropout: bool = True
     head_widths: tuple = (256, 128)
 

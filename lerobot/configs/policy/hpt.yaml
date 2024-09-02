@@ -28,7 +28,7 @@ training:
   online_steps_between_rollouts: 1
 
   delta_timestamps:
-    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.action_horizon})]"
+    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.action_chunk_size})]"
 
 eval:
   n_episodes: 50 # 50
@@ -98,7 +98,7 @@ policy:
   state_num_of_copy: 1
 
   # MLP Head
-  action_horizon: 100 # tuned for aloha
+  action_chunk_size: 100 # tuned for aloha
   n_action_steps: 100
   head_input_dim: "${policy.embed_dim}"
   head_tanh_end: True # normalized action output
