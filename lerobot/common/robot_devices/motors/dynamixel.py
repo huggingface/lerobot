@@ -582,7 +582,7 @@ class DynamixelMotorsBus:
         if motor_names is None:
             motor_names = self.motor_names
 
-        # Convert from unsigned int32 original range [0, 2**32[ to centered signed int32 range [-2**31, 2**31[
+        # Convert from unsigned int32 original range [0, 2**32] to signed float32 range
         values = values.astype(np.float32)
 
         for i, name in enumerate(motor_names):
@@ -661,7 +661,7 @@ class DynamixelMotorsBus:
         if motor_names is None:
             motor_names = self.motor_names
 
-        # Convert from unsigned int32 original range [0, 2**32[ to centered signed int32 range [-2**31, 2**31[
+        # Convert from unsigned int32 original range [0, 2**32] to signed float32 range
         values = values.astype(np.float32)
 
         for i, name in enumerate(motor_names):
@@ -741,7 +741,6 @@ class DynamixelMotorsBus:
         if motor_names is None:
             motor_names = self.motor_names
 
-        # Convert from the universal float32 centered degree range ]-180, 180[ to resolution range ]-resolution, resolution[
         for i, name in enumerate(motor_names):
             calib_idx = self.calibration["motor_names"].index(name)
             calib_mode = self.calibration["calib_mode"][calib_idx]
@@ -752,16 +751,25 @@ class DynamixelMotorsBus:
                 _, model = self.motors[name]
                 resolution = self.model_resolution[model]
 
-                # Convert from nominal range ]-resolution, resolution[ to centered signed int32 range [-2**31, 2**31[
-                values[i] = values[i] / 180 * (resolution // 2)
+                # Convert from nominal 0-centered degree range [-180, 180] to
+                # 0-centered resolution range (e.g. [-2048, 2048] for resolution=4096)
+                values[i] = values[i] / HALF_TURN_DEGREE * (resolution // 2)
 
+                # Substract the homing offsets to come back to actual motor range of values
+                # which can be arbitrary.
                 values[i] -= homing_offset
+
+                # Remove drive mode, which is the rotation direction of the motor, to come back to
+                # actual motor rotation direction which can be arbitrary.
                 if drive_mode:
                     values[i] *= -1
 
             elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
                 start_pos = self.calibration["start_pos"][calib_idx]
                 end_pos = self.calibration["end_pos"][calib_idx]
+
+                # Convert from nominal lnear range of [0, 100] % to
+                # actual motor range of values which can be arbitrary.
                 values[i] = values[i] / 100 * (end_pos - start_pos) + start_pos
 
         values = np.round(values).astype(np.int32)
