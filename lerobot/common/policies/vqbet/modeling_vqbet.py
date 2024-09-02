@@ -152,6 +152,12 @@ class VQBeTPolicy(
 
         return loss_dict
 
+    def make_optimizer_and_scheduler(self, cfg):
+        """Create the optimizer and learning rate scheduler for VQ-BeT"""
+        optimizer = VQBeTOptimizer(self, cfg)
+        scheduler = VQBeTScheduler(optimizer, cfg)
+        return optimizer, scheduler
+
 
 class SpatialSoftmax(nn.Module):
     """

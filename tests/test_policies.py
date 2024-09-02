@@ -213,7 +213,7 @@ def test_act_backbone_lr():
 
     dataset = make_dataset(cfg)
     policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.stats)
-    optimizer, _ = policy.make_optimizer_and_scheduler(**cfg.training)
+    optimizer, _ = policy.make_optimizer_and_scheduler(cfg)
     assert len(optimizer.param_groups) == 2
     assert optimizer.param_groups[0]["lr"] == cfg.training.lr
     assert optimizer.param_groups[1]["lr"] == cfg.training.lr_backbone

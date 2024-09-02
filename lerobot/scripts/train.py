@@ -281,7 +281,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     assert isinstance(policy, nn.Module)
     # Create optimizer and scheduler
     # Temporary hack to move optimizer out of policy
-    optimizer, lr_scheduler = policy.make_optimizer_and_scheduler(**cfg.training)
+    optimizer, lr_scheduler = policy.make_optimizer_and_scheduler(cfg)
     grad_scaler = GradScaler(enabled=cfg.use_amp)
 
     step = 0  # number of policy updates (forward + backward + optim)
