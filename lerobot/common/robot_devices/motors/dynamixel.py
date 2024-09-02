@@ -30,13 +30,13 @@ TIMEOUT_MS = 1000
 MAX_ID_RANGE = 252
 
 # The following bounds define the lower and upper joints range (after calibration).
-# For joints in degree (i.e. most joints), their nominal range is [-180, 180] degrees
+# For joints in degree (i.e. revolute joints), their nominal range is [-180, 180] degrees
 # which corresponds to a half rotation on the left and half rotation on the right.
 # Some joints might require higher range, so we allow up to [-270, 270] degrees until
 # an error is raised.
 LOWER_BOUND_DEGREE = -270
 UPPER_BOUND_DEGREE = 270
-# For joints in percentage (i.e. joints that move linearly like a parallel gripper),
+# For joints in percentage (i.e. joints that move linearly like the prismatic joint of a gripper),
 # their nominal range is [0, 100] %. For instance, for Aloha gripper, 0% is fully
 # closed, and 100% is fully open. To account for slight calibration issue, we allow up to
 # [-10, 110] until an error is raised.
@@ -155,7 +155,7 @@ NUM_READ_RETRY = 10
 NUM_WRITE_RETRY = 10
 
 
-def convert_degrees_to_steps(degrees: int | float | np.ndarray, models: str | list[str]) -> np.ndarray:
+def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str]) -> np.ndarray:
     """This function convert the degree range to the step range for indicating motors rotation.
     It assums a motor achieves a full rotation by going from -180 degree position to +180.
     The motor resolution (e.g. 4096) corresponds to the number of steps needed to achieve a full rotation.
