@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 Tony Z. Zhao and The HuggingFace Inc. team. All rights reserved.
+# Copyright 2024 Lirui Wang and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,64 +36,84 @@ class HPTConfig:
         - "action" is required as an output key.
 
     Args:
-        input_shapes: A dictionary defining the shapes of the input data for the policy.
+        input_shapes (dict[str, list[int]]): A dictionary defining the shapes of the input data for the policy.
             The key represents the input data name, and the value is a list indicating the dimensions
-            of the corresponding data. For example, "observation.image" refers to an input from
-            a camera with dimensions [3, 96, 96], indicating it has three color channels and 96x96 resolution.
+            of the corresponding data. For example, "observation.images.top" refers to an input from
+            a camera with dimensions [3, 480, 640], indicating it has three color channels and 480x640 resolution.
             Importantly, shapes don't include batch dimension or temporal dimension.
-        output_shapes: A dictionary defining the shapes of the output data for the policy.
+        output_shapes (dict[str, list[int]]): A dictionary defining the shapes of the output data for the policy.
             The key represents the output data name, and the value is a list indicating the dimensions
             of the corresponding data. For example, "action" refers to an output shape of [14], indicating
             14-dimensional actions. Importantly, shapes don't include batch dimension or temporal dimension.
-        input_normalization_modes: A dictionary with key representing the modality (e.g. "observation.state"),
-            and the value specifies the normalization mode to apply. The two available modes are "mean_std"
-            which subtracts the mean and divides by the standard deviation and "min_max" which rescale in a
-            [-1, 1] range.
-        output_normalization_modes: Similar dictionary as `input_normalization_modes`, but to unnormalize to the
-            original scale. Note that this is also used for normalizing the training targets.
-        vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
-        crop_shape: (H, W) shape to crop images to as a preprocessing step for the vision backbone. Must fit
-            within the image size. If None, no cropping is done.
-        crop_is_random: Whether the crop should be random at training time (it's always a center crop in eval
-            mode).
-        embed_dim: Transformer model size.
-        num_blocks: Number of blocks in the trunk transformer.
-        num_heads: Number of heads in the trunk transformer.
-        use_modality_embedding: Whether to add modality-specific trainable parameters.
-        use_domain_embedding: Whether to add domain-specific trainable parameters.
-        token_postprocessing: Method to pool the tokens, either "max" or "mean".
-        weight_init_style: Weight initialization style.
-        drop_path: Drop path in the trunk transformer.
-        use_gpt_trunk: Load pre-trained trunk from GPT2.
-        use_llama_trunk: Load pre-trained trunk from LLaMA2.
-        hf_trunk: Load pre-trained transformer from Hugging Face.
-        modalities: Modalities (e.g., 'image', 'language').
-        modality_embed_dim: Embedding dimension for each modality.
-        normalize_state: Normalize state vectors.
-        state_embedding_dim: Dimension of positional encoding for state.
-        image_encoder: Default image encoder.
-        crossattn_dim_head: Dimension of each head in cross-attention modules.
-        crossattn_heads: Number of heads in cross-attention.
-        crossattn_modality_dropout: Dropout ratio for cross-attention.
-        n_obs_steps: Observation horizon.
-        random_horizon_masking: Randomize observation input length.
-        add_pos_embedding_to_state: Positional embedding for the state.
-        stem_num_blocks: Number of blocks for stem transformer's cross and self-attention.
-        crossattn_latent_image: Latent dimension for cross-attention (image).
-        crossattn_latent_state: Latent dimension for cross-attention (state).
-        image_input_dim: Input dimension for the image encoder.
-        image_output_dim: Output dimension for the image encoder.
-        image_widths: Widths of the layers for the image encoder.
-        image_num_of_copy: Number of copies for the image encoder.
-        state_input_dim: Placeholder, should be overwritten based on the environment state dimension.
-        state_output_dim: Output dimension for the state encoder.
-        state_widths: Widths of the layers for the state encoder.
-        head_input_dim: Input dimension for the head network.
-        head_tanh_end: Whether to apply tanh to normalize action output.
-        head_action_dim: Placeholder, should be overwritten based on the environment action dimension.
-        action_horizon: Action horizon, should be overwritten based on the dataset.
-        head_dropout: Add dropout to the head network.
-        head_widths: Widths of the layers for the head network.
+        input_normalization_modes (dict[str, str]): A dictionary where the key represents the modality (e.g.,
+            "observation.state"), and the value specifies the normalization mode to apply. The two available
+            modes are "mean_std" (which subtracts the mean and divides by the standard deviation) and "min_max"
+            (which rescales in a [-1, 1] range).
+        output_normalization_modes (dict[str, str]): Similar dictionary to `input_normalization_modes`, but used to
+            unnormalize to the original scale. This is also used for normalizing the training targets.
+        domain_name (str): Name of the domain, e.g., 'robotics'.
+        vision_backbone (str): Name of the torchvision ResNet backbone to use for encoding images, e.g., "resnet18".
+        head_architecture (str): Architecture of the head network, e.g., "diffusion".
+        embed_dim (int): Transformer model size.
+        num_blocks (int): Number of blocks in the trunk transformer.
+        num_heads (int): Number of heads in the trunk transformer.
+        use_modality_embedding (bool): Whether to add modality-specific trainable parameters.
+        use_domain_embedding (bool): Whether to add domain-specific trainable parameters.
+        token_postprocessing (str): Method to pool the tokens, either "max" or "mean".
+        weight_init_style (str): Weight initialization style, e.g., "pytorch".
+        drop_path (float): Drop path rate in the trunk transformer.
+        no_trunk (bool): Whether to disable the trunk transformer.
+        load_pretrained (bool): Whether to load a pre-trained model for the trunk transformer.
+        modalities (tuple): Modalities used in the model, e.g., ('image', 'state').
+        modality_embed_dim (int): Embedding dimension for each modality.
+        normalize_state (bool): Whether to normalize state vectors.
+        state_embedding_dim (int): Dimension of positional encoding for state.
+        image_encoder (str): Default image encoder, e.g., "resnet".
+        crossattn_dim_head (int): Dimension of each head in cross-attention modules.
+        crossattn_heads (int): Number of heads in cross-attention.
+        crossattn_modality_dropout (float): Dropout ratio for cross-attention.
+        n_obs_steps (int): Observation horizon.
+        random_horizon_masking (bool): Whether to randomize observation input length.
+        add_pos_embedding_to_state (bool): Whether to add positional embedding to the state.
+        image_crossattn_latent (int): Latent dimension for cross-attention (image).
+        state_crossattn_latent (int): Latent dimension for cross-attention (state).
+        image_input_dim (int): Input dimension for the image encoder.
+        image_output_dim (int): Output dimension for the image encoder.
+        image_widths (tuple[int]): Widths of the layers for the image encoder.
+        image_num_of_copy (int): Number of copies for the image encoder.
+        state_input_dim (int): Input dimension for the state encoder, should be overwritten based on the environment state dimension.
+        state_output_dim (int): Output dimension for the state encoder.
+        state_widths (tuple[int]): Widths of the layers for the state encoder.
+        state_num_of_copy (int): Number of copies for the state encoder.
+        head_input_dim (int): Input dimension for the head network.
+        head_tanh_end (bool): Whether to apply tanh to normalize action output.
+        head_action_dim (int): Output dimension for the head network, should be overwritten based on the environment action dimension.
+        action_horizon (int): Action horizon, should be overwritten based on the dataset.
+        n_action_steps (int): Number of steps for action generation.
+        head_dropout (bool): Whether to add dropout to the head network.
+        head_widths (tuple[int]): Widths of the layers for the head network.
+        down_dims (tuple[int]): Dimensions for down-sampling in the diffusion head network.
+        kernel_size (int): Kernel size for convolutional layers in the diffusion head network.
+        n_groups (int): Number of groups for normalization in the diffusion head network.
+        diffusion_step_embed_dim (int): Embedding dimension for diffusion steps.
+        use_film_scale_modulation (bool): Whether to use FiLM scale modulation in the diffusion head.
+        noise_scheduler_type (str): Type of noise scheduler, e.g., "DDPM".
+        num_train_timesteps (int): Number of training timesteps for the diffusion process.
+        beta_schedule (str): Schedule type for beta, e.g., "squaredcos_cap_v2".
+        beta_start (float): Starting value for beta in the diffusion process.
+        beta_end (float): Ending value for beta in the diffusion process.
+        prediction_type (str): Type of prediction in the diffusion process, e.g., "epsilon".
+        clip_sample (bool): Whether to clip samples during the diffusion process.
+        clip_sample_range (float): Range for clipping samples.
+        num_inference_steps (int | None): Number of inference steps. If None, a default value is used.
+        do_mask_loss_for_padding (bool): Whether to mask loss computation for padding tokens.
+        dim_model (int): Dimension of the model for the ACT head.
+        n_heads (int): Number of heads in the ACT head.
+        dim_feedforward (int): Feedforward dimension in the ACT head.
+        feedforward_activation (str): Activation function for the feedforward network, e.g., "relu".
+        n_decoder_layers (int): Number of decoder layers in the ACT head.
+        dropout (float): Dropout rate in the ACT head.
+        pre_norm (bool): Whether to apply layer normalization before the main operations in the ACT head.
     """
 
     # Input / output structure.
@@ -140,6 +160,7 @@ class HPTConfig:
     drop_path: float = 0.1
     no_trunk: bool = False
     load_pretrained: bool = False
+    freeze_trunk: bool = False
 
     # Stem network (projectors) for different modalities
     modalities: tuple = ("image", "state")
@@ -185,7 +206,7 @@ class HPTConfig:
     n_groups: int = 8
     diffusion_step_embed_dim: int = 128
     use_film_scale_modulation: bool = True
-    # Noise scheduler.
+
     noise_scheduler_type: str = "DDPM"
     num_train_timesteps: int = 100
     beta_schedule: str = "squaredcos_cap_v2"

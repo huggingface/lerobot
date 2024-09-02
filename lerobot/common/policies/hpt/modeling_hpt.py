@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 Tony Z. Zhao and The HuggingFace Inc. team. All rights reserved.
+# Copyright 2024 Lirui Wang and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 # limitations under the License.
 """Heterogeneous Pre-trained Transformer Policy
 
-As per Scaling Proprioceptive-Visual Learning with Heterogeneous Pre-trained Transformers (TBU).
+As per Scaling Proprioceptive-Visual Learning with Heterogeneous Pre-trained Transformers (https://liruiw.github.io/hpt/).
 The majority of changes here involve removing unused code, unifying naming, and adding helpful comments.
 """
 
@@ -49,7 +49,7 @@ class HPTPolicy(
 ):
     """
     Heterogeneous Pre-trained Transformer Policy as per Scaling Proprioceptive-Visual Learning
-    with Heterogeneous Pre-trained Transformers  (paper: TBU, code: https://github.com/liruiw/HPT-Transfer)
+    with Heterogeneous Pre-trained Transformers  (paper: https://liruiw.github.io/hpt/, code: https://github.com/liruiw/HPT-Transfer)
     """
 
     name = "hpt"
@@ -129,28 +129,28 @@ class HPT(nn.Module):
         -  The head then maps the processed tokens to actions in different downstream tasks.
         For a specific embodiment, one stem/head pair is activated.
 
-    ┌───────────────────────────────────────────────────────────┐
-    |                               Outputs                     |
-    |                                ▲                          |
-    |     ┌─────────────┐   ┌─────────────┐   ┌──────────┐      |
-    |     |    Head 1   |   |    Head 2   |   |  Head 3  |      |
-    |     └──────▲──────┘   └──────▲──────┘   └────▲─────┘      |
-    |            │                 │               │            |
-    |            ┌─────────────────────────────────┐            |
-    |            |          Trunk Transformer.     │            |
-    |            └────────▲──────────▲─────────────┘            |
-    |                     │          │                          |
-    |           ┌─────────┴──────┬───┴────────────┐             |
-    |           │                │                │             |
-    |   ┌───────┴────┐   ┌─────┴─────┐   ┌────┴──────┐          |
-    |   │  Stem.     │   │  Stem.    │   │  Stem.    │          |
-    |   │  Encoder 1 │   │  Encoder 2│   │  Encoder 3│          |
-    |   │  ┌─────────┐   │ ┌─────────┐   │ ┌─────────┐          |
-    |   │  │image emb│   │ │image emb│   │ │image emb│          |
-    |   │  │state emb│   │ │state emb│   │ │state emb│          |
-    |   └──┴─────────┘   └─┴─────────┘   └─┴─────────┘          |
-    |                                                           |
-    └───────────────────────────────────────────────────────────┘
+    ┌─────────────────────────────────────────────────────┐
+    |                         Outputs                     |
+    |                            ▲                        |
+    |     ┌───────────┐   ┌───────────┐   ┌───────────┐   |
+    |     |   Head 1  |   |   Head 2  |   |   Head 3  |   |
+    |     └───────▲───┘   └───────▲───┘   └─────▲─────┘   |
+    |             │               │             │         |
+    |            ┌─────────────────────────────────┐      |
+    |            |          Trunk Transformer.     │      |
+    |            └────────▲──────────▲─────────────┘      |
+    |                     │          │                    |
+    |           ┌─────────┴──────┬───┴────────────┐       |
+    |           │                │                │       |
+    |   ┌───────┴────┐   ┌─────┴─────┐   ┌────┴──────┐    |
+    |   │  Stem.     │   │  Stem.    │   │  Stem.    │    |
+    |   │  Encoder 1 │   │  Encoder 2│   │  Encoder 3│    |
+    |   │  ┌─────────┐   │ ┌─────────┐   │ ┌─────────┐    |
+    |   │  │image emb│   │ │image emb│   │ │image emb│    |
+    |   │  │state emb│   │ │state emb│   │ │state emb│    |
+    |   └──┴─────────┘   └─┴─────────┘   └─┴─────────┘    |
+    |                                                     |
+    └─────────────────────────────────────────────────────┘
     """
 
     def __init__(self, config: HPTConfig):
@@ -159,7 +159,6 @@ class HPT(nn.Module):
         self.use_robot_state = "observation.state" in config.input_shapes
         self.use_images = any(k.startswith("observation.image") for k in config.input_shapes)
         self.embed_dim = config.embed_dim
-        self.no_trunk = config.no_trunk
 
         self.trunk = self._create_policy_trunk(config.embed_dim, config.num_blocks, config.num_heads)
         self.stems = {}
@@ -167,12 +166,9 @@ class HPT(nn.Module):
 
         self.encoders = {}
         self.domains = []
-        self.use_modality_embedding = config.use_modality_embedding
         self.n_obs_steps = config.n_obs_steps
         self.action_horizon = config.action_horizon
         self.token_postprocessing = config.token_postprocessing
-        self.use_domain_embedding = config.use_domain_embedding
-        self.modalities_tokens = {}
         self.action_tokens = {}
 
         # initialize modules.
@@ -181,10 +177,9 @@ class HPT(nn.Module):
         self.init_domain_stem(self.config.domain_name)
         self.init_domain_head(self.config.domain_name)
         self.finalize_modules()
-        if len(config.load_pretrained) > 0:
-            self.load_trunk(config.load_pretrained)
 
-    def _init_weights(self, m):
+
+    def _init_weights(self, m: nn.Module):
         """
         Weight initialization for transformer
         """
@@ -196,14 +191,14 @@ class HPT(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def init_encoders(self, modality, encoder):
+    def init_encoders(self, modality: str, encoder: nn.Module):
         """
         Add image/language encoders into the policy parameters in the case of joint finetuning
         """
         self.encoders[modality] = encoder
         self.encoders = nn.ModuleDict(self.encoders)
 
-    def init_domain_stem(self, domain_name):
+    def init_domain_stem(self, domain_name: str):
         """
         Initialize an observation stem for each domain
         """
@@ -218,16 +213,14 @@ class HPT(nn.Module):
             )
 
             self.stems[domain_name + "_" + modality].init_cross_attn(self.config, modality)
-            self.modalities_tokens[modality] = nn.Parameter(
-                torch.randn(1, 1, self.config.modality_embed_dim) * INIT_CONST
-            )
+           
 
         if self.token_postprocessing == "action_token":
             self.action_tokens[domain_name] = nn.Parameter(
                 torch.randn(1, self.action_horizon, self.embed_dim) * INIT_CONST
             )
 
-    def init_domain_head(self, domain_name):
+    def init_domain_head(self, domain_name: str):
         """initialize an action head for each domain, along with normalizer"""
         self.head_spec = self.config
         self.action_horizon = self.config.action_horizon
@@ -309,6 +302,12 @@ class HPT(nn.Module):
             add_bias_kv=True,
             drop_path=drop_path,
         )
+
+        if len(self.config.load_pretrained) > 0:
+            self.load_trunk(config.load_pretrained)
+
+        if self.config.freeze_trunk:
+            self.freeze_trunk()
         return nn.ModuleDict(trunk)
 
     def _reset_parameters(self):
@@ -324,8 +323,6 @@ class HPT(nn.Module):
             "observation.images": (B, n_cameras, C, H, W) batch of images.
                 AND/OR
             "observation.environment_state": (B, env_dim) batch of environment states.
-
-            "action" (optional, only if training with VAE): (B, chunk_size, action dim) batch of actions.
         }
 
         Returns:
@@ -348,7 +345,7 @@ class HPT(nn.Module):
 
         return action
 
-    def preprocess_tokens(self, domain: str, features: List[torch.Tensor]) -> torch.Tensor:
+    def preprocess_tokens(self, domain: str, features: List[Tensor]) -> Tensor:
         """
         Shared modality layers and add modality tokens. Add positional and time embeddings.
         """
@@ -362,7 +359,7 @@ class HPT(nn.Module):
         tokens = tokens + position_tokens
         return tokens
 
-    def get_position_embedding(self, feature: torch.Tensor) -> torch.Tensor:
+    def get_position_embedding(self, feature: Tensor) -> Tensor:
         """
         Add positional embedding to the features
         """
@@ -370,16 +367,16 @@ class HPT(nn.Module):
         pos_embedding = pos_embedding.repeat((1, 1, 1)).to(feature.device)
         return pos_embedding
 
-    def postprocess_tokens(self, trunk_tokens: torch.Tensor) -> torch.Tensor:
+    def postprocess_tokens(self, trunk_tokens: Tensor) -> Tensor:
         """
         Postprocesses the trunk tokens to obtain the final features.
 
         Args:
-            trunk_tokens (torch.Tensor): The trunk tokens of shape (N, L, D), where N is the batch size,
+            trunk_tokens (Tensor): The trunk tokens of shape (N, L, D), where N is the batch size,
                                         L is the sequence length, and D is the token dimension.
 
         Returns:
-            torch.Tensor: The postprocessed tokens of shape (N, D), where N is the batch size and D is the
+            Tensor: The postprocessed tokens of shape (N, D), where N is the batch size and D is the
                           final feature dimension.
         """
         if self.token_postprocessing == "mean":
@@ -393,7 +390,7 @@ class HPT(nn.Module):
         elif self.token_postprocessing == "no-op":
             return trunk_tokens
 
-    def mapped_modality_keys(self, modality: str, data: dict[str, Tensor]) -> bool:
+    def mapped_modality_keys(self, modality: str, data: dict[str, Tensor]) -> str | Tensor:
         """Select the data for the given modality"""
         selected_keys = []
         selected_data = []
@@ -458,7 +455,7 @@ class HPT(nn.Module):
 
         return feats
 
-    def forward_features(self, data: dict) -> torch.Tensor:
+    def forward_features(self, data: dict) -> Tensor:
         """
         Compute the features for the given domain and data.
         Args:
@@ -474,14 +471,21 @@ class HPT(nn.Module):
         self.trunk_tokens = self.preprocess_tokens(domain, self.stem_tokens)
 
         # trunk pass
-        if not self.no_trunk:
-            self.trunk_tokens = self.trunk["trunk"](self.trunk_tokens)
+        self.trunk_tokens = self.trunk["trunk"](self.trunk_tokens)
 
         # pooling the features
         return self.postprocess_tokens(self.trunk_tokens)
 
     def load_trunk(self, path: str):
         """load the trunk part of the model"""
+
+        def module_mean_param(module):
+            def maybe_mean(x):
+                return float(torch.abs(x).mean()) if x is not None else 0
+
+            max_data = np.mean([(maybe_mean(param.data)) for name, param in module.named_parameters()])
+            return max_data
+
         path = "liruiw/hpt-" + path
         print(f"Loading trunk from {path}")
         import huggingface_hub
@@ -489,7 +493,21 @@ class HPT(nn.Module):
         download_path = huggingface_hub.snapshot_download(path)
         self.trunk.load_state_dict(torch.load(download_path + "/trunk.pth"))
 
-    def compute_loss(self, batch):
+    def freeze_trunk(self, num_layers: int = 0):
+        """freeze the trunk parameters in the last num_layers"""
+        layers = list(self.trunk["trunk"].children())
+        for layer in layers[-num_layers:]:
+            for param in layer.parameters():
+                param.requires_grad = False
+
+    def unfreeze_trunk(self, num_layers: int = 0):
+        """unfreeze the trunk parameters in the last num_layers"""
+        layers = list(self.trunk["trunk"].children())
+        for layer in layers[-num_layers:]:
+            for param in layer.parameters():
+                param.requires_grad = True
+
+    def compute_loss(self, batch: dict[str, Tensor]) -> Tensor:
         """Compute the loss for the training loop forward pass."""
         domain = self.config.domain_name
         features = self.forward_features(batch)
@@ -510,7 +528,7 @@ class MLPHead(nn.Module):
         action_horizon: int = 1,
         ln: bool = True,
     ) -> None:
-        """MLP head on the pooled feature"""
+        """MLP Policy Head class """
         super().__init__()
         self.input = input
         self.action_horizon = action_horizon
@@ -529,17 +547,17 @@ class MLPHead(nn.Module):
             modules.append(nn.Tanh())
         self.net = nn.Sequential(*modules)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         return self.net(x).view(len(x), self.action_horizon, -1)
 
-    def compute_loss(self, x: torch.Tensor, target: dict) -> torch.Tensor:
+    def compute_loss(self, x: Tensor, target: dict) -> Tensor:
         target_action = target["action"]
         pred_action = self(x).view(target_action.shape)
         return LOSS(pred_action, target_action)
 
 
 class DiffusionHead(nn.Module):
-    """Simple Diffusion based policy head based on modifications of the diffusion implementation"""
+    """Diffusion based policy head based on the diffusion implementation"""
 
     def __init__(self, config, embed_dim: int, action_horizon: int, action_dim: int) -> None:
         super().__init__()
@@ -593,10 +611,10 @@ class DiffusionHead(nn.Module):
             trajectory = scheduler.step(model_output, t, trajectory, generator=generator).prev_sample
         return trajectory
 
-    def forward(self, global_cond: torch.Tensor):
+    def forward(self, global_cond: Tensor):
         return self.conditional_sample(global_cond)
 
-    def compute_loss(self, global_cond: torch.Tensor, data: torch.Tensor) -> torch.Tensor:
+    def compute_loss(self, global_cond: Tensor, data: Tensor) -> Tensor:
         trajectory = data["action"].reshape(
             (len(global_cond), self.action_horizon, self.action_dim)
         )  # Reshape the action tensor
@@ -618,7 +636,7 @@ class ACTHead(nn.Module):
         action_horizon: int = 4,
     ) -> None:
         """
-        Transformer decoder similar to ACT or Detr head.
+        Transformer decoder based on ACT head.
         """
         super().__init__()
         from ..act.modeling_act import ACTDecoder
@@ -629,7 +647,7 @@ class ACTHead(nn.Module):
         self.tokens = nn.Parameter(torch.randn(action_horizon, self.config.embed_dim) * INIT_CONST)
         self.head_mlp = nn.Linear(self.config.embed_dim, self.config.head_action_dim)
 
-    def forward(self, context: torch.Tensor) -> torch.Tensor:
+    def forward(self, context: Tensor) -> Tensor:
         """
         context: (B, input_dim)
         """
@@ -649,7 +667,7 @@ class ACTHead(nn.Module):
         out = self.head_mlp(decoder_out).transpose(0, 1).contiguous()
         return out
 
-    def compute_loss(self, x: torch.Tensor, target: dict) -> torch.Tensor:
+    def compute_loss(self, x: Tensor, target: dict) -> Tensor:
         target_action = target["action"]
         pred_action = self(x).view(target_action.shape)
         return F.l1_loss(pred_action, target_action)
@@ -677,7 +695,7 @@ class PolicyStem(nn.Module):
     def device(self):
         return next(self.parameters()).device
 
-    def compute_latent(self, x: torch.Tensor) -> torch.Tensor:
+    def compute_latent(self, x: Tensor) -> Tensor:
         """
         Computes the latent representations of input data by attention.
 
@@ -739,7 +757,7 @@ class MLPStem(PolicyStem):
         if self.num_of_copy > 1:
             self.net = nn.ModuleList([nn.Sequential(*modules) for _ in range(num_of_copy)])
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         """
         Performs a forward pass of the model.
         Args:
@@ -785,19 +803,17 @@ class CrossAttention(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(
-        self, x: torch.Tensor, context: torch.Tensor, mask: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    def forward(self, x: Tensor, context: Tensor, mask: Optional[Tensor] = None) -> Tensor:
         """
         Forward pass of the CrossAttention module.
 
         Args:
-            x (torch.Tensor): The query input tensor.
-            context (torch.Tensor): The context input tensor.
-            mask (torch.Tensor, optional): The attention mask tensor. Defaults to None.
+            x (Tensor): The query input tensor.
+            context (Tensor): The context input tensor.
+            mask (Tensor, optional): The attention mask tensor. Defaults to None.
 
         Returns:
-            torch.Tensor: The output tensor.
+            Tensor: The output tensor.
         """
         h = self.heads
         q = self.to_q(x)
@@ -842,7 +858,7 @@ class Mlp(nn.Module):
         self.fc2 = nn.Linear(hidden_features, out_features)
         self.drop = nn.Dropout(drop)
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         x = self.fc1(x)
         x = self.act(x)
         x = self.drop(x)
@@ -865,15 +881,7 @@ class BlockWithMasking(nn.Module):
         layer_scale_init_value: float = 1e-4,
     ):
         super().__init__()
-
-        assert not isinstance(
-            attn_target, nn.Module
-        ), "attn_target should be a Callable. Otherwise attn_target is shared across blocks!"
         self.attn = attn_target()
-        # if drop_path > 0.0:
-        #     requires timm package
-        #     self.drop_path = DropPath(drop_path)
-        # else:
         self.drop_path = nn.Identity()
         self.norm_1 = norm_layer(dim)
         mlp_hidden_dim = int(mlp_ratio * dim)
@@ -902,7 +910,7 @@ class BlockWithMasking(nn.Module):
                 requires_grad=True,
             )
 
-    def forward(self, x: torch.Tensor, attn_mask: torch.Tensor):
+    def forward(self, x: Tensor, attn_mask: Tensor) -> Tensor:
         if self.layer_scale_type is None:
             x = x + self.drop_path(self.attn(self.norm_1(x), attn_mask))
             x = x + self.drop_path(self.mlp(self.norm_2(x)))
@@ -913,7 +921,7 @@ class BlockWithMasking(nn.Module):
 
 
 class MultiheadAttention(nn.MultiheadAttention):
-    def forward(self, x: torch.Tensor, attn_mask: torch.Tensor):
+    def forward(self, x: Tensor, attn_mask: Tensor) -> Tensor:
         return super().forward(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
 
 
@@ -971,7 +979,7 @@ class SimpleTransformer(nn.Module):
         self.weight_init_style = weight_init_style
         self.apply(self._init_weights)
 
-    def forward(self, tokens: torch.Tensor, attn_mask: torch.Tensor = None):
+    def forward(self, tokens: Tensor, attn_mask: Optional[Tensor] = None) -> Tensor:
         """
         Inputs
         - tokens: data of shape N x L x D (or L x N x D depending on the attention implementation)
@@ -1012,16 +1020,16 @@ class EinOpsRearrange(nn.Module):
         self.rearrange_expr = rearrange_expr
         self.kwargs = kwargs
 
-    def forward(self, x):
-        assert isinstance(x, torch.Tensor)
+    def forward(self, x: Tensor) -> Tensor:
+        assert isinstance(x, Tensor)
         return rearrange(x, self.rearrange_expr, **self.kwargs)
 
 
-def get_sinusoid_encoding_table(position_start, position_end, d_hid):
+def get_sinusoid_encoding_table(position_start: int, position_end: int, d_hid: int) -> Tensor:
     """Sinusoid position encoding table"""
 
     # TODO: make it with torch instead of numpy
-    def get_position_angle_vec(position):
+    def get_position_angle_vec(position: int):
         return [position / np.power(10000, 2 * (hid_j // 2) / d_hid) for hid_j in range(d_hid)]
 
     sinusoid_table = np.array(
@@ -1049,7 +1057,7 @@ class ResNet(PolicyStem):
         self.input = input
         self.out_dim = output_dim
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         """
         Performs a forward pass of the model.
         Args:
