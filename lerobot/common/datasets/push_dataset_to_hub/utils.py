@@ -35,11 +35,7 @@ def concatenate_episodes(ep_dicts):
             if key not in data_dict:
                 data_dict[key] = []
             for ep_dict in ep_dicts:
-                access_key = key
-                if ep_dict.get(key, None) is None and key == 'observation.images.wrist':
-                    print("overwrite left wrist key!")
-                    access_key = 'observation.images.left_wrist'
-                for x in ep_dict[access_key]:
+                for x in ep_dict[key]:
                     data_dict[key].append(x)
 
     total_frames = data_dict["frame_index"].shape[0]

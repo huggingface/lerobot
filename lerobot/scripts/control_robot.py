@@ -418,7 +418,6 @@ def record(
         log_control_info(robot, dt_s, fps=fps)
 
         timestamp = time.perf_counter() - start_warmup_t
-        print(timestamp)
 
     # Save images using threads to reach high fps (30 and more)
     # Using `with` to exit smoothly if an execption is raised.
@@ -474,8 +473,6 @@ def record(
                             if "image" in name:
                                 observation[name] = observation[name].type(torch.float32) / 255
                                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
-                            if isinstance(observation[name], np.ndarray):
-                                observation[name] = torch.from_numpy(observation[name]).type(torch.float32)
                             observation[name] = observation[name].unsqueeze(0)
                             observation[name] = observation[name].to(device)
 
@@ -688,8 +685,6 @@ def replay(robot: Robot, episode: int, fps: int | None = None, root="data", repo
 
         action = items[idx]["action"]
         robot.send_action(action)
-        obs = robot.capture_observation()
-        print(f"- Observation: {obs}\n- Action sent: {action}")
 
         dt_s = time.perf_counter() - start_episode_t
         busy_wait(1 / fps - dt_s)

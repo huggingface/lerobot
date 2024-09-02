@@ -1,12 +1,12 @@
 _target_: lerobot.common.robot_devices.robots.arx5.ARX5Robot
 leader_arms:
-  left:
+  main:
     model: L5
     interface_name: enx5c5310ecc0ec
     urdf_path: lerobot/models/arx5.urdf
     dof: 6
 follower_arms:
-  left:
+  main:
     model: L5
     interface_name: enx5c5310ecc38c
     urdf_path: lerobot/models/arx5.urdf

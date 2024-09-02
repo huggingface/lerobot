@@ -221,10 +221,6 @@ class ARX5Robot:
 
                 self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
-        # TODO remove - debug only
-        for name in self.follower_arms:
-            leader_pos[name] = self.follower_arms[name].get_state()
-
         # Early exit when recording data is not requested
         if not record_data:
             return
