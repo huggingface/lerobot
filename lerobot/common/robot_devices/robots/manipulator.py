@@ -145,12 +145,9 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
 def ensure_safe_goal_position(
     goal_pos: torch.Tensor, present_pos: torch.Tensor, max_relative_target: float | list[float]
 ):
-    if isinstance(max_relative_target, float):
-        max_relative_target = [max_relative_target] * len(goal_pos)
-    max_relative_target = torch.tensor(max_relative_target)
-
     # Cap relative action target magnitude for safety.
     diff = goal_pos - present_pos
+    max_relative_target = torch.tensor(max_relative_target)
     safe_diff = torch.minimum(diff, max_relative_target)
     safe_diff = torch.maximum(safe_diff, -max_relative_target)
     safe_goal_pos = present_pos + safe_diff
