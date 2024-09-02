@@ -508,8 +508,11 @@ def record(
                         action = action.to("cpu")
 
                     # Order the robot to move
-                    robot.send_action(action)
-                    action = {"action": action}
+                    action_sent = robot.send_action(action)
+
+                    # Action can eventually be clipped using `max_relative_target`,
+                    # so action actually sent is saved in the dataset.
+                    action = {"action": action_sent}
 
                 for key in action:
                     if key not in ep_dict:

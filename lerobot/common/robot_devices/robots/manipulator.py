@@ -632,11 +632,12 @@ class ManipulatorRobot:
             obs_dict[f"observation.images.{name}"] = images[name]
         return obs_dict
 
-    def send_action(self, action: torch.Tensor):
+    def send_action(self, action: torch.Tensor) -> torch.Tensor:
         """Command the follower arms to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter
-        `max_relative_target`.
+        `max_relative_target`. In this case, the action sent differs from original action.
+        Thus, this function always returns the action actually sent.
 
         Args:
             action: tensor containing the concatenated goal positions for the follower arms.
@@ -657,6 +658,7 @@ class ManipulatorRobot:
                 from_idx = to_idx
 
         # Send goal position to each follower
+        action_sent = []
         for name in self.follower_arms:
             goal_pos = follower_goal_pos[name]
 
@@ -669,6 +671,9 @@ class ManipulatorRobot:
 
             goal_pos = goal_pos.numpy().astype(np.int32)
             self.follower_arms[name].write("Goal_Position", goal_pos)
+            action_sent.append(goal_pos)
+
+        return torch.cat(action_sent)
 
     def disconnect(self):
         if not self.is_connected:
