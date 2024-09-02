@@ -300,10 +300,10 @@ def record(
     tags=None,
     num_image_writers=8,
     force_override=False,
+    dataset_sync_tolerance_s=None,
 ):
     # TODO(rcadene): Add option to record logs
     # TODO(rcadene): Clean this function via decomposition in higher level functions
-
     _, dataset_name = repo_id.split("/")
     if dataset_name.startswith("eval_") and policy is None:
         raise ValueError(
@@ -634,6 +634,7 @@ def record(
         episode_data_index=episode_data_index,
         info=info,
         videos_dir=videos_dir,
+        tolerance_s=dataset_sync_tolerance_s,
     )
     if run_compute_stats:
         logging.info("Computing dataset statistics")
@@ -798,7 +799,13 @@ if __name__ == "__main__":
         nargs="*",
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
-
+    parser_record.add_argument(
+        "--dataset-sync-tolerance-s",
+        type=float,
+        default=None,
+        help="Override the maximum syncronisation tolerance (in seconds) between frames allowed by the LeRobot Dataset. Not passing an argument means we use FPS settings to infer the tolerance.",
+    )
+    
     parser_replay = subparsers.add_parser("replay", parents=[base_parser])
     parser_replay.add_argument(
         "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"

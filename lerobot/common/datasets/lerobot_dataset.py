@@ -49,6 +49,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
         video_backend: str | None = None,
+        tolerance_s: float | None = None,
     ):
         super().__init__()
         self.repo_id = repo_id
@@ -56,6 +57,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.split = split
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
+        self.tolerance_s = tolerance_s
         # load data from hub or locally when root is provided
         # TODO(rcadene, aliberts): implement faster transfer
         # https://huggingface.co/docs/huggingface_hub/en/guides/download#faster-downloads
@@ -126,6 +128,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         are not close enough from the requested frames. It is only used when `delta_timestamps`
         is provided or when loading video frames from mp4 files.
         """
+        if self.tolerance_s is not None:
+            return self.tolerance_s
+
         # 1e-4 to account for possible numerical error
         return 1 / self.fps - 1e-4
 
@@ -190,6 +195,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         info=None,
         videos_dir=None,
         video_backend=None,
+        tolerance_s: float | None = None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from existing data and attributes instead of loading from the filesystem.
 
@@ -212,6 +218,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.info = info if info is not None else {}
         obj.videos_dir = videos_dir
         obj.video_backend = video_backend if video_backend is not None else "pyav"
+        obj.tolerance_s = tolerance_s
         return obj
 
 
