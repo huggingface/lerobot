@@ -29,16 +29,16 @@ For a visual walkthrough of the assembly process, you can refer to [this video t
 
 ## 2. Configure motors, calibrate arms, teleoperate your Koch v1.1
 
-First, install the additional dependencies required for Koch v1.1 by running one of the following commands.
+First, install the additional dependencies required for robots built with dynamixel motors like Koch v1.1 by running one of the following commands.
 
 Using `pip`:
 ```bash
-pip install -e ".[koch]"
+pip install -e ".[dynamixel]"
 ```
 
 Or using `poetry`:
 ```bash
-poetry install --sync --extras "koch"
+poetry install --sync --extras "dynamixel"
 ```
 
 You are now ready to plug the 5V power supply to the motor bus of the leader arm (the smaller one) since all its motors only require 5V.
