@@ -107,7 +107,7 @@ def run_server(
 
     @app.route("/<string:dataset_namespace>/<string:dataset_name>/episode_<int:episode_id>")
     def show_episode(dataset_namespace, dataset_name, episode_id):
-        episode_data_csv_str = write_episode_data_csv(dataset, episode_id)
+        episode_data_csv_str = get_episode_data_csv_str(dataset, episode_id)
         dataset_info = {
             "repo_id": dataset.repo_id,
             "num_samples": dataset.num_samples,
@@ -137,8 +137,8 @@ def get_ep_csv_fname(episode_id: int):
     return ep_csv_fname
 
 
-def write_episode_data_csv(dataset, episode_index):
-    """Write a csv file containg timeseries data of an episode (e.g. state and action).
+def get_episode_data_csv_str(dataset, episode_index):
+    """Get a csv str containg timeseries data of an episode (e.g. state and action).
     This file will be loaded by Dygraph javascript to plot data in real time."""
     from_idx = dataset.episode_data_index["from"][episode_index]
     to_idx = dataset.episode_data_index["to"][episode_index]
