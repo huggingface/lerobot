@@ -106,7 +106,7 @@ def run_server(
             {"url": url_for("static", filename=video_path), "filename": Path(video_path).name}
             for video_path in video_paths
         ]
-        
+
         if language_instruction:
             videos_info[0]["language_instruction"] = language_instruction
 
