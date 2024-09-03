@@ -212,9 +212,15 @@
 
                 // alpine initialization
                 init() {
+                    const csvData = {{ episode_data_csv_str|tojson|safe }};
+                    // Create a Blob with the CSV data
+                    const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
+                    // Create a URL for the Blob
+                    const csvUrl = URL.createObjectURL(blob);
+
                     this.videos = document.querySelectorAll('video');
                     this.video = this.videos[0];
-                    this.dygraph = new Dygraph(document.getElementById("graph"), '{{ ep_csv_url }}', {
+                    this.dygraph = new Dygraph(document.getElementById("graph"), csvUrl, {
                         pixelsPerPoint: 0.01,
                         legend: 'always',
                         labelsDiv: document.getElementById('labels'),
