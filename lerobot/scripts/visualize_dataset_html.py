@@ -53,11 +53,11 @@ python lerobot/scripts/visualize_dataset_html.py \
 """
 
 import argparse
+import csv
 import logging
 import shutil
-from pathlib import Path
-import csv
 from io import StringIO
+from pathlib import Path
 
 import numpy as np
 from flask import Flask, redirect, render_template, url_for
