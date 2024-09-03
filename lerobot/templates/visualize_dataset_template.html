@@ -219,9 +219,9 @@
 
                 // alpine initialization
                 init() {
-                    const csvData = {{ episode_data_csv_str|tojson|safe }};
+                    const csvDataStr = {{ episode_data_csv_str|tojson|safe }};
                     // Create a Blob with the CSV data
-                    const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
+                    const blob = new Blob([csvDataStr], { type: 'text/csv;charset=utf-8;' });
                     // Create a URL for the Blob
                     const csvUrl = URL.createObjectURL(blob);
 
