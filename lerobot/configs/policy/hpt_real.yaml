@@ -71,7 +71,7 @@ policy:
   domain_name: "aloha_sim_insertion_human"
   vision_backbone: "resnet18"
   pretrained_backbone_weights: "ResNet18_Weights.IMAGENET1K_V1"
-  head_architecture: "ACT"
+  head_architecture: "transformer"
 
 
   input_shapes:

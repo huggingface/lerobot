@@ -172,10 +172,9 @@ class HPT(nn.Module):
 
         # initialize modules.
         if "image" in config.modalities and not self.config.freeze_encoders:
-            self.init_encoders("image", ResNet())
+            self.init_encoders("image", ResNet(resnet_model=self.config.vision_backbone))
         self.init_domain_stem(self.config.domain_name)
         self.init_domain_head(self.config.domain_name)
-
 
     def _init_weights(self, m: nn.Module):
         """
@@ -210,7 +209,6 @@ class HPT(nn.Module):
                 num_of_copy=getattr(self.config, modality + "_num_of_copy"),
             )
             self.stems[domain_name + "_" + modality].init_cross_attn(self.config, modality)
-           
 
     def init_domain_head(self, domain_name: str):
         """initialize an action head for each domain, along with normalizer"""
@@ -225,13 +223,13 @@ class HPT(nn.Module):
                 action_dim=self.config.head_action_dim,
             )
 
-        elif self.config.head_architecture == "ACT":
-            self.heads[domain_name] = ACTHead(
+        elif self.config.head_architecture == "transformer":
+            self.heads[domain_name] = TransformerHead(
                 config=self.config,
                 action_chunk_size=self.config.action_chunk_size,
             )
 
-        elif self.config.head_architecture == "mlp":
+        elif self.config.head_architecture == "MLP":
             self.heads[domain_name] = MLPHead(
                 input_dim=self.config.embed_dim,
                 action_chunk_size=self.config.action_chunk_size,
@@ -254,7 +252,6 @@ class HPT(nn.Module):
                 embed_dim=embed_dim,
                 num_blocks=num_blocks,
                 ffn_dropout_rate=0.0,
-                drop_path_rate=drop_path,
                 attn_target=partial(
                     MultiheadAttention,
                     embed_dim=embed_dim,
@@ -278,7 +275,7 @@ class HPT(nn.Module):
             pre_transformer_ln=False,
             add_bias_kv=True,
             drop_path=drop_path,
-        ) 
+        )
         self.trunk = nn.ModuleDict(trunk)
 
         if len(self.config.load_pretrained) > 0:
@@ -499,7 +496,7 @@ class MLPHead(nn.Module):
         action_chunk_size: int = 1,
         ln: bool = True,
     ) -> None:
-        """MLP Policy Head class """
+        """MLP Policy Head class"""
         super().__init__()
         self.input = input
         assert output_dim % action_chunk_size == 0
@@ -602,14 +599,14 @@ class DiffusionHead(nn.Module):
         return F.mse_loss(pred, target)
 
 
-class ACTHead(nn.Module):
+class TransformerHead(nn.Module):
     def __init__(
         self,
         config,
         action_chunk_size: int = 4,
     ) -> None:
         """
-        Transformer decoder based on ACT head.
+        Transformer decoder similar to ACT head.
         """
         super().__init__()
         from ..act.modeling_act import ACTDecoder
@@ -633,9 +630,9 @@ class ACTHead(nn.Module):
             context = context.unsqueeze(1)
 
         decoder_out = self.decoder(
-            decoder_in,  # torch.Size([100, 8, 512])
-            context.transpose(0, 1),  # torch.Size([1, 8, 512])
-            decoder_pos_embed=self.tokens.unsqueeze(1),  # torch.Size([100, 1, 512])
+            decoder_in,  # [100, 8, 512]
+            context.transpose(0, 1),  #  [1, 8, 512]
+            decoder_pos_embed=self.tokens.unsqueeze(1),  #  [100, 1, 512]
         )
         out = self.head_mlp(decoder_out).transpose(0, 1).contiguous()
         return out
@@ -734,8 +731,7 @@ class MLPStem(PolicyStem):
         """
         Performs a forward pass of the model.
         Args:
-            x: Image tensor with shape [B, T, N, 3, H, W] representing the batch size,
-            horizon, instance (e.g. num of views)
+            x: Image tensor with shape [B, T, N, 3, H, W]
         Returns:
             Flatten tensor with shape [B, M, 512]
         """
@@ -849,13 +845,9 @@ class BlockWithMasking(nn.Module):
         act_layer: Callable = nn.GELU,
         norm_layer: Callable = nn.LayerNorm,
         ffn_dropout_rate: float = 0.0,
-        drop_path: float = 0.0,
-        layer_scale_type: Optional[str] = None,
-        layer_scale_init_value: float = 1e-4,
     ):
         super().__init__()
         self.attn = attn_target()
-        self.drop_path = nn.Identity()
         self.norm_1 = norm_layer(dim)
         mlp_hidden_dim = int(mlp_ratio * dim)
         self.mlp = Mlp(
@@ -865,31 +857,10 @@ class BlockWithMasking(nn.Module):
             drop=ffn_dropout_rate,
         )
         self.norm_2 = norm_layer(dim)
-        self.layer_scale_type = layer_scale_type
-        if self.layer_scale_type is not None:
-            if self.layer_scale_type == "per_channel":
-                # one gamma value per channel
-                gamma_shape = [1, 1, dim]
-            elif self.layer_scale_type == "scalar":
-                # single gamma value for all channels
-                gamma_shape = [1, 1, 1]
-            # two gammas: for each part of the fwd in the encoder
-            self.layer_scale_gamma1 = nn.Parameter(
-                torch.ones(size=gamma_shape) * layer_scale_init_value,
-                requires_grad=True,
-            )
-            self.layer_scale_gamma2 = nn.Parameter(
-                torch.ones(size=gamma_shape) * layer_scale_init_value,
-                requires_grad=True,
-            )
 
     def forward(self, x: Tensor, attn_mask: Tensor) -> Tensor:
-        if self.layer_scale_type is None:
-            x = x + self.drop_path(self.attn(self.norm_1(x), attn_mask))
-            x = x + self.drop_path(self.mlp(self.norm_2(x)))
-        else:
-            x = x + self.drop_path(self.attn(self.norm_1(x), attn_mask)) * self.layer_scale_gamma1
-            x = x + self.drop_path(self.mlp(self.norm_2(x))) * self.layer_scale_gamma2
+        x = x + self.attn(self.norm_1(x), attn_mask)
+        x = x + self.mlp(self.norm_2(x))
         return x
 
 
@@ -907,13 +878,9 @@ class SimpleTransformer(nn.Module):
         block: Callable = BlockWithMasking,
         pre_transformer_layer: Optional[Callable] = None,
         post_transformer_layer: Optional[Callable] = None,
-        drop_path_rate: float = 0.0,
-        drop_path_type: str = "progressive",
         norm_layer: Callable = _LAYER_NORM,
         mlp_ratio: int = 4,
         ffn_dropout_rate: float = 0.0,
-        layer_scale_type: Optional[str] = None,
-        layer_scale_init_value: float = 1e-4,
         weight_init_style: str = "pytorch",
     ):
         """
@@ -926,13 +893,6 @@ class SimpleTransformer(nn.Module):
         """
         super().__init__()
         self.pre_transformer_layer = pre_transformer_layer
-        if drop_path_type == "progressive":
-            dpr = [x.item() for x in torch.linspace(0, drop_path_rate, num_blocks)]
-        elif drop_path_type == "uniform":
-            dpr = [drop_path_rate for i in range(num_blocks)]
-        else:
-            raise ValueError(f"Unknown drop_path_type: {drop_path_type}")
-
         self.blocks = nn.Sequential(
             *[
                 block(
@@ -940,10 +900,7 @@ class SimpleTransformer(nn.Module):
                     attn_target=attn_target,
                     mlp_ratio=mlp_ratio,
                     ffn_dropout_rate=ffn_dropout_rate,
-                    drop_path=dpr[i],
                     norm_layer=norm_layer,
-                    layer_scale_type=layer_scale_type,
-                    layer_scale_init_value=layer_scale_init_value,
                 )
                 for i in range(num_blocks)
             ]
@@ -971,13 +928,7 @@ class SimpleTransformer(nn.Module):
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
-            if self.weight_init_style == "jax":
-                # Based on MAE and official Jax ViT implementation
-                torch.nn.init.xavier_uniform_(m.weight)
-
-            elif self.weight_init_style == "pytorch":
-                # PyTorch ViT uses trunc_normal_
-                torch.nn.init.trunc_normal_(m.weight, std=0.02)
+            torch.nn.init.trunc_normal_(m.weight, std=0.02)
 
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
