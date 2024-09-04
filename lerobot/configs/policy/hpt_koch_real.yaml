@@ -1,7 +1,7 @@
 # @package _global_
 
-# Use `act_koch_real.yaml` to train on real-world datasets collected on Alexander Koch's robots.
-# Compared to `act.yaml`, it contains 2 cameras (i.e. laptop, phone) instead of 1 camera (i.e. top).
+# Use `hpt_koch_real.yaml` to train on real-world datasets collected on Alexander Koch's robots.
+# Compared to `hpt.yaml`, it contains 2 cameras (i.e. laptop, phone) instead of 1 camera (i.e. top).
 # Also, `training.eval_freq` is set to -1. This config is used to evaluate checkpoints at a certain frequency of training steps.
 # When it is set to -1, it deactivates evaluation. This is because real-world evaluation is done through our `control_robot.py` script.
 # Look at the documentation in header of `control_robot.py` for more information on how to collect data , train and evaluate a policy.
@@ -9,7 +9,7 @@
 # Example of usage for training:
 # ```bash
 # python lerobot/scripts/train.py \
-#   policy=act_koch_real \
+#   policy=hpt_koch_real \
 #   env=koch_real
 # ```
 
@@ -40,7 +40,7 @@ training:
   lr_warmup_steps: 500
   adam_betas: [0.95, 0.999]
   adam_eps: 1.0e-8
-  adam_weight_decay: 1.0e-6
+  adam_weight_decay: 1.0e-4
   grad_clip_norm: 10
   online_steps_between_rollouts: 1
 
@@ -87,7 +87,7 @@ policy:
   num_heads: 16
   use_modality_embedding: False
   use_domain_embedding: False
-  token_postprocessing: "mean"
+  token_postprocessing: "no-op"
   weight_init_style: 'pytorch'
   drop_path: 0.0
   no_trunk: False
@@ -111,12 +111,12 @@ policy:
 
   image_input_dim: 512 # need modifications based on the vision encoders
   image_output_dim: "${policy.embed_dim}"
-  image_widths: [128]
+  image_widths: [512, 512]
   image_num_of_copy: 1
 
   state_input_dim: "${env.state_dim}" # ovewrite based on the dataset
   state_output_dim: "${policy.embed_dim}"
-  state_widths: [128]
+  state_widths: [512, 512]
   state_num_of_copy: 1
 
   # ACT Head
