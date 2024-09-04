@@ -9,7 +9,7 @@ calibration_dir: .cache/calibration/aloha_default
 # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
 # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
 # the number of motors in your follower arms.
-# For Aloha, which is heavy, we cap motor rotations to 5 degrees by default.
+# For Aloha, for every goal position request, motor rotations are capped at 5 degrees by default.
 # When you feel more confident with teleoperation or running the policy, you can extend
 # this safety limit and even removing it by setting it to `null`.
 # Also, everything is expected to work safely out-of-the-box, but we highly advise to
@@ -20,8 +20,7 @@ max_relative_target: 5
 leader_arms:
   left:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    port: /dev/ttyDXL_master_left
-    # port: /dev/tty.usbserial-FT89FM77
+    port: /dev/ttyDXL_leader_left
     motors:  # window_x
       # name: (index, model)
       waist: [1, xm430-w350]
@@ -35,8 +34,7 @@ leader_arms:
       gripper: [9, xc430-w150]
   right:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    port: /dev/ttyDXL_master_right
-    # port: /dev/tty.usbserial-FT891KPN
+    port: /dev/ttyDXL_leader_right
     motors:  # window_x
       # name: (index, model)
       waist: [1, xm430-w350]
@@ -52,8 +50,7 @@ leader_arms:
 follower_arms:
   left:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    port: /dev/ttyDXL_puppet_left
-    # port: /dev/tty.usbserial-FT891KBG
+    port: /dev/ttyDXL_follower_left
     motors:
       # name: [index, model]
       waist: [1, xm540-w270]
@@ -67,8 +64,7 @@ follower_arms:
       gripper: [9, xm430-w350]
   right:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
-    port: /dev/ttyDXL_puppet_right
-    # port: /dev/tty.usbserial-FT89FM09
+    port: /dev/ttyDXL_follower_right
     motors:
       # name: [index, model]
       waist: [1, xm540-w270]
