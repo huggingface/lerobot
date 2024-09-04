@@ -80,6 +80,10 @@ def save_image(img_array, camera_index, frame_index, images_dir):
 def save_images_from_cameras(
     images_dir: Path, camera_ids: list[int] | None = None, fps=None, width=None, height=None, record_time_s=2
 ):
+    """
+    Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
+    associated to a given camera index.
+    """
     if camera_ids is None:
         camera_ids = find_camera_indices()
 
@@ -156,7 +160,7 @@ class OpenCVCameraConfig:
     def __post_init__(self):
         if self.color_mode not in ["rgb", "bgr"]:
             raise ValueError(
-                f"Expected color_mode values are 'rgb' or 'bgr', but {self.color_mode} is provided."
+                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
             )
 
 
@@ -202,6 +206,7 @@ class OpenCVCamera:
     def __init__(self, camera_index: int, config: OpenCVCameraConfig | None = None, **kwargs):
         if config is None:
             config = OpenCVCameraConfig()
+
         # Overwrite config arguments using kwargs
         config = replace(config, **kwargs)
 
