@@ -40,7 +40,7 @@ policy:
   domain_name: "aloha_sim_insertion_human"
   vision_backbone: "resnet18"
   pretrained_backbone_weights: "ResNet18_Weights.IMAGENET1K_V1"
-  head_architecture: "diffusion"
+  head_architecture: "MLP"
 
   # Input / output structure.
   input_shapes:
@@ -59,17 +59,16 @@ policy:
 
   # full policy configurations.
   # HPT trunk config
-  embed_dim: 768
-  num_blocks: 32
-  num_heads: 16
-
+  embed_dim: 256
+  num_blocks: 16
+  num_heads: 8
   use_modality_embedding: False
   use_domain_embedding: False
   token_postprocessing: "mean"
   weight_init_style: 'pytorch'
   drop_path: 0.0
   no_trunk: False
-  load_pretrained: "xlarge" # load pre-trained model
+  load_pretrained: "" # load pre-trained model
   freeze_trunk: False
 
   # stem network (projectors) for different modalities
@@ -90,12 +89,12 @@ policy:
 
   image_input_dim: 512 # need modifications based on the vision encoders
   image_output_dim: "${policy.embed_dim}"
-  image_widths: [128]
+  image_widths: [512, 512]
   image_num_of_copy: 1
 
   state_input_dim: "${env.state_dim}" # ovewrite based on the dataset
   state_output_dim: "${policy.embed_dim}"
-  state_widths: [128]
+  state_widths: [512, 512]
   state_num_of_copy: 1
 
   # MLP Head
@@ -106,36 +105,3 @@ policy:
   head_action_dim: "${env.action_dim}" # overwrite based on dataset
   head_dropout: True
   head_widths: [1024, 512, 256]
-
-  # Diffusion Head
-  down_dims: [256, 512, 1024]
-  kernel_size: 5
-  n_groups: 8
-  diffusion_step_embed_dim: 128
-  use_film_scale_modulation: True
-
-  # Noise scheduler.
-  noise_scheduler_type: DDIM
-  num_train_timesteps: 100
-  beta_schedule: squaredcos_cap_v2
-  beta_start: 0.0001
-  beta_end: 0.02
-  prediction_type: epsilon # epsilon / sample
-  clip_sample: True
-  clip_sample_range: 1.0
-
-  # Inference
-  num_inference_steps: 30  # if not provided, defaults to `num_train_timesteps`
-
-  # Loss computation
-  do_mask_loss_for_padding: false
-
-
-  # ACT Head
-  dim_model: "${policy.embed_dim}"
-  n_heads: 8
-  dim_feedforward: 3200
-  feedforward_activation: "relu"
-  n_decoder_layers: 1
-  dropout: 0.1
-  pre_norm: False
