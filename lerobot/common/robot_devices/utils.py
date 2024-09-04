@@ -2,7 +2,7 @@ import time
 
 
 def busy_wait(seconds):
-    # Significantly more accurate than `time.sleep`, and mendatory for our use case,
+    # Significantly more accurate than `time.sleep`, and mandatory for our use case,
     # but it consumes CPU cycles.
     # TODO(rcadene): find an alternative: from python 11, time.sleep is precise
     end_time = time.perf_counter() + seconds

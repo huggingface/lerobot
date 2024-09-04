@@ -558,7 +558,7 @@ class DynamixelMotorsBus:
         self.calibration = calibration
 
     def apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
-        """This function apply the calibration, automatically detects out of range errors for motors values and attempt to correct.
+        """This function applies the calibration, automatically detects out of range errors for motors values and attempts to correct.
 
         For more info, see docstring of `apply_calibration` and `autocorrect_calibration`.
         """
@@ -606,12 +606,13 @@ class DynamixelMotorsBus:
                 if drive_mode:
                     values[i] *= -1
 
-                # Convert from range [-2**31, 2**31[ to
-                # nominal range ]-resolution, resolution[ (e.g. ]-2048, 2048[)
+                # Convert from range [-2**31, 2**31] to
+                # nominal range [-resolution//2, resolution//2] (e.g. [-2048, 2048])
                 values[i] += homing_offset
 
-                # Convert from range ]-resolution, resolution[ to
-                # universal float32 centered degree range ]-180, 180[
+                # Convert from range [-resolution//2, resolution//2] to
+                # universal float32 centered degree range [-180, 180]
+                # (e.g. 2048 / (4096 // 2) * 180 = 180)
                 values[i] = values[i] / (resolution // 2) * HALF_TURN_DEGREE
 
                 if (values[i] < LOWER_BOUND_DEGREE) or (values[i] > UPPER_BOUND_DEGREE):
@@ -653,8 +654,8 @@ class DynamixelMotorsBus:
 
         Known issues:
         #1: Motor value randomly shifts of a full turn, caused by hardware/connection errors.
-        #2: Motor internal homing offset is shifted of a full turn, caused by using default calibration (e.g Aloha).
-        #3: motor internal homing offset is shifted of less or more than a full turn, caused by using default calibration
+        #2: Motor internal homing offset is shifted by a full turn, caused by using default calibration (e.g Aloha).
+        #3: motor internal homing offset is shifted by less or more than a full turn, caused by using default calibration
             or by human error during manual calibration.
 
         Issues #1 and #2 can be solved by shifting the calibration homing offset by a full turn.
@@ -679,6 +680,9 @@ class DynamixelMotorsBus:
                 _, model = self.motors[name]
                 resolution = self.model_resolution[model]
 
+                # Update direction of rotation of the motor to match between leader and follower.
+                # In fact, the motor of the leader for a given joint can be assembled in an
+                # opposite direction in term of rotation than the motor of the follower on the same joint.
                 if drive_mode:
                     values[i] *= -1
 
@@ -689,13 +693,9 @@ class DynamixelMotorsBus:
                 # Solve this inequality to find the factor to shift the range into [-180, 180] degrees
                 # values[i] = (values[i] + homing_offset + resolution * factor) / (resolution // 2) * HALF_TURN_DEGREE
                 # - HALF_TURN_DEGREE <= (values[i] + homing_offset + resolution * factor) / (resolution // 2) * HALF_TURN_DEGREE <= HALF_TURN_DEGREE
-                # (- HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2) - values[i] - homing_offset) / resolution <= factor <= (HALF_TURN_DEGREE / 180 * (resolution // 2) - values[i] - homing_offset) / resolution
-                low_factor = (
-                    -HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2) - values[i] - homing_offset
-                ) / resolution
-                upp_factor = (
-                    HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2) - values[i] - homing_offset
-                ) / resolution
+                # (- (resolution // 2) - values[i] - homing_offset) / resolution <= factor <= ((resolution // 2) - values[i] - homing_offset) / resolution
+                low_factor = (-(resolution // 2) - values[i] - homing_offset) / resolution
+                upp_factor = ((resolution // 2) - values[i] - homing_offset) / resolution
 
             elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
                 start_pos = self.calibration["start_pos"][calib_idx]
