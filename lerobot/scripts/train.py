@@ -177,8 +177,6 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_online):
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_samples
     log_items = [
-        # number of training steps completed
-        f"{format_big_number(step)}->",
         # number of samples seen during training
         f"smpl:{format_big_number(num_samples)}",
         # number of episodes seen during training
@@ -189,11 +187,11 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_online):
         f"loss:{loss:.3f}",
         # gradient norm in the past step
         f"grdn:{grad_norm:.3f}",
-        # learning rate at the end of the step
+        # learning rate at the end of the past step
         f"lr:{lr:0.1e}",
-        # aggregated policy update (pu) time(s) in format max_update_time|average_update_time
+        # aggregated policy update time(s) in format max_update_time|average_update_time since the last log
         f"pu_mx_av:{max_policy_updating_s:.3f}|{avg_policy_updating_s:.3f}",
-        # data loading (dl) time(s) in format max_loading_time|average_loading_time
+        # data loading time(s) in format max_loading_time|average_loading_time since the last log
         f"dl_mx_av:{max_data_loading_s:.3f}|{avg_data_loading_s:.3f}",  # if not ~0, you are bottlenecked by cpu or io
     ]
     logging.info(" ".join(log_items))
