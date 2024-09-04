@@ -78,7 +78,7 @@ def save_images_from_cameras(
         camera = IntelRealSenseCamera(cam_idx, fps=fps, width=width, height=height)
         camera.connect()
         print(
-            f"IntelRealSense Camera({camera.camera_idx}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color})"
+            f"IntelRealSense Camera({camera.camera_idx}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
         )
         cameras.append(camera)
 
@@ -221,7 +221,7 @@ class IntelRealSenseCamera:
         # Overwrite the config arguments using kwargs
         config = replace(config, **kwargs)
 
-        self.camera_idx = str(camera_index)
+        self.camera_index = str(camera_index)
         self.fps = config.fps
         self.width = config.width
         self.height = config.height
@@ -239,10 +239,10 @@ class IntelRealSenseCamera:
 
     def connect(self):
         if self.is_connected:
-            raise RobotDeviceAlreadyConnectedError(f"Camera {self.camera_idx} is already connected.")
+            raise RobotDeviceAlreadyConnectedError(f"Camera {self.camera_index} is already connected.")
 
         config = rs.config()
-        config.enable_device(str(self.camera_idx))
+        config.enable_device(str(self.camera_index))
 
         if self.fps and self.width and self.height:
             # TODO(rcadene): can we set rgb8 directly?
@@ -290,7 +290,7 @@ class IntelRealSenseCamera:
         """
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                f"IntelRealSense({self.camera_idx}) is not connected. Try running `camera.connect()` first."
+                f"IntelRealSense({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
         start_time = time.perf_counter()
@@ -300,7 +300,7 @@ class IntelRealSenseCamera:
         color_frame = frame.get_color_frame()
 
         if not color_frame:
-            raise OSError(f"Can't capture color image from camera {self.camera_idx}.")
+            raise OSError(f"Can't capture color image from camera {self.camera_index}.")
 
         color_image = np.asanyarray(color_frame.get_data())
 
@@ -310,28 +310,26 @@ class IntelRealSenseCamera:
                 f"Expected color values are 'rgb' or 'bgr', but {requested_color_mode} is provided."
             )
 
-        # OpenCV uses BGR format as default (blue, green red) for all operations, including displaying images.
-        # However, Deep Learning framework such as LeRobot uses RGB format as default to train neural networks,
-        # so we convert the image color from BGR to RGB.
-        if requested_color_mode == "rgb":
-            color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
+        # IntelRealSense uses RGB format as default (red, green, blue).
+        if requested_color_mode == "bgr":
+            color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
 
-            h, w, _ = color_image.shape
-            if h != self.height or w != self.width:
-                raise OSError(
-                    f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
-                )
+        h, w, _ = color_image.shape
+        if h != self.height or w != self.width:
+            raise OSError(
+                f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
+            )
 
-            # log the number of seconds it took to read the image
-            self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
+        # log the number of seconds it took to read the image
+        self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
 
-            # log the utc time at which the image was received
-            self.logs["timestamp_utc"] = capture_timestamp_utc()
+        # log the utc time at which the image was received
+        self.logs["timestamp_utc"] = capture_timestamp_utc()
 
         if self.use_depth:
             depth_frame = frame.get_depth_frame()
             if not depth_frame:
-                raise OSError(f"Can't capture depth image from camera {self.camera_idx}.")
+                raise OSError(f"Can't capture depth image from camera {self.camera_index}.")
             depth_image = np.asanyarray(depth_frame.get_data())
 
             return color_image, depth_image
@@ -346,7 +344,7 @@ class IntelRealSenseCamera:
         """Access the latest color image"""
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                f"IntelRealsense( {self.camera_idx}) is not connected. Try running `camera.connect()` first."
+                f"IntelRealsense( {self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
         if self.use_depth:
@@ -372,7 +370,7 @@ class IntelRealSenseCamera:
     def disconnect(self):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                f"Intel ({self.camera_idx}) is not connected. Try running `camera.connect()` first."
+                f"Intel ({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
         if self.thread is not None and self.thread.is_alive():
@@ -381,15 +379,6 @@ class IntelRealSenseCamera:
             self.thread.join()
             self.thread = None
             self.stop_event = None
-
-        # if getattr(self, "camera", None):
-        #     try:
-        #         self.camera.stop()
-        #     except RuntimeError as e:
-        #         if "stop() cannot be called before start()" in str(e):
-        #             # skip this runtime error
-        #             return
-        #         traceback.print_exc()
 
         self.camera.stop()
         self.camera = None

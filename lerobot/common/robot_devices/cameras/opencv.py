@@ -316,7 +316,7 @@ class OpenCVCamera:
                 f"Expected color values are 'rgb' or 'bgr', but {requested_color_mode} is provided."
             )
 
-        # OpenCV uses BGR format as default (blue, green red) for all operations, including displaying images.
+        # OpenCV uses BGR format as default (blue, green, red) for all operations, including displaying images.
         # However, Deep Learning framework such as LeRobot uses RGB format as default to train neural networks,
         # so we convert the image color from BGR to RGB.
         if requested_color_mode == "rgb":
