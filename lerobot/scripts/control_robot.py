@@ -127,7 +127,8 @@ from lerobot.common.datasets.utils import calculate_episode_data_index, create_b
 from lerobot.common.datasets.video_utils import encode_video_frames
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.common.robot_devices.robots.utils import Robot, get_arm_id
+from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 from lerobot.scripts.push_dataset_to_hub import (
@@ -167,15 +168,6 @@ def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
     path = videos_dir / f"{key}_episode_{episode_index:06d}" / f"frame_{frame_index:06d}.png"
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(path), quality=100)
-
-
-def busy_wait(seconds):
-    # Significantly more accurate than `time.sleep`, and mendatory for our use case,
-    # but it consumes CPU cycles.
-    # TODO(rcadene): find an alternative: from python 11, time.sleep is precise
-    end_time = time.perf_counter() + seconds
-    while time.perf_counter() < end_time:
-        pass
 
 
 def none_or_int(value):
@@ -249,10 +241,38 @@ def is_headless():
 ########################################################################################
 
 
-def calibrate(robot: Robot):
-    if robot.calibration_path.exists():
-        print(f"Removing '{robot.calibration_path}'")
-        robot.calibration_path.unlink()
+def calibrate(robot: Robot, arms: list[str] | None):
+    available_arms = []
+    for name in robot.follower_arms:
+        arm_id = get_arm_id(name, "follower")
+        available_arms.append(arm_id)
+    for name in robot.leader_arms:
+        arm_id = get_arm_id(name, "leader")
+        available_arms.append(arm_id)
+
+    unknown_arms = [arm_id for arm_id in arms if arm_id not in available_arms]
+
+    available_arms_str = " ".join(available_arms)
+    unknown_arms_str = " ".join(unknown_arms)
+
+    if arms is None or len(arms) == 0:
+        raise ValueError(
+            "No arm provided. Use `--arms` as argument with one or more available arms.\n"
+            f"For instance, to recalibrate all arms add: `--arms {available_arms_str}`"
+        )
+
+    if len(unknown_arms) > 0:
+        raise ValueError(
+            f"Unknown arms provided ('{unknown_arms_str}'). Available arms are `{available_arms_str}`."
+        )
+
+    for arm_id in arms:
+        arm_calib_path = robot.calibration_dir / f"{arm_id}.json"
+        if arm_calib_path.exists():
+            print(f"Removing '{arm_calib_path}'")
+            arm_calib_path.unlink()
+        else:
+            print(f"Calibration file not found '{arm_calib_path}'")
 
     if robot.is_connected:
         robot.disconnect()
@@ -260,6 +280,8 @@ def calibrate(robot: Robot):
     # Calling `connect` automatically runs calibration
     # when the calibration file is missing
     robot.connect()
+    robot.disconnect()
+    print("Calibration is done! You can now teleoperate and record datasets!")
 
 
 def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | None = None):
@@ -486,8 +508,11 @@ def record(
                         action = action.to("cpu")
 
                     # Order the robot to move
-                    robot.send_action(action)
-                    action = {"action": action}
+                    action_sent = robot.send_action(action)
+
+                    # Action can eventually be clipped using `max_relative_target`,
+                    # so action actually sent is saved in the dataset.
+                    action = {"action": action_sent}
 
                 for key in action:
                     if key not in ep_dict:
@@ -712,6 +737,12 @@ if __name__ == "__main__":
     )
 
     parser_calib = subparsers.add_parser("calibrate", parents=[base_parser])
+    parser_calib.add_argument(
+        "--arms",
+        type=int,
+        nargs="*",
+        help="List of arms to calibrate (e.g. `--arms left_follower right_follower left_leader`)",
+    )
 
     parser_teleop = subparsers.add_parser("teleoperate", parents=[base_parser])
     parser_teleop.add_argument(

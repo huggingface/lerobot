@@ -21,11 +21,12 @@ import torch
 
 from lerobot.common.utils.import_utils import is_package_available
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 # Pass this as the first argument to init_hydra_config.
 DEFAULT_CONFIG_PATH = "lerobot/configs/default.yaml"
-KOCH_ROBOT_CONFIG_PATH = "lerobot/configs/robot/koch.yaml"
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+ROBOT_CONFIG_PATH_TEMPLATE = "lerobot/configs/robot/{robot}.yaml"
 
 
 def require_x86_64_kernel(func):
@@ -150,21 +151,35 @@ def require_package(package_name):
     return decorator
 
 
-def require_koch(func):
+def require_robot(func):
     """
-    Decorator that skips the test if an alexander koch robot is not available
+    Decorator that skips the test if a robot is not available
+
+    The decorated function must have two arguments `request` and `robot_type`.
+
+    Example of usage:
+    ```python
+    @pytest.mark.parametrize(
+        "robot_type", ["koch", "aloha"]
+    )
+    @require_robot
+    def test_require_robot(request, robot_type):
+        pass
+    ```
     """
 
     @wraps(func)
     def wrapper(*args, **kwargs):
-        # Access the pytest request context to get the is_koch_available fixture
+        # Access the pytest request context to get the is_robot_available fixture
         request = kwargs.get("request")
+        robot_type = kwargs.get("robot_type")
+
         if request is None:
             raise ValueError("The 'request' fixture must be passed to the test function as a parameter.")
 
-        # The function `is_koch_available` is defined in `tests/conftest.py`
-        if not request.getfixturevalue("is_koch_available"):
-            pytest.skip("An alexander koch robot is not available.")
+        # The function `is_robot_available` is defined in `tests/conftest.py`
+        if not request.getfixturevalue("is_robot_available"):
+            pytest.skip(f"A {robot_type} robot is not available.")
         return func(*args, **kwargs)
 
     return wrapper
