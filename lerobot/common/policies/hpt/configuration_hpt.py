@@ -153,16 +153,16 @@ class HPTConfig:
 
     # Network configuration
     # Trunk Transformer
-    embed_dim: int = 256
-    num_blocks: int = 16
-    num_heads: int = 8
+    embed_dim: int = 768
+    num_blocks: int = 32
+    num_heads: int = 16
     use_modality_embedding: bool = True
     use_domain_embedding: bool = False
     token_postprocessing: str = "mean"
     weight_init_style: str = "pytorch"
     drop_path: float = 0.1
     no_trunk: bool = False
-    load_pretrained: bool = False
+    load_pretrained: str = "xlarge"
     freeze_trunk: bool = False
 
     # Stem network (projectors) for different modalities

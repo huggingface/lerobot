@@ -59,16 +59,16 @@ policy:
 
   # full policy configurations.
   # HPT trunk config
-  embed_dim: 256
-  num_blocks: 16
-  num_heads: 8
+  embed_dim: 768
+  num_blocks: 32
+  num_heads: 16
   use_modality_embedding: False
   use_domain_embedding: False
   token_postprocessing: "mean"
   weight_init_style: 'pytorch'
   drop_path: 0.0
   no_trunk: False
-  load_pretrained: "" # load pre-trained model
+  load_pretrained: "xlarge" # load pre-trained model
   freeze_trunk: False
 
   # stem network (projectors) for different modalities

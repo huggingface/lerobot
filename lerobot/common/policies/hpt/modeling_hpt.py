@@ -229,13 +229,6 @@ class HPT(nn.Module):
                 action_chunk_size=self.config.action_chunk_size,
             )
 
-        elif self.config.head_architecture == "MLP":
-            self.heads[domain_name] = MLPHead(
-                input_dim=self.config.embed_dim,
-                action_chunk_size=self.config.action_chunk_size,
-                output_dim=self.config.head_action_dim * self.config.action_chunk_size,
-                widths=self.config.head_widths,
-            )
 
     def _create_policy_trunk(
         self,
@@ -281,8 +274,6 @@ class HPT(nn.Module):
         if len(self.config.load_pretrained) > 0:
             self.load_trunk(self.config.load_pretrained)
 
-        if self.config.freeze_trunk:
-            self.freeze_trunk()
         return self.trunk
 
     def _reset_parameters(self):
@@ -351,10 +342,6 @@ class HPT(nn.Module):
         """
         if self.token_postprocessing == "mean":
             return trunk_tokens.mean(dim=1)
-        elif self.token_postprocessing == "max":
-            return trunk_tokens.max(dim=1)[0]
-        elif self.token_postprocessing == "last":
-            return trunk_tokens[:, -1]
         elif self.token_postprocessing == "no-op":
             return trunk_tokens
 
@@ -461,70 +448,12 @@ class HPT(nn.Module):
         download_path = huggingface_hub.snapshot_download(path)
         self.trunk.load_state_dict(torch.load(download_path + "/trunk.pth"))
 
-    def freeze_trunk(self, num_layers: int = 0):
-        """freeze the trunk parameters in the last num_layers"""
-        layers = list(self.trunk["trunk"].children())
-        for layer in layers[-num_layers:]:
-            for param in layer.parameters():
-                param.requires_grad = False
-
-    def unfreeze_trunk(self, num_layers: int = 0):
-        """unfreeze the trunk parameters in the last num_layers"""
-        layers = list(self.trunk["trunk"].children())
-        for layer in layers[-num_layers:]:
-            for param in layer.parameters():
-                param.requires_grad = True
-
     def compute_loss(self, batch: dict[str, Tensor]) -> Tensor:
         """Compute the loss for the training loop forward pass."""
         domain = self.config.domain_name
         features = self.forward_features(batch)
         loss = self.heads[domain].compute_loss(features, batch)
         return loss
-
-
-class MLPHead(nn.Module):
-    """Simple MLP based policy head"""
-
-    def __init__(
-        self,
-        input_dim: int = 10,
-        output_dim: int = 10,
-        widths: List[int] = (512, 512),
-        dropout: bool = False,
-        tanh_end: bool = True,
-        action_chunk_size: int = 1,
-        ln: bool = True,
-    ) -> None:
-        """MLP Policy Head class"""
-        super().__init__()
-        self.input = input
-        assert output_dim % action_chunk_size == 0
-        self.action_chunk_size = action_chunk_size
-        self.action_dim = output_dim // action_chunk_size
-        modules = [nn.Linear(input_dim, widths[0]), nn.SiLU()]
-
-        for i in range(len(widths) - 1):
-            modules.extend([nn.Linear(widths[i], widths[i + 1])])
-            if dropout:
-                modules.append(nn.Dropout(p=0.1))
-            if ln:
-                modules.append(nn.LayerNorm(widths[i + 1]))
-            modules.append(nn.SiLU())
-
-        modules.append(nn.Linear(widths[-1], output_dim))
-        if tanh_end:
-            modules.append(nn.Tanh())
-        self.net = nn.Sequential(*modules)
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self.net(x).view(len(x), self.action_chunk_size, self.action_dim)
-
-    def compute_loss(self, x: Tensor, target: dict) -> Tensor:
-        target_action = target["action"]
-        pred_action = self(x).view(target_action.shape)
-        return LOSS(pred_action, target_action)
-
 
 class DiffusionHead(nn.Module):
     """Diffusion based policy head based on the diffusion implementation"""
