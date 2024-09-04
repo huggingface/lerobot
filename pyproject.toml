@@ -67,9 +67,9 @@ pynput = {version = ">=1.7.7", optional = true}
 # TODO(rcadene, aliberts): 71.0.1 has a bug
 setuptools = {version = "!=71.0.1", optional = true}
 pyrealsense2 = {version = ">=2.55.1.6486", markers = "sys_platform != 'darwin'", optional = true}
-pyrender = {git = "https://github.com/mmatl/pyrender.git", branch = "master", markers = "sys_platform == 'linux'", optional = true}
+pyrender = {git = "https://github.com/mmatl/pyrender.git", markers = "sys_platform == 'linux'", optional = true}
 # TODO(aliberts): add as version = ">=0.7.27" when it's out instead of git
-hello-robot-stretch-body = {git = "https://github.com/hello-robot/stretch_body.git", branch = "master", subdirectory = "body", markers = "sys_platform == 'linux'", optional = true, develop = true}
+hello-robot-stretch-body = {git = "https://github.com/hello-robot/stretch_body.git", subdirectory = "body", markers = "sys_platform == 'linux'", optional = true, develop = true}
 
 
 [tool.poetry.extras]
