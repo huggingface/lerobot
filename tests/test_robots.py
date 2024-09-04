@@ -1,54 +1,52 @@
-import pickle
+"""
+Tests meant to be used locally and launched manually.
+
+Example usage:
+```bash
+pytest -sx tests/test_robots.py::test_robot
+```
+"""
+
 from pathlib import Path
 
 import pytest
 import torch
 
-from lerobot.common.robot_devices.robots.factory import make_robot
+from lerobot import available_robots
+from lerobot.common.robot_devices.robots.factory import make_robot as make_robot_from_cfg
+from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import require_koch
+from lerobot.common.utils.utils import init_hydra_config
+from tests.utils import ROBOT_CONFIG_PATH_TEMPLATE, require_robot
 
 
-@require_koch
-def test_robot(tmpdir, request):
+def make_robot(robot_type: str, overrides: list[str] | None = None) -> Robot:
+    config_path = ROBOT_CONFIG_PATH_TEMPLATE.format(robot=robot_type)
+    robot_cfg = init_hydra_config(config_path, overrides)
+    robot = make_robot_from_cfg(robot_cfg)
+    return robot
+
+
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_robot
+def test_robot(tmpdir, request, robot_type):
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
     # TODO(rcadene): add compatibility with other robots
-    from lerobot.common.robot_devices.robots.koch import KochRobot
+    from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
     # Save calibration preset
-    calibration = {
-        "follower_main": {
-            "shoulder_pan": (-2048, False),
-            "shoulder_lift": (2048, True),
-            "elbow_flex": (-1024, False),
-            "wrist_flex": (2048, True),
-            "wrist_roll": (2048, True),
-            "gripper": (2048, True),
-        },
-        "leader_main": {
-            "shoulder_pan": (-2048, False),
-            "shoulder_lift": (1024, True),
-            "elbow_flex": (2048, True),
-            "wrist_flex": (-2048, False),
-            "wrist_roll": (2048, True),
-            "gripper": (2048, True),
-        },
-    }
     tmpdir = Path(tmpdir)
-    calibration_path = tmpdir / "calibration.pkl"
-    calibration_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(calibration_path, "wb") as f:
-        pickle.dump(calibration, f)
+    calibration_dir = tmpdir / robot_type
 
     # Test connecting without devices raises an error
-    robot = KochRobot()
+    robot = ManipulatorRobot()
     with pytest.raises(ValueError):
         robot.connect()
     del robot
 
     # Test using robot before connecting raises an error
-    robot = KochRobot()
+    robot = ManipulatorRobot()
     with pytest.raises(RobotDeviceNotConnectedError):
         robot.teleop_step()
     with pytest.raises(RobotDeviceNotConnectedError):
@@ -64,9 +62,7 @@ def test_robot(tmpdir, request):
     del robot
 
     # Test connecting
-    robot = make_robot("koch")
-    # TODO(rcadene): proper monkey patch
-    robot.calibration_path = calibration_path
+    robot = make_robot(robot_type, overrides=[f"calibration_dir={calibration_dir}"])
     robot.connect()  # run the manual calibration precedure
     assert robot.is_connected
 
@@ -78,8 +74,8 @@ def test_robot(tmpdir, request):
     del robot
 
     # Test teleop can run
-    robot = make_robot("koch")
-    robot.calibration_path = calibration_path
+    robot = make_robot(robot_type, overrides=[f"calibration_dir={calibration_dir}"])
+    robot.calibration_dir = calibration_dir
     robot.connect()
     robot.teleop_step()
 

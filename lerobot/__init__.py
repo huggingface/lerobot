@@ -27,6 +27,7 @@ Example:
         print(lerobot.available_real_world_datasets)
         print(lerobot.available_policies)
         print(lerobot.available_policies_per_env)
+        print(lerobot.available_robots)
     ```
 
 When implementing a new dataset loadable with LeRobotDataset follow these steps:
@@ -182,12 +183,19 @@ available_datasets = list(
     itertools.chain(*available_datasets_per_env.values(), available_real_world_datasets)
 )
 
-# lists all available policies from `lerobot/common/policies` by their class attribute: `name`.
+# lists all available policies from `lerobot/common/policies`
 available_policies = [
     "act",
     "diffusion",
     "tdmpc",
     "vqbet",
+]
+
+# lists all available robots from `lerobot/common/robot_devices/robots`
+available_robots = [
+    "koch",
+    "koch_bimanual",
+    "aloha",
 ]
 
 # keys and values refer to yaml files

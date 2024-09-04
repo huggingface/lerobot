@@ -1,3 +1,13 @@
+"""
+Tests meant to be used locally and launched manually.
+
+Example usage:
+```bash
+pytest -sx tests/test_motors.py::test_find_port
+pytest -sx tests/test_motors.py::test_motors_bus
+```
+"""
+
 # TODO(rcadene): measure fps in nightly?
 # TODO(rcadene): test logs
 # TODO(rcadene): test calibration
@@ -5,34 +15,41 @@
 
 import time
 
-import hydra
 import numpy as np
 import pytest
 
+from lerobot import available_robots
+from lerobot.common.robot_devices.motors.utils import MotorsBus
+from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import init_hydra_config
-from tests.utils import KOCH_ROBOT_CONFIG_PATH, require_koch
+from tests.utils import ROBOT_CONFIG_PATH_TEMPLATE, require_robot
 
 
-def make_motors_bus():
-    robot_cfg = init_hydra_config(KOCH_ROBOT_CONFIG_PATH)
-    # Instantiating a common motors structure.
-    # Here the one from Alexander Koch follower arm.
-    motors_bus = hydra.utils.instantiate(robot_cfg.leader_arms.main)
+def make_motors_bus(robot_type: str) -> MotorsBus:
+    # Instantiate a robot and return one of its leader arms
+    config_path = ROBOT_CONFIG_PATH_TEMPLATE.format(robot=robot_type)
+    robot_cfg = init_hydra_config(config_path)
+    robot = make_robot(robot_cfg)
+    first_bus_name = list(robot.leader_arms.keys())[0]
+    motors_bus = robot.leader_arms[first_bus_name]
     return motors_bus
 
 
-@require_koch
-def test_find_port(request):
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_robot
+def test_find_port(request, robot_type):
     from lerobot.common.robot_devices.motors.dynamixel import find_port
 
     find_port()
 
 
-@require_koch
-def test_configure_motors_all_ids_1(request):
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_robot
+def test_configure_motors_all_ids_1(request, robot_type):
+    input("Are you sure you want to re-configure the motors? Press enter to continue...")
     # This test expect the configuration was already correct.
-    motors_bus = make_motors_bus()
+    motors_bus = make_motors_bus(robot_type)
     motors_bus.connect()
     motors_bus.write("Baud_Rate", [0] * len(motors_bus.motors))
     motors_bus.set_bus_baudrate(9_600)
@@ -40,15 +57,16 @@ def test_configure_motors_all_ids_1(request):
     del motors_bus
 
     # Test configure
-    motors_bus = make_motors_bus()
+    motors_bus = make_motors_bus(robot_type)
     motors_bus.connect()
     assert motors_bus.are_motors_configured()
     del motors_bus
 
 
-@require_koch
-def test_motors_bus(request):
-    motors_bus = make_motors_bus()
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_robot
+def test_motors_bus(request, robot_type):
+    motors_bus = make_motors_bus(robot_type)
 
     # Test reading and writting before connecting raises an error
     with pytest.raises(RobotDeviceNotConnectedError):
@@ -62,7 +80,7 @@ def test_motors_bus(request):
     del motors_bus
 
     # Test connecting
-    motors_bus = make_motors_bus()
+    motors_bus = make_motors_bus(robot_type)
     motors_bus.connect()
 
     # Test connecting twice raises an error

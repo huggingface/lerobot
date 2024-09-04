@@ -1,4 +1,6 @@
 import enum
+import logging
+import math
 import time
 import traceback
 from copy import deepcopy
@@ -27,11 +29,28 @@ TIMEOUT_MS = 1000
 
 MAX_ID_RANGE = 252
 
+# The following bounds define the lower and upper joints range (after calibration).
+# For joints in degree (i.e. revolute joints), their nominal range is [-180, 180] degrees
+# which corresponds to a half rotation on the left and half rotation on the right.
+# Some joints might require higher range, so we allow up to [-270, 270] degrees until
+# an error is raised.
+LOWER_BOUND_DEGREE = -270
+UPPER_BOUND_DEGREE = 270
+# For joints in percentage (i.e. joints that move linearly like the prismatic joint of a gripper),
+# their nominal range is [0, 100] %. For instance, for Aloha gripper, 0% is fully
+# closed, and 100% is fully open. To account for slight calibration issue, we allow up to
+# [-10, 110] until an error is raised.
+LOWER_BOUND_LINEAR = -10
+UPPER_BOUND_LINEAR = 110
+
+HALF_TURN_DEGREE = 180
+
 # https://emanual.robotis.com/docs/en/dxl/x/xl330-m077
 # https://emanual.robotis.com/docs/en/dxl/x/xl330-m288
 # https://emanual.robotis.com/docs/en/dxl/x/xl430-w250
 # https://emanual.robotis.com/docs/en/dxl/x/xm430-w350
 # https://emanual.robotis.com/docs/en/dxl/x/xm540-w270
+# https://emanual.robotis.com/docs/en/dxl/x/xc430-w150
 
 # data_name: (address, size_byte)
 X_SERIES_CONTROL_TABLE = {
@@ -109,6 +128,7 @@ MODEL_CONTROL_TABLE = {
     "xl430-w250": X_SERIES_CONTROL_TABLE,
     "xm430-w350": X_SERIES_CONTROL_TABLE,
     "xm540-w270": X_SERIES_CONTROL_TABLE,
+    "xc430-w150": X_SERIES_CONTROL_TABLE,
 }
 
 MODEL_RESOLUTION = {
@@ -118,6 +138,7 @@ MODEL_RESOLUTION = {
     "xl430-w250": 4096,
     "xm430-w350": 4096,
     "xm540-w270": 4096,
+    "xc430-w150": 4096,
 }
 
 MODEL_BAUDRATE_TABLE = {
@@ -127,20 +148,18 @@ MODEL_BAUDRATE_TABLE = {
     "xl430-w250": X_SERIES_BAUDRATE_TABLE,
     "xm430-w350": X_SERIES_BAUDRATE_TABLE,
     "xm540-w270": X_SERIES_BAUDRATE_TABLE,
+    "xc430-w150": X_SERIES_BAUDRATE_TABLE,
 }
 
 NUM_READ_RETRY = 10
 NUM_WRITE_RETRY = 10
 
 
-def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str]):
-    """This function convert the degree range to the step range for indicating motors rotation.
-    It assums a motor achieves a full rotation by going from -180 degree position to +180.
+def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str]) -> np.ndarray:
+    """This function converts the degree range to the step range for indicating motors rotation.
+    It assumes a motor achieves a full rotation by going from -180 degree position to +180.
     The motor resolution (e.g. 4096) corresponds to the number of steps needed to achieve a full rotation.
     """
-    if isinstance(degrees, float):
-        degrees = np.array(degrees)
-
     resolutions = [MODEL_RESOLUTION[model] for model in models]
     steps = degrees / 180 * np.array(resolutions) / 2
     steps = steps.astype(int)
@@ -250,18 +269,22 @@ class TorqueMode(enum.Enum):
     DISABLED = 0
 
 
-class OperatingMode(enum.Enum):
-    VELOCITY = 1
-    POSITION = 3
-    EXTENDED_POSITION = 4
-    CURRENT_CONTROLLED_POSITION = 5
-    PWM = 16
-    UNKNOWN = -1
-
-
 class DriveMode(enum.Enum):
     NON_INVERTED = 0
     INVERTED = 1
+
+
+class CalibrationMode(enum.Enum):
+    # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
+    DEGREE = 0
+    # Joints with linear motions (like gripper of Aloha) are experessed in nominal range of [0, 100]
+    LINEAR = 1
+
+
+class JointOutOfRangeError(Exception):
+    def __init__(self, message="Joint is out of range"):
+        self.message = message
+        super().__init__(self.message)
 
 
 class DynamixelMotorsBus:
@@ -531,8 +554,21 @@ class DynamixelMotorsBus:
     def motor_indices(self) -> list[int]:
         return [idx for idx, _ in self.motors.values()]
 
-    def set_calibration(self, calibration: dict[str, tuple[int, bool]]):
+    def set_calibration(self, calibration: dict[str, list]):
         self.calibration = calibration
+
+    def apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
+        """This function applies the calibration, automatically detects out of range errors for motors values and attempts to correct.
+
+        For more info, see docstring of `apply_calibration` and `autocorrect_calibration`.
+        """
+        try:
+            values = self.apply_calibration(values, motor_names)
+        except JointOutOfRangeError as e:
+            print(e)
+            self.autocorrect_calibration(values, motor_names)
+            values = self.apply_calibration(values, motor_names)
+        return values
 
     def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         """Convert from unsigned int32 joint position range [0, 2**32[ to the universal float32 nominal degree range ]-180.0, 180.0[ with
@@ -551,53 +587,197 @@ class DynamixelMotorsBus:
         if motor_names is None:
             motor_names = self.motor_names
 
-        # Convert from unsigned int32 original range [0, 2**32[ to centered signed int32 range [-2**31, 2**31[
-        values = values.astype(np.int32)
-
-        for i, name in enumerate(motor_names):
-            homing_offset, drive_mode = self.calibration[name]
-
-            # Update direction of rotation of the motor to match between leader and follower. In fact, the motor of the leader for a given joint
-            # can be assembled in an opposite direction in term of rotation than the motor of the follower on the same joint.
-            if drive_mode:
-                values[i] *= -1
-
-            # Convert from range [-2**31, 2**31[ to nominal range ]-resolution, resolution[ (e.g. ]-2048, 2048[)
-            values[i] += homing_offset
-
-        # Convert from range ]-resolution, resolution[ to the universal float32 centered degree range ]-180, 180[
+        # Convert from unsigned int32 original range [0, 2**32] to signed float32 range
         values = values.astype(np.float32)
+
         for i, name in enumerate(motor_names):
-            _, model = self.motors[name]
-            resolution = self.model_resolution[model]
-            values[i] = values[i] / (resolution // 2) * 180
+            calib_idx = self.calibration["motor_names"].index(name)
+            calib_mode = self.calibration["calib_mode"][calib_idx]
+
+            if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
+                drive_mode = self.calibration["drive_mode"][calib_idx]
+                homing_offset = self.calibration["homing_offset"][calib_idx]
+                _, model = self.motors[name]
+                resolution = self.model_resolution[model]
+
+                # Update direction of rotation of the motor to match between leader and follower.
+                # In fact, the motor of the leader for a given joint can be assembled in an
+                # opposite direction in term of rotation than the motor of the follower on the same joint.
+                if drive_mode:
+                    values[i] *= -1
+
+                # Convert from range [-2**31, 2**31] to
+                # nominal range [-resolution//2, resolution//2] (e.g. [-2048, 2048])
+                values[i] += homing_offset
+
+                # Convert from range [-resolution//2, resolution//2] to
+                # universal float32 centered degree range [-180, 180]
+                # (e.g. 2048 / (4096 // 2) * 180 = 180)
+                values[i] = values[i] / (resolution // 2) * HALF_TURN_DEGREE
+
+                if (values[i] < LOWER_BOUND_DEGREE) or (values[i] > UPPER_BOUND_DEGREE):
+                    raise JointOutOfRangeError(
+                        f"Wrong motor position range detected for {name}. "
+                        f"Expected to be in nominal range of [-{HALF_TURN_DEGREE}, {HALF_TURN_DEGREE}] degrees (a full rotation), "
+                        f"with a maximum range of [{LOWER_BOUND_DEGREE}, {UPPER_BOUND_DEGREE}] degrees to account for joints that can rotate a bit more, "
+                        f"but present value is {values[i]} degree. "
+                        "This might be due to a cable connection issue creating an artificial 360 degrees jump in motor values. "
+                        "You need to recalibrate by running: `python lerobot/scripts/control_robot.py calibrate`"
+                    )
+
+            elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
+                start_pos = self.calibration["start_pos"][calib_idx]
+                end_pos = self.calibration["end_pos"][calib_idx]
+
+                # Rescale the present position to a nominal range [0, 100] %,
+                # useful for joints with linear motions like Aloha gripper
+                values[i] = (values[i] - start_pos) / (end_pos - start_pos) * 100
+
+                if (values[i] < LOWER_BOUND_LINEAR) or (values[i] > UPPER_BOUND_LINEAR):
+                    raise JointOutOfRangeError(
+                        f"Wrong motor position range detected for {name}. "
+                        f"Expected to be in nominal range of [0, 100] % (a full linear translation), "
+                        f"with a maximum range of [{LOWER_BOUND_LINEAR}, {UPPER_BOUND_LINEAR}] % to account for some imprecision during calibration, "
+                        f"but present value is {values[i]} %. "
+                        "This might be due to a cable connection issue creating an artificial jump in motor values. "
+                        "You need to recalibrate by running: `python lerobot/scripts/control_robot.py calibrate`"
+                    )
 
         return values
+
+    def autocorrect_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
+        """This function automatically detects issues with values of motors after calibration, and correct for these issues.
+
+        Some motors might have values outside of expected maximum bounds after calibration.
+        For instance, for a joint in degree, its value can be outside [-270, 270] degrees, which is totally unexpected given
+        a nominal range of [-180, 180] degrees, which represents half a turn to the left or right starting from zero position.
+
+        Known issues:
+        #1: Motor value randomly shifts of a full turn, caused by hardware/connection errors.
+        #2: Motor internal homing offset is shifted by a full turn, caused by using default calibration (e.g Aloha).
+        #3: motor internal homing offset is shifted by less or more than a full turn, caused by using default calibration
+            or by human error during manual calibration.
+
+        Issues #1 and #2 can be solved by shifting the calibration homing offset by a full turn.
+        Issue #3 will be visually detected by user and potentially captured by the safety feature `max_relative_target`,
+        that will slow down the motor, raise an error asking to recalibrate. Manual recalibrating will solve the issue.
+
+        Note: A full turn corresponds to 360 degrees but also to 4096 steps for a motor resolution of 4096.
+        """
+        if motor_names is None:
+            motor_names = self.motor_names
+
+        # Convert from unsigned int32 original range [0, 2**32] to signed float32 range
+        values = values.astype(np.float32)
+
+        for i, name in enumerate(motor_names):
+            calib_idx = self.calibration["motor_names"].index(name)
+            calib_mode = self.calibration["calib_mode"][calib_idx]
+
+            if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
+                drive_mode = self.calibration["drive_mode"][calib_idx]
+                homing_offset = self.calibration["homing_offset"][calib_idx]
+                _, model = self.motors[name]
+                resolution = self.model_resolution[model]
+
+                # Update direction of rotation of the motor to match between leader and follower.
+                # In fact, the motor of the leader for a given joint can be assembled in an
+                # opposite direction in term of rotation than the motor of the follower on the same joint.
+                if drive_mode:
+                    values[i] *= -1
+
+                # Convert from initial range to range [-180, 180] degrees
+                calib_val = (values[i] + homing_offset) / (resolution // 2) * HALF_TURN_DEGREE
+                in_range = (calib_val > LOWER_BOUND_DEGREE) and (calib_val < UPPER_BOUND_DEGREE)
+
+                # Solve this inequality to find the factor to shift the range into [-180, 180] degrees
+                # values[i] = (values[i] + homing_offset + resolution * factor) / (resolution // 2) * HALF_TURN_DEGREE
+                # - HALF_TURN_DEGREE <= (values[i] + homing_offset + resolution * factor) / (resolution // 2) * HALF_TURN_DEGREE <= HALF_TURN_DEGREE
+                # (- (resolution // 2) - values[i] - homing_offset) / resolution <= factor <= ((resolution // 2) - values[i] - homing_offset) / resolution
+                low_factor = (-(resolution // 2) - values[i] - homing_offset) / resolution
+                upp_factor = ((resolution // 2) - values[i] - homing_offset) / resolution
+
+            elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
+                start_pos = self.calibration["start_pos"][calib_idx]
+                end_pos = self.calibration["end_pos"][calib_idx]
+
+                # Convert from initial range to range [0, 100] in %
+                calib_val = (values[i] - start_pos) / (end_pos - start_pos) * 100
+                in_range = (calib_val > LOWER_BOUND_LINEAR) and (calib_val < UPPER_BOUND_LINEAR)
+
+                # Solve this inequality to find the factor to shift the range into [0, 100] %
+                # values[i] = (values[i] - start_pos + resolution * factor) / (end_pos + resolution * factor - start_pos - resolution * factor) * 100
+                # values[i] = (values[i] - start_pos + resolution * factor) / (end_pos - start_pos) * 100
+                # 0 <= (values[i] - start_pos + resolution * factor) / (end_pos - start_pos) * 100 <= 100
+                # (start_pos - values[i]) / resolution <= factor <= (end_pos - values[i]) / resolution
+                low_factor = (start_pos - values[i]) / resolution
+                upp_factor = (end_pos - values[i]) / resolution
+
+            if not in_range:
+                # Get first integer between the two bounds
+                if low_factor < upp_factor:
+                    factor = math.ceil(low_factor)
+
+                    if factor > upp_factor:
+                        raise ValueError(f"No integer found between bounds [{low_factor=}, {upp_factor=}]")
+                else:
+                    factor = math.ceil(upp_factor)
+
+                    if factor > low_factor:
+                        raise ValueError(f"No integer found between bounds [{low_factor=}, {upp_factor=}]")
+
+                if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
+                    out_of_range_str = f"{LOWER_BOUND_DEGREE} < {calib_val} < {UPPER_BOUND_DEGREE} degrees"
+                    in_range_str = f"{LOWER_BOUND_DEGREE} < {calib_val} < {UPPER_BOUND_DEGREE} degrees"
+                elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
+                    out_of_range_str = f"{LOWER_BOUND_LINEAR} < {calib_val} < {UPPER_BOUND_LINEAR} %"
+                    in_range_str = f"{LOWER_BOUND_LINEAR} < {calib_val} < {UPPER_BOUND_LINEAR} %"
+
+                logging.warning(
+                    f"Auto-correct calibration of motor '{name}' by shifting value by {abs(factor)} full turns, "
+                    f"from '{out_of_range_str}' to '{in_range_str}'."
+                )
+
+                # A full turn corresponds to 360 degrees but also to 4096 steps for a motor resolution of 4096.
+                self.calibration["homing_offset"][calib_idx] += resolution * factor
 
     def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         """Inverse of `apply_calibration`."""
         if motor_names is None:
             motor_names = self.motor_names
 
-        # Convert from the universal float32 centered degree range ]-180, 180[ to resolution range ]-resolution, resolution[
         for i, name in enumerate(motor_names):
-            _, model = self.motors[name]
-            resolution = self.model_resolution[model]
-            values[i] = values[i] / 180 * (resolution // 2)
+            calib_idx = self.calibration["motor_names"].index(name)
+            calib_mode = self.calibration["calib_mode"][calib_idx]
+
+            if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
+                drive_mode = self.calibration["drive_mode"][calib_idx]
+                homing_offset = self.calibration["homing_offset"][calib_idx]
+                _, model = self.motors[name]
+                resolution = self.model_resolution[model]
+
+                # Convert from nominal 0-centered degree range [-180, 180] to
+                # 0-centered resolution range (e.g. [-2048, 2048] for resolution=4096)
+                values[i] = values[i] / HALF_TURN_DEGREE * (resolution // 2)
+
+                # Substract the homing offsets to come back to actual motor range of values
+                # which can be arbitrary.
+                values[i] -= homing_offset
+
+                # Remove drive mode, which is the rotation direction of the motor, to come back to
+                # actual motor rotation direction which can be arbitrary.
+                if drive_mode:
+                    values[i] *= -1
+
+            elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
+                start_pos = self.calibration["start_pos"][calib_idx]
+                end_pos = self.calibration["end_pos"][calib_idx]
+
+                # Convert from nominal lnear range of [0, 100] % to
+                # actual motor range of values which can be arbitrary.
+                values[i] = values[i] / 100 * (end_pos - start_pos) + start_pos
 
         values = np.round(values).astype(np.int32)
-
-        # Convert from nominal range ]-resolution, resolution[ to centered signed int32 range [-2**31, 2**31[
-        for i, name in enumerate(motor_names):
-            homing_offset, drive_mode = self.calibration[name]
-            values[i] -= homing_offset
-
-            # Update direction of rotation of the motor that was matching between leader and follower to their original direction.
-            # In fact, the motor of the leader for a given joint can be assembled in an opposite direction in term of rotation
-            # than the motor of the follower on the same joint.
-            if drive_mode:
-                values[i] *= -1
-
         return values
 
     def _read_with_motor_ids(self, motor_models, motor_ids, data_name):
@@ -683,19 +863,7 @@ class DynamixelMotorsBus:
             values = values.astype(np.int32)
 
         if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
-            values = self.apply_calibration(values, motor_names)
-
-            # We expect our motors to stay in a nominal range of [-180, 180] degrees
-            # which corresponds to a half turn rotation.
-            # However, some motors can turn a bit more, hence we extend the nominal range to [-270, 270]
-            # which is less than a full 360 degree rotation.
-            if not np.all((values > -270) & (values < 270)):
-                raise ValueError(
-                    f"Wrong motor position range detected. "
-                    f"Expected to be in [-270, +270] but in [{values.min()}, {values.max()}]. "
-                    "This might be due to a cable connection issue creating an artificial 360 degrees jump in motor values. "
-                    "You need to recalibrate by running: `python lerobot/scripts/control_robot.py calibrate`"
-                )
+            values = self.apply_calibration_autocorrect(values, motor_names)
 
         # log the number of seconds it took to read the data from the motors
         delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
