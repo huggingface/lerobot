@@ -52,7 +52,7 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
-with open("lerobot/common/datasets/push_dataset_to_hub/openx/configs.yaml", "r") as f:
+with open("lerobot/common/datasets/push_dataset_to_hub/openx/configs.yaml") as f:
     _openx_list = yaml.safe_load(f)
 
 OPENX_DATASET_CONFIGS = _openx_list["OPENX_DATASET_CONFIGS"]
