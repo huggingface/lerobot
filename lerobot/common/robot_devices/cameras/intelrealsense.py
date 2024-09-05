@@ -28,7 +28,7 @@ from lerobot.scripts.control_robot import busy_wait
 SERIAL_NUMBER_INDEX = 1
 
 
-def find_camera_indices(raise_when_empty=True):
+def find_camera_indices(raise_when_empty=True) -> list[int]:
     """
     Find the serial numbers of the Intel RealSense cameras
     connected to the computer.
@@ -108,7 +108,7 @@ def save_images_from_cameras(
                     executor.submit(
                         save_image,
                         bgr_converted_image,
-                        camera.camera_idx,
+                        camera.camera_index,
                         frame_index,
                         images_dir,
                     )
@@ -159,7 +159,7 @@ class IntelRealSenseCameraConfig:
         if (self.fps or self.width or self.height) and not (self.fps and self.width and self.height):
             raise ValueError(
                 "For `fps`, `width` and `height`, either all of them need to be set, or none of them, "
-                "but {self.fps=}, {self.width=}, {self.height=} were provided."
+                f"but {self.fps=}, {self.width=}, {self.height=} were provided."
             )
 
 
@@ -221,7 +221,7 @@ class IntelRealSenseCamera:
         # Overwrite the config arguments using kwargs
         config = replace(config, **kwargs)
 
-        self.camera_index = str(camera_index)
+        self.camera_index = camera_index
         self.fps = config.fps
         self.width = config.width
         self.height = config.height
@@ -239,7 +239,9 @@ class IntelRealSenseCamera:
 
     def connect(self):
         if self.is_connected:
-            raise RobotDeviceAlreadyConnectedError(f"Camera {self.camera_index} is already connected.")
+            raise RobotDeviceAlreadyConnectedError(
+                f"IntelRealSenseCamera({self.camera_index}) is already connected."
+            )
 
         config = rs.config()
         config.enable_device(str(self.camera_index))
@@ -275,7 +277,7 @@ class IntelRealSenseCamera:
                     "To find the camera index you should use, run `python lerobot/common/robot_devices/cameras/intelrealsense.py`."
                 )
 
-            raise OSError(f"Can't access camera {self.camera_index}.")
+            raise OSError(f"Can't access IntelRealSenseCamera({self.camera_index}).")
 
         self.is_connected = True
 
@@ -290,7 +292,7 @@ class IntelRealSenseCamera:
         """
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                f"IntelRealSense({self.camera_index}) is not connected. Try running `camera.connect()` first."
+                f"IntelRealSenseCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
         start_time = time.perf_counter()
@@ -300,7 +302,7 @@ class IntelRealSenseCamera:
         color_frame = frame.get_color_frame()
 
         if not color_frame:
-            raise OSError(f"Can't capture color image from camera {self.camera_index}.")
+            raise OSError(f"Can't capture color image from IntelRealSenseCamera({self.camera_index}).")
 
         color_image = np.asanyarray(color_frame.get_data())
 
@@ -329,7 +331,7 @@ class IntelRealSenseCamera:
         if self.use_depth:
             depth_frame = frame.get_depth_frame()
             if not depth_frame:
-                raise OSError(f"Can't capture depth image from camera {self.camera_index}.")
+                raise OSError(f"Can't capture depth image from IntelRealSenseCamera({self.camera_index}).")
             depth_image = np.asanyarray(depth_frame.get_data())
 
             return color_image, depth_image
@@ -344,7 +346,7 @@ class IntelRealSenseCamera:
         """Access the latest color image"""
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                f"IntelRealsense( {self.camera_index}) is not connected. Try running `camera.connect()` first."
+                f"IntelRealSenseCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
         if self.use_depth:
@@ -370,7 +372,7 @@ class IntelRealSenseCamera:
     def disconnect(self):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                f"Intel ({self.camera_index}) is not connected. Try running `camera.connect()` first."
+                f"IntelRealSenseCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
         if self.thread is not None and self.thread.is_alive():

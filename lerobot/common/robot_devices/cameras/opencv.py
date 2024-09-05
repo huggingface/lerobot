@@ -225,7 +225,7 @@ class OpenCVCamera:
 
     def connect(self):
         if self.is_connected:
-            raise RobotDeviceAlreadyConnectedError(f"Camera {self.camera_index} is already connected.")
+            raise RobotDeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")
 
         # First create a temporary camera trying to access `camera_index`,
         # and verify it is a valid camera by calling `isOpened`.
@@ -251,7 +251,7 @@ class OpenCVCamera:
                     "To find the camera index you should use, run `python lerobot/common/robot_devices/cameras/opencv.py`."
                 )
 
-            raise OSError(f"Can't access camera {self.camera_index}.")
+            raise OSError(f"Can't access OpenCVCamera({self.camera_index}).")
 
         # Secondly, create the camera that will be used downstream.
         # Note: For some unknown reason, calling `isOpened` blocks the camera which then
@@ -274,15 +274,15 @@ class OpenCVCamera:
 
         if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             raise OSError(
-                f"Can't set {self.fps=} for camera {self.camera_index}. Actual value is {actual_fps}."
+                f"Can't set {self.fps=} for OpenCVCamera({self.camera_index}). Actual value is {actual_fps}."
             )
         if self.width is not None and self.width != actual_width:
             raise OSError(
-                f"Can't set {self.width=} for camera {self.camera_index}. Actual value is {actual_width}."
+                f"Can't set {self.width=} for OpenCVCamera({self.camera_index}). Actual value is {actual_width}."
             )
         if self.height is not None and self.height != actual_height:
             raise OSError(
-                f"Can't set {self.height=} for camera {self.camera_index}. Actual value is {actual_height}."
+                f"Can't set {self.height=} for OpenCVCamera({self.camera_index}). Actual value is {actual_height}."
             )
 
         self.fps = actual_fps
