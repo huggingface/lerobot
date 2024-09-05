@@ -3198,7 +3198,7 @@ diagrams = ["jinja2", "railroad-diagrams"]
 name = "pyrealsense2"
 version = "2.55.1.6486"
 description = "Python Wrapper for Intel Realsense SDK 2.0."
-optional = false
+optional = true
 python-versions = "*"
 files = [
     {file = "pyrealsense2-2.55.1.6486-cp310-cp310-manylinux1_x86_64.whl", hash = "sha256:882613808289c602b23f2e19bf1fbadd63fb3af9be9c2997cc4ea74741a65136"},
@@ -4586,4 +4586,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "957e5100c7828679ed31fdaa6b6a645a60bdfce389b99d5f39fd70acebe94ff3"
+content-hash = "06a8a1941b75c3ec78ade6f8b2c3ad7b5d2f1516b590fa3d5a773add73f6dbec"
