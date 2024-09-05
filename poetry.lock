@@ -4576,7 +4576,7 @@ aloha = ["gym-aloha"]
 dev = ["debugpy", "pre-commit"]
 dora = ["gym-dora"]
 dynamixel = ["dynamixel-sdk", "pynput"]
-intelrealsense = []
+intelrealsense = ["pyrealsense2"]
 pusht = ["gym-pusht"]
 test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
@@ -4586,4 +4586,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "5e0db1a30617641137dc8400cd0f8e91786496422a2fb50cede9cc78ec291f54"
+content-hash = "957e5100c7828679ed31fdaa6b6a645a60bdfce389b99d5f39fd70acebe94ff3"
