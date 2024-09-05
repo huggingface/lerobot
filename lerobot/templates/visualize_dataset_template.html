@@ -75,7 +75,7 @@
             {% for video_info in videos_info %}
             <div class="max-w-96">
                 <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
-                <video muted loop type="video/mp4" class="min-w-64" @canplay="videoCanPlay" @timeupdate="() => {
+                <video muted loop type="video/mp4" class="min-w-64" @canplaythrough="videoCanPlay" @timeupdate="() => {
                     if (video.duration) {
                       const time = video.currentTime;
                       const pc = (100 / video.duration) * time;
