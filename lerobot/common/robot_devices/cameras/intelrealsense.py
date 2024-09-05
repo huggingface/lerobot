@@ -1,5 +1,5 @@
 """
-This file contains ultilities for recording frames from Intel Realsense cameras.
+This file contains utilities for recording frames from Intel Realsense cameras.
 """
 
 import argparse
