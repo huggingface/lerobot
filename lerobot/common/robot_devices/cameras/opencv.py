@@ -293,7 +293,7 @@ class OpenCVCamera:
 
     def read(self, temporary_color_mode: str | None = None) -> np.ndarray:
         """Read a frame from the camera returned in the format (height, width, channels)
-        (e.g. (640, 480, 3)), contrarily to the pytorch format which is channel first.
+        (e.g. 480 x 640 x 3), contrarily to the pytorch format which is channel first.
 
         Note: Reading a frame is done every `camera.fps` times per second, and it is blocking.
         If you are reading data from other sensors, we advise to use `camera.async_read()` which is non blocking version of `camera.read()`.

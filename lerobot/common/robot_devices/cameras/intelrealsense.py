@@ -78,7 +78,7 @@ def save_images_from_cameras(
         camera = IntelRealSenseCamera(cam_idx, fps=fps, width=width, height=height)
         camera.connect()
         print(
-            f"IntelRealSense Camera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
+            f"IntelRealSenseCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
         )
         cameras.append(camera)
 
@@ -206,7 +206,7 @@ class IntelRealSenseCamera:
     camera = IntelRealSenseCamera(camera_index, use_depth=True)
     camera.connect()
     color_image, depth_map = camera.read()
-
+    ```
     """
 
     def __init__(
@@ -234,7 +234,7 @@ class IntelRealSenseCamera:
         self.thread = None
         self.stop_event = None
         self.color_image = None
-        self._color_image = None
+        self.depth_map = None
         self.logs = {}
 
     def connect(self):
@@ -282,10 +282,11 @@ class IntelRealSenseCamera:
         self.is_connected = True
 
     def read(self, temporary_color: str | None = None) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-        """Read a frame from the camera returned in the format (height, width, channels)
-        (e.g. (640, 480, 3)), contrarily to the pytorch format which is channel first.
+        """Read a frame from the camera returned in the format height x width x channels (e.g. 480 x 640 x 3)
+        of type `np.uint8`, contrarily to the pytorch format which is float channel first.
 
-        When `use_depth=True`, returns a tuple with the color image and the depth map.
+        When `use_depth=True`, returns a tuple `(color_image, depth_map)` with a depth map in the format
+        height x width (e.g. 480 x 640) of type np.uint16.
 
         Note: Reading a frame is done every `camera.fps` times per second, and it is blocking.
         If you are reading data from other sensors, we advise to use `camera.async_read()` which is non blocking version of `camera.read()`.
@@ -332,15 +333,25 @@ class IntelRealSenseCamera:
             depth_frame = frame.get_depth_frame()
             if not depth_frame:
                 raise OSError(f"Can't capture depth image from IntelRealSenseCamera({self.camera_index}).")
-            depth_image = np.asanyarray(depth_frame.get_data())
 
-            return color_image, depth_image
+            depth_map = np.asanyarray(depth_frame.get_data())
+
+            h, w = depth_map.shape
+            if h != self.height or w != self.width:
+                raise OSError(
+                    f"Can't capture depth map with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
+                )
+
+            return color_image, depth_map
         else:
             return color_image
 
     def read_loop(self):
         while self.stop_event is None or not self.stop_event.is_set():
-            self.color_image = self.read()
+            if self.use_depth:
+                self.color_image, self.depth_map = self.read()
+            else:
+                self.color_image = self.read()
 
     def async_read(self):
         """Access the latest color image"""
@@ -348,9 +359,6 @@ class IntelRealSenseCamera:
             raise RobotDeviceNotConnectedError(
                 f"IntelRealSenseCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
-
-        if self.use_depth:
-            raise NotImplementedError("Async read does not work with depth as of now.")
 
         if self.thread is None:
             self.stop_event = threading.Event()
@@ -367,7 +375,10 @@ class IntelRealSenseCamera:
                     "The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.thread.start()` has been called."
                 )
 
-        return self.color_image
+        if self.use_depth:
+            return self.color_image, self.depth_map
+        else:
+            return self.color_image
 
     def disconnect(self):
         if not self.is_connected:
