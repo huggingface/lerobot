@@ -3195,6 +3195,29 @@ files = [
 diagrams = ["jinja2", "railroad-diagrams"]
 
 [[package]]
+name = "pyrealsense2"
+version = "2.55.1.6486"
+description = "Python Wrapper for Intel Realsense SDK 2.0."
+optional = true
+python-versions = "*"
+files = [
+    {file = "pyrealsense2-2.55.1.6486-cp310-cp310-manylinux1_x86_64.whl", hash = "sha256:882613808289c602b23f2e19bf1fbadd63fb3af9be9c2997cc4ea74741a65136"},
+    {file = "pyrealsense2-2.55.1.6486-cp310-cp310-manylinux2014_aarch64.whl", hash = "sha256:686320811ef30c162c7240cb619e9b152420c0a32337a137139276c87f213336"},
+    {file = "pyrealsense2-2.55.1.6486-cp310-cp310-win_amd64.whl", hash = "sha256:600e7c691c7c50043a2c930471f873da33badce9c5b8c75a8bad499389ac10a4"},
+    {file = "pyrealsense2-2.55.1.6486-cp311-cp311-manylinux1_x86_64.whl", hash = "sha256:178f92caec6e8e212a7ced66c678dec47462b0b77e929fa576d02eea297bb177"},
+    {file = "pyrealsense2-2.55.1.6486-cp311-cp311-win_amd64.whl", hash = "sha256:e01939a63bac3e1a4da742f7e1dbc618a4ec03ee0f7b3690ae5d1ad0c983aca8"},
+    {file = "pyrealsense2-2.55.1.6486-cp37-cp37m-manylinux1_x86_64.whl", hash = "sha256:5a40216386b49a520b5817afe97efa9a53471747b765e8b4e6ca549678945c04"},
+    {file = "pyrealsense2-2.55.1.6486-cp37-cp37m-manylinux2014_aarch64.whl", hash = "sha256:affb80b0cad7a732db4e450e9d4a8f7193499e3b35c0ce0b3e67fde5b1e9cf64"},
+    {file = "pyrealsense2-2.55.1.6486-cp37-cp37m-win_amd64.whl", hash = "sha256:93f81f0955037a325529d93059138e5036fc5e51d5fda4b3c88ae4287fa0b3ed"},
+    {file = "pyrealsense2-2.55.1.6486-cp38-cp38-manylinux1_x86_64.whl", hash = "sha256:0f51350ea100215dedc757ea7872ec23342a1d84015e87583911912d882c8ce2"},
+    {file = "pyrealsense2-2.55.1.6486-cp38-cp38-manylinux2014_aarch64.whl", hash = "sha256:3695ae04d423d6404db4d0a756c66a0f122f9e0858c91d3dcee132adbef35b62"},
+    {file = "pyrealsense2-2.55.1.6486-cp38-cp38-win_amd64.whl", hash = "sha256:f06ea7adadcdcb7d3334b8f067e4f7a361f6421a763988897d52602937c716de"},
+    {file = "pyrealsense2-2.55.1.6486-cp39-cp39-manylinux1_x86_64.whl", hash = "sha256:18b5650b1ffcc2c2a42c9f72870d291509afc5819db757f5f365c42a8aae4129"},
+    {file = "pyrealsense2-2.55.1.6486-cp39-cp39-manylinux2014_aarch64.whl", hash = "sha256:aac4fb7f9a36ff6ecaa3bf0565f3baa9327b02dd843f14933eece8a4455c6c79"},
+    {file = "pyrealsense2-2.55.1.6486-cp39-cp39-win_amd64.whl", hash = "sha256:5cbede3cd35946f3051ae6df42619ea01419c58379533c596bbad5dbf648c25b"},
+]
+
+[[package]]
 name = "pyserial"
 version = "3.5"
 description = "Python Serial Port Extension"
@@ -4553,6 +4576,7 @@ aloha = ["gym-aloha"]
 dev = ["debugpy", "pre-commit"]
 dora = ["gym-dora"]
 dynamixel = ["dynamixel-sdk", "pynput"]
+intelrealsense = ["pyrealsense2"]
 pusht = ["gym-pusht"]
 test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
@@ -4562,4 +4586,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "781e1ca86ed53f76d1b28066a91cc591630886f3a908a691a5aa26146793a02c"
+content-hash = "06a8a1941b75c3ec78ade6f8b2c3ad7b5d2f1516b590fa3d5a773add73f6dbec"
