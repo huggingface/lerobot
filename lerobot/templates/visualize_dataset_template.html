@@ -176,9 +176,9 @@
                             </td>
                             <template x-for="(cell, colIndex) in row">
                                 <td x-show="cell" class="border border-slate-700">
-                                    <div class="flex gap-x-2 w-24 justify-between px-2">
+                                    <div class="flex gap-x-2 w-24 justify-between px-2" :class="{ 'hidden': cell.isNull }">
                                         <input type="checkbox" x-model="cell.checked" @change="updateTableValues()">
-                                        <span x-text="`${cell.value.toFixed(2)}`"
+                                        <span x-text="`${!cell.isNull ? cell.value.toFixed(2) : null}`"
                                             :style="`color: ${cell.color}`"></span>
                                     </div>
                                 </td>
@@ -200,7 +200,9 @@
                 dygraph: null,
                 currentFrameData: null,
                 columnNames: ["state", "action", "pred action"],
-                nColumns: {% if has_policy %}3{% else %}2{% endif %},
+                nColumns: 2,
+                nStates: 0,
+                nActions: 0,
                 checked: [],
                 dygraphTime: 0.0,
                 dygraphIndex: 0,
@@ -236,17 +238,17 @@
                                 this.checked = Array(this.colors.length).fill(true);
 
                                 const seriesNames = this.dygraph.getLabels().slice(1);
+                                this.nStates = seriesNames.findIndex(item => item.startsWith('action_'));
+                                this.nActions = seriesNames.length - this.nStates;
                                 const colors = [];
                                 const LIGHTNESS = [30, 65, 85]; // state_lightness, action_lightness, pred_action_lightness
-                                let lightnessIdx = 0;
-                                const chunkSize = Math.ceil(seriesNames.length / this.nColumns);
-                                for (let i = 0; i < seriesNames.length; i += chunkSize) {
-                                    const lightness = LIGHTNESS[lightnessIdx];
-                                    for (let hue = 0; hue < 360; hue += parseInt(360/chunkSize)) {
-                                        const color = `hsl(${hue}, 100%, ${lightness}%)`;
-                                        colors.push(color);
-                                    }
-                                    lightnessIdx += 1;
+                                for (let hue = 0; hue < 360; hue += parseInt(360/this.nStates)) {
+                                    const color = `hsl(${hue}, 100%, ${LIGHTNESS[0]}%)`;
+                                    colors.push(color);
+                                }
+                                for (let hue = 0; hue < 360; hue += parseInt(360/this.nActions)) {
+                                    const color = `hsl(${hue}, 100%, ${LIGHTNESS[1]}%)`;
+                                    colors.push(color);
                                 }
                                 this.dygraph.updateOptions({ colors });
                                 this.colors = colors;
@@ -273,37 +275,35 @@
                     if (!this.currentFrameData) {
                         return [];
                     }
-                    const columnSize = Math.ceil(this.currentFrameData.length / this.nColumns);
-                    return Array.from({
-                        length: columnSize
-                    }, (_, rowIndex) => {
-                        const row = [
-                            this.currentFrameData[rowIndex] || null,
-                            this.currentFrameData[rowIndex + columnSize] || null,
-                        ];
-                        if (this.nColumns === 3) {
-                            row.push(this.currentFrameData[rowIndex + 2 * columnSize] || null)
-                        }
-                        return row;
-                    });
+                    const rows = [];
+                    let rowIndex = 0;
+                    while(rowIndex < Math.max(this.nStates, this.nActions)){
+                        const row = [];
+                        const nullCell = {isNull: true};
+                        row.push(rowIndex < this.nStates ? this.currentFrameData[rowIndex] : nullCell);
+                        row.push(rowIndex < this.nActions ? this.currentFrameData[rowIndex + this.nStates] : nullCell);
+                        rowIndex += 1;
+                        rows.push(row);
+                    }
+                    return rows;
                 },
                 isRowChecked(rowIndex) {
-                    return this.rows[rowIndex].every(cell => cell && cell.checked);
+                    return this.rows[rowIndex].every(cell => cell && (cell.isNull || cell.checked));
                 },
                 isColumnChecked(colIndex) {
-                    return this.rows.every(row => row[colIndex] && row[colIndex].checked);
+                    return this.rows.every(row => row[colIndex] && (row[colIndex].isNull || row[colIndex].checked));
                 },
                 toggleRow(rowIndex) {
                     const newState = !this.isRowChecked(rowIndex);
                     this.rows[rowIndex].forEach(cell => {
-                        if (cell) cell.checked = newState;
+                        if (cell && !cell.isNull) cell.checked = newState;
                     });
                     this.updateTableValues();
                 },
                 toggleColumn(colIndex) {
                     const newState = !this.isColumnChecked(colIndex);
                     this.rows.forEach(row => {
-                        if (row[colIndex]) row[colIndex].checked = newState;
+                        if (row[colIndex] && !row[colIndex].isNull) row[colIndex].checked = newState;
                     });
                     this.updateTableValues();
                 },
