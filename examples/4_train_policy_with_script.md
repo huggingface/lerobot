@@ -196,7 +196,7 @@ These logs will also be saved in wandb if `wandb.enable` is set to `true`. Here 
 - `success`: average success rate of eval episodes. Reward and success are usually different except for the sparsing reward setting, where reward=1 only when the task is completed successfully.
 - `eval_s`: time to evaluate the policy in the environment, in second.
 - `updt_s`: time to update the network parameters, in second.
-- `data_s`: time to load a batch of data, in second. 
+- `data_s`: time to load a batch of data, in second.
 
 Some metrics are useful for initial performance profiling. For example, if you find the current GPU utilization is low via the `nvidia-smi` command and `data_s` sometimes is too high, you may need to modify batch size or number of dataloading workers to accelerate dataloading. We also recommend [pytorch profiler](https://github.com/huggingface/lerobot?tab=readme-ov-file#improve-your-code-with-profiling) for detailed performance probing.
 

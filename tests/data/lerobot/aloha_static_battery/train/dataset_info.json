@@ -1,3 +1,56 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:e2e066afefdee57f3bc534085ab7af54e62d3ab2736d42863a89deb743cd0d04
-size 1075
+{
+  "citation": "",
+  "description": "",
+  "features": {
+    "observation.images.cam_high": {
+      "_type": "VideoFrame"
+    },
+    "observation.images.cam_left_wrist": {
+      "_type": "VideoFrame"
+    },
+    "observation.images.cam_low": {
+      "_type": "VideoFrame"
+    },
+    "observation.images.cam_right_wrist": {
+      "_type": "VideoFrame"
+    },
+    "observation.state": {
+      "feature": {
+        "dtype": "float32",
+        "_type": "Value"
+      },
+      "length": 14,
+      "_type": "Sequence"
+    },
+    "action": {
+      "feature": {
+        "dtype": "float32",
+        "_type": "Value"
+      },
+      "length": 14,
+      "_type": "Sequence"
+    },
+    "episode_index": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "frame_index": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "timestamp": {
+      "dtype": "float32",
+      "_type": "Value"
+    },
+    "next.done": {
+      "dtype": "bool",
+      "_type": "Value"
+    },
+    "index": {
+      "dtype": "int64",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": ""
+}

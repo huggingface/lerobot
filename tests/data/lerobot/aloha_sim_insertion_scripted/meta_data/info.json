@@ -1,3 +1,11 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:50e40e4c2bb523fca0b54e9a9635281312e9c6f9d757db03c06a0865c5508f29
-size 188
+{
+    "codebase_version": "v1.6",
+    "fps": 50,
+    "video": true,
+    "encoding": {
+        "vcodec": "libsvtav1",
+        "pix_fmt": "yuv420p",
+        "g": 2,
+        "crf": 30
+    }
+}
