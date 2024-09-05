@@ -78,7 +78,7 @@ def save_images_from_cameras(
         camera = IntelRealSenseCamera(cam_idx, fps=fps, width=width, height=height)
         camera.connect()
         print(
-            f"IntelRealSense Camera({camera.camera_idx}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
+            f"IntelRealSense Camera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
         )
         cameras.append(camera)
 
@@ -98,7 +98,7 @@ def save_images_from_cameras(
                 now = time.perf_counter()
 
                 for camera in cameras:
-                    # If we use async_read when fps is None, the loop will go full speed, and we will endup
+                    # If we use async_read when fps is None, the loop will go full speed, and we will end up
                     # saving the same images from the cameras multiple times until the RAM/disk is full.
                     image = camera.read() if fps is None else camera.async_read()
                     if image is None:
@@ -171,7 +171,7 @@ class IntelRealSenseCamera:
     - read is more reliable than OpenCVCamera,
     - depth map can be returned.
 
-    To find the camera indices of your cameras, you can run our utility script that will be save a few frames for each camera:
+    To find the camera indices of your cameras, you can run our utility script that will save a few frames for each camera:
     ```bash
     python lerobot/common/robot_devices/cameras/intelrealsense.py --images-dir outputs/images_from_intelrealsense_cameras
     ```
