@@ -80,6 +80,10 @@ def save_image(img_array, camera_index, frame_index, images_dir):
 def save_images_from_cameras(
     images_dir: Path, camera_ids: list[int] | None = None, fps=None, width=None, height=None, record_time_s=2
 ):
+    """
+    Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
+    associated to a given camera index.
+    """
     if camera_ids is None:
         camera_ids = find_camera_indices()
 
@@ -156,7 +160,7 @@ class OpenCVCameraConfig:
     def __post_init__(self):
         if self.color_mode not in ["rgb", "bgr"]:
             raise ValueError(
-                f"Expected color_mode values are 'rgb' or 'bgr', but {self.color_mode} is provided."
+                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
             )
 
 
@@ -202,6 +206,7 @@ class OpenCVCamera:
     def __init__(self, camera_index: int, config: OpenCVCameraConfig | None = None, **kwargs):
         if config is None:
             config = OpenCVCameraConfig()
+
         # Overwrite config arguments using kwargs
         config = replace(config, **kwargs)
 
@@ -220,7 +225,7 @@ class OpenCVCamera:
 
     def connect(self):
         if self.is_connected:
-            raise RobotDeviceAlreadyConnectedError(f"Camera {self.camera_index} is already connected.")
+            raise RobotDeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")
 
         # First create a temporary camera trying to access `camera_index`,
         # and verify it is a valid camera by calling `isOpened`.
@@ -246,7 +251,7 @@ class OpenCVCamera:
                     "To find the camera index you should use, run `python lerobot/common/robot_devices/cameras/opencv.py`."
                 )
 
-            raise OSError(f"Can't access camera {self.camera_index}.")
+            raise OSError(f"Can't access OpenCVCamera({self.camera_index}).")
 
         # Secondly, create the camera that will be used downstream.
         # Note: For some unknown reason, calling `isOpened` blocks the camera which then
@@ -269,15 +274,15 @@ class OpenCVCamera:
 
         if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             raise OSError(
-                f"Can't set {self.fps=} for camera {self.camera_index}. Actual value is {actual_fps}."
+                f"Can't set {self.fps=} for OpenCVCamera({self.camera_index}). Actual value is {actual_fps}."
             )
         if self.width is not None and self.width != actual_width:
             raise OSError(
-                f"Can't set {self.width=} for camera {self.camera_index}. Actual value is {actual_width}."
+                f"Can't set {self.width=} for OpenCVCamera({self.camera_index}). Actual value is {actual_width}."
             )
         if self.height is not None and self.height != actual_height:
             raise OSError(
-                f"Can't set {self.height=} for camera {self.camera_index}. Actual value is {actual_height}."
+                f"Can't set {self.height=} for OpenCVCamera({self.camera_index}). Actual value is {actual_height}."
             )
 
         self.fps = actual_fps
@@ -288,7 +293,7 @@ class OpenCVCamera:
 
     def read(self, temporary_color_mode: str | None = None) -> np.ndarray:
         """Read a frame from the camera returned in the format (height, width, channels)
-        (e.g. (640, 480, 3)), contrarily to the pytorch format which is channel first.
+        (e.g. 480 x 640 x 3), contrarily to the pytorch format which is channel first.
 
         Note: Reading a frame is done every `camera.fps` times per second, and it is blocking.
         If you are reading data from other sensors, we advise to use `camera.async_read()` which is non blocking version of `camera.read()`.
@@ -311,7 +316,7 @@ class OpenCVCamera:
                 f"Expected color values are 'rgb' or 'bgr', but {requested_color_mode} is provided."
             )
 
-        # OpenCV uses BGR format as default (blue, green red) for all operations, including displaying images.
+        # OpenCV uses BGR format as default (blue, green, red) for all operations, including displaying images.
         # However, Deep Learning framework such as LeRobot uses RGB format as default to train neural networks,
         # so we convert the image color from BGR to RGB.
         if requested_color_mode == "rgb":

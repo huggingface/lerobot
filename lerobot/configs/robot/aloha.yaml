@@ -82,26 +82,26 @@ follower_arms:
 # on another USB hub or PCIe card.
 cameras:
   cam_high:
-    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 10
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
+    camera_index: 128422271347
     fps: 30
     width: 640
     height: 480
   cam_low:
-    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 22
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
+    camera_index: 130322270656
     fps: 30
     width: 640
     height: 480
   cam_left_wrist:
-    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 16
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
+    camera_index: 218622272670
     fps: 30
     width: 640
     height: 480
   cam_right_wrist:
-    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 4
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
+    camera_index: 130322272300
     fps: 30
     width: 640
     height: 480
