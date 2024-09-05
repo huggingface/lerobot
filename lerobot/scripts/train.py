@@ -181,7 +181,7 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_online):
         f"smpl:{format_big_number(num_samples)}",
         # number of episodes seen during training
         f"ep:{format_big_number(num_episodes)}",
-        # number of time all unique samples are seen
+        # number of passes through all of the training samples since the start of training
         f"epch:{num_epochs:.2f}",
         # loss in the past step
         f"loss:{loss:.3f}",
@@ -189,10 +189,10 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_online):
         f"grdn:{grad_norm:.3f}",
         # learning rate at the end of the past step
         f"lr:{lr:0.1e}",
-        # aggregated policy update time(s) in format max_update_time|average_update_time since the last log
-        f"pu_mx_av:{max_policy_updating_s:.3f}|{avg_policy_updating_s:.3f}",
-        # data loading time(s) in format max_loading_time|average_loading_time since the last log
-        f"dl_mx_av:{max_data_loading_s:.3f}|{avg_data_loading_s:.3f}",  # if not ~0, you are bottlenecked by cpu or io
+        # time taken for a policy update (forward + backward + optimizer step) in milliseconds. Includes the maximum and average over all training steps since the last log.
+        f"updt_max|avg:{round(max_policy_updating_s * 1000)}|{round(avg_policy_updating_s * 1000)}",
+        # data loading time in milliseconds. Includes the maximum and average over all training steps since the last log.
+        f"data_max|avg:{round(max_data_loading_s *1000)}|{round(avg_data_loading_s*1000)}",  # if not ~0, you are bottlenecked by cpu or io
     ]
     logging.info(" ".join(log_items))
 

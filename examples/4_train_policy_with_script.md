@@ -177,7 +177,7 @@ When you start the training process, you will first see your full configuration 
 After that, you will see training log like this one:
 
 ```
-INFO 2024-08-14 13:35:12 smpl:2K ep:3 epch:0.06 loss:3.706 grdn:94.749 lr:1.0e-05 pu_mx_av:1.472|1.159 dl_mx_av:0.022|0.010
+INFO 2024-08-14 13:35:12 smpl:2K ep:3 epch:0.06 loss:3.706 grdn:94.749 lr:1.0e-05 updt_max|avg:1472|1159 data_max|avg:22|10
 ```
 
 or evaluation log like:
