@@ -1,0 +1,3 @@
+_target_: lerobot.common.robot_devices.robots.stretch.LeRobotStretch
+robot_type: stretch
+teleoperate: false

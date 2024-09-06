@@ -127,6 +127,7 @@ from lerobot.common.datasets.utils import calculate_episode_data_index, create_b
 from lerobot.common.datasets.video_utils import encode_video_frames
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.factory import make_robot
+from lerobot.common.robot_devices.robots.stretch import LeRobotStretch
 from lerobot.common.robot_devices.robots.utils import Robot, get_arm_id
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
@@ -243,6 +244,13 @@ def is_headless():
 
 
 def calibrate(robot: Robot, arms: list[str] | None):
+    if isinstance(robot, LeRobotStretch):
+        if not robot.is_connected:
+            robot.connect()
+        if not robot.is_homed():
+            robot.home()
+        return
+
     available_arms = []
     for name in robot.follower_arms:
         arm_id = get_arm_id(name, "follower")
