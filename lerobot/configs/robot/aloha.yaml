@@ -1,3 +1,11 @@
+# Aloha: A Low-Cost Hardware for Bimanual Teleoperation
+# https://aloha-2.github.io
+# https://www.trossenrobotics.com/aloha-stationary
+
+# Requires installing extras packages
+# With pip: `pip install -e ".[dynamixel intelrealsense]"`
+# With poetry: `poetry install --sync --extras "dynamixel intelrealsense"`
+
 _target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
 robot_type: aloha
 # Specific to Aloha, LeRobot comes with default calibration files. Assuming the motors have been
