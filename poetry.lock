@@ -1913,7 +1913,6 @@ opencv-contrib-python = "*"
 pandas = "*"
 pathlib = "*"
 pixel-ring = "*"
-playsound = "*"
 psutil = "*"
 pyrealsense2 = "*"
 pyrender = "*"
@@ -1928,14 +1927,11 @@ SpeechRecognition = "*"
 sympy = "*"
 transforms3d = ">=0.4.2"
 urchin = "*"
-urdf-parser-py = "*"
+urdf_parser_py = "*"
 
 [package.source]
-type = "git"
-url = "https://github.com/hello-robot/stretch_body.git"
-reference = "master"
-resolved_reference = "2b340af4d072149b04fb6357c93f6d14431d3a0b"
-subdirectory = "body"
+type = "directory"
+url = "../stretch_body/body"
 
 [[package]]
 name = "hello-robot-stretch-body-tools"
@@ -4510,16 +4506,6 @@ files = [
 docs = ["furo (>=2023.9.10)", "proselint (>=0.13)", "sphinx (>=7.2.6)", "sphinx-autodoc-typehints (>=1.25.2)"]
 test = ["appdirs (==1.4.4)", "covdefaults (>=2.3)", "pytest (>=7.4.3)", "pytest-cov (>=4.1)", "pytest-mock (>=3.12)"]
 type = ["mypy (>=1.8)"]
-
-[[package]]
-name = "playsound"
-version = "1.3.0"
-description = "Pure Python, cross platform, single function module with no dependencies for playing sounds."
-optional = true
-python-versions = "*"
-files = [
-    {file = "playsound-1.3.0.tar.gz", hash = "sha256:cc6ed11d773034b0ef624e6bb4bf50f4b76b8414a59ce6d38afb89b423297ced"},
-]
 
 [[package]]
 name = "plotly"
@@ -7322,4 +7308,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "7be3e16cbd573db669bda15c151da8a48b4c0f8a7f36e09c4788a3092c8bab53"
+content-hash = "19f8b11354974b8d79097a37b160f0024f483ae9e7e9998615fa2f19320dbc2e"
