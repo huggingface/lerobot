@@ -66,7 +66,7 @@ dynamixel-sdk = {version = ">=3.7.31", optional = true}
 pynput = {version = ">=1.7.7", optional = true}
 # TODO(rcadene, salibert): 71.0.1 has a bug
 setuptools = {version = "!=71.0.1", optional = true}
-
+pyrealsense2 = {version = ">=2.55.1.6486", markers = "sys_platform != 'darwin'", optional = true}
 
 
 [tool.poetry.extras]
@@ -79,6 +79,7 @@ test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
 video_benchmark = ["scikit-image", "pandas"]
 dynamixel = ["dynamixel-sdk", "pynput"]
+intelrealsense = ["pyrealsense2"]
 
 [tool.ruff]
 line-length = 110
