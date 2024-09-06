@@ -127,7 +127,7 @@ from lerobot.common.datasets.utils import calculate_episode_data_index, create_b
 from lerobot.common.datasets.video_utils import encode_video_frames
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.robot_devices.robots.stretch import LeRobotStretch
+from lerobot.common.robot_devices.robots.stretch import StretchLeRobot
 from lerobot.common.robot_devices.robots.utils import Robot, get_arm_id
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
@@ -244,7 +244,8 @@ def is_headless():
 
 
 def calibrate(robot: Robot, arms: list[str] | None):
-    if isinstance(robot, LeRobotStretch):
+    # TODO(aliberts): move this code in robots' classes
+    if isinstance(robot, StretchLeRobot):
         if not robot.is_connected:
             robot.connect()
         if not robot.is_homed():
@@ -299,19 +300,24 @@ def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | Non
         robot.connect()
 
     start_teleop_t = time.perf_counter()
-    while True:
-        start_loop_t = time.perf_counter()
-        robot.teleop_step()
+    try:
+        while True:
+            start_loop_t = time.perf_counter()
+            robot.teleop_step()
 
-        if fps is not None:
+            if fps is not None:
+                dt_s = time.perf_counter() - start_loop_t
+                busy_wait(1 / fps - dt_s)
+
             dt_s = time.perf_counter() - start_loop_t
-            busy_wait(1 / fps - dt_s)
+            # log_control_info(robot, dt_s, fps=fps)
 
-        dt_s = time.perf_counter() - start_loop_t
-        log_control_info(robot, dt_s, fps=fps)
+            if teleop_time_s is not None and time.perf_counter() - start_teleop_t > teleop_time_s:
+                break
 
-        if teleop_time_s is not None and time.perf_counter() - start_teleop_t > teleop_time_s:
-            break
+    except Exception as e:
+        robot.disconnect()
+        raise e
 
 
 def record(
