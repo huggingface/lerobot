@@ -496,6 +496,17 @@ class ManipulatorRobot:
             # Set a velocity limit of 131 as advised by Trossen Robotics
             self.follower_arms[name].write("Velocity_Limit", 131)
 
+            # Use 'extended position mode' for all motors except gripper, because in joint mode the servos can't
+            # rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling the arm,
+            # you could end up with a servo with a position 0 or 4095 at a crucial point See [
+            # https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11]
+            all_motors_except_gripper = [
+                name for name in self.follower_arms[name].motor_names if name != "gripper"
+            ]
+            if len(all_motors_except_gripper) > 0:
+                # 4 corresponds to Extended Position on Aloha motors
+                self.follower_arms[name].write("Operating_Mode", 4, all_motors_except_gripper)
+
             # Use 'position control current based' for follower gripper to be limited by the limit of the current.
             # It can grasp an object without forcing too much even tho,
             # it's goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
