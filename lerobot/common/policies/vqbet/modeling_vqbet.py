@@ -361,7 +361,9 @@ class VQBeTModel(nn.Module):
         # mapping sequential observation to sequential action (please refer to section 2.2 in BeT paper https://arxiv.org/pdf/2206.11251).
         # Thus, it predicts a historical action sequence, in addition to current and future actions (predicting future actions : optional).
         if len_additional_action_token > 0:
-            features = torch.cat([ features[:, historical_act_pred_index], features[:, -len_additional_action_token:]], dim=1)
+            features = torch.cat(
+                [features[:, historical_act_pred_index], features[:, -len_additional_action_token:]], dim=1
+            )
         else:
             features = features[:, historical_act_pred_index]
         # pass through action head
