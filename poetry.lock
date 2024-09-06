@@ -1935,31 +1935,31 @@ url = "../stretch_body/body"
 
 [[package]]
 name = "hello-robot-stretch-body-tools"
-version = "0.4.17"
+version = "0.7.12"
 description = "Stretch Body Tools"
 optional = true
 python-versions = "*"
-files = [
-    {file = "hello_robot_stretch_body_tools-0.4.17-py3-none-any.whl", hash = "sha256:208d7d1c66566695c4dd6764e268431a18079199fd6f7dda1742f74f3f25c0a3"},
-    {file = "hello_robot_stretch_body_tools-0.4.17.tar.gz", hash = "sha256:7861904411ac3be134ea93427407f54c32a918d2bc63297ba497ad28000cbc93"},
-]
+files = []
+develop = true
 
 [package.dependencies]
 click = "*"
 cma = "*"
 colorama = "*"
 drawnow = "*"
-hello-robot-stretch-body = ">=0.4.26"
+filelock = "*"
+gitpython = "*"
 inputs = "*"
 ipython = "*"
 matplotlib = "*"
 nose = "*"
-numpy = "*"
+numpy = ">=1.24"
 open3d = "*"
 opencv-contrib-python = "*"
 packaging = "*"
 pandas = "*"
 pixel-ring = "*"
+pyaudio = "*"
 pyrealsense2 = "*"
 pyusb = "*"
 pyyaml = ">=5.1"
@@ -1970,8 +1970,13 @@ sh = "*"
 snakeviz = "*"
 SpeechRecognition = "*"
 sympy = "*"
-trimesh = "3.6.38"
-urdfpy = "*"
+trimesh = "4.4.7"
+urchin = "*"
+xmltodict = "*"
+
+[package.source]
+type = "directory"
+url = "../stretch_body/tools"
 
 [[package]]
 name = "hello-robot-stretch-factory"
@@ -4720,6 +4725,29 @@ files = [
 ]
 
 [[package]]
+name = "pyaudio"
+version = "0.2.14"
+description = "Cross-platform audio I/O with PortAudio"
+optional = true
+python-versions = "*"
+files = [
+    {file = "PyAudio-0.2.14-cp310-cp310-win32.whl", hash = "sha256:126065b5e82a1c03ba16e7c0404d8f54e17368836e7d2d92427358ad44fefe61"},
+    {file = "PyAudio-0.2.14-cp310-cp310-win_amd64.whl", hash = "sha256:2a166fc88d435a2779810dd2678354adc33499e9d4d7f937f28b20cc55893e83"},
+    {file = "PyAudio-0.2.14-cp311-cp311-win32.whl", hash = "sha256:506b32a595f8693811682ab4b127602d404df7dfc453b499c91a80d0f7bad289"},
+    {file = "PyAudio-0.2.14-cp311-cp311-win_amd64.whl", hash = "sha256:bbeb01d36a2f472ae5ee5e1451cacc42112986abe622f735bb870a5db77cf903"},
+    {file = "PyAudio-0.2.14-cp312-cp312-win32.whl", hash = "sha256:5fce4bcdd2e0e8c063d835dbe2860dac46437506af509353c7f8114d4bacbd5b"},
+    {file = "PyAudio-0.2.14-cp312-cp312-win_amd64.whl", hash = "sha256:12f2f1ba04e06ff95d80700a78967897a489c05e093e3bffa05a84ed9c0a7fa3"},
+    {file = "PyAudio-0.2.14-cp38-cp38-win32.whl", hash = "sha256:858caf35b05c26d8fc62f1efa2e8f53d5fa1a01164842bd622f70ddc41f55000"},
+    {file = "PyAudio-0.2.14-cp38-cp38-win_amd64.whl", hash = "sha256:2dac0d6d675fe7e181ba88f2de88d321059b69abd52e3f4934a8878e03a7a074"},
+    {file = "PyAudio-0.2.14-cp39-cp39-win32.whl", hash = "sha256:f745109634a7c19fa4d6b8b7d6967c3123d988c9ade0cd35d4295ee1acdb53e9"},
+    {file = "PyAudio-0.2.14-cp39-cp39-win_amd64.whl", hash = "sha256:009f357ee5aa6bc8eb19d69921cd30e98c42cddd34210615d592a71d09c4bd57"},
+    {file = "PyAudio-0.2.14.tar.gz", hash = "sha256:78dfff3879b4994d1f4fc6485646a57755c6ee3c19647a491f790a0895bd2f87"},
+]
+
+[package.extras]
+test = ["numpy"]
+
+[[package]]
 name = "pyav"
 version = "12.2.0"
 description = "Pythonic bindings for FFmpeg's libraries."
@@ -6722,24 +6750,24 @@ numpy = ">=1.15"
 
 [[package]]
 name = "trimesh"
-version = "3.6.38"
+version = "4.4.7"
 description = "Import, export, process, analyze and view triangular meshes."
 optional = true
-python-versions = "*"
+python-versions = ">=3.8"
 files = [
-    {file = "trimesh-3.6.38-py3-none-any.whl", hash = "sha256:f62831d7803b0243d3d08754f8e3f46d3973a10ce42a692df0dcb50ef67e0dc2"},
-    {file = "trimesh-3.6.38.tar.gz", hash = "sha256:5d1b7fa6434a921ea7e0de833494e248798c8cdff9824896558ecaa0cc74ae65"},
+    {file = "trimesh-4.4.7-py3-none-any.whl", hash = "sha256:6df98f3f5b971945b416f567b7ff6ee0c51b70f01b80a16a990fdcceb8dbd114"},
+    {file = "trimesh-4.4.7.tar.gz", hash = "sha256:e6619c70c99006d41f175bd5e1ba2c8c3dfdb00c2b41d65059917942e2f6971a"},
 ]
 
 [package.dependencies]
-numpy = "*"
-setuptools = "*"
+numpy = ">=1.20"
 
 [package.extras]
-all = ["chardet", "colorlog", "glooey", "jsonschema", "lxml", "meshio", "msgpack", "networkx", "pillow", "psutil", "pycollada", "pyglet", "python-fcl", "requests", "rtree", "scikit-image", "scipy", "setuptools", "shapely", "svg.path", "sympy", "triangle", "xxhash"]
-docs = ["autodocsumm", "jupyter", "networkx", "numpy", "pyopenssl", "pypandoc", "recommonmark", "scipy", "sphinx", "sphinx-rtd-theme"]
-easy = ["chardet", "colorlog", "jsonschema", "lxml", "msgpack", "networkx", "pillow", "pycollada", "pyglet", "requests", "rtree", "scipy", "setuptools", "shapely", "svg.path", "sympy", "xxhash"]
-test = ["coveralls", "pyinstrument", "pytest", "pytest-cov"]
+all = ["trimesh[deprecated,easy,recommend,test]"]
+deprecated = ["gmsh (==4.12.2)"]
+easy = ["chardet", "colorlog", "embreex", "httpx", "jsonschema", "lxml", "manifold3d (>=2.3.0)", "mapbox-earcut (>=1.0.2)", "networkx", "pillow", "pycollada", "rtree", "scipy", "setuptools", "shapely", "svg.path", "vhacdx", "xatlas", "xxhash"]
+recommend = ["cascadio", "glooey", "meshio", "openctm", "psutil", "pyglet (<2)", "python-fcl", "scikit-image", "sympy"]
+test = ["coveralls", "ezdxf", "matplotlib", "pyinstrument", "pymeshlab", "pyright", "pytest", "pytest-beartype", "pytest-cov", "ruff"]
 
 [[package]]
 name = "triton"
@@ -6836,31 +6864,6 @@ files = [
 [package.dependencies]
 lxml = "*"
 pyyaml = "*"
-
-[[package]]
-name = "urdfpy"
-version = "0.0.4"
-description = "URDF parser and manipulator for Python"
-optional = true
-python-versions = "*"
-files = [
-    {file = "urdfpy-0.0.4-py2-none-any.whl", hash = "sha256:ee0375c311f0648e98866c96dae6fac76eb2e669e0dc1ca6a6988628dc9798f4"},
-    {file = "urdfpy-0.0.4.tar.gz", hash = "sha256:5bae6e06572b72426565bcca2106de712a18cfb91a6b00c159451263e72a5839"},
-]
-
-[package.dependencies]
-lxml = "*"
-networkx = "*"
-numpy = "*"
-pillow = "*"
-pycollada = "*"
-pyrender = "*"
-six = "*"
-trimesh = "*"
-
-[package.extras]
-dev = ["flake8", "pre-commit", "pytest", "pytest-cov", "tox"]
-docs = ["sphinx", "sphinx-automodapi", "sphinx-rtd-theme"]
 
 [[package]]
 name = "uri-template"
@@ -7034,6 +7037,17 @@ python-versions = ">=3.7"
 files = [
     {file = "widgetsnbextension-4.0.13-py3-none-any.whl", hash = "sha256:74b2692e8500525cc38c2b877236ba51d34541e6385eeed5aec15a70f88a6c71"},
     {file = "widgetsnbextension-4.0.13.tar.gz", hash = "sha256:ffcb67bc9febd10234a362795f643927f4e0c05d9342c727b65d2384f8feacb6"},
+]
+
+[[package]]
+name = "xmltodict"
+version = "0.13.0"
+description = "Makes working with XML feel like you are working with JSON"
+optional = true
+python-versions = ">=3.4"
+files = [
+    {file = "xmltodict-0.13.0-py2.py3-none-any.whl", hash = "sha256:aa89e8fd76320154a40d19a0df04a4695fb9dc5ba977cbb68ab3e4eb225e7852"},
+    {file = "xmltodict-0.13.0.tar.gz", hash = "sha256:341595a488e3e01a85a9d8911d8912fd922ede5fecc4dce437eb4b6c8d037e56"},
 ]
 
 [[package]]
@@ -7299,7 +7313,7 @@ dora = ["gym-dora"]
 dynamixel = ["dynamixel-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
 pusht = ["gym-pusht"]
-stretch = ["hello-robot-stretch-body", "pyrender"]
+stretch = ["hello-robot-stretch-body", "hello-robot-stretch-body-tools", "pyrender"]
 test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
 video-benchmark = ["pandas", "scikit-image"]
@@ -7308,4 +7322,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "19f8b11354974b8d79097a37b160f0024f483ae9e7e9998615fa2f19320dbc2e"
+content-hash = "642b0ef04ce96a4b90daabc52aa089c9d1a1ecd250f104a2d251f3538d6c57ee"

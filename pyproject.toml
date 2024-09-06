@@ -71,6 +71,7 @@ pyrender = {git = "https://github.com/mmatl/pyrender.git", markers = "sys_platfo
 # TODO(aliberts): add as version = ">=0.7.27" when it's out instead of git
 # hello-robot-stretch-body = {git = "https://github.com/hello-robot/stretch_body.git", subdirectory = "body", markers = "sys_platform == 'linux'", optional = true, develop = true}
 hello-robot-stretch-body = {path = "../stretch_body/body", markers = "sys_platform == 'linux'", optional = true, develop = true}
+hello-robot-stretch-body-tools = {path = "../stretch_body/tools", markers = "sys_platform == 'linux'", optional = true, develop = true}
 
 
 [tool.poetry.extras]
@@ -84,7 +85,7 @@ umi = ["imagecodecs"]
 video_benchmark = ["scikit-image", "pandas"]
 dynamixel = ["dynamixel-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
-stretch = ["hello-robot-stretch-body", "pyrender"]
+stretch = ["hello-robot-stretch-body", "hello-robot-stretch-body-tools", "pyrender"]
 
 [tool.ruff]
 line-length = 110
