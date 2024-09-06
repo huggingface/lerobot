@@ -739,7 +739,7 @@ if __name__ == "__main__":
     parser_calib = subparsers.add_parser("calibrate", parents=[base_parser])
     parser_calib.add_argument(
         "--arms",
-        type=int,
+        type=str,
         nargs="*",
         help="List of arms to calibrate (e.g. `--arms left_follower right_follower left_leader`)",
     )
