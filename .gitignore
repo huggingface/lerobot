@@ -66,13 +66,17 @@ htmlcov/
 .nox/
 .coverage
 .coverage.*
-.cache
 nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
 .pytest_cache/
+
+# Ignore .cache except calibration
+.cache/*
+!.cache/calibration/
+!.cache/calibration/**
 
 # Translations
 *.mo

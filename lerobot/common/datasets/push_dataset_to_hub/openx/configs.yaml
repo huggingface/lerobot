@@ -1,0 +1,639 @@
+OPENX_DATASET_CONFIGS:
+  fractal20220817_data:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - base_pose_tool_reached
+      - gripper_closed
+    fps: 3
+
+  kuka:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - clip_function_input/base_pose_tool_reached
+      - gripper_closed
+    fps: 10
+
+  bridge_openx:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - EEF_state
+      - gripper_state
+    fps: 5
+
+  taco_play:
+    image_obs_keys:
+      - rgb_static
+      - rgb_gripper
+    depth_obs_keys:
+      - depth_static
+      - depth_gripper
+    state_obs_keys:
+      - state_eef
+      - state_gripper
+    fps: 15
+
+  jaco_play:
+    image_obs_keys:
+      - image
+      - image_wrist
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state_eef
+      - state_gripper
+    fps: 10
+
+  berkeley_cable_routing:
+    image_obs_keys:
+      - image
+      - top_image
+      - wrist45_image
+      - wrist225_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - robot_state
+    fps: 10
+
+  roboturk:
+    image_obs_keys:
+      - front_rgb
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - null
+    fps: 10
+
+  nyu_door_opening_surprising_effectiveness:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - null
+    fps: 3
+
+  viola:
+    image_obs_keys:
+      - agentview_rgb
+      - eye_in_hand_rgb
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - joint_states
+      - gripper_states
+    fps: 20
+
+  berkeley_autolab_ur5:
+    image_obs_keys:
+      - image
+      - hand_image
+    depth_obs_keys:
+      - image_with_depth
+    state_obs_keys:
+      - state
+    fps: 5
+
+  toto:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 30
+
+  language_table:
+    image_obs_keys:
+      - rgb
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - effector_translation
+    fps: 10
+
+  columbia_cairlab_pusht_real:
+    image_obs_keys:
+      - image
+      - wrist_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - robot_state
+    fps: 10
+
+  stanford_kuka_multimodal_dataset_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - depth_image
+    state_obs_keys:
+      - ee_position
+      - ee_orientation
+    fps: 20
+
+  nyu_rot_dataset_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - eef_state
+      - gripper_state
+    fps: 3
+
+  io_ai_tech:
+    image_obs_keys:
+      - image
+      - image_fisheye
+      - image_left_side
+      - image_right_side
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 3
+
+  stanford_hydra_dataset_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+      - wrist_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - eef_state
+      - gripper_state
+    fps: 10
+
+  austin_buds_dataset_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+      - wrist_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 20
+
+  nyu_franka_play_dataset_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+      - image_additional_view
+    depth_obs_keys:
+      - depth
+      - depth_additional_view
+    state_obs_keys:
+      - eef_state
+    fps: 3
+
+  maniskill_dataset_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+      - wrist_image
+    depth_obs_keys:
+      - depth
+      - wrist_depth
+    state_obs_keys:
+      - tcp_pose
+      - gripper_state
+    fps: 20
+
+  furniture_bench_dataset_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+      - wrist_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 10
+
+  cmu_franka_exploration_dataset_converted_externally_to_rlds:
+    image_obs_keys:
+      - highres_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - null
+    fps: 10
+
+  ucsd_kitchen_dataset_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - joint_state
+    fps: 2
+
+  ucsd_pick_and_place_dataset_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - eef_state
+      - gripper_state
+    fps: 3
+
+  spoc:
+    image_obs_keys:
+      - image
+      - image_manipulation
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - null
+    fps: 3
+
+  austin_sailor_dataset_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+      - wrist_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 20
+
+  austin_sirius_dataset_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+      - wrist_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 20
+
+  bc_z:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - present/xyz
+      - present/axis_angle
+      - present/sensed_close
+    fps: 10
+
+  utokyo_pr2_opening_fridge_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - eef_state
+      - gripper_state
+    fps: 10
+
+  utokyo_pr2_tabletop_manipulation_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - eef_state
+      - gripper_state
+    fps: 10
+
+  utokyo_xarm_pick_and_place_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+      - image2
+      - hand_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - end_effector_pose
+    fps: 10
+
+  utokyo_xarm_bimanual_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - pose_r
+    fps: 10
+
+  robo_net:
+    image_obs_keys:
+      - image
+      - image1
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - eef_state
+      - gripper_state
+    fps: 1
+
+  robo_set:
+    image_obs_keys:
+      - image_left
+      - image_right
+      - image_wrist
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+      - state_velocity
+    fps: 5
+
+  berkeley_mvp_converted_externally_to_rlds:
+    image_obs_keys:
+      - hand_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - gripper
+      - pose
+      - joint_pos
+    fps: 5
+
+  berkeley_rpt_converted_externally_to_rlds:
+    image_obs_keys:
+      - hand_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - joint_pos
+      - gripper
+    fps: 30
+
+  kaist_nonprehensile_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 10
+
+  stanford_mask_vit_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - eef_state
+      - gripper_state
+
+  tokyo_u_lsmo_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - eef_state
+      - gripper_state
+    fps: 10
+
+  dlr_sara_pour_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 10
+
+  dlr_sara_grid_clamp_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 10
+
+  dlr_edan_shared_control_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 5
+
+  asu_table_top_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - eef_state
+      - gripper_state
+    fps: 12.5
+
+  stanford_robocook_converted_externally_to_rlds:
+    image_obs_keys:
+      - image_1
+      - image_2
+    depth_obs_keys:
+      - depth_1
+      - depth_2
+    state_obs_keys:
+      - eef_state
+      - gripper_state
+    fps: 5
+
+  imperialcollege_sawyer_wrist_cam:
+    image_obs_keys:
+      - image
+      - wrist_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 10
+
+  iamlab_cmu_pickup_insert_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+      - wrist_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - joint_state
+      - gripper_state
+    fps: 20
+
+  uiuc_d3field:
+    image_obs_keys:
+      - image_1
+      - image_2
+    depth_obs_keys:
+      - depth_1
+      - depth_2
+    state_obs_keys:
+      - null
+    fps: 1
+
+  utaustin_mutex:
+    image_obs_keys:
+      - image
+      - wrist_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 20
+
+  berkeley_fanuc_manipulation:
+    image_obs_keys:
+      - image
+      - wrist_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - joint_state
+      - gripper_state
+    fps: 10
+
+  cmu_playing_with_food:
+    image_obs_keys:
+      - image
+      - finger_vision_1
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 10
+
+  cmu_play_fusion:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 5
+
+  cmu_stretch:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - eef_state
+      - gripper_state
+    fps: 10
+
+  berkeley_gnm_recon:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+      - position
+      - yaw
+    fps: 3
+
+  berkeley_gnm_cory_hall:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+      - position
+      - yaw
+    fps: 5
+
+  berkeley_gnm_sac_son:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+      - position
+      - yaw
+    fps: 10
+
+  droid:
+    image_obs_keys:
+      - exterior_image_1_left
+      - exterior_image_2_left
+      - wrist_image_left
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - proprio
+    fps: 15
+
+  droid_100:
+    image_obs_keys:
+      - exterior_image_1_left
+      - exterior_image_2_left
+      - wrist_image_left
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - proprio
+    fps: 15
+
+  fmb:
+    image_obs_keys:
+      - image_side_1
+      - image_side_2
+      - image_wrist_1
+      - image_wrist_2
+    depth_obs_keys:
+      - image_side_1_depth
+      - image_side_2_depth
+      - image_wrist_1_depth
+      - image_wrist_2_depth
+    state_obs_keys:
+      - proprio
+    fps: 10
+
+  dobbe:
+    image_obs_keys:
+      - wrist_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - proprio
+    fps: 3.75
+
+  usc_cloth_sim_converted_externally_to_rlds:
+    image_obs_keys:
+      - image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - null
+    fps: 10
+
+  plex_robosuite:
+    image_obs_keys:
+      - image
+      - wrist_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 20
+
+  conq_hose_manipulation:
+    image_obs_keys:
+      - frontleft_fisheye_image
+      - frontright_fisheye_image
+      - hand_color_image
+    depth_obs_keys:
+      - null
+    state_obs_keys:
+      - state
+    fps: 30
