@@ -41,6 +41,13 @@ Or using `poetry`:
 poetry install --sync --extras "dynamixel"
 ```
 
+/!\ For Linux only, ffmpeg and opencv requires conda install for now. Run this exact sequence of commands:
+```bash
+conda install -c conda-forge ffmpeg
+pip uninstall opencv-python
+conda install -c conda-forge opencv>=4.10.0
+```
+
 You are now ready to plug the 5V power supply to the motor bus of the leader arm (the smaller one) since all its motors only require 5V.
 
 Then plug the 12V power supply to the motor bus of the follower arm. It has two motors that need 12V, and the rest will be powered with 5V through the voltage convertor.
