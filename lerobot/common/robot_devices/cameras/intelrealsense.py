@@ -347,7 +347,7 @@ class IntelRealSenseCamera:
             return color_image
 
     def read_loop(self):
-        while self.stop_event is None or not self.stop_event.is_set():
+        while not self.stop_event.is_set():
             if self.use_depth:
                 self.color_image, self.depth_map = self.read()
             else:

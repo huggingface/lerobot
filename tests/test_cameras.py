@@ -5,6 +5,11 @@ Example usage:
 ```bash
 pytest -sx tests/test_cameras.py::test_camera
 ```
+
+Example of running test on mocked_koch:
+```bash
+python -m pytest -sx -k "mocked_koch" tests/test_cameras.py::test_camera
+```
 """
 
 import numpy as np
