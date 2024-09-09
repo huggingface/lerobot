@@ -207,7 +207,6 @@ class MockVideoCapture(cv2.VideoCapture):
     }
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
         self._mock_dict = {
             cv2.CAP_PROP_FPS: 30,
             cv2.CAP_PROP_FRAME_WIDTH: 640,
@@ -235,3 +234,6 @@ class MockVideoCapture(cv2.VideoCapture):
         w = self.get(cv2.CAP_PROP_FRAME_WIDTH)
         ret = True
         return ret, self.image[f"{h}x{w}"]
+
+    def release(self):
+        pass

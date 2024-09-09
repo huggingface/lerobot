@@ -337,9 +337,7 @@ class OpenCVCamera:
         return color_image
 
     def read_loop(self):
-        # TODO(rcadene): implement safe exit for the threads,
-        # to avoid Segfault when main process finishes
-        while self.stop_event is None or not self.stop_event.is_set():
+        while not self.stop_event.is_set():
             self.color_image = self.read()
 
     def async_read(self):
