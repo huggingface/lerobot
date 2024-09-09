@@ -14,7 +14,7 @@
 <!-- Use [Alpin.js](https://alpinejs.dev), a lightweight and easy to learn JS framework -->
 <!-- Use [tailwindcss](https://tailwindcss.com/), CSS classes for styling html -->
 <!-- Use [dygraphs](https://dygraphs.com/), a lightweight JS charting library -->
-<body class="flex h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()" @keydown.window="(e) => {
+<body class="flex flex-col md:flex-row h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()" @keydown.window="(e) => {
     // Use the space bar to play and pause, instead of default action (e.g. scrolling)
     const { keyCode, key } = e;
     if (keyCode === 32 || key === ' ') {
@@ -30,7 +30,7 @@
     }
 }">
     <!-- Sidebar -->
-    <div x-ref="sidebar" class="w-60 bg-slate-900 p-5 break-words max-h-screen overflow-y-auto">
+    <div x-ref="sidebar" class="bg-slate-900 p-5 break-words overflow-y-auto shrink-0 md:shrink md:w-60 md:max-h-screen">
         <h1 class="mb-4 text-xl font-semibold">{{ dataset_info.repo_id }}</h1>
 
         <ul>
@@ -46,7 +46,8 @@
         </ul>
 
         <p>Episodes:</p>
-        <ul class="ml-2">
+        <!-- episodes menu for medium & large screens -->
+        <ul class="ml-2 hidden md:block">
             {% for episode in episodes %}
             <li class="font-mono text-sm mt-0.5">
                 <a href="episode_{{ episode }}" class="underline {% if episode_id == episode %}font-bold -ml-1{% endif %}">
@@ -56,16 +57,27 @@
             {% endfor %}
         </ul>
 
+        <!-- episodes menu for small screens -->
+        <div class="flex overflow-x-auto md:hidden">
+            {% for episode in episodes %}
+            <p class="font-mono text-sm mt-0.5 border-r last:border-r-0 px-2 {% if episode_id == episode %}font-bold{% endif %}">
+                <a href="episode_{{ episode }}" class="">
+                    {{ episode }}
+                </a>
+            </p>
+            {% endfor %}
+        </div>
+
     </div>
 
     <!-- Toggle sidebar button -->
-    <button class="flex items-center opacity-50 hover:opacity-100 mx-1"
+    <button class="flex items-center opacity-50 hover:opacity-100 mx-1 hidden md:block"
         @click="() => ($refs.sidebar.classList.toggle('hidden'))" title="Toggle sidebar">
         <div class="bg-slate-500 w-2 h-10 rounded-full"></div>
     </button>
 
     <!-- Content -->
-    <div class="flex-1 max-h-screen flex flex-col gap-4 overflow-y-auto">
+    <div class="max-h-screen flex flex-col gap-4 overflow-y-auto md:flex-1">
         <h1 class="text-xl font-bold mt-4 font-mono">
             Episode {{ episode_id }}
         </h1>
