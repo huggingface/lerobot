@@ -72,8 +72,9 @@
 
         <!-- Videos -->
         <div class="flex flex-wrap gap-1">
+            <p x-show="videoCodecError" class="font-medium text-orange-700">Videos could NOT play because <a href="https://en.wikipedia.org/wiki/AV1" target="_blank" class="underline">AV1</a> decoding is not available on your browser. Learn more about <a href="https://huggingface.co/blog/video-encoding" target="_blank" class="underline">LeRobot video encoding</a>.</p>
             {% for video_info in videos_info %}
-            <div class="max-w-96">
+            <div x-show="!videoCodecError" class="max-w-96">
                 <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
                 <video muted loop type="video/mp4" class="min-w-64" @canplaythrough="videoCanPlay" @timeupdate="() => {
                     if (video.duration) {
@@ -218,9 +219,18 @@
                 colors: null,
                 nVideos: {{ videos_info | length }},
                 nVideoReadyToPlay: 0,
+                videoCodecError: false,
 
                 // alpine initialization
                 init() {
+                    // check if videos can play
+                    const dummyVideo = document.createElement('video');
+                    const canPlayVideos = dummyVideo.canPlayType('video/mp4; codecs="av01.0.05M.08"'); // codec source: https://huggingface.co/blog/video-encoding#results
+                    if(!canPlayVideos){
+                        this.videoCodecError = true;
+                    }
+                    
+                    // process CSV data
                     this.videos = document.querySelectorAll('video');
                     this.video = this.videos[0];
                     this.dygraph = new Dygraph(document.getElementById("graph"), '{{ ep_csv_url }}', {
