@@ -18,8 +18,9 @@ import traceback
 import pytest
 
 from lerobot.common.utils.utils import init_hydra_config
-
-from .utils import DEVICE, ROBOT_CONFIG_PATH_TEMPLATE
+from tests.test_cameras import make_camera
+from tests.test_motors import make_motors_bus
+from tests.utils import DEVICE, ROBOT_CONFIG_PATH_TEMPLATE
 
 
 def pytest_collection_finish():
@@ -40,4 +41,30 @@ def is_robot_available(robot_type):
     except Exception:
         traceback.print_exc()
         print(f"\nA {robot_type} robot is not available.")
+        return False
+
+
+@pytest.fixture
+def is_camera_available(camera_type):
+    try:
+        camera = make_camera(camera_type)
+        camera.connect()
+        del camera
+        return True
+    except Exception:
+        traceback.print_exc()
+        print(f"\nA {camera_type} camera is not available.")
+        return False
+
+
+@pytest.fixture
+def is_motor_available(motor_type):
+    try:
+        motors_bus = make_motors_bus(motor_type)
+        motors_bus.connect()
+        del motors_bus
+        return True
+    except Exception:
+        traceback.print_exc()
+        print(f"\nA {motor_type} motor is not available.")
         return False

@@ -1,10 +1,23 @@
 """
-Tests meant to be used locally and launched manually.
+Tests for physical motors and their mocked versions.
+If the physical motors are not connected to the computer, or not working,
+the test will be skipped.
 
-Example usage:
+Example of running a specific test:
 ```bash
 pytest -sx tests/test_motors.py::test_find_port
 pytest -sx tests/test_motors.py::test_motors_bus
+```
+
+
+Example of running test on real dynamixel motors connected to the computer:
+```bash
+pytest -sx tests/test_motors.py::test_motors_bus[dynamixel]
+```
+
+Example of running test on a mocked version of dynamixel motors:
+```bash
+pytest -sx -k "mocked_dynamixel" tests/test_motors.py::test_motors_bus
 ```
 """
 
@@ -18,34 +31,46 @@ import time
 import numpy as np
 import pytest
 
-from lerobot import available_robots
+from lerobot import available_motors
 from lerobot.common.robot_devices.motors.utils import MotorsBus
-from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from lerobot.common.utils.utils import init_hydra_config
-from tests.utils import ROBOT_CONFIG_PATH_TEMPLATE, require_robot
+from tests.utils import TEST_MOTOR_TYPES, require_motor
+
+DYNAMIXEL_PORT = "/dev/tty.usbmodem575E0032081"
+DYNAMIXEL_MOTORS = {
+    "shoulder_pan": [1, "xl430-w250"],
+    "shoulder_lift": [2, "xl430-w250"],
+    "elbow_flex": [3, "xl330-m288"],
+    "wrist_flex": [4, "xl330-m288"],
+    "wrist_roll": [5, "xl330-m288"],
+    "gripper": [6, "xl330-m288"],
+}
 
 
-def make_motors_bus(robot_type: str) -> MotorsBus:
-    # Instantiate a robot and return one of its leader arms
-    config_path = ROBOT_CONFIG_PATH_TEMPLATE.format(robot=robot_type)
-    robot_cfg = init_hydra_config(config_path)
-    robot = make_robot(robot_cfg)
-    first_bus_name = list(robot.leader_arms.keys())[0]
-    motors_bus = robot.leader_arms[first_bus_name]
-    return motors_bus
+def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
+    if motor_type == "dynamixel":
+        from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
+
+        port = kwargs.pop("port", DYNAMIXEL_PORT)
+        motors = kwargs.pop("motors", DYNAMIXEL_MOTORS)
+        return DynamixelMotorsBus(port, motors, **kwargs)
+
+    else:
+        raise ValueError(f"The motor type '{motor_type}' is not valid.")
 
 
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
+# TODO(rcadene): implement mocked version of this test
+@pytest.mark.parametrize("motor_type", available_motors)
+@require_motor
 def test_find_port(request, robot_type):
     from lerobot.common.robot_devices.motors.dynamixel import find_port
 
     find_port()
 
 
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
+# TODO(rcadene): implement mocked version of this test
+@pytest.mark.parametrize("motor_type", available_motors)
+@require_motor
 def test_configure_motors_all_ids_1(request, robot_type):
     input("Are you sure you want to re-configure the motors? Press enter to continue...")
     # This test expect the configuration was already correct.
@@ -63,8 +88,8 @@ def test_configure_motors_all_ids_1(request, robot_type):
     del motors_bus
 
 
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
+@pytest.mark.parametrize("motor_type", TEST_MOTOR_TYPES)
+@require_motor
 def test_motors_bus(request, robot_type):
     motors_bus = make_motors_bus(robot_type)
 

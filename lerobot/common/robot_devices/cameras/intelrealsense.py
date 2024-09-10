@@ -5,6 +5,7 @@ This file contains utilities for recording frames from Intel Realsense cameras.
 import argparse
 import concurrent.futures
 import logging
+import math
 import shutil
 import threading
 import time
@@ -156,7 +157,9 @@ class IntelRealSenseCameraConfig:
                 f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
             )
 
-        if (self.fps or self.width or self.height) and not (self.fps and self.width and self.height):
+        at_least_one_is_not_none = self.fps is not None or self.width is not None or self.height is not None
+        at_least_one_is_none = self.fps is None or self.width is None or self.height is None
+        if at_least_one_is_not_none and at_least_one_is_none:
             raise ValueError(
                 "For `fps`, `width` and `height`, either all of them need to be set, or none of them, "
                 f"but {self.fps=}, {self.width=}, {self.height=} were provided."
@@ -260,7 +263,7 @@ class IntelRealSenseCamera:
 
         self.camera = rs.pipeline()
         try:
-            self.camera.start(config)
+            profile = self.camera.start(config)
             is_camera_open = True
         except RuntimeError:
             is_camera_open = False
@@ -278,6 +281,29 @@ class IntelRealSenseCamera:
                 )
 
             raise OSError(f"Can't access IntelRealSenseCamera({self.camera_index}).")
+
+        color_stream = profile.get_stream(rs.stream.color)
+        color_profile = color_stream.as_video_stream_profile()
+        actual_fps = color_profile.fps()
+        actual_width = color_profile.width()
+        actual_height = color_profile.height()
+
+        if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
+            raise OSError(
+                f"Can't set {self.fps=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_fps}."
+            )
+        if self.width is not None and self.width != actual_width:
+            raise OSError(
+                f"Can't set {self.width=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_width}."
+            )
+        if self.height is not None and self.height != actual_height:
+            raise OSError(
+                f"Can't set {self.height=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_height}."
+            )
+
+        self.fps = actual_fps
+        self.width = actual_width
+        self.height = actual_height
 
         self.is_connected = True
 
