@@ -7,18 +7,13 @@ from stretch_body.robot import Robot as StretchAPI
 
 from lerobot.common.robot_devices.cameras.utils import Camera
 
-# class LeRobotStretchTeleop(GamePadTeleop):
-#     """Wrapper of stretch_body.gamepad_teleop.GamePadTeleop"""
-
-#     def __init__(self):
-#         super().__init__()
-
 
 @dataclass
 class StretchRobotConfig:
     robot_type: str | None = None
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
-    # TODO(aliberts): add comment
+    # TODO(aliberts): add feature with max_relative target
+    # TODO(aliberts): add comment on max_relative target
     max_relative_target: list[float] | float | None = None
 
 
@@ -45,10 +40,11 @@ class StretchRobot(StretchAPI):
 
     def connect(self):
         self.is_connected = self.startup()
-        # Connect the cameras
         for name in self.cameras:
             self.cameras[name].connect()
             self.is_connected = self.is_connected and self.cameras[name].is_connected
+
+        self.run_calibration()
 
     def run_calibration(self):
         if not self.is_homed():
@@ -109,6 +105,7 @@ class StretchRobot(StretchAPI):
             "wrist_pitch.pos": status["end_of_arm"]["wrist_pitch"]["pos"],
             "wrist_roll.pos": status["end_of_arm"]["wrist_roll"]["pos"],
             "wrist_yaw.pos": status["end_of_arm"]["wrist_yaw"]["pos"],
+            "gripper.pos": status["end_of_arm"]["stretch_gripper"]["pos"],
             "base_x.vel": status["base"]["x_vel"],
             "base_y.vel": status["base"]["y_vel"],
             "base_theta.vel": status["base"]["theta_vel"],
@@ -121,6 +118,10 @@ class StretchRobot(StretchAPI):
     def print_logs(self):
         ...
         # TODO(aliberts): move robot-specific logs logic here
+
+    def teleop_safety_stop(self):
+        if self.teleop is not None:
+            self.teleop._safety_stop(robot=self)
 
     def disconnect(self):
         self.stop()

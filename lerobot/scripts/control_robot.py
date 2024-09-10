@@ -240,6 +240,10 @@ def is_headless():
         return True
 
 
+def has_method(method_name: str, _object: object):
+    return hasattr(_object, method_name) and callable(getattr(_object, method_name))
+
+
 ########################################################################################
 # Control modes
 ########################################################################################
@@ -455,6 +459,9 @@ def record(
 
         timestamp = time.perf_counter() - start_warmup_t
 
+    if has_method("teleop_safety_stop", robot):
+        robot.teleop_safety_stop()
+
     # Save images using threads to reach high fps (30 and more)
     # Using `with` to exist smoothly if an execption is raised.
     futures = []
@@ -546,6 +553,9 @@ def record(
                 if exit_early:
                     exit_early = False
                     break
+
+            if has_method("teleop_safety_stop", robot):
+                robot.teleop_safety_stop()
 
             if not stop_recording:
                 # Start resetting env while the executor are finishing
