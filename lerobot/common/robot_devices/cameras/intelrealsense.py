@@ -190,7 +190,7 @@ class IntelRealSenseCamera:
 
     Example of usage:
     ```python
-    # Instanciate with camera index (its serial number)
+    # Instantiate with camera index (its serial number)
     camera = IntelRealSenseCamera(128422271347)
     # Or by its name if it's unique
     camera = IntelRealSenseCamera.init_from_name("Intel RealSense D405")
