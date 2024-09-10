@@ -127,9 +127,9 @@ from lerobot.common.datasets.utils import calculate_episode_data_index, create_b
 from lerobot.common.datasets.video_utils import encode_video_frames
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.robot_devices.robots.stretch import StretchLeRobot
+from lerobot.common.robot_devices.robots.stretch import StretchRobot
 from lerobot.common.robot_devices.robots.utils import Robot, get_arm_id
-from lerobot.common.robot_devices.utils import busy_wait
+from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 from lerobot.scripts.push_dataset_to_hub import (
@@ -196,24 +196,26 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None, fps=None
     # total step time displayed in milliseconds and its frequency
     log_dt("dt", dt_s)
 
-    for name in robot.leader_arms:
-        key = f"read_leader_{name}_pos_dt_s"
-        if key in robot.logs:
-            log_dt("dtRlead", robot.logs[key])
+    # TODO(aliberts): move robot-specific logs logic in robot.print_logs()
+    if not isinstance(robot, StretchRobot):
+        for name in robot.leader_arms:
+            key = f"read_leader_{name}_pos_dt_s"
+            if key in robot.logs:
+                log_dt("dtRlead", robot.logs[key])
 
-    for name in robot.follower_arms:
-        key = f"write_follower_{name}_goal_pos_dt_s"
-        if key in robot.logs:
-            log_dt("dtWfoll", robot.logs[key])
+        for name in robot.follower_arms:
+            key = f"write_follower_{name}_goal_pos_dt_s"
+            if key in robot.logs:
+                log_dt("dtWfoll", robot.logs[key])
 
-        key = f"read_follower_{name}_pos_dt_s"
-        if key in robot.logs:
-            log_dt("dtRfoll", robot.logs[key])
+            key = f"read_follower_{name}_pos_dt_s"
+            if key in robot.logs:
+                log_dt("dtRfoll", robot.logs[key])
 
-    for name in robot.cameras:
-        key = f"read_camera_{name}_dt_s"
-        if key in robot.logs:
-            log_dt(f"dtR{name}", robot.logs[key])
+        for name in robot.cameras:
+            key = f"read_camera_{name}_dt_s"
+            if key in robot.logs:
+                log_dt(f"dtR{name}", robot.logs[key])
 
     info_str = " ".join(log_items)
     logging.info(info_str)
@@ -243,9 +245,10 @@ def is_headless():
 ########################################################################################
 
 
+@safe_disconnect
 def calibrate(robot: Robot, arms: list[str] | None):
     # TODO(aliberts): move this code in robots' classes
-    if isinstance(robot, StretchLeRobot):
+    if isinstance(robot, StretchRobot):
         if not robot.is_connected:
             robot.connect()
         if not robot.is_homed():
@@ -294,32 +297,29 @@ def calibrate(robot: Robot, arms: list[str] | None):
     print("Calibration is done! You can now teleoperate and record datasets!")
 
 
+@safe_disconnect
 def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | None = None):
     # TODO(rcadene): Add option to record logs
     if not robot.is_connected:
         robot.connect()
 
     start_teleop_t = time.perf_counter()
-    try:
-        while True:
-            start_loop_t = time.perf_counter()
-            robot.teleop_step()
+    while True:
+        start_loop_t = time.perf_counter()
+        robot.teleop_step()
 
-            if fps is not None:
-                dt_s = time.perf_counter() - start_loop_t
-                busy_wait(1 / fps - dt_s)
-
+        if fps is not None:
             dt_s = time.perf_counter() - start_loop_t
-            # log_control_info(robot, dt_s, fps=fps)
+            busy_wait(1 / fps - dt_s)
 
-            if teleop_time_s is not None and time.perf_counter() - start_teleop_t > teleop_time_s:
-                break
+        dt_s = time.perf_counter() - start_loop_t
+        log_control_info(robot, dt_s, fps=fps)
 
-    except Exception as e:
-        robot.disconnect()
-        raise e
+        if teleop_time_s is not None and time.perf_counter() - start_teleop_t > teleop_time_s:
+            break
 
 
+@safe_disconnect
 def record(
     robot: Robot,
     policy: torch.nn.Module | None = None,
