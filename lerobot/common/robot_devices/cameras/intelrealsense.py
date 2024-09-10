@@ -143,6 +143,7 @@ class IntelRealSenseCameraConfig:
     IntelRealSenseCameraConfig(90, 640, 480)
     IntelRealSenseCameraConfig(30, 1280, 720)
     IntelRealSenseCameraConfig(30, 640, 480, use_depth=True)
+    IntelRealSenseCameraConfig(30, 640, 480, rotation=90)
     ```
     """
 
@@ -152,6 +153,7 @@ class IntelRealSenseCameraConfig:
     color_mode: str = "rgb"
     use_depth: bool = False
     force_hardware_reset: bool = True
+    rotation: int | None = None
 
     def __post_init__(self):
         if self.color_mode not in ["rgb", "bgr"]:
@@ -164,6 +166,9 @@ class IntelRealSenseCameraConfig:
                 "For `fps`, `width` and `height`, either all of them need to be set, or none of them, "
                 f"but {self.fps=}, {self.width=}, {self.height=} were provided."
             )
+
+        if self.rotation not in [-90, None, 90, 180]:
+            raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
 
 
 class IntelRealSenseCamera:
@@ -242,6 +247,15 @@ class IntelRealSenseCamera:
         self.color_image = None
         self.depth_map = None
         self.logs = {}
+
+        # TODO(alibets): Do we keep original width/height or do we define them after rotation?
+        self.rotation = None
+        if config.rotation == -90:
+            self.rotation = cv2.ROTATE_90_COUNTERCLOCKWISE
+        elif config.rotation == 90:
+            self.rotation = cv2.ROTATE_90_CLOCKWISE
+        elif config.rotation == 180:
+            self.rotation = cv2.ROTATE_180
 
     @classmethod
     def init_from_name(cls, name: str, config: IntelRealSenseCameraConfig | None = None, **kwargs):
@@ -350,6 +364,9 @@ class IntelRealSenseCamera:
                 f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
             )
 
+        if self.rotation is not None:
+            color_image = cv2.rotate(color_image, self.rotation)
+
         # log the number of seconds it took to read the image
         self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
 
@@ -368,6 +385,9 @@ class IntelRealSenseCamera:
                 raise OSError(
                     f"Can't capture depth map with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
                 )
+
+            if self.rotation is not None:
+                depth_map = cv2.rotate(depth_map, self.rotation)
 
             return color_image, depth_map
         else:
