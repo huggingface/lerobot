@@ -9,6 +9,7 @@ import shutil
 import threading
 import time
 import traceback
+from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Thread
@@ -28,22 +29,23 @@ from lerobot.scripts.control_robot import busy_wait
 SERIAL_NUMBER_INDEX = 1
 
 
-def find_camera_indices(raise_when_empty=True) -> list[int]:
+def find_cameras_info(raise_when_empty=True) -> dict[int, str]:
     """
-    Find the serial numbers of the Intel RealSense cameras
+    Find the names and the serial numbers of the Intel RealSense cameras
     connected to the computer.
     """
-    camera_ids = []
+    cameras_info = {}
     for device in rs.context().query_devices():
         serial_number = int(device.get_info(rs.camera_info(SERIAL_NUMBER_INDEX)))
-        camera_ids.append(serial_number)
+        name = device.get_info(rs.camera_info.name)
+        cameras_info[serial_number] = name
 
-    if raise_when_empty and len(camera_ids) == 0:
+    if raise_when_empty and len(cameras_info) == 0:
         raise OSError(
             "Not a single camera was detected. Try re-plugging, or re-installing `librealsense` and its python wrapper `pyrealsense2`, or updating the firmware."
         )
 
-    return camera_ids
+    return cameras_info
 
 
 def save_image(img_array, camera_idx, frame_index, images_dir):
@@ -59,7 +61,7 @@ def save_image(img_array, camera_idx, frame_index, images_dir):
 
 def save_images_from_cameras(
     images_dir: Path,
-    camera_ids: list[int] | None = None,
+    camera_ids: list[int | None],
     fps=None,
     width=None,
     height=None,
@@ -69,12 +71,13 @@ def save_images_from_cameras(
     Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
     associated to a given camera index.
     """
-    if camera_ids is None:
-        camera_ids = find_camera_indices()
+    if len(camera_ids) == 0:
+        camera_ids = find_cameras_info()
 
     print("Connecting cameras")
     cameras = []
     for cam_idx in camera_ids:
+        print(f"{cam_idx=}")
         camera = IntelRealSenseCamera(cam_idx, fps=fps, width=width, height=height)
         camera.connect()
         print(
@@ -93,7 +96,7 @@ def save_images_from_cameras(
     frame_index = 0
     start_time = time.perf_counter()
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             while True:
                 now = time.perf_counter()
 
@@ -167,6 +170,7 @@ class IntelRealSenseCamera:
     """
     The IntelRealSenseCamera class is similar to OpenCVCamera class but adds additional features for Intel Real Sense cameras:
     - camera_index corresponds to the serial number of the camera,
+    - can be instantiated with the camera's name — if it's unique — using IntelRealSenseCamera.init_from_name(),
     - camera_index won't randomly change as it can be the case of OpenCVCamera for Linux,
     - read is more reliable than OpenCVCamera,
     - depth map can be returned.
@@ -181,8 +185,10 @@ class IntelRealSenseCamera:
 
     Example of usage:
     ```python
-    camera_index = 128422271347
-    camera = IntelRealSenseCamera(camera_index)
+    # Instanciate with camera index (its serial number)
+    camera = IntelRealSenseCamera(128422271347)
+    # Or by its name if it's unique
+    camera = IntelRealSenseCamera.init_from_name("Intel RealSense D405")
     camera.connect()
     color_image = camera.read()
     # when done using the camera, consider disconnecting
@@ -237,6 +243,27 @@ class IntelRealSenseCamera:
         self.depth_map = None
         self.logs = {}
 
+    @classmethod
+    def init_from_name(cls, name: str, config: IntelRealSenseCameraConfig | None = None, **kwargs):
+        cameras_info = find_cameras_info()
+        this_name_count = Counter(cameras_info.values())[name]
+        if this_name_count > 1:
+            # TODO(aliberts): Test this with multiple identical cameras (Aloha)
+            raise ValueError(
+                f"Multiple {name} cameras have been detected. Please use their serial number to instantiate them."
+            )
+
+        name_to_serial_dict = {name: serial for serial, name in cameras_info.items()}
+        serial = name_to_serial_dict[name]
+
+        if config is None:
+            config = IntelRealSenseCameraConfig()
+
+        # Overwrite the config arguments using kwargs
+        config = replace(config, **kwargs)
+
+        return cls(camera_index=serial, config=config, **kwargs)
+
     def connect(self):
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
@@ -270,7 +297,7 @@ class IntelRealSenseCamera:
         # valid cameras.
         if not is_camera_open:
             # Verify that the provided `camera_index` is valid before printing the traceback
-            available_cam_ids = find_camera_indices()
+            available_cam_ids = find_cameras_info()
             if self.camera_index not in available_cam_ids:
                 raise ValueError(
                     f"`camera_index` is expected to be one of these available cameras {available_cam_ids}, but {self.camera_index} is provided instead. "

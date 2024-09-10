@@ -78,13 +78,13 @@ def save_image(img_array, camera_index, frame_index, images_dir):
 
 
 def save_images_from_cameras(
-    images_dir: Path, camera_ids: list[int] | None = None, fps=None, width=None, height=None, record_time_s=2
+    images_dir: Path, camera_ids: list[int | None], fps=None, width=None, height=None, record_time_s=2
 ):
     """
     Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
     associated to a given camera index.
     """
-    if camera_ids is None:
+    if len(camera_ids) == 0:
         camera_ids = find_camera_indices()
 
     print("Connecting cameras")
