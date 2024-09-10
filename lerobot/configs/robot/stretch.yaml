@@ -1,2 +1,17 @@
-_target_: lerobot.common.robot_devices.robots.stretch.StretchLeRobot
-robot_type: stretch
+_target_: lerobot.common.robot_devices.robots.stretch.StretchRobot
+robot_type: stretch3
+
+cameras:
+  head:
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera.init_from_name
+    name: Intel RealSense D435I
+    fps: 30
+    width: 640
+    height: 480
+    rotation: 90
+  wrist:
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera.init_from_name
+    name: Intel RealSense D405
+    fps: 30
+    width: 640
+    height: 480
