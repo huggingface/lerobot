@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
+FROM nvidia/cuda:12.4.2-base-ubuntu22.04
 
 # Configure image
 ARG PYTHON_VERSION=3.10
