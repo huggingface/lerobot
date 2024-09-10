@@ -240,7 +240,7 @@ def is_headless():
         return True
 
 
-def has_method(method_name: str, _object: object):
+def has_method(_object: object, method_name: str):
     return hasattr(_object, method_name) and callable(getattr(_object, method_name))
 
 
@@ -459,7 +459,7 @@ def record(
 
         timestamp = time.perf_counter() - start_warmup_t
 
-    if has_method("teleop_safety_stop", robot):
+    if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
     # Save images using threads to reach high fps (30 and more)
@@ -554,7 +554,7 @@ def record(
                     exit_early = False
                     break
 
-            if has_method("teleop_safety_stop", robot):
+            if has_method(robot, "teleop_safety_stop"):
                 robot.teleop_safety_stop()
 
             if not stop_recording:
