@@ -156,12 +156,16 @@ class OpenCVCameraConfig:
     width: int | None = None
     height: int | None = None
     color_mode: str = "rgb"
+    rotation: int | None = None
 
     def __post_init__(self):
         if self.color_mode not in ["rgb", "bgr"]:
             raise ValueError(
                 f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
             )
+
+        if self.rotation not in [-90, None, 90, 180]:
+            raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
 
 
 class OpenCVCamera:
@@ -222,6 +226,15 @@ class OpenCVCamera:
         self.stop_event = None
         self.color_image = None
         self.logs = {}
+
+        # TODO(alibets): Do we keep original width/height or do we define them after rotation?
+        self.rotation = None
+        if config.rotation == -90:
+            self.rotation = cv2.ROTATE_90_COUNTERCLOCKWISE
+        elif config.rotation == 90:
+            self.rotation = cv2.ROTATE_90_CLOCKWISE
+        elif config.rotation == 180:
+            self.rotation = cv2.ROTATE_180
 
     def connect(self):
         if self.is_connected:
@@ -327,6 +340,9 @@ class OpenCVCamera:
             raise OSError(
                 f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
             )
+
+        if self.rotation is not None:
+            color_image = cv2.rotate(color_image, self.rotation)
 
         # log the number of seconds it took to read the image
         self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
