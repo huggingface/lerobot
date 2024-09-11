@@ -35,7 +35,9 @@ jobs:
           lfs: true  # Ensure LFS files are pulled
 
       - name: Install apt dependencies
-        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev ffmpeg
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y libegl1-mesa-dev ffmpeg portaudio19-dev
 
       - name: Install poetry
         run: |
@@ -110,7 +112,9 @@ jobs:
           lfs: true  # Ensure LFS files are pulled
 
       - name: Install apt dependencies
-        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y libegl1-mesa-dev portaudio19-dev
 
       - name: Install poetry
         run: |
