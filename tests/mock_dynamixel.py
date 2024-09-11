@@ -1,9 +1,18 @@
 from dynamixel_sdk import COMM_SUCCESS
 
+DEFAULT_BAUDRATE = 9_600
 
-class PortHandler:
+
+def mock_convert_to_bytes(value, bytes):
+    del bytes  # unused
+    return value
+
+
+class MockPortHandler:
     def __init__(self, port):
         self.port = port
+        # default fresh from factory baudrate
+        self.baudrate = DEFAULT_BAUDRATE
 
     def openPort(self):  # noqa: N802
         return True
@@ -14,35 +23,53 @@ class PortHandler:
     def setPacketTimeoutMillis(self, timeout_ms):  # noqa: N802
         del timeout_ms  # unused
 
+    def getBaudRate(self):  # noqa: N802
+        return self.baudrate
 
-class PacketHandler:
+    def setBaudRate(self, baudrate):  # noqa: N802
+        self.baudrate = baudrate
+
+
+class MockPacketHandler:
     def __init__(self, protocol_version):
         del protocol_version  # unused
+        # Use packet_handler.data to communicate across Read and Write
+        self.data = {}
 
 
-class GroupSyncRead:
+class MockGroupSyncRead:
     def __init__(self, port_handler, packet_handler, address, bytes):
-        pass
+        self.packet_handler = packet_handler
 
     def addParam(self, motor_index):  # noqa: N802
-        pass
+        if motor_index not in self.packet_handler.data:
+            # Initialize motor default values
+            self.packet_handler.data[motor_index] = {
+                # Key (int) are from X_SERIES_CONTROL_TABLE
+                7: motor_index,  # ID
+                8: DEFAULT_BAUDRATE,  # Baud_rate
+                10: 0,  # Drive_Mode
+                64: 0,  # Torque_Enable
+                132: 0,  # Present_Position
+            }
 
     def txRxPacket(self):  # noqa: N802
         return COMM_SUCCESS
 
     def getData(self, index, address, bytes):  # noqa: N802
-        return value  # noqa: F821
+        return self.packet_handler.data[index][address]
 
 
-class GroupSyncWrite:
+class MockGroupSyncWrite:
     def __init__(self, port_handler, packet_handler, address, bytes):
-        pass
+        self.packet_handler = packet_handler
+        self.address = address
 
     def addParam(self, index, data):  # noqa: N802
-        pass
+        self.changeParam(index, data)
 
     def txPacket(self):  # noqa: N802
         return COMM_SUCCESS
 
     def changeParam(self, index, data):  # noqa: N802
-        pass
+        self.packet_handler.data[index][self.address] = data

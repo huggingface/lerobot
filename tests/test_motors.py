@@ -62,7 +62,7 @@ def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
 # TODO(rcadene): implement mocked version of this test
 @pytest.mark.parametrize("motor_type", available_motors)
 @require_motor
-def test_find_port(request, robot_type):
+def test_find_port(request, motor_type):
     from lerobot.common.robot_devices.motors.dynamixel import find_port
 
     find_port()
@@ -71,10 +71,10 @@ def test_find_port(request, robot_type):
 # TODO(rcadene): implement mocked version of this test
 @pytest.mark.parametrize("motor_type", available_motors)
 @require_motor
-def test_configure_motors_all_ids_1(request, robot_type):
+def test_configure_motors_all_ids_1(request, motor_type):
     input("Are you sure you want to re-configure the motors? Press enter to continue...")
     # This test expect the configuration was already correct.
-    motors_bus = make_motors_bus(robot_type)
+    motors_bus = make_motors_bus(motor_type)
     motors_bus.connect()
     motors_bus.write("Baud_Rate", [0] * len(motors_bus.motors))
     motors_bus.set_bus_baudrate(9_600)
@@ -82,7 +82,7 @@ def test_configure_motors_all_ids_1(request, robot_type):
     del motors_bus
 
     # Test configure
-    motors_bus = make_motors_bus(robot_type)
+    motors_bus = make_motors_bus(motor_type)
     motors_bus.connect()
     assert motors_bus.are_motors_configured()
     del motors_bus
@@ -90,8 +90,8 @@ def test_configure_motors_all_ids_1(request, robot_type):
 
 @pytest.mark.parametrize("motor_type", TEST_MOTOR_TYPES)
 @require_motor
-def test_motors_bus(request, robot_type):
-    motors_bus = make_motors_bus(robot_type)
+def test_motors_bus(request, motor_type):
+    motors_bus = make_motors_bus(motor_type)
 
     # Test reading and writting before connecting raises an error
     with pytest.raises(RobotDeviceNotConnectedError):
@@ -105,7 +105,7 @@ def test_motors_bus(request, robot_type):
     del motors_bus
 
     # Test connecting
-    motors_bus = make_motors_bus(robot_type)
+    motors_bus = make_motors_bus(motor_type)
     motors_bus.connect()
 
     # Test connecting twice raises an error

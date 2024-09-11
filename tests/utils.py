@@ -312,11 +312,19 @@ def mock_motors(request):
             MockGroupSyncWrite,
             MockPacketHandler,
             MockPortHandler,
+            mock_convert_to_bytes,
         )
 
         monkeypatch.setattr(dynamixel_sdk, "GroupSyncRead", MockGroupSyncRead)
         monkeypatch.setattr(dynamixel_sdk, "GroupSyncWrite", MockGroupSyncWrite)
         monkeypatch.setattr(dynamixel_sdk, "PacketHandler", MockPacketHandler)
         monkeypatch.setattr(dynamixel_sdk, "PortHandler", MockPortHandler)
+
+        # Import dynamixel AFTER mocking dynamixel_sdk to use mocked classes
+        from lerobot.common.robot_devices.motors import dynamixel
+
+        # TODO(rcadene): remove need to mock `convert_to_bytes` by implemented the inverse transform
+        # `convert_bytes_to_value`
+        monkeypatch.setattr(dynamixel, "convert_to_bytes", mock_convert_to_bytes)
     except ImportError:
         traceback.print_exc()
