@@ -9,7 +9,6 @@ pytest -sx tests/test_motors.py::test_find_port
 pytest -sx tests/test_motors.py::test_motors_bus
 ```
 
-
 Example of running test on real dynamixel motors connected to the computer:
 ```bash
 pytest -sx tests/test_motors.py::test_motors_bus[dynamixel]

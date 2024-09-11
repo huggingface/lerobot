@@ -1,10 +1,27 @@
 """
-Tests meant to be used locally and launched manually.
+Tests for physical robots and their mocked versions.
+If the physical robots are not connected to the computer, or not working,
+the test will be skipped.
 
-Example usage:
+Example of running a specific test:
 ```bash
 pytest -sx tests/test_robots.py::test_robot
 ```
+
+Example of running test on real robots connected to the computer:
+```bash
+pytest -sx tests/test_robots.py::test_robot[koch]
+pytest -sx tests/test_robots.py::test_robot[koch_bimanual]
+pytest -sx tests/test_robots.py::test_robot[aloha]
+```
+
+Example of running test on a mocked version of robots:
+```bash
+pytest -sx -k "mocked_koch" tests/test_robots.py::test_robot
+pytest -sx -k "mocked_koch_bimanual" tests/test_robots.py::test_robot
+pytest -sx -k "mocked_aloha" tests/test_robots.py::test_robot
+```
+
 """
 
 from pathlib import Path
@@ -12,12 +29,11 @@ from pathlib import Path
 import pytest
 import torch
 
-from lerobot import available_robots
 from lerobot.common.robot_devices.robots.factory import make_robot as make_robot_from_cfg
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import init_hydra_config
-from tests.utils import ROBOT_CONFIG_PATH_TEMPLATE, require_robot
+from tests.utils import ROBOT_CONFIG_PATH_TEMPLATE, TEST_ROBOT_TYPES, require_robot
 
 
 def make_robot(robot_type: str, overrides: list[str] | None = None) -> Robot:
@@ -27,7 +43,7 @@ def make_robot(robot_type: str, overrides: list[str] | None = None) -> Robot:
     return robot
 
 
-@pytest.mark.parametrize("robot_type", available_robots)
+@pytest.mark.parametrize("robot_type", TEST_ROBOT_TYPES)
 @require_robot
 def test_robot(tmpdir, request, robot_type):
     # TODO(rcadene): measure fps in nightly?
