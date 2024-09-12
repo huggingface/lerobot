@@ -179,13 +179,18 @@ def none_or_int(value):
 def log_control_info(robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
     if episode_index is not None:
-        log_items += [f"ep:{episode_index}"]
+        log_items.append(f"ep:{episode_index}")
     if frame_index is not None:
-        log_items += [f"frame:{frame_index}"]
+        log_items.append(f"frame:{frame_index}")
 
     def log_dt(shortname, dt_val_s):
-        nonlocal log_items
-        log_items += [f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"]
+        nonlocal log_items, fps
+        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"
+        if fps is not None:
+            actual_fps = 1 / dt_val_s
+            if actual_fps < fps - 1:
+                info_str = colored(info_str, "yellow")
+        log_items.append(info_str)
 
     # total step time displayed in milliseconds and its frequency
     log_dt("dt", dt_s)
@@ -210,10 +215,6 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None, fps=None
             log_dt(f"dtR{name}", robot.logs[key])
 
     info_str = " ".join(log_items)
-    if fps is not None:
-        actual_fps = 1 / dt_s
-        if actual_fps < fps - 1:
-            info_str = colored(info_str, "yellow")
     logging.info(info_str)
 
 
@@ -320,7 +321,7 @@ def record(
     run_compute_stats=True,
     push_to_hub=True,
     tags=None,
-    num_image_writers=8,
+    num_image_writers_per_camera=4,
     force_override=False,
 ):
     # TODO(rcadene): Add option to record logs
@@ -442,8 +443,8 @@ def record(
 
     # Save images using threads to reach high fps (30 and more)
     # Using `with` to exist smoothly if an execption is raised.
-    # Using only 4 worker threads to avoid blocking the main thread.
     futures = []
+    num_image_writers = num_image_writers_per_camera * len(robot.cameras)
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
         # Start recording all episodes
         while episode_index < num_episodes:
@@ -803,10 +804,14 @@ if __name__ == "__main__":
         help="Add tags to your dataset on the hub.",
     )
     parser_record.add_argument(
-        "--num-image-writers",
+        "--num-image-writers-per-camera",
         type=int,
-        default=8,
-        help="Number of threads writing the frames as png images on disk. Don't set too much as you might get unstable fps due to main thread being blocked.",
+        default=4,
+        help=(
+            "Number of threads writing the frames as png images on disk, per camera. "
+            "Too much threads might cause unstable teleoperation fps due to main thread being blocked. "
+            "Not enough threads might cause low camera fps."
+        ),
     )
     parser_record.add_argument(
         "--force-override",
