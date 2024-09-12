@@ -25,23 +25,21 @@ from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 from lerobot.scripts.push_dataset_to_hub import push_meta_data_to_hub, push_videos_to_hub, save_meta_data
 from tqdm import tqdm
 
+
 def process_args():
     # parse the repo_id name via command line
     parser = argparse.ArgumentParser()
-    parser.add_argument("--env-name", type=str, default="gym_lowcostrobot/ReachCube-v0")
+    parser.add_argument("--module-name", type=str, default="gym_lowcostrobot")
+    parser.add_argument("--env-name", type=str, default="ReachCube-v0")
     parser.add_argument("--num-episodes", type=int, default=2)
     parser.add_argument("--num-frames", type=int, default=20)
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--keep-last", action="store_true")
     parser.add_argument("--repo-id", type=str, default="myrepo")
     parser.add_argument("--push-to-hub", action="store_true")
-    parser.add_argument("--fps", type=int, default=30, help="Frames per second of the recording.")
-    parser.add_argument(
-        "--fps_tolerance",
-        type=float,
-        default=0.1,
-        help="Tolerance in fps for the recording before dropping episodes.",
-    )
+    parser.add_argument("--fps", type=int, default=30,
+                        help="Frames per second of the recording (will be ignored if step info provides timestamp).")
+
     parser.add_argument(
         "--image-keys",
         type=str,
@@ -54,7 +52,6 @@ def process_args():
         default="arm_qpos,arm_qvel,cube_pos",
         help="The keys of the state observations to record.",
     )
-
 
     parser.add_argument(
         "--revision", type=str, default=CODEBASE_VERSION, help="Codebase version used to generate the dataset."
@@ -70,10 +67,11 @@ if __name__ == "__main__":
     num_episodes = args.num_episodes
     num_frames = args.num_frames
     revision = args.revision
-    fps = args.fps
-    fps_tolerance = args.fps_tolerance
 
-    DATA_DIR = pathlib.Path("data_traces")
+    if DATA_DIR == None:
+        DATA_DIR = pathlib.Path("data_traces")
+        print("Warning: env variable DATA_DIR was not set, defaulting to './{}'.".format(DATA_DIR))
+
     out_data = DATA_DIR / repo_id
 
     # During data collection, frames are stored as png images in `images_dir`
@@ -90,40 +88,41 @@ if __name__ == "__main__":
         os.makedirs(videos_dir, exist_ok=True)
 
     # import the gym module containing the environment
-    gym_repo_id, env_name = args.env_name.split("/")
     try:
         # because we want to import using a variable, do it this way
-        module_obj = __import__(gym_repo_id)
+        module_obj = __import__(args.module_name)
         # create a global object containging our module
-        globals()[gym_repo_id] = module_obj
+        globals()[args.module_name] = module_obj
     except ImportError:
-        sys.stderr.write("ERROR: missing python module: " + gym_repo_id + "\n")
+        sys.stderr.write("ERROR: missing python module: " +
+                         args.module_name + "\n")
         sys.exit(1)
 
     # Create the gym environment - check the kwargs in gym_real_world/gym_environment.py
-    env = gym.make(env_name, disable_env_checker=True, observation_mode="both", action_mode="joint", render_mode="human")
+    env = gym.make(args.env_name, disable_env_checker=True,
+                   observation_mode="both", action_mode="joint", render_mode="human")
 
     ep_dicts = []
     episode_data_index = {"from": [], "to": []}
     ep_fps = []
     id_from = 0
     id_to = 0
-    os.system('spd-say "gym environment created"')
+    print(f"gym environment created")
 
     ep_idx = 0
     while ep_idx < num_episodes:
         # bring the follower to the leader and start camera
         env.reset()
 
-        os.system(f'spd-say "go {ep_idx}"')
+        print(f"go {ep_idx}")
 
         # init buffers
         obs_replay = {k: [] for k in env.observation_space}
         obs_replay["action"] = []
 
         timestamps = []
-        start_time = time.time()
         drop_episode = False
+        time_stamp = 0.0
         for _ in tqdm(range(num_frames)):
             # Apply the next action
             action = env.action_space.sample()
@@ -134,14 +133,17 @@ if __name__ == "__main__":
                 obs_replay[key].append(copy.deepcopy(observation[key]))
             obs_replay["action"].append(copy.deepcopy(action))
 
-            # TODO: add the timestamp to the info dict
-            # timestamps.append(info["timestamp"])
-            timestamps.append(time.time() - start_time)
+            # Use simulator time, if available.
+            try:
+                time_stamp = info["timestamp"]
+            except KeyError:
+                time_stamp += args.fps
+            timestamps.append(time_stamp)
 
-        os.system('spd-say "stop"')
+        print("stop")
 
         if not drop_episode:
-            os.system(f'spd-say "saving episode {ep_idx}"')
+            print(f"saving episode {ep_idx}")
             ep_dict = {}
 
             # store images in png and create the video
@@ -154,30 +156,35 @@ if __name__ == "__main__":
                 fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
 
                 # store the reference to the video frame
-                ep_dict[f"observation.{img_key}"] = [{"path": f"videos/{fname}", "timestamp": tstp} for tstp in timestamps]
+                ep_dict[f"observation.{img_key}"] = [
+                    {"path": f"videos/{fname}", "timestamp": tstp} for tstp in timestamps]
 
             states = []
             for state_name in args.state_keys.split(","):
                 states.append(np.array(obs_replay[state_name]))
             state = torch.tensor(np.concatenate(states, axis=1))
-            
+
             action = torch.tensor(np.array(obs_replay["action"]))
             next_done = torch.zeros(num_frames, dtype=torch.bool)
             next_done[-1] = True
 
             ep_dict["observation.state"] = state
             ep_dict["action"] = action
-            ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int64)
+            ep_dict["episode_index"] = torch.tensor(
+                [ep_idx] * num_frames, dtype=torch.int64)
             ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
             ep_dict["timestamp"] = torch.tensor(timestamps)
             ep_dict["next.done"] = next_done
+
+            print(f"num_frames={num_frames}")
+            print(f"timestamps[-1]={timestamps[-1]}")
             ep_fps.append(num_frames / timestamps[-1])
             ep_dicts.append(ep_dict)
-
             print(f"Episode {ep_idx} done, fps: {ep_fps[-1]:.2f}")
 
             episode_data_index["from"].append(id_from)
-            episode_data_index["to"].append(id_from + num_frames if args.keep_last else id_from + num_frames - 1)
+            episode_data_index["to"].append(
+                id_from + num_frames if args.keep_last else id_from + num_frames - 1)
 
             id_to = id_from + num_frames if args.keep_last else id_from + num_frames - 1
             id_from = id_to
@@ -186,31 +193,36 @@ if __name__ == "__main__":
 
     env.close()
 
-    os.system('spd-say "encode video frames"')
+    print("encode video frames")
     for ep_idx in range(num_episodes):
         for img_key in args.image_keys.split(","):
             encode_video_frames(
                 vcodec="libx265",
-                imgs_dir= images_dir / f"{img_key}_episode_{ep_idx:06d}",
-                video_path=  videos_dir / f"{img_key}_episode_{ep_idx:06d}.mp4",
-                fps= ep_fps[ep_idx],
+                imgs_dir=images_dir / f"{img_key}_episode_{ep_idx:06d}",
+                video_path=videos_dir / f"{img_key}_episode_{ep_idx:06d}.mp4",
+                fps=ep_fps[ep_idx],
             )
 
-    os.system('spd-say "concatenate episodes"')
-    data_dict = concatenate_episodes(ep_dicts)  # Since our fps varies we are sometimes off tolerance for the last frame
+    print("concatenate episodes")
+    # Since our fps varies we are sometimes off tolerance for the last frame
+    data_dict = concatenate_episodes(ep_dicts)
 
     features = {}
 
     keys = [key for key in data_dict if "observation.image_" in key]
     for key in keys:
-        features[key.replace("observation.image_", "observation.images.")] = VideoFrame()
-        data_dict[key.replace("observation.image_", "observation.images.")] = data_dict[key]
+        features[key.replace("observation.image_",
+                             "observation.images.")] = VideoFrame()
+        data_dict[key.replace("observation.image_",
+                              "observation.images.")] = data_dict[key]
         del data_dict[key]
 
     features["observation.state"] = Sequence(
-        length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
+        length=data_dict["observation.state"].shape[1], feature=Value(
+            dtype="float32", id=None)
     )
-    features["action"] = Sequence(length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None))
+    features["action"] = Sequence(
+        length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None))
     features["episode_index"] = Value(dtype="int64", id=None)
     features["frame_index"] = Value(dtype="int64", id=None)
     features["timestamp"] = Value(dtype="float32", id=None)
@@ -221,11 +233,12 @@ if __name__ == "__main__":
     hf_dataset.set_transform(hf_transform_to_torch)
 
     info = {
-        "fps": sum(ep_fps) / len(ep_fps),  # to have a good tolerance in data processing for the slowest video
+        # to have a good tolerance in data processing for the slowest video
+        "fps": sum(ep_fps) / len(ep_fps),
         "video": 1,
     }
 
-    os.system('spd-say "from preloaded"')
+    print("from preloaded")
     lerobot_dataset = LeRobotDataset.from_preloaded(
         repo_id=repo_id,
         hf_dataset=hf_dataset,
@@ -234,16 +247,18 @@ if __name__ == "__main__":
         videos_dir=videos_dir,
     )
 
-    os.system('spd-say "compute stats"')
+    print("compute stats")
     stats = compute_stats(lerobot_dataset, num_workers=args.num_workers)
 
-    os.system('spd-say "save to disk"')
-    hf_dataset = hf_dataset.with_format(None)  # to remove transforms that cant be saved
+    print("save to disk")
+    # to remove transforms that cant be saved
+    hf_dataset = hf_dataset.with_format(None)
     hf_dataset.save_to_disk(str(out_data / "train"))
 
     save_meta_data(info, stats, episode_data_index, meta_data_dir)
 
     if args.push_to_hub:
+        print(f"Pushing dataset to '{repo_id}'")
         hf_dataset.push_to_hub(repo_id, token=True, revision="main")
         hf_dataset.push_to_hub(repo_id, token=True, revision=revision)
 
