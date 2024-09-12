@@ -1,5 +1,4 @@
-"""This script demonstrates how to record a LeRobot dataset of training data
-using a very simple gym environment (see in examples/real_robot_example/gym_real_world/gym_environment.py).
+"""This script demonstrates how to record a LeRobot dataset of training data using a very simple gym environment.
 """
 
 import argparse
@@ -65,7 +64,7 @@ if __name__ == "__main__":
 
     repo_id = args.repo_id
     num_episodes = args.num_episodes
-    num_steps = args.num_steps + 1
+    num_steps = args.num_steps
     revision = args.revision
 
     if DATA_DIR == None:
@@ -112,7 +111,7 @@ if __name__ == "__main__":
     ep_idx = 0
     while ep_idx < num_episodes:
         # bring the follower to the leader and start camera
-        observation, info = env.reset()
+        env.reset()
 
         print(f"go {ep_idx}")
 
@@ -122,10 +121,10 @@ if __name__ == "__main__":
 
         timestamps = []
         drop_episode = False
-
-        action = env.action_space.sample() * np.nan
         for i in tqdm(range(num_steps)):
             # Apply the next action
+            action = env.action_space.sample()
+            observation, _, _, _, info = env.step(action=action)
 
             # store data
             for key in observation:
@@ -137,10 +136,6 @@ if __name__ == "__main__":
                 timestamps.append(info["timestamp"])
             except KeyError:
                 timestamps.append(np.float32(i)/args.fps)
-
-            if i < num_steps-1:
-                action = env.action_space.sample()
-                observation, _, _, _, info = env.step(action=action)
 
         print("stop")
 
