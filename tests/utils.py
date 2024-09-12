@@ -298,12 +298,13 @@ def mock_cameras(request):
     try:
         import pyrealsense2 as rs
 
-        from tests.mock_intelrealsense import MockConfig, MockFormat, MockPipeline, MockStream
+        from tests.mock_intelrealsense import MockConfig, MockContext, MockFormat, MockPipeline, MockStream
 
         monkeypatch.setattr(rs, "config", MockConfig)
         monkeypatch.setattr(rs, "pipeline", MockPipeline)
         monkeypatch.setattr(rs, "stream", MockStream)
         monkeypatch.setattr(rs, "format", MockFormat)
+        monkeypatch.setattr(rs, "context", MockContext)
     except ImportError:
         traceback.print_exc()
 

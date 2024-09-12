@@ -8,14 +8,16 @@ Example of running a specific test:
 pytest -sx tests/test_cameras.py::test_camera
 ```
 
-Example of running test on a real OpenCV camera connected to the computer:
+Example of running test on a real camera connected to the computer:
 ```bash
 pytest -sx tests/test_cameras.py::test_camera[opencv]
+pytest -sx tests/test_cameras.py::test_camera[intelrealsense]
 ```
 
-Example of running test on a mocked version of an OpenCV camera:
+Example of running test on a mocked version of the camera:
 ```bash
 pytest -sx -k "mocked_opencv" tests/test_cameras.py::test_camera
+pytest -sx -k "mocked_intelrealsense" tests/test_cameras.py::test_camera
 ```
 """
 

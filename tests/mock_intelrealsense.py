@@ -108,3 +108,21 @@ class MockDepthFrame:
 
     def get_data(self):
         return np.ones((self.config.height, self.config.width), dtype=np.uint16)
+
+
+class MockDevice:
+    def __init__(self):
+        pass
+
+    def get_info(self, camera_info) -> str:
+        del camera_info  # unused
+        # return fake serial number
+        return "123456789"
+
+
+class MockContext:
+    def __init__(self):
+        pass
+
+    def query_devices(self):
+        return [MockDevice()]
