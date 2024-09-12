@@ -110,6 +110,7 @@ import traceback
 from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
+from playsound import playsound
 
 import cv2
 import torch
@@ -305,6 +306,13 @@ def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | Non
         if teleop_time_s is not None and time.perf_counter() - start_teleop_t > teleop_time_s:
             break
 
+def play_record():
+    # https://media.merriam-webster.com/audio/prons/en/us/mp3/r/record01.mp3
+    playsound('sound_record.mp3')
+
+def play_reset():
+    # https://media.merriam-webster.com/audio/prons/en/us/mp3/r/reset001.mp3
+    playsound('sound_reset.mp3')
 
 def record(
     robot: Robot,
@@ -448,6 +456,7 @@ def record(
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
         # Start recording all episodes
         while episode_index < num_episodes:
+            play_record()
             logging.info(f"Recording episode {episode_index}")
             say(f"Recording episode {episode_index}")
             ep_dict = {}
@@ -582,8 +591,14 @@ def record(
             is_last_episode = stop_recording or (episode_index == (num_episodes - 1))
 
             # Wait if necessary
+            is_reset_wait_print = True
             with tqdm.tqdm(total=reset_time_s, desc="Waiting") as pbar:
                 while timestamp < reset_time_s and not is_last_episode:
+                    if is_reset_wait_print:
+                        play_reset()
+                        logging.info("Reset for next episode")
+                        say("Reset for next episode")
+                        is_reset_wait_print = False
                     time.sleep(1)
                     timestamp = time.perf_counter() - start_vencod_t
                     pbar.update(1)
