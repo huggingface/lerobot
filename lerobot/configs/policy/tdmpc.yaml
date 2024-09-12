@@ -12,6 +12,7 @@ training:
   grad_clip_norm: 10.0
   lr: 3e-4
 
+  save_freq: 10000
   eval_freq: 5000
   log_freq: 100
 

@@ -127,7 +127,8 @@ from lerobot.common.datasets.utils import calculate_episode_data_index, create_b
 from lerobot.common.datasets.video_utils import encode_video_frames
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.common.robot_devices.robots.utils import Robot, get_arm_id
+from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 from lerobot.scripts.push_dataset_to_hub import (
@@ -169,15 +170,6 @@ def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
     img.save(str(path), quality=100)
 
 
-def busy_wait(seconds):
-    # Significantly more accurate than `time.sleep`, and mendatory for our use case,
-    # but it consumes CPU cycles.
-    # TODO(rcadene): find an alternative: from python 11, time.sleep is precise
-    end_time = time.perf_counter() + seconds
-    while time.perf_counter() < end_time:
-        pass
-
-
 def none_or_int(value):
     if value == "None":
         return None
@@ -187,13 +179,18 @@ def none_or_int(value):
 def log_control_info(robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
     if episode_index is not None:
-        log_items += [f"ep:{episode_index}"]
+        log_items.append(f"ep:{episode_index}")
     if frame_index is not None:
-        log_items += [f"frame:{frame_index}"]
+        log_items.append(f"frame:{frame_index}")
 
     def log_dt(shortname, dt_val_s):
-        nonlocal log_items
-        log_items += [f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"]
+        nonlocal log_items, fps
+        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"
+        if fps is not None:
+            actual_fps = 1 / dt_val_s
+            if actual_fps < fps - 1:
+                info_str = colored(info_str, "yellow")
+        log_items.append(info_str)
 
     # total step time displayed in milliseconds and its frequency
     log_dt("dt", dt_s)
@@ -218,10 +215,6 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None, fps=None
             log_dt(f"dtR{name}", robot.logs[key])
 
     info_str = " ".join(log_items)
-    if fps is not None:
-        actual_fps = 1 / dt_s
-        if actual_fps < fps - 1:
-            info_str = colored(info_str, "yellow")
     logging.info(info_str)
 
 
@@ -249,10 +242,38 @@ def is_headless():
 ########################################################################################
 
 
-def calibrate(robot: Robot):
-    if robot.calibration_path.exists():
-        print(f"Removing '{robot.calibration_path}'")
-        robot.calibration_path.unlink()
+def calibrate(robot: Robot, arms: list[str] | None):
+    available_arms = []
+    for name in robot.follower_arms:
+        arm_id = get_arm_id(name, "follower")
+        available_arms.append(arm_id)
+    for name in robot.leader_arms:
+        arm_id = get_arm_id(name, "leader")
+        available_arms.append(arm_id)
+
+    unknown_arms = [arm_id for arm_id in arms if arm_id not in available_arms]
+
+    available_arms_str = " ".join(available_arms)
+    unknown_arms_str = " ".join(unknown_arms)
+
+    if arms is None or len(arms) == 0:
+        raise ValueError(
+            "No arm provided. Use `--arms` as argument with one or more available arms.\n"
+            f"For instance, to recalibrate all arms add: `--arms {available_arms_str}`"
+        )
+
+    if len(unknown_arms) > 0:
+        raise ValueError(
+            f"Unknown arms provided ('{unknown_arms_str}'). Available arms are `{available_arms_str}`."
+        )
+
+    for arm_id in arms:
+        arm_calib_path = robot.calibration_dir / f"{arm_id}.json"
+        if arm_calib_path.exists():
+            print(f"Removing '{arm_calib_path}'")
+            arm_calib_path.unlink()
+        else:
+            print(f"Calibration file not found '{arm_calib_path}'")
 
     if robot.is_connected:
         robot.disconnect()
@@ -260,6 +281,8 @@ def calibrate(robot: Robot):
     # Calling `connect` automatically runs calibration
     # when the calibration file is missing
     robot.connect()
+    robot.disconnect()
+    print("Calibration is done! You can now teleoperate and record datasets!")
 
 
 def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | None = None):
@@ -298,7 +321,7 @@ def record(
     run_compute_stats=True,
     push_to_hub=True,
     tags=None,
-    num_image_writers=8,
+    num_image_writers_per_camera=4,
     force_override=False,
 ):
     # TODO(rcadene): Add option to record logs
@@ -420,8 +443,8 @@ def record(
 
     # Save images using threads to reach high fps (30 and more)
     # Using `with` to exist smoothly if an execption is raised.
-    # Using only 4 worker threads to avoid blocking the main thread.
     futures = []
+    num_image_writers = num_image_writers_per_camera * len(robot.cameras)
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
         # Start recording all episodes
         while episode_index < num_episodes:
@@ -486,8 +509,11 @@ def record(
                         action = action.to("cpu")
 
                     # Order the robot to move
-                    robot.send_action(action)
-                    action = {"action": action}
+                    action_sent = robot.send_action(action)
+
+                    # Action can eventually be clipped using `max_relative_target`,
+                    # so action actually sent is saved in the dataset.
+                    action = {"action": action_sent}
 
                 for key in action:
                     if key not in ep_dict:
@@ -712,6 +738,12 @@ if __name__ == "__main__":
     )
 
     parser_calib = subparsers.add_parser("calibrate", parents=[base_parser])
+    parser_calib.add_argument(
+        "--arms",
+        type=str,
+        nargs="*",
+        help="List of arms to calibrate (e.g. `--arms left_follower right_follower left_leader`)",
+    )
 
     parser_teleop = subparsers.add_parser("teleoperate", parents=[base_parser])
     parser_teleop.add_argument(
@@ -772,10 +804,14 @@ if __name__ == "__main__":
         help="Add tags to your dataset on the hub.",
     )
     parser_record.add_argument(
-        "--num-image-writers",
+        "--num-image-writers-per-camera",
         type=int,
-        default=8,
-        help="Number of threads writing the frames as png images on disk. Don't set too much as you might get unstable fps due to main thread being blocked.",
+        default=4,
+        help=(
+            "Number of threads writing the frames as png images on disk, per camera. "
+            "Too much threads might cause unstable teleoperation fps due to main thread being blocked. "
+            "Not enough threads might cause low camera fps."
+        ),
     )
     parser_record.add_argument(
         "--force-override",

@@ -1,9 +1,19 @@
+"""
+Tests meant to be used locally and launched manually.
+
+Example usage:
+```bash
+pytest -sx tests/test_cameras.py::test_camera
+```
+"""
+
 import numpy as np
 import pytest
 
+from lerobot import available_robots
 from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera, save_images_from_cameras
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import require_koch
+from tests.utils import require_robot
 
 CAMERA_INDEX = 2
 # Maximum absolute difference between two consecutive images recored by a camera.
@@ -15,8 +25,9 @@ def compute_max_pixel_difference(first_image, second_image):
     return np.abs(first_image.astype(float) - second_image.astype(float)).max()
 
 
-@require_koch
-def test_camera(request):
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_robot
+def test_camera(request, robot_type):
     """Test assumes that `camera.read()` returns the same image when called multiple times in a row.
     So the environment should not change (you shouldnt be in front of the camera) and the camera should not be moving.
 
@@ -120,6 +131,7 @@ def test_camera(request):
     del camera
 
 
-@require_koch
-def test_save_images_from_cameras(tmpdir, request):
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_robot
+def test_save_images_from_cameras(tmpdir, request, robot_type):
     save_images_from_cameras(tmpdir, record_time_s=1)

@@ -1,3 +1,5 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:cf348d2c6a5cdca1f53f2df3ebce0c88230bf0b40870347f5a871c36b039c4de
-size 65
+{
+    "codebase_version": "v1.6",
+    "fps": 10,
+    "video": 0
+}
