@@ -32,13 +32,13 @@ def process_args():
     parser.add_argument("--module-name", type=str, default="gym_lowcostrobot")
     parser.add_argument("--env-name", type=str, default="ReachCube-v0")
     parser.add_argument("--num-episodes", type=int, default=2)
-    parser.add_argument("--num-frames", type=int, default=20)
+    parser.add_argument("--num-steps", type=int, default=20)
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--keep-last", action="store_true")
     parser.add_argument("--repo-id", type=str, default="myrepo")
     parser.add_argument("--push-to-hub", action="store_true")
-    parser.add_argument("--fps", type=int, default=30,
-                        help="Frames per second of the recording (will be ignored if step info provides timestamp).")
+    parser.add_argument("--fps", type=np.float32, default=30,
+                        help="Frames (steps) per second of the recording (will be ignored if `step()` info provides timestamp).")
 
     parser.add_argument(
         "--image-keys",
@@ -65,7 +65,7 @@ if __name__ == "__main__":
 
     repo_id = args.repo_id
     num_episodes = args.num_episodes
-    num_frames = args.num_frames
+    num_steps = args.num_steps + 1
     revision = args.revision
 
     if DATA_DIR == None:
@@ -112,7 +112,7 @@ if __name__ == "__main__":
     ep_idx = 0
     while ep_idx < num_episodes:
         # bring the follower to the leader and start camera
-        env.reset()
+        observation, info = env.reset()
 
         print(f"go {ep_idx}")
 
@@ -122,11 +122,10 @@ if __name__ == "__main__":
 
         timestamps = []
         drop_episode = False
-        time_stamp = 0.0
-        for _ in tqdm(range(num_frames)):
+
+        action = env.action_space.sample() * np.nan
+        for i in tqdm(range(num_steps)):
             # Apply the next action
-            action = env.action_space.sample()
-            observation, _, _, _, info = env.step(action=action)
 
             # store data
             for key in observation:
@@ -135,10 +134,13 @@ if __name__ == "__main__":
 
             # Use simulator time, if available.
             try:
-                time_stamp = info["timestamp"]
+                timestamps.append(info["timestamp"])
             except KeyError:
-                time_stamp += args.fps
-            timestamps.append(time_stamp)
+                timestamps.append(np.float32(i)/args.fps)
+
+            if i < num_steps-1:
+                action = env.action_space.sample()
+                observation, _, _, _, info = env.step(action=action)
 
         print("stop")
 
@@ -165,28 +167,28 @@ if __name__ == "__main__":
             state = torch.tensor(np.concatenate(states, axis=1))
 
             action = torch.tensor(np.array(obs_replay["action"]))
-            next_done = torch.zeros(num_frames, dtype=torch.bool)
+            next_done = torch.zeros(num_steps, dtype=torch.bool)
             next_done[-1] = True
 
             ep_dict["observation.state"] = state
             ep_dict["action"] = action
             ep_dict["episode_index"] = torch.tensor(
-                [ep_idx] * num_frames, dtype=torch.int64)
-            ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
+                [ep_idx] * num_steps, dtype=torch.int64)
+            ep_dict["frame_index"] = torch.arange(0, num_steps, 1)
             ep_dict["timestamp"] = torch.tensor(timestamps)
             ep_dict["next.done"] = next_done
 
-            print(f"num_frames={num_frames}")
+            print(f"num_steps={num_steps}")
             print(f"timestamps[-1]={timestamps[-1]}")
-            ep_fps.append(num_frames / timestamps[-1])
+            ep_fps.append(num_steps / timestamps[-1])
             ep_dicts.append(ep_dict)
             print(f"Episode {ep_idx} done, fps: {ep_fps[-1]:.2f}")
 
             episode_data_index["from"].append(id_from)
             episode_data_index["to"].append(
-                id_from + num_frames if args.keep_last else id_from + num_frames - 1)
+                id_from + num_steps if args.keep_last else id_from + num_steps - 1)
 
-            id_to = id_from + num_frames if args.keep_last else id_from + num_frames - 1
+            id_to = id_from + num_steps if args.keep_last else id_from + num_steps - 1
             id_from = id_to
 
             ep_idx += 1
