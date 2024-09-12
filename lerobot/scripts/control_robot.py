@@ -127,7 +127,6 @@ from lerobot.common.datasets.utils import calculate_episode_data_index, create_b
 from lerobot.common.datasets.video_utils import encode_video_frames
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.robot_devices.robots.stretch import StretchRobot
 from lerobot.common.robot_devices.robots.utils import Robot, get_arm_id
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
@@ -177,7 +176,7 @@ def none_or_int(value):
     return int(value)
 
 
-def log_control_info(robot, dt_s, episode_index=None, frame_index=None, fps=None):
+def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
     if episode_index is not None:
         log_items.append(f"ep:{episode_index}")
@@ -197,7 +196,7 @@ def log_control_info(robot, dt_s, episode_index=None, frame_index=None, fps=None
     log_dt("dt", dt_s)
 
     # TODO(aliberts): move robot-specific logs logic in robot.print_logs()
-    if not isinstance(robot, StretchRobot):
+    if not robot.robot_type.startswith("stretch"):
         for name in robot.leader_arms:
             key = f"read_leader_{name}_pos_dt_s"
             if key in robot.logs:
@@ -252,7 +251,7 @@ def has_method(_object: object, method_name: str):
 @safe_disconnect
 def calibrate(robot: Robot, arms: list[str] | None):
     # TODO(aliberts): move this code in robots' classes
-    if isinstance(robot, StretchRobot):
+    if robot.robot_type.startswith("stretch"):
         if not robot.is_connected:
             robot.connect()
         if not robot.is_homed():

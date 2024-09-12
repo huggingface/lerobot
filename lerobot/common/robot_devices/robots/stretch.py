@@ -26,7 +26,7 @@ from lerobot.common.robot_devices.cameras.utils import Camera
 
 @dataclass
 class StretchRobotConfig:
-    robot_type: str | None = None
+    robot_type: str | None = "stretch"
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
     # TODO(aliberts): add feature with max_relative target
     # TODO(aliberts): add comment on max_relative target
@@ -43,6 +43,7 @@ class StretchRobot(StretchAPI):
         # Overwrite config arguments using kwargs
         self.config = replace(config, **kwargs)
 
+        self.robot_type = self.config.robot_type
         self.cameras = self.config.cameras
         self.is_connected = False
         self.teleop = None
