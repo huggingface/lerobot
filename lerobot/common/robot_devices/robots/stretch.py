@@ -52,8 +52,9 @@ class StretchRobot(StretchAPI):
         # RobotParams.set_logging_level("INFO")  # <-- not working
 
         self.state_keys = None
+        self.action_keys = None
 
-    def connect(self):
+    def connect(self) -> None:
         self.is_connected = self.startup()
         for name in self.cameras:
             self.cameras[name].connect()
@@ -61,7 +62,7 @@ class StretchRobot(StretchAPI):
 
         self.run_calibration()
 
-    def run_calibration(self):
+    def run_calibration(self) -> None:
         if not self.is_homed():
             self.home()
 
@@ -74,7 +75,7 @@ class StretchRobot(StretchAPI):
             self.teleop.startup(robot=self)
 
         before_read_t = time.perf_counter()
-        state = self._get_state()
+        state = self.get_state()
         action = self.teleop.gamepad_controller.get_state()
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
@@ -110,7 +111,7 @@ class StretchRobot(StretchAPI):
 
         return obs_dict, action_dict
 
-    def _get_state(self) -> dict:
+    def get_state(self) -> dict:
         status = self.get_status()
         return {
             "head_pan.pos": status["head"]["head_pan"]["pos"],
@@ -126,10 +127,10 @@ class StretchRobot(StretchAPI):
             "base_theta.vel": status["base"]["theta_vel"],
         }
 
-    def capture_observation(self):
+    def capture_observation(self) -> dict:
         # TODO(aliberts): return ndarrays instead of torch.Tensors
         before_read_t = time.perf_counter()
-        state = self._get_state()
+        state = self.get_state()
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         if self.state_keys is None:
@@ -154,17 +155,35 @@ class StretchRobot(StretchAPI):
 
         return obs_dict
 
-    def send_action(self, action): ...
+    def send_action(self, action: torch.Tensor) -> torch.Tensor:
+        # TODO(aliberts): return ndarrays instead of torch.Tensors
+        if self.teleop is None:
+            self.teleop = GamePadTeleop(robot_instance=False)
+            self.teleop.startup(robot=self)
 
-    def print_logs(self):
+        if self.action_keys is None:
+            dummy_action = self.teleop.gamepad_controller.get_state()
+            self.action_keys = list(dummy_action.keys())
+
+        action_dict = dict(zip(self.action_keys, action.tolist(), strict=True))
+
+        before_write_t = time.perf_counter()
+        self.teleop.do_motion(state=action_dict, robot=self)
+        self.push_command()
+        self.logs["write_pos_dt_s"] = time.perf_counter() - before_write_t
+
+        # TODO(aliberts): return action_sent when motion is limited
+        return action
+
+    def print_logs(self) -> None:
         ...
         # TODO(aliberts): move robot-specific logs logic here
 
-    def teleop_safety_stop(self):
+    def teleop_safety_stop(self) -> None:
         if self.teleop is not None:
             self.teleop._safety_stop(robot=self)
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         self.stop()
         if self.teleop is not None:
             self.teleop.gamepad_controller.stop()
