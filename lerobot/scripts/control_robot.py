@@ -553,6 +553,7 @@ def record(
                     exit_early = False
                     break
 
+            # TODO(alibets): allow for teleop during reset
             if has_method(robot, "teleop_safety_stop"):
                 robot.teleop_safety_stop()
 
