@@ -82,9 +82,18 @@
             Episode {{ episode_id }}
         </h1>
 
+        <!-- Error message -->
+        <div class="font-medium text-orange-700 hidden" :class="{ 'hidden': !videoCodecError }">
+            <p>Videos could NOT play because <a href="https://en.wikipedia.org/wiki/AV1" target="_blank" class="underline">AV1</a> decoding is not available on your browser.</p>
+            <ul class="list-decimal list-inside">
+                <li>If iPhone: <span class="italic">It is supported with A17 chip or higher.</span></li>
+                <li>If Mac with Safari: <span class="italic">It is supported on most browsers except Safari with M1 chip or higher and on Safari with M3 chip or higher.</span></li>
+                <li>Other: <span class="italic">Contact the maintainers on LeRobot discord channel:</span> <a href="https://discord.com/invite/s3KuuzsPFb" target="_blank" class="underline">https://discord.com/invite/s3KuuzsPFb</a></li>
+            </ul>
+        </div>
+
         <!-- Videos -->
         <div class="flex flex-wrap gap-1">
-            <p x-show="videoCodecError" class="font-medium text-orange-700">Videos could NOT play because <a href="https://en.wikipedia.org/wiki/AV1" target="_blank" class="underline">AV1</a> decoding is not available on your browser. Learn more about <a href="https://huggingface.co/blog/video-encoding" target="_blank" class="underline">LeRobot video encoding</a>.</p>
             {% for video_info in videos_info %}
             <div x-show="!videoCodecError" class="max-w-96">
                 <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
