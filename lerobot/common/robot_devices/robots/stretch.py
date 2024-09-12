@@ -36,8 +36,6 @@ class StretchRobotConfig:
 class StretchRobot(StretchAPI):
     """Wrapper of stretch_body.robot.Robot"""
 
-    robot_type = "stretch"
-
     def __init__(self, config: StretchRobotConfig | None = None, **kwargs):
         super().__init__()
         if config is None:
