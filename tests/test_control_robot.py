@@ -6,10 +6,10 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils.utils import init_hydra_config
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
 from tests.test_robots import make_robot
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_MOTOR_TYPES, require_robot
+from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, require_robot
 
 
-@pytest.mark.parametrize("robot_type", TEST_MOTOR_TYPES)
+@pytest.mark.parametrize("robot_type", TEST_ROBOT_TYPES)
 @require_robot
 def test_teleoperate(request, robot_type):
     robot = make_robot(robot_type)
@@ -19,7 +19,7 @@ def test_teleoperate(request, robot_type):
     del robot
 
 
-@pytest.mark.parametrize("robot_type", TEST_MOTOR_TYPES)
+@pytest.mark.parametrize("robot_type", TEST_ROBOT_TYPES)
 @require_robot
 def test_calibrate(request, robot_type):
     robot = make_robot(robot_type)
@@ -27,7 +27,7 @@ def test_calibrate(request, robot_type):
     del robot
 
 
-@pytest.mark.parametrize("robot_type", TEST_MOTOR_TYPES)
+@pytest.mark.parametrize("robot_type", TEST_ROBOT_TYPES)
 @require_robot
 def test_record_without_cameras(tmpdir, request, robot_type):
     root = Path(tmpdir)
@@ -37,7 +37,7 @@ def test_record_without_cameras(tmpdir, request, robot_type):
     record(robot, fps=30, root=root, repo_id=repo_id, warmup_time_s=1, episode_time_s=1, num_episodes=2)
 
 
-@pytest.mark.parametrize("robot_type", TEST_MOTOR_TYPES)
+@pytest.mark.parametrize("robot_type", TEST_ROBOT_TYPES)
 @require_robot
 def test_record_and_replay_and_policy(tmpdir, request, robot_type):
     env_name = "koch_real"
