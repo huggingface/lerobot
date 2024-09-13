@@ -196,3 +196,12 @@ class DiffusionConfig:
                 f"`noise_scheduler_type` must be one of {supported_noise_schedulers}. "
                 f"Got {self.noise_scheduler_type}."
             )
+
+        # Check that the horizon size and U-Net downsampling is compatible.
+        # U-Net downsamples by 2 with each stage.
+        downsampling_factor = 2 ** len(self.down_dims)
+        if self.horizon % downsampling_factor != 0:
+            raise ValueError(
+                "The horizon should be an integer multiple of the downsampling factor (which is determined "
+                f"by `len(down_dims)`). Got {self.horizon=} and {self.down_dims=}"
+            )

@@ -14,7 +14,7 @@
 <!-- Use [Alpin.js](https://alpinejs.dev), a lightweight and easy to learn JS framework -->
 <!-- Use [tailwindcss](https://tailwindcss.com/), CSS classes for styling html -->
 <!-- Use [dygraphs](https://dygraphs.com/), a lightweight JS charting library -->
-<body class="flex h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()" @keydown.window="(e) => {
+<body class="flex flex-col md:flex-row h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()" @keydown.window="(e) => {
     // Use the space bar to play and pause, instead of default action (e.g. scrolling)
     const { keyCode, key } = e;
     if (keyCode === 32 || key === ' ') {
@@ -30,7 +30,7 @@
     }
 }">
     <!-- Sidebar -->
-    <div x-ref="sidebar" class="w-60 bg-slate-900 p-5 break-words max-h-screen overflow-y-auto">
+    <div x-ref="sidebar" class="bg-slate-900 p-5 break-words overflow-y-auto shrink-0 md:shrink md:w-60 md:max-h-screen">
         <h1 class="mb-4 text-xl font-semibold">{{ dataset_info.repo_id }}</h1>
 
         <ul>
@@ -46,7 +46,8 @@
         </ul>
 
         <p>Episodes:</p>
-        <ul class="ml-2">
+        <!-- episodes menu for medium & large screens -->
+        <ul class="ml-2 hidden md:block">
             {% for episode in episodes %}
             <li class="font-mono text-sm mt-0.5">
                 <a href="episode_{{ episode }}" class="underline {% if episode_id == episode %}font-bold -ml-1{% endif %}">
@@ -56,26 +57,47 @@
             {% endfor %}
         </ul>
 
+        <!-- episodes menu for small screens -->
+        <div class="flex overflow-x-auto md:hidden">
+            {% for episode in episodes %}
+            <p class="font-mono text-sm mt-0.5 border-r last:border-r-0 px-2 {% if episode_id == episode %}font-bold{% endif %}">
+                <a href="episode_{{ episode }}" class="">
+                    {{ episode }}
+                </a>
+            </p>
+            {% endfor %}
+        </div>
+
     </div>
 
     <!-- Toggle sidebar button -->
-    <button class="flex items-center opacity-50 hover:opacity-100 mx-1"
+    <button class="flex items-center opacity-50 hover:opacity-100 mx-1 hidden md:block"
         @click="() => ($refs.sidebar.classList.toggle('hidden'))" title="Toggle sidebar">
         <div class="bg-slate-500 w-2 h-10 rounded-full"></div>
     </button>
 
     <!-- Content -->
-    <div class="flex-1 max-h-screen flex flex-col gap-4 overflow-y-auto">
+    <div class="max-h-screen flex flex-col gap-4 overflow-y-auto md:flex-1">
         <h1 class="text-xl font-bold mt-4 font-mono">
             Episode {{ episode_id }}
         </h1>
 
+        <!-- Error message -->
+        <div class="font-medium text-orange-700 hidden" :class="{ 'hidden': !videoCodecError }">
+            <p>Videos could NOT play because <a href="https://en.wikipedia.org/wiki/AV1" target="_blank" class="underline">AV1</a> decoding is not available on your browser.</p>
+            <ul class="list-decimal list-inside">
+                <li>If iPhone: <span class="italic">It is supported with A17 chip or higher.</span></li>
+                <li>If Mac with Safari: <span class="italic">It is supported on most browsers except Safari with M1 chip or higher and on Safari with M3 chip or higher.</span></li>
+                <li>Other: <span class="italic">Contact the maintainers on LeRobot discord channel:</span> <a href="https://discord.com/invite/s3KuuzsPFb" target="_blank" class="underline">https://discord.com/invite/s3KuuzsPFb</a></li>
+            </ul>
+        </div>
+
         <!-- Videos -->
         <div class="flex flex-wrap gap-1">
             {% for video_info in videos_info %}
-            <div class="max-w-96">
+            <div x-show="!videoCodecError" class="max-w-96">
                 <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
-                <video muted loop type="video/mp4" class="min-w-64" @canplay="videoCanPlay" @timeupdate="() => {
+                <video muted loop type="video/mp4" class="object-contain w-full h-full" @canplaythrough="videoCanPlay" @timeupdate="() => {
                     if (video.duration) {
                       const time = video.currentTime;
                       const pc = (100 / video.duration) * time;
@@ -183,9 +205,9 @@
                             </td>
                             <template x-for="(cell, colIndex) in row">
                                 <td x-show="cell" class="border border-slate-700">
-                                    <div class="flex gap-x-2 w-24 justify-between px-2">
+                                    <div class="flex gap-x-2 w-24 justify-between px-2" :class="{ 'hidden': cell.isNull }">
                                         <input type="checkbox" x-model="cell.checked" @change="updateTableValues()">
-                                        <span x-text="`${cell.value.toFixed(2)}`"
+                                        <span x-text="`${!cell.isNull ? cell.value.toFixed(2) : null}`"
                                             :style="`color: ${cell.color}`"></span>
                                     </div>
                                 </td>
@@ -207,7 +229,9 @@
                 dygraph: null,
                 currentFrameData: null,
                 columnNames: ["state", "action", "pred action"],
-                nColumns: {% if has_policy %}3{% else %}2{% endif %},
+                nColumns: 2,
+                nStates: 0,
+                nActions: 0,
                 checked: [],
                 dygraphTime: 0.0,
                 dygraphIndex: 0,
@@ -216,9 +240,18 @@
                 colors: null,
                 nVideos: {{ videos_info | length }},
                 nVideoReadyToPlay: 0,
+                videoCodecError: false,
 
                 // alpine initialization
                 init() {
+                    // check if videos can play
+                    const dummyVideo = document.createElement('video');
+                    const canPlayVideos = dummyVideo.canPlayType('video/mp4; codecs="av01.0.05M.08"'); // codec source: https://huggingface.co/blog/video-encoding#results
+                    if(!canPlayVideos){
+                        this.videoCodecError = true;
+                    }
+                    
+                    // process CSV data
                     this.videos = document.querySelectorAll('video');
                     this.video = this.videos[0];
                     this.dygraph = new Dygraph(document.getElementById("graph"), '{{ ep_csv_url }}', {
@@ -243,17 +276,19 @@
                                 this.checked = Array(this.colors.length).fill(true);
 
                                 const seriesNames = this.dygraph.getLabels().slice(1);
+                                this.nStates = seriesNames.findIndex(item => item.startsWith('action_'));
+                                this.nActions = seriesNames.length - this.nStates;
                                 const colors = [];
                                 const LIGHTNESS = [30, 65, 85]; // state_lightness, action_lightness, pred_action_lightness
-                                let lightnessIdx = 0;
-                                const chunkSize = Math.ceil(seriesNames.length / this.nColumns);
-                                for (let i = 0; i < seriesNames.length; i += chunkSize) {
-                                    const lightness = LIGHTNESS[lightnessIdx];
-                                    for (let hue = 0; hue < 360; hue += parseInt(360/chunkSize)) {
-                                        const color = `hsl(${hue}, 100%, ${lightness}%)`;
-                                        colors.push(color);
-                                    }
-                                    lightnessIdx += 1;
+                                // colors for "state" lines
+                                for (let hue = 0; hue < 360; hue += parseInt(360/this.nStates)) {
+                                    const color = `hsl(${hue}, 100%, ${LIGHTNESS[0]}%)`;
+                                    colors.push(color);
+                                }
+                                // colors for "action" lines
+                                for (let hue = 0; hue < 360; hue += parseInt(360/this.nActions)) {
+                                    const color = `hsl(${hue}, 100%, ${LIGHTNESS[1]}%)`;
+                                    colors.push(color);
                                 }
                                 this.dygraph.updateOptions({ colors });
                                 this.colors = colors;
@@ -280,37 +315,40 @@
                     if (!this.currentFrameData) {
                         return [];
                     }
-                    const columnSize = Math.ceil(this.currentFrameData.length / this.nColumns);
-                    return Array.from({
-                        length: columnSize
-                    }, (_, rowIndex) => {
-                        const row = [
-                            this.currentFrameData[rowIndex] || null,
-                            this.currentFrameData[rowIndex + columnSize] || null,
-                        ];
-                        if (this.nColumns === 3) {
-                            row.push(this.currentFrameData[rowIndex + 2 * columnSize] || null)
-                        }
-                        return row;
-                    });
+                    const rows = [];
+                    const nRows = Math.max(this.nStates, this.nActions);
+                    let rowIndex = 0;
+                    while(rowIndex < nRows){
+                        const row = [];
+                        // number of states may NOT match number of actions. In this case, we null-pad the 2D array to make a fully rectangular 2d array
+                        const nullCell = { isNull: true };
+                        const stateValueIdx = rowIndex;
+                        const actionValueIdx = stateValueIdx + this.nStates; // because this.currentFrameData = [state0, state1, ..., stateN, action0, action1, ..., actionN]
+                        // row consists of [state value, action value]
+                        row.push(rowIndex < this.nStates ? this.currentFrameData[stateValueIdx] : nullCell); // push "state value" to row
+                        row.push(rowIndex < this.nActions ? this.currentFrameData[actionValueIdx] : nullCell); // push "action value" to row
+                        rowIndex += 1;
+                        rows.push(row);
+                    }
+                    return rows;
                 },
                 isRowChecked(rowIndex) {
-                    return this.rows[rowIndex].every(cell => cell && cell.checked);
+                    return this.rows[rowIndex].every(cell => cell && (cell.isNull || cell.checked));
                 },
                 isColumnChecked(colIndex) {
-                    return this.rows.every(row => row[colIndex] && row[colIndex].checked);
+                    return this.rows.every(row => row[colIndex] && (row[colIndex].isNull || row[colIndex].checked));
                 },
                 toggleRow(rowIndex) {
                     const newState = !this.isRowChecked(rowIndex);
                     this.rows[rowIndex].forEach(cell => {
-                        if (cell) cell.checked = newState;
+                        if (cell && !cell.isNull) cell.checked = newState;
                     });
                     this.updateTableValues();
                 },
                 toggleColumn(colIndex) {
                     const newState = !this.isColumnChecked(colIndex);
                     this.rows.forEach(row => {
-                        if (row[colIndex]) row[colIndex].checked = newState;
+                        if (row[colIndex] && !row[colIndex].isNull) row[colIndex].checked = newState;
                     });
                     this.updateTableValues();
                 },

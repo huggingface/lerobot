@@ -13,28 +13,31 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import traceback
+
 import pytest
 
 from lerobot.common.utils.utils import init_hydra_config
 
-from .utils import DEVICE, KOCH_ROBOT_CONFIG_PATH
+from .utils import DEVICE, ROBOT_CONFIG_PATH_TEMPLATE
 
 
 def pytest_collection_finish():
     print(f"\nTesting with {DEVICE=}")
 
 
-@pytest.fixture(scope="session")
-def is_koch_available():
+@pytest.fixture
+def is_robot_available(robot_type):
     try:
         from lerobot.common.robot_devices.robots.factory import make_robot
 
-        robot_cfg = init_hydra_config(KOCH_ROBOT_CONFIG_PATH)
+        config_path = ROBOT_CONFIG_PATH_TEMPLATE.format(robot=robot_type)
+        robot_cfg = init_hydra_config(config_path)
         robot = make_robot(robot_cfg)
         robot.connect()
         del robot
         return True
-    except Exception as e:
-        print("A koch robot is not available.")
-        print(e)
+    except Exception:
+        traceback.print_exc()
+        print(f"\nA {robot_type} robot is not available.")
         return False

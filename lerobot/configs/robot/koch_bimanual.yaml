@@ -1,5 +1,12 @@
-_target_: lerobot.common.robot_devices.robots.koch.KochRobot
-calibration_path: .cache/calibration/koch_bimanual.pkl
+_target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
+robot_type: koch
+calibration_dir: .cache/calibration/koch_bimanual
+
+# `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+# Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+# the number of motors in your follower arms.
+max_relative_target: null
+
 leader_arms:
   left:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
@@ -23,6 +30,7 @@ leader_arms:
       wrist_flex: [4, "xl330-m077"]
       wrist_roll: [5, "xl330-m077"]
       gripper: [6, "xl330-m077"]
+
 follower_arms:
   left:
     _target_: lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus
@@ -46,6 +54,7 @@ follower_arms:
       wrist_flex: [4, "xl330-m288"]
       wrist_roll: [5, "xl330-m288"]
       gripper: [6, "xl330-m288"]
+
 cameras:
   laptop:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
@@ -59,10 +68,8 @@ cameras:
     fps: 30
     width: 640
     height: 480
-# `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
-# Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
-# the number of motors in your follower arms.
-max_relative_target: null
+
+# ~ Koch specific settings ~
 # Sets the leader arm in torque mode with the gripper motor set to this angle. This makes it possible
 # to squeeze the gripper and have it spring back to an open position on its own.
 gripper_open_degree: 35.156

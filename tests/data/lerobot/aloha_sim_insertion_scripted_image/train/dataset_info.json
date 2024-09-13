@@ -1,3 +1,47 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:4c9545525dc1f4d550591bd5efb63b55c15b983ae0510fefda5a16d77c78b6ef
-size 837
+{
+  "citation": "",
+  "description": "",
+  "features": {
+    "observation.images.top": {
+      "_type": "Image"
+    },
+    "observation.state": {
+      "feature": {
+        "dtype": "float32",
+        "_type": "Value"
+      },
+      "length": 14,
+      "_type": "Sequence"
+    },
+    "action": {
+      "feature": {
+        "dtype": "float32",
+        "_type": "Value"
+      },
+      "length": 14,
+      "_type": "Sequence"
+    },
+    "episode_index": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "frame_index": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "timestamp": {
+      "dtype": "float32",
+      "_type": "Value"
+    },
+    "next.done": {
+      "dtype": "bool",
+      "_type": "Value"
+    },
+    "index": {
+      "dtype": "int64",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": ""
+}
