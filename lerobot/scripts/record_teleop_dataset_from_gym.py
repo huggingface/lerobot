@@ -63,6 +63,7 @@ class Runner:
         self.args = args
         self.image_keys = self.args.image_keys.split(",")
         self.state_keys = self.args.state_keys.split(",")
+        self.dataset_counter = 0
 
         self.import_module_contining_gym()
 
@@ -80,6 +81,9 @@ class Runner:
         else:
             raise ValueError(
                 "stop_teleoperation is not callable but a teleoperation system was initialized.")
+
+    def increment_dataset_counter(self):
+        self.dataset_counter += 1
 
     def construct_and_set_up_env(self):
         # Create the gym environment - check the kwargs in gym_real_world/gym_environment.py
@@ -163,27 +167,30 @@ class Runner:
 
         self.stop_teleoperation = stop_teleoperation
 
-    def output_data_path(self):
+    def output_data_path(self, dataset_index: int | None = None) -> str:
         if DATA_DIR == None:
             DATA_DIR = pathlib.Path("data_traces")
             print(
                 "Warning: env variable DATA_DIR was not set, defaulting to './{}'.".format(DATA_DIR))
 
-        return DATA_DIR / self.args.repo_id
+        if dataset_index is None:
+            dataset_index = self.dataset_counter
+
+        return DATA_DIR / self.args.repo_id / str(dataset_index)
 
     # Where to save the LeRobotDataset
-    def train_data_path(self) -> str:
+    def hf_dataset_path(self, dataset_index: int | None = None) -> str:
         return self.output_data_path() / "train"
 
     # During data collection, frames are stored here as png images.
-    def images_data_path(self) -> str:
+    def images_data_path(self, dataset_index: int | None = None) -> str:
         return self.output_data_path() / "images"
 
     # After data collection, png images of each episode are encoded into an mp4 file stored here.
-    def videos_data_path(self) -> str:
+    def videos_data_path(self, dataset_index: int | None = None) -> str:
         return self.output_data_path() / "videos"
 
-    def meta_data_path(self) -> str:
+    def meta_data_path(self, dataset_index: int | None) -> str:
         return self.output_data_path() / "meta_data"
 
     def set_up_output_path(self):
@@ -277,7 +284,7 @@ class Runner:
         print("save to disk")
         # to remove transforms that cant be saved
         hf_dataset = hf_dataset.with_format(None)
-        hf_dataset.save_to_disk(self.train_data_path())
+        hf_dataset.save_to_disk(self.hf_dataset_path())
 
         save_meta_data(info, stats, episode_data_index, self.meta_data_path())
 
@@ -415,13 +422,30 @@ class Runner:
 
         return lerobot_dataset
 
-    def replay_episodes(self, *, lerobot_dataset: LeRobotDataset):
-        pass
+    def teleop_robot_and_record_data() -> LeRobotDataset:
+        new_dataset = self.run_all_episodes()
+        return new_dataset
+
+    def replay_episodes_and_record_data(self, *, source_dataset: LeRobotDataset | None = None) -> LeRobotDataset:
+        if source_dataset is None:
+            source_dataset = LeRobotDataset(
+                repo_id=self.args.repo_id,
+                root=self.hf_dataset_path()
+            )
+
+        new_dataset = self.run_all_episodes(source_dataset=source_dataset)
+        return new_dataset
 
 
 if __name__ == "__main__":
     args = process_args()
     runner = Runner(args)
-    lerobot_dataset = runner.run_all_episodes()
 
-    runner.replay_episodes(lerobot_dataset=lerobot_dataset)
+    lerobot_dataset = record_initial_training_data()
+    runner.increment_dataset_counter()
+
+    print("Replaying from dataset")
+    runner.replay_episodes(dataset=lerobot_dataset)
+
+    print("Replaying teleop from ")
+    runner.replay_episodes(source_)
