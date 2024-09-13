@@ -194,7 +194,6 @@ if __name__ == "__main__":
     for ep_idx in range(num_episodes):
         for img_key in args.image_keys.split(","):
             encode_video_frames(
-                vcodec="libx265",
                 imgs_dir=images_dir / f"{img_key}_episode_{ep_idx:06d}",
                 video_path=videos_dir / f"{img_key}_episode_{ep_idx:06d}.mp4",
                 fps=ep_fps[ep_idx],
