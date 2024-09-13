@@ -63,6 +63,7 @@ class ARXArm:
         self.is_connected = True
 
         self.joint_controller = arx5.Arx5JointController(self.config.model, self.config.interface_name)
+        print("joint controller created")
         self.joint_controller.enable_background_send_recv()
         self.joint_controller.reset_to_home()
         self.joint_controller.enable_gravity_compensation(self.config.urdf_path)
@@ -170,9 +171,11 @@ class ARX5Robot:
         for name in self.follower_arms:
             print(f"Connecting {name} follower arm.")
             self.follower_arms[name].connect()
+            time.sleep(0.2)
         for name in self.leader_arms:
             print(f"Connecting {name} leader arm.")
             self.leader_arms[name].connect()
+            time.sleep(0.2)
 
         # Run calibration process which begins by resetting all arms
         self.run_calibration()
@@ -309,12 +312,11 @@ class ARX5Robot:
         action = action.numpy()
 
         from_idx = 0
-        to_idx = 0
         follower_goal_pos = {}
         for name in self.follower_arms:
             if name in self.follower_arms:
-                to_idx += self.config.follower_arms[name].dof
-                follower_goal_pos[name] = action[from_idx:to_idx + 1]
+                to_idx = self.config.follower_arms[name].dof
+                follower_goal_pos[name] = action[from_idx:(from_idx + to_idx + 1)]
                 from_idx = to_idx + 1
 
         for name in self.follower_arms:
