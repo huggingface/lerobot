@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from copy import deepcopy
 
 import torch
+from termcolor import colored
 from torch import Tensor
 
 from lerobot.common.policies.policy_protocol import Policy
@@ -71,11 +72,14 @@ class PolicyRolloutWrapper:
         self._threadpool_executor.shutdown(wait=True, cancel_futures=True)
 
     def reset(self):
-        """Reset observation and action caches.
+        """Reset policy, observation cache, and action cache.
 
         NOTE: Ensure that any access to these caches is within a thread-locked context as their state is
         managed in different threads.
         """
+        # Some policies need to be reset in between rollouts.
+        if hasattr(self.policy, "reset"):
+            self.policy.reset()
         with self._thread_lock:
             # Store a mapping from observation timestamp (the moment the observation was captured) to
             # observation batch.
@@ -150,7 +154,7 @@ class PolicyRolloutWrapper:
             )
 
         inference_time = time.perf_counter() - start_inference_t
-        # logging.info(f"Inference time: {inference_time * 1000 :.0f} ms")
+        logging.debug(f"Inference time: {inference_time * 1000 :.0f} ms")
         if inference_time > (self.n_action_buffer * self.period_us + self.period_us) / MICROSEC:
             logging.warning(
                 "Inference is taking longer than your buffer.\n"
@@ -161,9 +165,9 @@ class PolicyRolloutWrapper:
     def _get_contiguous_action_sequence_from_cache(self, first_action_timestamp_us: float) -> Tensor | None:
         with self._thread_lock:
             action_cache = deepcopy(self._action_cache)
-        if len(action_cache) == 0:
-            return None
         action_cache_timestamps_us = torch.tensor(sorted(action_cache))
+        if len(action_cache) == 0 or action_cache_timestamps_us.max() < first_action_timestamp_us:
+            return None
         action_timestamps_us = torch.arange(
             first_action_timestamp_us, action_cache_timestamps_us.max() + self.period_us, self.period_us
         )
@@ -233,7 +237,7 @@ class PolicyRolloutWrapper:
         del first_action_timestamp  # defensive against accidentally using the seconds version
 
         # Update observation cache.
-        if not set(observation_batch).issubset(self.policy.input_keys):
+        if not set(self.policy.input_keys).issubset(observation_batch):
             raise ValueError(
                 f"Missing observation_keys: {set(self.policy.input_keys).difference(set(observation_batch))}"
             )
@@ -274,7 +278,9 @@ class PolicyRolloutWrapper:
                 self._future.result(timeout=timeout_)
             except TimeoutError:
                 if ret is None:
-                    logging.warning("Your inference is begining to fall behind your rollout loop!")
+                    logging.warning(
+                        colored("Your inference is begining to fall behind your rollout loop!", "yellow")
+                    )
                 return ret
 
         # Start the inference job.
