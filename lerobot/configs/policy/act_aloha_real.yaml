@@ -21,7 +21,7 @@
 # ```
 
 seed: 1000
-dataset_repo_id: cadene/aloha_lace_shoe
+dataset_repo_id: lerobot/aloha_static_vinh_cup
 
 override_dataset_stats:
   observation.images.cam_right_wrist:
