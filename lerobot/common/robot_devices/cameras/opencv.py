@@ -233,6 +233,9 @@ class OpenCVCamera:
         if platform.system() == "Linux":
             # Linux uses ports for connecting to cameras
             tmp_camera = cv2.VideoCapture(f"/dev/video{self.camera_index}")
+        elif platform.system() == "Windows":
+            # Windows needs to use CAP_DSHOW for fast camera access
+            tmp_camera = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
         else:
             tmp_camera = cv2.VideoCapture(self.camera_index)
 
@@ -258,6 +261,8 @@ class OpenCVCamera:
         # needs to be re-created.
         if platform.system() == "Linux":
             self.camera = cv2.VideoCapture(f"/dev/video{self.camera_index}")
+        elif platform.system() == "Windows":
+            self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
         else:
             self.camera = cv2.VideoCapture(self.camera_index)
 
