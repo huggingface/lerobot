@@ -115,6 +115,7 @@ def test_camera(request, camera_type, mock):
         "max_pixel_difference between read() and async_read()",
         compute_max_pixel_difference(color_image, async_color_image),
     )
+    # TODO(rcadene): properly set `rtol`
     assert np.allclose(color_image, async_color_image, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE), error_msg
 
     # Test disconnecting
