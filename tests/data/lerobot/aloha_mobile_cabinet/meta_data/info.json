@@ -1,0 +1,11 @@
+{
+    "codebase_version": "v1.6",
+    "fps": 50,
+    "video": true,
+    "encoding": {
+        "vcodec": "libsvtav1",
+        "pix_fmt": "yuv420p",
+        "g": 2,
+        "crf": 30
+    }
+}
