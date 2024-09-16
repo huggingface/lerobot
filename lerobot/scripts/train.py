@@ -33,7 +33,7 @@ from torch.cuda.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
-from lerobot.common.datasets.online_buffer import OnlineBuffer, compute_sampler_weights
+from lerobot.common.datasets.online_buffer import DataBuffer, compute_sampler_weights
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
@@ -403,8 +403,19 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     else:
         shuffle = True
         sampler = None
+
+    if cfg.get("use_lerobot_data_buffer", False):
+        offline_dataset_for_dataloader = DataBuffer.from_hf_dataset(
+            offline_dataset.hf_dataset,
+            storage_dir=f"/tmp/{offline_dataset.repo_id}",
+            fps=offline_dataset.fps,
+            delta_timestamps=offline_dataset.delta_timestamps,
+        )
+    else:
+        offline_dataset_for_dataloader = offline_dataset
+
     dataloader = torch.utils.data.DataLoader(
-        offline_dataset,
+        offline_dataset_for_dataloader,
         num_workers=cfg.training.num_workers,
         batch_size=cfg.training.batch_size,
         shuffle=shuffle,
@@ -470,7 +481,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             "was made. This is because the online buffer is updated on disk during training, independently "
             "of our explicit checkpointing mechanisms."
         )
-    online_dataset = OnlineBuffer(
+    online_dataset = DataBuffer(
         online_buffer_path,
         data_spec={
             **{k: {"shape": v, "dtype": np.dtype("float32")} for k, v in policy.config.input_shapes.items()},
