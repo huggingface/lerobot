@@ -1,9 +1,18 @@
+"""Mocked classes and functions from dynamixel_sdk to allow for continuous integration
+and testing code logic that requires hardware and devices (e.g. robot arms, cameras)
+
+Warning: These mocked versions are minimalist. They do not exactly mock every behaviors
+from the original classes and functions (e.g. return types might be None instead of boolean).
+"""
+
 from dynamixel_sdk import COMM_SUCCESS
 
 DEFAULT_BAUDRATE = 9_600
 
 
 def mock_convert_to_bytes(value, bytes):
+    # TODO(rcadene): remove need to mock `convert_to_bytes` by implemented the inverse transform
+    # `convert_bytes_to_value`
     del bytes  # unused
     return value
 

@@ -288,7 +288,9 @@ class IntelRealSenseCamera:
         actual_width = color_profile.width()
         actual_height = color_profile.height()
 
+        # Using `math.isclose` since actual fps can be a float (e.g. 29.9 instead of 30)
         if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
+            # Using `OSError` since it's a broad that encompasses issues related to device communication
             raise OSError(
                 f"Can't set {self.fps=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_fps}."
             )

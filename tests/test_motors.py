@@ -11,12 +11,12 @@ pytest -sx tests/test_motors.py::test_motors_bus
 
 Example of running test on real dynamixel motors connected to the computer:
 ```bash
-pytest -sx tests/test_motors.py::test_motors_bus[dynamixel]
+pytest -sx 'tests/test_motors.py::test_motors_bus[dynamixel-False]'
 ```
 
 Example of running test on a mocked version of dynamixel motors:
 ```bash
-pytest -sx -k "mocked_dynamixel" tests/test_motors.py::test_motors_bus
+pytest -sx 'tests/test_motors.py::test_motors_bus[dynamixel-True]'
 ```
 """
 
@@ -87,9 +87,9 @@ def test_configure_motors_all_ids_1(request, motor_type):
     del motors_bus
 
 
-@pytest.mark.parametrize("motor_type", TEST_MOTOR_TYPES)
+@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
 @require_motor
-def test_motors_bus(request, motor_type):
+def test_motors_bus(request, motor_type, mock):
     motors_bus = make_motors_bus(motor_type)
 
     # Test reading and writting before connecting raises an error

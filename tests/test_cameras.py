@@ -10,16 +10,18 @@ pytest -sx tests/test_cameras.py::test_camera
 
 Example of running test on a real camera connected to the computer:
 ```bash
-pytest -sx tests/test_cameras.py::test_camera[opencv]
-pytest -sx tests/test_cameras.py::test_camera[intelrealsense]
+pytest -sx 'tests/test_cameras.py::test_camera[opencv-False]'
+pytest -sx 'tests/test_cameras.py::test_camera[intelrealsense-False]'
 ```
 
 Example of running test on a mocked version of the camera:
 ```bash
-pytest -sx -k "mocked_opencv" tests/test_cameras.py::test_camera
-pytest -sx -k "mocked_intelrealsense" tests/test_cameras.py::test_camera
+pytest -sx 'tests/test_cameras.py::test_camera[opencv-True]'
+pytest -sx 'tests/test_cameras.py::test_camera[intelrealsense-True]'
 ```
 """
+
+import os
 
 import numpy as np
 import pytest
@@ -28,8 +30,8 @@ from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError,
 from tests.utils import TEST_CAMERA_TYPES, require_camera
 
 # Camera indices used for connecting physical cameras
-OPENCV_CAMERA_INDEX = 0
-INTELREALSENSE_CAMERA_INDEX = 128422271614
+OPENCV_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_OPENCV_CAMERA_INDEX", 0))
+INTELREALSENSE_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_INTELREALSENSE_CAMERA_INDEX", 128422271614))
 
 # Maximum absolute difference between two consecutive images recored by a camera.
 # This value differs with respect to the camera.
@@ -57,9 +59,9 @@ def make_camera(camera_type, **kwargs):
         raise ValueError(f"The camera type '{camera_type}' is not valid.")
 
 
-@pytest.mark.parametrize("camera_type", TEST_CAMERA_TYPES)
+@pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)
 @require_camera
-def test_camera(request, camera_type):
+def test_camera(request, camera_type, mock):
     """Test assumes that `camera.read()` returns the same image when called multiple times in a row.
     So the environment should not change (you shouldnt be in front of the camera) and the camera should not be moving.
 
@@ -156,9 +158,9 @@ def test_camera(request, camera_type):
     del camera
 
 
-@pytest.mark.parametrize("camera_type", TEST_CAMERA_TYPES)
+@pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)
 @require_camera
-def test_save_images_from_cameras(tmpdir, request, camera_type):
+def test_save_images_from_cameras(tmpdir, request, camera_type, mock):
     # TODO(rcadene): refactor
     if camera_type == "opencv":
         from lerobot.common.robot_devices.cameras.opencv import save_images_from_cameras

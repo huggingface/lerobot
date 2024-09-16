@@ -30,9 +30,17 @@ DEFAULT_CONFIG_PATH = "lerobot/configs/default.yaml"
 
 ROBOT_CONFIG_PATH_TEMPLATE = "lerobot/configs/robot/{robot}.yaml"
 
-TEST_ROBOT_TYPES = available_robots + [f"mocked_{robot_type}" for robot_type in available_robots]
-TEST_CAMERA_TYPES = available_cameras + [f"mocked_{camera_type}" for camera_type in available_cameras]
-TEST_MOTOR_TYPES = available_motors + [f"mocked_{motor_type}" for motor_type in available_motors]
+TEST_ROBOT_TYPES = []
+for robot_type in available_robots:
+    TEST_ROBOT_TYPES += [(robot_type, True), (robot_type, False)]
+
+TEST_CAMERA_TYPES = []
+for camera_type in available_cameras:
+    TEST_CAMERA_TYPES += [(camera_type, True), (camera_type, False)]
+
+TEST_MOTOR_TYPES = []
+for motor_type in available_motors:
+    TEST_MOTOR_TYPES += [(motor_type, True), (motor_type, False)]
 
 
 def require_x86_64_kernel(func):
@@ -179,21 +187,22 @@ def require_robot(func):
         # Access the pytest request context to get the is_robot_available fixture
         request = kwargs.get("request")
         robot_type = kwargs.get("robot_type")
+        mock = kwargs.get("mock")
 
         if robot_type is None:
             raise ValueError("The 'robot_type' must be an argument of the test function.")
-
-        if robot_type not in TEST_ROBOT_TYPES:
-            raise ValueError(
-                f"The camera type '{robot_type}' is not valid. Expected one of these '{TEST_ROBOT_TYPES}"
-            )
-
         if request is None:
             raise ValueError("The 'request' fixture must be an argument of the test function.")
+        if mock is None:
+            raise ValueError("The 'mock' variable must be an argument of the test function.")
+
+        if robot_type not in available_robots:
+            raise ValueError(
+                f"The camera type '{robot_type}' is not valid. Expected one of these '{available_robots}"
+            )
 
         # Run test with a monkeypatched version of the robot devices.
-        if robot_type.startswith("mocked_"):
-            kwargs["robot_type"] = robot_type.replace("mocked_", "")
+        if mock:
             mock_cameras(request)
             mock_motors(request)
 
@@ -221,21 +230,22 @@ def require_camera(func):
         # Access the pytest request context to get the is_camera_available fixture
         request = kwargs.get("request")
         camera_type = kwargs.get("camera_type")
-
-        if camera_type is None:
-            raise ValueError("The 'camera_type' must be an argument of the test function.")
-
-        if camera_type not in TEST_CAMERA_TYPES:
-            raise ValueError(
-                f"The camera type '{camera_type}' is not valid. Expected one of these '{TEST_CAMERA_TYPES}"
-            )
+        mock = kwargs.get("mock")
 
         if request is None:
             raise ValueError("The 'request' fixture must be an argument of the test function.")
+        if camera_type is None:
+            raise ValueError("The 'camera_type' must be an argument of the test function.")
+        if mock is None:
+            raise ValueError("The 'mock' variable must be an argument of the test function.")
+
+        if camera_type not in available_cameras:
+            raise ValueError(
+                f"The camera type '{camera_type}' is not valid. Expected one of these '{available_cameras}"
+            )
 
         # Run test with a monkeypatched version of the robot devices.
-        if camera_type.startswith("mocked_"):
-            kwargs["camera_type"] = camera_type.replace("mocked_", "")
+        if mock:
             mock_cameras(request)
 
         # Run test with a real robot. Skip test if robot connection fails.
@@ -255,21 +265,22 @@ def require_motor(func):
         # Access the pytest request context to get the is_motor_available fixture
         request = kwargs.get("request")
         motor_type = kwargs.get("motor_type")
-
-        if motor_type is None:
-            raise ValueError("The 'motor_type' must be an argument of the test function.")
-
-        if motor_type not in TEST_MOTOR_TYPES:
-            raise ValueError(
-                f"The motor type '{motor_type}' is not valid. Expected one of these '{TEST_MOTOR_TYPES}"
-            )
+        mock = kwargs.get("mock")
 
         if request is None:
             raise ValueError("The 'request' fixture must be an argument of the test function.")
+        if motor_type is None:
+            raise ValueError("The 'motor_type' must be an argument of the test function.")
+        if mock is None:
+            raise ValueError("The 'mock' variable must be an argument of the test function.")
+
+        if motor_type not in available_motors:
+            raise ValueError(
+                f"The motor type '{motor_type}' is not valid. Expected one of these '{available_motors}"
+            )
 
         # Run test with a monkeypatched version of the robot devices.
-        if motor_type.startswith("mocked_"):
-            kwargs["motor_type"] = motor_type.replace("mocked_", "")
+        if mock:
             mock_motors(request)
 
         # Run test with a real robot. Skip test if robot connection fails.

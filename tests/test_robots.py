@@ -10,18 +10,17 @@ pytest -sx tests/test_robots.py::test_robot
 
 Example of running test on real robots connected to the computer:
 ```bash
-pytest -sx tests/test_robots.py::test_robot[koch]
-pytest -sx tests/test_robots.py::test_robot[koch_bimanual]
-pytest -sx tests/test_robots.py::test_robot[aloha]
+pytest -sx 'tests/test_robots.py::test_robot[koch-False]'
+pytest -sx 'tests/test_robots.py::test_robot[koch_bimanual-False]'
+pytest -sx 'tests/test_robots.py::test_robot[aloha-False]'
 ```
 
 Example of running test on a mocked version of robots:
 ```bash
-pytest -sx -k "mocked_koch" tests/test_robots.py::test_robot
-pytest -sx -k "mocked_koch_bimanual" tests/test_robots.py::test_robot
-pytest -sx -k "mocked_aloha" tests/test_robots.py::test_robot
+pytest -sx 'tests/test_robots.py::test_robot[koch-True]'
+pytest -sx 'tests/test_robots.py::test_robot[koch_bimanual-True]'
+pytest -sx 'tests/test_robots.py::test_robot[aloha-True]'
 ```
-
 """
 
 from pathlib import Path
@@ -43,9 +42,9 @@ def make_robot(robot_type: str, overrides: list[str] | None = None) -> Robot:
     return robot
 
 
-@pytest.mark.parametrize("robot_type", TEST_ROBOT_TYPES)
+@pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_robot(tmpdir, request, robot_type):
+def test_robot(tmpdir, request, robot_type, mock):
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
     # TODO(rcadene): add compatibility with other robots
