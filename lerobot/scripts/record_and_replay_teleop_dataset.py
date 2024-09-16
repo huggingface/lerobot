@@ -488,7 +488,7 @@ class Runner:
         if source_dataset is None:
             source_dataset = LeRobotDataset(
                 repo_id=self.args.repo_id,
-                root=self.self.prev_output_data_path
+                root=self.prev_output_data_path
             )
 
         new_dataset = self.run_sim_while_recording_dataset(
@@ -540,13 +540,11 @@ if __name__ == "__main__":
     })
     runner.replay_dataset_actions_in_sim(source_dataset=lerobot_dataset)
 
-    # FIXME: Not working yet (importing from file)
-    # print("Replaying from previous dataset (from disk)")
-    # runner.increment_dataset_counter()
-    # runner.augment_sim_parameters({
-    #     "manipulands": [
-    #         f"{module_obj.ASSETS_PATH}/blue_cube.sdf",
-    #     ],
-    # })
-    # print("Replaying from dataset")
-    # runner.replay_dataset_actions_in_sim()
+    print("Replaying from previous dataset (from disk)")
+    runner.increment_dataset_counter()
+    runner.augment_sim_parameters({
+        "manipulands": [
+            f"{module_obj.ASSETS_PATH}/green_cube.sdf",
+        ],
+    })
+    runner.replay_dataset_actions_in_sim()
