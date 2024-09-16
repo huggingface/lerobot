@@ -200,13 +200,13 @@ available_robots = [
     "aloha",
 ]
 
-# lists all available robots from `lerobot/common/robot_devices/cameras`
+# lists all available cameras from `lerobot/common/robot_devices/cameras`
 available_cameras = [
     "opencv",
     "intelrealsense",
 ]
 
-# lists all available robots from `lerobot/common/robot_devices/motors`
+# lists all available motors from `lerobot/common/robot_devices/motors`
 available_motors = [
     "dynamixel",
 ]
