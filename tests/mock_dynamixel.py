@@ -11,7 +11,7 @@ def mock_convert_to_bytes(value, bytes):
 class MockPortHandler:
     def __init__(self, port):
         self.port = port
-        # default fresh from factory baudrate
+        # factory default baudrate
         self.baudrate = DEFAULT_BAUDRATE
 
     def openPort(self):  # noqa: N802
