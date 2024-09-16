@@ -73,8 +73,13 @@ class ReplayHelper:
     def get_action_at_frame(self):
         return self.dataset[self.frame_index]["action"]
 
-    def is_last_frame_in_episode(self):
+    @property
+    def is_at_last_frame_in_episode(self):
         return self.dataset[self.frame_index]["episode_index"] != self.dataset[self.frame_index + 1]["episode_index"]
+
+    @property
+    def is_at_last_frame_in_dataset(self):
+        return self.dataset.num_samples-1 == self.frame_index
 
 
 class Runner:
@@ -87,7 +92,7 @@ class Runner:
         self.set_up_teleop(args.teleop_method)
         self.sim_parameters = dict()
 
-    def set_up_teleop(self, teleop_method:str):
+    def set_up_teleop(self, teleop_method: str):
         if teleop_method == "keyboard":
             self.set_up_keyboard_teleop()
         else:
@@ -98,7 +103,6 @@ class Runner:
             raise ValueError(
                 "stop_teleoperation_handler is not callable but a teleoperation system was initialized.")
 
-
     def increment_dataset_counter(self):
         self.prev_output_data_path = self.output_data_path
         self.dataset_counter += 1
@@ -106,7 +110,7 @@ class Runner:
     def construct_and_set_up_env(self):
         # Create the gym environment - check the kwargs in gym_real_world/gym_environment.py
         env = gym.make(self.args.env_name, disable_env_checker=True,
-                       observation_mode="both", action_mode="ee", render_mode="human")
+                       observation_mode="both", action_mode="ee", render_mode="human", parameters=self.sim_parameters)
 
         # Reset the environment
         observation, info = env.reset()
@@ -114,10 +118,16 @@ class Runner:
 
     def get_next_action_in_episode(self, replay_helper: ReplayHelper | None):
         if replay_helper is not None:
-            if replay_helper.is_last_frame_in_episode():
-                self.is_concluding_episode = True
             action = replay_helper.get_action_at_frame()
-            replay_helper.increment_frame_index()
+            if replay_helper.is_at_last_frame_in_dataset:
+                self.is_concluding_episode = True
+                self.is_stopping = True
+            elif replay_helper.is_at_last_frame_in_episode:
+                self.is_concluding_episode = True
+                replay_helper.increment_frame_index()
+            else:
+                replay_helper.increment_frame_index()
+
             return action
         else:
             assert self.teleoperation_action is not None
@@ -144,6 +154,16 @@ class Runner:
 
     def set_up_keyboard_teleop(self):
         print("Setting up keyboard teleop...")
+
+        print("Keyboard controls:")
+        print("up/dpwn: move hand forwards/backwards (+y/-y)")
+        print("left/right: move hand left/right (-x/+x)")
+        print("page_up/page_down: move hand up/down (+z/-z)")
+        print("cmd/shift: Close/open gripper")
+        print("delete: Discard Episode and reset env")
+        print("home: Save episode and reset env")
+        print("end: Save episode and end data collection")
+
         # TODO(samzapo): Use SharedMemoryManager.ShareableList for the following values.
         #                from multiprocessing.managers import SharedMemoryManager
         self.teleoperation_action = None
@@ -198,49 +218,43 @@ class Runner:
 
         # assign teleoperation shut-down function.
         self.stop_teleoperation_handler = lambda: listener.stop()
-        print(f"self.stop_teleoperation_handler={type(self.stop_teleoperation_handler)}")
-        
 
     # During data collection, all data written to disk is stored here.
+
     @property
     def output_data_path(self) -> str:
-        #FIXME: Use DATA_DIR, if available
+        # FIXME: Use DATA_DIR, if available
         print(f"DATA_DIR={lerobot.common.datasets.lerobot_dataset.DATA_DIR}")
         if lerobot.common.datasets.lerobot_dataset.DATA_DIR is None:
-            lerobot.common.datasets.lerobot_dataset.DATA_DIR = pathlib.Path("data_traces")
+            lerobot.common.datasets.lerobot_dataset.DATA_DIR = pathlib.Path(
+                "data_traces")
             print(
                 "Warning: env variable DATA_DIR was not set, defaulting to './{}'.".format(lerobot.common.datasets.lerobot_dataset.DATA_DIR))
 
         dataset_index = self.dataset_counter
 
-        return lerobot.common.datasets.lerobot_dataset.DATA_DIR / self.args.repo_id / str(dataset_index)
+        return lerobot.common.datasets.lerobot_dataset.DATA_DIR / str(self.dataset_counter)
 
     # Where to save the HF Dataset
 
     @property
     def hf_dataset_path(self) -> str:
-        return self.output_data_path / "train"
-
-    # Where the previous HF Dataset was written to disk.
-    @property
-    def prev_hf_dataset_path(self) -> str:
-        assert self.prev_output_data_path is not None
-        return self.prev_output_data_path / "train"
+        return self.output_data_path / self.args.repo_id / "train"
 
     # During data collection, frames are stored here as png images.
     @property
     def images_data_path(self) -> str:
-        return self.output_data_path / "images"
+        return self.output_data_path / self.args.repo_id / "images"
 
     # After data collection, png images of each episode are encoded into an mp4 file stored here.
     @property
     def videos_data_path(self) -> str:
-        return self.output_data_path / "videos"
+        return self.output_data_path / self.args.repo_id / "videos"
 
     # After data collection, meta data is stored here.
     @property
     def meta_data_path(self) -> str:
-        return self.output_data_path / "meta_data"
+        return self.output_data_path / self.args.repo_id / "meta_data"
 
     def set_up_output_path(self):
         # Create image and video directories
@@ -257,10 +271,12 @@ class Runner:
         print("encode video frames")
         for ep_idx in range(len(episode_fps)):
             for img_key in self.image_keys:
-                encode_video_frames( 
+                encode_video_frames(
                     vcodec="libx265",
-                    imgs_dir=self.images_data_path / f"{img_key}_episode_{ep_idx:06d}",
-                    video_path=self.videos_data_path / f"{img_key}_episode_{ep_idx:06d}.mp4",
+                    imgs_dir=self.images_data_path /
+                    f"{img_key}_episode_{ep_idx:06d}",
+                    video_path=self.videos_data_path /
+                    f"{img_key}_episode_{ep_idx:06d}.mp4",
                     fps=episode_fps[ep_idx],
                 )
 
@@ -369,7 +385,7 @@ class Runner:
                     {"path": f"videos/{fname}", "timestamp": timestamp} for timestamp in timestamps]
 
             states = []
-            for state_name in self.image_keys:
+            for state_name in self.state_keys:
                 states.append(np.array(observations[state_name]))
             state = torch.tensor(np.concatenate(states, axis=1))
 
@@ -472,11 +488,11 @@ class Runner:
         if source_dataset is None:
             source_dataset = LeRobotDataset(
                 repo_id=self.args.repo_id,
-                root=self.prev_hf_dataset_path
+                root=self.self.prev_output_data_path
             )
 
         new_dataset = self.run_sim_while_recording_dataset(
-            replay_helper=ReplayHelper(source_dataset))
+            replay_helper=ReplayHelper(lerobot_datadet=source_dataset))
         return new_dataset
 
     def augment_sim_parameters(self, new_sim_parameters: dict):
@@ -503,7 +519,8 @@ if __name__ == "__main__":
 
     module_obj = import_module_contining_gym(args.module_name)
     print(f"Imported python module: '{args.module_name}'")
-    assert hasattr(module_obj, 'ASSETS_PATH'), "Module should have the 'ASSETS_PATH' attribute!"
+    assert hasattr(
+        module_obj, 'ASSETS_PATH'), "Module should have the 'ASSETS_PATH' attribute!"
 
     runner = Runner(args)
 
@@ -523,12 +540,13 @@ if __name__ == "__main__":
     })
     runner.replay_dataset_actions_in_sim(source_dataset=lerobot_dataset)
 
-    print("Replaying from previous dataset (from disk)")
-    runner.increment_dataset_counter()
-    runner.augment_sim_parameters({
-        "manipulands": [
-            f"{module_obj.ASSETS_PATH}/blue_cube.sdf",
-        ],
-    })
-    print("Replaying from dataset")
-    runner.replay_dataset_actions_in_sim()
+    # FIXME: Not working yet (importing from file)
+    # print("Replaying from previous dataset (from disk)")
+    # runner.increment_dataset_counter()
+    # runner.augment_sim_parameters({
+    #     "manipulands": [
+    #         f"{module_obj.ASSETS_PATH}/blue_cube.sdf",
+    #     ],
+    # })
+    # print("Replaying from dataset")
+    # runner.replay_dataset_actions_in_sim()
