@@ -17,7 +17,11 @@ seed: 1000
 dataset_repo_id: villekuosmanen/pick_coffee_prop_test
 
 override_dataset_stats:
-  observation.images.wrist:
+  observation.images.left_wrist:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.right_wrist:
     # stats from imagenet, since we use a pretrained vision model
     mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
     std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
@@ -31,7 +35,6 @@ training:
   online_steps: 0
   eval_freq: -1
   save_freq: 10000
-  log_freq: 10
   save_checkpoint: true
 
   batch_size: 8
@@ -56,11 +59,11 @@ policy:
   n_obs_steps: 1
   chunk_size: 100 # chunk_size
   n_action_steps: 100
-  use_language_conditioned_goals: True
 
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
-    observation.images.wrist: [3, 480, 640]
+    observation.images.left_wrist: [3, 480, 640]
+    observation.images.right_wrist: [3, 480, 640]
     observation.images.front: [3, 480, 640]
     observation.state: ["${env.state_dim}"]
   output_shapes:
@@ -68,7 +71,8 @@ policy:
 
   # Normalization / Unnormalization
   input_normalization_modes:
-    observation.images.wrist: mean_std
+    observation.images.left_wrist: mean_std
+    observation.images.right_wrist: mean_std
     observation.images.front: mean_std
     observation.state: mean_std
   output_normalization_modes:
