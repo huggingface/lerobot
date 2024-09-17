@@ -406,10 +406,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     if cfg.get("use_lerobot_data_buffer", False):
         offline_dataset_for_dataloader = DataBuffer.from_hf_dataset(
-            offline_dataset.hf_dataset,
-            storage_dir=f"/tmp/{offline_dataset.repo_id}",
+            cfg.dataset_repo_id,
+            storage_dir=Path(f"/tmp/{offline_dataset.repo_id}"),
             fps=offline_dataset.fps,
             delta_timestamps=offline_dataset.delta_timestamps,
+            decode_video=offline_dataset.video,
         )
     else:
         offline_dataset_for_dataloader = offline_dataset

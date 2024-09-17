@@ -25,10 +25,13 @@ import datasets
 import numpy as np
 import torch
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.video_utils import VideoFrame, load_from_videos
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
+from lerobot.common.datasets.utils import load_hf_dataset, load_info, load_videos
+from lerobot.common.datasets.video_utils import VideoFrame, decode_video_frames_torchvision, load_from_videos
 
-MAX_VIDEO_PATH_LENGTH = 100  # TODO(now): Move somewhere more appropriate
+# TODO(alexander-soare): Move somewhere more appropriate once the DataBuffer class permeates more of the coe
+# base.
+MAX_VIDEO_PATH_LENGTH = 100
 
 
 def _make_memmap_safe(**kwargs) -> np.memmap:
@@ -111,9 +114,12 @@ class DataBuffer(torch.utils.data.Dataset):
                 internally, so you don't need to include them.
             buffer_capacity: How many frames should be stored in the buffer as a maximum. Be aware of your
                 system's available disk space when choosing this.
-            image_transform: TODO(now)
-            delta_timestamps: TODO(now)
-            fps: TODO(now)
+            image_transform: Transforms to apply in the item getter to all image data (any data whose key
+                starts with "observation.image").
+            delta_timestamps: TODO(alexander-soare): Document this somewhere when
+                `load_previous_and_future_frames` is refactored.
+            fps: TODO(alexander-soare): Document this somewhere when `load_previous_and_future_frames` is
+                refactored.
 
         """
         if (delta_timestamps is None) ^ (fps is None):
@@ -384,7 +390,7 @@ class DataBuffer(torch.utils.data.Dataset):
                 else:
                     query_ts = current_ts + self.delta_timestamps[k]
                     item_[k] = [
-                        {"path": item[k][i].decode(), "timestamp": video_timestamps[k][i]}
+                        {"path": item[k][i].decode(), "timestamp": float(video_timestamps[k][i])}
                         for i in range(len(item[k]))
                     ]
             item = load_from_videos(
@@ -402,7 +408,20 @@ class DataBuffer(torch.utils.data.Dataset):
         return self._item_to_tensors(item)
 
     @classmethod
-    def from_hf_dataset(cls, hf_dataset: datasets.Dataset, **kwargs) -> "DataBuffer":
+    def from_hf_dataset(
+        cls,
+        repo_id: str,
+        decode_video: bool = False,
+        **kwargs,
+    ) -> "DataBuffer":
+        hf_dataset = load_hf_dataset(repo_id, version=CODEBASE_VERSION, root=None, split="train")
+        lerobot_dataset_info = load_info(repo_id, version=CODEBASE_VERSION, root=None)
+        is_video_dataset = lerobot_dataset_info.get("video", False)
+        if not is_video_dataset and decode_video:
+            raise ValueError(f"The provided dataset is not a video dataset but you have {decode_video=}")
+        if is_video_dataset:
+            videos_path = load_videos(repo_id, version=CODEBASE_VERSION, root=None)
+
         data_spec = {}
         video_frame_keys = []
         for k, feature in hf_dataset.features.items():
@@ -412,11 +431,20 @@ class DataBuffer(torch.utils.data.Dataset):
                 example_img = np.array(hf_dataset[0][k])
                 data_spec[k] = {"shape": example_img.shape, "dtype": np.dtype("uint8")}
             elif isinstance(feature, VideoFrame):
-                video_frame_keys.append(k)
-                data_spec[k] = {
-                    "shape": (),
-                    "dtype": np.dtype(f"S{MAX_VIDEO_PATH_LENGTH}"),
-                }
+                if decode_video:
+                    video_dct = hf_dataset[0][k]
+                    example_img = decode_video_frames_torchvision(
+                        videos_path.parent / video_dct["path"],
+                        [video_dct["timestamp"]],
+                        1 / lerobot_dataset_info["fps"] - 1e-4,
+                    )[0]
+                    data_spec[k] = {"shape": example_img.shape, "dtype": np.dtype("uint8")}
+                else:
+                    video_frame_keys.append(k)
+                    data_spec[k] = {
+                        "shape": (),
+                        "dtype": np.dtype(f"S{MAX_VIDEO_PATH_LENGTH}"),
+                    }
             elif isinstance(feature, datasets.features.Sequence):
                 data_spec[k] = {"shape": (feature.length,), "dtype": np.dtype(feature.feature.dtype)}
             elif isinstance(feature, datasets.features.Value):
@@ -435,9 +463,25 @@ class DataBuffer(torch.utils.data.Dataset):
                     [np.array(pil_img).astype(np.float32) / 255 for pil_img in hf_dataset[k]]
                 )
             elif isinstance(feature, VideoFrame):
-                data_dict[k] = np.stack(
-                    [np.array(dct["path"], dtype=f"S{MAX_VIDEO_PATH_LENGTH}") for dct in hf_dataset[k]]
-                )
+                if decode_video:
+                    # Decode all videos into images.
+                    episode_indices = np.array(hf_dataset["episode_index"])
+                    timestamps = np.array(hf_dataset["timestamp"])
+                    all_imgs = []
+                    for episode_index in np.unique(episode_indices):
+                        episode_data_indices = np.where(episode_indices == episode_index)[0]
+                        episode_timestamps = timestamps[episode_indices == episode_index]
+                        episode_imgs = decode_video_frames_torchvision(
+                            videos_path.parent / hf_dataset[k][episode_data_indices[0]]["path"],
+                            episode_timestamps,
+                            1 / lerobot_dataset_info["fps"] - 1e-4,
+                        )
+                        all_imgs.extend(episode_imgs.numpy())
+                    data_dict[k] = np.stack(all_imgs)
+                else:
+                    data_dict[k] = np.stack(
+                        [np.array(dct["path"], dtype=f"S{MAX_VIDEO_PATH_LENGTH}") for dct in hf_dataset[k]]
+                    )
             else:
                 data_dict[k] = np.array(hf_dataset[k])
         obj.add_data(data_dict)
@@ -445,8 +489,13 @@ class DataBuffer(torch.utils.data.Dataset):
         if len(video_frame_keys) > 0:
             obj.video = True  # TODO(now): HACK
             obj.video_frame_keys = video_frame_keys  # TODO(now): HACK
+            # Symlink videos if needed.
+            obj.videos_dir = kwargs["storage_dir"] / "videos"
+            if not obj.videos_dir.exists():
+                os.symlink(videos_path.absolute(), kwargs["storage_dir"])
             obj.videos_dir = Path(kwargs["storage_dir"]) / "videos"  # TODO(now): HACK
             obj.video_backend = "pyav"  # TODO(now): HACK
+
         return obj
 
 
