@@ -70,6 +70,7 @@ def decode_video_frames_torchvision(
     tolerance_s: float,
     backend: str = "pyav",
     log_loaded_timestamps: bool = False,
+    to_pytorch_format: bool = True,
 ) -> torch.Tensor:
     """Loads frames associated to the requested timestamps of a video
 
@@ -129,8 +130,8 @@ def decode_video_frames_torchvision(
 
     reader = None
 
-    query_ts = torch.tensor(timestamps)
-    loaded_ts = torch.tensor(loaded_ts)
+    query_ts = torch.tensor(timestamps, dtype=torch.float32)
+    loaded_ts = torch.tensor(loaded_ts, dtype=torch.float32)
 
     # compute distances between each query timestamp and timestamps of all loaded frames
     dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
@@ -155,8 +156,12 @@ def decode_video_frames_torchvision(
     if log_loaded_timestamps:
         logging.info(f"{closest_ts=}")
 
-    # convert to the pytorch format which is float32 in [0,1] range (and channel first)
-    closest_frames = closest_frames.type(torch.float32) / 255
+    if to_pytorch_format:
+        # Return as pytorch format: float32, normalized to [0,1], channel-first.
+        closest_frames = closest_frames.type(torch.float32) / 255
+    else:
+        # Return in numpy format: np.uint8, in [0, 255], channel-last.
+        closest_frames = closest_frames.permute(0, 2, 3, 1).numpy()
 
     assert len(timestamps) == len(closest_frames)
     return closest_frames
