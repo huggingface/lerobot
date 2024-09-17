@@ -374,7 +374,7 @@ def set_up_keyboard_teleop():
         elif key == Key.page_up:
             episode_state.teleoperation_action[2] += 0.01
         # Gripper
-        elif key == Key.cmd:
+        elif key == Key.ctrl:
             episode_state.teleoperation_action[3] -= 0.1
         elif key == Key.shift:
             episode_state.teleoperation_action[3] += 0.1
