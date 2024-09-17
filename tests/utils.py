@@ -183,3 +183,18 @@ def require_robot(func):
         return func(*args, **kwargs)
 
     return wrapper
+
+
+class DevTestingError(Exception):
+    """To be raised when a test does not work as expected because of the test code itself.
+
+    This makes it clear that the test failed because of the test itself, not the code being tested.
+    """
+
+    def __init__(self, message: str | None = None):
+        if message is None:
+            message = (
+                "It's likely this test failed because of the test code itself, rather than the code being "
+                "tested. Please review the test code."
+            )
+        super().__init__(message)

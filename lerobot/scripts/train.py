@@ -31,9 +31,9 @@ from termcolor import colored
 from torch import nn
 from torch.cuda.amp import GradScaler
 
+from lerobot.common.datasets.data_buffer import DataBuffer, compute_sampler_weights
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
-from lerobot.common.datasets.online_buffer import DataBuffer, compute_sampler_weights
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
@@ -405,8 +405,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         sampler = None
 
     if cfg.get("use_lerobot_data_buffer", False):
-        offline_dataset_for_dataloader = DataBuffer.from_hf_dataset(
-            cfg.dataset_repo_id,
+        offline_dataset_for_dataloader = DataBuffer.from_huggingface_hub(
+            offline_dataset.repo_id,
             storage_dir=Path(f"/tmp/{offline_dataset.repo_id}"),
             fps=offline_dataset.fps,
             delta_timestamps=offline_dataset.delta_timestamps,
