@@ -10,11 +10,11 @@ def find_available_ports():
 
 
 def find_port():
-    print("Finding all available ports for the DynamixelMotorsBus.")
+    print("Finding all available ports for the MotorsBus.")
     ports_before = find_available_ports()
     print(ports_before)
 
-    print("Remove the usb cable from your DynamixelMotorsBus and press Enter when done.")
+    print("Remove the usb cable from your MotorsBus and press Enter when done.")
     input()
 
     time.sleep(0.5)
@@ -23,7 +23,7 @@ def find_port():
 
     if len(ports_diff) == 1:
         port = ports_diff[0]
-        print(f"The port of this DynamixelMotorsBus is '{port}'")
+        print(f"The port of this MotorsBus is '{port}'")
         print("Reconnect the usb cable.")
     elif len(ports_diff) == 0:
         raise OSError(f"Could not detect the port. No difference was found ({ports_diff}).")
@@ -32,5 +32,5 @@ def find_port():
 
 
 if __name__ == "__main__":
-    # Helper to find the usb port associated to all your DynamixelMotorsBus.
+    # Helper to find the usb port associated to all your MotorsBus.
     find_port()

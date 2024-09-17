@@ -55,7 +55,7 @@ def configure_motor(brand, model, motor_idx_des, baudrate_des):
     try:
         motor_bus.connect()
         print(f"Connected on port {motor_bus.port}")
-    except Exception as e:
+    except OSError as e:
         print(f"Error occurred when connecting to the motor bus: {e}")
         return
 
