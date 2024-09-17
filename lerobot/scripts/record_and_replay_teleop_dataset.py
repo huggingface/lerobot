@@ -49,7 +49,7 @@ def process_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-name", type=str, default="PickPlaceCube-v0")
     parser.add_argument("--teleop-method", type=str, default="keyboard")
-    parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument("--num-workers", type=int, default=1)
 
     # Arguments for pushing to HF Dataset Hub
     parser.add_argument("--repo-id", type=str, default="myrepo")
@@ -127,8 +127,9 @@ class OutputHelper:
         ep_dict = {}
         # store images in png and create the video
         for img_key in self.image_keys:
+            images = observations[img_key]
             save_images_concurrently(
-                observations[img_key],
+                images,
                 self.images_data_path /
                 f"{img_key}_episode_{episode_index:06d}",
                 args.num_workers,
