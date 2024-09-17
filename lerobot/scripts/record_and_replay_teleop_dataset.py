@@ -15,6 +15,7 @@ The following videos should result:
 
 """
 
+from turtle import position
 from typing import NamedTuple
 from pynput.keyboard import Key
 from pynput import keyboard
@@ -348,15 +349,11 @@ def set_up_keyboard_teleop():
     print("* HOME               : Save episode and reset env")
     print("* END                : Save episode and end data collection")
 
-    # TODO(samzapo): Use SharedMemoryManager.ShareableList for the following values.
-    #                from multiprocessing.managers import SharedMemoryManager
     episode_state.teleoperation_action = None
     episode_state.is_dropping_episode = False
     episode_state.is_concluding_episode = False
     episode_state.is_stopping = False
 
-    # TODO(samzapo): Launch the following code in a separate process using a Process
-    #                from multiprocessing import Process
     def on_press(key):
         # Y
         if key == Key.up:
@@ -392,31 +389,138 @@ def set_up_keyboard_teleop():
         # print('{0} released'.format(
         # key))
         if key == keyboard.Key.esc:
-            episode_state.is_stopping = True
-            # Stop listener
-            return False
+            exit()
 
     listener = keyboard.Listener(
         on_press=on_press, on_release=on_release)
-    listener.start()
+
+    def start_fn():
+        listener.start()
+
+    def stop_fn():
+        listener.stop()
 
     # assign teleoperation shut-down function.
-    return lambda: listener.stop()
+    return [start_fn, stop_fn]
+
+
+def set_up_arm_teleop():
+    episode_state.teleoperation_action = None
+    episode_state.is_dropping_episode = False
+    episode_state.is_concluding_episode = False
+    episode_state.is_stopping = False
+
+    print("Setting up keyboard & Arm teleop...")
+
+    print("Keyboard controls:")
+    print("* DELETE             : Discard Episode and reset env")
+    print("* HOME               : Save episode and reset env")
+    print("* END                : Save episode and end data collection")
+
+    episode_state.teleoperation_action = None
+    episode_state.is_dropping_episode = False
+    episode_state.is_concluding_episode = False
+    episode_state.is_stopping = False
+
+    def on_press(key):
+        # Training
+        if key == Key.delete:
+            episode_state.is_dropping_episode = True
+            episode_state.is_concluding_episode = True
+        elif key == Key.home:
+            episode_state.is_concluding_episode = True
+        elif key == Key.end:
+            episode_state.is_concluding_episode = True
+            episode_state.is_stopping = True
+
+    def on_release(key):
+        # print('{0} released'.format(
+        # key))
+        if key == keyboard.Key.esc:
+            exit()
+
+    listener = keyboard.Listener(
+        on_press=on_press, on_release=on_release)
+
+    # Separate process to get data from arm.
+    from multiprocessing import Process, Array
+
+    def update_controls(joint_commands: Array):
+        from lerobot.common.robot_devices.robots.factory import make_robot
+        from lerobot.common.robot_devices.robots.utils import Robot, get_arm_id
+        from lerobot.common.robot_devices.utils import busy_wait
+        from lerobot.common.utils.utils import init_hydra_config
+
+        robot_path = "lerobot/configs/robot/koch.yaml"
+        robot_overrides = '~cameras'
+
+        robot_cfg = init_hydra_config(robot_path, robot_overrides)
+        robot = make_robot(robot_cfg)
+
+        if not robot.is_connected:
+            robot.connect()
+
+        while True:
+            observation = robot.capture_observation()
+            positions = observation["joints"]
+            assert len(joint_commands) == len(positions)
+            for i in range(len(joint_commands)):
+                joint_commands[i] = positions[i]
+
+    joint_commands = Array('d', [0, 0, 0, 0, 0])
+    run_robot_process = Process(target=update_controls, args=(joint_commands))
+
+    # Separate thread to copy arm data to teleop_command (this shares compute time with simulation).
+    from threading import Thread
+
+    def copy_data(joint_commands: Array, teleoperation_action, is_stopping: bool):
+        while not is_stopping:
+            if teleoperation_action is None:
+                time.sleep(0.01)
+                continue
+
+            assert len(joint_commands) == len(teleoperation_action)
+            for i in range(len(joint_commands)):
+                teleoperation_action[i] = joint_commands[i]
+
+    copy_data_thread = Thread(target=copy_data, args=(
+        joint_commands, episode_state.teleoperation_action, episode_state.is_stopping))
+
+    def start_fn():
+        listener.start()
+        run_robot_process.start()
+        copy_data_thread.start()
+
+    def stop_fn():
+        listener.stop()
+        run_robot_process.join()
+        copy_data_thread.join()
+        del robot
+
+    return [start_fn, stop_fn]
 
 
 def set_up_teleop(teleop_method: str):
-    stop_teleoperation_fn = None
+    start_fn = None
+    stop_fn = None
+
     if teleop_method == "keyboard":
-        stop_teleoperation_fn = set_up_keyboard_teleop()
+        (start_fn, stop_fn) = set_up_keyboard_teleop()
+    elif teleop_method == "arm":
+        (start_fn, stop_fn) = set_up_arm_teleop()
     else:
         raise Exception(
             "A teleoperation method must be selected (Currently only 'keyboard' teleop is suppored)!")
 
-    if not isinstance(stop_teleoperation_fn, types.FunctionType):
+    if not isinstance(start_fn, types.FunctionType):
         raise ValueError(
-            "stop_teleoperation_fn is not callable but a teleoperation system was initialized.")
+            "start_fn is not callable but a teleoperation system was initialized.")
 
-    return stop_teleoperation_fn
+    if not isinstance(stop_fn, types.FunctionType):
+        raise ValueError(
+            "stop_fn is not callable but a teleoperation system was initialized.")
+
+    return [start_fn, stop_fn]
 
 
 ##########################################################################################
@@ -430,7 +534,7 @@ def construct_and_set_up_env(*, task_parameters: TaskParameters):
     env = gym.make(args.env_name,
                    disable_env_checker=True,
                    observation_mode="both",
-                   action_mode="ee",
+                   action_mode="ee" if args.teleop_method == "keyboard" else "joint",
                    render_mode="human",
                    cube_file_path=task_parameters.cube_file_path
                    )
@@ -579,8 +683,10 @@ if __name__ == "__main__":
     assert hasattr(
         module_obj, 'ASSETS_PATH'), "Module should have the 'ASSETS_PATH' attribute!"
 
+    (start_teleoperation_fn, stop_teleoperation_fn) = set_up_teleop(args.teleop_method)
+
     # start teleoperation listener
-    stop_teleoperation_fn = set_up_teleop(args.teleop_method)
+    start_teleoperation_fn()
 
     print("Recording initial dataset w/ teleop")
     lerobot_dataset = teleop_robot_and_record_data(
@@ -601,4 +707,3 @@ if __name__ == "__main__":
         source_dataset=lerobot_dataset,
         task_parameters=TaskParameters(
             cube_file_path=f"{module_obj.ASSETS_PATH}/blue_cube.sdf"))
-
