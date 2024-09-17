@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from lerobot.common.robot_devices.cameras.utils import Camera
-from lerobot.common.robot_devices.motors.dynamixel import (
+from lerobot.common.robot_devices.motors.feetech import (
     CalibrationMode,
     TorqueMode,
     convert_degrees_to_steps,
