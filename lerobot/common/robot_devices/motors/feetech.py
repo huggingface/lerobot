@@ -353,17 +353,6 @@ class FeetechMotorsBus:
         # Set expected baudrate for the bus
         self.set_bus_baudrate(BAUDRATE)
 
-        if not self.are_motors_configured():
-            input(
-                "\n/!\\ A configuration issue has been detected with your motors: \n"
-                "If it's the first time that you use these motors, press enter to configure your motors... but before "
-                "verify that all the cables are connected the proper way. If you find an issue, before making a modification, "
-                "kill the python process, unplug the power cord to not damage the motors, rewire correctly, then plug the power "
-                "again and relaunch the script.\n"
-            )
-            print()
-            self.configure_motors()
-
     def reconnect(self):
         self.port_handler = PortHandler(self.port)
         self.packet_handler = PacketHandler(PROTOCOL_VERSION)
@@ -414,7 +403,7 @@ class FeetechMotorsBus:
 
             if i > 0:
                 try:
-                    self._read_with_motor_ids(self.motor_models, untaken_ids[:i], "ID")
+                    self.read_with_motor_ids(self.motor_models, untaken_ids[:i], "ID")
                 except ConnectionError:
                     print(f"Failed to read from {untaken_ids[:i+1]}. Make sure the power cord is plugged in.")
                     input("Press Enter to continue...")
@@ -436,13 +425,13 @@ class FeetechMotorsBus:
 
                         # The write can fail, so we allow retries
                         for _ in range(NUM_WRITE_RETRY):
-                            self._write_with_motor_ids(
+                            self.write_with_motor_ids(
                                 self.motor_models, present_idx, "Baud_Rate", baudrate_idx
                             )
                             time.sleep(0.5)
                             self.set_bus_baudrate(BAUDRATE)
                             try:
-                                present_baudrate_idx = self._read_with_motor_ids(
+                                present_baudrate_idx = self.read_with_motor_ids(
                                     self.motor_models, present_idx, "Baud_Rate"
                                 )
                             except ConnectionError:
@@ -457,9 +446,9 @@ class FeetechMotorsBus:
                             raise OSError("Failed to write baudrate.")
 
                     print(f"Setting its index to a temporary untaken index ({untaken_ids[i]})")
-                    self._write_with_motor_ids(self.motor_models, present_idx, "ID", untaken_ids[i])
+                    self.write_with_motor_ids(self.motor_models, present_idx, "ID", untaken_ids[i])
 
-                    present_idx = self._read_with_motor_ids(self.motor_models, untaken_ids[i], "ID")
+                    present_idx = self.read_with_motor_ids(self.motor_models, untaken_ids[i], "ID")
                     if present_idx != untaken_ids[i]:
                         raise OSError("Failed to write index.")
 
@@ -476,7 +465,7 @@ class FeetechMotorsBus:
 
         print(f"Setting expected motor indices: {self.motor_indices}")
         self.set_bus_baudrate(BAUDRATE)
-        self._write_with_motor_ids(
+        self.write_with_motor_ids(
             self.motor_models, untaken_ids[: len(self.motors)], "ID", self.motor_indices
         )
         print()
@@ -493,7 +482,7 @@ class FeetechMotorsBus:
         indices = []
         for idx in tqdm.tqdm(possible_ids):
             try:
-                present_idx = self._read_with_motor_ids(self.motor_models, [idx], "ID")[0]
+                present_idx = self.read_with_motor_ids(self.motor_models, [idx], "ID")[0]
             except ConnectionError:
                 continue
 
@@ -753,7 +742,7 @@ class FeetechMotorsBus:
         values = np.round(values).astype(np.int32)
         return values
 
-    def _read_with_motor_ids(self, motor_models, motor_ids, data_name):
+    def read_with_motor_ids(self, motor_models, motor_ids, data_name):
         return_list = True
         if not isinstance(motor_ids, list):
             return_list = False
@@ -848,7 +837,7 @@ class FeetechMotorsBus:
 
         return values
 
-    def _write_with_motor_ids(self, motor_models, motor_ids, data_name, values):
+    def write_with_motor_ids(self, motor_models, motor_ids, data_name, values):
         if not isinstance(motor_ids, list):
             motor_ids = [motor_ids]
         if not isinstance(values, list):
