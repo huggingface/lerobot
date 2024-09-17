@@ -45,9 +45,8 @@ class Policy:
             latest_observation, latest_timestamp = self.obs_queue.get()
 
             if previous_timestamp is not None and previous_timestamp == latest_timestamp:
-                time.sleep(
-                    0.1
-                )  # in case inference ran faster than recording/adding a new observation in the queue
+                # in case inference ran faster than recording/adding a new observation in the queue
+                time.sleep(0.1)
             else:
                 predicted_action_sequence = self.inference(latest_observation)
                 self.action_queue.add(predicted_action_sequence, latest_timestamp)
