@@ -774,13 +774,13 @@ optimize = ["orjson"]
 
 [[package]]
 name = "diffusers"
-version = "0.30.2"
+version = "0.30.3"
 description = "State-of-the-art diffusion in PyTorch and JAX."
 optional = false
 python-versions = ">=3.8.0"
 files = [
-    {file = "diffusers-0.30.2-py3-none-any.whl", hash = "sha256:739826043147c2b59560944591dfdea5d24cd4fb15e751abbe20679a289bece8"},
-    {file = "diffusers-0.30.2.tar.gz", hash = "sha256:641875f78f36bdfa4b9af752b124d1fd6d431eadd5547fe0a3f354ae0af2636c"},
+    {file = "diffusers-0.30.3-py3-none-any.whl", hash = "sha256:1b70209e4d2c61223b96a7e13bc4d70869c8b0b68f54a35ce3a67fcf813edeee"},
+    {file = "diffusers-0.30.3.tar.gz", hash = "sha256:67c5eb25d5b50bf0742624ef43fe0f6d1e1604f64aad3e8558469cbe89ecf72f"},
 ]
 
 [package.dependencies]
@@ -1406,13 +1406,13 @@ subdirectory = "gym_dora"
 
 [[package]]
 name = "gym-drake-lca"
-version = "0.0.4"
+version = "0.0.5"
 description = "A Gym implementation of the Low Cost Arm (LCA) in the Drake simulator."
 optional = true
 python-versions = "<4.0,>=3.10"
 files = [
-    {file = "gym_drake_lca-0.0.4-py3-none-any.whl", hash = "sha256:7f9f231f63bbd971b5ce92cd2f4df0b70ee9f9c6531e998ffb52dbb64209e5f1"},
-    {file = "gym_drake_lca-0.0.4.tar.gz", hash = "sha256:856ef96b1e8f7c7c12b6e3e359b366c990850998dfaa467d4373ac0b7090983d"},
+    {file = "gym_drake_lca-0.0.5-py3-none-any.whl", hash = "sha256:e5b2afa5efc491e7fbb06366a9a5a78a1b3cdd2a70e82982049afc9fa9049dd6"},
+    {file = "gym_drake_lca-0.0.5.tar.gz", hash = "sha256:11a245c448212902dbdc570e95b3d7f90aed7cedbf25a06e42aaaa142ab20062"},
 ]
 
 [package.dependencies]
@@ -4721,19 +4721,19 @@ test = ["covdefaults (>=2.3)", "coverage (>=7.2.7)", "coverage-enable-subprocess
 
 [[package]]
 name = "wandb"
-version = "0.18.0"
+version = "0.18.1"
 description = "A CLI and library for interacting with the Weights & Biases API."
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "wandb-0.18.0-py3-none-any.whl", hash = "sha256:a176af0d51b55a363dac3c54a8b7aa1cfd5a89cad6fc6574237232f37c779965"},
-    {file = "wandb-0.18.0-py3-none-macosx_10_13_x86_64.whl", hash = "sha256:2bc7f18becda9a566a63723666390f941e8b115b9e7746e0e5d73dc9ea9714c6"},
-    {file = "wandb-0.18.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:e14a385c95e61e77b0b5c4cbc6c5a0b47ac0d9e66730ca8c17b84eba374e35d1"},
-    {file = "wandb-0.18.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:d0764ad8911a70cdb7cb339567c4170b860e8f5f523447b2f748d7e0e6224e29"},
-    {file = "wandb-0.18.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3d2ffea43710e3482168a2d89b2770aa9a14007ba16e717b176428f2a50765f2"},
-    {file = "wandb-0.18.0-py3-none-win32.whl", hash = "sha256:b209840a9499bf687e8b5b20117341e7722f86a85f986c422501eb1a709dc721"},
-    {file = "wandb-0.18.0-py3-none-win_amd64.whl", hash = "sha256:25aa8ee1808eae0c0e4818b81bc43fd6461e4f3603d7918e5eab2f9afca00715"},
-    {file = "wandb-0.18.0.tar.gz", hash = "sha256:872dfd7298c053ca861352196bc422452caff105d3bc66b90e7bc86f17ad8bdd"},
+    {file = "wandb-0.18.1-py3-none-any.whl", hash = "sha256:be936a193eeb940ce03d966f013b847562497e76256852d5fb170cdcdf50f185"},
+    {file = "wandb-0.18.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:1f143b814b0fd51b5f1a676ad8b66bd06a5ee4ad22fc46bcbf24048d76c77d35"},
+    {file = "wandb-0.18.1-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:86b73a9f94f18b07f0e937ae945560244b560b57c16a9dfb8f03e2516d0cc666"},
+    {file = "wandb-0.18.1-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:cc404682ebfb2477b48cb436a331e1bea0262e002d6fb3ccafe71d13657dd4ee"},
+    {file = "wandb-0.18.1-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fd4c97d69242efd604c1a2077c8b56341e236cfaca78c40f59dcef9b95464fdc"},
+    {file = "wandb-0.18.1-py3-none-win32.whl", hash = "sha256:33c5a0d74bc28879917b519f24d69b0e81530d72e99aba1c115189a2c9aac9cf"},
+    {file = "wandb-0.18.1-py3-none-win_amd64.whl", hash = "sha256:559cbd6e9ab752622f7d6dacdc334ede7f1bc34f42df3f48ed32bde55db42c6e"},
+    {file = "wandb-0.18.1.tar.gz", hash = "sha256:d625e94d53ff4ff961c58a9a17f0a1ea35720d98b9db710a458235924469fc6b"},
 ]
 
 [package.dependencies]
@@ -5083,4 +5083,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "38ccc271a8e034f46e65e64b7b0e9a2bff7f47aa3dc42ea361f7740cc6d5d067"
+content-hash = "4dba12ad438efcab98813396e67bd8559a51a474b8b9171c6913d75082f55cc7"
