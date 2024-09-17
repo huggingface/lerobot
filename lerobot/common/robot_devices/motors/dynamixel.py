@@ -377,8 +377,10 @@ class DynamixelMotorsBus:
 
         self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
 
-        # Set expected baudrate for the bus
-        self.set_bus_baudrate(BAUDRATE)
+        if not self.are_motors_configured():
+            raise OSError(
+                "Motors are not configured. Please use configure_motors.py to configure motors before continuing."
+            )
 
     def reconnect(self):
         self.port_handler = PortHandler(self.port)
