@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from lerobot.common.robot_devices.cameras.utils import Camera
-from lerobot.common.robot_devices.motors.dynamixel import (
+from lerobot.common.robot_devices.motors.feetech import (
     CalibrationMode,
     TorqueMode,
     convert_degrees_to_steps,
@@ -364,6 +364,7 @@ class ManipulatorRobot:
         for name in self.follower_arms:
             print(f"Connecting {name} follower arm.")
             self.follower_arms[name].connect()
+        for name in self.leader_arms:
             print(f"Connecting {name} leader arm.")
             self.leader_arms[name].connect()
 

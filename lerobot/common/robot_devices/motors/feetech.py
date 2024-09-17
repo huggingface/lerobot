@@ -100,9 +100,9 @@ SCS_SERIES_BAUDRATE_TABLE = {
     2: 250_000,
     3: 128_000,
     4: 115_200,
-    # 5: 76_800,
-    # 6: 57_600,
-    # 7: 38_400,
+    5: 57_600,
+    6: 38_400,
+    7: 19_200,
 }
 
 CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
