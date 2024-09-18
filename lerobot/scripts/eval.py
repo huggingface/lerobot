@@ -57,7 +57,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 from huggingface_hub import snapshot_download
-from huggingface_hub.utils._errors import RepositoryNotFoundError
+from huggingface_hub.errors import RepositoryNotFoundError
 from huggingface_hub.utils._validators import HFValidationError
 from torch import Tensor, nn
 from tqdm import trange
