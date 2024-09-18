@@ -27,9 +27,13 @@ import pathlib
 import time
 import importlib
 import types
+import logging
 
 import gymnasium as gym
 import numpy as np
+import lerobot.common
+import lerobot.common.utils
+import lerobot.common.utils.utils
 import torch
 import lerobot
 
@@ -40,34 +44,20 @@ from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episod
 from lerobot.common.datasets.utils import (
     hf_transform_to_torch,
 )
+
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 from lerobot.scripts.push_dataset_to_hub import push_meta_data_to_hub, push_videos_to_hub, save_meta_data
 from tqdm import tqdm
 
-
-def process_args():
-    # parse the repo_id name via command line
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--env-name", type=str, default="PickPlaceCube-v0")
-    parser.add_argument("--teleop-method", type=str, default="keyboard")
-    parser.add_argument("--num-workers", type=int, default=1)
-
-    # Arguments for pushing to HF Dataset Hub
-    parser.add_argument("--repo-id", type=str, default="myrepo")
-    parser.add_argument("--push-to-hub", action="store_true")
-
-    parser.add_argument(
-        "--revision", type=str, default=CODEBASE_VERSION, help="Codebase version used to generate the dataset."
-    )
-
-    return parser.parse_args()
-
-
-args = process_args()
-
+# Predeclarations
+args = None
+output_helper = None
+episode_state = None
 
 ##########################################################################################
 # Reading and writing datasets
+
+
 class ReplayHelper:
     def __init__(self, *, lerobot_dataset: pathlib.PosixPath | LeRobotDataset):
         if isinstance(lerobot_dataset, pathlib.PosixPath):
@@ -90,6 +80,9 @@ class ReplayHelper:
     def get_action_at_frame(self):
         return self.dataset[self.frame_index]["action"]
 
+    def get_state_observation_at_frame(self):
+        return self.dataset[self.frame_index]["observation.state"]
+
     @property
     def is_at_last_frame_in_episode(self):
         return self.dataset[self.frame_index]["episode_index"] != self.dataset[self.frame_index + 1]["episode_index"]
@@ -102,10 +95,16 @@ class ReplayHelper:
 class OutputHelper:
     def __init__(self, *, repo_id):
         self.repo_id = repo_id
-
-        self.dataset_counter = 0
+        self.dataset_counter = -1
 
     def set_up_data_keys(self, observation):
+        """
+        Preconditions:
+            - len(self.state_keys) == 0
+            - len(self.image_keys) == 0
+        """
+        assert len(self.state_keys) == 0
+        assert len(self.image_keys) == 0
         for key, value in observation.items():
             if len(value.shape) == 1:
                 self.state_keys.append(key)
@@ -124,7 +123,23 @@ class OutputHelper:
         self.image_keys = []
         self.state_keys = []
 
+    def vectorize_state_observations(self, observations):
+        states = []
+        for state_name in self.state_keys:
+            states.append(np.array(observations[state_name]))
+        return states
+
+    def tensorize_state_observations(self, observations):
+        states = self.vectorize_state_observations(observations)
+        state = torch.tensor(np.concatenate(states, axis=1))
+        return state
+
     def save_episode_data(self, *, num_steps: int, episode_index: int, observations, actions, timestamps):
+        """
+        Preconditions:
+            - self.dataset_counter >= 0
+        """
+        assert self.dataset_counter >= 0
         ep_dict = {}
         # store images in png and create the video
         for img_key in self.image_keys:
@@ -141,16 +156,12 @@ class OutputHelper:
             ep_dict[f"observation.{img_key}"] = [
                 {"path": f"videos/{fname}", "timestamp": timestamp} for timestamp in timestamps]
 
-        states = []
-        for state_name in self.state_keys:
-            states.append(np.array(observations[state_name]))
-        state = torch.tensor(np.concatenate(states, axis=1))
-
         action = torch.tensor(np.array(actions))
         next_done = torch.zeros(num_steps, dtype=torch.bool)
         next_done[-1] = True
 
-        ep_dict["observation.state"] = state
+        ep_dict["observation.state"] = self.tensorize_state_observations(
+            observations)
         ep_dict["action"] = action
         ep_dict["episode_index"] = torch.tensor(
             [episode_index] * num_steps, dtype=torch.int64)
@@ -196,7 +207,8 @@ class OutputHelper:
             lerobot.common.datasets.lerobot_dataset.DATA_DIR = pathlib.Path(
                 "data_traces")
             print(
-                "Warning: env variable DATA_DIR was not set, defaulting to './{}'.".format(lerobot.common.datasets.lerobot_dataset.DATA_DIR))
+                "Warning: env variable DATA_DIR was not set, defaulting to './{}'."
+                .format(lerobot.common.datasets.lerobot_dataset.DATA_DIR))
 
         dataset_index = self.dataset_counter
 
@@ -320,9 +332,6 @@ class OutputHelper:
         push_videos_to_hub(repo_id, self.videos_data_path, revision=revision)
 
 
-output_helper = OutputHelper(repo_id=args.repo_id)
-
-
 ##########################################################################################
 # Controlling the robot (teleop) and data recording
 
@@ -332,9 +341,6 @@ class EpisodeState():
         self.is_dropping_episode: bool | None = None
         self.is_concluding_episode: bool | None = None
         self.is_stopping: bool | None = None
-
-
-episode_state = EpisodeState()
 
 
 def set_up_keyboard_teleop():
@@ -355,6 +361,15 @@ def set_up_keyboard_teleop():
     episode_state.is_stopping = False
 
     def on_press(key):
+        if np.isnan(np.linalg.norm(episode_state.teleoperation_action)):
+            # Assign good initial action
+            # FIXME: This is robot-specific (Low-Cost Robot Arm)
+            episode_state.teleoperation_action[0] = 0.0
+            episode_state.teleoperation_action[1] = 0.14
+            episode_state.teleoperation_action[2] = 0.17
+            episode_state.teleoperation_action[3] = 0.0
+        assert np.isfinite(np.linalg.norm(episode_state.teleoperation_action))
+
         # Y
         if key == Key.up:
             episode_state.teleoperation_action[1] += 0.01
@@ -530,6 +545,7 @@ class TaskParameters(NamedTuple):
 
 
 def construct_and_set_up_env(*, task_parameters: TaskParameters):
+    lerobot.common.utils.utils.set_global_seed(args.random_seed)
     # Create the gym environment - check the kwargs in gym_real_world/gym_environment.py
     env = gym.make(args.env_name,
                    disable_env_checker=True,
@@ -541,12 +557,15 @@ def construct_and_set_up_env(*, task_parameters: TaskParameters):
 
     # Reset the environment
     observation, info = env.reset()
-    return [env, observation]
+    output_helper.set_up_data_keys(observation)
+
+    return env
 
 
 def get_next_action_in_episode(replay_helper: ReplayHelper | None):
     if replay_helper is not None:
         action = replay_helper.get_action_at_frame()
+        state_observation = replay_helper.get_state_observation_at_frame()
         if replay_helper.is_at_last_frame_in_dataset:
             episode_state.is_concluding_episode = True
             episode_state.is_stopping = True
@@ -556,31 +575,20 @@ def get_next_action_in_episode(replay_helper: ReplayHelper | None):
         else:
             replay_helper.increment_frame_index()
 
-        return action
+        return [action, state_observation]
     else:
-        assert episode_state.teleoperation_action is not None
-        return episode_state.teleoperation_action
+        # Wait for first command to arrive.
+        while np.isnan(np.linalg.norm(episode_state.teleoperation_action)):
+            print(f"Waiting for first teleoperation command to arrive...")
+            time.sleep(1)
+
+        return [episode_state.teleoperation_action, None]
 
 
-def set_up_next_episode(*, is_teleoperating: bool, env):
+def set_up_next_episode(env):
     env.reset()
-    if is_teleoperating:
-        # Sample random action (usually positional).
-        sample = env.action_space.sample()
-        print(f"action type={type(sample)}")
-
-        # Assign good initial action
-        sample[0] = 0.0
-        sample[1] = 0.14
-        sample[2] = 0.17
-        sample[3] = 0.0
-
-        print(f"init_action={sample}")
-        assert env.action_space.contains(sample)
-
-        episode_state.teleoperation_action = sample * 1.0
-    else:
-        episode_state.teleoperation_action = None
+    # Set up correctly-sized action.
+    episode_state.teleoperation_action = env.action_space.sample() * np.nan
 
 
 def run_sim_while_recording_dataset(*, replay_helper: ReplayHelper | None = None, task_parameters: TaskParameters) -> LeRobotDataset:
@@ -588,13 +596,11 @@ def run_sim_while_recording_dataset(*, replay_helper: ReplayHelper | None = None
     print(f"gym environment created")
 
     episode_counter = 0
-    (env, init_obs) = construct_and_set_up_env(task_parameters=task_parameters)
-    output_helper.set_up_data_keys(init_obs)
+    env = construct_and_set_up_env(task_parameters=task_parameters)
 
     episode_state.is_stopping = False
     while not episode_state.is_stopping:
-        set_up_next_episode(
-            is_teleoperating=(replay_helper is None), env=env)
+        set_up_next_episode(env)
 
         print(f"Starting episode #{episode_counter}")
 
@@ -607,11 +613,25 @@ def run_sim_while_recording_dataset(*, replay_helper: ReplayHelper | None = None
         episode_state.is_concluding_episode = False
         step_counter = 0
         while not episode_state.is_concluding_episode:
-            action = get_next_action_in_episode(replay_helper)
+            (action, expected_state_observation) = get_next_action_in_episode(
+                replay_helper)
 
             # Apply the next action (provided by teleop)
             observation, reward, terminted, truncated, info = env.step(
                 action=action)
+
+            if expected_state_observation is not None:
+                state_observation = torch.tensor(np.concatenate(
+                    output_helper.vectorize_state_observations(observation), axis=0))
+                if not torch.norm(expected_state_observation - state_observation) < 1e-6:
+                    print("diff =\n{}".format(expected_state_observation - state_observation))
+                    print("norm(diff) =\n{}".format(torch.norm(expected_state_observation - state_observation)))
+                    print("expected_state_observation ({})=\n{}".format(
+                        type(expected_state_observation), expected_state_observation))
+                    print("state_observation ({})=\n{}".format(
+                        type(state_observation), state_observation))
+                    raise AssertionError(
+                        "State observations should be equal between source dataset and replay.")
 
             # Render the simultion
             env.render()
@@ -621,6 +641,7 @@ def run_sim_while_recording_dataset(*, replay_helper: ReplayHelper | None = None
                 observations[key].append(copy.deepcopy(observation[key]))
             actions.append(copy.deepcopy(action))
             timestamps.append(info["timestamp"])
+            print("@t={}".format(info["timestamp"]))
 
             step_counter += 1
 
@@ -643,9 +664,18 @@ def run_sim_while_recording_dataset(*, replay_helper: ReplayHelper | None = None
 
 
 def teleop_robot_and_record_data(*, task_parameters: TaskParameters) -> LeRobotDataset:
+    (start_teleoperation_fn, stop_teleoperation_fn) = set_up_teleop(args.teleop_method)
+
+    # start teleoperation listener
+    start_teleoperation_fn()
+
     new_dataset = run_sim_while_recording_dataset(
         task_parameters=task_parameters
     )
+
+    # stop teleoperation listener
+    stop_teleoperation_fn()
+
     return new_dataset
 
 
@@ -674,27 +704,46 @@ def import_module_contining_gym(module_name: str):
                          module_name + "\n")
         sys.exit(1)
 
-
-if __name__ == "__main__":
-    module_name = "gym_drake_lca"
-    module_obj = import_module_contining_gym(module_name)
-
+    # Check that module contains necessary attributes:
     print(f"Imported python module: '{module_name}'")
     assert hasattr(
-        module_obj, 'ASSETS_PATH'), "Module should have the 'ASSETS_PATH' attribute!"
+        module_obj, 'ASSETS_PATH'), "Module must have the 'ASSETS_PATH' attribute!"
 
-    (start_teleoperation_fn, stop_teleoperation_fn) = set_up_teleop(args.teleop_method)
 
-    # start teleoperation listener
-    start_teleoperation_fn()
+def process_args():
+    # parse the repo_id name via command line
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--random-seed", type=int, default="0")
+
+    parser.add_argument("--env-name", type=str, default="PickPlaceCube-v0")
+    parser.add_argument("--teleop-method", type=str, default="keyboard")
+    parser.add_argument("--num-workers", type=int, default=1)
+
+    # Arguments for pushing to HF Dataset Hub
+    parser.add_argument("--repo-id", type=str, default="myrepo")
+    parser.add_argument("--push-to-hub", action="store_true")
+
+    parser.add_argument(
+        "--revision", type=str, default=CODEBASE_VERSION, help="Codebase version used to generate the dataset."
+    )
+
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = process_args()
+    logging.basicConfig(level=logging.CRITICAL)
+
+    output_helper = OutputHelper(repo_id=args.repo_id)
+    episode_state = EpisodeState()
+
+    module_name = "gym_drake_lca"
+    module_obj = import_module_contining_gym(module_name)
 
     print("Recording initial dataset w/ teleop")
     lerobot_dataset = teleop_robot_and_record_data(
         task_parameters=TaskParameters(
             cube_file_path=f"{module_obj.ASSETS_PATH}/red_cube.sdf"))
-
-    # stop teleoperation listener
-    stop_teleoperation_fn()
 
     print("Replaying from previous dataset (from disk)")
     replay_dataset_actions_in_sim(
