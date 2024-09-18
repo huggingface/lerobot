@@ -33,6 +33,7 @@ def load_from_videos(
     videos_dir: Path,
     tolerance_s: float,
     backend: str = "pyav",
+    to_pytorch_format: bool = True,
 ):
     """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
     in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a Segmentation Fault.
@@ -51,14 +52,18 @@ def load_from_videos(
                 raise NotImplementedError("All video paths are expected to be the same for now.")
             video_path = data_dir / paths[0]
 
-            frames = decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
+            frames = decode_video_frames_torchvision(
+                video_path, timestamps, tolerance_s, backend, to_pytorch_format=to_pytorch_format
+            )
             item[key] = frames
         else:
             # load one frame
             timestamps = [item[key]["timestamp"]]
             video_path = data_dir / item[key]["path"]
 
-            frames = decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
+            frames = decode_video_frames_torchvision(
+                video_path, timestamps, tolerance_s, backend, to_pytorch_format=to_pytorch_format
+            )
             item[key] = frames[0]
 
     return item

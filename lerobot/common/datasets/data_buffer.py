@@ -91,10 +91,10 @@ class DataBuffer(torch.utils.data.Dataset):
     and wrapping around to the start when necessary (in which case older episodes are overwritten).
 
     This class is also a PyTorch Dataset and can be used as such in a dataloader for a training loop. The item
-    getter returns either a single frame, or a slice of a single episode if `delta_timestamps` is set.
+    getter returns either a single frame, or a slice of a single episode if `delta_timestamps` is set. It also
+    converts the numpy data to torch tensors, and handles converting images to channel-first, float32
+    normalized to the range [0, 1].
     """
-
-    # TODO(now): What should we do about implicit data key specs, like observations.image?
 
     # Special key for a (1,) array storing a pointer to the next index to fill from when adding data.
     NEXT_INDEX_KEY = "_next_index"
@@ -109,6 +109,8 @@ class DataBuffer(torch.utils.data.Dataset):
     EPISODE_INDEX_KEY = "episode_index"
     TIMESTAMP_KEY = "timestamp"
     PRESET_KEYS = {INDEX_KEY, FRAME_INDEX_KEY, EPISODE_INDEX_KEY, TIMESTAMP_KEY}
+    # By convention, all images should be stored under a key with this prefix.
+    IMAGE_KEY_PREFIX = "observation.image"
 
     METADATA_FILE_NAME = "meta.json"
 
@@ -138,10 +140,6 @@ class DataBuffer(torch.utils.data.Dataset):
                 refactored.
 
         """
-        # Argument validation.
-        if (delta_timestamps is None) ^ (fps is None):
-            raise ValueError("`delta_timestamps` and `fps` should be provided together, or not at all.")
-
         # Parameters for the data structure.
         self._storage_dir = Path(storage_dir)
         self._data: dict[str, np.memmap] = {}
@@ -165,12 +163,7 @@ class DataBuffer(torch.utils.data.Dataset):
             self._buffer_capacity = buffer_capacity
 
         # Parameters for the item getter.
-        self.set_delta_timestamps(delta_timestamps)
-        self._fps = fps
-        # Tolerance (in seconds) used to discard loaded frames when their timestamps are not close enough to
-        # the requested frames. It is only used when `delta_timestamps` is provided. The -1e-4 accounts for
-        # possible numerical error.
-        self.tolerance_s = 1 / self.fps - 1e-4 if fps is not None else None
+        self.set_delta_timestamps_and_fps(delta_timestamps, fps)
         self.image_transform = image_transform
 
     @property
@@ -217,7 +210,7 @@ class DataBuffer(torch.utils.data.Dataset):
 
         By convention, this is all the keys starting with "observation.image".
         """
-        return [k for k in self._data if k.startswith("observation.image")]
+        return [k for k in self._data if k.startswith(self.IMAGE_KEY_PREFIX)]
 
     def _save_data_spec(self, data_spec: dict[str, dict]):
         """Save the data type and shape specifications to the storage directory."""
@@ -285,16 +278,33 @@ class DataBuffer(torch.utils.data.Dataset):
     def delta_timestamps(self) -> dict[str, np.ndarray] | None:
         return self._delta_timestamps
 
-    def set_delta_timestamps(self, value: dict[str, list[float]] | None):
-        """Set delta_timestamps converting the values to numpy arrays.
+    def set_delta_timestamps_and_fps(
+        self, delta_timestamps: dict[str, list[float]] | None, fps: float | None
+    ):
+        """Set delta_timestamps converting the values to numpy arrays, fps, and timestamp tolerance.
 
         Note: The conversion is for an optimization in the __getitem__. The loop is much slower if lists need
         to be converted into numpy arrays.
+
+        Note: fps needs to be included as they should be provided together or not at all.
+        # TODO(now): ugly...
+
+        Tolerance is set according to the fps.
         """
-        if value is not None:
-            self._delta_timestamps = {k: np.array(v) for k, v in value.items()}
+        if (delta_timestamps is None) ^ (fps is None):
+            raise ValueError("`delta_timestamps` and `fps` should be provided together, or not at all.")
+
+        if delta_timestamps is not None:
+            self._delta_timestamps = {k: np.array(v) for k, v in delta_timestamps.items()}
         else:
             self._delta_timestamps = None
+
+        self._fps = fps
+
+        # Tolerance (in seconds) used to discard loaded frames when their timestamps are not close enough to
+        # the requested frames. It is only used when `delta_timestamps` is provided. The -1e-4 accounts for
+        # possible numerical error.
+        self.tolerance_s = 1 / self.fps - 1e-4 if fps is not None else None
 
     def add_episodes(self, data: dict[str, np.ndarray]):
         """Add data to the buffer.
@@ -341,6 +351,24 @@ class DataBuffer(torch.utils.data.Dataset):
             raise ValueError(
                 "Expected frame indices to start from 0 and step up in increments of 1 per frame."
             )
+        # Special checks on image keys.
+        for k in data:
+            if not k.startswith(self.IMAGE_KEY_PREFIX):
+                continue
+            if self._is_video_dataset:
+                if data[k].dtype != np.dtype(f"S{MAX_VIDEO_PATH_LENGTH}"):
+                    raise ValueError(
+                        f"Any data key starting with '{self.IMAGE_KEY_PREFIX}' is assumed to be an image, "
+                        "and in a video dataset it should be string data (with a relative path to the video "
+                        "to be loaded)."
+                    )
+            else:
+                _, h, w, c = data[k].shape
+                if data[k].dtype is not np.dtype("uint8") or c >= min(h, w):
+                    raise ValueError(
+                        f"Any data key starting with '{self.IMAGE_KEY_PREFIX}' is assumed to be an image, "
+                        "and should be of type np.uint8, with channel-last format."
+                    )
 
         # Figure out where we need to start filling data next, and make sure we continue data and episode
         # indices.
@@ -384,8 +412,14 @@ class DataBuffer(torch.utils.data.Dataset):
         for k, v in item.items():
             if isinstance(v, np.ndarray):
                 item_[k] = torch.from_numpy(v)
+            elif isinstance(v, torch.Tensor):
+                item_[k] = v
+            elif isinstance(v, np.bool_):
+                # Note: This is not necessary vs just doing torch.tensor(v), but it dodges a
+                # DeprecationWarning from torch.
+                item_[k] = torch.tensor(bool(v))
             else:
-                item_[k] = torch.tensor(item[k])
+                item_[k] = torch.tensor(v)
         return item_
 
     def _optimized_advanced_slice(self, data_key: str, indices: np.ndarray) -> np.ndarray:
@@ -412,6 +446,14 @@ class DataBuffer(torch.utils.data.Dataset):
         return self._data[key][self._data[self.OCCUPANCY_MASK_KEY]]
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        """Gets an item or slice from the buffer and returns it in PyTorch format.
+
+        Images (any data key starting with "observation.image") get converted from numpy uint8, in range
+        [0, 255], channel-first to torch float32, in range [0, 1], channel-last.
+
+        If `delta_timestamps` is set... TODO(alexander-soare): Document this somewhere when
+        `load_previous_and_future_frames` is refactored.
+        """
         if idx >= len(self) or idx < -len(self):
             raise IndexError
 
@@ -452,7 +494,7 @@ class DataBuffer(torch.utils.data.Dataset):
                         f"{self.tolerance_s=}) inside the episode range."
                     )
 
-                if self.is_video_dataset and data_key.startswith("observation.image"):
+                if self.is_video_dataset and data_key.startswith(self.IMAGE_KEY_PREFIX):
                     video_timestamps[data_key] = self._data[self.TIMESTAMP_KEY][episode_data_indices[argmin_]]
 
                 # Load frames for this data key.
@@ -469,24 +511,27 @@ class DataBuffer(torch.utils.data.Dataset):
 
         if self.is_video_dataset:
             item_ = dict(item)
-            for k in self.video_frame_keys:  # TODO(now): HACK
+            for k in self.camera_keys:
                 if self.delta_timestamps is None:
-                    item_[k] = {"path": item[k].decode(), "timestamp": float(item[self.TIMESTAMP_KEY])}
+                    item_[k] = {"path": item[k].decode(), "timestamp": item[self.TIMESTAMP_KEY]}
                 else:
-                    query_ts = current_ts + self.delta_timestamps[k]
                     item_[k] = [
-                        {"path": item[k][i].decode(), "timestamp": float(video_timestamps[k][i])}
+                        {"path": item[k][i].decode(), "timestamp": video_timestamps[k][i]}
                         for i in range(len(item[k]))
                     ]
             item = load_from_videos(
                 item_,
-                self.video_frame_keys,
+                self.camera_keys,
                 self.videos_dir,
-                self.tolerance_s,
-                self.video_backend,
+                self.tolerance_s or 1e-8,  # 1e-8 to account for no delta_timestamps
+                "pyav",
+                to_pytorch_format=True,
             )
+        else:
+            # Convert to PyTorch format: channel-last, float32, normalize to range [0, 1].
+            for cam in self.camera_keys:
+                item[cam] = item[cam].astype(np.float32) / 255.0
 
-        # TODO(now): Where to put transform that goes to torch format for images.
         if self.image_transform is not None:
             for cam in self.camera_keys:
                 item[cam] = self.image_transform(item[cam])
@@ -518,7 +563,6 @@ class DataBuffer(torch.utils.data.Dataset):
             The resulting DataBuffer object.
 
         TODO(now): Consider populating the buffer one episode at a time in order not to kill RAM.
-        TODO(now): Reuse previously saved? Maybe I need a hash.
         """
         for k in ["data_spec", "buffer_capacity"]:
             if k in kwargs:
@@ -576,21 +620,20 @@ class DataBuffer(torch.utils.data.Dataset):
                         all_imgs.extend(episode_imgs)
                     data_dict[k] = np.stack(all_imgs)
                 else:
+                    # TODO(now): Dynamically create the path instead of storing?
                     data_dict[k] = np.stack(
                         [np.array(dct["path"], dtype=f"S{MAX_VIDEO_PATH_LENGTH}") for dct in hf_dataset[k]]
                     )
             else:
                 data_dict[k] = np.array(hf_dataset[k])
-        obj.add_episodes(data_dict)
-        if is_video_dataset:
-            obj._is_video_dataset = True  # TODO(now): HACK
+        if is_video_dataset and not decode_video:
+            obj._is_video_dataset = True
+        obj.add_episodes(data_dict)  # note this must happen after setting _is_video_dataset.
+        if is_video_dataset and not decode_video:
             # Symlink videos if needed.
             obj.videos_dir = kwargs["storage_dir"] / "videos"
             if not obj.videos_dir.exists():
                 os.symlink(videos_path.absolute(), obj.videos_dir)
-            obj.videos_dir = kwargs["storage_dir"] / "videos"  # TODO(now): HACK
-            obj.video_backend = "pyav"  # TODO(now): HACK
-
         return obj
 
     @staticmethod
