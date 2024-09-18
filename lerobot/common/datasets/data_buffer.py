@@ -382,7 +382,10 @@ class DataBuffer(torch.utils.data.Dataset):
     def _item_to_tensors(item: dict) -> dict:
         item_ = {}
         for k, v in item.items():
-            item_[k] = torch.from_numpy(v)
+            if isinstance(v, np.ndarray):
+                item_[k] = torch.from_numpy(v)
+            else:
+                item_[k] = torch.tensor(item[k])
         return item_
 
     def _optimized_advanced_slice(self, data_key: str, indices: np.ndarray) -> np.ndarray:
@@ -403,6 +406,10 @@ class DataBuffer(torch.utils.data.Dataset):
 
     def __len__(self):
         return self.num_samples
+
+    def get_data_by_key(self, key: str) -> np.ndarray:
+        """Returns all data for a given data key (where the data is valid)."""
+        return self._data[key][self._data[self.OCCUPANCY_MASK_KEY]]
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         if idx >= len(self) or idx < -len(self):
@@ -479,6 +486,7 @@ class DataBuffer(torch.utils.data.Dataset):
                 self.video_backend,
             )
 
+        # TODO(now): Where to put transform that goes to torch format for images.
         if self.image_transform is not None:
             for cam in self.camera_keys:
                 item[cam] = self.image_transform(item[cam])
@@ -654,9 +662,9 @@ def compute_sampler_weights(
 
     if online_dataset is not None and len(online_dataset) > 0:
         online_data_mask_indices = []
-        episode_indices = online_dataset.get_data_by_key("episode_index")
-        for episode_idx in torch.unique(episode_indices):
-            where_episode = torch.where(episode_indices == episode_idx)
+        episode_indices = online_dataset.get_data_by_key(DataBuffer.EPISODE_INDEX_KEY)
+        for episode_idx in np.unique(episode_indices):
+            where_episode = np.where(episode_indices == episode_idx)
             start_index = where_episode[0][0]
             end_index = where_episode[0][-1] + 1
             online_data_mask_indices.extend(
