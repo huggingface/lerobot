@@ -47,7 +47,6 @@ import logging
 import threading
 import time
 from contextlib import nullcontext
-from copy import deepcopy
 from datetime import datetime as dt
 from pathlib import Path
 from typing import Callable
@@ -145,9 +144,9 @@ def rollout(
     )
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-        observation = preprocess_observation(observation)
         if return_observations:
-            all_observations.append(deepcopy(observation))
+            all_observations.append(preprocess_observation(observation, to_pytorch_format=False))
+        observation = preprocess_observation(observation)
 
         observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
 
@@ -173,35 +172,32 @@ def rollout(
         # Keep track of which environments are done so far.
         done = terminated | truncated | done
 
-        all_actions.append(torch.from_numpy(action))
-        all_rewards.append(torch.from_numpy(reward))
-        all_dones.append(torch.from_numpy(done))
-        all_successes.append(torch.tensor(successes))
+        all_actions.append(action)
+        all_rewards.append(reward)
+        all_dones.append(done)
+        all_successes.append(np.array(successes))
 
         step += 1
-        running_success_rate = (
-            einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
-        )
+        running_success_rate = einops.reduce(np.stack(all_successes, axis=1), "b n -> b", "any").mean()
         progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
         progbar.update()
 
     # Track the final observation.
     if return_observations:
-        observation = preprocess_observation(observation)
-        # TODO(now): Go uint8 HWC instead
-        all_observations.append(deepcopy(observation))
+        all_observations.append(preprocess_observation(observation, to_pytorch_format=False))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
+    # All arrays go to float32 for more efficient storage in a DataBuffer.
     ret = {
-        "action": torch.stack(all_actions, dim=1),
-        "reward": torch.stack(all_rewards, dim=1),
-        "success": torch.stack(all_successes, dim=1),
-        "done": torch.stack(all_dones, dim=1),
+        "action": np.stack(all_actions, axis=1).astype(np.float32),
+        "reward": np.stack(all_rewards, axis=1).astype(np.float32),
+        "success": np.stack(all_successes, axis=1).astype(bool),
+        "done": np.stack(all_dones, axis=1).astype(bool),
     }
     if return_observations:
         stacked_observations = {}
         for key in all_observations[0]:
-            stacked_observations[key] = torch.stack([obs[key] for obs in all_observations], dim=1)
+            stacked_observations[key] = np.stack([obs[key] for obs in all_observations], axis=1)
         ret["observation"] = stacked_observations
 
     return ret
@@ -293,11 +289,11 @@ def eval_policy(
         # this won't be included).
         n_steps = rollout_data["done"].shape[1]
         # Note: this relies on a property of argmax: that it returns the first occurrence as a tiebreaker.
-        done_indices = torch.argmax(rollout_data["done"].to(int), dim=1)
+        done_indices = np.argmax(rollout_data["done"], axis=1)
 
         # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
         # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
-        mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
+        mask = np.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)
         # Extend metrics.
         batch_sum_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "sum")
         sum_rewards.extend(batch_sum_rewards.tolist())
@@ -417,17 +413,27 @@ def _compile_episode_data(
         # Here we do `num_frames - 1` as we don't want to include the last observation frame just yet.
         ep_dict = {
             "action": rollout_data["action"][ep_ix, : num_frames - 1],
-            "episode_index": torch.tensor([start_episode_index + ep_ix] * (num_frames - 1)),
-            "frame_index": torch.arange(0, num_frames - 1, 1),
-            "timestamp": torch.arange(0, num_frames - 1, 1) / fps,
+            "episode_index": np.array([start_episode_index + ep_ix] * (num_frames - 1)),
+            "frame_index": np.arange(0, num_frames - 1, 1),
+            "timestamp": np.arange(0, num_frames - 1, 1) / fps,
             "next.done": rollout_data["done"][ep_ix, : num_frames - 1],
             "next.success": rollout_data["success"][ep_ix, : num_frames - 1],
-            "next.reward": rollout_data["reward"][ep_ix, : num_frames - 1].type(torch.float32),
+            "next.reward": rollout_data["reward"][ep_ix, : num_frames - 1],
         }
 
-        # For the last observation frame, all other keys will just be copy padded.
+        # For the last observation frame, all other keys will be padded.
         for k in ep_dict:
-            ep_dict[k] = torch.cat([ep_dict[k], ep_dict[k][-1:]])
+            if k not in ["timestamp", "frame_index"]:
+                # Copy-pad.
+                ep_dict[k] = np.concatenate([ep_dict[k], ep_dict[k][-1:]])
+            elif k == "timestamp":
+                # Pad with + 1 / fps
+                ep_dict[k] = np.append(ep_dict[k], ep_dict[k][-1] + 1 / fps)
+            elif k == "frame_index":
+                # Pad with the next index.
+                ep_dict[k] = np.append(ep_dict[k], ep_dict[k][-1] + 1)
+            else:
+                raise AssertionError
 
         for key in rollout_data["observation"]:
             ep_dict[key] = rollout_data["observation"][key][ep_ix, :num_frames]
@@ -436,9 +442,9 @@ def _compile_episode_data(
 
     data_dict = {}
     for key in ep_dicts[0]:
-        data_dict[key] = torch.cat([x[key] for x in ep_dicts])
+        data_dict[key] = np.concatenate([x[key] for x in ep_dicts])
 
-    data_dict["index"] = torch.arange(start_data_index, start_data_index + total_frames, 1)
+    data_dict["index"] = np.arange(start_data_index, start_data_index + total_frames, 1)
 
     return data_dict
 

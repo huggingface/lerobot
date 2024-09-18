@@ -23,7 +23,6 @@ from pprint import pformat
 from threading import Lock
 
 import hydra
-import numpy as np
 import torch
 from deepdiff import DeepDiff
 from omegaconf import DictConfig, ListConfig, OmegaConf
@@ -484,13 +483,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         )
     online_dataset = DataBuffer(
         online_buffer_path,
-        data_spec={
-            **{k: {"shape": v, "dtype": np.dtype("float32")} for k, v in policy.config.input_shapes.items()},
-            **{k: {"shape": v, "dtype": np.dtype("float32")} for k, v in policy.config.output_shapes.items()},
-            "next.reward": {"shape": (), "dtype": np.dtype("float32")},
-            "next.done": {"shape": (), "dtype": np.dtype("?")},
-            "next.success": {"shape": (), "dtype": np.dtype("?")},
-        },
         buffer_capacity=cfg.training.online_buffer_capacity,
         fps=online_env.unwrapped.metadata["render_fps"],
         delta_timestamps=cfg.training.delta_timestamps,
@@ -570,7 +562,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
             with lock:
                 start_update_buffer_time = time.perf_counter()
-                online_dataset.add_data(eval_info["episodes"])
+                online_dataset.add_episodes(eval_info["episodes"])
 
                 # Update the concatenated dataset length used during sampling.
                 concat_dataset.cumulative_sizes = concat_dataset.cumsum(concat_dataset.datasets)
