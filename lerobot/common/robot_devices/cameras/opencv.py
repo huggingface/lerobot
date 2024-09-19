@@ -283,9 +283,9 @@ class OpenCVCamera:
                     f"Can't set {self.height=} for OpenCVCamera({self.camera_index}). Actual value is {actual_height}."
                 )
 
-            self.fps = actual_fps
-            self.width = actual_width
-            self.height = actual_height
+            self.fps = int(actual_fps)
+            self.width = int(actual_width)
+            self.height = int(actual_height)
 
             self.is_connected = True
 
