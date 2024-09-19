@@ -22,12 +22,12 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.common.datasets.data_buffer import (
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, DATA_DIR, LeRobotDataset
+from lerobot.common.datasets.online_buffer import (
     DataBuffer,
     TimestampOutsideToleranceError,
     compute_sampler_weights,
 )
-from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, DATA_DIR, LeRobotDataset
 from lerobot.common.datasets.utils import hf_transform_to_torch, load_hf_dataset, load_info, load_videos
 from lerobot.common.datasets.video_utils import VideoFrame, decode_video_frames_torchvision
 from tests.utils import DevTestingError

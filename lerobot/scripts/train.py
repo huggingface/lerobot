@@ -30,9 +30,9 @@ from termcolor import colored
 from torch import nn
 from torch.cuda.amp import GradScaler
 
-from lerobot.common.datasets.data_buffer import DataBuffer, compute_sampler_weights
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
+from lerobot.common.datasets.online_buffer import DataBuffer, compute_sampler_weights
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
