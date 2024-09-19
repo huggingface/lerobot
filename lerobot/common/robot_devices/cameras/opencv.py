@@ -228,39 +228,34 @@ class OpenCVCamera:
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")
 
+        camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
         with self.lock:
             # First create a temporary camera trying to access `camera_index`,
             # and verify it is a valid camera by calling `isOpened`.
-            if platform.system() == "Linux":
-                # Linux uses ports for connecting to cameras
-                tmp_camera = cv2.VideoCapture(f"/dev/video{self.camera_index}")
-            else:
-                tmp_camera = cv2.VideoCapture(self.camera_index)
-
+            tmp_camera = cv2.VideoCapture(camera_idx)
             is_camera_open = tmp_camera.isOpened()
             # Release camera to make it accessible for `find_camera_indices`
+            tmp_camera.release()
             del tmp_camera
 
             # If the camera doesn't work, display the camera indices corresponding to
             # valid cameras.
-            if not is_camera_open:
-                # Verify that the provided `camera_index` is valid before printing the traceback
-                available_cam_ids = find_camera_indices()
-                if self.camera_index not in available_cam_ids:
-                    raise ValueError(
-                        f"`camera_index` is expected to be one of these available cameras {available_cam_ids}, but {self.camera_index} is provided instead. "
-                        "To find the camera index you should use, run `python lerobot/common/robot_devices/cameras/opencv.py`."
-                    )
+        if not is_camera_open:
+            # Verify that the provided `camera_index` is valid before printing the traceback
+            available_cam_ids = find_camera_indices()
+            if self.camera_index not in available_cam_ids:
+                raise ValueError(
+                    f"`camera_index` is expected to be one of these available cameras {available_cam_ids}, but {self.camera_index} is provided instead. "
+                    "To find the camera index you should use, run `python lerobot/common/robot_devices/cameras/opencv.py`."
+                )
 
-                raise OSError(f"Can't access OpenCVCamera({self.camera_index}).")
+            raise OSError(f"Can't access OpenCVCamera({camera_idx}).")
 
-            # Secondly, create the camera that will be used downstream.
-            # Note: For some unknown reason, calling `isOpened` blocks the camera which then
-            # needs to be re-created.
-            if platform.system() == "Linux":
-                self.camera = cv2.VideoCapture(f"/dev/video{self.camera_index}")
-            else:
-                self.camera = cv2.VideoCapture(self.camera_index)
+        # Secondly, create the camera that will be used downstream.
+        # Note: For some unknown reason, calling `isOpened` blocks the camera which then
+        # needs to be re-created.
+        with self.lock:
+            self.camera = cv2.VideoCapture(camera_idx)
 
             if self.fps is not None:
                 self.camera.set(cv2.CAP_PROP_FPS, self.fps)
