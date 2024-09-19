@@ -219,8 +219,9 @@ def test_delta_timestamps_outside_tolerance_outside_episode_range(tmp_path):
 @pytest.mark.parametrize(
     ("dataset_repo_id", "decode_video"),
     (
-        ("lerobot/aloha_mobile_cabinet", True),  # choose aloha_mobile_cabinet to have multiple image keys
-        ("lerobot/aloha_mobile_cabinet", False),
+        # choose unitreeh1_two_robot_greeting to have multiple image keys
+        ("lerobot/unitreeh1_two_robot_greeting", True),
+        ("lerobot/unitreeh1_two_robot_greeting", False),
         ("lerobot/pusht", False),
     ),
 )
@@ -235,8 +236,9 @@ def test_camera_keys(tmp_path: Path, dataset_repo_id: str, decode_video: bool):
 @pytest.mark.parametrize(
     ("dataset_repo_id", "decode_video"),
     (
-        ("lerobot/aloha_mobile_cabinet", True),  # choose aloha_mobile_cabinet to have multiple image keys
-        ("lerobot/aloha_mobile_cabinet", False),
+        # choose unitreeh1_two_robot_greeting to have multiple image keys
+        ("lerobot/unitreeh1_two_robot_greeting", True),
+        ("lerobot/unitreeh1_two_robot_greeting", False),
         ("lerobot/pusht", False),
     ),
 )
@@ -290,7 +292,8 @@ def test_getter_video_images_with_delta_timestamps(tmp_path: Path):
     Note: images deserve particular attention because video decoding is involved, and because they are not
     covered by the basic tests above that use simple spoof data.
     """
-    dataset_repo_id = "lerobot/aloha_mobile_cabinet"
+    # choose unitreeh1_two_robot_greeting to have multiple image keys
+    dataset_repo_id = "lerobot/unitreeh1_two_robot_greeting"
     lerobot_dataset_info = load_info(dataset_repo_id, version=CODEBASE_VERSION, root=DATA_DIR)
     fps = lerobot_dataset_info["fps"]
     # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
