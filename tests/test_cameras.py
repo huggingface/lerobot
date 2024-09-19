@@ -116,7 +116,9 @@ def test_camera(request, camera_type, mock):
         compute_max_pixel_difference(color_image, async_color_image),
     )
     # TODO(rcadene): properly set `rtol`
-    assert np.allclose(color_image, async_color_image, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE), error_msg
+    np.testing.assert_allclose(
+        color_image, async_color_image, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE, err_msg=error_msg
+    )
 
     # Test disconnecting
     camera.disconnect()
@@ -133,7 +135,9 @@ def test_camera(request, camera_type, mock):
     camera.connect()
     assert camera.color_mode == "bgr"
     bgr_color_image = camera.read()
-    assert np.allclose(color_image, bgr_color_image[:, :, [2, 1, 0]], rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE)
+    np.testing.assert_allclose(
+        color_image, bgr_color_image[:, :, [2, 1, 0]], rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE, err_msg=error_msg
+    )
     del camera
 
     # TODO(rcadene): Add a test for a camera that doesnt support fps=60 and raises an OSError
