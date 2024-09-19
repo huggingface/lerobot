@@ -220,8 +220,8 @@ def test_delta_timestamps_outside_tolerance_outside_episode_range(tmp_path):
 @pytest.mark.parametrize(
     ("dataset_repo_id", "decode_video"),
     (
-        # ("lerobot/aloha_mobile_cabinet", True),  # choose aloha_mobile_cabinet to have multiple image keys
-        # ("lerobot/aloha_mobile_cabinet", False),
+        ("lerobot/aloha_mobile_cabinet", True),  # choose aloha_mobile_cabinet to have multiple image keys
+        ("lerobot/aloha_mobile_cabinet", False),
         ("lerobot/pusht_image", False),
     ),
 )
@@ -241,7 +241,10 @@ def test_getter_images_with_delta_timestamps(tmp_path: Path, dataset_repo_id: st
 
     delta_timestamps = [-1 / fps, 0.0, 1 / fps]
     buffer.set_delta_timestamps_and_fps({k: [-1 / fps, 0.0, 1 / fps] for k in buffer.camera_keys}, fps)
-    for item in buffer:
+
+    # Just iterate through the start and end of the dataset to make the test faster.
+    for i in np.concatenate([np.arange(0, 10), np.arange(-10, 0)]):
+        item = buffer[i]
         for k in buffer.camera_keys:
             assert item[k].shape[0] == len(delta_timestamps)
 
@@ -341,7 +344,9 @@ def test_getter_returns_pytorch_format(tmp_path: Path, dataset_repo_id: str, dec
     # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
     storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_video}"
     buffer = DataBuffer.from_huggingface_hub(dataset_repo_id, decode_video, storage_dir=storage_dir)
-    for item in buffer:
+    # Just iterate through the start and end of the dataset to make the test faster.
+    for i in np.concatenate([np.arange(0, 10), np.arange(-10, 0)]):
+        item = buffer[i]
         for k in item:
             assert isinstance(item[k], torch.Tensor)
         if k in buffer.camera_keys:

@@ -25,10 +25,12 @@ from typing import Callable
 import datasets
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, DATA_DIR, LeRobotDataset
 from lerobot.common.datasets.utils import load_hf_dataset, load_info, load_videos
 from lerobot.common.datasets.video_utils import VideoFrame, decode_video_frames_torchvision, load_from_videos
+from lerobot.common.utils.utils import inside_slurm
 
 # TODO(alexander-soare): Move somewhere more appropriate once the DataBuffer class permeates more of the coe
 # base.
@@ -608,7 +610,9 @@ class DataBuffer(torch.utils.data.Dataset):
                     episode_indices = np.array(hf_dataset["episode_index"])
                     timestamps = np.array(hf_dataset["timestamp"])
                     all_imgs = []
-                    for episode_index in np.unique(episode_indices):
+                    for episode_index in tqdm(
+                        np.unique(episode_indices), desc="Decoding videos", disable=inside_slurm()
+                    ):
                         episode_data_indices = np.where(episode_indices == episode_index)[0]
                         episode_timestamps = timestamps[episode_indices == episode_index]
                         episode_imgs = decode_video_frames_torchvision(
