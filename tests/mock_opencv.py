@@ -19,7 +19,7 @@ class MockVideoCapture:
         self._is_opened = True
 
     def isOpened(self):  # noqa: N802
-        return True
+        return self._is_opened
 
     def set(self, propId: int, value: float) -> bool:  # noqa: N803
         if not self._is_opened:
