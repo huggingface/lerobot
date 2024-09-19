@@ -29,7 +29,7 @@ from tqdm import tqdm
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, DATA_DIR, LeRobotDataset
 from lerobot.common.datasets.utils import load_hf_dataset, load_info, load_videos
-from lerobot.common.datasets.video_utils import VideoFrame, decode_video_frames_torchvision, load_from_videos
+from lerobot.common.datasets.video_utils import VideoFrame, decode_video_frames_torchvision
 from lerobot.common.utils.utils import inside_slurm
 
 # TODO(alexander-soare): Move somewhere more appropriate once the DataBuffer class permeates more of the coe
@@ -446,6 +446,7 @@ class DataBuffer(torch.utils.data.Dataset):
 
         item = {k: v[idx] for k, v in self._data.items() if not k.startswith("_")}
 
+        # If we are using delta_timestamps take slices of the data.
         if self.delta_timestamps is not None:
             episode_index = item[self.EPISODE_INDEX_KEY]
             current_ts = item[self.TIMESTAMP_KEY]
@@ -458,7 +459,8 @@ class DataBuffer(torch.utils.data.Dataset):
             episode_timestamps = self._data[self.TIMESTAMP_KEY][episode_data_indices]
 
             if self.is_video_dataset:
-                video_timestamps = {}  # TODO(now): HACK
+                # We'll use this for `decode_video_frames_torchvision`.
+                video_delta_timestamps = {}
 
             for data_key in self.delta_timestamps:
                 # Get timestamps used as query to retrieve data of previous/future frames.
@@ -482,42 +484,44 @@ class DataBuffer(torch.utils.data.Dataset):
                     )
 
                 if self.is_video_dataset and data_key.startswith(self.IMAGE_KEY_PREFIX):
-                    video_timestamps[data_key] = self._data[self.TIMESTAMP_KEY][episode_data_indices[argmin_]]
-
-                item[data_key] = self._data[data_key][episode_data_indices[argmin_]]
+                    video_delta_timestamps[data_key] = self._data[self.TIMESTAMP_KEY][
+                        episode_data_indices[argmin_]
+                    ]
+                else:
+                    item[data_key] = self._data[data_key][episode_data_indices[argmin_]]
 
                 item[f"{data_key}{self.IS_PAD_POSTFIX}"] = is_pad
 
         if self.is_video_dataset:
-            item_ = dict(item)
+            # Decode the required video frames.
             for k in self.camera_keys:
-                if self.delta_timestamps is None or not any(
-                    k in self.delta_timestamps for k in self.camera_keys
-                ):
-                    item_[k] = {"path": item[k].decode(), "timestamp": item[self.TIMESTAMP_KEY]}
+                this_key_has_delta_timestamps = (
+                    self.delta_timestamps is not None and k in self.delta_timestamps
+                )
+                requested_timestamps = (
+                    video_delta_timestamps[k] if this_key_has_delta_timestamps else [item[self.TIMESTAMP_KEY]]
+                )
+                img_or_imgs = decode_video_frames_torchvision(
+                    video_path=self.storage_dir / item[k].decode(),
+                    timestamps=requested_timestamps,
+                    tolerance_s=self.tolerance_s or 1e-8,  # 1e-8 to account for no fps setting
+                    backend="pyav",
+                    to_pytorch_format=True,
+                )
+                if this_key_has_delta_timestamps:
+                    item[k] = img_or_imgs
                 else:
-                    item_[k] = [
-                        {"path": item[k][i].decode(), "timestamp": video_timestamps[k][i]}
-                        for i in range(len(item[k]))
-                    ]
-            item = load_from_videos(
-                item_,
-                self.camera_keys,
-                self._videos_dir,
-                self.tolerance_s or 1e-8,  # 1e-8 to account for no delta_timestamps
-                "pyav",
-                to_pytorch_format=True,
-            )
+                    item[k] = img_or_imgs[0]  # in this case we don't want a temporal dimension
         else:
             # Convert to PyTorch format: channel-last, float32, normalize to range [0, 1].
-            for cam in self.camera_keys:
-                item[cam] = einops.rearrange(
-                    torch.from_numpy(item[cam].astype(np.float32) / 255.0), "... h w c -> ... c h w"
+            for k in self.camera_keys:
+                item[k] = einops.rearrange(
+                    torch.from_numpy(item[k].astype(np.float32) / 255.0), "... h w c -> ... c h w"
                 )
 
         if self.image_transform is not None:
-            for cam in self.camera_keys:
-                item[cam] = self.image_transform(item[cam])
+            for k in self.camera_keys:
+                item[k] = self.image_transform(item[k])
 
         return self._item_to_tensors(item)
 
