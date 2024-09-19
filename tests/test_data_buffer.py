@@ -219,7 +219,7 @@ def test_delta_timestamps_outside_tolerance_outside_episode_range(tmp_path):
 @pytest.mark.parametrize(
     ("dataset_repo_id", "decode_video"),
     (
-        # choose unitreeh1_two_robot_greeting to have multiple image keys
+        # choose unitreeh1_two_robot_greeting to have multiple image keys (with minimal video data)
         ("lerobot/unitreeh1_two_robot_greeting", True),
         ("lerobot/unitreeh1_two_robot_greeting", False),
         ("lerobot/pusht", False),
@@ -232,7 +232,6 @@ def test_camera_keys(tmp_path: Path, dataset_repo_id: str, decode_video: bool):
     assert set(buffer.camera_keys) == {k for k in buffer._data if k.startswith("observation.image")}
 
 
-# TODO(now): Make the test lighter.
 @pytest.mark.parametrize(
     ("dataset_repo_id", "decode_video"),
     (
@@ -334,6 +333,7 @@ def test_from_huggingface_hub(tmp_path: Path, dataset_repo_id: str, decode_video
         - We can make a buffer from a Hugging Face Hub dataset repository.
         - The buffer we make, accurately reflects the hub dataset.
         - If we try to make it a second time, everything still works as expected.
+        - All non-image data
     """
     for iteration in range(2):  # do it twice to check that running with an existing cached buffer also works
         hf_dataset = load_hf_dataset(dataset_repo_id, version=CODEBASE_VERSION, root=DATA_DIR, split="train")

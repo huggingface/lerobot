@@ -406,7 +406,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     if cfg.get("use_lerobot_data_buffer", False):
         offline_dataset_for_dataloader = DataBuffer.from_huggingface_hub(
             offline_dataset.repo_id,
-            storage_dir=Path(f"/tmp/{offline_dataset.repo_id}"),
             fps=offline_dataset.fps,
             delta_timestamps=offline_dataset.delta_timestamps,
             decode_video=offline_dataset.video,

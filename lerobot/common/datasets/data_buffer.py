@@ -224,7 +224,7 @@ class DataBuffer(torch.utils.data.Dataset):
         with open(meta_file, "w") as f:
             for k in data_spec:
                 data_spec[k]["dtype"] = str(data_spec[k]["dtype"])
-            json.dump(data_spec, f)
+            json.dump(data_spec, f, indent=2)
 
     def _load_data_spec(self) -> dict[str, dict]:
         """Load the data type and shape specifications from the storage directory."""
@@ -631,8 +631,12 @@ class DataBuffer(torch.utils.data.Dataset):
                     data_dict[k] = np.stack(
                         [np.array(dct["path"], dtype=f"S{MAX_VIDEO_PATH_LENGTH}") for dct in hf_dataset[k]]
                     )
+            elif isinstance(feature, datasets.features.Sequence):
+                data_dict[k] = np.array(hf_dataset[k], dtype=np.dtype(feature.feature.dtype))
+            elif isinstance(feature, datasets.features.Value):
+                data_dict[k] = np.array(hf_dataset[k], dtype=np.dtype(feature.dtype))
             else:
-                data_dict[k] = np.array(hf_dataset[k])
+                raise NotImplementedError(f"feature type {type(feature)} is not handled.")
         if is_video_dataset and not decode_video:
             obj._is_video_dataset = True
         obj.add_episodes(data_dict)  # note this must happen after setting _is_video_dataset.
