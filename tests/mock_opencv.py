@@ -1,13 +1,15 @@
+from functools import cache
+
 import cv2
 import numpy as np
 
 
-class MockVideoCapture(cv2.VideoCapture):
-    image = {
-        "480x640": np.random.randint(0, 256, size=(480, 640, 3), dtype=np.uint8),
-        "720x1280": np.random.randint(0, 256, size=(720, 1280, 3), dtype=np.uint8),
-    }
+@cache
+def _generate_image(width: int, height: int):
+    return np.random.randint(0, 256, size=(height, width, 3), dtype=np.uint8)
 
+
+class MockVideoCapture:
     def __init__(self, *args, **kwargs):
         self._mock_dict = {
             cv2.CAP_PROP_FPS: 30,
@@ -42,7 +44,7 @@ class MockVideoCapture(cv2.VideoCapture):
         h = self.get(cv2.CAP_PROP_FRAME_HEIGHT)
         w = self.get(cv2.CAP_PROP_FRAME_WIDTH)
         ret = True
-        return ret, self.image[f"{h}x{w}"]
+        return ret, _generate_image(width=w, height=h)
 
     def release(self):
         self._is_opened = False

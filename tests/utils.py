@@ -319,10 +319,6 @@ def mock_cameras(request):
     except ImportError:
         traceback.print_exc()
 
-    # yield ensures that any setup and teardown (like releasing resources)
-    # happens automatically after each test
-    yield
-
 
 def mock_motors(request):
     monkeypatch = request.getfixturevalue("monkeypatch")
