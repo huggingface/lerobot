@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Callable
 
 import datasets
+import einops
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -145,7 +146,9 @@ class DataBuffer(torch.utils.data.Dataset):
         # Parameters for the data structure.
         self._storage_dir = Path(storage_dir)
         self._data: dict[str, np.memmap] = {}
-        self._is_video_dataset = False
+        self._is_video_dataset = False  # may be switched to True by `from_huggingface_hub`
+        self._videos_dir: str | None = None  # may be set by `from_huggingface_hub`
+
         # If the storage directory already exists, load the memmaps.
         if self._storage_dir.exists():
             if buffer_capacity is not None:
@@ -165,7 +168,8 @@ class DataBuffer(torch.utils.data.Dataset):
             self._buffer_capacity = buffer_capacity
 
         # Parameters for the item getter.
-        self.set_delta_timestamps_and_fps(delta_timestamps, fps)
+        self._fps = fps
+        self.set_delta_timestamps(delta_timestamps)
         self.image_transform = image_transform
 
     @property
@@ -247,8 +251,7 @@ class DataBuffer(torch.utils.data.Dataset):
                 self.INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (self._buffer_capacity,)},
                 self.FRAME_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (self._buffer_capacity,)},
                 self.EPISODE_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (self._buffer_capacity,)},
-                # TODO(now): Should this just be float32?
-                self.TIMESTAMP_KEY: {"dtype": np.dtype("float64"), "shape": (self._buffer_capacity,)},
+                self.TIMESTAMP_KEY: {"dtype": np.dtype("float32"), "shape": (self._buffer_capacity,)},
             }
             for k, v in episode_data.items():
                 if k in data_spec:
@@ -280,33 +283,32 @@ class DataBuffer(torch.utils.data.Dataset):
     def delta_timestamps(self) -> dict[str, np.ndarray] | None:
         return self._delta_timestamps
 
-    def set_delta_timestamps_and_fps(
-        self, delta_timestamps: dict[str, list[float]] | None, fps: float | None
-    ):
-        """Set delta_timestamps converting the values to numpy arrays, fps, and timestamp tolerance.
+    @property
+    def tolerance_s(self) -> float | None:
+        """
+        Tolerance (in seconds) used to discard loaded frames when their timestamps are not close enough to
+        the requested frames. It is only used when `delta_timestamps` is provided. The -1e-4 accounts for
+        possible numerical error.
+        """
+        if self._fps is None:
+            return None
+        return 1 / self._fps - 1e-4
+
+    def set_delta_timestamps(self, delta_timestamps: dict[str, list[float]] | None):
+        """Set delta_timestamps converting the values to numpy arrays.
 
         Note: The conversion is for an optimization in the __getitem__. The loop is much slower if lists need
         to be converted into numpy arrays.
-
-        Note: fps needs to be included as they should be provided together or not at all.
-        # TODO(now): ugly...
-
-        Tolerance is set according to the fps.
         """
-        if (delta_timestamps is None) ^ (fps is None):
-            raise ValueError("`delta_timestamps` and `fps` should be provided together, or not at all.")
+        if delta_timestamps is not None and self._fps is None:
+            raise ValueError(
+                "`fps` must be provided to `__init__` if you want to provide `delta_timestamps`."
+            )
 
         if delta_timestamps is not None:
             self._delta_timestamps = {k: np.array(v) for k, v in delta_timestamps.items()}
         else:
             self._delta_timestamps = None
-
-        self._fps = fps
-
-        # Tolerance (in seconds) used to discard loaded frames when their timestamps are not close enough to
-        # the requested frames. It is only used when `delta_timestamps` is provided. The -1e-4 accounts for
-        # possible numerical error.
-        self.tolerance_s = 1 / self.fps - 1e-4 if fps is not None else None
 
     def add_episodes(self, data: dict[str, np.ndarray]):
         """Add data to the buffer.
@@ -524,7 +526,7 @@ class DataBuffer(torch.utils.data.Dataset):
             item = load_from_videos(
                 item_,
                 self.camera_keys,
-                self.videos_dir,
+                self._videos_dir,
                 self.tolerance_s or 1e-8,  # 1e-8 to account for no delta_timestamps
                 "pyav",
                 to_pytorch_format=True,
@@ -532,7 +534,9 @@ class DataBuffer(torch.utils.data.Dataset):
         else:
             # Convert to PyTorch format: channel-last, float32, normalize to range [0, 1].
             for cam in self.camera_keys:
-                item[cam] = item[cam].astype(np.float32) / 255.0
+                item[cam] = einops.rearrange(
+                    torch.from_numpy(item[cam].astype(np.float32) / 255.0), "... h w c -> ... c h w"
+                )
 
         if self.image_transform is not None:
             for cam in self.camera_keys:
@@ -611,7 +615,7 @@ class DataBuffer(torch.utils.data.Dataset):
                     timestamps = np.array(hf_dataset["timestamp"])
                     all_imgs = []
                     for episode_index in tqdm(
-                        np.unique(episode_indices), desc="Decoding videos", disable=inside_slurm()
+                        np.unique(episode_indices), desc=f"Decoding videos for {k}", disable=inside_slurm()
                     ):
                         episode_data_indices = np.where(episode_indices == episode_index)[0]
                         episode_timestamps = timestamps[episode_indices == episode_index]
@@ -624,7 +628,6 @@ class DataBuffer(torch.utils.data.Dataset):
                         all_imgs.extend(episode_imgs)
                     data_dict[k] = np.stack(all_imgs)
                 else:
-                    # TODO(now): Dynamically create the path instead of storing?
                     data_dict[k] = np.stack(
                         [np.array(dct["path"], dtype=f"S{MAX_VIDEO_PATH_LENGTH}") for dct in hf_dataset[k]]
                     )
@@ -635,9 +638,9 @@ class DataBuffer(torch.utils.data.Dataset):
         obj.add_episodes(data_dict)  # note this must happen after setting _is_video_dataset.
         if is_video_dataset and not decode_video:
             # Symlink videos if needed.
-            obj.videos_dir = kwargs["storage_dir"] / "videos"
-            if not obj.videos_dir.exists():
-                os.symlink(videos_path.absolute(), obj.videos_dir)
+            obj._videos_dir = kwargs["storage_dir"] / "videos"
+            if not obj._videos_dir.exists():
+                os.symlink(videos_path.absolute(), obj._videos_dir)
         return obj
 
     @staticmethod

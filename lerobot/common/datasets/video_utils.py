@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
+import einops
 import pyarrow as pa
 import torch
 import torchvision
@@ -161,12 +162,13 @@ def decode_video_frames_torchvision(
     if log_loaded_timestamps:
         logging.info(f"{closest_ts=}")
 
+    # Note that at this point the images are in torch.uint8, in [0, 255], channel-first.
     if to_pytorch_format:
         # Return as pytorch format: float32, normalized to [0,1], channel-first.
         closest_frames = closest_frames.type(torch.float32) / 255
     else:
         # Return in numpy format: np.uint8, in [0, 255], channel-last.
-        closest_frames = closest_frames.permute(0, 2, 3, 1).numpy()
+        closest_frames = einops.rearrange(closest_frames.numpy(), "... c h w -> ... h w c")
 
     assert len(timestamps) == len(closest_frames)
     return closest_frames

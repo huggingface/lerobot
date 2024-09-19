@@ -174,10 +174,9 @@ def test_delta_timestamps_within_tolerance(tmp_path: Path):
     """Check that getting an item with delta_timestamps within tolerance succeeds."""
     if fps != 10:
         raise DevTestingError("This test is designed to use fps == 10.")
-    buffer = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}", delta_timestamps={"index": [-0.2, 0, 0.139]})
+    buffer = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}", delta_timestamps={"index": [-0.2, 0, 0.1]})
     new_data = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=5)
     buffer.add_episodes(new_data)
-    buffer.tolerance_s = 0.04
     item = buffer[2]
     data, is_pad = item["index"], item[f"index{DataBuffer.IS_PAD_POSTFIX}"]
     assert torch.allclose(data, torch.tensor([0, 2, 3])), "Data does not match expected values"
@@ -191,10 +190,11 @@ def test_delta_timestamps_outside_tolerance_inside_episode_range(tmp_path: Path)
     """
     if fps != 10:
         raise DevTestingError("This test is designed to use fps == 10.")
-    buffer = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}", delta_timestamps={"index": [-0.2, 0, 0.141]})
+    buffer = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}", delta_timestamps={"index": [-0.2, 0, 0.1]})
     new_data = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=5)
+    # Hack the timestamps to invoke a tolerance error.
+    new_data["timestamp"][3] += 0.1
     buffer.add_episodes(new_data)
-    buffer.tolerance_s = 0.04
     with pytest.raises(TimestampOutsideToleranceError):
         buffer[2]
 
@@ -204,16 +204,15 @@ def test_delta_timestamps_outside_tolerance_outside_episode_range(tmp_path):
     if fps != 10:
         raise DevTestingError("This test is designed to use fps == 10.")
     buffer = make_new_buffer(
-        tmp_path / f"buffer_{uuid4().hex}", delta_timestamps={"index": [-0.3, -0.24, 0, 0.26, 0.3]}
+        tmp_path / f"buffer_{uuid4().hex}", delta_timestamps={"index": [-0.3, -0.2, 0, 0.2, 0.3]}
     )
     new_data = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=5)
     buffer.add_episodes(new_data)
-    buffer.tolerance_s = 0.04
     item = buffer[2]
     data, is_pad = item["index"], item["index_is_pad"]
     assert torch.equal(data, torch.tensor([0, 0, 2, 4, 4])), "Data does not match expected values"
     assert torch.equal(
-        is_pad, torch.tensor([True, False, False, True, True])
+        is_pad, torch.tensor([True, False, False, False, True])
     ), "Padding does not match expected values"
 
 
@@ -222,25 +221,59 @@ def test_delta_timestamps_outside_tolerance_outside_episode_range(tmp_path):
     (
         ("lerobot/aloha_mobile_cabinet", True),  # choose aloha_mobile_cabinet to have multiple image keys
         ("lerobot/aloha_mobile_cabinet", False),
-        ("lerobot/pusht_image", False),
+        ("lerobot/pusht", False),
     ),
 )
-def test_getter_images_with_delta_timestamps(tmp_path: Path, dataset_repo_id: str, decode_video: bool):
+def test_camera_keys(tmp_path: Path, dataset_repo_id: str, decode_video: bool):
+    """Check that the camera_keys property returns all relevant keys."""
+    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_video}"
+    buffer = DataBuffer.from_huggingface_hub(dataset_repo_id, decode_video, storage_dir=storage_dir)
+    assert set(buffer.camera_keys) == {k for k in buffer._data if k.startswith("observation.image")}
+
+
+# TODO(now): Make the test lighter.
+@pytest.mark.parametrize(
+    ("dataset_repo_id", "decode_video"),
+    (
+        ("lerobot/aloha_mobile_cabinet", True),  # choose aloha_mobile_cabinet to have multiple image keys
+        ("lerobot/aloha_mobile_cabinet", False),
+        ("lerobot/pusht", False),
+    ),
+)
+def test_getter_returns_pytorch_format(tmp_path: Path, dataset_repo_id: str, decode_video: bool):
+    """Checks that tensors are returned and that images are torch.float32, in range [0, 1], channel-first."""
+    # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
+    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_video}"
+    buffer = DataBuffer.from_huggingface_hub(dataset_repo_id, decode_video, storage_dir=storage_dir)
+    # Just iterate through the start and end of the dataset to make the test faster.
+    for i in np.concatenate([np.arange(0, 10), np.arange(-10, 0)]):
+        item = buffer[i]
+        for k in item:
+            assert isinstance(item[k], torch.Tensor)
+        for k in buffer.camera_keys:
+            assert item[k].dtype == torch.float32, "images aren't float32"
+            assert item[k].max() <= 1, "image values go above max of range [0, 1]"
+            assert item[k].min() >= 0, "image values go below min of range [0, 1]"
+            c, h, w = item[k].shape
+            assert c < min(h, w), "images are not channel-first"
+
+
+def test_getter_images_with_delta_timestamps(tmp_path: Path):
     """Checks a basic delta_timestamps use case with images.
 
     Specifically, makes sure that the items returned by the getter have the correct number of frames.
 
-    Note: images deserve particular attention because video decoding is involved, and because they are not
-    covered by the basic tests above that use simple spoof data.
+    Note: images deserve particular attention because they are not covered by the basic tests above that use
+    simple spoof data.
     """
+    dataset_repo_id = "lerobot/pusht_image"
     lerobot_dataset_info = load_info(dataset_repo_id, version=CODEBASE_VERSION, root=DATA_DIR)
     fps = lerobot_dataset_info["fps"]
     # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
-    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_video}"
-    buffer = DataBuffer.from_huggingface_hub(dataset_repo_id, decode_video, storage_dir=storage_dir)
-
+    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}"
+    buffer = DataBuffer.from_huggingface_hub(dataset_repo_id, storage_dir=storage_dir, fps=fps)
     delta_timestamps = [-1 / fps, 0.0, 1 / fps]
-    buffer.set_delta_timestamps_and_fps({k: [-1 / fps, 0.0, 1 / fps] for k in buffer.camera_keys}, fps)
+    buffer.set_delta_timestamps({k: delta_timestamps for k in buffer.camera_keys})
 
     # Just iterate through the start and end of the dataset to make the test faster.
     for i in np.concatenate([np.arange(0, 10), np.arange(-10, 0)]):
@@ -248,7 +281,40 @@ def test_getter_images_with_delta_timestamps(tmp_path: Path, dataset_repo_id: st
         for k in buffer.camera_keys:
             assert item[k].shape[0] == len(delta_timestamps)
 
-    # TODO(now) check that the frames come out the same with / without decode video.
+
+def test_getter_video_images_with_delta_timestamps(tmp_path: Path):
+    """Checks that images from the video dataset and decoded video dataset are the same.
+
+    Adds to `test_getter_images_with_delta_timestamps` by testing with a video dataset.
+
+    Note: images deserve particular attention because video decoding is involved, and because they are not
+    covered by the basic tests above that use simple spoof data.
+    """
+    dataset_repo_id = "lerobot/aloha_mobile_cabinet"
+    lerobot_dataset_info = load_info(dataset_repo_id, version=CODEBASE_VERSION, root=DATA_DIR)
+    fps = lerobot_dataset_info["fps"]
+    # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
+    buffer_video = DataBuffer.from_huggingface_hub(
+        dataset_repo_id, False, storage_dir=tmp_path / f"{dataset_repo_id}_{uuid4().hex}_False", fps=fps
+    )
+    buffer_decode = DataBuffer.from_huggingface_hub(
+        dataset_repo_id, True, storage_dir=tmp_path / f"{dataset_repo_id}_{uuid4().hex}_True", fps=fps
+    )
+
+    assert set(buffer_video.camera_keys) == set(buffer_decode.camera_keys)
+
+    delta_timestamps = [-1 / fps, 0.0, 1 / fps]
+    buffer_video.set_delta_timestamps({k: delta_timestamps for k in buffer_video.camera_keys})
+    buffer_decode.set_delta_timestamps({k: delta_timestamps for k in buffer_decode.camera_keys})
+
+    # Just iterate through the start and end of the datasets to make the test faster.
+    for i in np.concatenate([np.arange(0, 10), np.arange(-10, 0)]):
+        item_video = buffer_video[i]
+        item_decode = buffer_decode[i]
+        for k in buffer_video.camera_keys:
+            assert item_video[k].shape[0] == len(delta_timestamps)
+            assert item_decode[k].shape[0] == len(delta_timestamps)
+            assert torch.equal(item_video[k], item_decode[k])
 
 
 @pytest.mark.parametrize(
@@ -315,44 +381,6 @@ def test_from_huggingface_hub(tmp_path: Path, dataset_repo_id: str, decode_video
                 assert np.array_equal(buffer.get_data_by_key(k), hf_dataset[k])
             else:
                 raise DevTestingError(f"Tests not implemented for this feature type: {type(feature)=}.")
-
-
-@pytest.mark.parametrize(
-    ("dataset_repo_id", "decode_video"),
-    (
-        ("lerobot/aloha_mobile_cabinet", True),  # choose aloha_mobile_cabinet to have multiple image keys
-        ("lerobot/aloha_mobile_cabinet", False),
-        ("lerobot/pusht", False),
-    ),
-)
-def test_camera_keys(tmp_path: Path, dataset_repo_id: str, decode_video: bool):
-    """Check that the camera_keys property returns all relevant keys."""
-    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_video}"
-    buffer = DataBuffer.from_huggingface_hub(dataset_repo_id, decode_video, storage_dir=storage_dir)
-    assert set(buffer.camera_keys) == {k for k in buffer._data if k.startswith("observation.image")}
-
-
-@pytest.mark.parametrize(
-    ("dataset_repo_id", "decode_video"),
-    (
-        ("lerobot/aloha_mobile_cabinet", True),  # choose aloha_mobile_cabinet to have multiple image keys
-        ("lerobot/aloha_mobile_cabinet", False),
-        ("lerobot/pusht", False),
-    ),
-)
-def test_getter_returns_pytorch_format(tmp_path: Path, dataset_repo_id: str, decode_video: bool):
-    # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
-    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_video}"
-    buffer = DataBuffer.from_huggingface_hub(dataset_repo_id, decode_video, storage_dir=storage_dir)
-    # Just iterate through the start and end of the dataset to make the test faster.
-    for i in np.concatenate([np.arange(0, 10), np.arange(-10, 0)]):
-        item = buffer[i]
-        for k in item:
-            assert isinstance(item[k], torch.Tensor)
-        if k in buffer.camera_keys:
-            assert item[k].dtype == torch.float32, "images aren't float32"
-            h, w, c = item.shape
-            assert c < min(h, w), "images are not channel-first"
 
 
 # Arbitrarily set small dataset sizes, making sure to have uneven sizes.

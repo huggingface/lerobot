@@ -31,6 +31,8 @@ test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-default-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-act-pusht-tutorial
 
+# TODO(now): Add tests with siphon
+
 test-act-ete-train:
 	python lerobot/scripts/train.py \
 		policy=act \
