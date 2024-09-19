@@ -20,6 +20,8 @@ build-gpu:
 
 test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-train
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-data-buffer
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-data-buffer-decode-video
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-amp
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval-amp
@@ -30,8 +32,6 @@ test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-default-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-act-pusht-tutorial
-
-# TODO(now): Add tests with siphon
 
 test-act-ete-train:
 	python lerobot/scripts/train.py \
@@ -51,6 +51,47 @@ test-act-ete-train:
 		training.batch_size=2 \
 		training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/act/
+
+test-act-ete-train-data-buffer:
+	python lerobot/scripts/train.py \
+		policy=act \
+		policy.dim_model=64 \
+		env=aloha \
+		wandb.enable=False \
+		training.offline_steps=2 \
+		training.online_steps=0 \
+		eval.n_episodes=1 \
+		eval.batch_size=1 \
+		device=$(DEVICE) \
+		training.save_checkpoint=true \
+		training.save_freq=2 \
+		policy.n_action_steps=20 \
+		policy.chunk_size=20 \
+		training.batch_size=2 \
+		training.image_transforms.enable=true \
+		hydra.run.dir=tests/outputs/act_buffer/ \
+		+use_lerobot_data_buffer=true \
+
+test-act-ete-train-data-buffer-decode-video:
+	python lerobot/scripts/train.py \
+		policy=act \
+		policy.dim_model=64 \
+		env=aloha \
+		wandb.enable=False \
+		training.offline_steps=2 \
+		training.online_steps=0 \
+		eval.n_episodes=1 \
+		eval.batch_size=1 \
+		device=$(DEVICE) \
+		training.save_checkpoint=true \
+		training.save_freq=2 \
+		policy.n_action_steps=20 \
+		policy.chunk_size=20 \
+		training.batch_size=2 \
+		training.image_transforms.enable=true \
+		hydra.run.dir=tests/outputs/act_buffer_decode_video/ \
+		+use_lerobot_data_buffer=true \
+		+lerobot_data_buffer_decode_video=true \
 
 test-act-ete-eval:
 	python lerobot/scripts/eval.py \

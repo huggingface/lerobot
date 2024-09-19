@@ -18,7 +18,6 @@
 import json
 import os
 import shutil
-from itertools import chain
 from pathlib import Path
 from typing import Callable
 
@@ -426,22 +425,6 @@ class DataBuffer(torch.utils.data.Dataset):
                 item_[k] = torch.tensor(v)
         return item_
 
-    def _optimized_advanced_slice(self, data_key: str, indices: np.ndarray) -> np.ndarray:
-        """Convert advanced slicing to basic slicing by finding contiguous ranges in the requested indices.
-
-        TODO(now): Is this needed?
-        """
-        indices_diff = np.diff(indices, prepend=indices[0] - 1)
-        where_not_1 = np.where(indices_diff != 1)[0]
-        ptr = 0
-        ret = []
-        for ix in chain(where_not_1, [len(indices)]):
-            ret.append(self._data[data_key][indices[ptr] : indices[ix - 1] + 1])
-            ptr = ix
-
-        # Avoid creating a copy with concatenate if possible.
-        return np.concatenate(ret) if len(ret) > 1 else ret[0]
-
     def __len__(self):
         return self.num_samples
 
@@ -501,22 +484,16 @@ class DataBuffer(torch.utils.data.Dataset):
                 if self.is_video_dataset and data_key.startswith(self.IMAGE_KEY_PREFIX):
                     video_timestamps[data_key] = self._data[self.TIMESTAMP_KEY][episode_data_indices[argmin_]]
 
-                # Load frames for this data key.
-                if np.any(np.diff(argmin_) != 1):
-                    item[data_key] = self._data[data_key][episode_data_indices[argmin_]]
-                    # item[data_key] = self._optimized_advanced_slice(data_key, episode_data_indices[argmin_])
-                else:
-                    # Do basic slicing where possible
-                    item[data_key] = self._data[data_key][
-                        episode_data_indices[argmin_.min()] : episode_data_indices[argmin_.max()] + 1
-                    ]
+                item[data_key] = self._data[data_key][episode_data_indices[argmin_]]
 
                 item[f"{data_key}{self.IS_PAD_POSTFIX}"] = is_pad
 
         if self.is_video_dataset:
             item_ = dict(item)
             for k in self.camera_keys:
-                if self.delta_timestamps is None:
+                if self.delta_timestamps is None or not any(
+                    k in self.delta_timestamps for k in self.camera_keys
+                ):
                     item_[k] = {"path": item[k].decode(), "timestamp": item[self.TIMESTAMP_KEY]}
                 else:
                     item_[k] = [
@@ -550,6 +527,7 @@ class DataBuffer(torch.utils.data.Dataset):
         repo_id: str,
         decode_video: bool = False,
         root: Path | None = DATA_DIR,
+        verbose: bool = False,
         **kwargs,
     ) -> "DataBuffer":
         """Create a DataBuffer from a data repository on the Hugging Face Hub.
@@ -567,8 +545,6 @@ class DataBuffer(torch.utils.data.Dataset):
                 `/tmp/{repo_id}_{hf_dataset._fingerprint}_{decoded?}` unless provided explicitly.
         Returns:
             The resulting DataBuffer object.
-
-        TODO(now): Consider populating the buffer one episode at a time in order not to kill RAM.
         """
         for k in ["data_spec", "buffer_capacity"]:
             if k in kwargs:
@@ -576,6 +552,13 @@ class DataBuffer(torch.utils.data.Dataset):
 
         hf_dataset = load_hf_dataset(repo_id, version=CODEBASE_VERSION, root=root, split="train")
         hf_dataset.set_transform(lambda x: x)
+        # Get some metadata necessary for processing videos.
+        lerobot_dataset_info = load_info(repo_id, version=CODEBASE_VERSION, root=root)
+        if not lerobot_dataset_info.get("video", False) and decode_video:
+            raise ValueError(f"The provided dataset is not a video dataset but you have {decode_video=}")
+        if lerobot_dataset_info.get("video", False):
+            videos_path = load_videos(repo_id, version=CODEBASE_VERSION, root=root)
+
         kwargs.setdefault(
             "storage_dir",
             DataBuffer._default_storage_dir_from_huggingface_hub(
@@ -587,21 +570,22 @@ class DataBuffer(torch.utils.data.Dataset):
         if kwargs["storage_dir"].exists():
             buffer_already_on_disk = True
 
+        # Create the DataBuffer object. Reminder: if the storage directory already exists, this reads it.
+        # Otherwise, the storage directory is not created until later when we make the first call to
+        # `add_episodes`.
         obj = cls(
             **kwargs,
             buffer_capacity=len(hf_dataset) if not buffer_already_on_disk else None,
         )
+
+        if lerobot_dataset_info.get("video", False) and not decode_video:
+            obj._is_video_dataset = True
+        if obj._is_video_dataset:
+            obj._videos_dir = kwargs["storage_dir"] / "videos"
+
         # If we have accessed an existing cached data buffer, just return the object as is.
         if buffer_already_on_disk:
             return obj
-
-        # Get some metadata necessary for processing videos.
-        lerobot_dataset_info = load_info(repo_id, version=CODEBASE_VERSION, root=root)
-        is_video_dataset = lerobot_dataset_info.get("video", False)
-        if not is_video_dataset and decode_video:
-            raise ValueError(f"The provided dataset is not a video dataset but you have {decode_video=}")
-        if is_video_dataset:
-            videos_path = load_videos(repo_id, version=CODEBASE_VERSION, root=root)
 
         # Populate the buffer with the data from the dataset.
         data_dict = {}
@@ -637,14 +621,11 @@ class DataBuffer(torch.utils.data.Dataset):
                 data_dict[k] = np.array(hf_dataset[k], dtype=np.dtype(feature.dtype))
             else:
                 raise NotImplementedError(f"feature type {type(feature)} is not handled.")
-        if is_video_dataset and not decode_video:
-            obj._is_video_dataset = True
+
         obj.add_episodes(data_dict)  # note this must happen after setting _is_video_dataset.
-        if is_video_dataset and not decode_video:
-            # Symlink videos if needed.
-            obj._videos_dir = kwargs["storage_dir"] / "videos"
-            if not obj._videos_dir.exists():
-                os.symlink(videos_path.absolute(), obj._videos_dir)
+        # Symlink vidoes if needed.
+        if obj._is_video_dataset and not obj._videos_dir.exists():
+            os.symlink(videos_path.absolute(), obj._videos_dir)
         return obj
 
     @staticmethod

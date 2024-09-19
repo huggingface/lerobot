@@ -404,11 +404,19 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         sampler = None
 
     if cfg.get("use_lerobot_data_buffer", False):
+        logging.info("Siphoning the dataset into a DataBuffer.")
+        decode_video = offline_dataset.video and cfg.get("lerobot_data_buffer_decode_video", False)
+        if decode_video:
+            logging.info(
+                "You have chosen to decode the video. It could take some time to populate the buffer "
+                "depending on the amount of data (but it only needs to happen once, and data loading will be "
+                "fast!)"
+            )
         offline_dataset_for_dataloader = DataBuffer.from_huggingface_hub(
             offline_dataset.repo_id,
             fps=offline_dataset.fps,
             delta_timestamps=offline_dataset.delta_timestamps,
-            decode_video=offline_dataset.video,
+            decode_video=decode_video,
         )
     else:
         offline_dataset_for_dataloader = offline_dataset

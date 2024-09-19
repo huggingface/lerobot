@@ -332,8 +332,8 @@ def test_from_huggingface_hub(tmp_path: Path, dataset_repo_id: str, decode_video
     Check that:
         - We can make a buffer from a Hugging Face Hub dataset repository.
         - The buffer we make, accurately reflects the hub dataset.
+        - We can get an item from the buffer.
         - If we try to make it a second time, everything still works as expected.
-        - All non-image data
     """
     for iteration in range(2):  # do it twice to check that running with an existing cached buffer also works
         hf_dataset = load_hf_dataset(dataset_repo_id, version=CODEBASE_VERSION, root=DATA_DIR, split="train")
@@ -384,6 +384,8 @@ def test_from_huggingface_hub(tmp_path: Path, dataset_repo_id: str, decode_video
                 assert np.array_equal(buffer.get_data_by_key(k), hf_dataset[k])
             else:
                 raise DevTestingError(f"Tests not implemented for this feature type: {type(feature)=}.")
+        # Check that we can get an item.
+        _ = buffer[0]
 
 
 # Arbitrarily set small dataset sizes, making sure to have uneven sizes.
