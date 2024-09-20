@@ -1,7 +1,7 @@
 import time
 
 
-def precise_sleep(seconds: float):
+def precise_sleep(seconds: float, blocking: bool = False):
     """A more precise sleep than time.sleep
 
     There are several factors that influence the precision of time.sleep. They basically boil down to the OS
@@ -18,12 +18,15 @@ def precise_sleep(seconds: float):
 
     Args:
         seconds: Amount of time to sleep for in seconds.
+        blocking: If set to True, just does a while-loop with `pass` making the sleep as precise as possible
+            but using the CPU the whole time. Set this to True, if you don't need to parallelize with other
+            work.
     """
     end_time = time.perf_counter() + seconds
     # 20 ms buffer is usually enough to account for an overly-long last sleep, even with heavy system load.
     end_time_with_buffer = end_time - 0.02
     while (now := time.perf_counter()) < end_time:
-        if now < end_time_with_buffer:
+        if now < end_time_with_buffer and not blocking:
             # 100 microsec is faster than any control loop frequency we expect, but long enough to not hog
             # the CPU.
             time.sleep(0.0001)
