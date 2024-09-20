@@ -1,7 +1,7 @@
 import time
 
 
-def precise_sleep(seconds: float, blocking: bool = False):
+def precise_sleep(seconds: float, blocking: bool = True):
     """A more precise sleep than time.sleep
 
     There are several factors that influence the precision of time.sleep. They basically boil down to the OS
@@ -11,22 +11,23 @@ def precise_sleep(seconds: float, blocking: bool = False):
     In all cases, nothing much can be done about issues with CPU scheduling. To be as precise as possible,
     we need to use a while-loop with a `pass`. This unfortunately keeps the CPU busy the whole time.
 
-    The trick we use here, is to sleep most of the requested time, but switch to blocking the CPU towards the
-    end of the requested time.
+    An optional advanced feature we have here, is to sleep most of the requested time, but switch to blocking
+    the CPU towards the end of the requested time.
 
     NOTE: See the benchmarking script at the bottom of the source file.
 
     Args:
         seconds: Amount of time to sleep for in seconds.
-        blocking: If set to True, just does a while-loop with `pass` making the sleep as precise as possible
-            but using the CPU the whole time. Set this to True, if you don't need to parallelize with other
-            work.
+        blocking: If set to False, just does a while-loop with `pass` making the sleep as precise as possible
+            but using the CPU the whole time. If set to True, uses the partial sleep trick documented above.
+            To be safe, leave this as True, if you don't mind blocking the CPU.
     """
     end_time = time.perf_counter() + seconds
-    # 20 ms buffer is usually enough to account for an overly-long last sleep, even with heavy system load.
-    end_time_with_buffer = end_time - 0.02
-    while (now := time.perf_counter()) < end_time:
-        if now < end_time_with_buffer and not blocking:
+    # 5 ms buffer is often enough to account for large sleep time granularity on some platforms, and delays
+    # due to CPU scheduling under system load.
+    end_time_with_buffer = end_time - 0.005
+    while time.perf_counter() < end_time:
+        if time.perf_counter() < end_time_with_buffer and not blocking:
             # 100 microsec is faster than any control loop frequency we expect, but long enough to not hog
             # the CPU.
             time.sleep(0.0001)
@@ -72,22 +73,23 @@ if __name__ == "__main__":
     killall yes
     ```
 
-    `precise_sleep` should be better than `sleep` even up to maximal core usage.
+    On a Linux machine with 16 cores, `precise_sleep` has been shown to work well with N_CORES <= 8.
     """
 
     import math
+    from functools import partial
 
     from tqdm import trange
 
     sleep_time = 1 / 50  # 50 Hz like Aloha
 
-    for fn in [time.sleep, precise_sleep]:
+    for fn in [time.sleep, partial(precise_sleep, blocking=False)]:
         times = []
-        for _ in trange(1000):
+        for _ in trange(500):
             start = time.perf_counter()
             fn(sleep_time)
             times.append(time.perf_counter() - start)
-        print(fn.__name__)
+        # print(fn.__name__)
         print("Max time:", max(times))
         print("Min time:", min(times))
         mean_time = sum(times) / len(times)
