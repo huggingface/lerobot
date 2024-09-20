@@ -2,28 +2,21 @@
 This file contains utilities for recording frames from Intel Realsense cameras.
 """
 
-import argparse
-import concurrent.futures
-import logging
-import shutil
 import threading
 import time
 import traceback
 from dataclasses import dataclass, replace
-from pathlib import Path
 from threading import Thread
 
 import cv2
 import numpy as np
 import pyrealsense2 as rs
-from PIL import Image
 
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
 )
 from lerobot.common.utils.utils import capture_timestamp_utc
-from lerobot.scripts.control_robot import busy_wait
 
 SERIAL_NUMBER_INDEX = 1
 
@@ -44,89 +37,6 @@ def find_camera_indices(raise_when_empty=True) -> list[int]:
         )
 
     return camera_ids
-
-
-def save_image(img_array, camera_idx, frame_index, images_dir):
-    try:
-        img = Image.fromarray(img_array)
-        path = images_dir / f"camera_{camera_idx}_frame_{frame_index:06d}.png"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        img.save(str(path), quality=100)
-        logging.info(f"Saved image: {path}")
-    except Exception as e:
-        logging.error(f"Failed to save image for camera {camera_idx} frame {frame_index}: {e}")
-
-
-def save_images_from_cameras(
-    images_dir: Path,
-    camera_ids: list[int] | None = None,
-    fps=None,
-    width=None,
-    height=None,
-    record_time_s=2,
-):
-    """
-    Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
-    associated to a given camera index.
-    """
-    if camera_ids is None:
-        camera_ids = find_camera_indices()
-
-    print("Connecting cameras")
-    cameras = []
-    for cam_idx in camera_ids:
-        camera = IntelRealSenseCamera(cam_idx, fps=fps, width=width, height=height)
-        camera.connect()
-        print(
-            f"IntelRealSenseCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
-        )
-        cameras.append(camera)
-
-    images_dir = Path(images_dir)
-    if images_dir.exists():
-        shutil.rmtree(
-            images_dir,
-        )
-    images_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"Saving images to {images_dir}")
-    frame_index = 0
-    start_time = time.perf_counter()
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            while True:
-                now = time.perf_counter()
-
-                for camera in cameras:
-                    # If we use async_read when fps is None, the loop will go full speed, and we will end up
-                    # saving the same images from the cameras multiple times until the RAM/disk is full.
-                    image = camera.read() if fps is None else camera.async_read()
-                    if image is None:
-                        print("No Frame")
-                    bgr_converted_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-                    executor.submit(
-                        save_image,
-                        bgr_converted_image,
-                        camera.camera_index,
-                        frame_index,
-                        images_dir,
-                    )
-
-                if fps is not None:
-                    dt_s = time.perf_counter() - now
-                    busy_wait(1 / fps - dt_s)
-
-                if time.perf_counter() - start_time > record_time_s:
-                    break
-
-                print(f"Frame: {frame_index:04d}\tLatency (ms): {(time.perf_counter() - now) * 1000:.2f}")
-
-                frame_index += 1
-    finally:
-        print(f"Images have been saved to {images_dir}")
-        for camera in cameras:
-            camera.disconnect()
 
 
 @dataclass
@@ -173,7 +83,9 @@ class IntelRealSenseCamera:
 
     To find the camera indices of your cameras, you can run our utility script that will save a few frames for each camera:
     ```bash
-    python lerobot/common/robot_devices/cameras/intelrealsense.py --images-dir outputs/images_from_intelrealsense_cameras
+    python lerobot/scripts/save_images_from_cameras.py \
+    --driver intelrealsense \
+    --images-dir outputs/images_from_intelrealsense_cameras
     ```
 
     When an IntelRealSenseCamera is instantiated, if no specific config is provided, the default fps, width, height and color_mode
@@ -274,7 +186,7 @@ class IntelRealSenseCamera:
             if self.camera_index not in available_cam_ids:
                 raise ValueError(
                     f"`camera_index` is expected to be one of these available cameras {available_cam_ids}, but {self.camera_index} is provided instead. "
-                    "To find the camera index you should use, run `python lerobot/common/robot_devices/cameras/intelrealsense.py`."
+                    "To find the camera index you should use, run `python lerobot/scripts/save_images_from_cameras.py --driver intelrealsense`."
                 )
 
             raise OSError(f"Can't access IntelRealSenseCamera({self.camera_index}).")
@@ -401,48 +313,3 @@ class IntelRealSenseCamera:
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Save a few frames using `IntelRealSenseCamera` for all cameras connected to the computer, or a selected subset."
-    )
-    parser.add_argument(
-        "--camera-ids",
-        type=int,
-        nargs="*",
-        default=None,
-        help="List of camera indices used to instantiate the `IntelRealSenseCamera`. If not provided, find and use all available camera indices.",
-    )
-    parser.add_argument(
-        "--fps",
-        type=int,
-        default=30,
-        help="Set the number of frames recorded per seconds for all cameras. If not provided, use the default fps of each camera.",
-    )
-    parser.add_argument(
-        "--width",
-        type=str,
-        default=640,
-        help="Set the width for all cameras. If not provided, use the default width of each camera.",
-    )
-    parser.add_argument(
-        "--height",
-        type=str,
-        default=480,
-        help="Set the height for all cameras. If not provided, use the default height of each camera.",
-    )
-    parser.add_argument(
-        "--images-dir",
-        type=Path,
-        default="outputs/images_from_intelrealsense_cameras",
-        help="Set directory to save a few frames for each camera.",
-    )
-    parser.add_argument(
-        "--record-time-s",
-        type=float,
-        default=2.0,
-        help="Set the number of seconds used to record the frames. By default, 2 seconds.",
-    )
-    args = parser.parse_args()
-    save_images_from_cameras(**vars(args))
