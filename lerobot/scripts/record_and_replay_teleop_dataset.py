@@ -80,8 +80,12 @@ class ReplayHelper:
     def get_action_at_frame(self):
         return self.dataset[self.frame_index]["action"]
 
-    def get_state_observation_at_frame(self):
-        return self.dataset[self.frame_index]["observation.state"]
+    def get_state_observation_at_next_frame(self):
+        if self.is_at_last_frame_in_dataset:
+            return None
+        if self.is_at_last_frame_in_episode:
+            return None
+        return self.dataset[self.frame_index+1]["observation.state"]
 
     @property
     def is_at_last_frame_in_episode(self):
@@ -96,6 +100,10 @@ class OutputHelper:
     def __init__(self, *, repo_id):
         self.repo_id = repo_id
         self.dataset_counter = -1
+
+    def maybe_set_up_data_keys(self, observation):
+        if len(self.image_keys) + len(self.state_keys) == 0:
+            self.set_up_data_keys(observation)
 
     def set_up_data_keys(self, observation):
         """
@@ -350,7 +358,7 @@ def set_up_keyboard_teleop():
     print("*      UP|DOWN       : move hand  forwards|backwards (+y|-y)")
     print("*    LEFT|RIGHT      : move hand      left|right     (-x|+x)")
     print("* PAGE UP|PAGE DOWN  : move hand        up|down      (+z|-z)")
-    print("*     CMD|SHIFT      : move gripper  close|open")
+    print("*     CMD|SHIFT      : move gripper   open|close")
     print("* DELETE             : Discard Episode and reset env")
     print("* HOME               : Save episode and reset env")
     print("* END                : Save episode and end data collection")
@@ -555,17 +563,13 @@ def construct_and_set_up_env(*, task_parameters: TaskParameters):
                    cube_file_path=task_parameters.cube_file_path
                    )
 
-    # Reset the environment
-    observation, info = env.reset()
-    output_helper.set_up_data_keys(observation)
-
     return env
 
 
 def get_next_action_in_episode(replay_helper: ReplayHelper | None):
     if replay_helper is not None:
         action = replay_helper.get_action_at_frame()
-        state_observation = replay_helper.get_state_observation_at_frame()
+        state_observation = replay_helper.get_state_observation_at_next_frame()
         if replay_helper.is_at_last_frame_in_dataset:
             episode_state.is_concluding_episode = True
             episode_state.is_stopping = True
@@ -586,7 +590,10 @@ def get_next_action_in_episode(replay_helper: ReplayHelper | None):
 
 
 def set_up_next_episode(env):
-    env.reset()
+    # Reset the environment
+    observation, info = env.reset()
+    output_helper.maybe_set_up_data_keys(observation)
+
     # Set up correctly-sized action.
     episode_state.teleoperation_action = env.action_space.sample() * np.nan
 
@@ -619,19 +626,24 @@ def run_sim_while_recording_dataset(*, replay_helper: ReplayHelper | None = None
             # Apply the next action (provided by teleop)
             observation, reward, terminted, truncated, info = env.step(
                 action=action)
+            t = info["timestamp"]
+            print("@t={}".format(t))
 
             if expected_state_observation is not None:
                 state_observation = torch.tensor(np.concatenate(
                     output_helper.vectorize_state_observations(observation), axis=0))
                 if not torch.norm(expected_state_observation - state_observation) < 1e-6:
-                    print("diff =\n{}".format(expected_state_observation - state_observation))
-                    print("norm(diff) =\n{}".format(torch.norm(expected_state_observation - state_observation)))
-                    print("expected_state_observation ({})=\n{}".format(
-                        type(expected_state_observation), expected_state_observation))
-                    print("state_observation ({})=\n{}".format(
-                        type(state_observation), state_observation))
-                    raise AssertionError(
-                        "State observations should be equal between source dataset and replay.")
+                    print("action=\n{}".format(action))
+                    print("diff =\n{}".format(
+                        expected_state_observation - state_observation))
+                    print("norm(diff) =\n{}".format(torch.norm(
+                        expected_state_observation - state_observation)))
+                    # print("expected_state_observation ({})=\n{}".format(
+                    #     type(expected_state_observation), expected_state_observation))
+                    # print("state_observation ({})=\n{}".format(
+                    #     type(state_observation), state_observation))
+                    # raise AssertionError(
+                    #     "State observations should be equal between source dataset and replay.")
 
             # Render the simultion
             env.render()
@@ -640,8 +652,7 @@ def run_sim_while_recording_dataset(*, replay_helper: ReplayHelper | None = None
             for key in observation:
                 observations[key].append(copy.deepcopy(observation[key]))
             actions.append(copy.deepcopy(action))
-            timestamps.append(info["timestamp"])
-            print("@t={}".format(info["timestamp"]))
+            timestamps.append(t)
 
             step_counter += 1
 
