@@ -2,11 +2,6 @@
 
 fps: 15
 
-eval:
-  # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
-  # set it to false to avoid some problems of the aloha env
-  use_async_envs: false
-
 env:
   name: xarm
   task: XarmLift-v0
