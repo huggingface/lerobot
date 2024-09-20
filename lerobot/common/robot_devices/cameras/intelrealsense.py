@@ -23,7 +23,7 @@ from lerobot.common.robot_devices.utils import (
     RobotDeviceNotConnectedError,
 )
 from lerobot.common.utils.utils import capture_timestamp_utc
-from lerobot.scripts.control_robot import busy_wait
+from lerobot.scripts.control_robot import precise_sleep
 
 SERIAL_NUMBER_INDEX = 1
 
@@ -115,7 +115,7 @@ def save_images_from_cameras(
 
                 if fps is not None:
                     dt_s = time.perf_counter() - now
-                    busy_wait(1 / fps - dt_s)
+                    precise_sleep(1 / fps - dt_s)
 
                 if time.perf_counter() - start_time > record_time_s:
                     break

@@ -20,7 +20,7 @@ from PIL import Image
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
-    busy_wait,
+    precise_sleep,
 )
 from lerobot.common.utils.utils import capture_timestamp_utc
 
@@ -127,7 +127,7 @@ def save_images_from_cameras(
 
             if fps is not None:
                 dt_s = time.perf_counter() - now
-                busy_wait(1 / fps - dt_s)
+                precise_sleep(1 / fps - dt_s)
 
             if time.perf_counter() - start_time > record_time_s:
                 break
