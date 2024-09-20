@@ -531,7 +531,6 @@ class DataBuffer(torch.utils.data.Dataset):
         repo_id: str,
         decode_video: bool = False,
         root: Path | None = DATA_DIR,
-        verbose: bool = False,
         **kwargs,
     ) -> "DataBuffer":
         """Create a DataBuffer from a data repository on the Hugging Face Hub.
