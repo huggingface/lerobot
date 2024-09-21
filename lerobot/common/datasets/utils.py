@@ -32,7 +32,7 @@ DATASET_CARD_TEMPLATE = """
 ---
 # Metadata will go there
 ---
-This dataset was created using [🤗 LeRobot](https://github.com/huggingface/lerobot).
+This dataset was created using [LeRobot](https://github.com/huggingface/lerobot).
 
 """
 
