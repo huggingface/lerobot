@@ -417,6 +417,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             fps=offline_dataset.fps,
             delta_timestamps=offline_dataset.delta_timestamps,
             decode_video=decode_video,
+            image_transform=offline_dataset.image_transforms,
         )
     else:
         offline_dataset_for_dataloader = offline_dataset
@@ -493,6 +494,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         buffer_capacity=cfg.training.online_buffer_capacity,
         fps=online_env.unwrapped.metadata["render_fps"],
         delta_timestamps=cfg.training.delta_timestamps,
+        image_transform=offline_dataset.image_transforms,
     )
 
     # If we are doing online rollouts asynchronously, deepcopy the policy to use for online rollouts (this

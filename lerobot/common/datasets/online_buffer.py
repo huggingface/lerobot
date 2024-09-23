@@ -66,7 +66,7 @@ class DataBuffer(torch.utils.data.Dataset):
     """Data buffer and training data item getter.
 
     Data is considered to come in the form of "episodes" (an instance of a robot performing a task). Episodes
-    are made up of "frames", which are chronoligically ordered and contain timestamp aligned data, potentially
+    are made up of "frames", which are chronologically ordered and contain timestamp aligned data, potentially
     including environment observations, and robot actions. NOTE: for the time being, we require all data
     modalities to be timestamp aligned. This constraint may be relaxed in the future.
 
@@ -87,10 +87,11 @@ class DataBuffer(torch.utils.data.Dataset):
     about the date types and shapes for each memmap. This allows us to load the data without having to specify
     the data specifications at runtime.
 
-    The `add_episodes` method can be used to insert more data in the form of integral episodes (starting from
-    frame 0 and with the frames ordered). The buffer has a compulsory size limit, which must be provided when
-    creating a new one. Data is inserted in a circular fashion, inserting after the most recently added frame,
-    and wrapping around to the start when necessary (in which case older episodes are overwritten).
+    A size limit must be specified when creating a new buffer (to know how much space to reserve on disk). The_
+    `add_episodes` method can be used to insert data in the form of integral episodes (starting from frame 0
+    and with the frames ordered). Data is inserted in a circular fashion, inserting after the most recently
+    added frame, and wrapping around to the start of the buffer when necessary (in which case older episode
+    frames are overwritten).
 
     This class is also a PyTorch Dataset and can be used as such in a dataloader for a training loop. The item
     getter returns either a single frame, or a slice of a single episode if `delta_timestamps` is set. It also
@@ -554,7 +555,7 @@ class DataBuffer(torch.utils.data.Dataset):
                 raise ValueError(f"`{k}` should not be provided as it is inferred from the hub dataset.")
 
         hf_dataset = load_hf_dataset(repo_id, version=CODEBASE_VERSION, root=root, split="train")
-        hf_dataset.set_transform(lambda x: x)
+        hf_dataset.set_transform(lambda x: x)  # there is a default transform in place. reset it
         # Get some metadata necessary for processing videos.
         lerobot_dataset_info = load_info(repo_id, version=CODEBASE_VERSION, root=root)
         if not lerobot_dataset_info.get("video", False) and decode_video:
