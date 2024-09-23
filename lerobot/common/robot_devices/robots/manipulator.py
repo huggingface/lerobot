@@ -49,9 +49,10 @@ def apply_drive_mode(position, drive_mode):
 
 
 def compute_nearest_rounded_position(position, models):
-    delta_turn = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, models)
-    nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
-    return nearest_pos.astype(position.dtype)
+    # delta_turn = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, models)
+    # nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
+    # return nearest_pos.astype(position.dtype)
+    return position
 
 
 def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
@@ -382,6 +383,8 @@ class ManipulatorRobot:
             self.set_koch_robot_preset()
         elif self.robot_type == "aloha":
             self.set_aloha_robot_preset()
+        elif self.robot_type == "so_100":
+            self.set_so_100_robot_preset()
         else:
             warnings.warn(f"No preset found for robot type: {self.robot_type}", stacklevel=1)
 
@@ -396,6 +399,13 @@ class ManipulatorRobot:
             for name in self.leader_arms:
                 self.leader_arms[name].write("Torque_Enable", 1, "gripper")
                 self.leader_arms[name].write("Goal_Position", self.config.gripper_open_degree, "gripper")
+
+        # Check both arms can be read
+        for name in self.follower_arms:
+            self.follower_arms[name].read("Present_Position")
+        for name in self.leader_arms:
+            self.leader_arms[name].read("Present_Position")
+
 
         # Connect the cameras
         for name in self.cameras:
@@ -522,6 +532,23 @@ class ManipulatorRobot:
                 f"`gripper_open_degree` is set to {self.config.gripper_open_degree}, but None is expected for Aloha instead",
                 stacklevel=1,
             )
+
+    def set_so_100_robot_preset(self):
+        for name in self.follower_arms:
+            self.follower_arms[name].write("Mode", 0)
+            #self.follower_arms[name].write("P_Coefficient", 255, "shoulder_pan")
+            self.follower_arms[name].write("P_Coefficient", 32, "shoulder_pan")
+            #self.follower_arms[name].write("D_Coefficient", 230, "shoulder_pan")
+            self.follower_arms[name].write("D_Coefficient", 32, "shoulder_pan")
+            self.follower_arms[name].write("Acceleration", 254)
+            self.follower_arms[name].write("Minimum_Startup_Force", 16)
+
+        # for name in self.leader_arms:
+        #     self.leader_arms[name].write("Max_Torque_Limit", 50, "gripper")
+        #     self.leader_arms[name].write("Torque_Limit", 1000, "gripper")
+        #     self.leader_arms[name].write("Torque_Enable", 1, "gripper")
+        #     self.leader_arms[name].write("Goal_Position", 2048, "gripper")
+
 
     def teleop_step(
         self, record_data=False

@@ -82,6 +82,7 @@ SCS_SERIES_CONTROL_TABLE = {
     "Goal_Position": (42, 2),
     "Goal_Time": (44, 2),
     "Goal_Speed": (46, 2),
+    "Torque_Limit": (48, 2),
     "Lock": (55, 1),
     "Present_Position": (56, 2),
     "Present_Speed": (58, 2),
@@ -296,6 +297,18 @@ class FeetechMotorsBus:
         self.group_writers = {}
         self.logs = {}
 
+        self.track_positions = {}
+        self.present_pos = {
+            "prev": [None] * len(self.motor_names),
+            "below_zero": [None] * len(self.motor_names),
+            "above_max": [None] * len(self.motor_names),
+        }
+        self.goal_pos = {
+            "prev": [None] * len(self.motor_names),
+            "below_zero": [None] * len(self.motor_names),
+            "above_max": [None] * len(self.motor_names),
+        }
+
     def connect(self):
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
@@ -378,7 +391,8 @@ class FeetechMotorsBus:
         return [idx for idx, _ in self.motors.values()]
 
     def set_calibration(self, calibration: dict[str, list]):
-        self.calibration = calibration
+        pass
+        #self.calibration = calibration
 
     def apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
         """This function apply the calibration, automatically detects out of range errors for motors values and attempt to correct.
@@ -603,6 +617,44 @@ class FeetechMotorsBus:
         values = np.round(values).astype(np.int32)
         return values
 
+    def avoid_rotation_reset(self, values, motor_names, data_name):
+        if data_name not in self.track_positions:
+            self.track_positions[data_name] = {
+                "prev": [None] * len(self.motor_names),
+                # Assume False at initialization 
+                "below_zero": [False] * len(self.motor_names),
+                "above_max": [False] * len(self.motor_names),
+            }
+
+        track = self.track_positions[data_name]
+
+        if motor_names is None:
+            motor_names = self.motor_names
+
+        for i, name in enumerate(motor_names):
+            idx = self.motor_names.index(name)
+
+            if track["prev"][idx] is None:
+                track["prev"][idx] = values[i]
+                continue
+
+            # Detect a full rotation occured
+            if abs(track["prev"][idx] - values[i]) > 2048:
+                
+                # Position went below 0 and got reset to 4095
+                if track["prev"][idx] < values[i]:
+                    # So we set negative value by adding a full rotation
+                    values[i] -= 4096
+
+                # Position went above 4095 and got reset to 0
+                elif track["prev"][idx] > values[i]:
+                    # So we add a full rotation
+                    values[i] += 4096
+
+            track["prev"][idx] = values[i]
+
+        return values
+
     def read_with_motor_ids(self, motor_models, motor_ids, data_name):
         return_list = True
         if not isinstance(motor_ids, list):
@@ -615,7 +667,11 @@ class FeetechMotorsBus:
         for idx in motor_ids:
             group.addParam(idx)
 
-        comm = group.txRxPacket()
+        for _ in range(NUM_READ_RETRY):
+            comm = group.txRxPacket()
+            if comm == COMM_SUCCESS:
+                break
+
         if comm != COMM_SUCCESS:
             raise ConnectionError(
                 f"Read failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "
@@ -685,6 +741,11 @@ class FeetechMotorsBus:
         if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
             values = values.astype(np.int32)
 
+        print(values)
+
+        if data_name in CALIBRATION_REQUIRED:
+            values = self.avoid_rotation_reset(values, motor_names, data_name)
+
         if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
             values = self.apply_calibration_autocorrect(values, motor_names)
 
@@ -736,6 +797,8 @@ class FeetechMotorsBus:
             values = [int(values)] * len(motor_names)
 
         values = np.array(values)
+
+        print(values)
 
         motor_ids = []
         models = []
