@@ -534,6 +534,12 @@ class TDMPCPolicy(
         # we update every step and adjust the decay parameter `alpha` accordingly (0.99 -> 0.995)
         update_ema_parameters(self.model_target, self.model, self.config.target_model_momentum)
 
+    def make_optimizer_and_scheduler(self, cfg):
+        """Create the optimizer and learning rate scheduler for TD-MPC"""
+        optimizer = torch.optim.Adam(self.parameters(), cfg.training.lr)
+        lr_scheduler = None
+        return optimizer, lr_scheduler
+
 
 class TDMPCTOLD(nn.Module):
     """Task-Oriented Latent Dynamics (TOLD) model used in TD-MPC."""

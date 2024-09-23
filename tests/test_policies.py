@@ -37,7 +37,6 @@ from lerobot.common.policies.factory import (
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import init_hydra_config, seeded_context
-from lerobot.scripts.train import make_optimizer_and_scheduler
 from tests.scripts.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_cpu, require_env, require_x86_64_kernel
 
@@ -214,7 +213,7 @@ def test_act_backbone_lr():
 
     dataset = make_dataset(cfg)
     policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.stats)
-    optimizer, _ = make_optimizer_and_scheduler(cfg, policy)
+    optimizer, _ = policy.make_optimizer_and_scheduler(cfg)
     assert len(optimizer.param_groups) == 2
     assert optimizer.param_groups[0]["lr"] == cfg.training.lr
     assert optimizer.param_groups[1]["lr"] == cfg.training.lr_backbone

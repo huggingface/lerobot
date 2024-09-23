@@ -160,6 +160,31 @@ class ACTPolicy(
 
         return loss_dict
 
+    def make_optimizer_and_scheduler(self, cfg):
+        """Create the optimizer and learning rate scheduler for ACT"""
+        optimizer_params_dicts = [
+            {
+                "params": [
+                    p
+                    for n, p in self.named_parameters()
+                    if not n.startswith("model.backbone") and p.requires_grad
+                ]
+            },
+            {
+                "params": [
+                    p
+                    for n, p in self.named_parameters()
+                    if n.startswith("model.backbone") and p.requires_grad
+                ],
+                "lr": cfg.training.lr_backbone,
+            },
+        ]
+        optimizer = torch.optim.AdamW(
+            optimizer_params_dicts, lr=cfg.training.lr, weight_decay=cfg.training.weight_decay
+        )
+        lr_scheduler = None
+        return optimizer, lr_scheduler
+
 
 class ACTTemporalEnsembler:
     def __init__(self, temporal_ensemble_coeff: float, chunk_size: int) -> None:

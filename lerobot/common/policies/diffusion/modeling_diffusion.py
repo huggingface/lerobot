@@ -156,6 +156,25 @@ class DiffusionPolicy(
         loss = self.diffusion.compute_loss(batch)
         return {"loss": loss}
 
+    def make_optimizer_and_scheduler(self, cfg):
+        """Create the optimizer and learning rate scheduler for Diffusion policy"""
+        optimizer = torch.optim.Adam(
+            self.diffusion.parameters(),
+            cfg.training.lr,
+            cfg.training.adam_betas,
+            cfg.training.adam_eps,
+            cfg.training.adam_weight_decay,
+        )
+        from diffusers.optimization import get_scheduler
+
+        lr_scheduler = get_scheduler(
+            cfg.training.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=cfg.training.lr_warmup_steps,
+            num_training_steps=cfg.training.offline_steps,
+        )
+        return optimizer, lr_scheduler
+
 
 def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
     """
