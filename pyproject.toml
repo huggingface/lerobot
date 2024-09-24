@@ -43,7 +43,7 @@ opencv-python = ">=4.9.0"
 diffusers = ">=0.27.2"
 torchvision = ">=0.17.1"
 h5py = ">=3.10.0"
-huggingface-hub = {extras = ["hf-transfer", "cli"], version = ">=0.23.0"}
+huggingface-hub = {extras = ["hf-transfer", "cli"], version = ">=0.25.0"}
 gymnasium = ">=0.29.1"
 cmake = ">=3.29.0.1"
 gym-dora = { git = "https://github.com/dora-rs/dora-lerobot.git", subdirectory = "gym_dora", optional = true }
