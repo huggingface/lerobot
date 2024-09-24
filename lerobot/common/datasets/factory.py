@@ -90,7 +90,32 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
             random_order=cfg_tf.random_order,
         )
 
-    if isinstance(cfg.dataset_repo_id, str):
+    if cfg.hdf5_data_dir:
+        from pathlib import Path
+        from lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format import from_raw_to_lerobot_format
+        from lerobot.common.datasets.compute_stats import compute_stats
+
+        data_dir = Path(cfg.hdf5_data_dir)
+
+        if data_dir.exists():
+            logging.info(f"HDF5 data dir: {data_dir}")
+            dataset, episode_data_index, info = from_raw_to_lerobot_format(raw_dir=data_dir, videos_dir=None, fps=cfg.env.fps, video=False)
+            stats = compute_stats(dataset, batch_size=16, num_workers=16, max_num_samples=None)
+        else:
+            raise ValueError(f"HDF5 data directory: {data_dir} does not exist!")
+
+        dataset = LeRobotDataset.from_preloaded(
+            root=data_dir,
+            hf_dataset=dataset,
+            episode_data_index=episode_data_index,
+            stats=stats,
+            # delta_timestamps=None,
+            transform=image_transforms,
+            split=split,
+            delta_timestamps=cfg.training.get("delta_timestamps"),
+            info=info,
+        )
+    elif isinstance(cfg.dataset_repo_id, str):
         dataset = LeRobotDataset(
             cfg.dataset_repo_id,
             split=split,

@@ -16,6 +16,8 @@ hydra:
 # Note that when resuming a run, the default behavior is to use the configuration from the checkpoint,
 # regardless of what's provided with the training command at the time of resumption.
 resume: false
+# Overwrite checkpoint config
+overwrite_config: false
 device: cuda  # cpu
 # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
 # automatic gradient scaling is used.
@@ -92,7 +94,7 @@ training:
   #   min_max: Lower & upper bound respectively used for sampling the transform's parameter
   #           (following uniform distribution) when it's applied.
     # Set this flag to `true` to enable transforms during training
-    enable: false
+    enable: true
     # This is the maximum number of transforms (sampled from these below) that will be applied to each frame.
     # It's an integer in the interval [1, number of available transforms].
     max_num_transforms: 3
@@ -123,8 +125,8 @@ eval:
   use_async_envs: false
 
 wandb:
-  enable: false
+  enable: true
   # Set to true to disable saving an artifact despite save_checkpoint == True
   disable_artifact: false
-  project: lerobot
+  project: lerobot_indnxt
   notes: ""

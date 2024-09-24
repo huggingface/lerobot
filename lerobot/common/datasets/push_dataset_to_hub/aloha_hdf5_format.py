@@ -51,6 +51,7 @@ def get_cameras(hdf5_data):
 def check_format(raw_dir) -> bool:
     # only frames from simulation are uncompressed
     compressed_images = "sim" not in raw_dir.name
+    print(f"Checking format of {raw_dir} with compressed images: {compressed_images}")
 
     hdf5_paths = list(raw_dir.glob("episode_*.hdf5"))
     assert len(hdf5_paths) != 0

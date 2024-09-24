@@ -1,0 +1,14 @@
+# @package _global_
+
+fps: 5
+
+env:
+  name: my_custom_aloha
+  task: place_baby
+  state_dim: 5
+  action_dim: 3
+  fps: ${fps}
+  episode_length: 400
+  # gym:
+  #   obs_type: pixels_agent_pos
+  #   render_mode: rgb_array
