@@ -25,7 +25,9 @@ import datasets
 import einops
 import numpy as np
 import torch
-from tqdm import tqdm
+import torchvision
+from PIL import Image
+from tqdm import tqdm, trange
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, DATA_DIR, LeRobotDataset
 from lerobot.common.datasets.utils import load_hf_dataset, load_info, load_videos
@@ -146,11 +148,11 @@ class DataBuffer(torch.utils.data.Dataset):
         # Parameters for the data structure.
         self._storage_dir = Path(storage_dir)
         self._data: dict[str, np.memmap] = {}
-        self._is_video_dataset = False  # may be switched to True by `from_huggingface_hub`
+        self._image_storage_mode = "memmap"
         self._videos_dir: str | None = None  # may be set by `from_huggingface_hub`
 
         # If the storage directory already exists, load the memmaps.
-        if self._storage_dir.exists():
+        if (self._storage_dir / self.METADATA_FILE_NAME).exists():
             if buffer_capacity is not None:
                 raise ValueError(
                     "The storage directory already exists, which means you should not provide a "
@@ -237,9 +239,9 @@ class DataBuffer(torch.utils.data.Dataset):
 
     def _make_storage_dir(self, episode_data: dict[str, np.ndarray]):
         """Create the storage directory based on example episode data from the first `add_episodes` call."""
-        assert (
-            not self.storage_dir.exists()
-        ), "This method should only be called before the storage directory has been created."
+        assert not (
+            self.storage_dir / self.METADATA_FILE_NAME
+        ).exists(), "This method should only be called before the storage directory has been created."
 
         self._storage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -359,12 +361,11 @@ class DataBuffer(torch.utils.data.Dataset):
         for k in data:
             if not k.startswith(self.IMAGE_KEY_PREFIX):
                 continue
-            if self._is_video_dataset:
+            if self._image_storage_mode in ["video", "png"]:
                 if data[k].dtype != np.dtype(f"S{MAX_VIDEO_PATH_LENGTH}"):
                     raise ValueError(
                         f"Any data key starting with '{self.IMAGE_KEY_PREFIX}' is assumed to be an image, "
-                        "and in a video dataset it should be string data (with a relative path to the video "
-                        "to be loaded)."
+                        "and it should be string data (with a relative path to the video/png to be loaded)."
                     )
             else:
                 _, h, w, c = data[k].shape
@@ -459,7 +460,7 @@ class DataBuffer(torch.utils.data.Dataset):
             )[0]
             episode_timestamps = self._data[self.TIMESTAMP_KEY][episode_data_indices]
 
-            if self.is_video_dataset:
+            if self._image_storage_mode == "video":
                 # We'll use this for `decode_video_frames_torchvision`.
                 video_delta_timestamps = {}
 
@@ -484,7 +485,7 @@ class DataBuffer(torch.utils.data.Dataset):
                         f"{self.tolerance_s=}) inside the episode range."
                     )
 
-                if self.is_video_dataset and data_key.startswith(self.IMAGE_KEY_PREFIX):
+                if self._image_storage_mode == "video" and data_key.startswith(self.IMAGE_KEY_PREFIX):
                     video_delta_timestamps[data_key] = self._data[self.TIMESTAMP_KEY][
                         episode_data_indices[argmin_]
                     ]
@@ -493,7 +494,7 @@ class DataBuffer(torch.utils.data.Dataset):
 
                 item[f"{data_key}{self.IS_PAD_POSTFIX}"] = is_pad
 
-        if self.is_video_dataset:
+        if self._image_storage_mode == "video":
             # Decode the required video frames.
             for k in self.camera_keys:
                 this_key_has_delta_timestamps = (
@@ -513,6 +514,14 @@ class DataBuffer(torch.utils.data.Dataset):
                     item[k] = img_or_imgs
                 else:
                     item[k] = img_or_imgs[0]  # in this case we don't want a temporal dimension
+        elif self._image_storage_mode == "png":
+            imgs = []
+            for k in self.camera_keys:
+                for rel_path in item[k]:
+                    imgs.append(
+                        torchvision.transforms.ToTensor()(Image.open(self.storage_dir / rel_path.decode()))
+                    )
+            item[k] = torch.stack(imgs)
         else:
             # Convert to PyTorch format: channel-last, float32, normalize to range [0, 1].
             for k in self.camera_keys:
@@ -530,7 +539,7 @@ class DataBuffer(torch.utils.data.Dataset):
     def from_huggingface_hub(
         cls,
         repo_id: str,
-        decode_video: bool = False,
+        decode_images: bool = False,
         root: Path | None = DATA_DIR,
         **kwargs,
     ) -> "DataBuffer":
@@ -541,8 +550,9 @@ class DataBuffer(torch.utils.data.Dataset):
 
         Args:
             repo_id: The dataset repository ID.
-            decode_video: If repo_id refers to a video dataset (the image observations are encoded as videos),
-                decode the videos and store the frames in a numpy memmap.
+            decode_images: Optionally decode videos files or image files into a numpy memmap up front. This
+                provides large speed benefits for data access but only if your storage can handle it (decoded
+                images take up a lot more storage space than videos or png files).
             root: (will be deprecated) Directory to load the dataset from, instead of the hub.
             **kwargs: Other arguments to `self.__init__` except for the `data_spec` and
                 `buffer_capacity` arguments which are inferred automatically. `storage_dir` is set to
@@ -558,20 +568,20 @@ class DataBuffer(torch.utils.data.Dataset):
         hf_dataset.set_transform(lambda x: x)  # there is a default transform in place. reset it
         # Get some metadata necessary for processing videos.
         lerobot_dataset_info = load_info(repo_id, version=CODEBASE_VERSION, root=root)
-        if not lerobot_dataset_info.get("video", False) and decode_video:
-            raise ValueError(f"The provided dataset is not a video dataset but you have {decode_video=}")
+        # if not lerobot_dataset_info.get("video", False) and decode_images:
+        #     raise ValueError(f"The provided dataset is not a video dataset but you have {decode_images=}")
         if lerobot_dataset_info.get("video", False):
             videos_path = load_videos(repo_id, version=CODEBASE_VERSION, root=root)
 
         kwargs.setdefault(
             "storage_dir",
             DataBuffer._default_storage_dir_from_huggingface_hub(
-                repo_id, hf_dataset._fingerprint, decode_video
+                repo_id, hf_dataset._fingerprint, decode_images
             ),
         )
 
         buffer_already_on_disk = False
-        if kwargs["storage_dir"].exists():
+        if Path(kwargs["storage_dir"] / DataBuffer.METADATA_FILE_NAME).exists():
             buffer_already_on_disk = True
 
         # Create the DataBuffer object. Reminder: if the storage directory already exists, this reads it.
@@ -582,10 +592,14 @@ class DataBuffer(torch.utils.data.Dataset):
             buffer_capacity=len(hf_dataset) if not buffer_already_on_disk else None,
         )
 
-        if lerobot_dataset_info.get("video", False) and not decode_video:
-            obj._is_video_dataset = True
-        if obj._is_video_dataset:
+        if lerobot_dataset_info.get("video", False) and not decode_images:
+            obj._image_storage_mode = "video"
+        elif not decode_images:
+            obj._image_storage_mode = "png"
+        if obj._image_storage_mode == "video":
             obj._videos_dir = kwargs["storage_dir"] / "videos"
+
+        os.makedirs(obj.storage_dir, exist_ok=True)
 
         # If we have accessed an existing cached data buffer, just return the object as is.
         if buffer_already_on_disk:
@@ -595,9 +609,23 @@ class DataBuffer(torch.utils.data.Dataset):
         data_dict = {}
         for k, feature in hf_dataset.features.items():
             if isinstance(feature, datasets.features.Image):
-                data_dict[k] = np.stack([np.array(pil_img) for pil_img in hf_dataset[k]])
+                if decode_images:
+                    data_dict[k] = np.stack([np.array(pil_img) for pil_img in hf_dataset[k]])
+                else:
+                    relative_paths = []
+                    for i in trange(len(hf_dataset)):
+                        item = hf_dataset[i]
+                        pil_img = item[k]
+                        frame_index = item[DataBuffer.FRAME_INDEX_KEY]
+                        episode_index = item[DataBuffer.EPISODE_INDEX_KEY]
+                        relative_path = f"images/{k}_episode_{episode_index:06d}_frame_{frame_index:06d}.png"
+                        relative_paths.append(np.array(relative_path, dtype=f"S{MAX_VIDEO_PATH_LENGTH}"))
+                        absolute_path = obj.storage_dir / relative_path
+                        os.makedirs(absolute_path.parent, exist_ok=True)
+                        pil_img.save(absolute_path)
+                    data_dict[k] = np.stack(relative_paths, dtype=f"S{MAX_VIDEO_PATH_LENGTH}")
             elif isinstance(feature, VideoFrame):
-                if decode_video:
+                if decode_images:
                     # Decode all videos into images.
                     episode_indices = np.array(hf_dataset["episode_index"])
                     timestamps = np.array(hf_dataset["timestamp"])
@@ -628,7 +656,7 @@ class DataBuffer(torch.utils.data.Dataset):
 
         obj.add_episodes(data_dict)  # note this must happen after setting _is_video_dataset.
         # Symlink vidoes if needed.
-        if obj._is_video_dataset and not obj._videos_dir.exists():
+        if obj._image_storage_mode == "video" and not obj._videos_dir.exists():
             os.symlink(videos_path.absolute(), obj._videos_dir)
         return obj
 

@@ -416,7 +416,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             offline_dataset.repo_id,
             fps=offline_dataset.fps,
             delta_timestamps=offline_dataset.delta_timestamps,
-            decode_video=decode_video,
+            decode_images=decode_video,
             image_transform=offline_dataset.image_transforms,
         )
     else:
