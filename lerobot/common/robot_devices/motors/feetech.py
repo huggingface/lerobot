@@ -92,6 +92,7 @@ SCS_SERIES_CONTROL_TABLE = {
     "Status": (65, 1),
     "Moving": (66, 1),
     "Present_Current": (69, 2),
+    "Maximum_Acceleration": (85, 2),
 }
 
 SCS_SERIES_BAUDRATE_TABLE = {
@@ -124,8 +125,8 @@ MODEL_BAUDRATE_TABLE = {
     "sts3215": SCS_SERIES_BAUDRATE_TABLE,
 }
 
-NUM_READ_RETRY = 10
-NUM_WRITE_RETRY = 10
+NUM_READ_RETRY = 2
+NUM_WRITE_RETRY = 2
 
 
 def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str]) -> np.ndarray:
@@ -392,7 +393,7 @@ class FeetechMotorsBus:
 
     def set_calibration(self, calibration: dict[str, list]):
         pass
-        #self.calibration = calibration
+        # self.calibration = calibration
 
     def apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
         """This function apply the calibration, automatically detects out of range errors for motors values and attempt to correct.
@@ -621,7 +622,7 @@ class FeetechMotorsBus:
         if data_name not in self.track_positions:
             self.track_positions[data_name] = {
                 "prev": [None] * len(self.motor_names),
-                # Assume False at initialization 
+                # Assume False at initialization
                 "below_zero": [False] * len(self.motor_names),
                 "above_max": [False] * len(self.motor_names),
             }
@@ -640,7 +641,6 @@ class FeetechMotorsBus:
 
             # Detect a full rotation occured
             if abs(track["prev"][idx] - values[i]) > 2048:
-                
                 # Position went below 0 and got reset to 4095
                 if track["prev"][idx] < values[i]:
                     # So we set negative value by adding a full rotation

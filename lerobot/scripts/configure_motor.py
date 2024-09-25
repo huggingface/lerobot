@@ -13,21 +13,22 @@ python lerobot/scripts/configure_motor.py \
 """
 
 import argparse
-import importlib
 import time
 
 
 def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     if brand == "feetech":
-        from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus as motor_bus_class
-        from lerobot.common.robot_devices.motors.feetech import SCS_SERIES_BAUDRATE_TABLE as baudrate_table
-        from lerobot.common.robot_devices.motors.feetech import NUM_WRITE_RETRY as num_write_retry
         from lerobot.common.robot_devices.motors.feetech import MODEL_BAUDRATE_TABLE as model_baud_rate_table
+        from lerobot.common.robot_devices.motors.feetech import NUM_WRITE_RETRY as num_write_retry
+        from lerobot.common.robot_devices.motors.feetech import SCS_SERIES_BAUDRATE_TABLE as baudrate_table
+        from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus as motor_bus_class
     elif brand == "dynamixel":
-        from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus as motor_bus_class
-        from lerobot.common.robot_devices.motors.dynamixel import X_SERIES_BAUDRATE_TABLE as baudrate_table
+        from lerobot.common.robot_devices.motors.dynamixel import (
+            MODEL_BAUDRATE_TABLE as model_baud_rate_table,
+        )
         from lerobot.common.robot_devices.motors.dynamixel import NUM_WRITE_RETRY as num_write_retry
-        from lerobot.common.robot_devices.motors.dynamixel import MODEL_BAUDRATE_TABLE as model_baud_rate_table
+        from lerobot.common.robot_devices.motors.dynamixel import X_SERIES_BAUDRATE_TABLE as baudrate_table
+        from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus as motor_bus_class
     else:
         raise ValueError(
             f"Currently we do not support this motor brand: {brand}. We currently support feetech and dynamixel motors."
@@ -45,9 +46,7 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     motor_model = model  # Use the motor model passed via argument
 
     # Initialize the MotorBus with the correct port and motor configurations
-    motor_bus = motor_bus_class(
-        port=port, motors={motor_name: (motor_index_arbitrary, motor_model)}
-    )
+    motor_bus = motor_bus_class(port=port, motors={motor_name: (motor_index_arbitrary, motor_model)})
 
     # Try to connect to the motor bus and handle any connection-specific errors
     try:
@@ -65,7 +64,7 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
 
         for baudrate in all_baudrates:
             motor_bus.set_bus_baudrate(baudrate)
-            present_ids = motor_bus.find_motor_indices(list(range(1,10)))
+            present_ids = motor_bus.find_motor_indices(list(range(1, 10)))
             if len(present_ids) > 1:
                 raise ValueError(
                     "Error: More than one motor ID detected. This script is designed to only handle one motor at a time. Please disconnect all but one motor."
@@ -107,7 +106,6 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
             if present_baudrate_idx != baudrate_idx:
                 raise OSError("Failed to write baudrate.")
 
-
         motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Lock", 0)
 
         print(f"Setting its index to desired index {motor_idx_des}")
@@ -116,7 +114,7 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
         present_idx = motor_bus.read_with_motor_ids(motor_bus.motor_models, motor_idx_des, "ID")
         if present_idx != motor_idx_des:
             raise OSError("Failed to write index.")
-        
+
         if brand == "feetech":
             motor_bus.write("Goal_Position", 2047)
             time.sleep(4)
@@ -124,7 +122,6 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
             time.sleep(4)
             breakpoint()
             motor_bus.read("Present_Position")
-
 
     except Exception as e:
         print(f"Error occurred during motor configuration: {e}")
