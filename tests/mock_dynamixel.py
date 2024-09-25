@@ -59,7 +59,9 @@ class MockGroupSyncRead:
                 8: DEFAULT_BAUDRATE,  # Baud_rate
                 10: 0,  # Drive_Mode
                 64: 0,  # Torque_Enable
-                132: 0,  # Present_Position
+                # Set 2560 since calibration values for Aloha gripper is between start_pos=2499 and end_pos=3144
+                # For other joints, 2560 will be autocorrected to be in calibration range
+                132: 2560,  # Present_Position
             }
 
     def txRxPacket(self):  # noqa: N802
