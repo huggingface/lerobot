@@ -61,7 +61,7 @@ def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
 # TODO(rcadene): implement mocked version of this test
 @pytest.mark.parametrize("motor_type", available_motors)
 @require_motor
-def test_find_port(request, motor_type):
+def test_find_port(request, motor_type, mock=False):
     from lerobot.common.robot_devices.motors.dynamixel import find_port
 
     find_port()
@@ -70,7 +70,7 @@ def test_find_port(request, motor_type):
 # TODO(rcadene): implement mocked version of this test
 @pytest.mark.parametrize("motor_type", available_motors)
 @require_motor
-def test_configure_motors_all_ids_1(request, motor_type):
+def test_configure_motors_all_ids_1(request, motor_type, mock=False):
     input("Are you sure you want to re-configure the motors? Press enter to continue...")
     # This test expect the configuration was already correct.
     motors_bus = make_motors_bus(motor_type)
