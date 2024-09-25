@@ -219,10 +219,10 @@ class OpenCVCamera:
         self.camera = None
         self.is_connected = False
         self.thread = None
-        # Using Lock to avoid race condition and segfault when multiple threads
-        # access the same camera. This is not one of our use case, but we add this
-        # for safety if users want to use this class with threads. As a result, threads
-        # will go sequentially through the code logic protected by a lock, instead of 
+        # Using Lock to avoid race condition and segfault when threads access the
+        # same camera. Though not currently a use case for LeRobot, lock ensures
+        # safety if users want to use this class with threads. As a result, threads
+        # will go sequentially through the code logic protected by a lock, instead of
         # in parallel. Also, we use Recursive Lock to avoid deadlock by allowing each
         # thread to acquire the lock multiple times.
         # TODO(rcadene, aliberts): Add RLock on every robot devices where it makes sense?
