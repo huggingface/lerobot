@@ -203,7 +203,14 @@ def require_robot(func):
 
         # Run test with a monkeypatched version of the robot devices.
         if mock:
-            mock_cameras(request)
+            # TODO(rcadene): redesign mocking to not have this hardcoded logic
+            if robot_type == "koch":
+                camera_type = "opencv"
+            elif robot_type == "aloha":
+                camera_type = "intelrealsense"
+            else:
+                camera_type = "all"
+            mock_cameras(request, camera_type)
             mock_motors(request)
 
             def mock_input(text):
@@ -246,7 +253,7 @@ def require_camera(func):
 
         # Run test with a monkeypatched version of the robot devices.
         if mock:
-            mock_cameras(request)
+            mock_cameras(request, camera_type)
 
         # Run test with a real robot. Skip test if robot connection fails.
         else:
@@ -294,33 +301,47 @@ def require_motor(func):
     return wrapper
 
 
-def mock_cameras(request):
+def mock_cameras(request, camera_type="all"):
+    # TODO(rcadene): Redesign the mocking tests
     monkeypatch = request.getfixturevalue("monkeypatch")
 
-    try:
-        import cv2
+    if camera_type in ["opencv", "all"]:
+        try:
+            import cv2
 
-        from tests.mock_opencv import MockVideoCapture
+            from tests.mock_opencv import MockVideoCapture
 
-        monkeypatch.setattr(cv2, "VideoCapture", MockVideoCapture)
-    except ImportError:
-        traceback.print_exc()
+            monkeypatch.setattr(cv2, "VideoCapture", MockVideoCapture)
+        except ImportError:
+            traceback.print_exc()
+            pytest.skip("To avoid skipping tests mocking opencv cameras, run `pip install opencv-python`.")
 
-    try:
-        import pyrealsense2 as rs
+    if camera_type in ["intelrealsense", "all"]:
+        try:
+            import pyrealsense2 as rs
 
-        from tests.mock_intelrealsense import MockConfig, MockContext, MockFormat, MockPipeline, MockStream
+            from tests.mock_intelrealsense import (
+                MockConfig,
+                MockContext,
+                MockFormat,
+                MockPipeline,
+                MockStream,
+            )
 
-        monkeypatch.setattr(rs, "config", MockConfig)
-        monkeypatch.setattr(rs, "pipeline", MockPipeline)
-        monkeypatch.setattr(rs, "stream", MockStream)
-        monkeypatch.setattr(rs, "format", MockFormat)
-        monkeypatch.setattr(rs, "context", MockContext)
-    except ImportError:
-        traceback.print_exc()
+            monkeypatch.setattr(rs, "config", MockConfig)
+            monkeypatch.setattr(rs, "pipeline", MockPipeline)
+            monkeypatch.setattr(rs, "stream", MockStream)
+            monkeypatch.setattr(rs, "format", MockFormat)
+            monkeypatch.setattr(rs, "context", MockContext)
+        except ImportError:
+            traceback.print_exc()
+            pytest.skip(
+                "To avoid skipping tests mocking intelrealsense cameras, run `pip install pyrealsense2`."
+            )
 
 
 def mock_motors(request):
+    # TODO(rcadene): Redesign the mocking tests
     monkeypatch = request.getfixturevalue("monkeypatch")
 
     try:
@@ -347,3 +368,4 @@ def mock_motors(request):
         monkeypatch.setattr(dynamixel, "convert_to_bytes", mock_convert_to_bytes)
     except ImportError:
         traceback.print_exc()
+        pytest.skip("To avoid skipping tests mocking dynamixel motors, run `pip install dynamixel-sdk`.")
