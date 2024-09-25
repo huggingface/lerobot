@@ -18,6 +18,7 @@
 import json
 import os
 import shutil
+from enum import Enum
 from pathlib import Path
 from typing import Callable
 
@@ -64,6 +65,12 @@ class TimestampOutsideToleranceError(Exception):
     pass
 
 
+class DataBufferImageMode(Enum):
+    MEMMAP = "memmap"
+    PNG = "png"
+    VIDEO = "video"
+
+
 class DataBuffer(torch.utils.data.Dataset):
     """Data buffer and training data item getter.
 
@@ -72,13 +79,24 @@ class DataBuffer(torch.utils.data.Dataset):
     including environment observations, and robot actions. NOTE: for the time being, we require all data
     modalities to be timestamp aligned. This constraint may be relaxed in the future.
 
-    The data is stored in a mapping from data keys to arrays with shape (total_number_of_frames, *data_dim).
-    The compulsory data keys are:
+    Non-image data is stored in a mapping from data keys to arrays with shape (total_number_of_frames,
+    *data_dim). The compulsory data keys are:
         - "index": A sequential integer index per frame.
         - "episode_index": A sequential integer index per episode.
         - "frame_index": A sequential integer index per frame within an episode (it resets for each episode).
         - "timestamp": The relative timestamp of the frame within the episode in units of seconds. The choice.
             of reference time is not important.
+
+    Image data may be stored in at least one of the following formats: video files, PNG image files, as raw
+    pixel arrays (in which case they also have a data key to array mapping as discussed above). Some words on
+    each of these storage methods:
+        - Video files: These are the most compact in terms of storage space. Decoding image frames from the
+            video files takes non-trivial time and one would be advised to keep an eye out for data loading
+            bottlenecks during policy training.
+        - Numpy memmaps (more on memmaps below): This is the least compact in terms of storage space (high
+            resolution camera feeds can rapidly overwhelm your storage capacity). On the other hand, random
+            access of image frames at least an order of magnitude faster than with video decoding.
+        - TODO(now)
 
     Under the hood, the data is stored in `numpy.memmap`s, one for each data key. Loosely speaking, memory
     mapping (https://en.wikipedia.org/wiki/Memory-mapped_file) allows us to treat a portion of disk space as
@@ -117,12 +135,16 @@ class DataBuffer(torch.utils.data.Dataset):
     # By convention, all images should be stored under a key with this prefix.
     IMAGE_KEY_PREFIX = "observation.image"
 
-    METADATA_FILE_NAME = "meta.json"
+    METADATA_FILE_NAME = "metadata.json"
+
+    VIDEOS_DIR = "videos"  # directory (relative to storage directory), to store videos
+    IMAGES_DIR = "images"  # directory (relative to storage directory), to store images
 
     def __init__(
         self,
         storage_dir: str | Path,
         buffer_capacity: int | None = None,
+        image_mode: DataBufferImageMode | None = None,
         image_transform: Callable[[np.ndarray], np.ndarray] | None = None,
         delta_timestamps: dict[str, list[float]] | dict[str, np.ndarray] | None = None,
         fps: float | None = None,
@@ -137,6 +159,7 @@ class DataBuffer(torch.utils.data.Dataset):
                 system's available disk space when choosing this. Note that if `storage_dir` references an
                 existing storage directory, `buffer_capacity` should not be provided, as it is already
                 included in "meta.json".
+            image_mode: TODO(now)
             image_transform: Transforms to apply in the item getter to all image data (any data whose key
                 starts with "observation.image").
             delta_timestamps: TODO(alexander-soare): Document this somewhere when
@@ -148,10 +171,14 @@ class DataBuffer(torch.utils.data.Dataset):
         # Parameters for the data structure.
         self._storage_dir = Path(storage_dir)
         self._data: dict[str, np.memmap] = {}
-        self._image_storage_mode = "memmap"
-        self._videos_dir: str | None = None  # may be set by `from_huggingface_hub`
 
-        # If the storage directory already exists, load the memmaps.
+        # Default assumption is that the image storage mode is memmaps meaning we don't need a video or image
+        # directory.
+        self._image_mode = DataBufferImageMode.MEMMAP
+        self._videos_dir: str | None = None
+        self._images_dir: str | None = None
+
+        # If the storage directory and metadata files already exists, load the memmaps.
         if (self._storage_dir / self.METADATA_FILE_NAME).exists():
             if buffer_capacity is not None:
                 raise ValueError(
@@ -162,6 +189,22 @@ class DataBuffer(torch.utils.data.Dataset):
             data_spec = self._load_data_spec()
             self._make_memmaps(data_spec, mode="r+")
             self._buffer_capacity = len(self._data[self.INDEX_KEY])
+            # Set image mode based on what's available in the storage directory and/or the user's selection.
+            possible_image_modes = self._infer_image_modes()
+            if image_mode is not None:
+                if image_mode not in possible_image_modes:
+                    raise ValueError(
+                        f"Provided {image_mode=} not available with this storage directory. Modes available: "
+                        f"{possible_image_modes}"
+                    )
+                self._image_mode = image_mode
+            else:
+                # If image_mode is not provided, default to VIDEO, followed by PNG, followed by MEMMAP
+                # (already set above).
+                if DataBufferImageMode.VIDEO in possible_image_modes:
+                    self._image_mode = DataBufferImageMode.VIDEO
+                elif DataBufferImageMode.PNG in possible_image_modes:
+                    self._image_mode = DataBufferImageMode.PNG
         else:
             if buffer_capacity is None:
                 raise ValueError(
@@ -177,10 +220,6 @@ class DataBuffer(torch.utils.data.Dataset):
     @property
     def storage_dir(self) -> Path:
         return self._storage_dir
-
-    @property
-    def is_video_dataset(self) -> bool:
-        return self._is_video_dataset
 
     @property
     def data_keys(self) -> list[str]:
@@ -219,6 +258,17 @@ class DataBuffer(torch.utils.data.Dataset):
         By convention, this is all the keys starting with "observation.image".
         """
         return [k for k in self._data if k.startswith(self.IMAGE_KEY_PREFIX)]
+
+    def _infer_image_modes(self) -> list[DataBufferImageMode]:
+        """Infer which image modes are available according to what is in the storage directory"""
+        image_modes = []
+        if (self.storage_dir / self.VIDEOS_DIR).exists():
+            image_modes.append(DataBufferImageMode.VIDEO)
+        if (self.storage_dir / self.IMAGES_DIR).exists():
+            image_modes.append(DataBufferImageMode.PNG)
+        if any(k.startswith("observation.image") for k in self._load_data_spec()):
+            image_modes.append(DataBufferImageMode.MEMMAP)
+        return image_modes
 
     def _save_data_spec(self, data_spec: dict[str, dict]):
         """Save the data type and shape specifications to the storage directory."""
@@ -361,7 +411,7 @@ class DataBuffer(torch.utils.data.Dataset):
         for k in data:
             if not k.startswith(self.IMAGE_KEY_PREFIX):
                 continue
-            if self._image_storage_mode in ["video", "png"]:
+            if self._image_mode in [DataBufferImageMode.PNG, DataBufferImageMode.VIDEO]:
                 if data[k].dtype != np.dtype(f"S{MAX_VIDEO_PATH_LENGTH}"):
                     raise ValueError(
                         f"Any data key starting with '{self.IMAGE_KEY_PREFIX}' is assumed to be an image, "
@@ -460,7 +510,7 @@ class DataBuffer(torch.utils.data.Dataset):
             )[0]
             episode_timestamps = self._data[self.TIMESTAMP_KEY][episode_data_indices]
 
-            if self._image_storage_mode == "video":
+            if self._image_mode == DataBufferImageMode.VIDEO:
                 # We'll use this for `decode_video_frames_torchvision`.
                 video_delta_timestamps = {}
 
@@ -485,7 +535,9 @@ class DataBuffer(torch.utils.data.Dataset):
                         f"{self.tolerance_s=}) inside the episode range."
                     )
 
-                if self._image_storage_mode == "video" and data_key.startswith(self.IMAGE_KEY_PREFIX):
+                if self._image_mode == DataBufferImageMode.VIDEO and data_key.startswith(
+                    self.IMAGE_KEY_PREFIX
+                ):
                     video_delta_timestamps[data_key] = self._data[self.TIMESTAMP_KEY][
                         episode_data_indices[argmin_]
                     ]
@@ -494,7 +546,7 @@ class DataBuffer(torch.utils.data.Dataset):
 
                 item[f"{data_key}{self.IS_PAD_POSTFIX}"] = is_pad
 
-        if self._image_storage_mode == "video":
+        if self._image_mode == DataBufferImageMode.VIDEO:
             # Decode the required video frames.
             for k in self.camera_keys:
                 this_key_has_delta_timestamps = (
@@ -514,7 +566,7 @@ class DataBuffer(torch.utils.data.Dataset):
                     item[k] = img_or_imgs
                 else:
                     item[k] = img_or_imgs[0]  # in this case we don't want a temporal dimension
-        elif self._image_storage_mode == "png":
+        elif self._image_mode == DataBufferImageMode.PNG:
             imgs = []
             for k in self.camera_keys:
                 for rel_path in item[k]:
@@ -559,6 +611,8 @@ class DataBuffer(torch.utils.data.Dataset):
                 `/tmp/{repo_id}_{hf_dataset._fingerprint}_{decoded?}` unless provided explicitly.
         Returns:
             The resulting DataBuffer object.
+
+        # TODO(now): Add one episode at a time.
         """
         for k in ["data_spec", "buffer_capacity"]:
             if k in kwargs:
@@ -592,14 +646,15 @@ class DataBuffer(torch.utils.data.Dataset):
             buffer_capacity=len(hf_dataset) if not buffer_already_on_disk else None,
         )
 
-        if lerobot_dataset_info.get("video", False) and not decode_images:
-            obj._image_storage_mode = "video"
-        elif not decode_images:
-            obj._image_storage_mode = "png"
-        if obj._image_storage_mode == "video":
-            obj._videos_dir = kwargs["storage_dir"] / "videos"
-
-        os.makedirs(obj.storage_dir, exist_ok=True)
+        if decode_images:
+            obj._image_mode = DataBufferImageMode.MEMMAP
+        else:
+            if lerobot_dataset_info.get("video", False):
+                obj._image_mode = DataBufferImageMode.VIDEO
+                obj._videos_dir = kwargs["storage_dir"] / DataBuffer.VIDEOS_DIR
+            else:
+                obj._image_mode = DataBufferImageMode.PNG
+                obj._images_dir = kwargs["storage_dir"] / DataBuffer.IMAGES_DIR
 
         # If we have accessed an existing cached data buffer, just return the object as is.
         if buffer_already_on_disk:
@@ -656,7 +711,7 @@ class DataBuffer(torch.utils.data.Dataset):
 
         obj.add_episodes(data_dict)  # note this must happen after setting _is_video_dataset.
         # Symlink vidoes if needed.
-        if obj._image_storage_mode == "video" and not obj._videos_dir.exists():
+        if obj._image_mode == DataBufferImageMode.VIDEO and not obj._videos_dir.exists():
             os.symlink(videos_path.absolute(), obj._videos_dir)
         return obj
 
