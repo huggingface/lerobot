@@ -204,7 +204,7 @@ def require_robot(func):
         # Run test with a monkeypatched version of the robot devices.
         if mock:
             # TODO(rcadene): redesign mocking to not have this hardcoded logic
-            if robot_type == "koch":
+            if robot_type in ["koch", "koch_bimanual"]:
                 camera_type = "opencv"
             elif robot_type == "aloha":
                 camera_type = "intelrealsense"

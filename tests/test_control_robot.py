@@ -29,7 +29,7 @@ import pytest
 
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils.utils import init_hydra_config
-from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
+from lerobot.scripts.control_robot import calibrate, get_available_arms, record, replay, teleoperate
 from tests.test_robots import make_robot
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, require_robot
 
@@ -48,7 +48,7 @@ def test_teleoperate(request, robot_type, mock):
 @require_robot
 def test_calibrate(request, robot_type, mock):
     robot = make_robot(robot_type)
-    calibrate(robot)
+    calibrate(robot, arms=get_available_arms(robot))
     del robot
 
 
@@ -59,7 +59,17 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
     repo_id = "lerobot/debug"
 
     robot = make_robot(robot_type, overrides=["~cameras"])
-    record(robot, fps=30, root=root, repo_id=repo_id, warmup_time_s=1, episode_time_s=1, num_episodes=2)
+    record(
+        robot,
+        fps=30,
+        root=root,
+        repo_id=repo_id,
+        warmup_time_s=1,
+        episode_time_s=1,
+        num_episodes=2,
+        run_compute_stats=False,
+        push_to_hub=False,
+    )
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
@@ -73,7 +83,14 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
 
     robot = make_robot(robot_type)
     dataset = record(
-        robot, fps=30, root=root, repo_id=repo_id, warmup_time_s=1, episode_time_s=1, num_episodes=2
+        robot,
+        fps=30,
+        root=root,
+        repo_id=repo_id,
+        warmup_time_s=1,
+        episode_time_s=1,
+        num_episodes=2,
+        push_to_hub=False,
     )
 
     replay(robot, episode=0, fps=30, root=root, repo_id=repo_id)
@@ -89,6 +106,6 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
 
     policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.stats)
 
-    record(robot, policy, cfg, run_time_s=1)
+    record(robot, policy, cfg, warmup_time_s=1, episode_time_s=1, run_compute_stats=False, push_to_hub=False)
 
     del robot
