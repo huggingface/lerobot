@@ -1,28 +1,35 @@
+from functools import cache
+
 import cv2
 import numpy as np
 
 
-class MockVideoCapture(cv2.VideoCapture):
-    image = {
-        "480x640": np.random.randint(0, 256, size=(480, 640, 3), dtype=np.uint8),
-        "720x1280": np.random.randint(0, 256, size=(720, 1280, 3), dtype=np.uint8),
-    }
+@cache
+def _generate_image(width: int, height: int):
+    return np.random.randint(0, 256, size=(height, width, 3), dtype=np.uint8)
 
+
+class MockVideoCapture:
     def __init__(self, *args, **kwargs):
         self._mock_dict = {
             cv2.CAP_PROP_FPS: 30,
             cv2.CAP_PROP_FRAME_WIDTH: 640,
             cv2.CAP_PROP_FRAME_HEIGHT: 480,
         }
+        self._is_opened = True
 
     def isOpened(self):  # noqa: N802
-        return True
+        return self._is_opened
 
     def set(self, propId: int, value: float) -> bool:  # noqa: N803
+        if not self._is_opened:
+            raise RuntimeError("Camera is not opened")
         self._mock_dict[propId] = value
         return True
 
     def get(self, propId: int) -> float:  # noqa: N803
+        if not self._is_opened:
+            raise RuntimeError("Camera is not opened")
         value = self._mock_dict[propId]
         if value == 0:
             if propId == cv2.CAP_PROP_FRAME_HEIGHT:
@@ -32,10 +39,16 @@ class MockVideoCapture(cv2.VideoCapture):
         return value
 
     def read(self):
+        if not self._is_opened:
+            raise RuntimeError("Camera is not opened")
         h = self.get(cv2.CAP_PROP_FRAME_HEIGHT)
         w = self.get(cv2.CAP_PROP_FRAME_WIDTH)
         ret = True
-        return ret, self.image[f"{h}x{w}"]
+        return ret, _generate_image(width=w, height=h)
 
     def release(self):
-        pass
+        self._is_opened = False
+
+    def __del__(self):
+        if self._is_opened:
+            self.release()
