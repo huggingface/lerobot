@@ -616,14 +616,14 @@ class DataBuffer(torch.utils.data.Dataset):
                     self.delta_timestamps is not None and k in self.delta_timestamps
                 )
                 if this_key_has_delta_timestamps:
-                    imgs = []
-                    for rel_path in item[k]:
-                        imgs.append(
+                    item[k] = torch.stack(
+                        [
                             torchvision.transforms.ToTensor()(
                                 Image.open(self.storage_dir / rel_path.decode())
                             )
-                        )
-                    item[k] = torch.stack(imgs)
+                            for rel_path in item[k]
+                        ]
+                    )
                 else:
                     item[k] = torchvision.transforms.ToTensor()(
                         Image.open(self.storage_dir / item[k].decode())
