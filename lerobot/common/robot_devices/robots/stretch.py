@@ -56,9 +56,17 @@ class StretchRobot(StretchAPI):
 
     def connect(self) -> None:
         self.is_connected = self.startup()
+        if not self.is_connected:
+            print("Another process is already using Stretch. Try running 'stretch_free_robot_process.py'")
+            raise ConnectionError()
+
         for name in self.cameras:
             self.cameras[name].connect()
             self.is_connected = self.is_connected and self.cameras[name].is_connected
+
+        if not self.is_connected:
+            print("Could not connect to the cameras, check that all cameras are plugged-in.")
+            raise ConnectionError()
 
         self.run_calibration()
 
@@ -70,6 +78,9 @@ class StretchRobot(StretchAPI):
         self, record_data=False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         # TODO(aliberts): return ndarrays instead of torch.Tensors
+        if not self.is_connected:
+            raise ConnectionError()
+
         if self.teleop is None:
             self.teleop = GamePadTeleop(robot_instance=False)
             self.teleop.startup(robot=self)
@@ -157,6 +168,9 @@ class StretchRobot(StretchAPI):
 
     def send_action(self, action: torch.Tensor) -> torch.Tensor:
         # TODO(aliberts): return ndarrays instead of torch.Tensors
+        if not self.is_connected:
+            raise ConnectionError()
+
         if self.teleop is None:
             self.teleop = GamePadTeleop(robot_instance=False)
             self.teleop.startup(robot=self)
