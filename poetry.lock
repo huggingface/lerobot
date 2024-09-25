@@ -7418,7 +7418,7 @@ dora = ["gym-dora"]
 dynamixel = ["dynamixel-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
 pusht = ["gym-pusht"]
-stretch = ["hello-robot-stretch-body", "pyrealsense2", "pyrender"]
+stretch = ["hello-robot-stretch-body", "pynput", "pyrealsense2", "pyrender"]
 test = ["pytest", "pytest-cov"]
 umi = ["imagecodecs"]
 video-benchmark = ["pandas", "scikit-image"]
@@ -7427,4 +7427,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "3f082f0c1c7311bff15263882df111df8882b3b5a67a87ca914674b88a14f734"
+content-hash = "d532bfeb99fd3c6269457746829258848c6f9cf5d464ba08e401a9f170bc5a1e"
