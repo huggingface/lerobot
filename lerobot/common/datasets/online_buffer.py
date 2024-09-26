@@ -18,6 +18,7 @@
 import json
 import os
 import shutil
+from copy import copy
 from enum import Enum
 from pathlib import Path
 from typing import Callable
@@ -210,9 +211,11 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 One memmap file will be stored for each data key. Note that if the storage directory already
                 exists, the memmap files are opened in read-write mode. If the storage directory does not
                 exist, it will be lazily created with the first call to `add_episodes`.
-            buffer_capacity: How many frames should be stored in the buffer as a maximum. Note that if
-                `storage_dir` references an existing storage directory, `buffer_capacity` should not be
-                provided, as it is already included in "metadata.json".
+            buffer_capacity: When using this class as an online replay buffer, this specifies how many frames
+                should be stored in the dataset as a maximum. Calls to `add_episode` beyond the maximum
+                capacity, will result in the oldest episodes being pushed out of the buffer to make way
+                for the new ones (first-in-last-out aka FILO). When loading an existing dataset, this
+                parameter must still be provided if you wish to make use of this FILO mechanism.
             image_mode: The image storage mode used for the item getter. See notes above on the various
                 options. If not provided it defaults to memmap mode.
             image_transform: Transforms to apply in the item getter to all image data (any data whose key
@@ -235,15 +238,18 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
 
         # If the storage directory and metadata files already exists, load the memmaps.
         if (self._storage_dir / self.METADATA_FILE_NAME).exists():
-            if buffer_capacity is not None:
-                raise ValueError(
-                    "The storage directory already exists, which means you should not provide a "
-                    "buffer_capacity explicitly. Instead, it will be read from 'meta.json' in the storage "
-                    "directory."
-                )
-            data_spec = self._load_metadata()
+            data_spec = self._load_metadata()["_data_spec"]
             self._make_memmaps(data_spec, mode="r+")
-            self._buffer_capacity = len(self._data[self.INDEX_KEY])
+            if buffer_capacity is not None:
+                if buffer_capacity < len(self):
+                    raise ValueError(
+                        f"The storage directory already exists and contains a dataset with {len(self)} "
+                        f"frames. But you have provided {buffer_capacity=}. It is required that "
+                        "buffer_capacity >= {len(self)}"
+                    )
+                if buffer_capacity > len(self._data[self.INDEX_KEY]):
+                    self._extend_memmaps(new_length=buffer_capacity)
+                self._buffer_capacity = buffer_capacity
             # Set image mode based on what's available in the storage directory and/or the user's selection.
             possible_image_modes = self._infer_image_modes()
             if image_mode is not None:
@@ -260,10 +266,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             ]:
                 raise NotImplementedError(
                     f"Creating a new dataset from scratch with {image_mode=} is not yet supported."
-                )
-            if buffer_capacity is None:
-                raise ValueError(
-                    "The storage directory does not exist, which means you need to provide a buffer_capacity."
                 )
             self._buffer_capacity = buffer_capacity
 
@@ -310,18 +312,8 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
 
         By convention, this is all the keys starting with "observation.image".
         """
-        if self._image_mode == LeRobotDatasetV2ImageMode.MEMMAP:
-            return [k for k in self._data if k.startswith(self.IMAGE_KEY_PREFIX)]
-        elif self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
-            # TODO(now): Should this be just gotten from the metadata instead?
-            return list(
-                {name.split("_episode", 1)[0] for name in os.listdir(self.storage_dir / self.VIDEOS_DIR)}
-            )
-        elif self._image_mode == LeRobotDatasetV2ImageMode.PNG:
-            # TODO(now): Should this be just gotten from the metadata instead?
-            return list(
-                {name.split("_episode", 1)[0] for name in os.listdir(self.storage_dir / self.PNGS_DIR)}
-            )
+        metadata = self._load_metadata()
+        return [k for k in metadata["data_keys"] if k.startswith(self.IMAGE_KEY_PREFIX)]
 
     def _infer_image_modes(self) -> list[LeRobotDatasetV2ImageMode]:
         """Infer which image modes are available according to what is in the storage directory"""
@@ -334,23 +326,47 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             image_modes.append(LeRobotDatasetV2ImageMode.MEMMAP)
         return image_modes
 
-    def _save_metadata(self, data_spec: dict[str, dict]):
-        """Save the data type and shape specifications to the storage directory."""
-        # TODO(now): save f-strings
-        meta_file = self._storage_dir / self.METADATA_FILE_NAME
-        with open(meta_file, "w") as f:
-            for k in data_spec:
-                data_spec[k]["dtype"] = str(data_spec[k]["dtype"])
-            json.dump(data_spec, f, indent=2)
+    def _save_metadata(
+        self,
+        data_keys: list[str] | None = None,
+        data_spec: dict | None = None,
+    ):
+        """Save or update the metadata file in the storage directory.
 
-    def _load_metadata(self) -> dict[str, dict]:
+        If the metadata file already exists, it is updated with the provided parameters, otherwise a new
+        metadata file is created. There is no mechanism for clearing a field in the metadata file.
+
+        Args:
+            data_keys: All the data keys of the data set. Used for human readability.
+            data_spec: `numpy.memmap` data spec used for loading the memmaps.
+        """
+        metadata_file = self._storage_dir / self.METADATA_FILE_NAME
+        if not metadata_file.exists() and any([data_spec is None, data_keys is None]):
+            raise AssertionError("The first time _save_metadata is called, all arguments should be provided.")
+        metadata = self._load_metadata() if metadata_file.exists() else {}
+
+        # Go through each provided argument, updating the metadata.
+        if data_keys is not None:
+            metadata["data_keys"] = copy(data_keys)
+        if data_spec is not None:
+            data_spec = dict(data_spec)
+            metadata["_data_spec"] = copy(data_spec)
+
+        # Custom serialization.
+        for k in metadata["_data_spec"]:
+            metadata["_data_spec"][k]["dtype"] = str(metadata["_data_spec"][k]["dtype"])
+
+        with open(metadata_file, "w") as f:
+            json.dump(metadata, f, indent=2)
+
+    def _load_metadata(self) -> dict:
         """Load the data type and shape specifications from the storage directory."""
-        meta_file = self._storage_dir / self.METADATA_FILE_NAME
-        with open(meta_file) as f:
-            data_spec = json.load(f)
-        for k in data_spec:
-            data_spec[k]["dtype"] = np.dtype(data_spec[k]["dtype"])
-        return data_spec
+        with open(self._storage_dir / self.METADATA_FILE_NAME) as f:
+            metadata = json.load(f)
+        # Custom deserialization.
+        for k in metadata["_data_spec"]:
+            metadata["_data_spec"][k]["dtype"] = np.dtype(metadata["_data_spec"][k]["dtype"])
+        return metadata
 
     def _make_storage_dir(self, episode_data: dict[str, np.ndarray]):
         """Create the storage directory based on example episode data from the first `add_episodes` call."""
@@ -360,23 +376,36 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
 
         self._storage_dir.mkdir(parents=True, exist_ok=True)
 
+        if self._buffer_capacity is None:
+            # Reserve enough storage for one episode. Storage will be extended as needed.
+            num_frames = len(episode_data[self.INDEX_KEY])
+        else:
+            num_frames = self._buffer_capacity
+
+        # TODO(now): Warn if attempting to store too much.
+
         try:
             # Make the data spec for np.memmap
             data_spec = {
                 self.NEXT_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (1,)},
-                self.OCCUPANCY_MASK_KEY: {"dtype": np.dtype("?"), "shape": (self._buffer_capacity,)},
-                self.INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (self._buffer_capacity,)},
-                self.FRAME_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (self._buffer_capacity,)},
-                self.EPISODE_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (self._buffer_capacity,)},
-                self.TIMESTAMP_KEY: {"dtype": np.dtype("float32"), "shape": (self._buffer_capacity,)},
+                self.OCCUPANCY_MASK_KEY: {"dtype": np.dtype("?"), "shape": (num_frames,)},
+                self.INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (num_frames,)},
+                self.FRAME_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (num_frames,)},
+                self.EPISODE_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (num_frames,)},
+                self.TIMESTAMP_KEY: {"dtype": np.dtype("float32"), "shape": (num_frames,)},
             }
             for k, v in episode_data.items():
                 if k in data_spec:
                     continue
-                data_spec[k] = {"dtype": v.dtype, "shape": (self._buffer_capacity, *v.shape[1:])}
+                if k.startswith(self.IMAGE_KEY_PREFIX):
+                    if self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+                        (self._storage_dir / self.VIDEOS_DIR).mkdir(exist_ok=True)
+                    elif self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+                        (self._storage_dir / self.PNGS_DIR).mkdir(exist_ok=True)
+                data_spec[k] = {"dtype": v.dtype, "shape": (num_frames, *v.shape[1:])}
 
             self._make_memmaps(data_spec, "w+")
-            self._save_metadata(data_spec)
+            self._save_metadata(data_spec=data_spec, data_keys=list(episode_data))
         except Exception as e:
             # Attempt to clean up by removing the empty storage directory.
             shutil.rmtree(self._storage_dir)
@@ -395,6 +424,20 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 mode=mode,
                 shape=tuple(v["shape"]) if v is not None else None,
             )
+
+    def _extend_memmaps(self, new_length: int):
+        """Increase the frame capacity of the memmaps to new_length."""
+        # TODO(now): Warn if attempting to store too much.
+        assert (
+            len(self._data[self.INDEX_KEY]) < new_length
+        ), "new_length must be more than the current capacity of the memmaps"
+        data_spec = self._load_metadata()["_data_spec"]
+        for k in data_spec:
+            if k == self.NEXT_INDEX_KEY:
+                continue
+            data_spec[k]["shape"][0] = new_length
+        self._make_memmaps(data_spec=data_spec, mode="r+")
+        self._save_metadata(data_spec=data_spec)
 
     @property
     def delta_timestamps(self) -> dict[str, np.ndarray] | None:
@@ -493,12 +536,23 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         else:
             last_episode_index = -1
             last_data_index = -1
-        # If there aren't enough slots in the buffer left to accommodate the episode, wrap to the start.
-        if max(0, new_data_length - (self._buffer_capacity - next_index)) > 0:
-            next_index = 0
+
+        # If there aren't enough slots left in the reserved memmap space to accommodate the episode, either
+        # extend the memmaps, or wrap to the start if we have an explicit buffer capacity.
+        if self._buffer_capacity is None:
+            # A buffer capacity was not explicitly provided, so dynamically resize the memmaps (double the
+            # capacity).
+            if max(0, new_data_length - (len(self._data[self.INDEX_KEY]) - next_index)) > 0:
+                self._extend_memmaps(len(self._data[self.INDEX_KEY]) * 2)
+        else:
+            # A buffer capacity was provided. Wrap to the start.
+            if max(0, new_data_length - (self._buffer_capacity - next_index)) > 0:
+                next_index = 0
 
         # Insert the new data starting from next_index.
         for k in self.data_keys:
+            # TODO(now): Handle "png" and "video", including deleting images and videos when in online buffer
+            # mode.
             slc = slice(next_index, next_index + new_data_length)
             if k == self.EPISODE_INDEX_KEY:
                 self._data[k][slc] = last_episode_index + 1
@@ -572,7 +626,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             raise IndexError
 
         # Grab the relevant frame from the memmap data. At this point, this may be incomplete for one of two
-        # reasons: TODO(now)
+        # reasons:
         # 1. We are using delta_timestamps, so some of these will act as key frames for a temporal chunk that
         #    wish to extract.
         # 2. The image mode is either "video" or "png", in which case we will need to decode the image frames
@@ -793,6 +847,9 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 obj._data[LeRobotDatasetV2.NEXT_INDEX_KEY][0] = 0
 
         # Siphon the data from the Hugging Face dataset into our dataset object.
+        # If the image mode is either "png" or "video" we will apply a small hack. Rather than passing image
+        # arrays to `add_episodes` to be encoded, we will reuse the pre-existing files. This means that we'll
+        # need to manually update metadata["data_keys"] afterwards.
         episode_indices = np.unique(hf_dataset["episode_index"])
         for episode_index in tqdm(episode_indices, desc="Siphoning episodes into local data structure"):
             data_dict = {}
@@ -853,6 +910,13 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             obj.add_episodes(data_dict, no_flush=True)
 
         obj.flush()
+
+        if obj._image_mode in [LeRobotDatasetV2ImageMode.VIDEO, LeRobotDatasetV2ImageMode.PNG]:
+            # We didn't pass the image keys into the first call to `add_episodes` so manually update
+            # metadata["data_keys"].
+            data_keys: list[str] = obj._load_metadata()["data_keys"]
+            data_keys.extend(hf_dataset_camera_keys)
+            obj._save_metadata(data_keys=data_keys)
 
         return obj
 
