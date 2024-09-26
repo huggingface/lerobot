@@ -106,21 +106,20 @@ class DataBuffer(torch.utils.data.Dataset):
         - Video files: These are the most compact in terms of storage space. Video decoding can be faster
             than PNG image file decoding when we need to access multiple sequential frames at a time,
             otherwise it is generally slower.
-        - PNG files: The are the less compact than videos in terms of storage space. When randomly accessing
+        - PNG files: The are less compact than videos in terms of storage space. When randomly accessing
             individual image frames from the dataset, decoding PNG files can be significantly faster than
             decoding video files.
         - Numpy memmaps (more on memmaps below): These are by far the least compact in terms of storage space.
             They are also the fastest option in terms of data loading, but under certain settings video files
             and PNG images can get surprisingly close when using a PyTorch DataLoader with multiple workers.
 
-    About `numpy.memmap`s: Loosely speaking,
-    memory mapping (https://en.wikipedia.org/wiki/Memory-mapped_file) allows us to treat a portion of disk
-    space as virtual memory. This allows us to work with more data than can fit in our physical memory, while
-    treating the data as if it were just standard numpy arrays. The associated files are saved in the file
-    system under what we call the "storage directory", and the Python object that allows us to treat them as
-    virtual memory is called the "buffer". The storage directory also contains a "metadata.json" file which
-    includes information about the date types and shapes for each memmap. This allows us to load the data
-    without having to specify the data specifications at runtime.
+    About `numpy.memmap`s: Loosely speaking, memory mapping (https://en.wikipedia.org/wiki/Memory-mapped_file)
+    allows us to treat a portion of disk space as virtual memory. This allows us to work with more data than
+    can fit in our physical memory, while treating the data as if it were just standard numpy arrays. The
+    associated files are saved in the file system under what we call the "storage directory", and the Python
+    object that allows us to treat them as virtual memory is called the "buffer". The storage directory also
+    contains a "metadata.json" file which includes information about the date types and shapes for each
+    memmap. This allows us to load the data without having to specify the data specifications at runtime.
 
     A size limit must be specified when creating a new buffer (to know how much space to reserve on disk for
     the `memmaps`). The `add_episodes` method can be used to insert data in the form of integral episodes
@@ -615,19 +614,13 @@ class DataBuffer(torch.utils.data.Dataset):
                 this_key_has_delta_timestamps = (
                     self.delta_timestamps is not None and k in self.delta_timestamps
                 )
+                to_tensor = torchvision.transforms.ToTensor()
                 if this_key_has_delta_timestamps:
                     item[k] = torch.stack(
-                        [
-                            torchvision.transforms.ToTensor()(
-                                Image.open(self.storage_dir / rel_path.decode())
-                            )
-                            for rel_path in item[k]
-                        ]
+                        [to_tensor(Image.open(self.storage_dir / rel_path.decode())) for rel_path in item[k]]
                     )
                 else:
-                    item[k] = torchvision.transforms.ToTensor()(
-                        Image.open(self.storage_dir / item[k].decode())
-                    )
+                    item[k] = to_tensor(Image.open(self.storage_dir / item[k].decode()))
         else:
             # Convert to PyTorch format: channel-last, float32, normalize to range [0, 1].
             for k in self.camera_keys:
@@ -665,8 +658,6 @@ class DataBuffer(torch.utils.data.Dataset):
                 `/tmp/{repo_id}_{hf_dataset._fingerprint}_{decoded?}` unless provided explicitly.
         Returns:
             The resulting DataBuffer object.
-
-        # TODO(now): Add one episode at a time.
         """
         for k in ["data_spec", "buffer_capacity"]:
             if k in kwargs:
@@ -709,6 +700,9 @@ class DataBuffer(torch.utils.data.Dataset):
                 obj._videos_dir = kwargs["storage_dir"] / DataBuffer.VIDEOS_DIR
             else:
                 obj._image_mode = DataBufferImageMode.PNG
+                for k, feature in hf_dataset.features.items():
+                    if isinstance(feature, datasets.features.Image):
+                        hf_dataset = hf_dataset.cast_column(k, datasets.features.Image(decode=False))
                 obj._images_dir = kwargs["storage_dir"] / DataBuffer.IMAGES_DIR
 
         # If we have accessed an existing cached data buffer, just return the object as is.
@@ -738,7 +732,6 @@ class DataBuffer(torch.utils.data.Dataset):
                     else:
                         relative_paths = []
                         for i in range(len(hf_episode_data[k])):
-                            pil_img = hf_episode_data[k][i]
                             frame_index = hf_episode_data[DataBuffer.FRAME_INDEX_KEY][i]
                             episode_index = hf_episode_data[DataBuffer.EPISODE_INDEX_KEY][i]
                             relative_path = (
@@ -747,7 +740,9 @@ class DataBuffer(torch.utils.data.Dataset):
                             relative_paths.append(np.array(relative_path, dtype=f"S{MAX_VIDEO_PATH_LENGTH}"))
                             absolute_path = obj.storage_dir / relative_path
                             os.makedirs(absolute_path.parent, exist_ok=True)
-                            pil_img.save(absolute_path)
+                            img_bytes = hf_episode_data[k][i]["bytes"]
+                            with open(absolute_path, "wb") as f:
+                                f.write(img_bytes)
                         data_dict[k] = np.stack(relative_paths, dtype=f"S{MAX_VIDEO_PATH_LENGTH}")
                 elif isinstance(feature, VideoFrame):
                     if decode_images:
