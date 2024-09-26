@@ -21,17 +21,11 @@ pytest -sx 'tests/test_cameras.py::test_camera[intelrealsense-True]'
 ```
 """
 
-import os
-
 import numpy as np
 import pytest
 
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import TEST_CAMERA_TYPES, require_camera
-
-# Camera indices used for connecting physical cameras
-OPENCV_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_OPENCV_CAMERA_INDEX", 0))
-INTELREALSENSE_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_INTELREALSENSE_CAMERA_INDEX", 128422271614))
+from tests.utils import TEST_CAMERA_TYPES, make_camera, require_camera
 
 # Maximum absolute difference between two consecutive images recored by a camera.
 # This value differs with respect to the camera.
@@ -40,23 +34,6 @@ MAX_PIXEL_DIFFERENCE = 25
 
 def compute_max_pixel_difference(first_image, second_image):
     return np.abs(first_image.astype(float) - second_image.astype(float)).max()
-
-
-def make_camera(camera_type, **kwargs):
-    if camera_type == "opencv":
-        from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
-
-        camera_index = kwargs.pop("camera_index", OPENCV_CAMERA_INDEX)
-        return OpenCVCamera(camera_index, **kwargs)
-
-    elif camera_type == "intelrealsense":
-        from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
-
-        camera_index = kwargs.pop("camera_index", INTELREALSENSE_CAMERA_INDEX)
-        return IntelRealSenseCamera(camera_index, **kwargs)
-
-    else:
-        raise ValueError(f"The camera type '{camera_type}' is not valid.")
 
 
 @pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)

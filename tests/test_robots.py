@@ -28,18 +28,8 @@ from pathlib import Path
 import pytest
 import torch
 
-from lerobot.common.robot_devices.robots.factory import make_robot as make_robot_from_cfg
-from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from lerobot.common.utils.utils import init_hydra_config
-from tests.utils import ROBOT_CONFIG_PATH_TEMPLATE, TEST_ROBOT_TYPES, require_robot
-
-
-def make_robot(robot_type: str, overrides: list[str] | None = None) -> Robot:
-    config_path = ROBOT_CONFIG_PATH_TEMPLATE.format(robot=robot_type)
-    robot_cfg = init_hydra_config(config_path, overrides)
-    robot = make_robot_from_cfg(robot_cfg)
-    return robot
+from tests.utils import TEST_ROBOT_TYPES, make_robot, require_robot
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)

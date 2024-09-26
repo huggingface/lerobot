@@ -30,31 +30,8 @@ import time
 import numpy as np
 import pytest
 
-from lerobot.common.robot_devices.motors.utils import MotorsBus
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import TEST_MOTOR_TYPES, mock_input, require_motor
-
-DYNAMIXEL_PORT = "/dev/tty.usbmodem575E0032081"
-DYNAMIXEL_MOTORS = {
-    "shoulder_pan": [1, "xl430-w250"],
-    "shoulder_lift": [2, "xl430-w250"],
-    "elbow_flex": [3, "xl330-m288"],
-    "wrist_flex": [4, "xl330-m288"],
-    "wrist_roll": [5, "xl330-m288"],
-    "gripper": [6, "xl330-m288"],
-}
-
-
-def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
-    if motor_type == "dynamixel":
-        from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
-
-        port = kwargs.pop("port", DYNAMIXEL_PORT)
-        motors = kwargs.pop("motors", DYNAMIXEL_MOTORS)
-        return DynamixelMotorsBus(port, motors, **kwargs)
-
-    else:
-        raise ValueError(f"The motor type '{motor_type}' is not valid.")
+from tests.utils import TEST_MOTOR_TYPES, make_motors_bus, mock_input, require_motor
 
 
 @pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
