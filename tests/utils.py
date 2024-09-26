@@ -314,22 +314,8 @@ def require_mock_camera(func):
     return wrapper
 
 
-def require_mock_motor(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        # Access the pytest request context to get the mockeypatch fixture
-        monkeypatch = kwargs.get("monkeypatch")
-        motor_type = kwargs.get("motor_type")
-
-        if monkeypatch is None:
-            raise ValueError("The 'monkeypatch' fixture must be an argument of the test function.")
-        if motor_type is None:
-            raise ValueError("The 'motor_type' must be an argument of the test function.")
-
-        mock_motor(monkeypatch, motor_type)
-        return func(*args, **kwargs)
-
-    return wrapper
+def mock_motor(**kwargs):
+    pass
 
 
 def mock_robot(monkeypatch, robot_type):
@@ -392,42 +378,6 @@ def mock_camera(monkeypatch, camera_type):
             )
     else:
         raise NotImplementedError("Implement mocking logic for new camera.")
-
-
-def mock_motor(monkeypatch, motor_type):
-    if motor_type not in available_motors:
-        raise ValueError(
-            f"The motor type '{motor_type}' is not valid. Expected one of these '{available_motors}"
-        )
-
-    if motor_type == "dynamixel":
-        try:
-            import dynamixel_sdk
-
-            from tests.mock_dynamixel import (
-                MockGroupSyncRead,
-                MockGroupSyncWrite,
-                MockPacketHandler,
-                MockPortHandler,
-                mock_convert_to_bytes,
-            )
-
-            monkeypatch.setattr(dynamixel_sdk, "GroupSyncRead", MockGroupSyncRead)
-            monkeypatch.setattr(dynamixel_sdk, "GroupSyncWrite", MockGroupSyncWrite)
-            monkeypatch.setattr(dynamixel_sdk, "PacketHandler", MockPacketHandler)
-            monkeypatch.setattr(dynamixel_sdk, "PortHandler", MockPortHandler)
-
-            # Import dynamixel AFTER mocking dynamixel_sdk to use mocked classes
-            from lerobot.common.robot_devices.motors import dynamixel
-
-            # TODO(rcadene): remove need to mock `convert_to_bytes` by implemented the inverse transform
-            # `convert_bytes_to_value`
-            monkeypatch.setattr(dynamixel, "convert_to_bytes", mock_convert_to_bytes)
-        except ImportError:
-            traceback.print_exc()
-            pytest.skip("To avoid skipping tests mocking dynamixel motors, run `pip install dynamixel-sdk`.")
-    else:
-        raise NotImplementedError("Implement mocking logic for new motor.")
 
 
 def mock_builtins_input(monkeypatch):

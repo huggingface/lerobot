@@ -26,13 +26,14 @@ pytest -sx 'tests/test_motors.py::test_motors_bus[dynamixel-True]'
 # TODO(rcadene): add compatibility with other motors bus
 
 import time
+import traceback
 
 import numpy as np
 import pytest
 
 from lerobot import available_motors
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import make_motors_bus, mock_builtins_input, mock_motor, require_motor
+from tests.utils import make_motors_bus, mock_builtins_input, require_motor
 
 
 def _test_configure_motors_all_ids_1(motor_type):
@@ -152,3 +153,39 @@ def test_motors_bus_mock(monkeypatch, motor_type):
 @require_motor
 def test_motors_bus(request, motor_type):
     _test_motors_bus(motor_type)
+
+
+def mock_motor(monkeypatch, motor_type):
+    if motor_type not in available_motors:
+        raise ValueError(
+            f"The motor type '{motor_type}' is not valid. Expected one of these '{available_motors}"
+        )
+
+    if motor_type == "dynamixel":
+        try:
+            import dynamixel_sdk
+
+            from tests.mock_dynamixel import (
+                MockGroupSyncRead,
+                MockGroupSyncWrite,
+                MockPacketHandler,
+                MockPortHandler,
+                mock_convert_to_bytes,
+            )
+
+            monkeypatch.setattr(dynamixel_sdk, "GroupSyncRead", MockGroupSyncRead)
+            monkeypatch.setattr(dynamixel_sdk, "GroupSyncWrite", MockGroupSyncWrite)
+            monkeypatch.setattr(dynamixel_sdk, "PacketHandler", MockPacketHandler)
+            monkeypatch.setattr(dynamixel_sdk, "PortHandler", MockPortHandler)
+
+            # Import dynamixel AFTER mocking dynamixel_sdk to use mocked classes
+            from lerobot.common.robot_devices.motors import dynamixel
+
+            # TODO(rcadene): remove need to mock `convert_to_bytes` by implemented the inverse transform
+            # `convert_bytes_to_value`
+            monkeypatch.setattr(dynamixel, "convert_to_bytes", mock_convert_to_bytes)
+        except ImportError:
+            traceback.print_exc()
+            pytest.skip("To avoid skipping tests mocking dynamixel motors, run `pip install dynamixel-sdk`.")
+    else:
+        raise NotImplementedError("Implement mocking logic for new motor.")
