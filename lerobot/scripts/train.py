@@ -32,7 +32,7 @@ from torch.cuda.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
-from lerobot.common.datasets.online_buffer import DataBuffer, compute_sampler_weights
+from lerobot.common.datasets.online_buffer import LeRobotDatasetV2, compute_sampler_weights
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
@@ -412,7 +412,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 "depending on the amount of data (but it only needs to happen once, and data loading will be "
                 "fast!)"
             )
-        offline_dataset_for_dataloader = DataBuffer.from_huggingface_hub(
+        offline_dataset_for_dataloader = LeRobotDatasetV2.from_huggingface_hub(
             offline_dataset.repo_id,
             fps=offline_dataset.fps,
             delta_timestamps=offline_dataset.delta_timestamps,
@@ -489,7 +489,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             "was made. This is because the online buffer is updated on disk during training, independently "
             "of our explicit checkpointing mechanisms."
         )
-    online_dataset = DataBuffer(
+    online_dataset = LeRobotDatasetV2(
         online_buffer_path,
         buffer_capacity=cfg.training.online_buffer_capacity,
         fps=online_env.unwrapped.metadata["render_fps"],

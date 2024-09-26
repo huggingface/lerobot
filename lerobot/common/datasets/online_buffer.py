@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""A data buffer for efficient data management during offline and online training."""
+"""A dataset class for efficient data management during offline and online training."""
 
 import json
 import os
@@ -26,17 +26,12 @@ import datasets
 import einops
 import numpy as np
 import torch
-import torchvision
 from PIL import Image
 from tqdm import tqdm
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, DATA_DIR, LeRobotDataset
 from lerobot.common.datasets.utils import load_episode_data_index, load_hf_dataset, load_info, load_videos
 from lerobot.common.datasets.video_utils import VideoFrame, decode_video_frames_torchvision
-
-# TODO(alexander-soare): Move somewhere more appropriate once the DataBuffer class permeates more of the coe
-# base.
-MAX_VIDEO_PATH_LENGTH = 100
 
 
 def _make_memmap_safe(**kwargs) -> np.memmap:
@@ -64,27 +59,40 @@ class TimestampOutsideToleranceError(Exception):
     pass
 
 
-class DataBufferImageMode(Enum):
+class LeRobotDatasetV2ImageMode(Enum):
     MEMMAP = "memmap"
     PNG = "png"
     VIDEO = "video"
 
 
-class DataBuffer(torch.utils.data.Dataset):
-    """Data buffer and training data item getter.
-
+class LeRobotDatasetV2(torch.utils.data.Dataset):
+    """
     This class is intended for the following main use cases:
     - Downloading and using datasets from the Hugging Face Hub.
     - Creating new datasets and potentially uploading them to the Hugging Face Hub.
     - Use as an online experience replay buffer during training.
 
-    Data is considered to come in the form of "episodes" (an instance of a robot performing a task). Episodes
-    are made up of "frames", which are chronologically ordered and contain timestamp aligned data, potentially
-    including environment observations, and robot actions. NOTE: for the time being, we require all data
-    modalities to be timestamp aligned. This constraint may be relaxed in the future.
+    Conceptually, data is considered to come in the form of "episodes" (an instance of a robot performing a
+    task). Episodes are made up of "frames", which are chronologically ordered and contain timestamp aligned
+    data, potentially including environment observations, and robot actions. NOTE: for the time being, we
+    require all data modalities to be timestamp aligned. This constraint may be relaxed in the future.
 
-    Data is stored in a mapping from data keys to arrays with shape (total_number_of_frames, *data_dim). The
-    compulsory data keys are:
+    Physically, data is stored on disk in one or more of three forms: video files, PNG files, `numpy.memmap`s.
+    Image data can be stored in any of these forms, while non-image data is only stored in `numpy.memmaps`.
+
+    A quick note on `numpy.memmap`s: memory mapping (https://en.wikipedia.org/wiki/Memory-mapped_file)
+    allows us to treat a portion of disk space as virtual memory. This allows us to work with more data than
+    can fit in our physical memory, while treating the data as if it were just standard numpy arrays.
+
+    All of the on-disk storage goes in one directory on your file system. In here you will find:
+      - One memmap file for each non-image data key, and perhaps one for each image data key.
+      - Perhaps a directory called "videos".
+      - Perhaps a directory called "images"
+      - A "metadata.json" file which contains human-readable information about the dataset and some
+        configuration parameters.
+
+    `numpy.memmap` data is stored in a mapping from data keys to arrays with shape (total_number_of_frames,
+    *data_dim). The compulsory data keys are:
         - "index": A sequential integer index per frame.
         - "episode_index": A sequential integer index per episode.
         - "frame_index": A sequential integer index per frame within an episode (it resets for each episode).
@@ -100,45 +108,50 @@ class DataBuffer(torch.utils.data.Dataset):
           necessarily get stored in this data structure. Instead, we might have video files or PNG files to
           decode (more on that below).
 
-    Image data may be stored in at least one of the following formats: video files, PNG image files, as raw
-    pixel arrays (in which case they also have a data key to array mapping as discussed above). For each of
-    these methods, we care about storage capacity and random access data loading speed.
+    Image data may be stored in at least one of the following formats: video files, PNG image files, and as
+    raw pixel arrays (in which case they also have a data key to array mapping as discussed above). For each
+    of these methods, we care about storage capacity, random access data loading speed, and in some use cases,
+    how fast we can add new data.
         - Video files: These are the most compact in terms of storage space. Video decoding can be faster
             than PNG image file decoding when we need to access multiple sequential frames at a time,
-            otherwise it is generally slower.
-        - PNG files: The are less compact than videos in terms of storage space. When randomly accessing
+            otherwise it is generally slower. Video encoding time, when adding new data, is also something to
+            consider.
+        - PNG files: These are less compact than videos in terms of storage space. When randomly accessing
             individual image frames from the dataset, decoding PNG files can be significantly faster than
-            decoding video files.
+            decoding video files. PNG encoding time, when adding new data, is also something to consider.
         - Numpy memmaps (more on memmaps below): These are by far the least compact in terms of storage space.
-            They are also the fastest option in terms of data loading, but under certain settings video files
-            and PNG images can get surprisingly close when using a PyTorch DataLoader with multiple workers.
-
-    About `numpy.memmap`s: Loosely speaking, memory mapping (https://en.wikipedia.org/wiki/Memory-mapped_file)
-    allows us to treat a portion of disk space as virtual memory. This allows us to work with more data than
-    can fit in our physical memory, while treating the data as if it were just standard numpy arrays. The
-    associated files are saved in the file system under what we call the "storage directory", and the Python
-    object that allows us to treat them as virtual memory is called the "buffer". The storage directory also
-    contains a "metadata.json" file which includes information about the date types and shapes for each
-    memmap. This allows us to load the data without having to specify the data specifications at runtime.
-
-    A size limit must be specified when creating a new buffer (to know how much space to reserve on disk for
-    the `memmaps`). The `add_episodes` method can be used to insert data in the form of integral episodes
-    (starting from frame 0 and with the frames ordered). For the purposes of a limited-capacity experience
-    replay buffer, data is inserted in a circular fashion, inserting after the most recently added frame, and
-    wrapping around to the start of the buffer when necessary (in which case older episode frames are
-    overwritten).
+            They are also the fastest option for adding new episodes to the dataset and data loading. But
+            under certain settings, video files and PNG images can get surprisingly close when using a PyTorch
+            DataLoader with multiple workers.
 
     This class is also a PyTorch Dataset and can be used as such in a dataloader for a training loop. The item
     getter returns either a single frame, or a slice of a single episode if `delta_timestamps` is set. It also
     converts the numpy data to torch tensors, and handles converting images to channel-first, float32
     normalized to the range [0, 1].
 
-    Example usage: you want to use a dataset from the Hugging Face hub for training a policy:
+    USE CASES AND EXAMPLES:
+
+    The most common use case will be to download a dataset from Hugging Face Hub for training a policy.
+    The following examples downloads the PushT dataset from the hub (or uses the locally cached dataset if it
+    exists) and passes it to a PyTorch dataloader.
 
     ```python
-    dataset = DataBuffer.from_huggingface_hub("lerobot/pusht")
+    dataset = LeRobotDatasetV2.from_huggingface_hub("lerobot/pusht")
     dataloader = torch.utils.data.DataLoader(dataset)
     ```
+
+    TODO(now): Finish the docs below
+
+    The next most common use case is to create a dataset from scratch. TODO(now): What to do about the need
+    for up-front buffer capacity.
+
+    A size limit must be specified when creating a new dataset (to know how much space to reserve on disk for
+    the `numpy.memmap`s). The `add_episodes` method can be used to insert data in the form of integral
+    episodes (starting from frame 0 and with the frames ordered). For the purposes of a limited-capacity
+    experience replay buffer, data is inserted in a circular fashion, inserting after the most recently added
+    frame, and wrapping around to the start of the buffer when necessary (in which case older episode frames
+    are overwritten).
+
 
     Example usage: you want to create a new dataset and upload it to the hub
 
@@ -147,7 +160,7 @@ class DataBuffer(torch.utils.data.Dataset):
     Example usage: you need an experience replay buffer for an online RL policy like TD-MPC
 
     ```python
-    dataset = DataBuffer(storage_dir="online_buffer", buffer_capacity=10000)
+    dataset = LeRobotDatasetV2(storage_dir="online_buffer", buffer_capacity=10000)
     iter_dataloader = iter(torch.utils.data.DataLoader(dataset))
 
     # training loop
@@ -161,11 +174,11 @@ class DataBuffer(torch.utils.data.Dataset):
 
     # Special key for a (1,) array storing a pointer to the next index to fill from when adding data.
     NEXT_INDEX_KEY = "_next_index"
-    # Since the data buffer is pre-allocated, this boolean mask is used to indicate which frames have "real"
-    # data.
+    # Since the numpy.memmap storage is pre-allocated, this boolean mask is used to indicate which frames have
+    # "real" data.
     OCCUPANCY_MASK_KEY = "_occupancy_mask"
-    # This is not a data key used in the buffer. It is used to indicate that a frame is padding, added by the
-    # __getitem__ method.
+    # IS_PAD_POSTFIX is added by the __getitem__ method, and is not stored in the numpy.memmap. It is used to
+    # indicate that a frame is padding.
     IS_PAD_POSTFIX = "_is_pad"
     INDEX_KEY = "index"
     FRAME_INDEX_KEY = "frame_index"
@@ -178,13 +191,15 @@ class DataBuffer(torch.utils.data.Dataset):
     METADATA_FILE_NAME = "metadata.json"
 
     VIDEOS_DIR = "videos"  # directory (relative to storage directory), to store videos
-    IMAGES_DIR = "images"  # directory (relative to storage directory), to store images
+    VIDEO_NAME_FSTRING = "{data_key}_episode_{episode_index:06d}.mp4"
+    PNGS_DIR = "images"  # directory (relative to storage directory), to store images
+    PNG_NAME_FSTRING = "{data_key}_episode_{episode_index:06d}_frame_{frame_index:06d}.png"
 
     def __init__(
         self,
         storage_dir: str | Path,
         buffer_capacity: int | None = None,
-        image_mode: DataBufferImageMode | None = None,
+        image_mode: LeRobotDatasetV2ImageMode | None = None,
         image_transform: Callable[[np.ndarray], np.ndarray] | None = None,
         delta_timestamps: dict[str, list[float]] | dict[str, np.ndarray] | None = None,
         fps: float | None = None,
@@ -199,9 +214,7 @@ class DataBuffer(torch.utils.data.Dataset):
                 `storage_dir` references an existing storage directory, `buffer_capacity` should not be
                 provided, as it is already included in "metadata.json".
             image_mode: The image storage mode used for the item getter. See notes above on the various
-                options. If not provided: when creating a new dataset it defaults to "video" mode, and when
-                loading an existing dataset it defaults to the first mode available from "video", "png",
-                "memmap", in that order.
+                options. If not provided it defaults to memmap mode.
             image_transform: Transforms to apply in the item getter to all image data (any data whose key
                 starts with "observation.image").
             delta_timestamps: TODO(alexander-soare): Document this somewhere when
@@ -216,7 +229,7 @@ class DataBuffer(torch.utils.data.Dataset):
 
         # Default assumption is that the image storage mode is memmaps meaning we don't need a video or image
         # directory.
-        self._image_mode = DataBufferImageMode.MEMMAP
+        self._image_mode = LeRobotDatasetV2ImageMode.MEMMAP
         self._videos_dir: str | None = None
         self._images_dir: str | None = None
 
@@ -228,7 +241,7 @@ class DataBuffer(torch.utils.data.Dataset):
                     "buffer_capacity explicitly. Instead, it will be read from 'meta.json' in the storage "
                     "directory."
                 )
-            data_spec = self._load_data_spec()
+            data_spec = self._load_metadata()
             self._make_memmaps(data_spec, mode="r+")
             self._buffer_capacity = len(self._data[self.INDEX_KEY])
             # Set image mode based on what's available in the storage directory and/or the user's selection.
@@ -240,14 +253,14 @@ class DataBuffer(torch.utils.data.Dataset):
                         f"{possible_image_modes}"
                     )
                 self._image_mode = image_mode
-            else:
-                # If image_mode is not provided, default to VIDEO, followed by PNG, followed by MEMMAP
-                # (already set above).
-                if DataBufferImageMode.VIDEO in possible_image_modes:
-                    self._image_mode = DataBufferImageMode.VIDEO
-                elif DataBufferImageMode.PNG in possible_image_modes:
-                    self._image_mode = DataBufferImageMode.PNG
         else:
+            if image_mode is not None and image_mode in [
+                LeRobotDatasetV2ImageMode.VIDEO,
+                LeRobotDatasetV2ImageMode.PNG,
+            ]:
+                raise NotImplementedError(
+                    f"Creating a new dataset from scratch with {image_mode=} is not yet supported."
+                )
             if buffer_capacity is None:
                 raise ValueError(
                     "The storage directory does not exist, which means you need to provide a buffer_capacity."
@@ -278,7 +291,6 @@ class DataBuffer(torch.utils.data.Dataset):
     def num_episodes(self) -> int:
         """Total number of unique episode indices in the dataset."""
         if len(self._data) == 0:
-            # Buffers not created yet.
             return 0
         return len(np.unique(self._data[self.EPISODE_INDEX_KEY][self._data[self.OCCUPANCY_MASK_KEY]]))
 
@@ -289,7 +301,6 @@ class DataBuffer(torch.utils.data.Dataset):
         TODO(alexander-soare): Rename to num_frames once LeRobotDataset is deprecated.
         """
         if len(self._data) == 0:
-            # Buffers not created yet.
             return 0
         return np.count_nonzero(self._data[self.OCCUPANCY_MASK_KEY])
 
@@ -299,28 +310,40 @@ class DataBuffer(torch.utils.data.Dataset):
 
         By convention, this is all the keys starting with "observation.image".
         """
-        return [k for k in self._data if k.startswith(self.IMAGE_KEY_PREFIX)]
+        if self._image_mode == LeRobotDatasetV2ImageMode.MEMMAP:
+            return [k for k in self._data if k.startswith(self.IMAGE_KEY_PREFIX)]
+        elif self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+            # TODO(now): Should this be just gotten from the metadata instead?
+            return list(
+                {name.split("_episode", 1)[0] for name in os.listdir(self.storage_dir / self.VIDEOS_DIR)}
+            )
+        elif self._image_mode == LeRobotDatasetV2ImageMode.PNG:
+            # TODO(now): Should this be just gotten from the metadata instead?
+            return list(
+                {name.split("_episode", 1)[0] for name in os.listdir(self.storage_dir / self.PNGS_DIR)}
+            )
 
-    def _infer_image_modes(self) -> list[DataBufferImageMode]:
+    def _infer_image_modes(self) -> list[LeRobotDatasetV2ImageMode]:
         """Infer which image modes are available according to what is in the storage directory"""
         image_modes = []
         if (self.storage_dir / self.VIDEOS_DIR).exists():
-            image_modes.append(DataBufferImageMode.VIDEO)
-        if (self.storage_dir / self.IMAGES_DIR).exists():
-            image_modes.append(DataBufferImageMode.PNG)
-        if any(k.startswith("observation.image") for k in self._load_data_spec()):
-            image_modes.append(DataBufferImageMode.MEMMAP)
+            image_modes.append(LeRobotDatasetV2ImageMode.VIDEO)
+        if (self.storage_dir / self.PNGS_DIR).exists():
+            image_modes.append(LeRobotDatasetV2ImageMode.PNG)
+        if any(k.startswith("observation.image") for k in self._load_metadata()):
+            image_modes.append(LeRobotDatasetV2ImageMode.MEMMAP)
         return image_modes
 
-    def _save_data_spec(self, data_spec: dict[str, dict]):
+    def _save_metadata(self, data_spec: dict[str, dict]):
         """Save the data type and shape specifications to the storage directory."""
+        # TODO(now): save f-strings
         meta_file = self._storage_dir / self.METADATA_FILE_NAME
         with open(meta_file, "w") as f:
             for k in data_spec:
                 data_spec[k]["dtype"] = str(data_spec[k]["dtype"])
             json.dump(data_spec, f, indent=2)
 
-    def _load_data_spec(self) -> dict[str, dict]:
+    def _load_metadata(self) -> dict[str, dict]:
         """Load the data type and shape specifications from the storage directory."""
         meta_file = self._storage_dir / self.METADATA_FILE_NAME
         with open(meta_file) as f:
@@ -353,14 +376,14 @@ class DataBuffer(torch.utils.data.Dataset):
                 data_spec[k] = {"dtype": v.dtype, "shape": (self._buffer_capacity, *v.shape[1:])}
 
             self._make_memmaps(data_spec, "w+")
-            self._save_data_spec(data_spec)
+            self._save_metadata(data_spec)
         except Exception as e:
             # Attempt to clean up by removing the empty storage directory.
             shutil.rmtree(self._storage_dir)
             raise e
 
     def _make_memmaps(self, data_spec: dict[str, dict], mode: str):
-        """Create the memmap buffer objects.
+        """Create the memmap objects.
 
         The underlying storage directory may or may not already exist. Provide the file opening `mode`
         accordingly.
@@ -405,20 +428,20 @@ class DataBuffer(torch.utils.data.Dataset):
             self._delta_timestamps = None
 
     def add_episodes(self, data: dict[str, np.ndarray], no_flush: bool = False):
-        """Add data to the buffer.
+        """Add episodes to the dataset.
 
-        `data` should have the same key, array mapping as the buffer. It should contain at least one episode.
-        The episodes should have frame indices that start from 0 and step up in increments of 1.
+        `data` should be a mapping of data key to data in array format. It should contain at least one
+        episode. The episodes should have frame indices that start from 0 and step up in increments of 1.
 
-        Episodes are added to the buffer one-by-one. If an episode has more frames then are available till the
-        end of the buffer, the pointer is reset to the start of the buffer and the episode is inserted there,
-        overwriting existing episode frames.
+        Episodes are added to the dataset one-by-one. If an episode has more frames then are available till
+        the end of the numpy.memmap buffer, the pointer is reset to the start of the buffer and the episode is
+        inserted there, overwriting existing episode frames.  # TODO(now): Maybe I only want this if the user intends to use the dataset as a replay buffer
 
         When episode frames are overwritten by a new episode, by default, any remaining frames belonging to
         the existing episode are left in place (meaning not all episodes will be guaranteed to start from
-        their frame 0).
+        their frame 0).  # TODO(now): Maybe I only want this if the user intends to use the dataset as a replay buffer
 
-        After adding the episodes to the buffer, the buffer is flushed to disk.
+        After adding the episodes to the dataset, the numpy.memmap buffer is flushed to disk.
         """
         for episode_index in np.unique(data[self.EPISODE_INDEX_KEY]):
             where_episode = np.where(data[self.EPISODE_INDEX_KEY] == episode_index)[0]
@@ -429,7 +452,7 @@ class DataBuffer(torch.utils.data.Dataset):
             self.flush()
 
     def _add_episode(self, data: dict[str, np.ndarray]):
-        """Add data for a single episode to the buffer."""
+        """Add a single episode to the dataset."""
         if len(self._data) == 0:
             self._make_storage_dir(data)
 
@@ -450,23 +473,16 @@ class DataBuffer(torch.utils.data.Dataset):
             raise ValueError(
                 "Expected frame indices to start from 0 and step up in increments of 1 per frame."
             )
-        # Special checks on image keys.
+        # Special check on image keys.
         for k in data:
             if not k.startswith(self.IMAGE_KEY_PREFIX):
                 continue
-            if self._image_mode in [DataBufferImageMode.PNG, DataBufferImageMode.VIDEO]:
-                if data[k].dtype != np.dtype(f"S{MAX_VIDEO_PATH_LENGTH}"):
-                    raise ValueError(
-                        f"Any data key starting with '{self.IMAGE_KEY_PREFIX}' is assumed to be an image, "
-                        "and it should be string data (with a relative path to the video/png to be loaded)."
-                    )
-            else:
-                _, h, w, c = data[k].shape
-                if data[k].dtype is not np.dtype("uint8") or c >= min(h, w):
-                    raise ValueError(
-                        f"Any data key starting with '{self.IMAGE_KEY_PREFIX}' is assumed to be an image, "
-                        "and should be of type np.uint8, with channel-last format."
-                    )
+            _, h, w, c = data[k].shape
+            if data[k].dtype is not np.dtype("uint8") or c >= min(h, w):
+                raise ValueError(
+                    f"Any data key starting with '{self.IMAGE_KEY_PREFIX}' is assumed to be an image, "
+                    "and should be of type np.uint8, with channel-last format."
+                )
 
         # Figure out where we need to start filling data next, and make sure we continue data and episode
         # indices.
@@ -524,11 +540,27 @@ class DataBuffer(torch.utils.data.Dataset):
         return self.num_samples
 
     def get_data_by_key(self, key: str) -> np.ndarray:
-        """Returns all data for a given data key (where the data is valid)."""
+        """Returns all data for a given data key in the numpy.memmap data."""
+        if key.startswith(self.IMAGE_KEY_PREFIX) and self._image_mode in [
+            LeRobotDatasetV2ImageMode.VIDEO,
+            LeRobotDatasetV2ImageMode.PNG,
+        ]:
+            raise ValueError(
+                f"Can't get all data for image keys when {self._image_mode=}. This would require decoding "
+                "the whole dataset!"
+            )
         return self._data[key][self._data[self.OCCUPANCY_MASK_KEY]]
 
+    @staticmethod
+    def _numpy_img_to_tensor(img: np.ndarray) -> torch.Tensor:
+        """
+        Converts img from numpy uint8, in range [0, 255], channel-first to torch float32, in range [0, 1],
+        channel-last.
+        """
+        return torch.from_numpy(einops.rearrange(img.astype(np.float32) / 255.0, "... h w c -> ... c h w"))
+
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        """Gets an item or slice from the buffer and returns it in PyTorch format.
+        """Gets an item or slice from the dataset and returns it in PyTorch format.
 
         Images (any data key starting with "observation.image") get converted from numpy uint8, in range
         [0, 255], channel-first to torch float32, in range [0, 1], channel-last.
@@ -539,10 +571,30 @@ class DataBuffer(torch.utils.data.Dataset):
         if idx >= len(self) or idx < -len(self):
             raise IndexError
 
-        item = {k: v[idx] for k, v in self._data.items() if not k.startswith("_")}
+        # Grab the relevant frame from the memmap data. At this point, this may be incomplete for one of two
+        # reasons: TODO(now)
+        # 1. We are using delta_timestamps, so some of these will act as key frames for a temporal chunk that
+        #    wish to extract.
+        # 2. The image mode is either "video" or "png", in which case we will need to decode the image frames
+        #    further down.
+        item = {}
+        for k in self._data:
+            if k.startswith("_"):
+                # Reserved key.
+                continue
+            if (
+                self._image_mode
+                in [
+                    LeRobotDatasetV2ImageMode.VIDEO,
+                    LeRobotDatasetV2ImageMode.PNG,
+                ]
+                and k in self.camera_keys
+            ):
+                continue
+            item[k] = self._data[k][idx]
 
-        # If we are using delta_timestamps take slices of the data.
         if self.delta_timestamps is not None:
+            # We are using delta timestamps, so extract the appropriate temporal chunks of data.
             episode_index = item[self.EPISODE_INDEX_KEY]
             current_ts = item[self.TIMESTAMP_KEY]
             episode_data_indices = np.where(
@@ -552,10 +604,6 @@ class DataBuffer(torch.utils.data.Dataset):
                 )
             )[0]
             episode_timestamps = self._data[self.TIMESTAMP_KEY][episode_data_indices]
-
-            if self._image_mode == DataBufferImageMode.VIDEO:
-                # We'll use this for `decode_video_frames_torchvision`.
-                video_delta_timestamps = {}
 
             for data_key in self.delta_timestamps:
                 # Get timestamps used as query to retrieve data of previous/future frames.
@@ -578,55 +626,81 @@ class DataBuffer(torch.utils.data.Dataset):
                         f"{self.tolerance_s=}) inside the episode range."
                     )
 
-                if self._image_mode == DataBufferImageMode.VIDEO and data_key.startswith(
-                    self.IMAGE_KEY_PREFIX
+                # For image data, either decode video frames, load PNG files, or slice the memmap. For all
+                # other data, slice the memmap.
+                episode_data_indices_to_retrieve = episode_data_indices[argmin_]
+                if (
+                    data_key.startswith(self.IMAGE_KEY_PREFIX)
+                    and self._image_mode == LeRobotDatasetV2ImageMode.VIDEO
                 ):
-                    video_delta_timestamps[data_key] = self._data[self.TIMESTAMP_KEY][
-                        episode_data_indices[argmin_]
-                    ]
+                    item[data_key] = decode_video_frames_torchvision(
+                        video_path=self.storage_dir
+                        / self.VIDEOS_DIR
+                        / self.VIDEO_NAME_FSTRING.format(data_key=data_key, episode_index=episode_index),
+                        timestamps=self._data[self.TIMESTAMP_KEY][episode_data_indices_to_retrieve],
+                        tolerance_s=self.tolerance_s,
+                        backend="pyav",
+                        to_pytorch_format=True,
+                    )
+                elif (
+                    data_key.startswith(self.IMAGE_KEY_PREFIX)
+                    and self._image_mode == LeRobotDatasetV2ImageMode.PNG
+                ):
+                    imgs = []
+                    for frame_index in self._data[self.FRAME_INDEX_KEY][episode_data_indices_to_retrieve]:
+                        img_path = (
+                            self.storage_dir
+                            / self.PNGS_DIR
+                            / self.PNG_NAME_FSTRING.format(
+                                data_key=data_key,
+                                episode_index=episode_index,
+                                frame_index=frame_index,
+                            )
+                        )
+                        imgs.append(self._numpy_img_to_tensor(np.array(Image.open(img_path))))
+                    item[data_key] = torch.stack(imgs)
                 else:
-                    item[data_key] = self._data[data_key][episode_data_indices[argmin_]]
+                    item[data_key] = self._data[data_key][episode_data_indices_to_retrieve]
 
                 item[f"{data_key}{self.IS_PAD_POSTFIX}"] = is_pad
 
-        if self._image_mode == DataBufferImageMode.VIDEO:
-            # Decode the required video frames.
+        # For video and png images, we may still need to load frames if we have not already done it in the
+        # delta timestamps logic. For memmap images, we just need to finalize by converting the images to
+        # pytorch format.
+        if self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
             for k in self.camera_keys:
-                this_key_has_delta_timestamps = (
-                    self.delta_timestamps is not None and k in self.delta_timestamps
-                )
-                requested_timestamps = (
-                    video_delta_timestamps[k] if this_key_has_delta_timestamps else [item[self.TIMESTAMP_KEY]]
-                )
-                img_or_imgs = decode_video_frames_torchvision(
-                    video_path=self.storage_dir / item[k].decode(),
-                    timestamps=requested_timestamps,
-                    tolerance_s=self.tolerance_s or 1e-8,  # 1e-8 to account for no fps setting
+                if k in item:
+                    # We have already populated it in the delta_timestamps logic.
+                    assert self.delta_timestamps is not None and k in self.delta_timestamps  # sanity check
+                    continue
+                item[k] = decode_video_frames_torchvision(
+                    video_path=self.storage_dir
+                    / self.VIDEOS_DIR
+                    / self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=item[self.EPISODE_INDEX_KEY]),
+                    timestamps=[item[self.TIMESTAMP_KEY]],
+                    tolerance_s=1e-8,  # we expect the timestamp to match exactly
                     backend="pyav",
                     to_pytorch_format=True,
-                )
-                if this_key_has_delta_timestamps:
-                    item[k] = img_or_imgs
-                else:
-                    item[k] = img_or_imgs[0]  # in this case we don't want a temporal dimension
-        elif self._image_mode == DataBufferImageMode.PNG:
+                )[0]
+        elif self._image_mode == LeRobotDatasetV2ImageMode.PNG:
             for k in self.camera_keys:
-                this_key_has_delta_timestamps = (
-                    self.delta_timestamps is not None and k in self.delta_timestamps
-                )
-                to_tensor = torchvision.transforms.ToTensor()
-                if this_key_has_delta_timestamps:
-                    item[k] = torch.stack(
-                        [to_tensor(Image.open(self.storage_dir / rel_path.decode())) for rel_path in item[k]]
+                if k in item:
+                    # We have already populated it in the delta_timestamps logic.
+                    assert self.delta_timestamps is not None and k in self.delta_timestamps  # sanity check
+                    continue
+                img_path = (
+                    self.storage_dir
+                    / self.PNGS_DIR
+                    / self.PNG_NAME_FSTRING.format(
+                        data_key=k,
+                        episode_index=item[self.EPISODE_INDEX_KEY],
+                        frame_index=item[self.FRAME_INDEX_KEY],
                     )
-                else:
-                    item[k] = to_tensor(Image.open(self.storage_dir / item[k].decode()))
-        else:
-            # Convert to PyTorch format: channel-last, float32, normalize to range [0, 1].
-            for k in self.camera_keys:
-                item[k] = einops.rearrange(
-                    torch.from_numpy(item[k].astype(np.float32) / 255.0), "... h w c -> ... c h w"
                 )
+                item[k] = self._numpy_img_to_tensor(np.array(Image.open(img_path)))
+        elif self._image_mode == LeRobotDatasetV2ImageMode.MEMMAP:
+            for k in self.camera_keys:
+                item[k] = self._numpy_img_to_tensor(item[k])
 
         if self.image_transform is not None:
             for k in self.camera_keys:
@@ -641,10 +715,10 @@ class DataBuffer(torch.utils.data.Dataset):
         decode_images: bool = False,
         root: Path | None = DATA_DIR,
         **kwargs,
-    ) -> "DataBuffer":
-        """Create a DataBuffer from a data repository on the Hugging Face Hub.
+    ) -> "LeRobotDatasetV2":
+        """Create a LeRobotDatasetV2 from a data repository on the Hugging Face Hub.
 
-        NOTE: If the DataBuffer already exists in /tmp, this function will reuse it rather than creating a new
+        NOTE: If the LeRobotDatasetV2 already exists in /tmp, this function will reuse it rather than creating a new
         one.
 
         Args:
@@ -657,13 +731,16 @@ class DataBuffer(torch.utils.data.Dataset):
                 `buffer_capacity` arguments which are inferred automatically. `storage_dir` is set to
                 `/tmp/{repo_id}_{hf_dataset._fingerprint}_{decoded?}` unless provided explicitly.
         Returns:
-            The resulting DataBuffer object.
+            The resulting LeRobotDatasetV2 object.
         """
         for k in ["data_spec", "buffer_capacity"]:
             if k in kwargs:
                 raise ValueError(f"`{k}` should not be provided as it is inferred from the hub dataset.")
 
         hf_dataset = load_hf_dataset(repo_id, version=CODEBASE_VERSION, root=root, split="train")
+        hf_dataset_camera_keys = [
+            k for k in hf_dataset.features if k.startswith(LeRobotDatasetV2.IMAGE_KEY_PREFIX)
+        ]
         episode_data_index = load_episode_data_index(repo_id, version=CODEBASE_VERSION, root=root)
         hf_dataset.set_transform(lambda x: x)  # there is a default transform in place. reset it
         # Get some metadata necessary for processing videos.
@@ -675,47 +752,47 @@ class DataBuffer(torch.utils.data.Dataset):
 
         kwargs.setdefault(
             "storage_dir",
-            DataBuffer._default_storage_dir_from_huggingface_hub(
+            LeRobotDatasetV2._default_storage_dir_from_huggingface_hub(
                 repo_id, hf_dataset._fingerprint, decode_images
             ),
         )
 
-        buffer_already_on_disk = False
-        if Path(kwargs["storage_dir"] / DataBuffer.METADATA_FILE_NAME).exists():
-            buffer_already_on_disk = True
+        dataset_already_on_disk = False
+        if Path(kwargs["storage_dir"] / LeRobotDatasetV2.METADATA_FILE_NAME).exists():
+            dataset_already_on_disk = True
 
-        # Create the DataBuffer object. Reminder: if the storage directory already exists, this reads it.
+        # Create the LeRobotDatasetV2 object. Reminder: if the storage directory already exists, this reads it.
         # Otherwise, the storage directory is not created until later when we make the first call to
         # `add_episodes`.
         obj = cls(
             **kwargs,
-            buffer_capacity=len(hf_dataset) if not buffer_already_on_disk else None,
+            buffer_capacity=len(hf_dataset) if not dataset_already_on_disk else None,
         )
 
-        if decode_images:
-            obj._image_mode = DataBufferImageMode.MEMMAP
+        # Set the image mode based on the provided HF dataset and whether we are decoding images.
+        if len(hf_dataset_camera_keys) == 0 or decode_images:
+            obj._image_mode = LeRobotDatasetV2ImageMode.MEMMAP
+        elif lerobot_dataset_info.get("video", False):
+            obj._image_mode = LeRobotDatasetV2ImageMode.VIDEO
+            obj._videos_dir = kwargs["storage_dir"] / LeRobotDatasetV2.VIDEOS_DIR
         else:
-            if lerobot_dataset_info.get("video", False):
-                obj._image_mode = DataBufferImageMode.VIDEO
-                obj._videos_dir = kwargs["storage_dir"] / DataBuffer.VIDEOS_DIR
-            else:
-                obj._image_mode = DataBufferImageMode.PNG
-                for k, feature in hf_dataset.features.items():
-                    if isinstance(feature, datasets.features.Image):
-                        hf_dataset = hf_dataset.cast_column(k, datasets.features.Image(decode=False))
-                obj._images_dir = kwargs["storage_dir"] / DataBuffer.IMAGES_DIR
+            obj._image_mode = LeRobotDatasetV2ImageMode.PNG
+            for k, feature in hf_dataset.features.items():
+                if isinstance(feature, datasets.features.Image):
+                    hf_dataset = hf_dataset.cast_column(k, datasets.features.Image(decode=False))
+            obj._images_dir = kwargs["storage_dir"] / LeRobotDatasetV2.PNGS_DIR
 
-        # If we have accessed an existing cached data buffer, just return the object as is.
-        if buffer_already_on_disk:
+        # If we have accessed an existing cached dataset, just return the object as is.
+        if dataset_already_on_disk:
             if len(obj) == len(hf_dataset):
                 # All episodes are already in the storage directory.
                 return obj
             else:
                 # Only some episodes are in the storage directory. Reset the data pointer and start from
                 # scratch.
-                obj._data[DataBuffer.NEXT_INDEX_KEY][0] = 0
+                obj._data[LeRobotDatasetV2.NEXT_INDEX_KEY][0] = 0
 
-        # Populate the buffer with the data from the dataset.
+        # Siphon the data from the Hugging Face dataset into our dataset object.
         episode_indices = np.unique(hf_dataset["episode_index"])
         for episode_index in tqdm(episode_indices, desc="Siphoning episodes into local data structure"):
             data_dict = {}
@@ -730,38 +807,40 @@ class DataBuffer(torch.utils.data.Dataset):
                     if decode_images:
                         data_dict[k] = np.stack([np.array(pil_img) for pil_img in hf_episode_data[k]])
                     else:
-                        relative_paths = []
                         for i in range(len(hf_episode_data[k])):
-                            frame_index = hf_episode_data[DataBuffer.FRAME_INDEX_KEY][i]
-                            episode_index = hf_episode_data[DataBuffer.EPISODE_INDEX_KEY][i]
-                            relative_path = (
-                                f"images/{k}_episode_{episode_index:06d}_frame_{frame_index:06d}.png"
+                            frame_index = hf_episode_data[LeRobotDatasetV2.FRAME_INDEX_KEY][i]
+                            img_path = (
+                                obj.storage_dir
+                                / LeRobotDatasetV2.PNGS_DIR
+                                / LeRobotDatasetV2.PNG_NAME_FSTRING.format(
+                                    data_key=k, episode_index=episode_index, frame_index=frame_index
+                                )
                             )
-                            relative_paths.append(np.array(relative_path, dtype=f"S{MAX_VIDEO_PATH_LENGTH}"))
-                            absolute_path = obj.storage_dir / relative_path
-                            os.makedirs(absolute_path.parent, exist_ok=True)
+                            os.makedirs(img_path.parent, exist_ok=True)
                             img_bytes = hf_episode_data[k][i]["bytes"]
-                            with open(absolute_path, "wb") as f:
+                            with open(img_path, "wb") as f:
                                 f.write(img_bytes)
-                        data_dict[k] = np.stack(relative_paths, dtype=f"S{MAX_VIDEO_PATH_LENGTH}")
                 elif isinstance(feature, VideoFrame):
                     if decode_images:
-                        # Decode all videos into images.
-                        all_imgs = []
-                        episode_imgs = decode_video_frames_torchvision(
+                        # Decode all frames of the episode.
+                        data_dict[k] = decode_video_frames_torchvision(
                             lerobot_dataset_videos_path.parent / hf_episode_data[k][0]["path"],
-                            np.array(hf_episode_data["timestamp"]),
-                            1 / lerobot_dataset_info["fps"] - 1e-4,
+                            timestamps=np.array(hf_episode_data["timestamp"]),
+                            tolerance_s=1e-8,
                             to_pytorch_format=False,
                         )
-                        all_imgs.extend(episode_imgs)
-                        data_dict[k] = np.stack(all_imgs)
                     else:
-                        data_dict[k] = np.stack(
-                            [
-                                np.array(dct["path"], dtype=f"S{MAX_VIDEO_PATH_LENGTH}")
-                                for dct in hf_episode_data[k]
-                            ]
+                        # Copy video to storage directory.
+                        new_video_path = (
+                            obj.storage_dir
+                            / LeRobotDatasetV2.VIDEOS_DIR
+                            / LeRobotDatasetV2.VIDEO_NAME_FSTRING.format(
+                                data_key=k, episode_index=episode_index
+                            )
+                        )
+                        os.makedirs(new_video_path.parent, exist_ok=True)
+                        os.symlink(
+                            (lerobot_dataset_videos_path / new_video_path.name).absolute(), new_video_path
                         )
                 elif isinstance(feature, datasets.features.Sequence):
                     data_dict[k] = np.array(hf_episode_data[k], dtype=np.dtype(feature.feature.dtype))
@@ -770,13 +849,11 @@ class DataBuffer(torch.utils.data.Dataset):
                 else:
                     raise NotImplementedError(f"feature type {type(feature)} is not handled.")
 
+            # no_flush=True makes it a lot faster. We will flush once after the loop.
             obj.add_episodes(data_dict, no_flush=True)
 
         obj.flush()
 
-        # Symlink vidoes if needed.
-        if obj._image_mode == DataBufferImageMode.VIDEO and not obj._videos_dir.exists():
-            os.symlink(lerobot_dataset_videos_path.absolute(), obj._videos_dir)
         return obj
 
     @staticmethod
@@ -791,7 +868,7 @@ class DataBuffer(torch.utils.data.Dataset):
 def compute_sampler_weights(
     offline_dataset: LeRobotDataset,
     offline_drop_n_last_frames: int = 0,
-    online_dataset: DataBuffer | None = None,
+    online_dataset: LeRobotDatasetV2 | None = None,
     online_sampling_ratio: float | None = None,
     online_drop_n_last_frames: int = 0,
 ) -> torch.Tensor:
@@ -800,7 +877,7 @@ def compute_sampler_weights(
     Args:
         offline_dataset: The LeRobotDataset used for offline pre-training.
         online_drop_n_last_frames: Number of frames to drop from the end of each offline dataset episode.
-        online_dataset: The DataBuffer used in online training.
+        online_dataset: The LeRobotDatasetV2 used in online training.
         online_sampling_ratio: The proportion of data that should be sampled from the online dataset. If an
             online dataset is provided, this value must also be provided.
         online_drop_n_first_frames: See `offline_drop_n_last_frames`. This is the same, but for the online
@@ -848,7 +925,7 @@ def compute_sampler_weights(
 
     if online_dataset is not None and len(online_dataset) > 0:
         online_data_mask_indices = []
-        episode_indices = online_dataset.get_data_by_key(DataBuffer.EPISODE_INDEX_KEY)
+        episode_indices = online_dataset.get_data_by_key(LeRobotDatasetV2.EPISODE_INDEX_KEY)
         for episode_idx in np.unique(episode_indices):
             where_episode = np.where(episode_indices == episode_idx)
             start_index = where_episode[0][0]

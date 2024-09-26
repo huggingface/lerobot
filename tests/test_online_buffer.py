@@ -24,7 +24,7 @@ import torch
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, DATA_DIR, LeRobotDataset
 from lerobot.common.datasets.online_buffer import (
-    DataBuffer,
+    LeRobotDatasetV2,
     TimestampOutsideToleranceError,
     compute_sampler_weights,
 )
@@ -41,8 +41,8 @@ fps = 10
 
 def make_new_buffer(
     storage_dir: str, storage_dir_exists: bool = False, delta_timestamps: dict[str, list[float]] | None = None
-) -> DataBuffer:
-    buffer = DataBuffer(
+) -> LeRobotDatasetV2:
+    buffer = LeRobotDatasetV2(
         storage_dir,
         buffer_capacity=buffer_capacity if not storage_dir_exists else None,
         fps=None if delta_timestamps is None else fps,
@@ -54,10 +54,10 @@ def make_new_buffer(
 def make_spoof_data_frames(n_episodes: int, n_frames_per_episode: int) -> dict[str, np.ndarray]:
     new_data = {
         data_key: np.arange(n_frames_per_episode * n_episodes * np.prod(data_shape)).reshape(-1, *data_shape),
-        DataBuffer.INDEX_KEY: np.arange(n_frames_per_episode * n_episodes),
-        DataBuffer.EPISODE_INDEX_KEY: np.repeat(np.arange(n_episodes), n_frames_per_episode),
-        DataBuffer.FRAME_INDEX_KEY: np.tile(np.arange(n_frames_per_episode), n_episodes),
-        DataBuffer.TIMESTAMP_KEY: np.tile(np.arange(n_frames_per_episode) / fps, n_episodes),
+        LeRobotDatasetV2.INDEX_KEY: np.arange(n_frames_per_episode * n_episodes),
+        LeRobotDatasetV2.EPISODE_INDEX_KEY: np.repeat(np.arange(n_episodes), n_frames_per_episode),
+        LeRobotDatasetV2.FRAME_INDEX_KEY: np.tile(np.arange(n_frames_per_episode), n_episodes),
+        LeRobotDatasetV2.TIMESTAMP_KEY: np.tile(np.arange(n_frames_per_episode) / fps, n_episodes),
     }
     return new_data
 
@@ -178,7 +178,7 @@ def test_delta_timestamps_within_tolerance(tmp_path: Path):
     new_data = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=5)
     buffer.add_episodes(new_data)
     item = buffer[2]
-    data, is_pad = item["index"], item[f"index{DataBuffer.IS_PAD_POSTFIX}"]
+    data, is_pad = item["index"], item[f"index{LeRobotDatasetV2.IS_PAD_POSTFIX}"]
     assert torch.allclose(data, torch.tensor([0, 2, 3])), "Data does not match expected values"
     assert not is_pad.any(), "Unexpected padding detected"
 
@@ -228,7 +228,7 @@ def test_delta_timestamps_outside_tolerance_outside_episode_range(tmp_path):
 def test_camera_keys(tmp_path: Path, dataset_repo_id: str, decode_video: bool):
     """Check that the camera_keys property returns all relevant keys."""
     storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_video}"
-    buffer = DataBuffer.from_huggingface_hub(dataset_repo_id, decode_video, storage_dir=storage_dir)
+    buffer = LeRobotDatasetV2.from_huggingface_hub(dataset_repo_id, decode_video, storage_dir=storage_dir)
     assert set(buffer.camera_keys) == {k for k in buffer._data if k.startswith("observation.image")}
 
 
@@ -245,7 +245,7 @@ def test_getter_returns_pytorch_format(tmp_path: Path, dataset_repo_id: str, dec
     """Checks that tensors are returned and that images are torch.float32, in range [0, 1], channel-first."""
     # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
     storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_video}"
-    buffer = DataBuffer.from_huggingface_hub(dataset_repo_id, decode_video, storage_dir=storage_dir)
+    buffer = LeRobotDatasetV2.from_huggingface_hub(dataset_repo_id, decode_video, storage_dir=storage_dir)
     # Just iterate through the start and end of the dataset to make the test faster.
     for i in np.concatenate([np.arange(0, 10), np.arange(-10, 0)]):
         item = buffer[i]
@@ -272,7 +272,7 @@ def test_getter_images_with_delta_timestamps(tmp_path: Path):
     fps = lerobot_dataset_info["fps"]
     # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
     storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}"
-    buffer = DataBuffer.from_huggingface_hub(dataset_repo_id, storage_dir=storage_dir, fps=fps)
+    buffer = LeRobotDatasetV2.from_huggingface_hub(dataset_repo_id, storage_dir=storage_dir, fps=fps)
     delta_timestamps = [-1 / fps, 0.0, 1 / fps]
     buffer.set_delta_timestamps({k: delta_timestamps for k in buffer.camera_keys})
 
@@ -296,10 +296,10 @@ def test_getter_video_images_with_delta_timestamps(tmp_path: Path):
     lerobot_dataset_info = load_info(dataset_repo_id, version=CODEBASE_VERSION, root=DATA_DIR)
     fps = lerobot_dataset_info["fps"]
     # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
-    buffer_video = DataBuffer.from_huggingface_hub(
+    buffer_video = LeRobotDatasetV2.from_huggingface_hub(
         dataset_repo_id, False, storage_dir=tmp_path / f"{dataset_repo_id}_{uuid4().hex}_False", fps=fps
     )
-    buffer_decode = DataBuffer.from_huggingface_hub(
+    buffer_decode = LeRobotDatasetV2.from_huggingface_hub(
         dataset_repo_id, True, storage_dir=tmp_path / f"{dataset_repo_id}_{uuid4().hex}_True", fps=fps
     )
 
@@ -340,12 +340,12 @@ def test_from_huggingface_hub(tmp_path: Path, dataset_repo_id: str, decode_video
         hf_dataset.set_transform(lambda x: x)
         # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
         # This ensures that the first time this loop is run, the storage directory does not already exist.
-        storage_dir = tmp_path / DataBuffer._default_storage_dir_from_huggingface_hub(
+        storage_dir = tmp_path / LeRobotDatasetV2._default_storage_dir_from_huggingface_hub(
             dataset_repo_id, hf_dataset._fingerprint, decode_video
         ).relative_to("/tmp")
         if iteration == 0 and storage_dir.exists():
             raise DevTestingError("The storage directory should not exist for the first pass of this test.")
-        buffer = DataBuffer.from_huggingface_hub(
+        buffer = LeRobotDatasetV2.from_huggingface_hub(
             dataset_repo_id,
             decode_video,
             storage_dir=storage_dir,
