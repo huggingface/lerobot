@@ -50,9 +50,15 @@ def test_robot(tmpdir, request, robot_type, mock):
     # TODO(rcadene): add compatibility with other robots
     from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
-    # Save calibration preset
-    tmpdir = Path(tmpdir)
-    calibration_dir = tmpdir / robot_type
+    if robot_type == "aloha" and mock:
+        # To simplify unit test, we do not rerun manual calibration for Aloha mock=True.
+        # Instead, we use the files from '.cache/calibration/aloha_default'
+        overrides_calibration_dir = None
+    else:
+        # Create an empty calibration directory to trigger manual calibration
+        tmpdir = Path(tmpdir)
+        calibration_dir = tmpdir / robot_type
+        overrides_calibration_dir = [f"calibration_dir={calibration_dir}"]
 
     # Test connecting without devices raises an error
     robot = ManipulatorRobot()
@@ -76,9 +82,9 @@ def test_robot(tmpdir, request, robot_type, mock):
     # Test deleting the object without connecting first
     del robot
 
-    # Test connecting
-    robot = make_robot(robot_type, overrides=[f"calibration_dir={calibration_dir}"])
-    robot.connect()  # run the manual calibration precedure
+    # Test connecting (triggers manual calibration)
+    robot = make_robot(robot_type, overrides=overrides_calibration_dir)
+    robot.connect()
     assert robot.is_connected
 
     # Test connecting twice raises an error
@@ -89,8 +95,9 @@ def test_robot(tmpdir, request, robot_type, mock):
     del robot
 
     # Test teleop can run
-    robot = make_robot(robot_type, overrides=[f"calibration_dir={calibration_dir}"])
-    robot.calibration_dir = calibration_dir
+    robot = make_robot(robot_type, overrides=overrides_calibration_dir)
+    if overrides_calibration_dir is not None:
+        robot.calibration_dir = calibration_dir
     robot.connect()
     robot.teleop_step()
 
