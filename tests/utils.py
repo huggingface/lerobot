@@ -213,11 +213,8 @@ def require_robot(func):
             mock_cameras(request, camera_type)
             mock_motors(request)
 
-            def mock_input(text):
-                print(text)
-
-            monkeypatch = request.getfixturevalue("monkeypatch")
             # To run calibration without user input
+            monkeypatch = request.getfixturevalue("monkeypatch")
             monkeypatch.setattr("builtins.input", mock_input)
 
         # Run test with a real robot. Skip test if robot connection fails.
@@ -299,6 +296,11 @@ def require_motor(func):
         return func(*args, **kwargs)
 
     return wrapper
+
+
+def mock_input(text=None):
+    if text is not None:
+        print(text)
 
 
 def mock_cameras(request, camera_type="all"):

@@ -30,10 +30,9 @@ import time
 import numpy as np
 import pytest
 
-from lerobot import available_motors
 from lerobot.common.robot_devices.motors.utils import MotorsBus
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import TEST_MOTOR_TYPES, require_motor
+from tests.utils import TEST_MOTOR_TYPES, mock_input, require_motor
 
 DYNAMIXEL_PORT = "/dev/tty.usbmodem575E0032081"
 DYNAMIXEL_MOTORS = {
@@ -58,19 +57,30 @@ def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
         raise ValueError(f"The motor type '{motor_type}' is not valid.")
 
 
-# TODO(rcadene): implement mocked version of this test
-@pytest.mark.parametrize("motor_type, mock", [(m, False) for m in available_motors])
+@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
 @require_motor
 def test_find_port(request, motor_type, mock):
     from lerobot.common.robot_devices.motors.dynamixel import find_port
 
-    find_port()
+    if mock:
+        # To run find_port without user input
+        monkeypatch = request.getfixturevalue("monkeypatch")
+        monkeypatch.setattr("builtins.input", mock_input)
+
+        with pytest.raises(OSError):
+            find_port()
+    else:
+        find_port()
 
 
-# TODO(rcadene): implement mocked version of this test
-@pytest.mark.parametrize("motor_type, mock", [(m, False) for m in available_motors])
+@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
 @require_motor
 def test_configure_motors_all_ids_1(request, motor_type, mock):
+    if mock:
+        # To run find_port without user input
+        monkeypatch = request.getfixturevalue("monkeypatch")
+        monkeypatch.setattr("builtins.input", mock_input)
+
     input("Are you sure you want to re-configure the motors? Press enter to continue...")
     # This test expect the configuration was already correct.
     motors_bus = make_motors_bus(motor_type)
