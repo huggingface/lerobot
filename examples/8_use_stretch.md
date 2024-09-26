@@ -70,13 +70,14 @@ python lerobot/scripts/control_robot.py teleoperate \
 ```
 This is essentially the same as running `stretch_gamepad_teleop.py`
 
-Store your Hugging Face repository name in a variable to run these commands:
+
+Once you're familiar with the gamepad controls and after a bit of practice, you can try to record your first dataset with Stretch.
+
+If you want to use the Hugging Face hub features for uploading your dataset and you haven't previously done it, make sure you've logged in using a write-access token, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
 ```bash
-HF_USER=$(huggingface-cli whoami | head -n 1)
-echo $HF_USER
+huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-Once you're familiar with the gamepad controls and after a bit of practice, try to record your first dataset with Stretch.
 Store your Hugging Face repository name in a variable to run these commands:
 ```bash
 HF_USER=$(huggingface-cli whoami | head -n 1)
