@@ -52,6 +52,11 @@ pip uninstall -y opencv-python
 conda install -y -c conda-forge "opencv>=4.10.0"
 ```
 
+7. You can make sure everyting is working with your robot by running a [system check](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#system-check):
+```bash
+stretch_system_check.py
+```
+
 ## Teleoperate, record a dataset and run a policy
 
 > **Note:** As indicated in Stretch's [doc](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#turning-off-gamepad-teleoperation), you may need to free the "robot process" after booting Stretch by running `stretch_free_robot_process.py`
