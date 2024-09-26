@@ -30,34 +30,12 @@ import time
 import numpy as np
 import pytest
 
+from lerobot import available_motors
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import TEST_MOTOR_TYPES, make_motors_bus, mock_input, require_motor
+from tests.utils import make_motors_bus, mock_builtins_input, require_mock_motor, require_motor
 
 
-@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
-@require_motor
-def test_find_port(request, motor_type, mock):
-    from lerobot.common.robot_devices.motors.dynamixel import find_port
-
-    if mock:
-        # To run find_port without user input
-        monkeypatch = request.getfixturevalue("monkeypatch")
-        monkeypatch.setattr("builtins.input", mock_input)
-
-        with pytest.raises(OSError):
-            find_port()
-    else:
-        find_port()
-
-
-@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
-@require_motor
-def test_configure_motors_all_ids_1(request, motor_type, mock):
-    if mock:
-        # To run find_port without user input
-        monkeypatch = request.getfixturevalue("monkeypatch")
-        monkeypatch.setattr("builtins.input", mock_input)
-
+def _test_configure_motors_all_ids_1(motor_type):
     input("Are you sure you want to re-configure the motors? Press enter to continue...")
     # This test expect the configuration was already correct.
     motors_bus = make_motors_bus(motor_type)
@@ -74,9 +52,7 @@ def test_configure_motors_all_ids_1(request, motor_type, mock):
     del motors_bus
 
 
-@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
-@require_motor
-def test_motors_bus(request, motor_type, mock):
+def _test_motors_bus(request, motor_type, mock):
     motors_bus = make_motors_bus(motor_type)
 
     # Test reading and writting before connecting raises an error
@@ -133,3 +109,46 @@ def test_motors_bus(request, motor_type, mock):
     time.sleep(1)
     new_values = motors_bus.read("Present_Position")
     assert (new_values == values).all()
+
+
+@pytest.mark.parametrize("motor_type", available_motors)
+@require_mock_motor
+def test_find_port_mock(monkeypatch, motor_type):
+    from lerobot.common.robot_devices.motors.dynamixel import find_port
+
+    # To run find_port without user input
+    mock_builtins_input(monkeypatch)
+    with pytest.raises(OSError):
+        find_port()
+
+
+@pytest.mark.parametrize("motor_type", available_motors)
+@require_motor
+def test_find_port(request, motor_type):
+    from lerobot.common.robot_devices.motors.dynamixel import find_port
+
+    find_port()
+
+
+@pytest.mark.parametrize("motor_type", available_motors)
+@require_mock_motor
+def test_configure_motors_all_ids_1_mock(monkeypatch, motor_type):
+    _test_configure_motors_all_ids_1(motor_type)
+
+
+@pytest.mark.parametrize("motor_type", available_motors)
+@require_motor
+def test_configure_motors_all_ids_1(request, motor_type):
+    _test_configure_motors_all_ids_1(motor_type)
+
+
+@pytest.mark.parametrize("motor_type", available_motors)
+@require_mock_motor
+def test_motors_bus_mock(monkeypatch, motor_type):
+    _test_motors_bus(motor_type)
+
+
+@pytest.mark.parametrize("motor_type", available_motors)
+@require_motor
+def test_motors_bus(request, motor_type):
+    _test_motors_bus(motor_type)

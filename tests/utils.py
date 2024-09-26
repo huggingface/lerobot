@@ -207,40 +207,15 @@ def require_robot(func):
         # Access the pytest request context to get the mockeypatch fixture
         request = kwargs.get("request")
         robot_type = kwargs.get("robot_type")
-        mock = kwargs.get("mock")
 
         if robot_type is None:
             raise ValueError("The 'robot_type' must be an argument of the test function.")
         if request is None:
             raise ValueError("The 'request' fixture must be an argument of the test function.")
-        if mock is None:
-            raise ValueError("The 'mock' variable must be an argument of the test function.")
-
-        if robot_type not in available_robots:
-            raise ValueError(
-                f"The camera type '{robot_type}' is not valid. Expected one of these '{available_robots}"
-            )
-
-        # Run test with a monkeypatched version of the robot devices.
-        if mock:
-            # TODO(rcadene): redesign mocking to not have this hardcoded logic
-            if robot_type in ["koch", "koch_bimanual"]:
-                camera_type = "opencv"
-            elif robot_type == "aloha":
-                camera_type = "intelrealsense"
-            else:
-                camera_type = "all"
-            mock_cameras(request, camera_type)
-            mock_motors(request)
-
-            # To run calibration without user input
-            monkeypatch = request.getfixturevalue("monkeypatch")
-            monkeypatch.setattr("builtins.input", mock_input)
 
         # Run test with a real robot. Skip test if robot connection fails.
-        else:
-            if not is_robot_available(robot_type):
-                pytest.skip(f"A {robot_type} robot is not available.")
+        if not request.getfixturevalue("is_robot_available"):
+            pytest.skip(f"A {robot_type} robot is not available.")
 
         return func(*args, **kwargs)
 
@@ -250,31 +225,16 @@ def require_robot(func):
 def require_camera(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        # Access the pytest request context to get the mockeypatch fixture
         request = kwargs.get("request")
         camera_type = kwargs.get("camera_type")
-        mock = kwargs.get("mock")
 
         if request is None:
             raise ValueError("The 'request' fixture must be an argument of the test function.")
         if camera_type is None:
             raise ValueError("The 'camera_type' must be an argument of the test function.")
-        if mock is None:
-            raise ValueError("The 'mock' variable must be an argument of the test function.")
 
-        if camera_type not in available_cameras:
-            raise ValueError(
-                f"The camera type '{camera_type}' is not valid. Expected one of these '{available_cameras}"
-            )
-
-        # Run test with a monkeypatched version of the robot devices.
-        if mock:
-            mock_cameras(request, camera_type)
-
-        # Run test with a real robot. Skip test if robot connection fails.
-        else:
-            if not is_camera_available(camera_type):
-                pytest.skip(f"A {camera_type} camera is not available.")
+        if not request.getfixturevalue("is_camera_available"):
+            pytest.skip(f"A {camera_type} camera is not available.")
 
         return func(*args, **kwargs)
 
@@ -287,44 +247,117 @@ def require_motor(func):
         # Access the pytest request context to get the mockeypatch fixture
         request = kwargs.get("request")
         motor_type = kwargs.get("motor_type")
-        mock = kwargs.get("mock")
 
         if request is None:
             raise ValueError("The 'request' fixture must be an argument of the test function.")
         if motor_type is None:
             raise ValueError("The 'motor_type' must be an argument of the test function.")
-        if mock is None:
-            raise ValueError("The 'mock' variable must be an argument of the test function.")
 
-        if motor_type not in available_motors:
-            raise ValueError(
-                f"The motor type '{motor_type}' is not valid. Expected one of these '{available_motors}"
-            )
-
-        # Run test with a monkeypatched version of the robot devices.
-        if mock:
-            mock_motors(request)
-
-        # Run test with a real robot. Skip test if robot connection fails.
-        else:
-            if not is_motor_available(motor_type):
-                pytest.skip(f"A {motor_type} motor is not available.")
+        if not request.getfixturevalue("is_motor_available"):
+            pytest.skip(f"A {motor_type} motor is not available.")
 
         return func(*args, **kwargs)
 
     return wrapper
 
 
-def mock_input(text=None):
-    if text is not None:
-        print(text)
+def require_mock_robot(func):
+    """
+    Decorator over test function to mock the robot
+
+    The decorated function must have two arguments `monkeypatch` and `robot_type`.
+
+    Example of usage:
+    ```python
+    @pytest.mark.parametrize(
+        "robot_type", ["koch", "aloha"]
+    )
+    @require_robot
+    def test_require_robot(request, robot_type):
+        pass
+    ```
+    """
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Access the pytest request context to get the mockeypatch fixture
+        monkeypatch = kwargs.get("monkeypatch")
+        robot_type = kwargs.get("robot_type")
+
+        if monkeypatch is None:
+            raise ValueError("The 'monkeypatch' fixture must be an argument of the test function.")
+
+        if robot_type is None:
+            raise ValueError("The 'robot_type' must be an argument of the test function.")
+
+        mock_robot(monkeypatch, robot_type)
+        return func(*args, **kwargs)
+
+    return wrapper
 
 
-def mock_cameras(request, camera_type="all"):
-    # TODO(rcadene): Redesign the mocking tests
-    monkeypatch = request.getfixturevalue("monkeypatch")
+def require_mock_camera(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Access the pytest request context to get the mockeypatch fixture
+        monkeypatch = kwargs.get("monkeypatch")
+        camera_type = kwargs.get("camera_type")
 
-    if camera_type in ["opencv", "all"]:
+        if monkeypatch is None:
+            raise ValueError("The 'monkeypatch' fixture must be an argument of the test function.")
+        if camera_type is None:
+            raise ValueError("The 'camera_type' must be an argument of the test function.")
+
+        mock_camera(monkeypatch, camera_type)
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def require_mock_motor(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Access the pytest request context to get the mockeypatch fixture
+        monkeypatch = kwargs.get("monkeypatch")
+        motor_type = kwargs.get("motor_type")
+
+        if monkeypatch is None:
+            raise ValueError("The 'monkeypatch' fixture must be an argument of the test function.")
+        if motor_type is None:
+            raise ValueError("The 'motor_type' must be an argument of the test function.")
+
+        mock_motor(monkeypatch, motor_type)
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def mock_robot(monkeypatch, robot_type):
+    if robot_type not in available_robots:
+        raise ValueError(
+            f"The camera type '{robot_type}' is not valid. Expected one of these '{available_robots}"
+        )
+
+    if robot_type in ["koch", "koch_bimanual"]:
+        mock_camera(monkeypatch, "opencv")
+        mock_motor(monkeypatch, "dynamixel")
+    elif robot_type == "aloha":
+        mock_camera(monkeypatch, "intelrealsense")
+        mock_motor(monkeypatch, "dynamixel")
+    else:
+        raise NotImplementedError("Implement mocking logic for new robot.")
+
+    # To run calibration without user input
+    mock_builtins_input(monkeypatch)
+
+
+def mock_camera(monkeypatch, camera_type):
+    if camera_type not in available_cameras:
+        raise ValueError(
+            f"The motor type '{camera_type}' is not valid. Expected one of these '{available_cameras}"
+        )
+
+    if camera_type == "opencv":
         try:
             import cv2
 
@@ -335,7 +368,7 @@ def mock_cameras(request, camera_type="all"):
             traceback.print_exc()
             pytest.skip("To avoid skipping tests mocking opencv cameras, run `pip install opencv-python`.")
 
-    if camera_type in ["intelrealsense", "all"]:
+    elif camera_type == "intelrealsense":
         try:
             import pyrealsense2 as rs
 
@@ -357,37 +390,52 @@ def mock_cameras(request, camera_type="all"):
             pytest.skip(
                 "To avoid skipping tests mocking intelrealsense cameras, run `pip install pyrealsense2`."
             )
+    else:
+        raise NotImplementedError("Implement mocking logic for new camera.")
 
 
-def mock_motors(request):
-    # TODO(rcadene): Redesign the mocking tests
-    monkeypatch = request.getfixturevalue("monkeypatch")
-
-    try:
-        import dynamixel_sdk
-
-        from tests.mock_dynamixel import (
-            MockGroupSyncRead,
-            MockGroupSyncWrite,
-            MockPacketHandler,
-            MockPortHandler,
-            mock_convert_to_bytes,
+def mock_motor(monkeypatch, motor_type):
+    if motor_type not in available_motors:
+        raise ValueError(
+            f"The motor type '{motor_type}' is not valid. Expected one of these '{available_motors}"
         )
 
-        monkeypatch.setattr(dynamixel_sdk, "GroupSyncRead", MockGroupSyncRead)
-        monkeypatch.setattr(dynamixel_sdk, "GroupSyncWrite", MockGroupSyncWrite)
-        monkeypatch.setattr(dynamixel_sdk, "PacketHandler", MockPacketHandler)
-        monkeypatch.setattr(dynamixel_sdk, "PortHandler", MockPortHandler)
+    if motor_type == "dynamixel":
+        try:
+            import dynamixel_sdk
 
-        # Import dynamixel AFTER mocking dynamixel_sdk to use mocked classes
-        from lerobot.common.robot_devices.motors import dynamixel
+            from tests.mock_dynamixel import (
+                MockGroupSyncRead,
+                MockGroupSyncWrite,
+                MockPacketHandler,
+                MockPortHandler,
+                mock_convert_to_bytes,
+            )
 
-        # TODO(rcadene): remove need to mock `convert_to_bytes` by implemented the inverse transform
-        # `convert_bytes_to_value`
-        monkeypatch.setattr(dynamixel, "convert_to_bytes", mock_convert_to_bytes)
-    except ImportError:
-        traceback.print_exc()
-        pytest.skip("To avoid skipping tests mocking dynamixel motors, run `pip install dynamixel-sdk`.")
+            monkeypatch.setattr(dynamixel_sdk, "GroupSyncRead", MockGroupSyncRead)
+            monkeypatch.setattr(dynamixel_sdk, "GroupSyncWrite", MockGroupSyncWrite)
+            monkeypatch.setattr(dynamixel_sdk, "PacketHandler", MockPacketHandler)
+            monkeypatch.setattr(dynamixel_sdk, "PortHandler", MockPortHandler)
+
+            # Import dynamixel AFTER mocking dynamixel_sdk to use mocked classes
+            from lerobot.common.robot_devices.motors import dynamixel
+
+            # TODO(rcadene): remove need to mock `convert_to_bytes` by implemented the inverse transform
+            # `convert_bytes_to_value`
+            monkeypatch.setattr(dynamixel, "convert_to_bytes", mock_convert_to_bytes)
+        except ImportError:
+            traceback.print_exc()
+            pytest.skip("To avoid skipping tests mocking dynamixel motors, run `pip install dynamixel-sdk`.")
+    else:
+        raise NotImplementedError("Implement mocking logic for new motor.")
+
+
+def mock_builtins_input(monkeypatch):
+    def print_text(text=None):
+        if text is not None:
+            print(text)
+
+    monkeypatch.setattr("builtins.input", print_text)
 
 
 def make_robot(robot_type: str, overrides: list[str] | None = None) -> Robot:
@@ -424,43 +472,3 @@ def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
 
     else:
         raise ValueError(f"The motor type '{motor_type}' is not valid.")
-
-
-def is_robot_available(robot_type):
-    try:
-        from lerobot.common.robot_devices.robots.factory import make_robot
-
-        config_path = ROBOT_CONFIG_PATH_TEMPLATE.format(robot=robot_type)
-        robot_cfg = init_hydra_config(config_path)
-        robot = make_robot(robot_cfg)
-        robot.connect()
-        del robot
-        return True
-    except Exception:
-        traceback.print_exc()
-        print(f"\nA {robot_type} robot is not available.")
-        return False
-
-
-def is_camera_available(camera_type):
-    try:
-        camera = make_camera(camera_type)
-        camera.connect()
-        del camera
-        return True
-    except Exception:
-        traceback.print_exc()
-        print(f"\nA {camera_type} camera is not available.")
-        return False
-
-
-def is_motor_available(motor_type):
-    try:
-        motors_bus = make_motors_bus(motor_type)
-        motors_bus.connect()
-        del motors_bus
-        return True
-    except Exception:
-        traceback.print_exc()
-        print(f"\nA {motor_type} motor is not available.")
-        return False

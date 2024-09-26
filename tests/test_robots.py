@@ -28,13 +28,12 @@ from pathlib import Path
 import pytest
 import torch
 
+from lerobot import available_robots
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import TEST_ROBOT_TYPES, make_robot, require_robot
+from tests.utils import make_robot, require_mock_robot, require_robot
 
 
-@pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
-@require_robot
-def test_robot(tmpdir, request, robot_type, mock):
+def _test_robot(tmpdir, robot_type, mock):
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
     # TODO(rcadene): add compatibility with other robots
@@ -134,3 +133,15 @@ def test_robot(tmpdir, request, robot_type, mock):
     for name in robot.cameras:
         assert not robot.cameras[name].is_connected
     del robot
+
+
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_mock_robot
+def test_robot_mock(tmpdir, monkeypatch, robot_type):
+    _test_robot(tmpdir, robot_type, mock=True)
+
+
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_robot
+def test_robot(tmpdir, request, robot_type):
+    _test_robot(tmpdir, robot_type, mock=False)
