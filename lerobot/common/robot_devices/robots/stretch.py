@@ -20,6 +20,7 @@ from dataclasses import dataclass, field, replace
 import torch
 from stretch_body.gamepad_teleop import GamePadTeleop
 from stretch_body.robot import Robot as StretchAPI
+from stretch_body.robot_params import RobotParams
 
 from lerobot.common.robot_devices.cameras.utils import Camera
 
@@ -48,8 +49,10 @@ class StretchRobot(StretchAPI):
         self.is_connected = False
         self.teleop = None
         self.logs = {}
-        # TODO(aliberts): remove original low-level logging from stretch
-        # RobotParams.set_logging_level("INFO")  # <-- not working
+
+        # TODO(aliberts): test this
+        RobotParams.set_logging_level("WARNING")
+        RobotParams.set_logging_formatter("brief_console_formatter")
 
         self.state_keys = None
         self.action_keys = None
