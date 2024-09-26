@@ -32,7 +32,7 @@ import pytest
 
 from lerobot import available_motors
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import make_motors_bus, mock_builtins_input, mock_motor, require_mock_motor, require_motor
+from tests.utils import make_motors_bus, mock_builtins_input, mock_motor, require_motor
 
 
 def _test_configure_motors_all_ids_1(motor_type):
@@ -131,8 +131,8 @@ def test_find_port(request, motor_type):
 
 
 @pytest.mark.parametrize("motor_type", available_motors)
-@require_mock_motor
 def test_configure_motors_all_ids_1_mock(monkeypatch, motor_type):
+    mock_motor(monkeypatch, motor_type)
     _test_configure_motors_all_ids_1(motor_type)
 
 
@@ -143,8 +143,8 @@ def test_configure_motors_all_ids_1(request, motor_type):
 
 
 @pytest.mark.parametrize("motor_type", available_motors)
-@require_mock_motor
 def test_motors_bus_mock(monkeypatch, motor_type):
+    mock_motor(monkeypatch, motor_type)
     _test_motors_bus(motor_type)
 
 
