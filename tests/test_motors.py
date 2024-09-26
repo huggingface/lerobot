@@ -31,22 +31,17 @@ import numpy as np
 import pytest
 
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import (
-    TEST_MOTOR_TYPES,
-    make_motors_bus,
-    mock_input,
-    mock_motor_or_skip_test_when_not_available,
-)
+from tests.utils import TEST_MOTOR_TYPES, make_motors_bus, mock_input, require_motor
 
 
 @pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
-def test_find_port(monkeypatch, motor_type, mock):
-    mock_motor_or_skip_test_when_not_available(monkeypatch, motor_type, mock)
-
+@require_motor
+def test_find_port(request, motor_type, mock):
     from lerobot.common.robot_devices.motors.dynamixel import find_port
 
     if mock:
         # To run find_port without user input
+        monkeypatch = request.getfixturevalue("monkeypatch")
         monkeypatch.setattr("builtins.input", mock_input)
 
         with pytest.raises(OSError):
@@ -56,11 +51,11 @@ def test_find_port(monkeypatch, motor_type, mock):
 
 
 @pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
-def test_configure_motors_all_ids_1(monkeypatch, motor_type, mock):
-    mock_motor_or_skip_test_when_not_available(monkeypatch, motor_type, mock)
-
+@require_motor
+def test_configure_motors_all_ids_1(request, motor_type, mock):
     if mock:
         # To run find_port without user input
+        monkeypatch = request.getfixturevalue("monkeypatch")
         monkeypatch.setattr("builtins.input", mock_input)
 
     input("Are you sure you want to re-configure the motors? Press enter to continue...")
@@ -80,9 +75,8 @@ def test_configure_motors_all_ids_1(monkeypatch, motor_type, mock):
 
 
 @pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
-def test_motors_bus(monkeypatch, motor_type, mock):
-    mock_motor_or_skip_test_when_not_available(monkeypatch, motor_type, mock)
-
+@require_motor
+def test_motors_bus(request, motor_type, mock):
     motors_bus = make_motors_bus(motor_type)
 
     # Test reading and writting before connecting raises an error
