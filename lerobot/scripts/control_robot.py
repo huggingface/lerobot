@@ -561,9 +561,9 @@ def record(
                 else:
                     imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
                     ep_dict[key] = []
-                    for frame_index in range(num_frames):
-                        img_path = imgs_dir / f"frame_{frame_index:06d}.png"
-                        ep_dict[key].append(img_path)
+                    for i in range(num_frames):
+                        img_path = imgs_dir / f"frame_{i:06d}.png"
+                        ep_dict[key].append({"path": str(img_path)})
 
             for key in not_image_keys:
                 ep_dict[key] = torch.stack(ep_dict[key])

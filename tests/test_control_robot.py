@@ -114,6 +114,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         cfg,
         warmup_time_s=1,
         episode_time_s=1,
+        num_episodes=2,
         run_compute_stats=False,
         push_to_hub=False,
         video=False,
