@@ -193,7 +193,7 @@ class StretchRobot(StretchAPI):
         return action
 
     def print_logs(self) -> None:
-        ...
+        pass
         # TODO(aliberts): move robot-specific logs logic here
 
     def teleop_safety_stop(self) -> None:

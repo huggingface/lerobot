@@ -682,7 +682,7 @@ class ManipulatorRobot:
         return torch.cat(action_sent)
 
     def print_logs(self):
-        ...
+        pass
         # TODO(aliberts): move robot-specific logs logic here
 
     def disconnect(self):
