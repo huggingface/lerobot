@@ -29,15 +29,16 @@ import pytest
 import torch
 
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import TEST_ROBOT_TYPES, make_robot, require_robot
+from tests.utils import TEST_ROBOT_TYPES, make_robot, mock_robot_or_skip_test_when_not_available
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
-@require_robot
-def test_robot(tmpdir, request, robot_type, mock):
+def test_robot(tmpdir, monkeypatch, robot_type, mock):
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
     # TODO(rcadene): add compatibility with other robots
+    mock_robot_or_skip_test_when_not_available(monkeypatch, robot_type, mock)
+
     from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
     if robot_type == "aloha" and mock:

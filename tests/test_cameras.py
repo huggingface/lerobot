@@ -25,7 +25,11 @@ import numpy as np
 import pytest
 
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import TEST_CAMERA_TYPES, make_camera, require_camera
+from tests.utils import (
+    TEST_CAMERA_TYPES,
+    make_camera,
+    mock_camera_or_skip_test_when_not_available,
+)
 
 # Maximum absolute difference between two consecutive images recored by a camera.
 # This value differs with respect to the camera.
@@ -37,8 +41,7 @@ def compute_max_pixel_difference(first_image, second_image):
 
 
 @pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)
-@require_camera
-def test_camera(request, camera_type, mock):
+def test_camera(monkeypatch, camera_type, mock):
     """Test assumes that `camera.read()` returns the same image when called multiple times in a row.
     So the environment should not change (you shouldnt be in front of the camera) and the camera should not be moving.
 
@@ -47,6 +50,8 @@ def test_camera(request, camera_type, mock):
     """
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
+
+    mock_camera_or_skip_test_when_not_available(monkeypatch, camera_type, mock)
 
     # Test instantiating
     camera = make_camera(camera_type)
@@ -141,9 +146,10 @@ def test_camera(request, camera_type, mock):
 
 
 @pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)
-@require_camera
-def test_save_images_from_cameras(tmpdir, request, camera_type, mock):
+def test_save_images_from_cameras(tmpdir, monkeypatch, camera_type, mock):
     # TODO(rcadene): refactor
+    mock_camera_or_skip_test_when_not_available(monkeypatch, camera_type, mock)
+
     if camera_type == "opencv":
         from lerobot.common.robot_devices.cameras.opencv import save_images_from_cameras
     elif camera_type == "intelrealsense":

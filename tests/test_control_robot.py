@@ -31,12 +31,18 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils.utils import init_hydra_config
 from lerobot.scripts.control_robot import calibrate, get_available_arms, record, replay, teleoperate
 from tests.test_robots import make_robot
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, require_robot
+from tests.utils import (
+    DEFAULT_CONFIG_PATH,
+    DEVICE,
+    TEST_ROBOT_TYPES,
+    mock_robot_or_skip_test_when_not_available,
+)
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
-@require_robot
-def test_teleoperate(request, robot_type, mock):
+def test_teleoperate(monkeypatch, robot_type, mock):
+    mock_robot_or_skip_test_when_not_available(monkeypatch, robot_type, mock)
+
     robot = make_robot(robot_type)
     teleoperate(robot, teleop_time_s=1)
     teleoperate(robot, fps=30, teleop_time_s=1)
@@ -45,16 +51,18 @@ def test_teleoperate(request, robot_type, mock):
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
-@require_robot
-def test_calibrate(request, robot_type, mock):
+def test_calibrate(monkeypatch, robot_type, mock):
+    mock_robot_or_skip_test_when_not_available(monkeypatch, robot_type, mock)
+
     robot = make_robot(robot_type)
     calibrate(robot, arms=get_available_arms(robot))
     del robot
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
-@require_robot
-def test_record_without_cameras(tmpdir, request, robot_type, mock):
+def test_record_without_cameras(tmpdir, monkeypatch, robot_type, mock):
+    mock_robot_or_skip_test_when_not_available(monkeypatch, robot_type, mock)
+
     root = Path(tmpdir)
     repo_id = "lerobot/debug"
 
@@ -74,8 +82,9 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
-@require_robot
-def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
+def test_record_and_replay_and_policy(tmpdir, monkeypatch, robot_type, mock):
+    mock_robot_or_skip_test_when_not_available(monkeypatch, robot_type, mock)
+
     env_name = "koch_real"
     policy_name = "act_koch_real"
 
