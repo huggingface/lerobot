@@ -590,7 +590,14 @@ class ManipulatorRobot:
         for name in self.cameras:
             before_camread_t = time.perf_counter()
             images[name] = self.cameras[name].async_read()
-            images[name] = torch.from_numpy(images[name])
+
+            if isinstance(images[name], tuple):
+                images_1 = images[name][1].astype('int32') #TODO: use uint16 instead of int32, because torch does not support uint16 in eager mode
+                images[name] = (images[name][0], images_1)
+                images[name] = tuple(torch.from_numpy(arr) for arr in images[name])
+                # print('images[name][1].shape', images[name][1].shape)
+            else:
+                images[name] = torch.from_numpy(images[name])
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
@@ -599,7 +606,12 @@ class ManipulatorRobot:
         obs_dict["observation.state"] = state
         action_dict["action"] = action
         for name in self.cameras:
-            obs_dict[f"observation.images.{name}"] = images[name]
+            if isinstance(images[name], tuple):
+                obs_dict[f"observation.images.{name}"] = images[name][0]
+                obs_dict[f"observation.depth.{name}"] = images[name][1]
+                
+            else:
+                obs_dict[f"observation.images.{name}"] = images[name]
 
         return obs_dict, action_dict
 
@@ -630,7 +642,12 @@ class ManipulatorRobot:
         for name in self.cameras:
             before_camread_t = time.perf_counter()
             images[name] = self.cameras[name].async_read()
-            images[name] = torch.from_numpy(images[name])
+            if isinstance(images[name], tuple):
+                images_1 = images[name][1].astype('int32') #TODO: use uint16 instead of int32, because torch does not support uint16 in eager mode
+                images[name] = (images[name][0], images_1)
+                images[name] = tuple(torch.from_numpy(arr) for arr in images[name])
+            else:
+                images[name] = torch.from_numpy(images[name])
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
@@ -638,7 +655,11 @@ class ManipulatorRobot:
         obs_dict = {}
         obs_dict["observation.state"] = state
         for name in self.cameras:
-            obs_dict[f"observation.images.{name}"] = images[name]
+            if isinstance(images[name], tuple):
+                obs_dict[f"observation.images.{name}"] = images[name][0]
+                obs_dict[f"observation.depth.{name}"] = images[name][1]
+            else:
+                obs_dict[f"observation.images.{name}"] = images[name]
         return obs_dict
 
     def send_action(self, action: torch.Tensor) -> torch.Tensor:

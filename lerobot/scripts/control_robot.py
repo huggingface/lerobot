@@ -111,6 +111,7 @@ from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
 
+import numpy as np
 import cv2
 import torch
 import tqdm
@@ -168,6 +169,20 @@ def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
     path = videos_dir / f"{key}_episode_{episode_index:06d}" / f"frame_{frame_index:06d}.png"
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(path), quality=100)
+
+def save_depth(depth_tensor, key, frame_index, episode_index, videos_dir):
+    # Convert the torch tensor to a numpy array
+    depth_array = depth_tensor.numpy().astype(np.uint16)
+    
+    # Convert the numpy array to a PIL Image
+    depth_image_pil = Image.fromarray(depth_array)
+    
+    # Define the path for saving the PNG file
+    path = videos_dir / f"{key}_episode_{episode_index:06d}" / f"frame_{frame_index:06d}.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Save the depth image as a PNG file
+    depth_image_pil.save(str(path), quality=100)
 
 
 def none_or_int(value):
@@ -472,13 +487,25 @@ def record(
                         )
                     ]
 
+                depth_keys = [key for key in observation if "depth" in key]
+                # not_depth_keys = [key for key in observation if "depth" not in key]
+
+                not_image_depth_keys = [key for key in observation if "image" not in key and "depth" not in key]
+
+                for key in depth_keys:
+                    futures += [
+                        executor.submit(
+                            save_depth, observation[key], key, frame_index, episode_index, videos_dir
+                        )
+                    ]
+
                 if not is_headless():
                     image_keys = [key for key in observation if "image" in key]
                     for key in image_keys:
                         cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
                     cv2.waitKey(1)
 
-                for key in not_image_keys:
+                for key in not_image_depth_keys:
                     if key not in ep_dict:
                         ep_dict[key] = []
                     ep_dict[key].append(observation[key])
@@ -555,7 +582,12 @@ def record(
                 for i in range(num_frames):
                     ep_dict[key].append({"path": f"videos/{fname}", "timestamp": i / fps})
 
-            for key in not_image_keys:
+            for key in depth_keys:
+                ep_dict[key] = []
+                for i in range(num_frames):
+                    ep_dict[key].append({"path": str(videos_dir / f"{key}_episode_{episode_index:06d}" / f"frame_{i:06d}.png")})
+
+            for key in not_image_depth_keys:
                 ep_dict[key] = torch.stack(ep_dict[key])
 
             for key in action:

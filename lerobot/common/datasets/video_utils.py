@@ -25,7 +25,36 @@ import pyarrow as pa
 import torch
 import torchvision
 from datasets.features.features import register_feature
+from PIL import Image
+import numpy as np
 
+
+def load_depth_frames(
+    item: dict[str, torch.Tensor],
+    depth_frame_keys: list[str],
+    videos_dir: Path,
+):
+    """
+    Load depth frames from individual PNG files.
+    """
+    for key in depth_frame_keys:
+        if isinstance(item[key], list):
+            # load multiple frames at once
+            frames = []
+            for frame in item[key]:
+                depth_path = frame["path"]
+                depth_image = Image.open(depth_path)
+                depth_tensor = torch.from_numpy(np.array(depth_image, dtype=np.uint16)).unsqueeze(0)  # Add channel dimension
+                frames.append(depth_tensor)
+            item[key] = torch.stack(frames)
+        else:
+            # load one frame
+            depth_path = item[key]["path"]
+            depth_image = Image.open(depth_path)
+            item[key] = torch.from_numpy(np.array(depth_image)).unsqueeze(0)  # Add channel dimension
+
+    # print('depth item[key].shape',item[key].shape, item[key].dtype)
+    return item
 
 def load_from_videos(
     item: dict[str, torch.Tensor],
@@ -237,6 +266,26 @@ class VideoFrame:
 
     def __call__(self):
         return self.pa_type
+    
+@dataclass
+class DepthFrame:
+    """
+    Provides a type for a dataset containing depth frames.
+
+    Example:
+
+    ```python
+    data_dict = [{"image": {"path": "videos/observation.depth.cam_high_episode_000000/frame_000000.png"}}]
+    features = {"image": DepthFrame()}
+    Dataset.from_dict(data_dict, features=Features(features))
+    ```
+    """
+
+    pa_type: ClassVar[Any] = pa.struct({"path": pa.string()})
+    _type: str = field(default="DepthFrame", init=False, repr=False)
+
+    def __call__(self):
+        return self.pa_type
 
 
 with warnings.catch_warnings():
@@ -247,3 +296,4 @@ with warnings.catch_warnings():
     )
     # to make VideoFrame available in HuggingFace `datasets`
     register_feature(VideoFrame, "VideoFrame")
+    register_feature(DepthFrame, "DepthFrame")

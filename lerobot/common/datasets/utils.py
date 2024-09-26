@@ -88,6 +88,9 @@ def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
         elif isinstance(first_item, dict) and "path" in first_item and "timestamp" in first_item:
             # video frame will be processed downstream
             pass
+        elif isinstance(first_item, dict) and "path" in first_item:
+            # depth frame will be processed downstream
+            pass
         elif first_item is None:
             pass
         else:

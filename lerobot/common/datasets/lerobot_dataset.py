@@ -33,7 +33,7 @@ from lerobot.common.datasets.utils import (
     load_videos,
     reset_episode_index,
 )
-from lerobot.common.datasets.video_utils import VideoFrame, load_from_videos
+from lerobot.common.datasets.video_utils import VideoFrame, load_from_videos, DepthFrame, load_depth_frames
 
 # For maintainers, see lerobot/common/datasets/push_dataset_to_hub/CODEBASE_VERSION.md
 CODEBASE_VERSION = "v1.6"
@@ -109,6 +109,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if isinstance(feats, VideoFrame):
                 video_frame_keys.append(key)
         return video_frame_keys
+    
+    @property
+    def depth_frame_keys(self) -> list[str]:
+        """Keys to access video frames that requires to be decoded into images.
+
+        Note: It is empty if the dataset contains images only,
+        or equal to `self.cameras` if the dataset contains videos only,
+        or can even be a subset of `self.cameras` in a case of a mixed image/video dataset.
+        """
+        depth_frame_keys = []
+        for key, feats in self.hf_dataset.features.items():
+            if isinstance(feats, DepthFrame):
+                depth_frame_keys.append(key)
+        return depth_frame_keys
 
     @property
     def num_samples(self) -> int:
@@ -152,6 +166,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self.tolerance_s,
                 self.video_backend,
             )
+
+            item = load_depth_frames(
+                item,
+                self.depth_frame_keys,
+                self.videos_dir,
+            )
+
 
         if self.image_transforms is not None:
             for cam in self.camera_keys:

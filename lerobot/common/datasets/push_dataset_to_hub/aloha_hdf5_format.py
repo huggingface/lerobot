@@ -38,7 +38,7 @@ from lerobot.common.datasets.utils import (
     calculate_episode_data_index,
     hf_transform_to_torch,
 )
-from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
+from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames, DepthFrame
 
 
 def get_cameras(hdf5_data):
@@ -179,6 +179,12 @@ def to_hf_dataset(data_dict, video) -> Dataset:
             features[key] = VideoFrame()
         else:
             features[key] = Image()
+
+
+    depth_keys = [key for key in data_dict if "observation.depth." in key]
+    
+    for key in depth_keys:
+        features[key] = DepthFrame
 
     features["observation.state"] = Sequence(
         length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
