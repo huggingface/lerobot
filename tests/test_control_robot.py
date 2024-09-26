@@ -69,6 +69,7 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
         num_episodes=2,
         run_compute_stats=False,
         push_to_hub=False,
+        video=False,
     )
 
 
@@ -91,6 +92,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         episode_time_s=1,
         num_episodes=2,
         push_to_hub=False,
+        video=False,
     )
 
     replay(robot, episode=0, fps=30, root=root, repo_id=repo_id)
@@ -106,6 +108,15 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
 
     policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.stats)
 
-    record(robot, policy, cfg, warmup_time_s=1, episode_time_s=1, run_compute_stats=False, push_to_hub=False)
+    record(
+        robot,
+        policy,
+        cfg,
+        warmup_time_s=1,
+        episode_time_s=1,
+        run_compute_stats=False,
+        push_to_hub=False,
+        video=False,
+    )
 
     del robot
