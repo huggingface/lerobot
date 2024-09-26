@@ -52,7 +52,7 @@ def _test_configure_motors_all_ids_1(motor_type):
     del motors_bus
 
 
-def _test_motors_bus(request, motor_type, mock):
+def _test_motors_bus(motor_type):
     motors_bus = make_motors_bus(motor_type)
 
     # Test reading and writting before connecting raises an error
