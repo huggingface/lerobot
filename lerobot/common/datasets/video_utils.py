@@ -126,6 +126,9 @@ def decode_video_frames_torchvision(
 
     if backend == "pyav":
         reader.container.close()
+        
+        for stream in reader.container.streams:
+            stream.close()
 
     reader = None
 
