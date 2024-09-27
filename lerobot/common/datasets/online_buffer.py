@@ -151,32 +151,34 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
     dataloader = torch.utils.data.DataLoader(dataset)
     ```
 
-    TODO(now): Finish the docs below
-
-    The next most common use case is to create a dataset from scratch. TODO(now): What to do about the need
-    for up-front buffer capacity.
-
-    A size limit must be specified when creating a new dataset (to know how much space to reserve on disk for
-    the `numpy.memmap`s). The `add_episodes` method can be used to insert data in the form of integral
-    episodes (starting from frame 0 and with the frames ordered). For the purposes of a limited-capacity
-    experience replay buffer, data is inserted in a circular fashion, inserting after the most recently added
-    frame, and wrapping around to the start of the buffer when necessary (in which case older episode frames
-    are overwritten).
-
-
-    Example usage: you want to create a new dataset and upload it to the hub
-
-    COMING SOON
-
-    Example usage: you need an experience replay buffer for an online RL policy like TD-MPC
+    The next most common use case is to create a dataset from scratch, and push it to the hub in video format.
+    For example:
 
     ```python
-    dataset = LeRobotDatasetV2(storage_dir="online_buffer", buffer_capacity=10000)
+    # TODO(now): Should it default to video mode?
+    dataset = LeRobotDatasetV2("path/to/new/dataset", image_mode="video")
+    # OR, if you know the size of the dataset (in number of frames) up front, provide a buffer capacity up
+    # front for more efficient handling of the underlying memmaps.
+    dataset = LeRobotDatasetV2("path/to/new/dataset", image_mode="video", buffer_capacity=25000)
+
+    # Add episodes to the dataset.
+    for _ in range(num_episodes):
+        # Create a dictionary mapping data keys to arrays of shape (num_frames_in_episode, *).
+        dataset.add_episodes(data_dict)
+        TODO(alexander-soare): Push to hub
+    ```
+
+    Finally, one may also use LeRobotDatasetV2 as an experience replay buffer for online RL algorithms.
+
+    ```python
+    dataset = LeRobotDatasetV2("online_buffer", buffer_capacity=10000, use_as_filo_buffer=True)
     iter_dataloader = iter(torch.utils.data.DataLoader(dataset))
 
     # training loop
     while True:
         data_dict = do_online_rollouts()
+        # Here, if the new frames exceed the capacity of the buffer, the oldest frames are shifted out to
+        # make space.
         dataset.add_episodes(data_dict)
         batch = next(iter_dataloader)
         # Policy forward, backward, gradient step.
@@ -211,7 +213,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         storage_dir: str | Path,
         buffer_capacity: int | None = None,
         use_as_filo_buffer: bool = False,
-        image_mode: LeRobotDatasetV2ImageMode | None = None,
+        image_mode: LeRobotDatasetV2ImageMode | str | None = None,
         image_transform: Callable[[np.ndarray], np.ndarray] | None = None,
         delta_timestamps: dict[str, list[float]] | dict[str, np.ndarray] | None = None,
         fps: float | None = None,
@@ -232,8 +234,9 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             use_as_filo_buffer: Set this to use the dataset as an online replay buffer. Calls to `add_episode`
                 beyond the buffer_capacity, will result in the oldest episodes being pushed out of the buffer
                 to make way for the new ones (first-in-last-out aka FILO).
-            image_mode: The image storage mode used for the item getter. See notes above on the various
-                options. If not provided it defaults to memmap mode.
+            image_mode: The image storage mode used for the item getter. Options are: "video", "png",
+                "memmap". See notes above for more information on the various options. If not provided it
+                defaults to memmap mode. TODO(now): should it default to video mode?
             image_transform: Transforms to apply in the item getter to all image data (any data whose key
                 starts with "observation.image").
             delta_timestamps: TODO(alexander-soare): Document this somewhere when

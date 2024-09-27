@@ -35,38 +35,57 @@ from lerobot.common.datasets.online_buffer import (
 )
 from lerobot.common.datasets.utils import hf_transform_to_torch, load_hf_dataset, load_info, load_videos
 from lerobot.common.datasets.video_utils import VideoFrame, decode_video_frames_torchvision
+from lerobot.common.utils.utils import seeded_context
 from tests.utils import DevTestingError
 
 # Some constants for DataBuffer tests.
 # TODO(now): remove these globals
-data_key = "data"
-data_shape = (2, 3)  # just some arbitrary > 1D shape
-# buffer_capacity = 100
-# fps = 10
-
-
-# def make_new_dataset(
-#     storage_dir: str, storage_dir_exists: bool = False, delta_timestamps: dict[str, list[float]] | None = None
-# ) -> LeRobotDatasetV2:
-#     buffer = LeRobotDatasetV2(
-#         storage_dir,
-#         buffer_capacity=buffer_capacity if not storage_dir_exists else None,
-#         fps=None if delta_timestamps is None else fps,
-#         delta_timestamps=delta_timestamps,
-#     )
-#     return buffer
+# data_key = "data"
 
 
 def make_spoof_data_frames(n_episodes: int, n_frames_per_episode: int) -> dict[str, np.ndarray]:
     fps = 10
-    new_data = {
-        data_key: np.arange(n_frames_per_episode * n_episodes * np.prod(data_shape)).reshape(-1, *data_shape),
-        LeRobotDatasetV2.INDEX_KEY: np.arange(n_frames_per_episode * n_episodes),
-        LeRobotDatasetV2.EPISODE_INDEX_KEY: np.repeat(np.arange(n_episodes), n_frames_per_episode),
-        LeRobotDatasetV2.FRAME_INDEX_KEY: np.tile(np.arange(n_frames_per_episode), n_episodes),
-        LeRobotDatasetV2.TIMESTAMP_KEY: np.tile(np.arange(n_frames_per_episode) / fps, n_episodes),
-    }
+    # Arbitrary choice of dimension. `proprio_dim` and `action_dim` are intentionally different.
+    proprio_dim = 6
+    action_dim = 4
+    img_size = (32, 32)
+    n_frames = n_frames_per_episode * n_episodes
+    with seeded_context(0):
+        new_data = {
+            "observation.image": np.random.randint(0, 256, size=(n_frames, *img_size, 3)).astype(np.uint8),
+            "observation.state": np.random.normal(size=(n_frames, proprio_dim)).astype(np.float32),
+            "action": np.random.normal(size=(n_frames, action_dim)).astype(np.float32),
+            LeRobotDatasetV2.INDEX_KEY: np.arange(n_frames),
+            LeRobotDatasetV2.EPISODE_INDEX_KEY: np.repeat(np.arange(n_episodes), n_frames_per_episode),
+            LeRobotDatasetV2.FRAME_INDEX_KEY: np.tile(np.arange(n_frames_per_episode), n_episodes),
+            LeRobotDatasetV2.TIMESTAMP_KEY: np.tile(
+                np.arange(n_frames_per_episode, dtype=np.float32) / fps, n_episodes
+            ),
+        }
     return new_data
+
+
+def test_get_data_keys(tmp_path: Path):
+    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
+    # Note: choices for args to make_spoof_data_frames are totally arbitrary.
+    new_episodes = make_spoof_data_frames(n_episodes=2, n_frames_per_episode=25)
+    dataset.add_episodes(new_episodes)
+    assert set(dataset.data_keys) == set(new_episodes)
+
+
+def test_get_data_by_key(tmp_path: Path):
+    """Tests that data can be added to a dataset and all data for a specific key can be read back."""
+    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
+    # Note: choices for args to make_spoof_data_frames are mostly arbitrary. The only intentional aspect is to
+    # make sure the buffer is not full, in order to check that `get_data_by_key` only returns the part of the
+    # buffer that is occupied.
+    n_episodes = 2
+    n_frames_per_episode = 25
+    new_episodes = make_spoof_data_frames(n_episodes, n_frames_per_episode)
+    dataset.add_episodes(new_episodes)
+
+    for k in new_episodes:
+        assert np.array_equal(new_episodes[k], dataset.get_data_by_key(k))
 
 
 def test_non_mutate(tmp_path: Path):
@@ -82,7 +101,7 @@ def test_non_mutate(tmp_path: Path):
     new_data = make_spoof_data_frames(2, 25)
     new_data_copy = deepcopy(new_data)
     dataset.add_episodes(new_data)
-    dataset.get_data_by_key(data_key)[:] += 1
+    dataset.get_data_by_key("action")[:] += 1
     assert all(np.array_equal(new_data[k], new_data_copy[k]) for k in new_data)
 
 
@@ -123,9 +142,8 @@ def test_write_read(tmp_path: Path, do_reload: bool):
         dataset = LeRobotDatasetV2(storage_dir)
 
     assert len(dataset) == n_frames_per_episode * n_episodes
-    for i, item in enumerate(dataset):
-        assert all(isinstance(item[k], torch.Tensor) for k in item)
-        assert np.array_equal(item[data_key].numpy(), new_data[data_key][i])
+    for k in dataset.data_keys:
+        assert np.array_equal(dataset.get_data_by_key(k), new_data[k])
 
 
 def test_filo_needs_buffer_capacity(tmp_path):
@@ -160,31 +178,19 @@ def test_filo(tmp_path: Path):
         len(dataset) == n_frames_per_episode * n_episodes
     ), "The new episode should have wrapped around to the start"
 
+    # Shift indices to match what the `add_episodes` method would do.
+    more_new_episodes[LeRobotDatasetV2.INDEX_KEY] += n_episodes * n_frames_per_episode
+    more_new_episodes[LeRobotDatasetV2.EPISODE_INDEX_KEY] += n_episodes
     expected_data = {}
     for k in new_episodes:
         expected_data[k] = new_episodes[k]
         # The extra new episode should overwrite the start of the buffer.
         expected_data[k][: len(more_new_episodes[k])] = more_new_episodes[k]
 
-    for i, item in enumerate(dataset):
-        assert np.array_equal(item[data_key].numpy(), expected_data[data_key][i])
+    for k in dataset.data_keys:
+        assert np.array_equal(dataset.get_data_by_key(k), expected_data[k])
 
     # TODO(now): Test that videos and pngs are removed as needed.
-
-
-def test_get_data_by_key(tmp_path: Path):
-    """Tests that data can be added to a dataset and all data for a specific key can be read back."""
-    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
-    # Note: choices for args to make_spoof_data_frames are mostly arbitrary. The only intentional aspect is to
-    # make sure the buffer is not full, in order to check that `get_data_by_key` only returns the part of the
-    # buffer that is occupied.
-    n_episodes = 2
-    n_frames_per_episode = 25
-    new_episodes = make_spoof_data_frames(n_episodes, n_frames_per_episode)
-    dataset.add_episodes(new_episodes)
-
-    data = dataset.get_data_by_key(data_key)
-    assert np.array_equal(data, new_episodes[data_key])
 
 
 def test_delta_timestamps_within_tolerance(tmp_path: Path):
