@@ -2,14 +2,13 @@ _target_: lerobot.common.robot_devices.robots.stretch.StretchRobot
 robot_type: stretch3
 
 cameras:
-  # TODO(aliberts): hardware currently not working, uncomment and test this when fixed
-  # navigation:
-  #   _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-  #   camera_index: /dev/hello-nav-head-camera
-  #   fps: 30
-  #   width: 1280
-  #   height: 720
-  #   rotation: -90
+  navigation:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: /dev/hello-nav-head-camera
+    fps: 10
+    width: 1280
+    height: 720
+    rotation: -90
   head:
     _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera.init_from_name
     name: Intel RealSense D435I
