@@ -277,26 +277,29 @@ def make_robot(robot_type: str, overrides: list[str] | None = None, mock=False) 
         if robot_type == "koch":
             overrides.append("+leader_arms.main.mock=true")
             overrides.append("+follower_arms.main.mock=true")
-            overrides.append("+cameras.laptop.mock=true")
-            overrides.append("+cameras.phone.mock=true")
+            if "~cameras" not in overrides:
+                overrides.append("+cameras.laptop.mock=true")
+                overrides.append("+cameras.phone.mock=true")
 
         elif robot_type == "koch_bimanual":
             overrides.append("+leader_arms.left.mock=true")
             overrides.append("+leader_arms.right.mock=true")
             overrides.append("+follower_arms.left.mock=true")
             overrides.append("+follower_arms.right.mock=true")
-            overrides.append("+cameras.laptop.mock=true")
-            overrides.append("+cameras.phone.mock=true")
+            if "~cameras" not in overrides:
+                overrides.append("+cameras.laptop.mock=true")
+                overrides.append("+cameras.phone.mock=true")
 
         elif robot_type == "aloha":
             overrides.append("+leader_arms.left.mock=true")
             overrides.append("+leader_arms.right.mock=true")
             overrides.append("+follower_arms.left.mock=true")
             overrides.append("+follower_arms.right.mock=true")
-            overrides.append("+cameras.cam_high.mock=true")
-            overrides.append("+cameras.cam_low.mock=true")
-            overrides.append("+cameras.cam_left_wrist.mock=true")
-            overrides.append("+cameras.cam_right_wrist.mock=true")
+            if "~cameras" not in overrides:
+                overrides.append("+cameras.cam_high.mock=true")
+                overrides.append("+cameras.cam_low.mock=true")
+                overrides.append("+cameras.cam_left_wrist.mock=true")
+                overrides.append("+cameras.cam_right_wrist.mock=true")
 
         else:
             raise NotImplementedError(robot_type)
