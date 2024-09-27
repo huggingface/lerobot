@@ -49,11 +49,15 @@ def test_teleoperate(request, robot_type, mock):
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_calibrate(request, robot_type, mock):
+def test_calibrate(tmpdir, request, robot_type, mock):
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
-    robot = make_robot(robot_type, mock=mock)
+    tmpdir = Path(tmpdir)
+    calibration_dir = tmpdir / robot_type
+    overrides_calibration_dir = [f"calibration_dir={calibration_dir}"]
+
+    robot = make_robot(robot_type, overrides=overrides_calibration_dir, mock=mock)
     calibrate(robot, arms=get_available_arms(robot))
     del robot
 
