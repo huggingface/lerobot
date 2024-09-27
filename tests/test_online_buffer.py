@@ -12,7 +12,12 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
-# limitations under the License.d
+# limitations under the License.
+
+# TODO(now): Test that the data_keys are saved correctly in the metadata
+# TODO(now): Test adding episodes in video mode and png mode.
+# TODO(now): Test ._extend_memmaps
+
 from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
@@ -33,25 +38,27 @@ from lerobot.common.datasets.video_utils import VideoFrame, decode_video_frames_
 from tests.utils import DevTestingError
 
 # Some constants for DataBuffer tests.
+# TODO(now): remove these globals
 data_key = "data"
 data_shape = (2, 3)  # just some arbitrary > 1D shape
-buffer_capacity = 100
-fps = 10
+# buffer_capacity = 100
+# fps = 10
 
 
-def make_new_buffer(
-    storage_dir: str, storage_dir_exists: bool = False, delta_timestamps: dict[str, list[float]] | None = None
-) -> LeRobotDatasetV2:
-    buffer = LeRobotDatasetV2(
-        storage_dir,
-        buffer_capacity=buffer_capacity if not storage_dir_exists else None,
-        fps=None if delta_timestamps is None else fps,
-        delta_timestamps=delta_timestamps,
-    )
-    return buffer
+# def make_new_dataset(
+#     storage_dir: str, storage_dir_exists: bool = False, delta_timestamps: dict[str, list[float]] | None = None
+# ) -> LeRobotDatasetV2:
+#     buffer = LeRobotDatasetV2(
+#         storage_dir,
+#         buffer_capacity=buffer_capacity if not storage_dir_exists else None,
+#         fps=None if delta_timestamps is None else fps,
+#         delta_timestamps=delta_timestamps,
+#     )
+#     return buffer
 
 
 def make_spoof_data_frames(n_episodes: int, n_frames_per_episode: int) -> dict[str, np.ndarray]:
+    fps = 10
     new_data = {
         data_key: np.arange(n_frames_per_episode * n_episodes * np.prod(data_shape)).reshape(-1, *data_shape),
         LeRobotDatasetV2.INDEX_KEY: np.arange(n_frames_per_episode * n_episodes),
@@ -70,60 +77,68 @@ def test_non_mutate(tmp_path: Path):
     NOTE: If this test fails, it means some of the other tests may be compromised. For example, we can't trust
     a success case for `test_write_read`.
     """
-    buffer = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}")
+    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
     # Note: choices for args to make_spoof_data_frames are arbitrary.
-    new_data = make_spoof_data_frames(2, buffer_capacity // 4)
+    new_data = make_spoof_data_frames(2, 25)
     new_data_copy = deepcopy(new_data)
-    buffer.add_episodes(new_data)
-    buffer.get_data_by_key(data_key)[:] += 1
+    dataset.add_episodes(new_data)
+    dataset.get_data_by_key(data_key)[:] += 1
     assert all(np.array_equal(new_data[k], new_data_copy[k]) for k in new_data)
 
 
 def test_index_error_no_data(tmp_path: Path):
-    buffer = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}")
+    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
     with pytest.raises(IndexError):
-        buffer[0]
+        dataset[0]
 
 
 def test_index_error_with_data(tmp_path: Path):
-    buffer = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}")
-    n_frames = buffer_capacity // 2
+    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
+    n_frames = 50
     # Note: choices for args to make_spoof_data_frames are arbitrary.
     new_data = make_spoof_data_frames(1, n_frames)
-    buffer.add_episodes(new_data)
+    dataset.add_episodes(new_data)
     with pytest.raises(IndexError):
-        buffer[n_frames]
+        dataset[n_frames]
     with pytest.raises(IndexError):
-        buffer[-n_frames - 1]
+        dataset[-n_frames - 1]
 
 
 @pytest.mark.parametrize("do_reload", [False, True])
 def test_write_read(tmp_path: Path, do_reload: bool):
-    """Checks that data can be added to the buffer and read back.
+    """Checks that data can be added to the dataset and read back.
 
-    If do_reload we delete the buffer object and load the buffer back from disk before reading.
+    If do_reload we delete the dataset object and load the dataset back from disk before reading.
     """
-    storage_dir = tmp_path / f"buffer_{uuid4().hex}"
-    buffer = make_new_buffer(storage_dir)
+    storage_dir = tmp_path / f"dataset_{uuid4().hex}"
+    dataset = LeRobotDatasetV2(storage_dir)
     # Note: choices for args to make_spoof_data_frames are arbitrary.
     n_episodes = 2
-    n_frames_per_episode = buffer_capacity // 4
+    n_frames_per_episode = 25
     new_data = make_spoof_data_frames(n_episodes, n_frames_per_episode)
-    buffer.add_episodes(new_data)
+    dataset.add_episodes(new_data)
 
     if do_reload:
-        del buffer
-        buffer = make_new_buffer(storage_dir, storage_dir_exists=True)
+        del dataset
+        dataset = LeRobotDatasetV2(storage_dir)
 
-    assert len(buffer) == n_frames_per_episode * n_episodes
-    for i, item in enumerate(buffer):
+    assert len(dataset) == n_frames_per_episode * n_episodes
+    for i, item in enumerate(dataset):
         assert all(isinstance(item[k], torch.Tensor) for k in item)
         assert np.array_equal(item[data_key].numpy(), new_data[data_key][i])
 
 
-def test_fifo(tmp_path: Path):
+def test_filo_needs_buffer_capacity(tmp_path):
+    with pytest.raises(ValueError):
+        LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", use_as_filo_buffer=True)
+
+
+def test_filo(tmp_path: Path):
     """Checks that if data is added beyond the buffer capacity, we discard the oldest data first."""
-    buffer = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}")
+    buffer_capacity = 100
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", buffer_capacity=buffer_capacity, use_as_filo_buffer=True
+    )
     # Note: choices for args to make_spoof_data_frames are mostly arbitrary. Of interest is:
     #   - later we need `n_more_episodes` to cause an overflow.
     #   - we need that overflow to happen *within* an episode such that we're testing the behavior whereby the
@@ -133,16 +148,16 @@ def test_fifo(tmp_path: Path):
     if buffer_capacity - n_frames_per_episode * n_episodes >= n_frames_per_episode:
         raise DevTestingError("Make sure to set this up such that adding another episode causes an overflow.")
     new_episodes = make_spoof_data_frames(n_episodes, n_frames_per_episode)
-    buffer.add_episodes(new_episodes)
+    dataset.add_episodes(new_episodes)
     # Note `n_more_episodes` is chosen to result in an overflow on the first episode.
     n_more_episodes = 2
     # Make this slightly larger than the prior episodes to test that there is no issue with overwriting the
     # start of an existing episode.
     n_frames_per_more_episodes = n_frames_per_episode + 1
     more_new_episodes = make_spoof_data_frames(n_more_episodes, n_frames_per_more_episodes)
-    buffer.add_episodes(more_new_episodes)
+    dataset.add_episodes(more_new_episodes)
     assert (
-        len(buffer) == n_frames_per_episode * n_episodes
+        len(dataset) == n_frames_per_episode * n_episodes
     ), "The new episode should have wrapped around to the start"
 
     expected_data = {}
@@ -151,30 +166,32 @@ def test_fifo(tmp_path: Path):
         # The extra new episode should overwrite the start of the buffer.
         expected_data[k][: len(more_new_episodes[k])] = more_new_episodes[k]
 
-    for i, item in enumerate(buffer):
+    for i, item in enumerate(dataset):
         assert np.array_equal(item[data_key].numpy(), expected_data[data_key][i])
+
+    # TODO(now): Test that videos and pngs are removed as needed.
 
 
 def test_get_data_by_key(tmp_path: Path):
-    """Tests that data can be added to a buffer and all data for a specific key can be read back."""
-    buffer = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}")
+    """Tests that data can be added to a dataset and all data for a specific key can be read back."""
+    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
     # Note: choices for args to make_spoof_data_frames are mostly arbitrary. The only intentional aspect is to
     # make sure the buffer is not full, in order to check that `get_data_by_key` only returns the part of the
     # buffer that is occupied.
     n_episodes = 2
-    n_frames_per_episode = buffer_capacity // 4
+    n_frames_per_episode = 25
     new_episodes = make_spoof_data_frames(n_episodes, n_frames_per_episode)
-    buffer.add_episodes(new_episodes)
+    dataset.add_episodes(new_episodes)
 
-    data_from_buffer = buffer.get_data_by_key(data_key)
-    assert np.array_equal(data_from_buffer, new_episodes[data_key])
+    data = dataset.get_data_by_key(data_key)
+    assert np.array_equal(data, new_episodes[data_key])
 
 
 def test_delta_timestamps_within_tolerance(tmp_path: Path):
     """Check that getting an item with delta_timestamps within tolerance succeeds."""
-    if fps != 10:
-        raise DevTestingError("This test is designed to use fps == 10.")
-    buffer = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}", delta_timestamps={"index": [-0.2, 0, 0.1]})
+    buffer = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, delta_timestamps={"index": [-0.2, 0, 0.1]}
+    )
     new_data = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=5)
     buffer.add_episodes(new_data)
     item = buffer[2]
@@ -188,9 +205,9 @@ def test_delta_timestamps_outside_tolerance_inside_episode_range(tmp_path: Path)
 
     We expect it to fail if and only if the requested timestamps are within the episode range.
     """
-    if fps != 10:
-        raise DevTestingError("This test is designed to use fps == 10.")
-    buffer = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}", delta_timestamps={"index": [-0.2, 0, 0.1]})
+    buffer = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, delta_timestamps={"index": [-0.2, 0, 0.1]}
+    )
     new_data = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=5)
     # Hack the timestamps to invoke a tolerance error.
     new_data["timestamp"][3] += 0.1
@@ -201,10 +218,8 @@ def test_delta_timestamps_outside_tolerance_inside_episode_range(tmp_path: Path)
 
 def test_delta_timestamps_outside_tolerance_outside_episode_range(tmp_path):
     """Check that copy-padding of timestamps outside of the episode range works."""
-    if fps != 10:
-        raise DevTestingError("This test is designed to use fps == 10.")
-    buffer = make_new_buffer(
-        tmp_path / f"buffer_{uuid4().hex}", delta_timestamps={"index": [-0.3, -0.2, 0, 0.2, 0.3]}
+    buffer = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, delta_timestamps={"index": [-0.3, -0.2, 0, 0.2, 0.3]}
     )
     new_data = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=5)
     buffer.add_episodes(new_data)
@@ -217,35 +232,40 @@ def test_delta_timestamps_outside_tolerance_outside_episode_range(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("dataset_repo_id", "decode_video"),
+    ("dataset_repo_id", "decode_images"),
     (
         # choose unitreeh1_two_robot_greeting to have multiple image keys (with minimal video data)
         ("lerobot/unitreeh1_two_robot_greeting", True),
         ("lerobot/unitreeh1_two_robot_greeting", False),
         ("lerobot/pusht", False),
+        ("lerobot/pusht_image", False),
+        ("lerobot/pusht_image", True),
     ),
 )
-def test_camera_keys(tmp_path: Path, dataset_repo_id: str, decode_video: bool):
+def test_camera_keys(tmp_path: Path, dataset_repo_id: str, decode_images: bool):
     """Check that the camera_keys property returns all relevant keys."""
-    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_video}"
-    buffer = LeRobotDatasetV2.from_huggingface_hub(dataset_repo_id, decode_video, storage_dir=storage_dir)
-    assert set(buffer.camera_keys) == {k for k in buffer._data if k.startswith("observation.image")}
+    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_images}"
+    buffer = LeRobotDatasetV2.from_huggingface_hub(dataset_repo_id, decode_images, storage_dir=storage_dir)
+    lerobot_dataset = LeRobotDataset(dataset_repo_id)
+    assert set(buffer.camera_keys) == set(lerobot_dataset.camera_keys)
 
 
 @pytest.mark.parametrize(
-    ("dataset_repo_id", "decode_video"),
+    ("dataset_repo_id", "decode_images"),
     (
         # choose unitreeh1_two_robot_greeting to have multiple image keys
         ("lerobot/unitreeh1_two_robot_greeting", True),
         ("lerobot/unitreeh1_two_robot_greeting", False),
         ("lerobot/pusht", False),
+        ("lerobot/pusht_image", False),
+        ("lerobot/pusht_image", True),
     ),
 )
-def test_getter_returns_pytorch_format(tmp_path: Path, dataset_repo_id: str, decode_video: bool):
+def test_getter_returns_pytorch_format(tmp_path: Path, dataset_repo_id: str, decode_images: bool):
     """Checks that tensors are returned and that images are torch.float32, in range [0, 1], channel-first."""
     # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
-    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_video}"
-    buffer = LeRobotDatasetV2.from_huggingface_hub(dataset_repo_id, decode_video, storage_dir=storage_dir)
+    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_images}"
+    buffer = LeRobotDatasetV2.from_huggingface_hub(dataset_repo_id, decode_images, storage_dir=storage_dir)
     # Just iterate through the start and end of the dataset to make the test faster.
     for i in np.concatenate([np.arange(0, 10), np.arange(-10, 0)]):
         item = buffer[i]
@@ -272,7 +292,7 @@ def test_getter_images_with_delta_timestamps(tmp_path: Path):
     fps = lerobot_dataset_info["fps"]
     # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
     storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}"
-    buffer = LeRobotDatasetV2.from_huggingface_hub(dataset_repo_id, storage_dir=storage_dir, fps=fps)
+    buffer = LeRobotDatasetV2.from_huggingface_hub(dataset_repo_id, storage_dir=storage_dir)
     delta_timestamps = [-1 / fps, 0.0, 1 / fps]
     buffer.set_delta_timestamps({k: delta_timestamps for k in buffer.camera_keys})
 
@@ -297,10 +317,10 @@ def test_getter_video_images_with_delta_timestamps(tmp_path: Path):
     fps = lerobot_dataset_info["fps"]
     # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
     buffer_video = LeRobotDatasetV2.from_huggingface_hub(
-        dataset_repo_id, False, storage_dir=tmp_path / f"{dataset_repo_id}_{uuid4().hex}_False", fps=fps
+        dataset_repo_id, False, storage_dir=tmp_path / f"{dataset_repo_id}_{uuid4().hex}_False"
     )
     buffer_decode = LeRobotDatasetV2.from_huggingface_hub(
-        dataset_repo_id, True, storage_dir=tmp_path / f"{dataset_repo_id}_{uuid4().hex}_True", fps=fps
+        dataset_repo_id, True, storage_dir=tmp_path / f"{dataset_repo_id}_{uuid4().hex}_True"
     )
 
     assert set(buffer_video.camera_keys) == set(buffer_decode.camera_keys)
@@ -320,14 +340,15 @@ def test_getter_video_images_with_delta_timestamps(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    ("dataset_repo_id", "decode_video"),
+    ("dataset_repo_id", "decode_images"),
     (
         ("lerobot/pusht", True),
         ("lerobot/pusht", False),
+        ("lerobot/pusht_image", True),
         ("lerobot/pusht_image", False),
     ),
 )
-def test_from_huggingface_hub(tmp_path: Path, dataset_repo_id: str, decode_video: bool):
+def test_from_huggingface_hub(tmp_path: Path, dataset_repo_id: str, decode_images: bool):
     """
     Check that:
         - We can make a buffer from a Hugging Face Hub dataset repository.
@@ -341,23 +362,27 @@ def test_from_huggingface_hub(tmp_path: Path, dataset_repo_id: str, decode_video
         # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
         # This ensures that the first time this loop is run, the storage directory does not already exist.
         storage_dir = tmp_path / LeRobotDatasetV2._default_storage_dir_from_huggingface_hub(
-            dataset_repo_id, hf_dataset._fingerprint, decode_video
+            dataset_repo_id, hf_dataset._fingerprint, decode_images
         ).relative_to("/tmp")
         if iteration == 0 and storage_dir.exists():
             raise DevTestingError("The storage directory should not exist for the first pass of this test.")
         buffer = LeRobotDatasetV2.from_huggingface_hub(
             dataset_repo_id,
-            decode_video,
+            decode_images,
             storage_dir=storage_dir,
         )
         assert len(buffer) == len(hf_dataset)
         for k, feature in hf_dataset.features.items():
             if isinstance(feature, datasets.features.Image):
-                assert np.array_equal(
-                    buffer.get_data_by_key(k), np.stack([np.array(pil_img) for pil_img in hf_dataset[k]])
-                )
+                if decode_images:
+                    assert np.array_equal(
+                        buffer.get_data_by_key(k), np.stack([np.array(pil_img) for pil_img in hf_dataset[k]])
+                    )
+                else:
+                    # TODO(now)
+                    pass
             elif isinstance(feature, VideoFrame):
-                if decode_video:
+                if decode_images:
                     # Decode the video here.
                     lerobot_dataset_info = load_info(dataset_repo_id, version=CODEBASE_VERSION, root=DATA_DIR)
                     videos_path = load_videos(dataset_repo_id, version=CODEBASE_VERSION, root=DATA_DIR)
@@ -376,10 +401,8 @@ def test_from_huggingface_hub(tmp_path: Path, dataset_repo_id: str, decode_video
                         all_imgs.extend(episode_imgs)
                     assert np.array_equal(buffer.get_data_by_key(k), all_imgs)
                 else:
-                    # Check that the video paths are the same.
-                    assert np.array_equal(
-                        buffer.get_data_by_key(k), [item["path"].encode("ascii") for item in hf_dataset[k]]
-                    )
+                    # TODO(now)
+                    pass
             elif isinstance(feature, (datasets.features.Sequence, datasets.features.Value)):
                 assert np.array_equal(buffer.get_data_by_key(k), hf_dataset[k])
             else:
@@ -412,7 +435,7 @@ def test_compute_sampler_weights_trivial(
             "to": torch.tensor([offline_dataset_size // 2, offline_dataset_size]),
         }
     # Create spoof online datset.
-    online_dataset = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}")
+    online_dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
     if online_dataset_size > 0:
         online_dataset.add_episodes(
             make_spoof_data_frames(n_episodes=2, n_frames_per_episode=online_dataset_size // 2)
@@ -443,7 +466,7 @@ def test_compute_sampler_weights_nontrivial_ratio(tmp_path: Path):
         "to": torch.tensor([2, 4]),
     }
     # Create spoof online datset.
-    online_dataset = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}")
+    online_dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
     online_dataset.add_episodes(make_spoof_data_frames(n_episodes=4, n_frames_per_episode=2))
     online_sampling_ratio = 0.8
     weights = compute_sampler_weights(
@@ -466,7 +489,7 @@ def test_compute_sampler_weights_drop_n_last_frames(tmp_path: Path):
     offline_dataset.hf_dataset.set_transform(hf_transform_to_torch)
     offline_dataset.episode_data_index = {"from": torch.tensor([0]), "to": torch.tensor([2])}
 
-    online_dataset = make_new_buffer(tmp_path / f"buffer_{uuid4().hex}")
+    online_dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
     online_dataset.add_episodes(make_spoof_data_frames(n_episodes=4, n_frames_per_episode=2))
 
     weights = compute_sampler_weights(

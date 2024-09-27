@@ -18,6 +18,7 @@
 import json
 import os
 import shutil
+import tempfile
 from copy import copy
 from enum import Enum
 from pathlib import Path
@@ -32,7 +33,11 @@ from tqdm import tqdm
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, DATA_DIR, LeRobotDataset
 from lerobot.common.datasets.utils import load_episode_data_index, load_hf_dataset, load_info, load_videos
-from lerobot.common.datasets.video_utils import VideoFrame, decode_video_frames_torchvision
+from lerobot.common.datasets.video_utils import (
+    VideoFrame,
+    decode_video_frames_torchvision,
+    encode_video_frames,
+)
 
 
 def _make_memmap_safe(**kwargs) -> np.memmap:
@@ -64,6 +69,11 @@ class LeRobotDatasetV2ImageMode(Enum):
     MEMMAP = "memmap"
     PNG = "png"
     VIDEO = "video"
+
+    @staticmethod
+    def needs_decoding(mode: "LeRobotDatasetV2ImageMode") -> bool:
+        """Return true if the provided image mode means decoding is needed, else False."""
+        return mode in [LeRobotDatasetV2ImageMode.PNG, LeRobotDatasetV2ImageMode.VIDEO]
 
 
 class LeRobotDatasetV2(torch.utils.data.Dataset):
@@ -200,6 +210,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         self,
         storage_dir: str | Path,
         buffer_capacity: int | None = None,
+        use_as_filo_buffer: bool = False,
         image_mode: LeRobotDatasetV2ImageMode | None = None,
         image_transform: Callable[[np.ndarray], np.ndarray] | None = None,
         delta_timestamps: dict[str, list[float]] | dict[str, np.ndarray] | None = None,
@@ -211,11 +222,16 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 One memmap file will be stored for each data key. Note that if the storage directory already
                 exists, the memmap files are opened in read-write mode. If the storage directory does not
                 exist, it will be lazily created with the first call to `add_episodes`.
-            buffer_capacity: When using this class as an online replay buffer, this specifies how many frames
-                should be stored in the dataset as a maximum. Calls to `add_episode` beyond the maximum
-                capacity, will result in the oldest episodes being pushed out of the buffer to make way
-                for the new ones (first-in-last-out aka FILO). When loading an existing dataset, this
-                parameter must still be provided if you wish to make use of this FILO mechanism.
+            buffer_capacity: Sets the size of the preallocated storage space for the memmaps in terms of
+                frames. If not provided, the memmap storage space is dynamically expanded as episodes are
+                added (doubling every time extra space is needed). If you know the number of frames you plan
+                to add in advance, it is recommended that this parameter be provided for efficiency. If
+                provided, attempts to add data beyond the capacity will result in an exception (unless
+                `use_as_filo_buffer` is set). If provided with an existing storage directory, the existing
+                memmaps will be expanded to the provided capacity if needed. TODO(now): test all this
+            use_as_filo_buffer: Set this to use the dataset as an online replay buffer. Calls to `add_episode`
+                beyond the buffer_capacity, will result in the oldest episodes being pushed out of the buffer
+                to make way for the new ones (first-in-last-out aka FILO).
             image_mode: The image storage mode used for the item getter. See notes above on the various
                 options. If not provided it defaults to memmap mode.
             image_transform: Transforms to apply in the item getter to all image data (any data whose key
@@ -225,52 +241,52 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             fps: TODO(alexander-soare): Document this somewhere when `load_previous_and_future_frames` is
                 refactored.
 
+
+        TODO(now): How to deal with corrupt state of the storage directory.
         """
-        # Parameters for the data structure.
+        if use_as_filo_buffer and buffer_capacity is None:
+            raise ValueError(f"A buffer_capacity must be provided if {use_as_filo_buffer=}.")
+
         self._storage_dir = Path(storage_dir)
         self._data: dict[str, np.memmap] = {}
-
-        # Default assumption is that the image storage mode is memmaps meaning we don't need a video or image
-        # directory.
+        self._use_as_filo_buffer = use_as_filo_buffer
         self._image_mode = LeRobotDatasetV2ImageMode.MEMMAP
         self._videos_dir: str | None = None
         self._images_dir: str | None = None
+        # TODO(now): Put fps in metadata.
+        self._fps = fps  # TODO(now): Decide how to treat fps (required or not?)
 
         # If the storage directory and metadata files already exists, load the memmaps.
         if (self._storage_dir / self.METADATA_FILE_NAME).exists():
             data_spec = self._load_metadata()["_data_spec"]
             self._make_memmaps(data_spec, mode="r+")
             if buffer_capacity is not None:
-                if buffer_capacity < len(self):
+                current_capacity = len(self._data[self.INDEX_KEY])
+                if buffer_capacity < current_capacity:
                     raise ValueError(
-                        f"The storage directory already exists and contains a dataset with {len(self)} "
-                        f"frames. But you have provided {buffer_capacity=}. It is required that "
-                        "buffer_capacity >= {len(self)}"
+                        f"The storage directory already exists and contains a memmaps with capacity: "
+                        f"{current_capacity} frames. But you have provided "
+                        f"{buffer_capacity=}. It is required that buffer_capacity >= {current_capacity}"
                     )
-                if buffer_capacity > len(self._data[self.INDEX_KEY]):
+                if buffer_capacity > current_capacity:
                     self._extend_memmaps(new_length=buffer_capacity)
+                self._buffer_capacity = buffer_capacity
+            else:
                 self._buffer_capacity = buffer_capacity
             # Set image mode based on what's available in the storage directory and/or the user's selection.
             possible_image_modes = self._infer_image_modes()
             if image_mode is not None:
                 if image_mode not in possible_image_modes:
                     raise ValueError(
-                        f"Provided {image_mode=} not available with this storage directory. Modes available: "
-                        f"{possible_image_modes}"
+                        f"Provided image_mode {str(image_mode)} not available with this storage directory. "
+                        f"Modes available: {[str(m) for m in possible_image_modes]}"
                     )
                 self._image_mode = image_mode
         else:
-            if image_mode is not None and image_mode in [
-                LeRobotDatasetV2ImageMode.VIDEO,
-                LeRobotDatasetV2ImageMode.PNG,
-            ]:
-                raise NotImplementedError(
-                    f"Creating a new dataset from scratch with {image_mode=} is not yet supported."
-                )
             self._buffer_capacity = buffer_capacity
+            if image_mode is not None:
+                self._image_mode = image_mode
 
-        # Parameters for the item getter.
-        self._fps = fps
         self.set_delta_timestamps(delta_timestamps)
         self.image_transform = image_transform
 
@@ -280,10 +296,23 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
 
     @property
     def data_keys(self) -> list[str]:
-        keys = set(self._data)
-        keys.remove(self.OCCUPANCY_MASK_KEY)
-        keys.remove(self.NEXT_INDEX_KEY)
-        return sorted(keys)
+        """Return the names of all data keys in the dataset.
+
+        Exclude "private" internal keys.
+
+        TODO(now): Test
+        """
+        metadata = self._load_metadata()
+        return list(metadata["data_keys"])
+
+    @property
+    def camera_keys(self) -> list[str]:
+        """Return the names of all data keys pertaining to camera observations.
+
+        By convention, this is all the keys starting with "observation.image".
+        """
+        metadata = self._load_metadata()
+        return [k for k in metadata["data_keys"] if k.startswith(self.IMAGE_KEY_PREFIX)]
 
     @property
     def fps(self) -> float | None:
@@ -306,14 +335,9 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             return 0
         return np.count_nonzero(self._data[self.OCCUPANCY_MASK_KEY])
 
-    @property
-    def camera_keys(self) -> list[str]:
-        """Return the names of all data keys pertaining to camera observations.
-
-        By convention, this is all the keys starting with "observation.image".
-        """
-        metadata = self._load_metadata()
-        return [k for k in metadata["data_keys"] if k.startswith(self.IMAGE_KEY_PREFIX)]
+    def get_unique_episode_indices(self) -> np.ndarray:
+        # TODO(now): test
+        return np.unique(self._data[self.EPISODE_INDEX_KEY][self._data[self.OCCUPANCY_MASK_KEY]])
 
     def _infer_image_modes(self) -> list[LeRobotDatasetV2ImageMode]:
         """Infer which image modes are available according to what is in the storage directory"""
@@ -370,6 +394,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
 
     def _make_storage_dir(self, episode_data: dict[str, np.ndarray]):
         """Create the storage directory based on example episode data from the first `add_episodes` call."""
+        # TODO(now): Do I really want this?
         assert not (
             self.storage_dir / self.METADATA_FILE_NAME
         ).exists(), "This method should only be called before the storage directory has been created."
@@ -397,12 +422,13 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             for k, v in episode_data.items():
                 if k in data_spec:
                     continue
-                if k.startswith(self.IMAGE_KEY_PREFIX):
-                    if self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
-                        (self._storage_dir / self.VIDEOS_DIR).mkdir(exist_ok=True)
-                    elif self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
-                        (self._storage_dir / self.PNGS_DIR).mkdir(exist_ok=True)
-                data_spec[k] = {"dtype": v.dtype, "shape": (num_frames, *v.shape[1:])}
+                is_image_key = k.startswith(self.IMAGE_KEY_PREFIX)
+                if is_image_key and self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+                    (self._storage_dir / self.VIDEOS_DIR).mkdir()
+                elif is_image_key and self._image_mode == LeRobotDatasetV2ImageMode.PNG:
+                    (self._storage_dir / self.PNGS_DIR).mkdir()
+                else:
+                    data_spec[k] = {"dtype": v.dtype, "shape": (num_frames, *v.shape[1:])}
 
             self._make_memmaps(data_spec, "w+")
             self._save_metadata(data_spec=data_spec, data_keys=list(episode_data))
@@ -504,8 +530,8 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         new_data_length = len(data[self.data_keys[0]])
         if new_data_length <= 0:
             raise ValueError("The episode has 0 frames")
-        if new_data_length > self._buffer_capacity:
-            raise ValueError("The episode length is larger than the buffer capacity.")
+        if self._buffer_capacity is not None and new_data_length > self._buffer_capacity:
+            raise ValueError("The episode length is larger than the total buffer capacity.")
         if not all(len(data[k]) == new_data_length for k in self.data_keys):
             raise ValueError("All data items should have the same length")
         if not np.all(data[self.EPISODE_INDEX_KEY] == data[self.EPISODE_INDEX_KEY][0]):
@@ -537,33 +563,67 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             last_episode_index = -1
             last_data_index = -1
 
-        # If there aren't enough slots left in the reserved memmap space to accommodate the episode, either
-        # extend the memmaps, or wrap to the start if we have an explicit buffer capacity.
-        if self._buffer_capacity is None:
-            # A buffer capacity was not explicitly provided, so dynamically resize the memmaps (double the
-            # capacity).
-            if max(0, new_data_length - (len(self._data[self.INDEX_KEY]) - next_index)) > 0:
-                self._extend_memmaps(len(self._data[self.INDEX_KEY]) * 2)
-        else:
-            # A buffer capacity was provided. Wrap to the start.
-            if max(0, new_data_length - (self._buffer_capacity - next_index)) > 0:
+        new_episode_index = last_episode_index + 1
+
+        # Handle situation if there aren't enough empty frames left in the memmaps to handle the new episode.
+        capacity = len(self._data[self.INDEX_KEY]) if self._buffer_capacity is None else self._buffer_capacity
+        n_excess = max(0, new_data_length - (capacity - next_index))
+        if n_excess > 0:
+            if self._buffer_capacity is None:
+                # A buffer capacity was not explicitly provided, so dynamically resize the memmaps (double the
+                # capacity).
+                self._extend_memmaps(capacity * 2)
+            elif self._use_as_filo_buffer:
+                # A buffer capacity was provided and we wish to use the dataset as a FILO buffer. Wrap to the
+                # start.
                 next_index = 0
+            else:
+                # A buffer capacity was provided meaning we intend to fix the dataset size.
+                raise RuntimeError(
+                    "Can't add this episode as it would exceed the provided buffer_capacity "
+                    f"({self._buffer_capacity} frames) by {n_excess} frames."
+                )
 
         # Insert the new data starting from next_index.
         for k in self.data_keys:
-            # TODO(now): Handle "png" and "video", including deleting images and videos when in online buffer
-            # mode.
-            slc = slice(next_index, next_index + new_data_length)
-            if k == self.EPISODE_INDEX_KEY:
-                self._data[k][slc] = last_episode_index + 1
-            elif k == self.INDEX_KEY:
-                self._data[k][slc] = np.arange(last_data_index + 1, last_data_index + 1 + new_data_length)
+            # Special treatment of image keys depending on the image mode.
+            if self._image_mode == LeRobotDatasetV2ImageMode.VIDEO and k.startswith(self.IMAGE_KEY_PREFIX):
+                # Encode all frames of the episode into a video and save to disk.
+                with tempfile.TemporaryDirectory() as tmpdirname:
+                    for frame_index, img in zip(data[self.FRAME_INDEX_KEY], data[k], strict=True):
+                        Image.fromarray(img).save(Path(tmpdirname) / f"frame_{frame_index:06d}.png")
+                    encode_video_frames(
+                        Path(tmpdirname),
+                        self._storage_dir
+                        / self.VIDEOS_DIR
+                        / self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=new_episode_index),
+                        self.fps,
+                    )
+            elif self._image_mode == LeRobotDatasetV2ImageMode.PNG and k.startswith(self.IMAGE_KEY_PREFIX):
+                # Encode images to PNG and save to disk.
+                for frame_index, img in zip(data[self.FRAME_INDEX_KEY], data[k], strict=True):
+                    Image.fromarray(img).save(
+                        self._storage_dir
+                        / self.PNGS_DIR
+                        / self.PNG_NAME_FSTRING.format(
+                            data_key=k, episode_index=new_episode_index, frame_index=frame_index
+                        )
+                    )
             else:
-                self._data[k][slc] = data[k]
-            self._data[self.OCCUPANCY_MASK_KEY][slc] = True
+                # Insertion into the memmap for non-image keys or image keys in memmap mode.
+                slc = slice(next_index, next_index + new_data_length)
+                if k == self.EPISODE_INDEX_KEY:
+                    self._data[k][slc] = new_episode_index
+                elif k == self.INDEX_KEY:
+                    self._data[k][slc] = np.arange(last_data_index + 1, last_data_index + 1 + new_data_length)
+                else:
+                    self._data[k][slc] = data[k]
+                self._data[self.OCCUPANCY_MASK_KEY][slc] = True
 
         # Update the data pointer.
         self._data[self.NEXT_INDEX_KEY][0] = next_index + new_data_length
+
+        # TODO(now): Remove videos/images if data is overwritten.
 
     def flush(self):
         """Save the data to disk.
@@ -595,15 +655,54 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
 
     def get_data_by_key(self, key: str) -> np.ndarray:
         """Returns all data for a given data key in the numpy.memmap data."""
-        if key.startswith(self.IMAGE_KEY_PREFIX) and self._image_mode in [
-            LeRobotDatasetV2ImageMode.VIDEO,
-            LeRobotDatasetV2ImageMode.PNG,
-        ]:
+        if key.startswith(self.IMAGE_KEY_PREFIX) and LeRobotDatasetV2ImageMode.needs_decoding(
+            self._image_mode
+        ):
             raise ValueError(
                 f"Can't get all data for image keys when {self._image_mode=}. This would require decoding "
                 "the whole dataset!"
             )
         return self._data[key][self._data[self.OCCUPANCY_MASK_KEY]]
+
+    def get_episode(self, episode_index: int) -> dict[str, np.ndarray]:
+        """Returns a whole episode as a key-array mapping.
+
+        Includes decoding videos or PNG files where necessary.
+
+        TODO(now)
+        """
+        episode_data = {}
+        data_mask = np.bitwise_and(
+            self._data[self.EPISODE_INDEX_KEY] == episode_index, self._data[self.OCCUPANCY_MASK_KEY]
+        )
+        for k in self.data_keys:
+            if self._image_mode == LeRobotDatasetV2ImageMode.VIDEO and k in self.camera_keys:
+                episode_data[k] = decode_video_frames_torchvision(
+                    video_path=self.storage_dir
+                    / self.VIDEOS_DIR
+                    / self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=episode_index),
+                    timestamps=self._data[self.TIMESTAMP_KEY][data_mask],
+                    tolerance_s=self.tolerance_s,
+                    backend="pyav",
+                    to_pytorch_format=False,
+                )
+            elif self._image_mode == LeRobotDatasetV2ImageMode.PNG and k in self.camera_keys:
+                imgs = []
+                for frame_index in self._data[self.FRAME_INDEX_KEY][data_mask]:
+                    img_path = (
+                        self.storage_dir
+                        / self.PNGS_DIR
+                        / self.PNG_NAME_FSTRING.format(
+                            data_key=k,
+                            episode_index=episode_index,
+                            frame_index=frame_index,
+                        )
+                    )
+                    imgs.append(np.array(Image.open(img_path)))
+                episode_data[k] = np.stack(imgs)
+            else:
+                episode_data[k] = self._data[k][data_mask]
+        return episode_data
 
     @staticmethod
     def _numpy_img_to_tensor(img: np.ndarray) -> torch.Tensor:
@@ -632,18 +731,8 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         # 2. The image mode is either "video" or "png", in which case we will need to decode the image frames
         #    further down.
         item = {}
-        for k in self._data:
-            if k.startswith("_"):
-                # Reserved key.
-                continue
-            if (
-                self._image_mode
-                in [
-                    LeRobotDatasetV2ImageMode.VIDEO,
-                    LeRobotDatasetV2ImageMode.PNG,
-                ]
-                and k in self.camera_keys
-            ):
+        for k in self.data_keys:
+            if LeRobotDatasetV2ImageMode.needs_decoding(self._image_mode) and k in self.camera_keys:
                 continue
             item[k] = self._data[k][idx]
 
@@ -781,13 +870,13 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 provides large speed benefits for data access but only if your storage can handle it (decoded
                 images take up a lot more storage space than videos or png files).
             root: (will be deprecated) Directory to load the dataset from, instead of the hub.
-            **kwargs: Other arguments to `self.__init__` except for the `data_spec` and
-                `buffer_capacity` arguments which are inferred automatically. `storage_dir` is set to
+            **kwargs: Other arguments to `self.__init__` except for the `data_spec`, `buffer_capacity` and
+                `fps` arguments which are inferred automatically. `storage_dir` is set to
                 `/tmp/{repo_id}_{hf_dataset._fingerprint}_{decoded?}` unless provided explicitly.
         Returns:
             The resulting LeRobotDatasetV2 object.
         """
-        for k in ["data_spec", "buffer_capacity"]:
+        for k in ["data_spec", "buffer_capacity", "fps"]:
             if k in kwargs:
                 raise ValueError(f"`{k}` should not be provided as it is inferred from the hub dataset.")
 
@@ -810,6 +899,8 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 repo_id, hf_dataset._fingerprint, decode_images
             ),
         )
+
+        kwargs["fps"] = lerobot_dataset_info["fps"]
 
         dataset_already_on_disk = False
         if Path(kwargs["storage_dir"] / LeRobotDatasetV2.METADATA_FILE_NAME).exists():
@@ -911,7 +1002,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
 
         obj.flush()
 
-        if obj._image_mode in [LeRobotDatasetV2ImageMode.VIDEO, LeRobotDatasetV2ImageMode.PNG]:
+        if LeRobotDatasetV2ImageMode.needs_decoding(obj._image_mode):
             # We didn't pass the image keys into the first call to `add_episodes` so manually update
             # metadata["data_keys"].
             data_keys: list[str] = obj._load_metadata()["data_keys"]
