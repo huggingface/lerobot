@@ -37,7 +37,7 @@ from tests.utils import TEST_MOTOR_TYPES, make_motors_bus, require_motor
 
 @pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
 @require_motor
-def test_find_port_mock(request, motor_type, mock):
+def test_find_port(request, motor_type, mock):
     if mock:
         request.getfixturevalue("patch_builtins_input")
         with pytest.raises(OSError):
@@ -48,7 +48,7 @@ def test_find_port_mock(request, motor_type, mock):
 
 @pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
 @require_motor
-def test_configure_motors_all_ids_1_mock(request, motor_type, mock):
+def test_configure_motors_all_ids_1(request, motor_type, mock):
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
