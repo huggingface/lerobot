@@ -11,6 +11,7 @@ on:
       - ".github/**"
       - "poetry.lock"
       - "Makefile"
+      - ".cache/**"
   push:
     branches:
       - main
@@ -21,6 +22,7 @@ on:
       - ".github/**"
       - "poetry.lock"
       - "Makefile"
+      - ".cache/**"
 
 jobs:
   pytest:
@@ -33,6 +35,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: true  # Ensure LFS files are pulled
+
+      - name: Ensure required file is fetched
+        run: |
+          git checkout origin/main -- .cache/calibration/aloha_default/left_follower.json
 
       - name: Install apt dependencies
         run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev ffmpeg
