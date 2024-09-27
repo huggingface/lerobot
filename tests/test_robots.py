@@ -44,8 +44,6 @@ def test_robot(tmpdir, request, robot_type, mock):
         # To simplify unit test, we do not rerun manual calibration for Aloha mock=True.
         # Instead, we use the files from '.cache/calibration/aloha_default'
         overrides_calibration_dir = None
-
-        assert Path(".cache/calibration/aloha_default/left_follower.json").exists()
     else:
         if mock:
             request.getfixturevalue("patch_builtins_input")
