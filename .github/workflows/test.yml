@@ -54,36 +54,11 @@ jobs:
 
       - name: Test with pytest
         run: |
-          pytest tests/test_motors.py -v --cov=./lerobot --durations=0 \
+          pytest tests -v --cov=./lerobot --durations=0 \
             -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
             -W ignore::UserWarning:torch.utils.data.dataloader:558 \
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
             && rm -rf tests/outputs outputs
-
-      - name: Test with pytest
-        run: |
-          pytest tests/test_cameras.py -v --cov=./lerobot --durations=0 \
-            -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
-            -W ignore::UserWarning:torch.utils.data.dataloader:558 \
-            -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
-            && rm -rf tests/outputs outputs
-
-      - name: Test with pytest
-        run: |
-          pytest tests/test_robots.py -v --cov=./lerobot --durations=0 \
-            -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
-            -W ignore::UserWarning:torch.utils.data.dataloader:558 \
-            -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
-            && rm -rf tests/outputs outputs
-
-      - name: Test with pytest
-        run: |
-          pytest tests/test_control_robot.py -v --cov=./lerobot --durations=0 \
-            -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
-            -W ignore::UserWarning:torch.utils.data.dataloader:558 \
-            -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
-            && rm -rf tests/outputs outputs
-
 
   pytest-minimal:
     name: Pytest (minimal install)
