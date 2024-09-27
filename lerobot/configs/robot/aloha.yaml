@@ -95,21 +95,25 @@ cameras:
     fps: 30
     width: 640
     height: 480
+    use_depth: false #set "true" if you want to use the depth camera
   cam_low:
     _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
     camera_index: 130322270656
     fps: 30
     width: 640
     height: 480
+    use_depth: false #set "true" if you want to use the depth camera
   cam_left_wrist:
     _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
     camera_index: 218622272670
     fps: 30
     width: 640
     height: 480
+    use_depth: false #set "true" if you want to use the depth camera
   cam_right_wrist:
     _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
     camera_index: 130322272300
     fps: 30
     width: 640
     height: 480
+    use_depth: false #set "true" if you want to use the depth camera

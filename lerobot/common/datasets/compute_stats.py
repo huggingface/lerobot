@@ -21,7 +21,7 @@ import torch
 import tqdm
 from datasets import Image
 
-from lerobot.common.datasets.video_utils import VideoFrame
+from lerobot.common.datasets.video_utils import VideoFrame, DepthFrame
 
 
 def get_stats_einops_patterns(dataset, num_workers=0):
@@ -56,6 +56,17 @@ def get_stats_einops_patterns(dataset, num_workers=0):
             assert batch[key].dtype == torch.float32, f"expect torch.float32, but instead {batch[key].dtype=}"
             assert batch[key].max() <= 1, f"expect pixels lower than 1, but instead {batch[key].max()=}"
             assert batch[key].min() >= 0, f"expect pixels greater than 1, but instead {batch[key].min()=}"
+
+            stats_patterns[key] = "b c h w -> c 1 1"
+        elif isinstance(feats_type, DepthFrame):
+            # sanity check that images are channel first
+            _, c, h, w = batch[key].shape
+            assert c < h and c < w, f"expect channel first images, but instead {batch[key].shape}"
+
+            # sanity check that images are float32 in range [0,1]
+            assert batch[key].dtype == torch.uint16, f"expect torch.float32, but instead {batch[key].dtype=}"
+            # assert batch[key].max() <= 1, f"expect pixels lower than 1, but instead {batch[key].max()=}"
+            # assert batch[key].min() >= 0, f"expect pixels greater than 1, but instead {batch[key].min()=}"
 
             stats_patterns[key] = "b c h w -> c 1 1"
         elif batch[key].ndim == 2:
