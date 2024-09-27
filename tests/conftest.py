@@ -17,6 +17,7 @@
 import traceback
 
 import pytest
+from serial import SerialException
 
 from lerobot import available_cameras, available_motors, available_robots
 from lerobot.common.utils.utils import init_hydra_config
@@ -43,9 +44,22 @@ def is_robot_available(robot_type):
         robot.connect()
         del robot
         return True
-    except Exception:
+
+    except ModuleNotFoundError as e:
+        print(f"\nA {robot_type} robot is not available.")
+        print(f"\nInstall module '{e.name}'")
+        traceback.print_exc()
+        return False
+
+    except SerialException:
         traceback.print_exc()
         print(f"\nA {robot_type} robot is not available.")
+        print("\nNo physical motors bus detected.")
+        return False
+
+    except Exception:
+        print(f"\nA {robot_type} robot is not available.")
+        traceback.print_exc()
         return False
 
 
@@ -61,10 +75,23 @@ def is_camera_available(camera_type):
         camera.connect()
         del camera
         return True
-    except Exception:
+
+    except ModuleNotFoundError as e:
         print(f"\nA {camera_type} camera is not available.")
+        print(f"\nInstall module '{e.name}'")
         traceback.print_exc()
         return False
+
+    except Exception:
+        print(f"\nA {camera_type} camera is not available.")
+        print("\nNo physical camera detected.")
+        traceback.print_exc()
+        return False
+
+    # except Exception as e:
+    #     print(f"\nA {camera_type} camera is not available.")
+    #     traceback.print_exc()
+    #     return False
 
 
 @pytest.fixture
@@ -79,9 +106,22 @@ def is_motor_available(motor_type):
         motors_bus.connect()
         del motors_bus
         return True
-    except Exception:
-        traceback.print_exc()
+
+    except ModuleNotFoundError as e:
         print(f"\nA {motor_type} motor is not available.")
+        print(f"\nInstall module '{e.name}'")
+        traceback.print_exc()
+        return False
+
+    except SerialException:
+        print(f"\nA {motor_type} motor is not available.")
+        print("\nNo physical motors bus detected.")
+        traceback.print_exc()
+        return False
+
+    except Exception:
+        print(f"\nA {motor_type} motor is not available.")
+        traceback.print_exc()
         return False
 
 
