@@ -14,9 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# TODO(now): Test that the data_keys are saved correctly in the metadata
-# TODO(now): Test adding episodes in video mode and png mode.
-# TODO(now): Test ._extend_memmaps
+# TODO(now): Test relevant functions in all image modes.
 
 from copy import deepcopy
 from pathlib import Path
@@ -30,6 +28,7 @@ import torch
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, DATA_DIR, LeRobotDataset
 from lerobot.common.datasets.online_buffer import (
     LeRobotDatasetV2,
+    LeRobotDatasetV2ImageMode,
     TimestampOutsideToleranceError,
     compute_sampler_weights,
 )
@@ -38,19 +37,17 @@ from lerobot.common.datasets.video_utils import VideoFrame, decode_video_frames_
 from lerobot.common.utils.utils import seeded_context
 from tests.utils import DevTestingError
 
-# Some constants for DataBuffer tests.
-# TODO(now): remove these globals
-# data_key = "data"
 
-
-def make_spoof_data_frames(n_episodes: int, n_frames_per_episode: int) -> dict[str, np.ndarray]:
+def make_spoof_data_frames(
+    n_episodes: int, n_frames_per_episode: int, seed: int = 0
+) -> dict[str, np.ndarray]:
     fps = 10
-    # Arbitrary choice of dimension. `proprio_dim` and `action_dim` are intentionally different.
     proprio_dim = 6
     action_dim = 4
-    img_size = (32, 32)
+    # This is the minimum size allowed for encoding.
+    img_size = (64, 64)
     n_frames = n_frames_per_episode * n_episodes
-    with seeded_context(0):
+    with seeded_context(seed):
         new_data = {
             "observation.image": np.random.randint(0, 256, size=(n_frames, *img_size, 3)).astype(np.uint8),
             "observation.state": np.random.normal(size=(n_frames, proprio_dim)).astype(np.float32),
@@ -86,6 +83,16 @@ def test_get_data_by_key(tmp_path: Path):
 
     for k in new_episodes:
         assert np.array_equal(new_episodes[k], dataset.get_data_by_key(k))
+
+
+def test_get_unique_episode_indices(tmp_path: Path):
+    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
+    # Note: choices for args to make_spoof_data_frames are mostly arbitrary. Just make sure there is more
+    # than one episode.
+    n_episodes = 2
+    new_episodes = make_spoof_data_frames(n_episodes=n_episodes, n_frames_per_episode=25)
+    dataset.add_episodes(new_episodes)
+    assert np.array_equal(np.sort(dataset.get_unique_episode_indices()), np.arange(n_episodes))
 
 
 def test_non_mutate(tmp_path: Path):
@@ -124,13 +131,17 @@ def test_index_error_with_data(tmp_path: Path):
 
 
 @pytest.mark.parametrize("do_reload", [False, True])
-def test_write_read(tmp_path: Path, do_reload: bool):
+@pytest.mark.parametrize("image_mode", list(LeRobotDatasetV2ImageMode))
+def test_write_read_and_get_episode(tmp_path: Path, do_reload: bool, image_mode: str):
     """Checks that data can be added to the dataset and read back.
 
     If do_reload we delete the dataset object and load the dataset back from disk before reading.
+
+    This also tests that the get_episode returns the correct data.
     """
     storage_dir = tmp_path / f"dataset_{uuid4().hex}"
-    dataset = LeRobotDatasetV2(storage_dir)
+    fps = 10
+    dataset = LeRobotDatasetV2(storage_dir, image_mode=image_mode, fps=fps)
     # Note: choices for args to make_spoof_data_frames are arbitrary.
     n_episodes = 2
     n_frames_per_episode = 25
@@ -139,14 +150,79 @@ def test_write_read(tmp_path: Path, do_reload: bool):
 
     if do_reload:
         del dataset
-        dataset = LeRobotDatasetV2(storage_dir)
+        dataset = LeRobotDatasetV2(storage_dir, image_mode=image_mode, fps=fps)
 
     assert len(dataset) == n_frames_per_episode * n_episodes
-    for k in dataset.data_keys:
-        assert np.array_equal(dataset.get_data_by_key(k), new_data[k])
+    for episode_index in range(n_episodes):
+        data_mask = new_data[LeRobotDatasetV2.EPISODE_INDEX_KEY] == episode_index
+        episode_data = dataset.get_episode(episode_index)
+        for k in dataset.data_keys:
+            if image_mode == LeRobotDatasetV2ImageMode.VIDEO and k.startswith(
+                LeRobotDatasetV2.IMAGE_KEY_PREFIX
+            ):
+                # Unfortunately we can't check array equality here because the videos were encoded lossily.
+                # We'll settle for a shape check.
+                # TODO(now): This should work with crf=0
+                assert episode_data[k].shape == new_data[k][data_mask].shape
+            else:
+                assert np.array_equal(episode_data[k], new_data[k][data_mask]), f"Mismatch for {k=}"
 
 
-def test_filo_needs_buffer_capacity(tmp_path):
+def test_get_episode_index_error(tmp_path: Path):
+    """Test that get_episode raises an IndexError is raised with an invalid episode index."""
+    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
+    # Note: args to make_spoof_data_frames are mostly arbitrary.
+    n_episodes = 1
+    new_episodes = make_spoof_data_frames(n_episodes=n_episodes, n_frames_per_episode=25)
+    dataset.add_episodes(new_episodes)
+    with pytest.raises(IndexError):
+        dataset.get_episode(n_episodes)
+
+
+def test_buffer_capacity(tmp_path: Path):
+    """Check that explicitly providing a buffer capacity, then overflowing, causes an exception."""
+    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", buffer_capacity=60)
+    # Note: choices for args to make_spoof_data_frames are totally arbitrary.
+    new_episodes = make_spoof_data_frames(n_episodes=3, n_frames_per_episode=25)
+    with pytest.raises(ValueError):
+        dataset.add_episodes(new_episodes)
+
+
+def test_dynamic_memmap_size(tmp_path: Path):
+    """Check that the memmap is dynamically resized when trying to add episodes over the capacity.
+
+    Check that the existing data is not corrupted.
+    """
+    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}")
+    n_frames_per_episode = 5
+    new_episodes = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=n_frames_per_episode, seed=0)
+    all_episodes = new_episodes
+    # This should trigger the creation of memmaps with 10 frame capacity.
+    dataset.add_episodes(new_episodes)
+    expected_capacity = n_frames_per_episode
+    used_capacity = n_frames_per_episode
+    assert len(dataset._data[LeRobotDatasetV2.INDEX_KEY]) == expected_capacity
+    for i in range(1, 51):  # 50 iterations makes the capacity grow to 320
+        new_episodes = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=n_frames_per_episode, seed=i)
+        # This should trigger the memmaps to double in size.
+        dataset.add_episodes(new_episodes)
+        # Track the data we expect to see in the memmaps.
+        for k in new_episodes:
+            # Shift indices the same we we expect `add_episodes` to.
+            if k == LeRobotDatasetV2.INDEX_KEY:
+                new_episodes[k] += all_episodes[k][-1] + 1
+            if k == LeRobotDatasetV2.EPISODE_INDEX_KEY:
+                new_episodes[k] += all_episodes[k][-1] + 1
+            all_episodes[k] = np.concatenate([all_episodes[k], new_episodes[k]], axis=0)
+        used_capacity += n_frames_per_episode
+        if used_capacity > expected_capacity:
+            expected_capacity *= 2
+        assert len(dataset._data[LeRobotDatasetV2.INDEX_KEY]) == expected_capacity
+        for k in dataset.data_keys:
+            assert np.array_equal(dataset.get_data_by_key(k), all_episodes[k])
+
+
+def test_filo_needs_buffer_capacity(tmp_path: Path):
     with pytest.raises(ValueError):
         LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", use_as_filo_buffer=True)
 

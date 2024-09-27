@@ -213,7 +213,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         storage_dir: str | Path,
         buffer_capacity: int | None = None,
         use_as_filo_buffer: bool = False,
-        image_mode: LeRobotDatasetV2ImageMode | str | None = None,
+        image_mode: LeRobotDatasetV2ImageMode | str = LeRobotDatasetV2ImageMode.MEMMAP,
         image_transform: Callable[[np.ndarray], np.ndarray] | None = None,
         delta_timestamps: dict[str, list[float]] | dict[str, np.ndarray] | None = None,
         fps: float | None = None,
@@ -230,7 +230,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 to add in advance, it is recommended that this parameter be provided for efficiency. If
                 provided, attempts to add data beyond the capacity will result in an exception (unless
                 `use_as_filo_buffer` is set). If provided with an existing storage directory, the existing
-                memmaps will be expanded to the provided capacity if needed. TODO(now): test all this
+                memmaps will be expanded to the provided capacity if needed.
             use_as_filo_buffer: Set this to use the dataset as an online replay buffer. Calls to `add_episode`
                 beyond the buffer_capacity, will result in the oldest episodes being pushed out of the buffer
                 to make way for the new ones (first-in-last-out aka FILO).
@@ -253,10 +253,9 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         self._storage_dir = Path(storage_dir)
         self._data: dict[str, np.memmap] = {}
         self._use_as_filo_buffer = use_as_filo_buffer
-        self._image_mode = LeRobotDatasetV2ImageMode.MEMMAP
         self._videos_dir: str | None = None
         self._images_dir: str | None = None
-        # TODO(now): Put fps in metadata.
+        # TODO(now): Put fps in metadata. What if fps is provided when loading a dataset?
         self._fps = fps  # TODO(now): Decide how to treat fps (required or not?)
 
         # If the storage directory and metadata files already exists, load the memmaps.
@@ -278,17 +277,15 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 self._buffer_capacity = buffer_capacity
             # Set image mode based on what's available in the storage directory and/or the user's selection.
             possible_image_modes = self._infer_image_modes()
-            if image_mode is not None:
-                if image_mode not in possible_image_modes:
-                    raise ValueError(
-                        f"Provided image_mode {str(image_mode)} not available with this storage directory. "
-                        f"Modes available: {[str(m) for m in possible_image_modes]}"
-                    )
-                self._image_mode = image_mode
+            if image_mode not in possible_image_modes:
+                raise ValueError(
+                    f"Provided image_mode {str(image_mode)} not available with this storage directory. "
+                    f"Modes available: {[str(m) for m in possible_image_modes]}"
+                )
         else:
             self._buffer_capacity = buffer_capacity
-            if image_mode is not None:
-                self._image_mode = image_mode
+
+        self._image_mode = LeRobotDatasetV2ImageMode(image_mode)
 
         self.set_delta_timestamps(delta_timestamps)
         self.image_transform = image_transform
@@ -302,8 +299,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         """Return the names of all data keys in the dataset.
 
         Exclude "private" internal keys.
-
-        TODO(now): Test
         """
         metadata = self._load_metadata()
         return list(metadata["data_keys"])
@@ -339,7 +334,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         return np.count_nonzero(self._data[self.OCCUPANCY_MASK_KEY])
 
     def get_unique_episode_indices(self) -> np.ndarray:
-        # TODO(now): test
         return np.unique(self._data[self.EPISODE_INDEX_KEY][self._data[self.OCCUPANCY_MASK_KEY]])
 
     def _infer_image_modes(self) -> list[LeRobotDatasetV2ImageMode]:
@@ -349,7 +343,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             image_modes.append(LeRobotDatasetV2ImageMode.VIDEO)
         if (self.storage_dir / self.PNGS_DIR).exists():
             image_modes.append(LeRobotDatasetV2ImageMode.PNG)
-        if any(k.startswith("observation.image") for k in self._load_metadata()):
+        if any(k.startswith(self.IMAGE_KEY_PREFIX) for k in self._load_metadata()["_data_spec"]):
             image_modes.append(LeRobotDatasetV2ImageMode.MEMMAP)
         return image_modes
 
@@ -504,16 +498,22 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
 
         `data` should be a mapping of data key to data in array format. It should contain at least one
         episode. The episodes should have frame indices that start from 0 and step up in increments of 1.
+        All image data should be np.uint8, channel-last.
 
         Episodes are added to the dataset one-by-one. If an episode has more frames then are available till
-        the end of the numpy.memmap buffer, the pointer is reset to the start of the buffer and the episode is
-        inserted there, overwriting existing episode frames.  # TODO(now): Maybe I only want this if the user intends to use the dataset as a replay buffer
+        the end of the numpy.memmap buffer, there are several possibilities:
+            - If `buffer_capacity` was not provided at initialization, the memmaps are doubled in size.
+            - If `buffer_capacity` was provided and `use_as_filo_buffer=False`, an exception will be raised.
+            - If `buffer_capacity` was provided and `use_as_filo_buffer=True`, the data insertion pointer is
+                reset to the start of the memmap and the episode is inserted there, overwriting existing
+                episode frames. When episode frames are overwritten by a new episode, any remaining frames
+                belonging to the existing episode are left in place (meaning not all episodes will be
+                guaranteed to start from their frame 0).
 
-        When episode frames are overwritten by a new episode, by default, any remaining frames belonging to
-        the existing episode are left in place (meaning not all episodes will be guaranteed to start from
-        their frame 0).  # TODO(now): Maybe I only want this if the user intends to use the dataset as a replay buffer
-
-        After adding the episodes to the dataset, the numpy.memmap buffer is flushed to disk.
+        After adding the episodes to the dataset, the numpy.memmap buffer is flushed to disk, unless
+        `no_flush=True` is provided. In a loop where one episode is added at a time, providing `no_flush=True`
+        may provide speed advantages. The user should just remember to call `flush()` after finishing the
+        loop.
         """
         for episode_index in np.unique(data[self.EPISODE_INDEX_KEY]):
             where_episode = np.where(data[self.EPISODE_INDEX_KEY] == episode_index)[0]
@@ -582,7 +582,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 next_index = 0
             else:
                 # A buffer capacity was provided meaning we intend to fix the dataset size.
-                raise RuntimeError(
+                raise ValueError(
                     "Can't add this episode as it would exceed the provided buffer_capacity "
                     f"({self._buffer_capacity} frames) by {n_excess} frames."
                 )
@@ -601,6 +601,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                         / self.VIDEOS_DIR
                         / self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=new_episode_index),
                         self.fps,
+                        # crf=0,  # TODO(now)
                     )
             elif self._image_mode == LeRobotDatasetV2ImageMode.PNG and k.startswith(self.IMAGE_KEY_PREFIX):
                 # Encode images to PNG and save to disk.
@@ -671,13 +672,13 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         """Returns a whole episode as a key-array mapping.
 
         Includes decoding videos or PNG files where necessary.
-
-        TODO(now)
         """
         episode_data = {}
         data_mask = np.bitwise_and(
             self._data[self.EPISODE_INDEX_KEY] == episode_index, self._data[self.OCCUPANCY_MASK_KEY]
         )
+        if np.count_nonzero(data_mask) == 0:
+            raise IndexError(f"Episode index {episode_index} is not in the dataset.")
         for k in self.data_keys:
             if self._image_mode == LeRobotDatasetV2ImageMode.VIDEO and k in self.camera_keys:
                 episode_data[k] = decode_video_frames_torchvision(
@@ -685,7 +686,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                     / self.VIDEOS_DIR
                     / self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=episode_index),
                     timestamps=self._data[self.TIMESTAMP_KEY][data_mask],
-                    tolerance_s=self.tolerance_s,
+                    tolerance_s=1e-8,
                     backend="pyav",
                     to_pytorch_format=False,
                 )
@@ -903,11 +904,20 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             ),
         )
 
-        kwargs["fps"] = lerobot_dataset_info["fps"]
-
         dataset_already_on_disk = False
         if Path(kwargs["storage_dir"] / LeRobotDatasetV2.METADATA_FILE_NAME).exists():
             dataset_already_on_disk = True
+
+        # Set the image mode based on the provided HF dataset and whether we are decoding images.
+        if len(hf_dataset_camera_keys) == 0 or decode_images:
+            image_mode = LeRobotDatasetV2ImageMode.MEMMAP
+        elif lerobot_dataset_info.get("video", False):
+            image_mode = LeRobotDatasetV2ImageMode.VIDEO
+        else:
+            image_mode = LeRobotDatasetV2ImageMode.PNG
+            for k, feature in hf_dataset.features.items():
+                if isinstance(feature, datasets.features.Image):
+                    hf_dataset = hf_dataset.cast_column(k, datasets.features.Image(decode=False))
 
         # Create the LeRobotDatasetV2 object. Reminder: if the storage directory already exists, this reads it.
         # Otherwise, the storage directory is not created until later when we make the first call to
@@ -915,20 +925,9 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         obj = cls(
             **kwargs,
             buffer_capacity=len(hf_dataset) if not dataset_already_on_disk else None,
+            fps=lerobot_dataset_info["fps"],
+            image_mode=image_mode,
         )
-
-        # Set the image mode based on the provided HF dataset and whether we are decoding images.
-        if len(hf_dataset_camera_keys) == 0 or decode_images:
-            obj._image_mode = LeRobotDatasetV2ImageMode.MEMMAP
-        elif lerobot_dataset_info.get("video", False):
-            obj._image_mode = LeRobotDatasetV2ImageMode.VIDEO
-            obj._videos_dir = kwargs["storage_dir"] / LeRobotDatasetV2.VIDEOS_DIR
-        else:
-            obj._image_mode = LeRobotDatasetV2ImageMode.PNG
-            for k, feature in hf_dataset.features.items():
-                if isinstance(feature, datasets.features.Image):
-                    hf_dataset = hf_dataset.cast_column(k, datasets.features.Image(decode=False))
-            obj._images_dir = kwargs["storage_dir"] / LeRobotDatasetV2.PNGS_DIR
 
         # If we have accessed an existing cached dataset, just return the object as is.
         if dataset_already_on_disk:
