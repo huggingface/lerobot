@@ -24,9 +24,8 @@ pytest -sx 'tests/test_cameras.py::test_camera[intelrealsense-True]'
 import numpy as np
 import pytest
 
-from lerobot import available_cameras
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import make_camera, require_camera, require_mock_camera
+from tests.utils import TEST_CAMERA_TYPES, make_camera, require_camera
 
 # Maximum absolute difference between two consecutive images recored by a camera.
 # This value differs with respect to the camera.
@@ -37,7 +36,9 @@ def compute_max_pixel_difference(first_image, second_image):
     return np.abs(first_image.astype(float) - second_image.astype(float)).max()
 
 
-def _test_camera(camera_type):
+@pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)
+@require_camera
+def test_camera(request, camera_type, mock):
     """Test assumes that `camera.read()` returns the same image when called multiple times in a row.
     So the environment should not change (you shouldnt be in front of the camera) and the camera should not be moving.
 
@@ -47,8 +48,11 @@ def _test_camera(camera_type):
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
 
+    if camera_type == "opencv" and not mock:
+        pytest.skip("TODO(rcadene): fix test for opencv physical camera")
+
     # Test instantiating
-    camera = make_camera(camera_type)
+    camera = make_camera(camera_type, mock=mock)
 
     # Test reading, async reading, disconnecting before connecting raises an error
     with pytest.raises(RobotDeviceNotConnectedError):
@@ -62,7 +66,7 @@ def _test_camera(camera_type):
     del camera
 
     # Test connecting
-    camera = make_camera(camera_type)
+    camera = make_camera(camera_type, mock=mock)
     camera.connect()
     assert camera.is_connected
     assert camera.fps is not None
@@ -102,12 +106,12 @@ def _test_camera(camera_type):
     assert camera.thread is None
 
     # Test disconnecting with `__del__`
-    camera = make_camera(camera_type)
+    camera = make_camera(camera_type, mock=mock)
     camera.connect()
     del camera
 
     # Test acquiring a bgr image
-    camera = make_camera(camera_type, color_mode="bgr")
+    camera = make_camera(camera_type, color_mode="bgr", mock=mock)
     camera.connect()
     assert camera.color_mode == "bgr"
     bgr_color_image = camera.read()
@@ -120,7 +124,7 @@ def _test_camera(camera_type):
     # TODO(rcadene): Add a test for a camera that supports fps=60
 
     # Test width and height can be set
-    camera = make_camera(camera_type, fps=30, width=1280, height=720)
+    camera = make_camera(camera_type, fps=30, width=1280, height=720, mock=mock)
     camera.connect()
     assert camera.fps == 30
     assert camera.width == 1280
@@ -133,41 +137,19 @@ def _test_camera(camera_type):
     del camera
 
     # Test not supported width and height raise an error
-    camera = make_camera(camera_type, fps=30, width=0, height=0)
+    camera = make_camera(camera_type, fps=30, width=0, height=0, mock=mock)
     with pytest.raises(OSError):
         camera.connect()
     del camera
 
 
-def _test_save_images_from_cameras(tmpdir, camera_type):
+@pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)
+@require_camera
+def test_save_images_from_cameras(tmpdir, request, camera_type, mock):
     # TODO(rcadene): refactor
     if camera_type == "opencv":
         from lerobot.common.robot_devices.cameras.opencv import save_images_from_cameras
     elif camera_type == "intelrealsense":
         from lerobot.common.robot_devices.cameras.intelrealsense import save_images_from_cameras
 
-    save_images_from_cameras(tmpdir, record_time_s=1)
-
-
-@pytest.mark.parametrize("camera_type", available_cameras)
-@require_mock_camera
-def test_camera_mock(monkeypatch, camera_type):
-    _test_camera(camera_type)
-
-
-@pytest.mark.parametrize("camera_type", available_cameras)
-@require_camera
-def test_camera(request, camera_type):
-    _test_camera(camera_type)
-
-
-@pytest.mark.parametrize("camera_type", available_cameras)
-@require_mock_camera
-def test_save_images_from_cameras_mock(tmpdir, monkeypatch, camera_type):
-    _test_save_images_from_cameras(tmpdir, camera_type)
-
-
-@pytest.mark.parametrize("camera_type", available_cameras)
-@require_camera
-def test_save_images_from_cameras(tmpdir, request, camera_type):
-    _test_save_images_from_cameras(tmpdir, camera_type)
+    save_images_from_cameras(tmpdir, record_time_s=1, mock=mock)

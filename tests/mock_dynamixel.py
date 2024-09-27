@@ -5,19 +5,20 @@ Warning: These mocked versions are minimalist. They do not exactly mock every be
 from the original classes and functions (e.g. return types might be None instead of boolean).
 """
 
-from dynamixel_sdk import COMM_SUCCESS
+# from dynamixel_sdk import COMM_SUCCESS
 
 DEFAULT_BAUDRATE = 9_600
+COMM_SUCCESS = 0  # tx or rx packet communication success
 
 
-def mock_convert_to_bytes(value, bytes):
+def convert_to_bytes(value, bytes):
     # TODO(rcadene): remove need to mock `convert_to_bytes` by implemented the inverse transform
     # `convert_bytes_to_value`
     del bytes  # unused
     return value
 
 
-class MockPortHandler:
+class PortHandler:
     def __init__(self, port):
         self.port = port
         # factory default baudrate
@@ -39,14 +40,14 @@ class MockPortHandler:
         self.baudrate = baudrate
 
 
-class MockPacketHandler:
+class PacketHandler:
     def __init__(self, protocol_version):
         del protocol_version  # unused
         # Use packet_handler.data to communicate across Read and Write
         self.data = {}
 
 
-class MockGroupSyncRead:
+class GroupSyncRead:
     def __init__(self, port_handler, packet_handler, address, bytes):
         self.packet_handler = packet_handler
 
@@ -71,7 +72,7 @@ class MockGroupSyncRead:
         return self.packet_handler.data[index][address]
 
 
-class MockGroupSyncWrite:
+class GroupSyncWrite:
     def __init__(self, port_handler, packet_handler, address, bytes):
         self.packet_handler = packet_handler
         self.address = address

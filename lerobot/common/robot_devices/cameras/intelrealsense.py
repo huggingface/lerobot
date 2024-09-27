@@ -14,9 +14,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Thread
 
-import cv2
 import numpy as np
-import pyrealsense2 as rs
 from PIL import Image
 
 from lerobot.common.robot_devices.utils import (
@@ -29,14 +27,23 @@ from lerobot.scripts.control_robot import busy_wait
 SERIAL_NUMBER_INDEX = 1
 
 
-def find_camera_indices(raise_when_empty=True) -> list[int]:
+def find_camera_indices(raise_when_empty=True, mock=False) -> list[int]:
     """
     Find the serial numbers of the Intel RealSense cameras
     connected to the computer.
     """
+    if mock:
+        from tests.mock_intelrealsense import (
+            RSCameraInfo,
+            RSContext,
+        )
+    else:
+        from pyrealsense2 import camera_info as RSCameraInfo  # noqa: N812
+        from pyrealsense2 import context as RSContext  # noqa: N812
+
     camera_ids = []
-    for device in rs.context().query_devices():
-        serial_number = int(device.get_info(rs.camera_info(SERIAL_NUMBER_INDEX)))
+    for device in RSContext().query_devices():
+        serial_number = int(device.get_info(RSCameraInfo(SERIAL_NUMBER_INDEX)))
         camera_ids.append(serial_number)
 
     if raise_when_empty and len(camera_ids) == 0:
@@ -65,18 +72,24 @@ def save_images_from_cameras(
     width=None,
     height=None,
     record_time_s=2,
+    mock=False,
 ):
     """
     Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
     associated to a given camera index.
     """
     if camera_ids is None:
-        camera_ids = find_camera_indices()
+        camera_ids = find_camera_indices(mock=mock)
+
+    if mock:
+        from tests.mock_opencv import COLOR_RGB2BGR, cvtColor
+    else:
+        from cv2 import COLOR_RGB2BGR, cvtColor
 
     print("Connecting cameras")
     cameras = []
     for cam_idx in camera_ids:
-        camera = IntelRealSenseCamera(cam_idx, fps=fps, width=width, height=height)
+        camera = IntelRealSenseCamera(cam_idx, fps=fps, width=width, height=height, mock=mock)
         camera.connect()
         print(
             f"IntelRealSenseCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
@@ -104,7 +117,8 @@ def save_images_from_cameras(
                     image = camera.read() if fps is None else camera.async_read()
                     if image is None:
                         print("No Frame")
-                    bgr_converted_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+                    bgr_converted_image = cvtColor(image, COLOR_RGB2BGR)
 
                     executor.submit(
                         save_image,
@@ -150,6 +164,7 @@ class IntelRealSenseCameraConfig:
     color_mode: str = "rgb"
     use_depth: bool = False
     force_hardware_reset: bool = True
+    mock: bool = False
 
     def __post_init__(self):
         if self.color_mode not in ["rgb", "bgr"]:
@@ -231,6 +246,7 @@ class IntelRealSenseCamera:
         self.color_mode = config.color_mode
         self.use_depth = config.use_depth
         self.force_hardware_reset = config.force_hardware_reset
+        self.mock = config.mock
 
         self.camera = None
         self.is_connected = False
@@ -246,22 +262,35 @@ class IntelRealSenseCamera:
                 f"IntelRealSenseCamera({self.camera_index}) is already connected."
             )
 
-        config = rs.config()
+        if self.mock:
+            from tests.mock_intelrealsense import (
+                RSConfig,
+                RSFormat,
+                RSPipeline,
+                RSStream,
+            )
+        else:
+            from pyrealsense2 import config as RSConfig  # noqa: N812
+            from pyrealsense2 import format as RSFormat  # noqa: N812
+            from pyrealsense2 import pipeline as RSPipeline  # noqa: N812
+            from pyrealsense2 import stream as RSStream  # noqa: N812
+
+        config = RSConfig()
         config.enable_device(str(self.camera_index))
 
         if self.fps and self.width and self.height:
             # TODO(rcadene): can we set rgb8 directly?
-            config.enable_stream(rs.stream.color, self.width, self.height, rs.format.rgb8, self.fps)
+            config.enable_stream(RSStream.color, self.width, self.height, RSFormat.rgb8, self.fps)
         else:
-            config.enable_stream(rs.stream.color)
+            config.enable_stream(RSStream.color)
 
         if self.use_depth:
             if self.fps and self.width and self.height:
-                config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
+                config.enable_stream(RSStream.depth, self.width, self.height, RSFormat.z16, self.fps)
             else:
-                config.enable_stream(rs.stream.depth)
+                config.enable_stream(RSStream.depth)
 
-        self.camera = rs.pipeline()
+        self.camera = RSPipeline()
         try:
             profile = self.camera.start(config)
             is_camera_open = True
@@ -282,7 +311,7 @@ class IntelRealSenseCamera:
 
             raise OSError(f"Can't access IntelRealSenseCamera({self.camera_index}).")
 
-        color_stream = profile.get_stream(rs.stream.color)
+        color_stream = profile.get_stream(RSStream.color)
         color_profile = color_stream.as_video_stream_profile()
         actual_fps = color_profile.fps()
         actual_width = color_profile.width()
@@ -343,7 +372,12 @@ class IntelRealSenseCamera:
 
         # IntelRealSense uses RGB format as default (red, green, blue).
         if requested_color_mode == "bgr":
-            color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+            if self.mock:
+                from tests.mock_opencv import COLOR_RGB2BGR, cvtColor
+            else:
+                from cv2 import COLOR_RGB2BGR, cvtColor
+
+            color_image = cvtColor(color_image, COLOR_RGB2BGR)
 
         h, w, _ = color_image.shape
         if h != self.height or w != self.width:

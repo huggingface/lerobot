@@ -27,33 +27,44 @@ from pathlib import Path
 
 import pytest
 
-from lerobot import available_robots
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils.utils import init_hydra_config
 from lerobot.scripts.control_robot import calibrate, get_available_arms, record, replay, teleoperate
 from tests.test_robots import make_robot
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_mock_robot, require_robot
+from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, require_robot
 
 
-def _test_teleoperate(robot_type):
-    robot = make_robot(robot_type)
+@pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
+@require_robot
+def test_teleoperate(request, robot_type, mock):
+    robot = make_robot(robot_type, mock=mock)
     teleoperate(robot, teleop_time_s=1)
     teleoperate(robot, fps=30, teleop_time_s=1)
     teleoperate(robot, fps=60, teleop_time_s=1)
     del robot
 
 
-def _test_calibrate(robot_type):
-    robot = make_robot(robot_type)
+@pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
+@require_robot
+def test_calibrate(request, robot_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
+    robot = make_robot(robot_type, mock=mock)
     calibrate(robot, arms=get_available_arms(robot))
     del robot
 
 
-def _test_record_without_cameras(tmpdir, robot_type):
+@pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
+@require_robot
+def test_record_without_cameras(tmpdir, request, robot_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
     root = Path(tmpdir)
     repo_id = "lerobot/debug"
 
-    robot = make_robot(robot_type, overrides=["~cameras"])
+    robot = make_robot(robot_type, overrides=["~cameras"], mock=mock)
     record(
         robot,
         fps=30,
@@ -68,14 +79,19 @@ def _test_record_without_cameras(tmpdir, robot_type):
     )
 
 
-def _test_record_and_replay_and_policy(tmpdir, robot_type):
+@pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
+@require_robot
+def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
     env_name = "koch_real"
     policy_name = "act_koch_real"
 
     root = Path(tmpdir)
     repo_id = "lerobot/debug"
 
-    robot = make_robot(robot_type)
+    robot = make_robot(robot_type, mock=mock)
     dataset = record(
         robot,
         fps=30,
@@ -115,51 +131,3 @@ def _test_record_and_replay_and_policy(tmpdir, robot_type):
     )
 
     del robot
-
-
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_mock_robot
-def test_teleoperate_mock(monkeypatch, robot_type):
-    _test_teleoperate(robot_type)
-
-
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
-def test_teleoperate(request, robot_type):
-    _test_teleoperate(robot_type)
-
-
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_mock_robot
-def test_calibrate_mock(monkeypatch, robot_type):
-    _test_calibrate(robot_type)
-
-
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
-def test_calibrate(request, robot_type):
-    _test_calibrate(robot_type)
-
-
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_mock_robot
-def test_record_without_cameras_mock(tmpdir, monkeypatch, robot_type):
-    _test_record_without_cameras(tmpdir, robot_type)
-
-
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
-def test_record_without_cameras(tmpdir, request, robot_type):
-    _test_record_without_cameras(tmpdir, robot_type)
-
-
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_mock_robot
-def test_record_and_replay_and_policy_mock(tmpdir, monkeypatch, robot_type):
-    _test_record_and_replay_and_policy(tmpdir, robot_type)
-
-
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
-def test_record_and_replay_and_policy(tmpdir, request, robot_type):
-    _test_record_and_replay_and_policy(tmpdir, robot_type)

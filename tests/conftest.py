@@ -62,8 +62,8 @@ def is_camera_available(camera_type):
         del camera
         return True
     except Exception:
-        traceback.print_exc()
         print(f"\nA {camera_type} camera is not available.")
+        traceback.print_exc()
         return False
 
 
@@ -83,3 +83,12 @@ def is_motor_available(motor_type):
         traceback.print_exc()
         print(f"\nA {motor_type} motor is not available.")
         return False
+
+
+@pytest.fixture
+def patch_builtins_input(monkeypatch):
+    def print_text(text=None):
+        if text is not None:
+            print(text)
+
+    monkeypatch.setattr("builtins.input", print_text)

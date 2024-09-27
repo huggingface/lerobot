@@ -28,22 +28,26 @@ from pathlib import Path
 import pytest
 import torch
 
-from lerobot import available_robots
+from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import make_robot, require_mock_robot, require_robot
+from tests.utils import TEST_ROBOT_TYPES, make_robot, require_robot
 
 
-def _test_robot(tmpdir, robot_type, mock):
+@pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
+@require_robot
+def test_robot(tmpdir, request, robot_type, mock):
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
     # TODO(rcadene): add compatibility with other robots
-    from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
     if robot_type == "aloha" and mock:
         # To simplify unit test, we do not rerun manual calibration for Aloha mock=True.
         # Instead, we use the files from '.cache/calibration/aloha_default'
         overrides_calibration_dir = None
     else:
+        if mock:
+            request.getfixturevalue("patch_builtins_input")
+
         # Create an empty calibration directory to trigger manual calibration
         tmpdir = Path(tmpdir)
         calibration_dir = tmpdir / robot_type
@@ -72,7 +76,7 @@ def _test_robot(tmpdir, robot_type, mock):
     del robot
 
     # Test connecting (triggers manual calibration)
-    robot = make_robot(robot_type, overrides=overrides_calibration_dir)
+    robot = make_robot(robot_type, overrides=overrides_calibration_dir, mock=mock)
     robot.connect()
     assert robot.is_connected
 
@@ -84,7 +88,7 @@ def _test_robot(tmpdir, robot_type, mock):
     del robot
 
     # Test teleop can run
-    robot = make_robot(robot_type, overrides=overrides_calibration_dir)
+    robot = make_robot(robot_type, overrides=overrides_calibration_dir, mock=mock)
     if overrides_calibration_dir is not None:
         robot.calibration_dir = calibration_dir
     robot.connect()
@@ -133,15 +137,3 @@ def _test_robot(tmpdir, robot_type, mock):
     for name in robot.cameras:
         assert not robot.cameras[name].is_connected
     del robot
-
-
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_mock_robot
-def test_robot_mock(tmpdir, monkeypatch, robot_type):
-    _test_robot(tmpdir, robot_type, mock=True)
-
-
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
-def test_robot(tmpdir, request, robot_type):
-    _test_robot(tmpdir, robot_type, mock=False)

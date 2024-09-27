@@ -1,7 +1,11 @@
 from functools import cache
 
-import cv2
 import numpy as np
+
+CAP_PROP_FPS = 5
+CAP_PROP_FRAME_WIDTH = 3
+CAP_PROP_FRAME_HEIGHT = 4
+COLOR_BGR2RGB = 4
 
 
 @cache
@@ -9,12 +13,19 @@ def _generate_image(width: int, height: int):
     return np.random.randint(0, 256, size=(height, width, 3), dtype=np.uint8)
 
 
-class MockVideoCapture:
+def cvtColor(color_image, color_convertion):  # noqa: N802
+    if color_convertion == COLOR_BGR2RGB:
+        return color_image[:, :, [2, 1, 0]]
+    else:
+        raise NotImplementedError(color_convertion)
+
+
+class VideoCapture:
     def __init__(self, *args, **kwargs):
         self._mock_dict = {
-            cv2.CAP_PROP_FPS: 30,
-            cv2.CAP_PROP_FRAME_WIDTH: 640,
-            cv2.CAP_PROP_FRAME_HEIGHT: 480,
+            CAP_PROP_FPS: 30,
+            CAP_PROP_FRAME_WIDTH: 640,
+            CAP_PROP_FRAME_HEIGHT: 480,
         }
         self._is_opened = True
 
@@ -32,17 +43,17 @@ class MockVideoCapture:
             raise RuntimeError("Camera is not opened")
         value = self._mock_dict[propId]
         if value == 0:
-            if propId == cv2.CAP_PROP_FRAME_HEIGHT:
+            if propId == CAP_PROP_FRAME_HEIGHT:
                 value = 480
-            elif propId == cv2.CAP_PROP_FRAME_WIDTH:
+            elif propId == CAP_PROP_FRAME_WIDTH:
                 value = 640
         return value
 
     def read(self):
         if not self._is_opened:
             raise RuntimeError("Camera is not opened")
-        h = self.get(cv2.CAP_PROP_FRAME_HEIGHT)
-        w = self.get(cv2.CAP_PROP_FRAME_WIDTH)
+        h = self.get(CAP_PROP_FRAME_HEIGHT)
+        w = self.get(CAP_PROP_FRAME_WIDTH)
         ret = True
         return ret, _generate_image(width=w, height=h)
 

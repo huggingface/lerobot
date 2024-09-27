@@ -26,20 +26,35 @@ pytest -sx 'tests/test_motors.py::test_motors_bus[dynamixel-True]'
 # TODO(rcadene): add compatibility with other motors bus
 
 import time
-import traceback
 
 import numpy as np
 import pytest
 
-from lerobot import available_motors
+from lerobot.common.robot_devices.motors.dynamixel import find_port
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import make_motors_bus, mock_builtins_input, require_motor
+from tests.utils import TEST_MOTOR_TYPES, make_motors_bus, require_motor
 
 
-def _test_configure_motors_all_ids_1(motor_type):
+@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
+@require_motor
+def test_find_port_mock(request, motor_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+        with pytest.raises(OSError):
+            find_port()
+    else:
+        find_port()
+
+
+@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
+@require_motor
+def test_configure_motors_all_ids_1_mock(request, motor_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
     input("Are you sure you want to re-configure the motors? Press enter to continue...")
     # This test expect the configuration was already correct.
-    motors_bus = make_motors_bus(motor_type)
+    motors_bus = make_motors_bus(motor_type, mock=mock)
     motors_bus.connect()
     motors_bus.write("Baud_Rate", [0] * len(motors_bus.motors))
     motors_bus.set_bus_baudrate(9_600)
@@ -47,14 +62,19 @@ def _test_configure_motors_all_ids_1(motor_type):
     del motors_bus
 
     # Test configure
-    motors_bus = make_motors_bus(motor_type)
+    motors_bus = make_motors_bus(motor_type, mock=mock)
     motors_bus.connect()
     assert motors_bus.are_motors_configured()
     del motors_bus
 
 
-def _test_motors_bus(motor_type):
-    motors_bus = make_motors_bus(motor_type)
+@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
+@require_motor
+def test_motors_bus(request, motor_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
+    motors_bus = make_motors_bus(motor_type, mock=mock)
 
     # Test reading and writting before connecting raises an error
     with pytest.raises(RobotDeviceNotConnectedError):
@@ -68,7 +88,7 @@ def _test_motors_bus(motor_type):
     del motors_bus
 
     # Test connecting
-    motors_bus = make_motors_bus(motor_type)
+    motors_bus = make_motors_bus(motor_type, mock=mock)
     motors_bus.connect()
 
     # Test connecting twice raises an error
@@ -110,82 +130,3 @@ def _test_motors_bus(motor_type):
     time.sleep(1)
     new_values = motors_bus.read("Present_Position")
     assert (new_values == values).all()
-
-
-@pytest.mark.parametrize("motor_type", available_motors)
-def test_find_port_mock(monkeypatch, motor_type):
-    mock_motor(monkeypatch, motor_type)
-    from lerobot.common.robot_devices.motors.dynamixel import find_port
-
-    # To run find_port without user input
-    mock_builtins_input(monkeypatch)
-    with pytest.raises(OSError):
-        find_port()
-
-
-@pytest.mark.parametrize("motor_type", available_motors)
-@require_motor
-def test_find_port(request, motor_type):
-    from lerobot.common.robot_devices.motors.dynamixel import find_port
-
-    find_port()
-
-
-@pytest.mark.parametrize("motor_type", available_motors)
-def test_configure_motors_all_ids_1_mock(monkeypatch, motor_type):
-    mock_motor(monkeypatch, motor_type)
-    _test_configure_motors_all_ids_1(motor_type)
-
-
-@pytest.mark.parametrize("motor_type", available_motors)
-@require_motor
-def test_configure_motors_all_ids_1(request, motor_type):
-    _test_configure_motors_all_ids_1(motor_type)
-
-
-@pytest.mark.parametrize("motor_type", available_motors)
-def test_motors_bus_mock(monkeypatch, motor_type):
-    mock_motor(monkeypatch, motor_type)
-    _test_motors_bus(motor_type)
-
-
-@pytest.mark.parametrize("motor_type", available_motors)
-@require_motor
-def test_motors_bus(request, motor_type):
-    _test_motors_bus(motor_type)
-
-
-def mock_motor(monkeypatch, motor_type):
-    if motor_type not in available_motors:
-        raise ValueError(
-            f"The motor type '{motor_type}' is not valid. Expected one of these '{available_motors}"
-        )
-
-    if motor_type == "dynamixel":
-        try:
-            import dynamixel_sdk
-
-            from tests.mock_dynamixel import (
-                MockGroupSyncRead,
-                MockGroupSyncWrite,
-                MockPacketHandler,
-                MockPortHandler,
-                mock_convert_to_bytes,
-            )
-
-            monkeypatch.setattr(dynamixel_sdk, "GroupSyncRead", MockGroupSyncRead)
-            monkeypatch.setattr(dynamixel_sdk, "GroupSyncWrite", MockGroupSyncWrite)
-            monkeypatch.setattr(dynamixel_sdk, "PacketHandler", MockPacketHandler)
-            monkeypatch.setattr(dynamixel_sdk, "PortHandler", MockPortHandler)
-
-            # Import dynamixel AFTER mocking dynamixel_sdk to use mocked classes
-            from lerobot.common.robot_devices.motors import dynamixel
-
-            # TODO(rcadene): remove need to mock `convert_to_bytes` by implemented the inverse transform
-            # `convert_bytes_to_value`
-            monkeypatch.setattr(dynamixel, "convert_to_bytes", mock_convert_to_bytes)
-        except ImportError:
-            traceback.print_exc()
-            pytest.skip("To avoid skipping tests mocking dynamixel motors, run `pip install dynamixel-sdk`.")
-    else:
-        raise NotImplementedError("Implement mocking logic for new motor.")

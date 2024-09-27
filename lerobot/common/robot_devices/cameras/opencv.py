@@ -13,7 +13,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Thread
 
-import cv2
 import numpy as np
 from PIL import Image
 
@@ -24,10 +23,6 @@ from lerobot.common.robot_devices.utils import (
 )
 from lerobot.common.utils.utils import capture_timestamp_utc
 
-# Use 1 thread to avoid blocking the main thread. Especially useful during data collection
-# when other threads are used to save the images.
-cv2.setNumThreads(1)
-
 # The maximum opencv device index depends on your operating system. For instance,
 # if you have 3 cameras, they should be associated to index 0, 1, and 2. This is the case
 # on MacOS. However, on Ubuntu, the indices are different like 6, 16, 23.
@@ -36,7 +31,7 @@ cv2.setNumThreads(1)
 MAX_OPENCV_INDEX = 60
 
 
-def find_camera_indices(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX):
+def find_camera_indices(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, mock=False):
     if platform.system() == "Linux":
         # Linux uses camera ports
         print("Linux detected. Finding available camera indices through scanning '/dev/video*' ports")
@@ -51,9 +46,14 @@ def find_camera_indices(raise_when_empty=False, max_index_search_range=MAX_OPENC
         )
         possible_camera_ids = range(max_index_search_range)
 
+    if mock:
+        from tests.mock_opencv import VideoCapture
+    else:
+        from cv2 import VideoCapture
+
     camera_ids = []
     for camera_idx in possible_camera_ids:
-        camera = cv2.VideoCapture(camera_idx)
+        camera = VideoCapture(camera_idx)
         is_open = camera.isOpened()
         camera.release()
 
@@ -78,19 +78,25 @@ def save_image(img_array, camera_index, frame_index, images_dir):
 
 
 def save_images_from_cameras(
-    images_dir: Path, camera_ids: list[int] | None = None, fps=None, width=None, height=None, record_time_s=2
+    images_dir: Path,
+    camera_ids: list[int] | None = None,
+    fps=None,
+    width=None,
+    height=None,
+    record_time_s=2,
+    mock=False,
 ):
     """
     Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
     associated to a given camera index.
     """
     if camera_ids is None:
-        camera_ids = find_camera_indices()
+        camera_ids = find_camera_indices(mock=mock)
 
     print("Connecting cameras")
     cameras = []
     for cam_idx in camera_ids:
-        camera = OpenCVCamera(cam_idx, fps=fps, width=width, height=height)
+        camera = OpenCVCamera(cam_idx, fps=fps, width=width, height=height, mock=mock)
         camera.connect()
         print(
             f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, "
@@ -156,6 +162,7 @@ class OpenCVCameraConfig:
     width: int | None = None
     height: int | None = None
     color_mode: str = "rgb"
+    mock: bool = False
 
     def __post_init__(self):
         if self.color_mode not in ["rgb", "bgr"]:
@@ -215,6 +222,7 @@ class OpenCVCamera:
         self.width = config.width
         self.height = config.height
         self.color_mode = config.color_mode
+        self.mock = config.mock
 
         self.camera = None
         self.is_connected = False
@@ -235,11 +243,31 @@ class OpenCVCamera:
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")
 
+        if self.mock:
+            from tests.mock_opencv import (
+                CAP_PROP_FPS,
+                CAP_PROP_FRAME_HEIGHT,
+                CAP_PROP_FRAME_WIDTH,
+                VideoCapture,
+            )
+        else:
+            import cv2
+            from cv2 import (
+                CAP_PROP_FPS,
+                CAP_PROP_FRAME_HEIGHT,
+                CAP_PROP_FRAME_WIDTH,
+                VideoCapture,
+            )
+
+            # Use 1 thread to avoid blocking the main thread. Especially useful during data collection
+            # when other threads are used to save the images.
+            cv2.setNumThreads(1)
+
         camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
         with self.lock:
             # First create a temporary camera trying to access `camera_index`,
             # and verify it is a valid camera by calling `isOpened`.
-            tmp_camera = cv2.VideoCapture(camera_idx)
+            tmp_camera = VideoCapture(camera_idx)
             is_camera_open = tmp_camera.isOpened()
             # Release camera to make it accessible for `find_camera_indices`
             tmp_camera.release()
@@ -262,18 +290,18 @@ class OpenCVCamera:
         # Note: For some unknown reason, calling `isOpened` blocks the camera which then
         # needs to be re-created.
         with self.lock:
-            self.camera = cv2.VideoCapture(camera_idx)
+            self.camera = VideoCapture(camera_idx)
 
             if self.fps is not None:
-                self.camera.set(cv2.CAP_PROP_FPS, self.fps)
+                self.camera.set(CAP_PROP_FPS, self.fps)
             if self.width is not None:
-                self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                self.camera.set(CAP_PROP_FRAME_WIDTH, self.width)
             if self.height is not None:
-                self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                self.camera.set(CAP_PROP_FRAME_HEIGHT, self.height)
 
-            actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
-            actual_width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
-            actual_height = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            actual_fps = self.camera.get(CAP_PROP_FPS)
+            actual_width = self.camera.get(CAP_PROP_FRAME_WIDTH)
+            actual_height = self.camera.get(CAP_PROP_FRAME_HEIGHT)
 
             # Using `math.isclose` since actual fps can be a float (e.g. 29.9 instead of 30)
             if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
@@ -327,7 +355,12 @@ class OpenCVCamera:
         # However, Deep Learning framework such as LeRobot uses RGB format as default to train neural networks,
         # so we convert the image color from BGR to RGB.
         if requested_color_mode == "rgb":
-            color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
+            if self.mock:
+                from tests.mock_opencv import COLOR_BGR2RGB, cvtColor
+            else:
+                from cv2 import COLOR_BGR2RGB, cvtColor
+
+            color_image = cvtColor(color_image, COLOR_BGR2RGB)
 
         h, w, _ = color_image.shape
         if h != self.height or w != self.width:
