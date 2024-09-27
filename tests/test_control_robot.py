@@ -37,6 +37,9 @@ from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, require_r
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
 def test_teleoperate(request, robot_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
     robot = make_robot(robot_type, mock=mock)
     teleoperate(robot, teleop_time_s=1)
     teleoperate(robot, fps=30, teleop_time_s=1)
@@ -84,6 +87,9 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
 def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     if mock:
         request.getfixturevalue("patch_builtins_input")
+
+    if robot_type == "aloha":
+        pytest.skip("TODO(rcadene): enable test once aloha_real and act_aloha_real are merged")
 
     env_name = "koch_real"
     policy_name = "act_koch_real"
