@@ -5,6 +5,7 @@ import numpy as np
 CAP_PROP_FPS = 5
 CAP_PROP_FRAME_WIDTH = 3
 CAP_PROP_FRAME_HEIGHT = 4
+COLOR_RGB2BGR = 4
 COLOR_BGR2RGB = 4
 
 
@@ -14,7 +15,7 @@ def _generate_image(width: int, height: int):
 
 
 def cvtColor(color_image, color_convertion):  # noqa: N802
-    if color_convertion == COLOR_BGR2RGB:
+    if color_convertion in [COLOR_RGB2BGR, COLOR_BGR2RGB]:
         return color_image[:, :, [2, 1, 0]]
     else:
         raise NotImplementedError(color_convertion)
