@@ -38,6 +38,7 @@ jobs:
 
       - name: Ensure required file is fetched
         run: |
+          git fetch origin main
           git checkout origin/main -- .cache/calibration/aloha_default/left_follower.json
 
       - name: Install apt dependencies
