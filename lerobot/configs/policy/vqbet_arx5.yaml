@@ -14,14 +14,14 @@ override_dataset_stats:
   # from the original codebase, but we should remove these and train our own pretrained model
 
 training:
-  offline_steps: 600000
+  offline_steps: 50000
   online_steps: 0
-  eval_freq: 20000
-  save_freq: 20000
-  log_freq: 10
+  eval_freq: -1
+  save_freq: 5000
+  log_freq: 200
   save_checkpoint: true
 
-  batch_size: 64
+  batch_size: 16
   grad_clip_norm: 10
   lr: 1.0e-4
   lr_scheduler: cosine
@@ -33,7 +33,7 @@ training:
 
   # VQ-BeT specific
   vqvae_lr: 1.0e-3
-  n_vqvae_training_steps: 20000
+  n_vqvae_training_steps: 5000
   bet_weight_decay: 2e-4
   bet_learning_rate: 5.5e-5
   bet_betas: [0.9, 0.999]
@@ -52,7 +52,7 @@ policy:
   name: vqbet
 
   # Input / output structure.
-  n_obs_steps: 5
+  n_obs_steps: 10
   n_action_pred_token: 7
   action_chunk_size: 5
   use_language_conditioned_goals: True

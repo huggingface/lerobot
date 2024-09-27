@@ -425,7 +425,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         dataloading_s = time.perf_counter() - start_time
 
         for key in batch:
-            batch[key] = batch[key].to(device, non_blocking=True)
+            if key != 'language_instruction':
+                batch[key] = batch[key].to(device, non_blocking=True)
 
         train_info = update_policy(
             policy,
