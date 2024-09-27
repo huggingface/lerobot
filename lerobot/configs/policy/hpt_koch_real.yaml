@@ -36,7 +36,7 @@ training:
 
   batch_size: 8
   lr: 1.0e-5
-  lr_scheduler: cosine
+  lr_scheduler: constant_with_warmup
   lr_warmup_steps: 500
   adam_betas: [0.95, 0.999]
   adam_eps: 1.0e-8

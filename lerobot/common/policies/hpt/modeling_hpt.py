@@ -508,7 +508,7 @@ class DiffusionHead(nn.Module):
                 global_cond=global_cond,
             )
             trajectory = scheduler.step(model_output, t, trajectory, generator=generator).prev_sample
-        return trajectory
+        return trajectory.transpose(0,1)
 
     def forward(self, global_cond: Tensor):
         return self.conditional_sample(global_cond)
