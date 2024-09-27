@@ -8,7 +8,7 @@ OPENX_DATASET_CONFIGS:
       - base_pose_tool_reached
       - gripper_closed
     fps: 3
-  
+
   kuka:
     image_obs_keys:
       - image
@@ -18,7 +18,7 @@ OPENX_DATASET_CONFIGS:
       - clip_function_input/base_pose_tool_reached
       - gripper_closed
     fps: 10
-  
+
   bridge_openx:
     image_obs_keys:
       - image
@@ -28,7 +28,7 @@ OPENX_DATASET_CONFIGS:
       - EEF_state
       - gripper_state
     fps: 5
-  
+
   taco_play:
     image_obs_keys:
       - rgb_static
@@ -40,7 +40,7 @@ OPENX_DATASET_CONFIGS:
       - state_eef
       - state_gripper
     fps: 15
-  
+
   jaco_play:
     image_obs_keys:
       - image
@@ -51,7 +51,7 @@ OPENX_DATASET_CONFIGS:
       - state_eef
       - state_gripper
     fps: 10
-  
+
   berkeley_cable_routing:
     image_obs_keys:
       - image
@@ -72,7 +72,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - null
     fps: 10
-  
+
   nyu_door_opening_surprising_effectiveness:
     image_obs_keys:
       - image
@@ -221,7 +221,7 @@ OPENX_DATASET_CONFIGS:
     image_obs_keys:
       - highres_image
     depth_obs_keys:
-      - null  
+      - null
     state_obs_keys:
       - null
     fps: 10
@@ -234,7 +234,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - joint_state
     fps: 2
-  
+
   ucsd_pick_and_place_dataset_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -244,7 +244,7 @@ OPENX_DATASET_CONFIGS:
       - eef_state
       - gripper_state
     fps: 3
-  
+
   spoc:
     image_obs_keys:
       - image
@@ -254,7 +254,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - null
     fps: 3
-  
+
   austin_sailor_dataset_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -264,7 +264,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state
     fps: 20
-  
+
   austin_sirius_dataset_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -274,7 +274,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state
     fps: 20
-  
+
   bc_z:
     image_obs_keys:
       - image
@@ -285,7 +285,7 @@ OPENX_DATASET_CONFIGS:
       - present/axis_angle
       - present/sensed_close
     fps: 10
-  
+
   utokyo_pr2_opening_fridge_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -295,7 +295,7 @@ OPENX_DATASET_CONFIGS:
       - eef_state
       - gripper_state
     fps: 10
-  
+
   utokyo_pr2_tabletop_manipulation_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -305,7 +305,7 @@ OPENX_DATASET_CONFIGS:
       - eef_state
       - gripper_state
     fps: 10
-  
+
   utokyo_xarm_pick_and_place_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -316,7 +316,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - end_effector_pose
     fps: 10
-  
+
   utokyo_xarm_bimanual_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -325,7 +325,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - pose_r
     fps: 10
-  
+
   robo_net:
     image_obs_keys:
       - image
@@ -336,7 +336,7 @@ OPENX_DATASET_CONFIGS:
       - eef_state
       - gripper_state
     fps: 1
-  
+
   robo_set:
     image_obs_keys:
       - image_left
@@ -348,7 +348,7 @@ OPENX_DATASET_CONFIGS:
       - state
       - state_velocity
     fps: 5
-  
+
   berkeley_mvp_converted_externally_to_rlds:
     image_obs_keys:
       - hand_image
@@ -359,7 +359,7 @@ OPENX_DATASET_CONFIGS:
       - pose
       - joint_pos
     fps: 5
-  
+
   berkeley_rpt_converted_externally_to_rlds:
     image_obs_keys:
       - hand_image
@@ -369,7 +369,7 @@ OPENX_DATASET_CONFIGS:
       - joint_pos
       - gripper
     fps: 30
-  
+
   kaist_nonprehensile_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -378,7 +378,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state
     fps: 10
-  
+
   stanford_mask_vit_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -387,7 +387,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - eef_state
       - gripper_state
-  
+
   tokyo_u_lsmo_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -397,7 +397,7 @@ OPENX_DATASET_CONFIGS:
       - eef_state
       - gripper_state
     fps: 10
-  
+
   dlr_sara_pour_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -406,16 +406,16 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state
     fps: 10
-  
+
   dlr_sara_grid_clamp_converted_externally_to_rlds:
     image_obs_keys:
       - image
     depth_obs_keys:
       - null
     state_obs_keys:
-      - state  
+      - state
     fps: 10
-  
+
   dlr_edan_shared_control_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -424,7 +424,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state
     fps: 5
-  
+
   asu_table_top_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -478,7 +478,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - null
     fps: 1
-  
+
   utaustin_mutex:
     image_obs_keys:
       - image
@@ -488,7 +488,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state
     fps: 20
-  
+
   berkeley_fanuc_manipulation:
     image_obs_keys:
       - image
@@ -499,7 +499,7 @@ OPENX_DATASET_CONFIGS:
       - joint_state
       - gripper_state
     fps: 10
-  
+
   cmu_playing_with_food:
     image_obs_keys:
       - image
@@ -509,7 +509,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state
     fps: 10
-  
+
   cmu_play_fusion:
     image_obs_keys:
       - image
@@ -518,7 +518,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state
     fps: 5
-  
+
   cmu_stretch:
     image_obs_keys:
       - image
@@ -528,7 +528,7 @@ OPENX_DATASET_CONFIGS:
       - eef_state
       - gripper_state
     fps: 10
-  
+
   berkeley_gnm_recon:
     image_obs_keys:
       - image
@@ -539,7 +539,7 @@ OPENX_DATASET_CONFIGS:
       - position
       - yaw
     fps: 3
- 
+
   berkeley_gnm_cory_hall:
     image_obs_keys:
       - image
@@ -550,7 +550,7 @@ OPENX_DATASET_CONFIGS:
       - position
       - yaw
     fps: 5
- 
+
   berkeley_gnm_sac_son:
     image_obs_keys:
       - image
@@ -561,7 +561,7 @@ OPENX_DATASET_CONFIGS:
       - position
       - yaw
     fps: 10
-  
+
   droid:
     image_obs_keys:
       - exterior_image_1_left
@@ -572,7 +572,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - proprio
     fps: 15
-  
+
   droid_100:
     image_obs_keys:
       - exterior_image_1_left
@@ -583,7 +583,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - proprio
     fps: 15
-  
+
   fmb:
     image_obs_keys:
       - image_side_1
@@ -598,7 +598,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - proprio
     fps: 10
-  
+
   dobbe:
     image_obs_keys:
       - wrist_image
@@ -607,7 +607,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - proprio
     fps: 3.75
-  
+
   usc_cloth_sim_converted_externally_to_rlds:
     image_obs_keys:
       - image
@@ -616,7 +616,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - null
     fps: 10
-  
+
   plex_robosuite:
     image_obs_keys:
       - image
@@ -626,7 +626,7 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state
     fps: 20
-  
+
   conq_hose_manipulation:
     image_obs_keys:
       - frontleft_fisheye_image
@@ -637,4 +637,3 @@ OPENX_DATASET_CONFIGS:
     state_obs_keys:
       - state
     fps: 30
-  

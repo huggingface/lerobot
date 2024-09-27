@@ -1,6 +1,7 @@
+import json
 import logging
-import pickle
 import time
+import warnings
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Sequence
@@ -10,11 +11,12 @@ import torch
 
 from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.motors.dynamixel import (
-    OperatingMode,
+    CalibrationMode,
     TorqueMode,
     convert_degrees_to_steps,
 )
 from lerobot.common.robot_devices.motors.utils import MotorsBus
+from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 
 ########################################################################
@@ -25,7 +27,8 @@ URL_TEMPLATE = (
     "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"
 )
 
-# In nominal degree range ]-180, +180[
+# The following positions are provided in nominal degree range ]-180, +180[
+# For more info on these constants, see comments in the code where they get used.
 ZERO_POSITION_DEGREE = 0
 ROTATED_POSITION_DEGREE = 90
 
@@ -45,27 +48,13 @@ def apply_drive_mode(position, drive_mode):
     return position
 
 
-def reset_torque_mode(arm: MotorsBus):
-    # To be configured, all servos must be in "torque disable" mode
-    arm.write("Torque_Enable", TorqueMode.DISABLED.value)
-
-    # Use 'extended position mode' for all motors except gripper, because in joint mode the servos can't
-    # rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling the arm,
-    # you could end up with a servo with a position 0 or 4095 at a crucial point See [
-    # https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11]
-    all_motors_except_gripper = [name for name in arm.motor_names if name != "gripper"]
-    if len(all_motors_except_gripper) > 0:
-        arm.write("Operating_Mode", OperatingMode.EXTENDED_POSITION.value, all_motors_except_gripper)
-
-    # Use 'position control current based' for gripper to be limited by the limit of the current.
-    # For the follower gripper, it means it can grasp an object without forcing too much even tho,
-    # it's goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
-    # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
-    # to make it move, and it will move back to its original target position when we release the force.
-    arm.write("Operating_Mode", OperatingMode.CURRENT_CONTROLLED_POSITION.value, "gripper")
+def compute_nearest_rounded_position(position, models):
+    delta_turn = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, models)
+    nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
+    return nearest_pos.astype(position.dtype)
 
 
-def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
+def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
     """This function ensures that a neural network trained on data collected on a given robot
     can work on another robot. For instance before calibration, setting a same goal position
     for each motor of two different robots will get two very different positions. But after calibration,
@@ -84,38 +73,27 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
 
     Example of usage:
     ```python
-    run_arm_calibration(arm, "left", "follower")
+    run_arm_calibration(arm, "koch", "left", "follower")
     ```
     """
-    reset_torque_mode(arm)
+    if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
+        raise ValueError("To run calibration, the torque must be disabled on all motors.")
 
-    print(f"\nRunning calibration of {name} {arm_type}...")
+    print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
 
     print("\nMove arm to zero position")
-    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="zero"))
+    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="zero"))
     input("Press Enter to continue...")
 
-    # We arbitrarely choosed our zero target position to be a straight horizontal position with gripper upwards and closed.
+    # We arbitrarily chose our zero target position to be a straight horizontal position with gripper upwards and closed.
     # It is easy to identify and all motors are in a "quarter turn" position. Once calibration is done, this position will
-    # corresponds to every motor angle being 0. If you set all 0 as Goal Position, the arm will move in this position.
-    zero_position = convert_degrees_to_steps(ZERO_POSITION_DEGREE, arm.motor_models)
-
-    def _compute_nearest_rounded_position(position, models):
-        # TODO(rcadene): Rework this function since some motors cant physically rotate a quarter turn
-        # (e.g. the gripper of Aloha arms can only rotate ~50 degree)
-        quarter_turn_degree = 90
-        quarter_turn = convert_degrees_to_steps(quarter_turn_degree, models)
-        nearest_pos = np.round(position.astype(float) / quarter_turn) * quarter_turn
-        return nearest_pos.astype(position.dtype)
+    # correspond to every motor angle being 0. If you set all 0 as Goal Position, the arm will move in this position.
+    zero_target_pos = convert_degrees_to_steps(ZERO_POSITION_DEGREE, arm.motor_models)
 
     # Compute homing offset so that `present_position + homing_offset ~= target_position`.
-    position = arm.read("Present_Position")
-    position = _compute_nearest_rounded_position(position, arm.motor_models)
-    homing_offset = zero_position - position
-
-    print("\nMove arm to rotated target position")
-    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="rotated"))
-    input("Press Enter to continue...")
+    zero_pos = arm.read("Present_Position")
+    zero_nearest_pos = compute_nearest_rounded_position(zero_pos, arm.motor_models)
+    homing_offset = zero_target_pos - zero_nearest_pos
 
     # The rotated target position corresponds to a rotation of a quarter turn from the zero position.
     # This allows to identify the rotation direction of each motor.
@@ -124,44 +102,83 @@ def run_arm_calibration(arm: MotorsBus, name: str, arm_type: str):
     # Sometimes, there is only one possible rotation direction. For instance, if the gripper is closed, there is only one direction which
     # corresponds to opening the gripper. When the rotation direction is ambiguous, we arbitrarely rotate clockwise from the point of view
     # of the previous motor in the kinetic chain.
-    rotated_position = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, arm.motor_models)
+    print("\nMove arm to rotated target position")
+    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rotated"))
+    input("Press Enter to continue...")
+
+    rotated_target_pos = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, arm.motor_models)
 
     # Find drive mode by rotating each motor by a quarter of a turn.
     # Drive mode indicates if the motor rotation direction should be inverted (=1) or not (=0).
-    position = arm.read("Present_Position")
-    position += homing_offset
-    position = _compute_nearest_rounded_position(position, arm.motor_models)
-    drive_mode = (position != rotated_position).astype(np.int32)
+    rotated_pos = arm.read("Present_Position")
+    drive_mode = (rotated_pos < zero_pos).astype(np.int32)
 
     # Re-compute homing offset to take into account drive mode
-    position = arm.read("Present_Position")
-    position = apply_drive_mode(position, drive_mode)
-    position = _compute_nearest_rounded_position(position, arm.motor_models)
-    homing_offset = rotated_position - position
+    rotated_drived_pos = apply_drive_mode(rotated_pos, drive_mode)
+    rotated_nearest_pos = compute_nearest_rounded_position(rotated_drived_pos, arm.motor_models)
+    homing_offset = rotated_target_pos - rotated_nearest_pos
 
     print("\nMove arm to rest position")
-    print("See: " + URL_TEMPLATE.format(robot="koch", arm=arm_type, position="rest"))
+    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rest"))
     input("Press Enter to continue...")
     print()
 
-    return homing_offset, drive_mode
+    # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
+    calib_mode = [CalibrationMode.DEGREE.name] * len(arm.motor_names)
+
+    # TODO(rcadene): make type of joints (DEGREE or LINEAR) configurable from yaml?
+    if robot_type == "aloha" and "gripper" in arm.motor_names:
+        # Joints with linear motions (like gripper of Aloha) are experessed in nominal range of [0, 100]
+        calib_idx = arm.motor_names.index("gripper")
+        calib_mode[calib_idx] = CalibrationMode.LINEAR.name
+
+    calib_data = {
+        "homing_offset": homing_offset.tolist(),
+        "drive_mode": drive_mode.tolist(),
+        "start_pos": zero_pos.tolist(),
+        "end_pos": rotated_pos.tolist(),
+        "calib_mode": calib_mode,
+        "motor_names": arm.motor_names,
+    }
+    return calib_data
+
+
+def ensure_safe_goal_position(
+    goal_pos: torch.Tensor, present_pos: torch.Tensor, max_relative_target: float | list[float]
+):
+    # Cap relative action target magnitude for safety.
+    diff = goal_pos - present_pos
+    max_relative_target = torch.tensor(max_relative_target)
+    safe_diff = torch.minimum(diff, max_relative_target)
+    safe_diff = torch.maximum(safe_diff, -max_relative_target)
+    safe_goal_pos = present_pos + safe_diff
+
+    if not torch.allclose(goal_pos, safe_goal_pos):
+        logging.warning(
+            "Relative goal position magnitude had to be clamped to be safe.\n"
+            f"  requested relative goal position target: {diff}\n"
+            f"    clamped relative goal position target: {safe_diff}"
+        )
+
+    return safe_goal_pos
 
 
 ########################################################################
-# Alexander Koch robot arm
+# Manipulator robot
 ########################################################################
 
 
 @dataclass
-class KochRobotConfig:
+class ManipulatorRobotConfig:
     """
     Example of usage:
     ```python
-    KochRobotConfig()
+    ManipulatorRobotConfig()
     ```
     """
 
     # Define all components of the robot
+    robot_type: str | None = None
     leader_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     follower_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
@@ -191,14 +208,15 @@ class KochRobotConfig:
         super().__setattr__(prop, val)
 
 
-class KochRobot:
+class ManipulatorRobot:
     # TODO(rcadene): Implement force feedback
-    """This class allows to control any Koch robot of various number of motors.
+    """This class allows to control any manipulator robot of various number of motors.
 
-    A few versions are available:
-    - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow expansion, which was developed
-    by Alexander Koch from [Tau Robotics](https://tau-robotics.com): [Github for sourcing and assembly](
-    - [Koch v1.1])https://github.com/jess-moss/koch-v1-1), which was developed by Jess Moss.
+    Non exaustive list of robots:
+    - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow expansion, developed
+    by Alexander Koch from [Tau Robotics](https://tau-robotics.com)
+    - [Koch v1.1](https://github.com/jess-moss/koch-v1-1) developed by Jess Moss
+    - [Aloha](https://www.trossenrobotics.com/aloha-kits) developed by Trossen Robotics
 
     Example of highest frequency teleoperation without camera:
     ```python
@@ -231,7 +249,9 @@ class KochRobot:
             },
         ),
     }
-    robot = KochRobot(
+    robot = ManipulatorRobot(
+        robot_type="koch",
+        calibration_dir=".cache/calibration/koch",
         leader_arms=leader_arms,
         follower_arms=follower_arms,
     )
@@ -246,7 +266,9 @@ class KochRobot:
     Example of highest frequency data collection without camera:
     ```python
     # Assumes leader and follower arms have been instantiated already (see first example)
-    robot = KochRobot(
+    robot = ManipulatorRobot(
+        robot_type="koch",
+        calibration_dir=".cache/calibration/koch",
         leader_arms=leader_arms,
         follower_arms=follower_arms,
     )
@@ -267,7 +289,9 @@ class KochRobot:
     }
 
     # Assumes leader and follower arms have been instantiated already (see first example)
-    robot = KochRobot(
+    robot = ManipulatorRobot(
+        robot_type="koch",
+        calibration_dir=".cache/calibration/koch",
         leader_arms=leader_arms,
         follower_arms=follower_arms,
         cameras=cameras,
@@ -280,7 +304,9 @@ class KochRobot:
     Example of controlling the robot with a policy (without running multiple policies in parallel to ensure highest frequency):
     ```python
     # Assumes leader and follower arms + cameras have been instantiated already (see previous example)
-    robot = KochRobot(
+    robot = ManipulatorRobot(
+        robot_type="koch",
+        calibration_dir=".cache/calibration/koch",
         leader_arms=leader_arms,
         follower_arms=follower_arms,
         cameras=cameras,
@@ -306,16 +332,17 @@ class KochRobot:
 
     def __init__(
         self,
-        config: KochRobotConfig | None = None,
-        calibration_path: Path = ".cache/calibration/koch.pkl",
+        config: ManipulatorRobotConfig | None = None,
+        calibration_dir: Path = ".cache/calibration/koch",
         **kwargs,
     ):
         if config is None:
-            config = KochRobotConfig()
+            config = ManipulatorRobotConfig()
         # Overwrite config arguments using kwargs
         self.config = replace(config, **kwargs)
-        self.calibration_path = Path(calibration_path)
+        self.calibration_dir = Path(calibration_dir)
 
+        self.robot_type = self.config.robot_type
         self.leader_arms = self.config.leader_arms
         self.follower_arms = self.config.follower_arms
         self.cameras = self.config.cameras
@@ -325,12 +352,12 @@ class KochRobot:
     def connect(self):
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
-                "KochRobot is already connected. Do not run `robot.connect()` twice."
+                "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
             )
 
         if not self.leader_arms and not self.follower_arms and not self.cameras:
             raise ValueError(
-                "KochRobot doesn't have any device to connect. See example of usage in docstring of the class."
+                "ManipulatorRobot doesn't have any device to connect. See example of usage in docstring of the class."
             )
 
         # Connect the arms
@@ -340,38 +367,22 @@ class KochRobot:
             print(f"Connecting {name} leader arm.")
             self.leader_arms[name].connect()
 
-        # Reset the arms and load or run calibration
-        if self.calibration_path.exists():
-            # Reset all arms before setting calibration
-            for name in self.follower_arms:
-                reset_torque_mode(self.follower_arms[name])
-            for name in self.leader_arms:
-                reset_torque_mode(self.leader_arms[name])
-
-            with open(self.calibration_path, "rb") as f:
-                calibration = pickle.load(f)
-        else:
-            print(f"Missing calibration file '{self.calibration_path}'. Starting calibration precedure.")
-            # Run calibration process which begins by reseting all arms
-            calibration = self.run_calibration()
-
-            print(f"Calibration is done! Saving calibration file '{self.calibration_path}'")
-            self.calibration_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.calibration_path, "wb") as f:
-                pickle.dump(calibration, f)
-
-        # Set calibration
+        # We assume that at connection time, arms are in a rest position, and torque can
+        # be safely disabled to run calibration and/or set robot preset configurations.
         for name in self.follower_arms:
-            self.follower_arms[name].set_calibration(calibration[f"follower_{name}"])
+            self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
         for name in self.leader_arms:
-            self.leader_arms[name].set_calibration(calibration[f"leader_{name}"])
+            self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
 
-        # Set better PID values to close the gap between recored states and actions
-        # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
-        for name in self.follower_arms:
-            self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
-            self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
-            self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
+        self.activate_calibration()
+
+        # Set robot preset (e.g. torque in leader gripper for Koch v1.1)
+        if self.robot_type == "koch":
+            self.set_koch_robot_preset()
+        elif self.robot_type == "aloha":
+            self.set_aloha_robot_preset()
+        else:
+            warnings.warn(f"No preset found for robot type: {self.robot_type}", stacklevel=1)
 
         # Enable torque on all motors of the follower arms
         for name in self.follower_arms:
@@ -391,31 +402,132 @@ class KochRobot:
 
         self.is_connected = True
 
-    def run_calibration(self):
-        calibration = {}
+    def activate_calibration(self):
+        """After calibration all motors function in human interpretable ranges.
+        Rotations are expressed in degrees in nominal range of [-180, 180],
+        and linear motions (like gripper of Aloha) in nominal range of [0, 100].
+        """
+
+        def load_or_run_calibration_(name, arm, arm_type):
+            arm_id = get_arm_id(name, arm_type)
+            arm_calib_path = self.calibration_dir / f"{arm_id}.json"
+
+            if arm_calib_path.exists():
+                with open(arm_calib_path) as f:
+                    calibration = json.load(f)
+            else:
+                print(f"Missing calibration file '{arm_calib_path}'")
+                calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
+
+                print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
+                arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(arm_calib_path, "w") as f:
+                    json.dump(calibration, f)
+
+            return calibration
+
+        for name, arm in self.follower_arms.items():
+            calibration = load_or_run_calibration_(name, arm, "follower")
+            arm.set_calibration(calibration)
+        for name, arm in self.leader_arms.items():
+            calibration = load_or_run_calibration_(name, arm, "leader")
+            arm.set_calibration(calibration)
+
+    def set_koch_robot_preset(self):
+        def set_operating_mode_(arm):
+            if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
+                raise ValueError("To run set robot preset, the torque must be disabled on all motors.")
+
+            # Use 'extended position mode' for all motors except gripper, because in joint mode the servos can't
+            # rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling the arm,
+            # you could end up with a servo with a position 0 or 4095 at a crucial point See [
+            # https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11]
+            all_motors_except_gripper = [name for name in arm.motor_names if name != "gripper"]
+            if len(all_motors_except_gripper) > 0:
+                # 4 corresponds to Extended Position on Koch motors
+                arm.write("Operating_Mode", 4, all_motors_except_gripper)
+
+            # Use 'position control current based' for gripper to be limited by the limit of the current.
+            # For the follower gripper, it means it can grasp an object without forcing too much even tho,
+            # it's goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
+            # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
+            # to make it move, and it will move back to its original target position when we release the force.
+            # 5 corresponds to Current Controlled Position on Koch gripper motors "xl330-m077, xl330-m288"
+            arm.write("Operating_Mode", 5, "gripper")
 
         for name in self.follower_arms:
-            homing_offset, drive_mode = run_arm_calibration(self.follower_arms[name], name, "follower")
+            set_operating_mode_(self.follower_arms[name])
 
-            calibration[f"follower_{name}"] = {}
-            for idx, motor_name in enumerate(self.follower_arms[name].motor_names):
-                calibration[f"follower_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
+            # Set better PID values to close the gap between recorded states and actions
+            # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
+            self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
+            self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
+            self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
+
+        if self.config.gripper_open_degree is not None:
+            for name in self.leader_arms:
+                set_operating_mode_(self.leader_arms[name])
+
+                # Enable torque on the gripper of the leader arms, and move it to 45 degrees,
+                # so that we can use it as a trigger to close the gripper of the follower arms.
+                self.leader_arms[name].write("Torque_Enable", 1, "gripper")
+                self.leader_arms[name].write("Goal_Position", self.config.gripper_open_degree, "gripper")
+
+    def set_aloha_robot_preset(self):
+        def set_shadow_(arm):
+            # Set secondary/shadow ID for shoulder and elbow. These joints have two motors.
+            # As a result, if only one of them is required to move to a certain position,
+            # the other will follow. This is to avoid breaking the motors.
+            if "shoulder_shadow" in arm.motor_names:
+                shoulder_idx = arm.read("ID", "shoulder")
+                arm.write("Secondary_ID", shoulder_idx, "shoulder_shadow")
+
+            if "elbow_shadow" in arm.motor_names:
+                elbow_idx = arm.read("ID", "elbow")
+                arm.write("Secondary_ID", elbow_idx, "elbow_shadow")
+
+        for name in self.follower_arms:
+            set_shadow_(self.follower_arms[name])
 
         for name in self.leader_arms:
-            homing_offset, drive_mode = run_arm_calibration(self.leader_arms[name], name, "leader")
+            set_shadow_(self.leader_arms[name])
 
-            calibration[f"leader_{name}"] = {}
-            for idx, motor_name in enumerate(self.leader_arms[name].motor_names):
-                calibration[f"leader_{name}"][motor_name] = (homing_offset[idx], drive_mode[idx])
+        for name in self.follower_arms:
+            # Set a velocity limit of 131 as advised by Trossen Robotics
+            self.follower_arms[name].write("Velocity_Limit", 131)
 
-        return calibration
+            # Use 'extended position mode' for all motors except gripper, because in joint mode the servos can't
+            # rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling the arm,
+            # you could end up with a servo with a position 0 or 4095 at a crucial point See [
+            # https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11]
+            all_motors_except_gripper = [
+                name for name in self.follower_arms[name].motor_names if name != "gripper"
+            ]
+            if len(all_motors_except_gripper) > 0:
+                # 4 corresponds to Extended Position on Aloha motors
+                self.follower_arms[name].write("Operating_Mode", 4, all_motors_except_gripper)
+
+            # Use 'position control current based' for follower gripper to be limited by the limit of the current.
+            # It can grasp an object without forcing too much even tho,
+            # it's goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
+            # 5 corresponds to Current Controlled Position on Aloha gripper follower "xm430-w350"
+            self.follower_arms[name].write("Operating_Mode", 5, "gripper")
+
+            # Note: We can't enable torque on the leader gripper since "xc430-w150" doesn't have
+            # a Current Controlled Position mode.
+
+        if self.config.gripper_open_degree is not None:
+            warnings.warn(
+                f"`gripper_open_degree` is set to {self.config.gripper_open_degree}, but None is expected for Aloha instead",
+                stacklevel=1,
+            )
 
     def teleop_step(
         self, record_data=False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "KochRobot is not connected. You need to run `robot.connect()`."
+                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
         # Prepare to assign the position of the leader to the follower
@@ -423,16 +535,27 @@ class KochRobot:
         for name in self.leader_arms:
             before_lread_t = time.perf_counter()
             leader_pos[name] = self.leader_arms[name].read("Present_Position")
+            leader_pos[name] = torch.from_numpy(leader_pos[name])
             self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - before_lread_t
 
+        # Send goal position to the follower
         follower_goal_pos = {}
-        for name in self.leader_arms:
-            follower_goal_pos[name] = leader_pos[name]
-
-        # Send action
         for name in self.follower_arms:
             before_fwrite_t = time.perf_counter()
-            self.send_action(torch.tensor(follower_goal_pos[name]), [name])
+            goal_pos = leader_pos[name]
+
+            # Cap goal position when too far away from present position.
+            # Slower fps expected due to reading from the follower.
+            if self.config.max_relative_target is not None:
+                present_pos = self.follower_arms[name].read("Present_Position")
+                present_pos = torch.from_numpy(present_pos)
+                goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
+
+            # Used when record_data=True
+            follower_goal_pos[name] = goal_pos
+
+            goal_pos = goal_pos.numpy().astype(np.int32)
+            self.follower_arms[name].write("Goal_Position", goal_pos)
             self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
         # Early exit when recording data is not requested
@@ -445,6 +568,7 @@ class KochRobot:
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
             follower_pos[name] = self.follower_arms[name].read("Present_Position")
+            follower_pos[name] = torch.from_numpy(follower_pos[name])
             self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
         # Create state by concatenating follower current position
@@ -452,29 +576,30 @@ class KochRobot:
         for name in self.follower_arms:
             if name in follower_pos:
                 state.append(follower_pos[name])
-        state = np.concatenate(state)
+        state = torch.cat(state)
 
         # Create action by concatenating follower goal position
         action = []
         for name in self.follower_arms:
             if name in follower_goal_pos:
                 action.append(follower_goal_pos[name])
-        action = np.concatenate(action)
+        action = torch.cat(action)
 
         # Capture images from cameras
         images = {}
         for name in self.cameras:
             before_camread_t = time.perf_counter()
             images[name] = self.cameras[name].async_read()
+            images[name] = torch.from_numpy(images[name])
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
-        # Populate output dictionnaries and format to pytorch
+        # Populate output dictionnaries
         obs_dict, action_dict = {}, {}
-        obs_dict["observation.state"] = torch.from_numpy(state)
-        action_dict["action"] = torch.from_numpy(action)
+        obs_dict["observation.state"] = state
+        action_dict["action"] = action
         for name in self.cameras:
-            obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
+            obs_dict[f"observation.images.{name}"] = images[name]
 
         return obs_dict, action_dict
 
@@ -482,7 +607,7 @@ class KochRobot:
         """The returned observations do not have a batch dimension."""
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "KochRobot is not connected. You need to run `robot.connect()`."
+                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
         # Read follower position
@@ -490,6 +615,7 @@ class KochRobot:
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
             follower_pos[name] = self.follower_arms[name].read("Present_Position")
+            follower_pos[name] = torch.from_numpy(follower_pos[name])
             self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
         # Create state by concatenating follower current position
@@ -497,82 +623,68 @@ class KochRobot:
         for name in self.follower_arms:
             if name in follower_pos:
                 state.append(follower_pos[name])
-        state = np.concatenate(state)
+        state = torch.cat(state)
 
         # Capture images from cameras
         images = {}
         for name in self.cameras:
             before_camread_t = time.perf_counter()
             images[name] = self.cameras[name].async_read()
+            images[name] = torch.from_numpy(images[name])
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
         # Populate output dictionnaries and format to pytorch
         obs_dict = {}
-        obs_dict["observation.state"] = torch.from_numpy(state)
+        obs_dict["observation.state"] = state
         for name in self.cameras:
-            obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
+            obs_dict[f"observation.images.{name}"] = images[name]
         return obs_dict
 
-    def send_action(self, action: torch.Tensor, follower_names: list[str] | None = None):
+    def send_action(self, action: torch.Tensor) -> torch.Tensor:
         """Command the follower arms to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter
-        `max_relative_target`.
+        `max_relative_target`. In this case, the action sent differs from original action.
+        Thus, this function always returns the action actually sent.
 
         Args:
-            action: tensor containing the concatenated joint positions for the follower arms.
-            follower_names: Pass follower arm names to only control a subset of all the follower arms.
+            action: tensor containing the concatenated goal positions for the follower arms.
         """
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "KochRobot is not connected. You need to run `robot.connect()`."
-            )
-
-        if follower_names is None:
-            follower_names = list(self.follower_arms)
-        elif not set(follower_names).issubset(self.follower_arms):
-            raise ValueError(
-                f"You provided {follower_names=} but only the following arms are registered: "
-                f"{list(self.follower_arms)}"
+                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
         from_idx = 0
         to_idx = 0
-        follower_goal_pos = {}
-        for name in follower_names:
+        action_sent = []
+        for name in self.follower_arms:
+            # Get goal position of each follower arm by splitting the action vector
             to_idx += len(self.follower_arms[name].motor_names)
-            this_action = action[from_idx:to_idx]
-
-            if self.config.max_relative_target is not None:
-                if not isinstance(self.config.max_relative_target, list):
-                    max_relative_target = [self.config.max_relative_target for _ in range(from_idx, to_idx)]
-                max_relative_target = torch.tensor(self.config.max_relative_target)
-                # Cap relative action target magnitude for safety.
-                current_pos = torch.tensor(self.follower_arms[name].read("Present_Position"))
-                diff = this_action - current_pos
-                safe_diff = torch.minimum(diff, max_relative_target)
-                safe_diff = torch.maximum(safe_diff, -max_relative_target)
-                safe_action = current_pos + safe_diff
-                if not torch.allclose(safe_action, this_action):
-                    logging.warning(
-                        "Relative action magnitude had to be clamped to be safe.\n"
-                        f"  requested relative action target: {diff}\n"
-                        f"    clamped relative action target: {safe_diff}"
-                    )
-                follower_goal_pos[name] = safe_action.numpy()
-            else:
-                follower_goal_pos[name] = this_action.numpy()
-
+            goal_pos = action[from_idx:to_idx]
             from_idx = to_idx
 
-        for name in self.follower_arms:
-            self.follower_arms[name].write("Goal_Position", follower_goal_pos[name].astype(np.int32))
+            # Cap goal position when too far away from present position.
+            # Slower fps expected due to reading from the follower.
+            if self.config.max_relative_target is not None:
+                present_pos = self.follower_arms[name].read("Present_Position")
+                present_pos = torch.from_numpy(present_pos)
+                goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
+
+            # Save tensor to concat and return
+            action_sent.append(goal_pos)
+
+            # Send goal position to each follower
+            goal_pos = goal_pos.numpy().astype(np.int32)
+            self.follower_arms[name].write("Goal_Position", goal_pos)
+
+        return torch.cat(action_sent)
 
     def disconnect(self):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "KochRobot is not connected. You need to run `robot.connect()` before disconnecting."
+                "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
             )
 
         for name in self.follower_arms:

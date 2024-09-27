@@ -39,7 +39,7 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
             # sanity check that images are channel last
             _, h, w, c = img.shape
-            assert c < h and c < w, f"expect channel first images, but instead {img.shape}"
+            assert c < h and c < w, f"expect channel last images, but instead got {img.shape=}"
 
             # sanity check that images are uint8
             assert img.dtype == torch.uint8, f"expect torch.uint8, but instead {img.dtype=}"
