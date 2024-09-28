@@ -401,9 +401,9 @@ class OpenCVCamera:
 
         num_tries = 0
         while True:
-            with self.lock:
-                if self.color_image is not None:
-                    return self.color_image
+            # Do not use `with self.lock` here, as it reduces fps
+            if self.color_image is not None:
+                return self.color_image
 
             time.sleep(1 / self.fps)
             num_tries += 1
