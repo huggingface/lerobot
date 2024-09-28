@@ -11,6 +11,7 @@ on:
       - ".github/**"
       - "poetry.lock"
       - "Makefile"
+      - ".cache/**"
   push:
     branches:
       - main
@@ -21,6 +22,7 @@ on:
       - ".github/**"
       - "poetry.lock"
       - "Makefile"
+      - ".cache/**"
 
 jobs:
   pytest:
@@ -59,7 +61,6 @@ jobs:
             -W ignore::UserWarning:torch.utils.data.dataloader:558 \
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
             && rm -rf tests/outputs outputs
-
 
   pytest-minimal:
     name: Pytest (minimal install)

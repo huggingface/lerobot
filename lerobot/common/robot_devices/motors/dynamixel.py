@@ -8,17 +8,6 @@ from pathlib import Path
 
 import numpy as np
 import tqdm
-from dynamixel_sdk import (
-    COMM_SUCCESS,
-    DXL_HIBYTE,
-    DXL_HIWORD,
-    DXL_LOBYTE,
-    DXL_LOWORD,
-    GroupSyncRead,
-    GroupSyncWrite,
-    PacketHandler,
-    PortHandler,
-)
 
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
@@ -166,7 +155,17 @@ def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str
     return steps
 
 
-def convert_to_bytes(value, bytes):
+def convert_to_bytes(value, bytes, mock=False):
+    if mock:
+        return value
+
+    from dynamixel_sdk import (
+        DXL_HIBYTE,
+        DXL_HIWORD,
+        DXL_LOBYTE,
+        DXL_LOWORD,
+    )
+
     # Note: No need to convert back into unsigned int, since this byte preprocessing
     # already handles it for us.
     if bytes == 1:
@@ -333,9 +332,11 @@ class DynamixelMotorsBus:
         motors: dict[str, tuple[int, str]],
         extra_model_control_table: dict[str, list[tuple]] | None = None,
         extra_model_resolution: dict[str, int] | None = None,
+        mock=False,
     ):
         self.port = port
         self.motors = motors
+        self.mock = mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
         if extra_model_control_table:
@@ -358,6 +359,11 @@ class DynamixelMotorsBus:
             raise RobotDeviceAlreadyConnectedError(
                 f"DynamixelMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice."
             )
+
+        if self.mock:
+            from tests.mock_dynamixel_sdk import PacketHandler, PortHandler
+        else:
+            from dynamixel_sdk import PacketHandler, PortHandler
 
         self.port_handler = PortHandler(self.port)
         self.packet_handler = PacketHandler(PROTOCOL_VERSION)
@@ -392,10 +398,17 @@ class DynamixelMotorsBus:
             self.configure_motors()
 
     def reconnect(self):
+        if self.mock:
+            from tests.mock_dynamixel_sdk import PacketHandler, PortHandler
+        else:
+            from dynamixel_sdk import PacketHandler, PortHandler
+
         self.port_handler = PortHandler(self.port)
         self.packet_handler = PacketHandler(PROTOCOL_VERSION)
+
         if not self.port_handler.openPort():
             raise OSError(f"Failed to open port '{self.port}'.")
+
         self.is_connected = True
 
     def are_motors_configured(self):
@@ -781,6 +794,11 @@ class DynamixelMotorsBus:
         return values
 
     def _read_with_motor_ids(self, motor_models, motor_ids, data_name):
+        if self.mock:
+            from tests.mock_dynamixel_sdk import COMM_SUCCESS, GroupSyncRead
+        else:
+            from dynamixel_sdk import COMM_SUCCESS, GroupSyncRead
+
         return_list = True
         if not isinstance(motor_ids, list):
             return_list = False
@@ -816,6 +834,11 @@ class DynamixelMotorsBus:
             )
 
         start_time = time.perf_counter()
+
+        if self.mock:
+            from tests.mock_dynamixel_sdk import COMM_SUCCESS, GroupSyncRead
+        else:
+            from dynamixel_sdk import COMM_SUCCESS, GroupSyncRead
 
         if motor_names is None:
             motor_names = self.motor_names
@@ -876,6 +899,11 @@ class DynamixelMotorsBus:
         return values
 
     def _write_with_motor_ids(self, motor_models, motor_ids, data_name, values):
+        if self.mock:
+            from tests.mock_dynamixel_sdk import COMM_SUCCESS, GroupSyncWrite
+        else:
+            from dynamixel_sdk import COMM_SUCCESS, GroupSyncWrite
+
         if not isinstance(motor_ids, list):
             motor_ids = [motor_ids]
         if not isinstance(values, list):
@@ -885,7 +913,7 @@ class DynamixelMotorsBus:
         addr, bytes = self.model_ctrl_table[motor_models[0]][data_name]
         group = GroupSyncWrite(self.port_handler, self.packet_handler, addr, bytes)
         for idx, value in zip(motor_ids, values, strict=True):
-            data = convert_to_bytes(value, bytes)
+            data = convert_to_bytes(value, bytes, self.mock)
             group.addParam(idx, data)
 
         comm = group.txPacket()
@@ -902,6 +930,11 @@ class DynamixelMotorsBus:
             )
 
         start_time = time.perf_counter()
+
+        if self.mock:
+            from tests.mock_dynamixel_sdk import COMM_SUCCESS, GroupSyncWrite
+        else:
+            from dynamixel_sdk import COMM_SUCCESS, GroupSyncWrite
 
         if motor_names is None:
             motor_names = self.motor_names
@@ -937,7 +970,7 @@ class DynamixelMotorsBus:
             )
 
         for idx, value in zip(motor_ids, values, strict=True):
-            data = convert_to_bytes(value, bytes)
+            data = convert_to_bytes(value, bytes, self.mock)
             if init_group:
                 self.group_writers[group_key].addParam(idx, data)
             else:
