@@ -33,7 +33,7 @@ def find_camera_indices(raise_when_empty=True, mock=False) -> list[int]:
     connected to the computer.
     """
     if mock:
-        from tests.mock_intelrealsense import (
+        from tests.mock_pyrealsense2 import (
             RSCameraInfo,
             RSContext,
         )
@@ -82,7 +82,7 @@ def save_images_from_cameras(
         camera_ids = find_camera_indices(mock=mock)
 
     if mock:
-        from tests.mock_opencv import COLOR_RGB2BGR, cvtColor
+        from tests.mock_cv2 import COLOR_RGB2BGR, cvtColor
     else:
         from cv2 import COLOR_RGB2BGR, cvtColor
 
@@ -263,7 +263,7 @@ class IntelRealSenseCamera:
             )
 
         if self.mock:
-            from tests.mock_intelrealsense import (
+            from tests.mock_pyrealsense2 import (
                 RSConfig,
                 RSFormat,
                 RSPipeline,
@@ -373,7 +373,7 @@ class IntelRealSenseCamera:
         # IntelRealSense uses RGB format as default (red, green, blue).
         if requested_color_mode == "bgr":
             if self.mock:
-                from tests.mock_opencv import COLOR_RGB2BGR, cvtColor
+                from tests.mock_cv2 import COLOR_RGB2BGR, cvtColor
             else:
                 from cv2 import COLOR_RGB2BGR, cvtColor
 
@@ -430,6 +430,7 @@ class IntelRealSenseCamera:
 
         num_tries = 0
         while self.color_image is None:
+            # TODO(rcadene, aliberts): intelrealsense has diverged compared to opencv over here
             num_tries += 1
             time.sleep(1 / self.fps)
             if num_tries > self.fps and (self.thread.ident is None or not self.thread.is_alive()):

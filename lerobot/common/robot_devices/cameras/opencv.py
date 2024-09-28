@@ -47,7 +47,7 @@ def find_camera_indices(raise_when_empty=False, max_index_search_range=MAX_OPENC
         possible_camera_ids = range(max_index_search_range)
 
     if mock:
-        from tests.mock_opencv import VideoCapture
+        from tests.mock_cv2 import VideoCapture
     else:
         from cv2 import VideoCapture
 
@@ -244,24 +244,24 @@ class OpenCVCamera:
             raise RobotDeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")
 
         if self.mock:
-            from tests.mock_opencv import (
+            from tests.mock_cv2 import (
                 CAP_PROP_FPS,
                 CAP_PROP_FRAME_HEIGHT,
                 CAP_PROP_FRAME_WIDTH,
                 VideoCapture,
             )
         else:
-            import cv2
             from cv2 import (
                 CAP_PROP_FPS,
                 CAP_PROP_FRAME_HEIGHT,
                 CAP_PROP_FRAME_WIDTH,
                 VideoCapture,
+                setNumThreads,
             )
 
             # Use 1 thread to avoid blocking the main thread. Especially useful during data collection
             # when other threads are used to save the images.
-            cv2.setNumThreads(1)
+            setNumThreads(1)
 
         camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
         with self.lock:
@@ -356,7 +356,7 @@ class OpenCVCamera:
         # so we convert the image color from BGR to RGB.
         if requested_color_mode == "rgb":
             if self.mock:
-                from tests.mock_opencv import COLOR_BGR2RGB, cvtColor
+                from tests.mock_cv2 import COLOR_BGR2RGB, cvtColor
             else:
                 from cv2 import COLOR_BGR2RGB, cvtColor
 
@@ -409,10 +409,6 @@ class OpenCVCamera:
             num_tries += 1
             if num_tries > self.fps * 2:
                 raise TimeoutError("Timed out waiting for async_read() to start.")
-            # if num_tries > self.fps and (self.thread.ident is None or not self.thread.is_alive()):
-            #     raise Exception(
-            #         "The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.thread.start()` has been called."
-            #     )
 
     def disconnect(self):
         if not self.is_connected:

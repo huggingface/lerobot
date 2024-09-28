@@ -143,8 +143,6 @@ MODEL_BAUDRATE_TABLE = {
 NUM_READ_RETRY = 10
 NUM_WRITE_RETRY = 10
 
-COMM_SUCCESS = 0
-
 
 def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str]) -> np.ndarray:
     """This function converts the degree range to the step range for indicating motors rotation.
@@ -363,7 +361,7 @@ class DynamixelMotorsBus:
             )
 
         if self.mock:
-            from tests.mock_dynamixel import PacketHandler, PortHandler
+            from tests.mock_dynamixel_sdk import PacketHandler, PortHandler
         else:
             from dynamixel_sdk import PacketHandler, PortHandler
 
@@ -401,7 +399,7 @@ class DynamixelMotorsBus:
 
     def reconnect(self):
         if self.mock:
-            from tests.mock_dynamixel import PacketHandler, PortHandler
+            from tests.mock_dynamixel_sdk import PacketHandler, PortHandler
         else:
             from dynamixel_sdk import PacketHandler, PortHandler
 
@@ -797,9 +795,9 @@ class DynamixelMotorsBus:
 
     def _read_with_motor_ids(self, motor_models, motor_ids, data_name):
         if self.mock:
-            from tests.mock_dynamixel import GroupSyncRead
+            from tests.mock_dynamixel_sdk import COMM_SUCCESS, GroupSyncRead
         else:
-            from dynamixel_sdk import GroupSyncRead
+            from dynamixel_sdk import COMM_SUCCESS, GroupSyncRead
 
         return_list = True
         if not isinstance(motor_ids, list):
@@ -838,9 +836,9 @@ class DynamixelMotorsBus:
         start_time = time.perf_counter()
 
         if self.mock:
-            from tests.mock_dynamixel import GroupSyncRead
+            from tests.mock_dynamixel_sdk import COMM_SUCCESS, GroupSyncRead
         else:
-            from dynamixel_sdk import GroupSyncRead
+            from dynamixel_sdk import COMM_SUCCESS, GroupSyncRead
 
         if motor_names is None:
             motor_names = self.motor_names
@@ -902,9 +900,9 @@ class DynamixelMotorsBus:
 
     def _write_with_motor_ids(self, motor_models, motor_ids, data_name, values):
         if self.mock:
-            from tests.mock_dynamixel import GroupSyncWrite
+            from tests.mock_dynamixel_sdk import COMM_SUCCESS, GroupSyncWrite
         else:
-            from dynamixel_sdk import GroupSyncWrite
+            from dynamixel_sdk import COMM_SUCCESS, GroupSyncWrite
 
         if not isinstance(motor_ids, list):
             motor_ids = [motor_ids]
@@ -934,9 +932,9 @@ class DynamixelMotorsBus:
         start_time = time.perf_counter()
 
         if self.mock:
-            from tests.mock_dynamixel import GroupSyncWrite
+            from tests.mock_dynamixel_sdk import COMM_SUCCESS, GroupSyncWrite
         else:
-            from dynamixel_sdk import GroupSyncWrite
+            from dynamixel_sdk import COMM_SUCCESS, GroupSyncWrite
 
         if motor_names is None:
             motor_names = self.motor_names

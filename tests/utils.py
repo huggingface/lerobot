@@ -204,7 +204,7 @@ def require_robot(func):
 
     @wraps(func)
     def wrapper(*args, **kwargs):
-        # Access the pytest request context to get the mockeypatch fixture
+        # Access the pytest request context to get the is_robot_available fixture
         request = kwargs.get("request")
         robot_type = kwargs.get("robot_type")
         mock = kwargs.get("mock")
@@ -228,6 +228,7 @@ def require_robot(func):
 def require_camera(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
+        # Access the pytest request context to get the is_camera_available fixture
         request = kwargs.get("request")
         camera_type = kwargs.get("camera_type")
         mock = kwargs.get("mock")
@@ -250,7 +251,7 @@ def require_camera(func):
 def require_motor(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        # Access the pytest request context to get the mockeypatch fixture
+        # Access the pytest request context to get the is_motor_available fixture
         request = kwargs.get("request")
         motor_type = kwargs.get("motor_type")
         mock = kwargs.get("mock")
