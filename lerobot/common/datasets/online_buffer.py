@@ -379,9 +379,9 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
     def _make_storage_directory(self, episode_data: dict[str, np.ndarray]):
         """Create the storage directory based on example episode data from the first `add_episodes` call."""
         # TODO(now): Do I really want this?
-        # assert not (
-        #     self.storage_dir / self.METADATA_FILE_NAME
-        # ).exists(), "This method should only be called before the storage directory has been created."
+        assert not (
+            self.storage_dir / self.METADATA_FILE_NAME
+        ).exists(), "This method should only be called before the storage directory has been created."
 
         self._storage_dir.mkdir(parents=True, exist_ok=True)
 
