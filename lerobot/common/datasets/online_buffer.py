@@ -39,26 +39,8 @@ from lerobot.common.datasets.video_utils import (
     encode_video_frames,
 )
 
-
-def _make_memmap_safe(**kwargs) -> np.memmap:
-    """Make a numpy memmap with checks on available disk space first.
-
-    Expected kwargs are: "filename", "dtype" (must by np.dtype), "mode" and "shape"
-
-    For information on dtypes:
-    https://numpy.org/doc/stable/reference/arrays.dtypes.html#arrays-dtypes-constructing
-    """
-    if kwargs["mode"].startswith("w"):
-        required_space = kwargs["dtype"].itemsize * np.prod(kwargs["shape"])  # bytes
-        stats = os.statvfs(Path(kwargs["filename"]).parent)
-        available_space = stats.f_bavail * stats.f_frsize  # bytes
-        if required_space >= available_space * 0.8:
-            raise RuntimeError(
-                f"You're about to take up {required_space} of {available_space} bytes available. This "
-                "exception has been raised to protect your storage device."
-                ""
-            )
-    return np.memmap(**kwargs)
+# Take no more than 80% of the available storage space when creating memmaps.
+MEMMAP_STORAGE_PCT_CAP = 0.8
 
 
 class TimestampOutsideToleranceError(Exception):
@@ -404,8 +386,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         else:
             num_frames = self._buffer_capacity
 
-        # TODO(now): Warn if attempting to store too much.
-
         try:
             # Make the data spec for np.memmap
             data_spec = {
@@ -440,8 +420,21 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         The underlying storage directory may or may not already exist. Provide the file opening `mode`
         accordingly.
         """
+        # First check that this will nor use up most or all of the storage space.
+        required_space = 0
+        for spec in data_spec.values():
+            required_space += spec["dtype"].itemsize * np.prod(spec["shape"])  # bytes
+        stats = os.statvfs(self._storage_dir)
+        available_space = stats.f_bavail * stats.f_frsize  # bytes
+        if required_space >= available_space * MEMMAP_STORAGE_PCT_CAP:
+            raise RuntimeError(
+                f"You're about to take up {required_space} of {available_space} bytes available. This "
+                "exception has been raised to protect your storage device."
+                ""
+            )
+
         for k, v in data_spec.items():
-            self._data[k] = _make_memmap_safe(
+            self._data[k] = np.memmap(
                 filename=self._storage_dir / k,
                 dtype=v["dtype"] if v is not None else None,
                 mode=mode,
@@ -450,7 +443,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
 
     def _extend_memmaps(self, new_length: int):
         """Increase the frame capacity of the memmaps to new_length."""
-        # TODO(now): Warn if attempting to store too much.
         assert (
             len(self._data[self.INDEX_KEY]) < new_length
         ), "new_length must be more than the current capacity of the memmaps"
