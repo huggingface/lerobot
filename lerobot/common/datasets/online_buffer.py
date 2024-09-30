@@ -193,12 +193,12 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
     def __init__(
         self,
         storage_dir: str | Path,
+        fps: float | None = None,
         buffer_capacity: int | None = None,
         use_as_filo_buffer: bool = False,
         image_mode: LeRobotDatasetV2ImageMode | str = LeRobotDatasetV2ImageMode.MEMMAP,
         image_transform: Callable[[np.ndarray], np.ndarray] | None = None,
         delta_timestamps: dict[str, list[float]] | dict[str, np.ndarray] | None = None,
-        fps: float | None = None,
     ):
         """
         Args:
@@ -206,6 +206,10 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 One memmap file will be stored for each data key. Note that if the storage directory already
                 exists, the memmap files are opened in read-write mode. If the storage directory does not
                 exist, it will be lazily created with the first call to `add_episodes`.
+            fps: Frames rate (frames per second) for all of the episodes in this dataset. This is used in two
+                places: video encoding, and computing property `tolerance_s` for retrieving frames via their
+                timestamp. Doesn't have to be provided if an existing dataset is being loaded (
+                that is, the storage_directory already exists).
             buffer_capacity: Sets the size of the preallocated storage space for the memmaps in terms of
                 frames. If not provided, the memmap storage space is dynamically expanded as episodes are
                 added (doubling every time extra space is needed). If you know the number of frames you plan
@@ -223,8 +227,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 starts with "observation.image").
             delta_timestamps: TODO(alexander-soare): Document this somewhere when
                 `load_previous_and_future_frames` is refactored.
-            fps: TODO(alexander-soare): Document this somewhere when `load_previous_and_future_frames` is
-                refactored.
 
 
         TODO(now): How to deal with corrupt state of the storage directory.
@@ -237,13 +239,12 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         self._use_as_filo_buffer = use_as_filo_buffer
         self._videos_dir: str | None = None
         self._images_dir: str | None = None
-        # TODO(now): Put fps in metadata. What if fps is provided when loading a dataset?
-        self._fps = fps  # TODO(now): Decide how to treat fps (required or not?)
 
         # If the storage directory and metadata files already exists, load the memmaps.
         if (self._storage_dir / self.METADATA_FILE_NAME).exists():
-            data_spec = self._load_metadata()["_data_spec"]
-            self._make_memmaps(data_spec, mode="r+")
+            metadata = self._load_metadata()
+            self._fps = metadata["fps"]
+            self._make_memmaps(metadata["_data_spec"], mode="r+")
             if buffer_capacity is not None:
                 current_capacity = len(self._data[self.INDEX_KEY])
                 if buffer_capacity < current_capacity:
@@ -265,6 +266,9 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                     f"Modes available: {[str(m) for m in possible_image_modes]}"
                 )
         else:
+            if fps is None:
+                raise ValueError("fps must be provided when creating a new dataset")
+            self._fps = fps
             self._buffer_capacity = buffer_capacity
 
         self._image_mode = LeRobotDatasetV2ImageMode(image_mode)
@@ -348,7 +352,8 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             raise AssertionError("The first time _save_metadata is called, all arguments should be provided.")
         metadata = self._load_metadata() if metadata_file.exists() else {}
 
-        # Go through each provided argument, updating the metadata.
+        # Go through each provided argument and internal parameter, updating the metadata.
+        metadata["fps"] = self._fps
         if data_keys is not None:
             metadata["data_keys"] = copy(data_keys)
         if data_spec is not None:
@@ -465,8 +470,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         the requested frames. It is only used when `delta_timestamps` is provided. The -1e-4 accounts for
         possible numerical error.
         """
-        if self._fps is None:
-            return None
         return 1 / self._fps - 1e-4
 
     def set_delta_timestamps(self, delta_timestamps: dict[str, list[float]] | None):
@@ -475,11 +478,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         Note: The conversion is for an optimization in the __getitem__. The loop is much slower if lists need
         to be converted into numpy arrays.
         """
-        if delta_timestamps is not None and self._fps is None:
-            raise ValueError(
-                "`fps` must be provided to `__init__` if you want to provide `delta_timestamps`."
-            )
-
         if delta_timestamps is not None:
             self._delta_timestamps = {k: np.array(v) for k, v in delta_timestamps.items()}
         else:
@@ -592,7 +590,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                         self._storage_dir
                         / self.VIDEOS_DIR
                         / self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=new_episode_index),
-                        self.fps,
+                        self._fps,
                     )
             elif self._image_mode == LeRobotDatasetV2ImageMode.PNG and k.startswith(self.IMAGE_KEY_PREFIX):
                 # Encode images to PNG and save to disk.
