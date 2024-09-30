@@ -65,7 +65,9 @@ def make_spoof_data_frames(
 
 
 def test_get_data_keys(tmp_path: Path):
-    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10)  # arbitrary fps
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
     # Note: choices for args to make_spoof_data_frames are totally arbitrary.
     new_episodes = make_spoof_data_frames(n_episodes=2, n_frames_per_episode=25)
     dataset.add_episodes(new_episodes)
@@ -74,7 +76,9 @@ def test_get_data_keys(tmp_path: Path):
 
 def test_get_data_by_key(tmp_path: Path):
     """Tests that data can be added to a dataset and all data for a specific key can be read back."""
-    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10)  # arbitrary fps
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
     # Note: choices for args to make_spoof_data_frames are mostly arbitrary. The only intentional aspect is to
     # make sure the memmaps are not full, in order to check that `get_data_by_key` only returns the parts of
     # the memmaps that are occupied.
@@ -88,7 +92,9 @@ def test_get_data_by_key(tmp_path: Path):
 
 
 def test_get_unique_episode_indices(tmp_path: Path):
-    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10)  # arbitrary fps
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
     # Note: choices for args to make_spoof_data_frames are mostly arbitrary. Just make sure there is more
     # than one episode.
     n_episodes = 2
@@ -105,7 +111,9 @@ def test_non_mutate(tmp_path: Path):
     NOTE: If this test fails, it means some of the other tests may be compromised. For example, we can't trust
     a success case for `test_write_read`.
     """
-    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10)  # arbitrary fps
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
     # Note: choices for args to make_spoof_data_frames are arbitrary.
     new_data = make_spoof_data_frames(2, 25)
     new_data_copy = deepcopy(new_data)
@@ -115,13 +123,17 @@ def test_non_mutate(tmp_path: Path):
 
 
 def test_index_error_no_data(tmp_path: Path):
-    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10)  # arbitrary fps
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
     with pytest.raises(IndexError):
         dataset[0]
 
 
 def test_index_error_with_data(tmp_path: Path):
-    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10)  # arbitrary fps
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
     n_frames = 50
     # Note: choices for args to make_spoof_data_frames are arbitrary.
     new_data = make_spoof_data_frames(1, n_frames)
@@ -143,7 +155,7 @@ def test_write_read_and_get_episode(tmp_path: Path, do_reload: bool, image_mode:
     """
     storage_dir = tmp_path / f"dataset_{uuid4().hex}"
     fps = 10
-    dataset = LeRobotDatasetV2(storage_dir, image_mode=image_mode, fps=fps)
+    dataset = LeRobotDatasetV2(storage_dir, fps=fps, image_mode=image_mode)
     # Note: choices for args to make_spoof_data_frames are arbitrary.
     n_episodes = 2
     n_frames_per_episode = 25
@@ -192,7 +204,7 @@ def test_write_read_and_get_episode_video_mode(tmp_path: Path, do_reload: bool):
     episode_length = len(provided_episode_data[LeRobotDatasetV2.INDEX_KEY])
     # This is the dataset we will be testing.
     storage_dir = tmp_path / f"dataset_{uuid4().hex}"
-    dataset = LeRobotDatasetV2(storage_dir, image_mode=LeRobotDatasetV2ImageMode.VIDEO, fps=fps)
+    dataset = LeRobotDatasetV2(storage_dir, fps=fps, image_mode=LeRobotDatasetV2ImageMode.VIDEO)
     # To construct the new dataset, just repeat the episode some number of times.
     n_episodes = 2
     for _ in range(n_episodes):
@@ -229,7 +241,9 @@ def test_write_read_and_get_episode_video_mode(tmp_path: Path, do_reload: bool):
 
 def test_get_episode_index_error(tmp_path: Path):
     """Test that get_episode raises an IndexError is raised with an invalid episode index."""
-    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10)  # arbitrary fps
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
     # Note: args to make_spoof_data_frames are mostly arbitrary.
     n_episodes = 1
     new_episodes = make_spoof_data_frames(n_episodes=n_episodes, n_frames_per_episode=25)
@@ -240,7 +254,12 @@ def test_get_episode_index_error(tmp_path: Path):
 
 def test_buffer_capacity(tmp_path: Path):
     """Check that explicitly providing a buffer capacity, then overflowing, causes an exception."""
-    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10, buffer_capacity=60)
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}",
+        fps=10,
+        image_mode=LeRobotDatasetV2ImageMode.MEMMAP,
+        buffer_capacity=60,
+    )
     # Note: choices for args to make_spoof_data_frames are totally arbitrary.
     new_episodes = make_spoof_data_frames(n_episodes=3, n_frames_per_episode=25)
     with pytest.raises(ValueError):
@@ -252,7 +271,9 @@ def test_dynamic_memmap_size(tmp_path: Path):
 
     Check that the existing data is not corrupted.
     """
-    dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10)  # arbitrary fps
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
     n_frames_per_episode = 5
     new_episodes = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=n_frames_per_episode, seed=0)
     all_episodes = new_episodes
@@ -283,7 +304,12 @@ def test_dynamic_memmap_size(tmp_path: Path):
 
 def test_filo_needs_buffer_capacity(tmp_path: Path):
     with pytest.raises(ValueError):
-        LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10, use_as_filo_buffer=True)
+        LeRobotDatasetV2(
+            tmp_path / f"dataset_{uuid4().hex}",
+            fps=10,
+            use_as_filo_buffer=True,
+            image_mode=LeRobotDatasetV2ImageMode.MEMMAP,
+        )
 
 
 @pytest.mark.parametrize("image_mode", list(LeRobotDatasetV2ImageMode))
@@ -367,7 +393,10 @@ def test_filo(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
 def test_delta_timestamps_within_tolerance(tmp_path: Path):
     """Check that getting an item with delta_timestamps within tolerance succeeds."""
     dataset = LeRobotDatasetV2(
-        tmp_path / f"dataset_{uuid4().hex}", fps=10, delta_timestamps={"index": [-0.2, 0, 0.1]}
+        tmp_path / f"dataset_{uuid4().hex}",
+        fps=10,
+        image_mode=LeRobotDatasetV2ImageMode.MEMMAP,
+        delta_timestamps={"index": [-0.2, 0, 0.1]},
     )
     new_data = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=5)
     dataset.add_episodes(new_data)
@@ -383,7 +412,10 @@ def test_delta_timestamps_outside_tolerance_inside_episode_range(tmp_path: Path)
     We expect it to fail if and only if the requested timestamps are within the episode range.
     """
     dataset = LeRobotDatasetV2(
-        tmp_path / f"dataset_{uuid4().hex}", fps=10, delta_timestamps={"index": [-0.2, 0, 0.1]}
+        tmp_path / f"dataset_{uuid4().hex}",
+        fps=10,
+        image_mode=LeRobotDatasetV2ImageMode.MEMMAP,
+        delta_timestamps={"index": [-0.2, 0, 0.1]},
     )
     new_data = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=5)
     # Hack the timestamps to invoke a tolerance error.
@@ -396,7 +428,10 @@ def test_delta_timestamps_outside_tolerance_inside_episode_range(tmp_path: Path)
 def test_delta_timestamps_outside_tolerance_outside_episode_range(tmp_path):
     """Check that copy-padding of timestamps outside of the episode range works."""
     dataset = LeRobotDatasetV2(
-        tmp_path / f"dataset_{uuid4().hex}", fps=10, delta_timestamps={"index": [-0.3, -0.2, 0, 0.2, 0.3]}
+        tmp_path / f"dataset_{uuid4().hex}",
+        fps=10,
+        image_mode=LeRobotDatasetV2ImageMode.MEMMAP,
+        delta_timestamps={"index": [-0.3, -0.2, 0, 0.2, 0.3]},
     )
     new_data = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=5)
     dataset.add_episodes(new_data)
@@ -629,7 +664,9 @@ def test_compute_sampler_weights_trivial(
             "to": torch.tensor([offline_dataset_size // 2, offline_dataset_size]),
         }
     # Create spoof online datset.
-    online_dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10)  # arbitrary fps
+    online_dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
     if online_dataset_size > 0:
         online_dataset.add_episodes(
             make_spoof_data_frames(n_episodes=2, n_frames_per_episode=online_dataset_size // 2)
@@ -660,7 +697,9 @@ def test_compute_sampler_weights_nontrivial_ratio(tmp_path: Path):
         "to": torch.tensor([2, 4]),
     }
     # Create spoof online datset.
-    online_dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10)  # arbitrary fps
+    online_dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
     online_dataset.add_episodes(make_spoof_data_frames(n_episodes=4, n_frames_per_episode=2))
     online_sampling_ratio = 0.8
     weights = compute_sampler_weights(
@@ -683,7 +722,9 @@ def test_compute_sampler_weights_drop_n_last_frames(tmp_path: Path):
     offline_dataset.hf_dataset.set_transform(hf_transform_to_torch)
     offline_dataset.episode_data_index = {"from": torch.tensor([0]), "to": torch.tensor([2])}
 
-    online_dataset = LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10)  # arbitrary fps
+    online_dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
     online_dataset.add_episodes(make_spoof_data_frames(n_episodes=4, n_frames_per_episode=2))
 
     weights = compute_sampler_weights(

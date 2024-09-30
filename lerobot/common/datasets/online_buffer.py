@@ -137,11 +137,10 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
     For example:
 
     ```python
-    # TODO(now): Should it default to video mode?
-    dataset = LeRobotDatasetV2("path/to/new/dataset", image_mode="video")
+    dataset = LeRobotDatasetV2("path/to/new/dataset")
     # OR, if you know the size of the dataset (in number of frames) up front, provide a buffer capacity up
     # front for more efficient handling of the underlying memmaps.
-    dataset = LeRobotDatasetV2("path/to/new/dataset", image_mode="video", buffer_capacity=25000)
+    dataset = LeRobotDatasetV2("path/to/new/dataset", buffer_capacity=25000)
 
     # Add episodes to the dataset.
     for _ in range(num_episodes):
@@ -153,7 +152,11 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
     Finally, one may also use LeRobotDatasetV2 as an experience replay buffer for online RL algorithms.
 
     ```python
-    dataset = LeRobotDatasetV2("online_buffer", buffer_capacity=10000, use_as_filo_buffer=True)
+    # Note: Other image modes could be used although if you can fit the buffer on disk, you should probably
+    # stick to memmap mode.
+    dataset = LeRobotDatasetV2(
+        "online_buffer", image_mode="memmap", buffer_capacity=10000, use_as_filo_buffer=True
+    )
     iter_dataloader = iter(torch.utils.data.DataLoader(dataset))
 
     # training loop
@@ -196,7 +199,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         fps: float | None = None,
         buffer_capacity: int | None = None,
         use_as_filo_buffer: bool = False,
-        image_mode: LeRobotDatasetV2ImageMode | str = LeRobotDatasetV2ImageMode.MEMMAP,
+        image_mode: LeRobotDatasetV2ImageMode | str = LeRobotDatasetV2ImageMode.VIDEO,
         image_transform: Callable[[np.ndarray], np.ndarray] | None = None,
         delta_timestamps: dict[str, list[float]] | dict[str, np.ndarray] | None = None,
     ):
@@ -222,7 +225,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 to make way for the new ones (first-in-last-out aka FILO).
             image_mode: The image storage mode used for the item getter. Options are: "video", "png",
                 "memmap". See notes above for more information on the various options. If not provided it
-                defaults to memmap mode. TODO(now): should it default to video mode?
+                defaults to video mode.
             image_transform: Transforms to apply in the item getter to all image data (any data whose key
                 starts with "observation.image").
             delta_timestamps: TODO(alexander-soare): Document this somewhere when
