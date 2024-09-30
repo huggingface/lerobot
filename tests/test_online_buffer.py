@@ -14,8 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# TODO(now): Test relevant functions in all image modes.
-
 import os
 from copy import deepcopy
 from pathlib import Path
@@ -64,9 +62,10 @@ def make_spoof_data_frames(
     return new_data
 
 
-def test_get_data_keys(tmp_path: Path):
+@pytest.mark.parametrize("image_mode", list(LeRobotDatasetV2ImageMode))
+def test_get_data_keys(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
     dataset = LeRobotDatasetV2(
-        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=image_mode
     )  # arbitrary fps
     # Note: choices for args to make_spoof_data_frames are totally arbitrary.
     new_episodes = make_spoof_data_frames(n_episodes=2, n_frames_per_episode=25)
@@ -74,10 +73,15 @@ def test_get_data_keys(tmp_path: Path):
     assert set(dataset.data_keys) == set(new_episodes)
 
 
-def test_get_data_by_key(tmp_path: Path):
-    """Tests that data can be added to a dataset and all data for a specific key can be read back."""
+@pytest.mark.parametrize("image_mode", list(LeRobotDatasetV2ImageMode))
+def test_get_data_by_key(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
+    """Tests that data can be added to a dataset and all data for a specific key can be read back.
+
+    Also checks that get_data_by_key does NOT work with image keys when we are working with a decodable image
+    mode.
+    """
     dataset = LeRobotDatasetV2(
-        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=image_mode
     )  # arbitrary fps
     # Note: choices for args to make_spoof_data_frames are mostly arbitrary. The only intentional aspect is to
     # make sure the memmaps are not full, in order to check that `get_data_by_key` only returns the parts of
@@ -88,7 +92,13 @@ def test_get_data_by_key(tmp_path: Path):
     dataset.add_episodes(new_episodes)
 
     for k in new_episodes:
-        assert np.array_equal(new_episodes[k], dataset.get_data_by_key(k))
+        if LeRobotDatasetV2ImageMode.needs_decoding(image_mode) and k.startswith(
+            LeRobotDatasetV2.IMAGE_KEY_PREFIX
+        ):
+            with pytest.raises(ValueError):
+                dataset.get_data_by_key(k)
+        else:
+            assert np.array_equal(new_episodes[k], dataset.get_data_by_key(k))
 
 
 def test_get_unique_episode_indices(tmp_path: Path):
@@ -104,7 +114,7 @@ def test_get_unique_episode_indices(tmp_path: Path):
 
 
 def test_non_mutate(tmp_path: Path):
-    """Checks that the data provided to the add_data method is copied rather than passed by reference.
+    """Checks that the data added to the memmap with `add_episodes` is copied rather than passed by reference.
 
     This means that mutating the data in the memmap does not mutate the original data.
 
@@ -390,19 +400,20 @@ def test_filo(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
         assert set(os.listdir(dataset.storage_dir / dataset.PNGS_DIR)) == set(expected_png_file_names)
 
 
-def test_delta_timestamps_within_tolerance(tmp_path: Path):
+@pytest.mark.parametrize("image_mode", list(LeRobotDatasetV2ImageMode))
+def test_delta_timestamps_within_tolerance(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
     """Check that getting an item with delta_timestamps within tolerance succeeds."""
     dataset = LeRobotDatasetV2(
         tmp_path / f"dataset_{uuid4().hex}",
         fps=10,
-        image_mode=LeRobotDatasetV2ImageMode.MEMMAP,
+        image_mode=image_mode,
         delta_timestamps={"index": [-0.2, 0, 0.1]},
     )
     new_data = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=5)
     dataset.add_episodes(new_data)
     item = dataset[2]
-    data, is_pad = item["index"], item[f"index{LeRobotDatasetV2.IS_PAD_POSTFIX}"]
-    assert torch.allclose(data, torch.tensor([0, 2, 3])), "Data does not match expected values"
+    indices, is_pad = item["index"], item[f"index{LeRobotDatasetV2.IS_PAD_POSTFIX}"]
+    assert torch.allclose(indices, torch.tensor([0, 2, 3])), "Data does not match expected values"
     assert not is_pad.any(), "Unexpected padding detected"
 
 
@@ -491,7 +502,8 @@ def test_getter_returns_pytorch_format(tmp_path: Path, dataset_repo_id: str, dec
             assert c < min(h, w), "images are not channel-first"
 
 
-def test_getter_images_with_delta_timestamps(tmp_path: Path):
+@pytest.mark.parametrize("decode_images", [True, False])
+def test_getter_images_with_delta_timestamps(tmp_path: Path, decode_images: bool):
     """Checks a basic delta_timestamps use case with images.
 
     Specifically, makes sure that the items returned by the getter have the correct number of frames.
@@ -503,8 +515,10 @@ def test_getter_images_with_delta_timestamps(tmp_path: Path):
     lerobot_dataset_info = load_info(dataset_repo_id, version=CODEBASE_VERSION, root=DATA_DIR)
     fps = lerobot_dataset_info["fps"]
     # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
-    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}"
-    dataset = LeRobotDatasetV2.from_huggingface_hub(dataset_repo_id, storage_dir=storage_dir)
+    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}_{decode_images}"
+    dataset = LeRobotDatasetV2.from_huggingface_hub(
+        dataset_repo_id, storage_dir=storage_dir, decode_images=decode_images
+    )
     delta_timestamps = [-1 / fps, 0.0, 1 / fps]
     dataset.set_delta_timestamps({k: delta_timestamps for k in dataset.camera_keys})
 
@@ -529,10 +543,10 @@ def test_getter_video_images_with_delta_timestamps(tmp_path: Path):
     fps = lerobot_dataset_info["fps"]
     # Note: storage_dir specified explicitly in order to make use of pytest's temporary file fixture.
     dataset_video = LeRobotDatasetV2.from_huggingface_hub(
-        dataset_repo_id, False, storage_dir=tmp_path / f"{dataset_repo_id}_{uuid4().hex}_False"
+        dataset_repo_id, decode_images=False, storage_dir=tmp_path / f"{dataset_repo_id}_{uuid4().hex}_False"
     )
     dataset_memmap = LeRobotDatasetV2.from_huggingface_hub(
-        dataset_repo_id, True, storage_dir=tmp_path / f"{dataset_repo_id}_{uuid4().hex}_True"
+        dataset_repo_id, decode_images=True, storage_dir=tmp_path / f"{dataset_repo_id}_{uuid4().hex}_True"
     )
 
     assert set(dataset_video.camera_keys) == set(dataset_memmap.camera_keys)
