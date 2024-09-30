@@ -376,12 +376,12 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             metadata["_data_spec"][k]["dtype"] = np.dtype(metadata["_data_spec"][k]["dtype"])
         return metadata
 
-    def _make_storage_dir(self, episode_data: dict[str, np.ndarray]):
+    def _make_storage_directory(self, episode_data: dict[str, np.ndarray]):
         """Create the storage directory based on example episode data from the first `add_episodes` call."""
         # TODO(now): Do I really want this?
-        assert not (
-            self.storage_dir / self.METADATA_FILE_NAME
-        ).exists(), "This method should only be called before the storage directory has been created."
+        # assert not (
+        #     self.storage_dir / self.METADATA_FILE_NAME
+        # ).exists(), "This method should only be called before the storage directory has been created."
 
         self._storage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -514,9 +514,12 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             self.flush()
 
     def _add_episode(self, data: dict[str, np.ndarray]):
-        """Add a single episode to the dataset."""
+        """Add a single episode to the dataset.
+
+        Also manages FILO logic.
+        """
         if len(self._data) == 0:
-            self._make_storage_dir(data)
+            self._make_storage_directory(data)
 
         if len(missing_keys := (set(self.data_keys).difference(set(data)))) > 0:
             raise ValueError(f"Missing data keys: {missing_keys}")
@@ -616,7 +619,54 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         # Update the data pointer.
         self._data[self.NEXT_INDEX_KEY][0] = next_index + new_data_length
 
-        # TODO(now): Remove videos/images if data is overwritten.
+        # Remove stale videos or PNG files if needed.
+        # TODO(now): DRY
+        if self._use_as_filo_buffer and self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+            relevant_file_names = []
+            for k in self.camera_keys:
+                relevant_file_names += [
+                    self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=ep_ix)
+                    for ep_ix in self.get_unique_episode_indices()
+                ]
+            relevant_file_names = set(relevant_file_names)
+            found_file_names = set(os.listdir(self._storage_dir / self.VIDEOS_DIR))
+            # Sanity check. All relevant file names should exist.
+            assert len(relevant_file_names.difference(found_file_names)) == 0
+            file_names_to_remove = found_file_names.difference(relevant_file_names)
+            if len(file_names_to_remove) > 0:
+                # Sanity check: the file names to remove should match the camera keys that we used to
+                # construct the relevant files. Adds a layer of protection against deleting files that
+                # shouldn't be deleted.
+                assert {f.split("_episode", 1)[0] for f in file_names_to_remove} == set(self.camera_keys)
+                # Now remove all irrelevant files.
+                for file_name in file_names_to_remove:
+                    os.remove(self._storage_dir / self.VIDEOS_DIR / file_name)
+        elif self._use_as_filo_buffer and self._image_mode == LeRobotDatasetV2ImageMode.PNG:
+            relevant_file_names = []
+            for k in self.camera_keys:
+                for ep_ix in self.get_unique_episode_indices():
+                    frame_indices = self.get_data_by_key(LeRobotDatasetV2.FRAME_INDEX_KEY)[
+                        self.get_data_by_key(LeRobotDatasetV2.EPISODE_INDEX_KEY) == ep_ix
+                    ]
+                    for frame_ix in frame_indices:
+                        relevant_file_names.append(
+                            self.PNG_NAME_FSTRING.format(
+                                data_key=k, episode_index=ep_ix, frame_index=frame_ix
+                            )
+                        )
+            relevant_file_names = set(relevant_file_names)
+            found_file_names = set(os.listdir(self._storage_dir / self.PNGS_DIR))
+            # Sanity check. All relevant file names should exist.
+            assert len(relevant_file_names.difference(found_file_names)) == 0
+            file_names_to_remove = found_file_names.difference(relevant_file_names)
+            if len(file_names_to_remove) > 0:
+                # Sanity check: the file names to remove should match the camera keys that we used to
+                # construct the relevant files. Adds a layer of protection against deleting files that
+                # shouldn't be deleted.
+                assert {f.split("_episode", 1)[0] for f in file_names_to_remove} == set(self.camera_keys)
+                # Now remove all irrelevant files.
+                for file_name in found_file_names.difference(relevant_file_names):
+                    os.remove(self._storage_dir / self.PNGS_DIR / file_name)
 
     def flush(self):
         """Save the data to disk.
@@ -854,8 +904,8 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
     ) -> "LeRobotDatasetV2":
         """Create a LeRobotDatasetV2 from a data repository on the Hugging Face Hub.
 
-        NOTE: If the LeRobotDatasetV2 already exists in /tmp, this function will reuse it rather than creating a new
-        one.
+        NOTE: If the LeRobotDatasetV2 already exists in the storage directory, this function will reuse it
+        rather than creating a new one.
 
         Args:
             repo_id: The dataset repository ID.
@@ -881,8 +931,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         hf_dataset.set_transform(lambda x: x)  # there is a default transform in place. reset it
         # Get some metadata necessary for processing videos.
         lerobot_dataset_info = load_info(repo_id, version=CODEBASE_VERSION, root=root)
-        # if not lerobot_dataset_info.get("video", False) and decode_images:
-        #     raise ValueError(f"The provided dataset is not a video dataset but you have {decode_images=}")
         if lerobot_dataset_info.get("video", False):
             lerobot_dataset_videos_path = load_videos(repo_id, version=CODEBASE_VERSION, root=root)
 

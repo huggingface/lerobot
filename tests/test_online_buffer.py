@@ -16,6 +16,7 @@
 
 # TODO(now): Test relevant functions in all image modes.
 
+import os
 from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
@@ -285,17 +286,22 @@ def test_filo_needs_buffer_capacity(tmp_path: Path):
         LeRobotDatasetV2(tmp_path / f"dataset_{uuid4().hex}", fps=10, use_as_filo_buffer=True)
 
 
-def test_filo(tmp_path: Path):
+@pytest.mark.parametrize("image_mode", list(LeRobotDatasetV2ImageMode))
+def test_filo(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
     """Checks that if data is added beyond the buffer capacity, we discard the oldest data first."""
     buffer_capacity = 100
     dataset = LeRobotDatasetV2(
-        tmp_path / f"dataset_{uuid4().hex}", fps=10, buffer_capacity=buffer_capacity, use_as_filo_buffer=True
+        tmp_path / f"dataset_{uuid4().hex}",
+        fps=10,
+        buffer_capacity=buffer_capacity,
+        use_as_filo_buffer=True,
+        image_mode=image_mode,
     )
     # Note: choices for args to make_spoof_data_frames are mostly arbitrary. Of interest is:
     #   - later we need `n_more_episodes` to cause an overflow.
     #   - we need that overflow to happen *within* an episode such that we're testing the behavior whereby the
     #     whole episode is wrapped to the start of the buffer, even if part of it can fit.
-    n_frames_per_episode = buffer_capacity // 4 + 2
+    n_frames_per_episode = buffer_capacity // 4 + 1  # 26
     n_episodes = 3
     if buffer_capacity - n_frames_per_episode * n_episodes >= n_frames_per_episode:
         raise DevTestingError("Make sure to set this up such that adding another episode causes an overflow.")
@@ -305,7 +311,7 @@ def test_filo(tmp_path: Path):
     n_more_episodes = 2
     # Make this slightly larger than the prior episodes to test that there is no issue with overwriting the
     # start of an existing episode.
-    n_frames_per_more_episodes = n_frames_per_episode + 1
+    n_frames_per_more_episodes = n_frames_per_episode + 1  # 27
     more_new_episodes = make_spoof_data_frames(n_more_episodes, n_frames_per_more_episodes)
     dataset.add_episodes(more_new_episodes)
     assert (
@@ -321,10 +327,41 @@ def test_filo(tmp_path: Path):
         # The extra new episode should overwrite the start of the buffer.
         expected_data[k][: len(more_new_episodes[k])] = more_new_episodes[k]
 
-    for k in dataset.data_keys:
-        assert np.array_equal(dataset.get_data_by_key(k), expected_data[k])
+    for episode_index in dataset.get_unique_episode_indices():
+        episode_data = dataset.get_episode(episode_index)
+        episode_mask = expected_data[LeRobotDatasetV2.EPISODE_INDEX_KEY] == episode_index
+        for k in dataset.data_keys:
+            if image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+                # Because of lossy compression for videos (which is exacerbated by the fact that we are
+                # working with random noise images), we can't check for pixel-perfect equality here (even
+                # with crf=0). See `test_write_read_and_get_episode_video_mode`.
+                assert episode_data[k].shape == expected_data[k][episode_mask].shape
+            else:
+                assert np.array_equal(episode_data[k], expected_data[k][episode_mask])
 
-    # TODO(now): Test that videos and pngs are removed as needed.
+    # Test that videos and PNG files are removed/added as needed.
+    # Note: since we have verified above that the memmap data is correct, we can make use of it to figure out
+    # which video/PNG files we expect to see.
+    if image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+        expected_video_file_names = []
+        for k in dataset.camera_keys:
+            expected_video_file_names += [
+                dataset.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=ep_ix)
+                for ep_ix in dataset.get_unique_episode_indices()
+            ]
+        assert set(os.listdir(dataset.storage_dir / dataset.VIDEOS_DIR)) == set(expected_video_file_names)
+    elif image_mode == LeRobotDatasetV2ImageMode.PNG:
+        expected_png_file_names = []
+        for k in dataset.camera_keys:
+            for ep_ix in dataset.get_unique_episode_indices():
+                frame_indices = dataset.get_data_by_key(LeRobotDatasetV2.FRAME_INDEX_KEY)[
+                    dataset.get_data_by_key(LeRobotDatasetV2.EPISODE_INDEX_KEY) == ep_ix
+                ]
+                for frame_ix in frame_indices:
+                    expected_png_file_names.append(
+                        dataset.PNG_NAME_FSTRING.format(data_key=k, episode_index=ep_ix, frame_index=frame_ix)
+                    )
+        assert set(os.listdir(dataset.storage_dir / dataset.PNGS_DIR)) == set(expected_png_file_names)
 
 
 def test_delta_timestamps_within_tolerance(tmp_path: Path):
