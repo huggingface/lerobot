@@ -49,7 +49,8 @@ def make_spoof_data_frames(
     n_frames = n_frames_per_episode * n_episodes
     with seeded_context(seed):
         new_data = {
-            "observation.image": np.random.randint(0, 256, size=(n_frames, *img_size, 3)).astype(np.uint8),
+            # "observation.image": np.random.randint(0, 256, size=(n_frames, *img_size, 3)).astype(np.uint8),
+            "observation.image": np.random.randint(118, 128, size=(n_frames, *img_size, 3)).astype(np.uint8),
             "observation.state": np.random.normal(size=(n_frames, proprio_dim)).astype(np.float32),
             "action": np.random.normal(size=(n_frames, action_dim)).astype(np.float32),
             LeRobotDatasetV2.INDEX_KEY: np.arange(n_frames),
@@ -160,12 +161,65 @@ def test_write_read_and_get_episode(tmp_path: Path, do_reload: bool, image_mode:
             if image_mode == LeRobotDatasetV2ImageMode.VIDEO and k.startswith(
                 LeRobotDatasetV2.IMAGE_KEY_PREFIX
             ):
-                # Unfortunately we can't check array equality here because the videos were encoded lossily.
-                # We'll settle for a shape check.
-                # TODO(now): This should work with crf=0
+                # Because of lossy compression for videos (which is exacerbated by the fact that we are
+                # working with random noise images), we can't check for pixel-perfect equality here (even
+                # with crf=0). See `test_write_read_and_get_episode_video_mode` for the follow up test.
                 assert episode_data[k].shape == new_data[k][data_mask].shape
             else:
                 assert np.array_equal(episode_data[k], new_data[k][data_mask]), f"Mismatch for {k=}"
+
+
+@pytest.mark.parametrize("do_reload", [False, True])
+def test_write_read_and_get_episode_video_mode(tmp_path: Path, do_reload: bool):
+    """
+    See `test_write_read_and_get_episode`. There, we had to get by with just checking that the image shapes
+    match for video mode. We couldn't check pixel equality because of lossy compression (which is especially
+    bad for random noise images as we used there). Here we use the PushT dataset and check that a high
+    percentage of pixel values are within tolerance.
+    """
+    dataset_repo_id = "lerobot/pusht"
+    storage_dir = tmp_path / f"{dataset_repo_id}_{uuid4().hex}"
+    # This is not the dataset we will be testing. We are just getting frames for it for the test.
+    dataset = LeRobotDatasetV2.from_huggingface_hub(dataset_repo_id, decode_images=True)
+    fps = dataset.fps
+    # Since `test_write_read_and_get_episode` already tested `get_episode` in "memmap" mode, it is fair to
+    # do it here as part of setting up for this test.
+    provided_episode_data = dataset.get_episode(0)
+    episode_length = len(provided_episode_data[LeRobotDatasetV2.INDEX_KEY])
+    # This is the dataset we will be testing.
+    storage_dir = tmp_path / f"dataset_{uuid4().hex}"
+    dataset = LeRobotDatasetV2(storage_dir, image_mode=LeRobotDatasetV2ImageMode.VIDEO, fps=fps)
+    # To construct the new dataset, just repeat the episode some number of times.
+    n_episodes = 2
+    for _ in range(n_episodes):
+        dataset.add_episodes(provided_episode_data)
+
+    if do_reload:
+        del dataset
+        dataset = LeRobotDatasetV2(storage_dir, image_mode=LeRobotDatasetV2ImageMode.VIDEO, fps=fps)
+
+    assert len(dataset) == episode_length * n_episodes
+    for episode_index in range(n_episodes):
+        retrieved_episode_data = dataset.get_episode(episode_index)
+        for k in dataset.data_keys:
+            if k.startswith(LeRobotDatasetV2.IMAGE_KEY_PREFIX):
+                # Check that >99% of array values are within 10 units of the original.
+                diff = np.abs(
+                    retrieved_episode_data[k].astype("int") - provided_episode_data[k].astype("int")
+                )
+                assert np.count_nonzero(diff >= 10) / np.prod(provided_episode_data[k].shape) <= 0.01
+            elif k == LeRobotDatasetV2.INDEX_KEY:
+                # Account for shift.
+                assert np.array_equal(
+                    retrieved_episode_data[k], provided_episode_data[k] + episode_length * episode_index
+                )
+            elif k == LeRobotDatasetV2.EPISODE_INDEX_KEY:
+                # Account for shift.
+                assert np.all(retrieved_episode_data[k] == episode_index)
+            else:
+                assert np.array_equal(
+                    retrieved_episode_data[k], provided_episode_data[k]
+                ), f"Mismatch for {k=}"
 
 
 def test_get_episode_index_error(tmp_path: Path):

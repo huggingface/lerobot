@@ -259,7 +259,7 @@ def encode_video_frames(
     if not video_path.exists():
         raise OSError(
             f"Video encoding did not work. File not found: {video_path}. "
-            f"Try running the command manually to debug: `{''.join(ffmpeg_cmd)}`"
+            f"Try running the command manually to debug: `{' '.join(ffmpeg_cmd)}`"
         )
 
 

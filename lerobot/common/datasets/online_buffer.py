@@ -601,7 +601,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                         / self.VIDEOS_DIR
                         / self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=new_episode_index),
                         self.fps,
-                        # crf=0,  # TODO(now)
                     )
             elif self._image_mode == LeRobotDatasetV2ImageMode.PNG and k.startswith(self.IMAGE_KEY_PREFIX):
                 # Encode images to PNG and save to disk.
