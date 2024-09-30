@@ -32,7 +32,11 @@ from torch.cuda.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
-from lerobot.common.datasets.online_buffer import LeRobotDatasetV2, compute_sampler_weights
+from lerobot.common.datasets.online_buffer import (
+    LeRobotDatasetV2,
+    LeRobotDatasetV2ImageMode,
+    compute_sampler_weights,
+)
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
@@ -403,20 +407,13 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         shuffle = True
         sampler = None
 
-    if cfg.get("use_lerobot_data_buffer", False):
-        logging.info("Siphoning the dataset into a DataBuffer.")
-        decode_video = offline_dataset.video and cfg.get("lerobot_data_buffer_decode_video", False)
-        if decode_video:
-            logging.info(
-                "You have chosen to decode the video. It could take some time to populate the buffer "
-                "depending on the amount of data (but it only needs to happen once, and data loading will be "
-                "fast!)"
-            )
+    if cfg.get("use_lerobot_dataset_v2", False):
+        logging.info("Siphoning the dataset into a LeRobotDatasetV2.")
+        decode_images = cfg.get("lerobot_dataset_v2_decode_images", False)
         offline_dataset_for_dataloader = LeRobotDatasetV2.from_huggingface_hub(
             offline_dataset.repo_id,
-            fps=offline_dataset.fps,
             delta_timestamps=offline_dataset.delta_timestamps,
-            decode_images=decode_video,
+            decode_images=decode_images,
             image_transform=offline_dataset.image_transforms,
         )
     else:
@@ -492,6 +489,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     online_dataset = LeRobotDatasetV2(
         online_buffer_path,
         buffer_capacity=cfg.training.online_buffer_capacity,
+        use_as_filo_buffer=True,
+        image_mode=LeRobotDatasetV2ImageMode.MEMMAP,
         fps=online_env.unwrapped.metadata["render_fps"],
         delta_timestamps=cfg.training.delta_timestamps,
         image_transform=offline_dataset.image_transforms,

@@ -154,6 +154,28 @@ def test_index_error_with_data(tmp_path: Path):
         dataset[-n_frames - 1]
 
 
+@pytest.mark.parametrize("image_mode", list(LeRobotDatasetV2ImageMode))
+def test_value_error_no_image(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
+    """
+    Check that trying to add an episode without image data when the image mode is decodable raises a
+    ValueError.
+    """
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=image_mode
+    )  # arbitrary fps
+    # Note: choices for args to make_spoof_data_frames are totally arbitrary.
+    new_episodes = make_spoof_data_frames(n_episodes=2, n_frames_per_episode=25)
+    # Drop any image data keys.
+    image_data_keys = [k for k in new_episodes if k.startswith(LeRobotDatasetV2.IMAGE_KEY_PREFIX)]
+    for k in image_data_keys:
+        del new_episodes[k]
+    if LeRobotDatasetV2ImageMode.needs_decoding(image_mode):
+        with pytest.raises(ValueError):
+            dataset.add_episodes(new_episodes)
+    else:
+        dataset.add_episodes(new_episodes)
+
+
 @pytest.mark.parametrize("do_reload", [False, True])
 @pytest.mark.parametrize("image_mode", list(LeRobotDatasetV2ImageMode))
 def test_write_read_and_get_episode(tmp_path: Path, do_reload: bool, image_mode: str):

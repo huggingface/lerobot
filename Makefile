@@ -20,8 +20,8 @@ build-gpu:
 
 test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-train
-	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-data-buffer
-	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-data-buffer-decode-video
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-lerobot-dataset-v2
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-lerobot-dataset-v2-decode-video
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-amp
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval-amp
@@ -52,7 +52,7 @@ test-act-ete-train:
 		training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/act/
 
-test-act-ete-train-data-buffer:
+test-act-ete-train-lerobot-dataset-v2:
 	python lerobot/scripts/train.py \
 		policy=act \
 		policy.dim_model=64 \
@@ -70,9 +70,9 @@ test-act-ete-train-data-buffer:
 		training.batch_size=2 \
 		training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/act_buffer/ \
-		+use_lerobot_data_buffer=true \
+		+use_lerobot_dataset_v2=true \
 
-test-act-ete-train-data-buffer-decode-video:
+test-act-ete-train-lerobot-dataset-v2-decode-video:
 	python lerobot/scripts/train.py \
 		policy=act \
 		policy.dim_model=64 \
@@ -90,8 +90,8 @@ test-act-ete-train-data-buffer-decode-video:
 		training.batch_size=2 \
 		training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/act_buffer_decode_video/ \
-		+use_lerobot_data_buffer=true \
-		+lerobot_data_buffer_decode_video=true \
+		+use_lerobot_dataset_v2=true \
+		+lerobot_dataset_v2_decode_images=true \
 
 test-act-ete-eval:
 	python lerobot/scripts/eval.py \

@@ -379,14 +379,11 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             metadata["_data_spec"][k]["dtype"] = np.dtype(metadata["_data_spec"][k]["dtype"])
         return metadata
 
-    def _make_storage_directory(self, episode_data: dict[str, np.ndarray]):
+    def _make_storage_dir(self, episode_data: dict[str, np.ndarray], exist_okay: bool = False):
         """Create the storage directory based on example episode data from the first `add_episodes` call."""
-        # TODO(now): Do I really want this?
-        assert not (
-            self.storage_dir / self.METADATA_FILE_NAME
-        ).exists(), "This method should only be called before the storage directory has been created."
-
-        self._storage_dir.mkdir(parents=True, exist_ok=True)
+        # Note: exist_ok=True allows `from_huggingface_hub` to do the hack of copying video/png files over
+        # in advance.
+        self._storage_dir.mkdir(parents=True, exist_ok=exist_okay)
 
         if self._buffer_capacity is None:
             # Reserve enough storage for one episode. Storage will be extended as needed.
@@ -516,13 +513,16 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         if not no_flush:
             self.flush()
 
-    def _add_episode(self, data: dict[str, np.ndarray]):
+    def _add_episode(self, data: dict[str, np.ndarray], from_huggingface_hub: bool = False):
         """Add a single episode to the dataset.
 
         Also manages FILO logic.
+
+        Setting `from_huggingface_hub` is only intended for calls from that method. This is a hack that allows
+        `from_huggingface_hub` to create the video or png directories ahead of time.
         """
         if len(self._data) == 0:
-            self._make_storage_directory(data)
+            self._make_storage_dir(data, exist_okay=from_huggingface_hub)
 
         if len(missing_keys := (set(self.data_keys).difference(set(data)))) > 0:
             raise ValueError(f"Missing data keys: {missing_keys}")
@@ -541,7 +541,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             raise ValueError(
                 "Expected frame indices to start from 0 and step up in increments of 1 per frame."
             )
-        # Special check on image keys.
+        # Special checks on image keys.
         for k in data:
             if not k.startswith(self.IMAGE_KEY_PREFIX):
                 continue
@@ -551,6 +551,15 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                     f"Any data key starting with '{self.IMAGE_KEY_PREFIX}' is assumed to be an image, "
                     "and should be of type np.uint8, with channel-last format."
                 )
+        if (
+            not from_huggingface_hub
+            and LeRobotDatasetV2ImageMode.needs_decoding(self._image_mode)
+            and not any(k.startswith(self.IMAGE_KEY_PREFIX) for k in data)
+        ):
+            raise ValueError(
+                f"Since the image mode is {str(self._image_mode)}, all added episodes are expected to have "
+                f"image data (that is, at least one key that starts with {self.IMAGE_KEY_PREFIX})."
+            )
 
         # Figure out where we need to start filling data next, and make sure we continue data and episode
         # indices.
@@ -938,7 +947,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         )
 
         dataset_already_on_disk = False
-        if Path(kwargs["storage_dir"] / LeRobotDatasetV2.METADATA_FILE_NAME).exists():
+        if Path(kwargs["storage_dir"]).exists():
             dataset_already_on_disk = True
 
         # Set the image mode based on the provided HF dataset and whether we are decoding images.
@@ -999,7 +1008,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                                     data_key=k, episode_index=episode_index, frame_index=frame_index
                                 )
                             )
-                            os.makedirs(img_path.parent, exist_ok=True)
+                            img_path.parent.mkdir(parents=True, exist_ok=True)
                             img_bytes = hf_episode_data[k][i]["bytes"]
                             with open(img_path, "wb") as f:
                                 f.write(img_bytes)
@@ -1021,7 +1030,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                                 data_key=k, episode_index=episode_index
                             )
                         )
-                        os.makedirs(new_video_path.parent, exist_ok=True)
+                        new_video_path.parent.mkdir(parents=True, exist_ok=True)
                         os.symlink(
                             (lerobot_dataset_videos_path / new_video_path.name).absolute(), new_video_path
                         )
@@ -1032,8 +1041,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 else:
                     raise NotImplementedError(f"feature type {type(feature)} is not handled.")
 
-            # no_flush=True makes it a lot faster. We will flush once after the loop.
-            obj.add_episodes(data_dict, no_flush=True)
+            obj._add_episode(data_dict, from_huggingface_hub=True)
 
         obj.flush()
 
