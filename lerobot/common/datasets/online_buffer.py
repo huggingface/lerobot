@@ -620,42 +620,35 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         self._data[self.NEXT_INDEX_KEY][0] = next_index + new_data_length
 
         # Remove stale videos or PNG files if needed.
-        # TODO(now): DRY
-        if self._use_as_filo_buffer and self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+        if self._use_as_filo_buffer and LeRobotDatasetV2ImageMode.needs_decoding(self._image_mode):
             relevant_file_names = []
-            for k in self.camera_keys:
-                relevant_file_names += [
-                    self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=ep_ix)
-                    for ep_ix in self.get_unique_episode_indices()
-                ]
-            relevant_file_names = set(relevant_file_names)
-            found_file_names = set(os.listdir(self._storage_dir / self.VIDEOS_DIR))
-            # Sanity check. All relevant file names should exist.
-            assert len(relevant_file_names.difference(found_file_names)) == 0
-            file_names_to_remove = found_file_names.difference(relevant_file_names)
-            if len(file_names_to_remove) > 0:
-                # Sanity check: the file names to remove should match the camera keys that we used to
-                # construct the relevant files. Adds a layer of protection against deleting files that
-                # shouldn't be deleted.
-                assert {f.split("_episode", 1)[0] for f in file_names_to_remove} == set(self.camera_keys)
-                # Now remove all irrelevant files.
-                for file_name in file_names_to_remove:
-                    os.remove(self._storage_dir / self.VIDEOS_DIR / file_name)
-        elif self._use_as_filo_buffer and self._image_mode == LeRobotDatasetV2ImageMode.PNG:
-            relevant_file_names = []
-            for k in self.camera_keys:
-                for ep_ix in self.get_unique_episode_indices():
-                    frame_indices = self.get_data_by_key(LeRobotDatasetV2.FRAME_INDEX_KEY)[
-                        self.get_data_by_key(LeRobotDatasetV2.EPISODE_INDEX_KEY) == ep_ix
+            if self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+                for k in self.camera_keys:
+                    relevant_file_names += [
+                        self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=ep_ix)
+                        for ep_ix in self.get_unique_episode_indices()
                     ]
-                    for frame_ix in frame_indices:
-                        relevant_file_names.append(
-                            self.PNG_NAME_FSTRING.format(
-                                data_key=k, episode_index=ep_ix, frame_index=frame_ix
+                files_dir = self._storage_dir / self.VIDEOS_DIR
+                found_file_names = set(os.listdir(files_dir))
+
+            elif self._image_mode == LeRobotDatasetV2ImageMode.PNG:
+                for k in self.camera_keys:
+                    for ep_ix in self.get_unique_episode_indices():
+                        frame_indices = self.get_data_by_key(LeRobotDatasetV2.FRAME_INDEX_KEY)[
+                            self.get_data_by_key(LeRobotDatasetV2.EPISODE_INDEX_KEY) == ep_ix
+                        ]
+                        for frame_ix in frame_indices:
+                            relevant_file_names.append(
+                                self.PNG_NAME_FSTRING.format(
+                                    data_key=k, episode_index=ep_ix, frame_index=frame_ix
+                                )
                             )
-                        )
+                files_dir = self._storage_dir / self.PNGS_DIR
+                found_file_names = set(os.listdir(self._storage_dir / self.PNGS_DIR))
+            else:
+                raise AssertionError("All decodable image modes should be handled")
+
             relevant_file_names = set(relevant_file_names)
-            found_file_names = set(os.listdir(self._storage_dir / self.PNGS_DIR))
             # Sanity check. All relevant file names should exist.
             assert len(relevant_file_names.difference(found_file_names)) == 0
             file_names_to_remove = found_file_names.difference(relevant_file_names)
@@ -666,7 +659,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 assert {f.split("_episode", 1)[0] for f in file_names_to_remove} == set(self.camera_keys)
                 # Now remove all irrelevant files.
                 for file_name in found_file_names.difference(relevant_file_names):
-                    os.remove(self._storage_dir / self.PNGS_DIR / file_name)
+                    os.remove(files_dir / file_name)
 
     def flush(self):
         """Save the data to disk.
