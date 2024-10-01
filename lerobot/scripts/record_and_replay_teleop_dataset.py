@@ -15,6 +15,7 @@ The following videos should result:
 
 """
 
+import array
 from turtle import position
 from typing import NamedTuple
 from pynput.keyboard import Key
@@ -408,14 +409,7 @@ def set_up_keyboard_teleop():
             episode_state.is_concluding_episode = True
             episode_state.is_stopping = True
 
-    def on_release(key):
-        # print('{0} released'.format(
-        # key))
-        if key == keyboard.Key.esc:
-            exit()
-
-    listener = keyboard.Listener(
-        on_press=on_press, on_release=on_release)
+    listener = keyboard.Listener(on_press=on_press)
 
     def start_fn():
         listener.start()
@@ -456,52 +450,51 @@ def set_up_arm_teleop():
             episode_state.is_concluding_episode = True
             episode_state.is_stopping = True
 
-    def on_release(key):
-        # print('{0} released'.format(
-        # key))
-        if key == keyboard.Key.esc:
-            exit()
-
-    listener = keyboard.Listener(
-        on_press=on_press, on_release=on_release)
+    listener = keyboard.Listener(on_press=on_press)
 
     # Separate process to get data from arm.
-    from multiprocessing import Process, Array
+    import multiprocessing
 
-    def update_controls(joint_commands: Array):
-        from lerobot.common.robot_devices.robots.factory import make_robot
-        from lerobot.common.robot_devices.robots.utils import Robot, get_arm_id
-        from lerobot.common.robot_devices.utils import busy_wait
-        from lerobot.common.utils.utils import init_hydra_config
+    def update_controls(joint_commands: multiprocessing.Array):
+        from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
+        leader_port = "/dev/ttyACM1"
 
-        robot_path = "lerobot/configs/robot/koch.yaml"
-        robot_overrides = '~cameras'
+        leader_arm = DynamixelMotorsBus(
+            port=leader_port,
+            motors={
+                # name: (index, model)
+                "shoulder_pan": (1, "xl330-m077"),
+                "shoulder_lift": (2, "xl330-m077"),
+                "elbow_flex": (3, "xl330-m077"),
+                "wrist_flex": (4, "xl330-m077"),
+                "wrist_roll": (5, "xl330-m077"),
+                "gripper": (6, "xl330-m077"),
+            },
+        )
 
-        robot_cfg = init_hydra_config(robot_path, robot_overrides)
-        robot = make_robot(robot_cfg)
-
-        if not robot.is_connected:
-            robot.connect()
+        if not leader_arm.is_connected:
+            leader_arm.connect()
 
         while True:
-            observation = robot.capture_observation()
-            positions = observation["joints"]
+            positions = leader_arm.read("Present_Position")
+            print(f"positions: {positions}")
+            print(f"joint_commands: {joint_commands}")
             assert len(joint_commands) == len(positions)
             for i in range(len(joint_commands)):
                 joint_commands[i] = positions[i]
 
-    joint_commands = Array('d', [0, 0, 0, 0, 0])
-    run_robot_process = Process(target=update_controls, args=(joint_commands))
+    joint_commands = multiprocessing.Array('d',[0, 0, 0, 0, 0, 0])
+    run_robot_process = multiprocessing.Process(target=update_controls, args=(joint_commands,))
 
     # Separate thread to copy arm data to teleop_command (this shares compute time with simulation).
     from threading import Thread
 
-    def copy_data(joint_commands: Array, teleoperation_action, is_stopping: bool):
+    def copy_data(joint_commands: multiprocessing.Array, teleoperation_action, is_stopping: bool):
         while not is_stopping:
             if teleoperation_action is None:
                 time.sleep(0.01)
                 continue
-
+            
             assert len(joint_commands) == len(teleoperation_action)
             for i in range(len(joint_commands)):
                 teleoperation_action[i] = joint_commands[i]
