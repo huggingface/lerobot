@@ -15,8 +15,10 @@
 # limitations under the License.
 
 import os
+from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 import datasets
@@ -26,6 +28,7 @@ import torch
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, DATA_DIR, LeRobotDataset
 from lerobot.common.datasets.online_buffer import (
+    DiskSpaceError,
     LeRobotDatasetV2,
     LeRobotDatasetV2ImageMode,
     TimestampOutsideToleranceError,
@@ -276,6 +279,41 @@ def test_write_read_and_get_episode_video_mode(tmp_path: Path, do_reload: bool):
                 assert np.array_equal(
                     retrieved_episode_data[k], provided_episode_data[k]
                 ), f"Mismatch for {k=}"
+
+
+@pytest.mark.parametrize("pct", [79.0, 81.0])
+@pytest.mark.parametrize("via", ["first_call_to_add_episodes", "extend_memmaps"])
+def test_disk_space_error(tmp_path: Path, pct: float, via: str):
+    """
+    Check that attempting to create or extend memmaps beyond 80% of the remaining disk capacity, raises an
+    error.
+    """
+    # First we'll create a dummy dataset to back out the disk usage.
+    dummy_dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
+    new_episodes = make_spoof_data_frames(n_episodes=10, n_frames_per_episode=25)
+    dummy_dataset.add_episodes(new_episodes)
+    data_spec = dummy_dataset._load_metadata()["_data_spec"]
+    # Required space in bytes.
+    required_space = sum(spec["dtype"].itemsize * np.prod(spec["shape"]) for spec in data_spec.values())
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )
+    if via == "extend_memmaps":
+        # The first time we add_episodes, there is no issue with disk space, so we should expect an error.
+        dataset.add_episodes(new_episodes)
+        required_space *= 2  # we will add another episode so we need 2x the space
+    with patch("os.statvfs") as mock_statvfs:
+        mock_statvfs.return_value.f_bavail = 1
+        mock_statvfs.return_value.f_frsize = int(required_space / (pct / 100))
+        # If via == "first_call_to_add_episodes", we are simulating calling `add_episodes` for the first time
+        # with not enough space on disk to do it.
+        # If via == "extend_memmaps", we are simulating calling `add_episodes` the second time. The first time
+        # (above) was successful, but now there is not enough disk space to extend the memmaps for the new
+        # episode.
+        with pytest.raises(DiskSpaceError) if pct > 80 else nullcontext():
+            dataset.add_episodes(new_episodes)
 
 
 def test_get_episode_index_error(tmp_path: Path):

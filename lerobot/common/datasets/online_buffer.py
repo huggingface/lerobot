@@ -48,6 +48,10 @@ class TimestampOutsideToleranceError(Exception):
     pass
 
 
+class DiskSpaceError(Exception):
+    pass
+
+
 class LeRobotDatasetV2ImageMode(Enum):
     MEMMAP = "memmap"
     PNG = "png"
@@ -421,7 +425,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             self._save_metadata(data_spec=data_spec, data_keys=list(episode_data))
         except Exception as e:
             # Attempt to clean up by removing the empty storage directory.
-            shutil.rmtree(self._storage_dir)
+            shutil.rmtree(self._storage_dir)  # TODO(now), I think this might not be safe?
             raise e
 
     def _make_memmaps(self, data_spec: dict[str, dict], mode: str):
@@ -430,14 +434,14 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         The underlying storage directory may or may not already exist. Provide the file opening `mode`
         accordingly.
         """
-        # First check that this will nor use up most or all of the storage space.
+        # First check that this will not use up most or all of the storage space.
         required_space = 0
         for spec in data_spec.values():
             required_space += spec["dtype"].itemsize * np.prod(spec["shape"])  # bytes
         stats = os.statvfs(self._storage_dir)
         available_space = stats.f_bavail * stats.f_frsize  # bytes
         if required_space >= available_space * MEMMAP_STORAGE_PCT_CAP:
-            raise RuntimeError(
+            raise DiskSpaceError(
                 f"You're about to take up {required_space} of {available_space} bytes available. This "
                 "exception has been raised to protect your storage device."
                 ""
