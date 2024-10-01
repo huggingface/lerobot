@@ -21,7 +21,6 @@ import shutil
 import tempfile
 from copy import copy
 from enum import Enum
-from inspect import signature
 from pathlib import Path
 from typing import Callable
 
@@ -283,10 +282,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
 
         self.set_delta_timestamps(delta_timestamps)
         self.image_transform = image_transform
-
-        # For video encoding - only intended to be changed for CI
-        self._vcodec = signature(encode_video_frames).parameters["vcodec"].default
-        self._crf = signature(encode_video_frames).parameters["crf"].default
 
     @property
     def storage_dir(self) -> Path:
@@ -615,8 +610,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                         / self.VIDEOS_DIR
                         / self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=new_episode_index),
                         self._fps,
-                        vcodec=self._vcodec,
-                        crf=self._crf,
                     )
             elif self._image_mode == LeRobotDatasetV2ImageMode.PNG and k.startswith(self.IMAGE_KEY_PREFIX):
                 # Encode images to PNG and save to disk.
