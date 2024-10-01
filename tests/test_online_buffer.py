@@ -67,6 +67,7 @@ def test_get_data_keys(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
     dataset = LeRobotDatasetV2(
         tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=image_mode
     )  # arbitrary fps
+    dataset._vcodec = "libx264"  # because CI doesn't currently support libsvtav1
     # Note: choices for args to make_spoof_data_frames are totally arbitrary.
     new_episodes = make_spoof_data_frames(n_episodes=2, n_frames_per_episode=25)
     dataset.add_episodes(new_episodes)
@@ -83,6 +84,7 @@ def test_get_data_by_key(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
     dataset = LeRobotDatasetV2(
         tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=image_mode
     )  # arbitrary fps
+    dataset._vcodec = "libx264"  # because CI doesn't currently support libsvtav1
     # Note: choices for args to make_spoof_data_frames are mostly arbitrary. The only intentional aspect is to
     # make sure the memmaps are not full, in order to check that `get_data_by_key` only returns the parts of
     # the memmaps that are occupied.
@@ -163,6 +165,7 @@ def test_value_error_no_image(tmp_path: Path, image_mode: LeRobotDatasetV2ImageM
     dataset = LeRobotDatasetV2(
         tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=image_mode
     )  # arbitrary fps
+    dataset._vcodec = "libx264"  # because CI doesn't currently support libsvtav1
     # Note: choices for args to make_spoof_data_frames are totally arbitrary.
     new_episodes = make_spoof_data_frames(n_episodes=2, n_frames_per_episode=25)
     # Drop any image data keys.
@@ -237,6 +240,8 @@ def test_write_read_and_get_episode_video_mode(tmp_path: Path, do_reload: bool):
     # This is the dataset we will be testing.
     storage_dir = tmp_path / f"dataset_{uuid4().hex}"
     dataset = LeRobotDatasetV2(storage_dir, fps=fps, image_mode=LeRobotDatasetV2ImageMode.VIDEO)
+    dataset._vcodec = "libx264"  # because CI doesn't currently support libsvtav1
+    dataset._crf = 0  # to maximize the video encoding quality
     # To construct the new dataset, just repeat the episode some number of times.
     n_episodes = 2
     for _ in range(n_episodes):
@@ -246,6 +251,8 @@ def test_write_read_and_get_episode_video_mode(tmp_path: Path, do_reload: bool):
         del dataset
         # Note: Don't provide fps parameter as we are also testing this is loaded up from the metadata.
         dataset = LeRobotDatasetV2(storage_dir, image_mode=LeRobotDatasetV2ImageMode.VIDEO)
+        dataset._vcodec = "libx264"  # because CI doesn't currently support libsvtav1
+        dataset._crf = 0  # to maximize the video encoding quality
 
     assert len(dataset) == episode_length * n_episodes
     for episode_index in range(n_episodes):
@@ -355,6 +362,7 @@ def test_filo(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
         use_as_filo_buffer=True,
         image_mode=image_mode,
     )
+    dataset._vcodec = "libx264"  # because CI doesn't currently support libsvtav1
     # Note: choices for args to make_spoof_data_frames are mostly arbitrary. Of interest is:
     #   - later we need `n_more_episodes` to cause an overflow.
     #   - we need that overflow to happen *within* an episode such that we're testing the behavior whereby the
@@ -431,6 +439,7 @@ def test_delta_timestamps_within_tolerance(tmp_path: Path, image_mode: LeRobotDa
         image_mode=image_mode,
         delta_timestamps={"index": [-0.2, 0, 0.1]},
     )
+    dataset._vcodec = "libx264"  # because CI doesn't currently support libsvtav1
     new_data = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=5)
     dataset.add_episodes(new_data)
     item = dataset[2]
