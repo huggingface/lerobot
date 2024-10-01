@@ -72,7 +72,7 @@ class TemporalQueue:
         nearest_idx = distances.argmin()
 
         # print(float(distances[nearest_idx]))
-        if float(distances[nearest_idx]) > 1 / 5:
+        if float(distances[nearest_idx]) > 1 / 30:
             raise ValueError()
 
         return self.items[nearest_idx], self.timestamps[nearest_idx]
