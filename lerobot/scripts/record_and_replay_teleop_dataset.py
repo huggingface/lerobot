@@ -457,10 +457,8 @@ def set_up_arm_teleop():
 
     def update_controls(joint_commands: multiprocessing.Array):
         from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
-        leader_port = "/dev/ttyACM1"
-
         leader_arm = DynamixelMotorsBus(
-            port=leader_port,
+            port=args.leader_arm_dev,
             motors={
                 # name: (index, model)
                 "shoulder_pan": (1, "xl330-m077"),
@@ -475,32 +473,37 @@ def set_up_arm_teleop():
         if not leader_arm.is_connected:
             leader_arm.connect()
 
+        counts_to_radians = np.pi * 2. / 4096.
+        tare_positions = [2057, 2093, 2128, 3124, 2101, 1965]
+        axis_direction = [-1, -1, -1, 1, -1, -1]
         while True:
             positions = leader_arm.read("Present_Position")
-            print(f"positions: {positions}")
-            print(f"joint_commands: {joint_commands}")
             assert len(joint_commands) == len(positions)
             for i in range(len(joint_commands)):
-                joint_commands[i] = positions[i]
+                joint_commands[i] = axis_direction[i] * \
+                    (positions[i] - tare_positions[i]) * counts_to_radians
 
-    joint_commands = multiprocessing.Array('d',[0, 0, 0, 0, 0, 0])
-    run_robot_process = multiprocessing.Process(target=update_controls, args=(joint_commands,))
+    joint_commands = multiprocessing.Array('d', [0, 0, 0, 0, 0, 0])
+    run_robot_process = multiprocessing.Process(
+        target=update_controls, args=(joint_commands,))
 
     # Separate thread to copy arm data to teleop_command (this shares compute time with simulation).
     from threading import Thread
 
-    def copy_data(joint_commands: multiprocessing.Array, teleoperation_action, is_stopping: bool):
+    def copy_data(joint_commands: multiprocessing.Array, is_stopping: bool):
         while not is_stopping:
-            if teleoperation_action is None:
-                time.sleep(0.01)
-                continue
-            
-            assert len(joint_commands) == len(teleoperation_action)
+            while episode_state.teleoperation_action is None:
+                print(f"Waiting for teleop to start...")
+                time.sleep(1.0)
+            assert len(joint_commands) == len(
+                episode_state.teleoperation_action)
             for i in range(len(joint_commands)):
-                teleoperation_action[i] = joint_commands[i]
+                episode_state.teleoperation_action[i] = joint_commands[i]
+
+            time.sleep(0.01)
 
     copy_data_thread = Thread(target=copy_data, args=(
-        joint_commands, episode_state.teleoperation_action, episode_state.is_stopping))
+        joint_commands, episode_state.is_stopping))
 
     def start_fn():
         listener.start()
@@ -726,6 +729,7 @@ def process_args():
     # Arguments for pushing to HF Dataset Hub
     parser.add_argument("--repo-id", type=str, default="myrepo")
     parser.add_argument("--push-to-hub", action="store_true")
+    parser.add_argument("--leader-arm-dev", type=str, default="/dev/ttyACM1")
 
     parser.add_argument(
         "--revision", type=str, default=CODEBASE_VERSION, help="Codebase version used to generate the dataset."
