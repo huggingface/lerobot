@@ -474,7 +474,7 @@ def set_up_arm_teleop():
             leader_arm.connect()
 
         counts_to_radians = np.pi * 2. / 4096.
-        tare_positions = [2057, 2093, 2128, 3124, 2101, 1965]
+        tare_positions = [2048, 2048, 2048, 3072, 2048, 2048]
         axis_direction = [-1, -1, -1, 1, -1, -1]
         while True:
             positions = leader_arm.read("Present_Position")
@@ -544,19 +544,14 @@ def set_up_teleop(teleop_method: str):
 
 ##########################################################################################
 # Running the task
-class TaskParameters(NamedTuple):
-    cube_file_path: str | None = None
+env_kwargs = None
 
-
-def construct_and_set_up_env(*, task_parameters: TaskParameters):
+def construct_and_set_up_env():
     lerobot.common.utils.utils.set_global_seed(args.random_seed)
     # Create the gym environment - check the kwargs in gym_real_world/gym_environment.py
     env = gym.make(args.env_name,
                    disable_env_checker=True,
-                   observation_mode="both",
-                   action_mode="ee" if args.teleop_method == "keyboard" else "joint",
-                   render_mode="human",
-                   cube_file_path=task_parameters.cube_file_path
+                   **env_kwargs
                    )
 
     return env
@@ -594,12 +589,12 @@ def set_up_next_episode(env):
     episode_state.teleoperation_action = env.action_space.sample() * np.nan
 
 
-def run_sim_while_recording_dataset(*, replay_helper: ReplayHelper | None = None, task_parameters: TaskParameters) -> LeRobotDataset:
+def run_sim_while_recording_dataset(*, replay_helper: ReplayHelper | None = None) -> LeRobotDataset:
     output_helper.increment_dataset_counter()
     print(f"gym environment created")
 
     episode_counter = 0
-    env = construct_and_set_up_env(task_parameters=task_parameters)
+    env = construct_and_set_up_env()
 
     episode_state.is_stopping = False
     while not episode_state.is_stopping:
@@ -670,15 +665,13 @@ def run_sim_while_recording_dataset(*, replay_helper: ReplayHelper | None = None
     return lerobot_dataset
 
 
-def teleop_robot_and_record_data(*, task_parameters: TaskParameters) -> LeRobotDataset:
+def teleop_robot_and_record_data(*) -> LeRobotDataset:
     (start_teleoperation_fn, stop_teleoperation_fn) = set_up_teleop(args.teleop_method)
 
     # start teleoperation listener
     start_teleoperation_fn()
 
-    new_dataset = run_sim_while_recording_dataset(
-        task_parameters=task_parameters
-    )
+    new_dataset = run_sim_while_recording_dataset()
 
     # stop teleoperation listener
     stop_teleoperation_fn()
@@ -686,19 +679,18 @@ def teleop_robot_and_record_data(*, task_parameters: TaskParameters) -> LeRobotD
     return new_dataset
 
 
-def replay_dataset_actions_in_sim(*, source_dataset: LeRobotDataset | None = None, task_parameters: TaskParameters) -> LeRobotDataset:
+def replay_dataset_actions_in_sim(*, source_dataset: LeRobotDataset | None = None) -> LeRobotDataset:
     # use latest recording for replay, if missing.
     if source_dataset is None:
         source_dataset = output_helper.output_data_path
 
     new_dataset = run_sim_while_recording_dataset(
         replay_helper=ReplayHelper(lerobot_dataset=source_dataset),
-        task_parameters=task_parameters
     )
     return new_dataset
 
 
-def import_module_contining_gym(module_name: str):
+def import_module_containing_gym(module_name: str):
     # import the gym module containing the environment
     try:
         # because we want to import using a variable, do it this way
@@ -730,6 +722,8 @@ def process_args():
     parser.add_argument("--repo-id", type=str, default="myrepo")
     parser.add_argument("--push-to-hub", action="store_true")
     parser.add_argument("--leader-arm-dev", type=str, default="/dev/ttyACM1")
+    parser.add_argument("--gym-config-yaml", type=str, default="lerobot/configs/env/koch_drake_leader_arm_teleop.yaml")
+    parser.add_argument("--gym-reconfig-yamls", type=str, default="lerobot/configs/env/koch_drake_leader_arm_teleop_replay_1.yaml;lerobot/configs/env/koch_drake_leader_arm_teleop_replay_2.yaml")
 
     parser.add_argument(
         "--revision", type=str, default=CODEBASE_VERSION, help="Codebase version used to generate the dataset."
@@ -739,6 +733,7 @@ def process_args():
 
 
 if __name__ == "__main__":
+    import yaml
     args = process_args()
     logging.basicConfig(level=logging.CRITICAL)
 
@@ -746,21 +741,21 @@ if __name__ == "__main__":
     episode_state = EpisodeState()
 
     module_name = "gym_drake_lca"
-    module_obj = import_module_contining_gym(module_name)
+    module_obj = import_module_containing_gym(module_name)
 
     print("Recording initial dataset w/ teleop")
-    lerobot_dataset = teleop_robot_and_record_data(
-        task_parameters=TaskParameters(
-            cube_file_path=f"{module_obj.ASSETS_PATH}/red_cube.sdf"))
+    env_kwargs = yaml.safe_load(args.gym_config_yaml)
+    lerobot_dataset = teleop_robot_and_record_data()
 
-    print("Replaying from previous dataset (from disk)")
-    replay_dataset_actions_in_sim(
-        task_parameters=TaskParameters(
-            cube_file_path=f"{module_obj.ASSETS_PATH}/green_cube.sdf"))
+    is_first_replay = True
+    for reconfig_yaml in args.gym_reconfig_yamls.split(sep=';'):
+        env_kwargs = yaml.safe_load(reconfig_yaml)
 
-    # Automatically re-record datasets with different models for the cube.
-    print("Replaying from dataset (in memory)")
-    replay_dataset_actions_in_sim(
-        source_dataset=lerobot_dataset,
-        task_parameters=TaskParameters(
-            cube_file_path=f"{module_obj.ASSETS_PATH}/blue_cube.sdf"))
+        if is_first_replay:
+            print("Replaying from previous dataset (from disk)")
+            replay_dataset_actions_in_sim()
+            is_first_replay = False
+        else:
+            # Automatically re-record datasets with different models for the cube.
+            print("Replaying from dataset (in memory)")
+            replay_dataset_actions_in_sim(source_dataset=lerobot_dataset)

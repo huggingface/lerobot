@@ -1,0 +1,4 @@
+observation_mode: "both"
+action_mode: "joint"
+render_mode: "human"
+cube_file_path: "{ASSETS_PATH}/blue_cube.sdf"
