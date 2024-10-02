@@ -75,6 +75,7 @@ import torch.utils.data
 import tqdm
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format import from_raw_to_lerobot_format
 
 
 class EpisodeSampler(torch.utils.data.Sampler):
@@ -101,6 +102,7 @@ def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
 
 def visualize_dataset(
     repo_id: str,
+    hdf5_data_dir: str,
     episode_index: int,
     batch_size: int = 32,
     num_workers: int = 0,
@@ -117,7 +119,25 @@ def visualize_dataset(
         ), "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
 
     logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id, root=root)
+
+    if repo_id:
+        dataset = LeRobotDataset(repo_id, root=root)
+    elif hdf5_data_dir:
+        data_dir = Path(hdf5_data_dir)
+        if data_dir.exists():
+            logging.info(f"HDF5 data dir: {data_dir}")
+            dataset, episode_data_index, info = from_raw_to_lerobot_format(raw_dir=data_dir, videos_dir=None, video=False, episodes=[episode_index])
+        else:
+            raise ValueError(f"Data directory: {data_dir} does not exists!")
+
+        dataset = LeRobotDataset.from_preloaded(
+            root=data_dir,
+            hf_dataset=dataset,
+            episode_data_index=episode_data_index,
+            info=info,
+        )
+    else:
+        Exception("No dataset ID or path provided")
 
     logging.info("Loading dataloader")
     episode_sampler = EpisodeSampler(dataset, episode_index)
@@ -197,11 +217,16 @@ def visualize_dataset(
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument(
+    data_arg_group = parser.add_mutually_exclusive_group(required=True)
+    data_arg_group.add_argument(
         "--repo-id",
         type=str,
-        required=True,
         help="Name of hugging face repositery containing a LeRobotDataset dataset (e.g. `lerobot/pusht`).",
+    )
+    data_arg_group.add_argument(
+        "--hdf5-data-dir",
+        type=str,
+        help="HDF5 dataset directory (e.g. 'PATH/hdf5/sim/').",
     )
     parser.add_argument(
         "--episode-index",
