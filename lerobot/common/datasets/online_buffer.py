@@ -675,8 +675,16 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                         self._data[k][slc] = data[k]
                     self._data[self.OCCUPANCY_MASK_KEY][slc] = True
         except Exception as e:
+            if self._use_as_filo_buffer:
+                # Roll back is not implemented for this scenario.
+                logging.warning(
+                    "An exception was caught while adding an episode to the dataset. If you have issues "
+                    "loading the dataset again, please check the dataset integrity with "
+                    f"{self.__class__.__name__}.check_storage_dir_integrity."
+                )
+                raise e
             logging.warning(
-                "Exception was caught while adding an episode to the dataset. Rolling back. Please do not "
+                "An exception was caught while adding an episode to the dataset. Rolling back. Please do not "
                 "interrupt."
             )
             self._data[self.OCCUPANCY_MASK_KEY][: len(prior_occupancy_mask)] = prior_occupancy_mask
