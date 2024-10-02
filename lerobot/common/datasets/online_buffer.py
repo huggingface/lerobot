@@ -276,12 +276,13 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             else:
                 self._buffer_capacity = buffer_capacity
             # Set image mode based on what's available in the storage directory and/or the user's selection.
-            possible_image_modes = self._infer_image_modes()
-            if image_mode not in possible_image_modes:
-                raise ValueError(
-                    f"Provided image_mode {str(image_mode)} not available with this storage directory. "
-                    f"Modes available: {[str(m) for m in possible_image_modes]}"
-                )
+            if any(k.startswith(LeRobotDatasetV2.IMAGE_KEY_PREFIX) for k in metadata["data_keys"]):
+                possible_image_modes = self._infer_image_modes()
+                if image_mode not in possible_image_modes:
+                    raise ValueError(
+                        f"Provided image_mode {str(image_mode)} not available with this storage directory. "
+                        f"Modes available: {[str(m) for m in possible_image_modes]}"
+                    )
         else:
             if fps is None:
                 raise ValueError("fps must be provided when creating a new dataset")
