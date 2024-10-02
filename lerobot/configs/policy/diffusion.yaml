@@ -56,7 +56,7 @@ policy:
 
   # Input / output structure.
   n_obs_steps: 2
-  horizon: 16
+  horizon: 10
   n_action_steps: 8
 
   input_shapes:
@@ -85,15 +85,15 @@ policy:
   down_dims: [512, 1024, 2048]
   kernel_size: 5
   n_groups: 8
-  diffusion_step_embed_dim: 128
+  diffusion_step_embed_dim: 256
   use_film_scale_modulation: True
   # Transformer
   use_transformer: True
-  n_layer: 4
+  n_layer: 8
   n_head: 4
-  p_drop_emb: 0.1
-  p_drop_attn: 0.1
-  causal_attn: False
+  p_drop_emb: 0.0
+  p_drop_attn: 0.3
+  causal_attn: True
   n_cond_layers: 0
   # Noise scheduler.
   noise_scheduler_type: DDPM
