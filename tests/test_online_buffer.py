@@ -33,6 +33,7 @@ from lerobot.common.datasets.online_buffer import (
     LeRobotDatasetV2,
     LeRobotDatasetV2ImageMode,
     TimestampOutsideToleranceError,
+    _TestRollBackError,
     compute_sampler_weights,
 )
 from lerobot.common.datasets.utils import hf_transform_to_torch, load_hf_dataset, load_info, load_videos
@@ -68,6 +69,22 @@ def make_spoof_data_frames(
             ),
         }
     return new_data
+
+
+def test_cleanup_storage_dir(tmp_path: Path):
+    """Check that if an exception is raised when creating the storage directory, it is cleaned up."""
+    storage_dir = tmp_path / f"dataset_{uuid4().hex}"
+    dataset = LeRobotDatasetV2(storage_dir, fps=10)  # arbitrary fps
+    # Note: choices for args to make_spoof_data_frames are totally arbitrary.
+    new_episodes = make_spoof_data_frames(n_episodes=2, n_frames_per_episode=25)
+    with patch(
+        f"{LeRobotDatasetV2.__module__}.{LeRobotDatasetV2.__qualname__}._make_memmaps"
+    ) as mock_make_memmaps:
+        # Mock a runtime error in _make_memmaps. This should trigger the clean up.
+        mock_make_memmaps.side_effect = RuntimeError()
+        with pytest.raises(RuntimeError):
+            dataset.add_episodes(new_episodes)
+    assert not storage_dir.exists()
 
 
 @pytest.mark.parametrize("image_mode", list(LeRobotDatasetV2ImageMode))
@@ -302,6 +319,46 @@ def test_write_read_and_get_episode_video_mode(tmp_path: Path, do_reload: bool):
                 assert np.array_equal(
                     retrieved_episode_data[k], provided_episode_data[k]
                 ), f"Mismatch for {k=}"
+
+
+@pytest.mark.parametrize("image_mode", list(LeRobotDatasetV2ImageMode))
+def test_roll_back(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
+    """Tests the roll back feature of add_episodes."""
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=image_mode
+    )  # arbitrary fps
+    # Note: choices for args to make_spoof_data_frames are mostly arbitrary. Just make sure there is more
+    # than one episode.
+    new_episodes = make_spoof_data_frames(n_episodes=2, n_frames_per_episode=25)
+    for i in range(-1, len(new_episodes.keys())):
+        # In `add_episodes` there is a loop over data keys. It adds the data to the dataset one key at a time.
+        # Here, we control at which point in the loop an exception should be raised. For i=-1, an exception
+        # is not raised, so we add the first batch of episode data to the dataset. For i >= 0, exceptions are
+        # raised after a portion of the data has been added to the dataset. And we are checking that in every
+        # such case, the dataset is rolled back to its prior state.
+        dataset._LeRobotDatasetV2__test_roll_back = i
+        with (
+            pytest.raises(_TestRollBackError) if i >= 0 else nullcontext(),
+            # patch encode_video_frames for CI where we don't have libsvtav1.
+            patch(
+                f"{LeRobotDatasetV2.__module__}.{encode_video_frames.__qualname__}",
+                new=partial(encode_video_frames, vcodec="libx264"),
+            ),
+        ):
+            dataset.add_episodes(new_episodes)
+        for episode_index in dataset.get_unique_episode_indices():
+            episode_data = dataset.get_episode(episode_index)
+            episode_mask = new_episodes[LeRobotDatasetV2.EPISODE_INDEX_KEY] == episode_index
+            for k in dataset.data_keys:
+                expected_data = new_episodes[k][episode_mask]
+                if image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+                    # Because of lossy compression for videos (which is exacerbated by the fact that we are
+                    # working with random noise images), we can't check for pixel-perfect equality here (even
+                    # with crf=0). See `test_write_read_and_get_episode_video_mode`.
+                    assert episode_data[k].shape == expected_data.shape
+                else:
+                    assert np.array_equal(episode_data[k], expected_data)
+            LeRobotDatasetV2.check_storage_dir_integrity(dataset.storage_dir)
 
 
 @pytest.mark.parametrize("pct", [79.0, 81.0])

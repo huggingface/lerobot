@@ -16,6 +16,7 @@
 """A dataset class for efficient data management during offline and online training."""
 
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -43,11 +44,21 @@ from lerobot.common.datasets.video_utils import (
 MEMMAP_STORAGE_PCT_CAP = 0.8
 
 
+# Some descriptive custom error classes for testing purposes and to some degree for informing the user.
 class TimestampOutsideToleranceError(Exception):
     pass
 
 
 class DiskSpaceError(Exception):
+    pass
+
+
+class StorageDirCorruptError(Exception):
+    pass
+
+
+# Custom exception for testing purpose only. The user will never see this. See unit-tests.
+class _TestRollBackError(Exception):
     pass
 
 
@@ -234,9 +245,6 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 starts with "observation.image").
             delta_timestamps: TODO(alexander-soare): Document this somewhere when
                 `load_previous_and_future_frames` is refactored.
-
-
-        TODO(now): How to deal with corrupt state of the storage directory.
         """
         if use_as_filo_buffer and buffer_capacity is None:
             raise ValueError(f"A buffer_capacity must be provided if {use_as_filo_buffer=}.")
@@ -247,8 +255,10 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         self._videos_dir: str | None = None
         self._images_dir: str | None = None
 
-        # If the storage directory and metadata files already exists, load the memmaps.
-        if (self._storage_dir / self.METADATA_FILE_NAME).exists():
+        # If the storage directory and already exists, load the memmaps.
+        if self._storage_dir.exists():
+            # Try to catch corrupt data ahead of time.
+            LeRobotDatasetV2.check_storage_dir_integrity(self._storage_dir)
             metadata = self._load_metadata()
             self._fps = metadata["fps"]
             self._make_memmaps(metadata["_data_spec"], mode="r+")
@@ -282,6 +292,9 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
 
         self.set_delta_timestamps(delta_timestamps)
         self.image_transform = image_transform
+
+        # For unit testing purposes.
+        self.__test_roll_back: int = -1
 
     @property
     def storage_dir(self) -> Path:
@@ -336,7 +349,8 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             image_modes.append(LeRobotDatasetV2ImageMode.VIDEO)
         if (self.storage_dir / self.PNGS_DIR).exists():
             image_modes.append(LeRobotDatasetV2ImageMode.PNG)
-        if any(k.startswith(self.IMAGE_KEY_PREFIX) for k in self._load_metadata()["_data_spec"]):
+        data_spec = self._load_metadata()["_data_spec"]
+        if any(k.startswith(self.IMAGE_KEY_PREFIX) for k in data_spec):
             image_modes.append(LeRobotDatasetV2ImageMode.MEMMAP)
         return image_modes
 
@@ -383,11 +397,19 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
             metadata["_data_spec"][k]["dtype"] = np.dtype(metadata["_data_spec"][k]["dtype"])
         return metadata
 
-    def _make_storage_dir(self, episode_data: dict[str, np.ndarray], exist_okay: bool = False):
+    def _make_storage_dir(self, episode_data: dict[str, np.ndarray], from_huggingface_hub: bool = False):
         """Create the storage directory based on example episode data from the first `add_episodes` call."""
-        # Note: exist_ok=True allows `from_huggingface_hub` to do the hack of copying video/png files over
-        # in advance.
-        self._storage_dir.mkdir(parents=True, exist_ok=exist_okay)
+        # Note: from_huggingface_hub=True allows the `from_huggingface_hub` method to do the hack of copying
+        # video/png files over in advance. Therefore, we'll first make sure that it is indeed the case that
+        # all that exists in the storage directory is either the video or png files.
+        if from_huggingface_hub:
+            if self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+                assert os.listdir(self._storage_dir) == [LeRobotDatasetV2.VIDEOS_DIR]
+            elif self._image_mode == LeRobotDatasetV2ImageMode.PNG:
+                assert os.listdir(self._storage_dir) == [LeRobotDatasetV2.PNGS_DIR]
+        else:
+            assert not self._storage_dir.exists()
+        self._storage_dir.mkdir(parents=True, exist_ok=from_huggingface_hub)
 
         if self._buffer_capacity is None:
             # Reserve enough storage for one episode. Storage will be extended as needed.
@@ -395,33 +417,38 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         else:
             num_frames = self._buffer_capacity
 
-        try:
-            # Make the data spec for np.memmap
-            data_spec = {
-                self.NEXT_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (1,)},
-                self.OCCUPANCY_MASK_KEY: {"dtype": np.dtype("?"), "shape": (num_frames,)},
-                self.INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (num_frames,)},
-                self.FRAME_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (num_frames,)},
-                self.EPISODE_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (num_frames,)},
-                self.TIMESTAMP_KEY: {"dtype": np.dtype("float32"), "shape": (num_frames,)},
-            }
-            for k, v in episode_data.items():
-                if k in data_spec:
-                    continue
-                is_image_key = k.startswith(self.IMAGE_KEY_PREFIX)
-                if is_image_key and self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
-                    (self._storage_dir / self.VIDEOS_DIR).mkdir()
-                elif is_image_key and self._image_mode == LeRobotDatasetV2ImageMode.PNG:
-                    (self._storage_dir / self.PNGS_DIR).mkdir()
-                else:
-                    data_spec[k] = {"dtype": v.dtype, "shape": (num_frames, *v.shape[1:])}
+        # Make the data spec for np.memmap
+        data_spec = {
+            self.NEXT_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (1,)},
+            self.OCCUPANCY_MASK_KEY: {"dtype": np.dtype("?"), "shape": (num_frames,)},
+            self.INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (num_frames,)},
+            self.FRAME_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (num_frames,)},
+            self.EPISODE_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (num_frames,)},
+            self.TIMESTAMP_KEY: {"dtype": np.dtype("float32"), "shape": (num_frames,)},
+        }
+        for k, v in episode_data.items():
+            if k in data_spec:
+                continue
+            is_image_key = k.startswith(self.IMAGE_KEY_PREFIX)
+            if is_image_key and self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+                (self._storage_dir / self.VIDEOS_DIR).mkdir()
+            elif is_image_key and self._image_mode == LeRobotDatasetV2ImageMode.PNG:
+                (self._storage_dir / self.PNGS_DIR).mkdir()
+            else:
+                data_spec[k] = {"dtype": v.dtype, "shape": (num_frames, *v.shape[1:])}
 
+        try:
             self._make_memmaps(data_spec, "w+")
             self._save_metadata(data_spec=data_spec, data_keys=list(episode_data))
         except Exception as e:
-            # Attempt to clean up by removing the empty storage directory.
-            shutil.rmtree(self._storage_dir)  # TODO(now), I think this might not be safe?
-            raise e
+            # Clean up (except if `from_huggingface_hub` is set, in which case we let that method take
+            # responsibility for the cleanup).
+            if not from_huggingface_hub:
+                shutil.rmtree(self._storage_dir)
+            raise RuntimeError(
+                "An exception was caught while attempting to create the storage directory for "
+                f"{self.__class__.__name__}. As part of the cleanup, the storage directory was removed."
+            ) from e
 
     def _make_memmaps(self, data_spec: dict[str, dict], mode: str):
         """Create the memmap objects.
@@ -522,11 +549,13 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
 
         Also manages FILO logic.
 
+        Also attempt to roll back any changes if an exception occurs mid way.
+
         Setting `from_huggingface_hub` is only intended for calls from that method. This is a hack that allows
         `from_huggingface_hub` to create the video or png directories ahead of time.
         """
         if len(self._data) == 0:
-            self._make_storage_dir(data, exist_okay=from_huggingface_hub)
+            self._make_storage_dir(data, from_huggingface_hub=from_huggingface_hub)
 
         if len(missing_keys := (set(self.data_keys).difference(set(data)))) > 0:
             raise ValueError(f"Missing data keys: {missing_keys}")
@@ -596,46 +625,75 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                     f"({self._buffer_capacity} frames) by {n_excess} frames."
                 )
 
-        # Insert the new data starting from next_index.
-        for k in self.data_keys:
-            # Special treatment of image keys depending on the image mode.
-            if self._image_mode == LeRobotDatasetV2ImageMode.VIDEO and k.startswith(self.IMAGE_KEY_PREFIX):
-                # Encode all frames of the episode into a video and save to disk.
-                with tempfile.TemporaryDirectory() as tmpdirname:
-                    for frame_index, img in zip(data[self.FRAME_INDEX_KEY], data[k], strict=True):
-                        Image.fromarray(img).save(Path(tmpdirname) / f"frame_{frame_index:06d}.png")
-                    encode_video_frames(
-                        Path(tmpdirname),
-                        self._storage_dir
-                        / self.VIDEOS_DIR
-                        / self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=new_episode_index),
-                        self._fps,
-                    )
-            elif self._image_mode == LeRobotDatasetV2ImageMode.PNG and k.startswith(self.IMAGE_KEY_PREFIX):
-                # Encode images to PNG and save to disk.
-                for frame_index, img in zip(data[self.FRAME_INDEX_KEY], data[k], strict=True):
-                    Image.fromarray(img).save(
-                        self._storage_dir
-                        / self.PNGS_DIR
-                        / self.PNG_NAME_FSTRING.format(
-                            data_key=k, episode_index=new_episode_index, frame_index=frame_index
+        # Insert the new data starting from next_index. If any exception occurs here, we need to roll back.
+        # We'll restore the occupancy mask if needed.
+        prior_occupancy_mask = np.array(self._data[self.OCCUPANCY_MASK_KEY])
+
+        try:
+            for i, k in enumerate(self.data_keys):
+                # See unit-test for more information on what this is.
+                if self.__test_roll_back == i:
+                    raise _TestRollBackError("This test was raised for a unit test.")
+                # Special treatment of image keys depending on the image mode.
+                if self._image_mode == LeRobotDatasetV2ImageMode.VIDEO and k.startswith(
+                    self.IMAGE_KEY_PREFIX
+                ):
+                    # Encode all frames of the episode into a video and save to disk.
+                    with tempfile.TemporaryDirectory() as tmpdirname:
+                        for frame_index, img in zip(data[self.FRAME_INDEX_KEY], data[k], strict=True):
+                            Image.fromarray(img).save(Path(tmpdirname) / f"frame_{frame_index:06d}.png")
+                        encode_video_frames(
+                            Path(tmpdirname),
+                            self._storage_dir
+                            / self.VIDEOS_DIR
+                            / self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=new_episode_index),
+                            self._fps,
+                            overwrite=True,
                         )
-                    )
-            else:
-                # Insertion into the memmap for non-image keys or image keys in memmap mode.
-                slc = slice(next_index, next_index + new_data_length)
-                if k == self.EPISODE_INDEX_KEY:
-                    self._data[k][slc] = new_episode_index
-                elif k == self.INDEX_KEY:
-                    self._data[k][slc] = np.arange(last_data_index + 1, last_data_index + 1 + new_data_length)
+                elif self._image_mode == LeRobotDatasetV2ImageMode.PNG and k.startswith(
+                    self.IMAGE_KEY_PREFIX
+                ):
+                    # Encode images to PNG and save to disk.
+                    for frame_index, img in zip(data[self.FRAME_INDEX_KEY], data[k], strict=True):
+                        Image.fromarray(img).save(
+                            self._storage_dir
+                            / self.PNGS_DIR
+                            / self.PNG_NAME_FSTRING.format(
+                                data_key=k, episode_index=new_episode_index, frame_index=frame_index
+                            )
+                        )
                 else:
-                    self._data[k][slc] = data[k]
-                self._data[self.OCCUPANCY_MASK_KEY][slc] = True
+                    # Insertion into the memmap for non-image keys or image keys in memmap mode.
+                    slc = slice(next_index, next_index + new_data_length)
+                    if k == self.EPISODE_INDEX_KEY:
+                        self._data[k][slc] = new_episode_index
+                    elif k == self.INDEX_KEY:
+                        self._data[k][slc] = np.arange(
+                            last_data_index + 1, last_data_index + 1 + new_data_length
+                        )
+                    else:
+                        self._data[k][slc] = data[k]
+                    self._data[self.OCCUPANCY_MASK_KEY][slc] = True
+        except Exception as e:
+            logging.warning(
+                "Exception was caught while adding an episode to the dataset. Rolling back. Please do not "
+                "interrupt."
+            )
+            self._data[self.OCCUPANCY_MASK_KEY][: len(prior_occupancy_mask)] = prior_occupancy_mask
+            self._remove_stale_image_files()
+            # As a last step, try to see if the data is corrupted.
+            LeRobotDatasetV2.check_storage_dir_integrity(self._storage_dir)
+            raise e
 
         # Update the data pointer.
         self._data[self.NEXT_INDEX_KEY][0] = next_index + new_data_length
 
         # Remove stale videos or PNG files if needed.
+        if self._use_as_filo_buffer and LeRobotDatasetV2ImageMode.needs_decoding(self._image_mode):
+            self._remove_stale_image_files()
+
+    def _remove_stale_image_files(self):
+        """Remove image files that are not aligned with the episode / frame indices in the memmaps."""
         if self._use_as_filo_buffer and LeRobotDatasetV2ImageMode.needs_decoding(self._image_mode):
             relevant_file_names = []
             if self._image_mode == LeRobotDatasetV2ImageMode.VIDEO:
@@ -965,8 +1023,8 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                 if isinstance(feature, datasets.features.Image):
                     hf_dataset = hf_dataset.cast_column(k, datasets.features.Image(decode=False))
 
-        # Create the LeRobotDatasetV2 object. Reminder: if the storage directory already exists, this reads it.
-        # Otherwise, the storage directory is not created until later when we make the first call to
+        # Create the LeRobotDatasetV2 object. Reminder: if the storage directory already exists, this reads
+        # it. Otherwise, the storage directory is not created until later when we make the first call to
         # `add_episodes`.
         obj = cls(
             **kwargs,
@@ -1065,6 +1123,126 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         Note: This method is really meant for development / testing.
         """
         return Path(f"/tmp/{repo_id}_{fingerprint}{'_decoded' if decode_video else ''}")
+
+    @staticmethod
+    def check_storage_dir_integrity(
+        storage_dir: Path | str, image_mode: LeRobotDatasetV2ImageMode | None = None
+    ):
+        """Checks if the dataset, as physically stored on disk, is valid.
+
+        The checks are not-exhaustive, but attempt to cover as much as is feasible without actually creating
+        the dataset object.
+
+        Optionally pass the image_mode argument to refine the check for a particular image mode.
+
+        Returns None if the storage directory is valid, or raises a StorageDirCorruptError of the storage
+        directory is corrupt.
+        """
+        storage_dir = Path(storage_dir)
+
+        # Check that the directory exists.
+        if not (storage_dir).exists():
+            raise ValueError(f"{storage_dir} not found.")
+
+        # Check that the metadata file exists.
+        if not (storage_dir / LeRobotDatasetV2.METADATA_FILE_NAME).exists():
+            raise StorageDirCorruptError(f"{storage_dir / LeRobotDatasetV2.METADATA_FILE_NAME} not found.")
+
+        # Check that the metadata file can be loaded.
+        try:
+            with open(storage_dir / LeRobotDatasetV2.METADATA_FILE_NAME) as f:
+                metadata = json.load(f)
+        except json.JSONDecodeError as e:
+            raise StorageDirCorruptError("Exception encountered when attempting to load metadata file") from e
+
+        # Check all mandatory keys are in the metadata.
+        for k in ["_data_spec", "data_keys", "fps"]:
+            if k not in metadata:
+                raise StorageDirCorruptError(
+                    f"Metadata from {(storage_dir / LeRobotDatasetV2.METADATA_FILE_NAME)} is missing key {k}"
+                )
+
+        # Check that there are memmap files for all the keys in the data spec.
+        data_spec = metadata["_data_spec"]
+        for k in data_spec:
+            if not (storage_dir / k).exists():
+                raise StorageDirCorruptError(f"Missing memmap for key {k}")
+
+        # Check that all of the memmaps have the same first array dimension (as per the data_spec).
+        for k, v in data_spec.items():
+            if k == LeRobotDatasetV2.NEXT_INDEX_KEY:
+                continue
+            if (n_frames := v["shape"][0]) != (
+                n_index_frames := data_spec[LeRobotDatasetV2.INDEX_KEY]["shape"][0]
+            ):
+                raise StorageDirCorruptError(
+                    f"There is an inconsistency in the memmap shapes. Got {n_frames} frames for data key "
+                    f"'{k}' but {n_index_frames} frames for data key '{LeRobotDatasetV2.INDEX_KEY}'"
+                )
+
+        # Load up some keys needed to check the file directories.
+        def load_memmap(key):
+            return np.memmap(
+                storage_dir / key,
+                mode="readonly",
+                shape=tuple(data_spec[key]["shape"]),
+                dtype=np.dtype(data_spec[key]["dtype"]),
+            )
+
+        occupancy_mask = load_memmap(LeRobotDatasetV2.OCCUPANCY_MASK_KEY)
+        frame_indices = load_memmap(LeRobotDatasetV2.FRAME_INDEX_KEY)
+        valid_frame_indices = frame_indices[occupancy_mask]
+        episode_indices = load_memmap(LeRobotDatasetV2.EPISODE_INDEX_KEY)
+        valid_episode_indices = episode_indices[occupancy_mask]
+
+        # Check that the file directory exists for the decodable image modes, and that the expected files are
+        # present.
+        if image_mode == LeRobotDatasetV2ImageMode.VIDEO:
+            if not (storage_dir / LeRobotDatasetV2.VIDEOS_DIR).exists():
+                raise StorageDirCorruptError(
+                    f"Couldn't find video directory: {storage_dir / LeRobotDatasetV2.VIDEOS_DIR}."
+                )
+            file_names = set(os.listdir(storage_dir / LeRobotDatasetV2.VIDEOS_DIR))
+            for k in metadata["data_keys"]:
+                if not k.startswith(LeRobotDatasetV2.IMAGE_KEY_PREFIX):
+                    continue
+                for episode_index in np.unique(valid_episode_indices):
+                    expected_name = LeRobotDatasetV2.VIDEO_NAME_FSTRING.format(
+                        data_key=k, episode_index=episode_index
+                    )
+                    if expected_name not in file_names:
+                        raise StorageDirCorruptError(
+                            f"Memmap data indicates the existence of "
+                            f"{storage_dir / LeRobotDatasetV2.VIDEOS_DIR / expected_name}, but this file "
+                            "could not be found."
+                        )
+        elif image_mode == LeRobotDatasetV2ImageMode.PNG:
+            if not (storage_dir / LeRobotDatasetV2.PNGS_DIR).exists():
+                raise StorageDirCorruptError(
+                    f"Couldn't find png directory: {storage_dir / LeRobotDatasetV2.PNGS_DIR}."
+                )
+            file_names = set(os.listdir(storage_dir / LeRobotDatasetV2.PNGS_DIR))
+            for k in metadata["data_keys"]:
+                if not k.startswith(LeRobotDatasetV2.IMAGE_KEY_PREFIX):
+                    continue
+                for episode_index in np.unique(valid_episode_indices):
+                    for frame_index in valid_frame_indices[valid_episode_indices == episode_index]:
+                        expected_name = LeRobotDatasetV2.PNG_NAME_FSTRING.format(
+                            data_key=k, episode_index=episode_index, frame_index=frame_index
+                        )
+                        if expected_name not in file_names:
+                            raise StorageDirCorruptError(
+                                f"Memmap data indicates the existence of "
+                                f"{storage_dir / LeRobotDatasetV2.PNGS_DIR / expected_name}, but this file "
+                                "could not be found."
+                            )
+        elif image_mode == LeRobotDatasetV2ImageMode.MEMMAP and not any(
+            k.startswith(LeRobotDatasetV2.IMAGE_KEY_PREFIX) for k in metadata["_data_spec"]
+        ):
+            raise StorageDirCorruptError(
+                f"Image mode is {str(image_mode)} but no memmap files for images (starting with "
+                f"{LeRobotDatasetV2.IMAGE_KEY_PREFIX}) could be found"
+            )
 
 
 def compute_sampler_weights(
