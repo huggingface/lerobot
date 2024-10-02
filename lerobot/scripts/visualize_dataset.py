@@ -140,7 +140,7 @@ def visualize_dataset(
         Exception("No dataset ID or path provided")
 
     logging.info("Loading dataloader")
-    episode_sampler = EpisodeSampler(dataset, episode_index)
+    episode_sampler = EpisodeSampler(dataset, episode_index=0)
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=num_workers,
