@@ -120,7 +120,7 @@ eval:
   # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
   batch_size: 1
   # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
-  use_async_envs: true
+  use_async_envs: false
 
 wandb:
   enable: false
