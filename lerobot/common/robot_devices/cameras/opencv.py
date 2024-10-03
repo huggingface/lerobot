@@ -4,6 +4,7 @@ This file contains utilities for recording frames from cameras. For more info lo
 
 import argparse
 import concurrent.futures
+import logging
 import math
 import platform
 import shutil
@@ -276,19 +277,17 @@ class OpenCVCamera:
             raise OSError(
                 f"Can't set {self.fps=} for OpenCVCamera({self.camera_index}). Actual value is {actual_fps}."
             )
+        resolution_info_fstring = (
+            "The provided {name} ({value}) could not be set natively on your camera. The settings "
+            f"are now (width={int(actual_width)}, height={int(actual_height)}. This class will resize the "
+            "frames to your desired resolution before returning them."
+        )
         if self.width is not None and self.width != actual_width:
-            raise OSError(
-                f"Can't set {self.width=} for OpenCVCamera({self.camera_index}). Actual value is {actual_width}."
-            )
+            logging.info(resolution_info_fstring.format(name="width", value=self.width))
         if self.height is not None and self.height != actual_height:
-            raise OSError(
-                f"Can't set {self.height=} for OpenCVCamera({self.camera_index}). Actual value is {actual_height}."
-            )
+            logging.info(resolution_info_fstring.format(name="height", value=self.height))
 
         self.fps = actual_fps
-        self.width = actual_width
-        self.height = actual_height
-
         self.is_connected = True
 
     def read(self, temporary_color_mode: str | None = None) -> np.ndarray:
@@ -324,9 +323,7 @@ class OpenCVCamera:
 
         h, w, _ = color_image.shape
         if h != self.height or w != self.width:
-            raise OSError(
-                f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
-            )
+            color_image = cv2.resize(color_image, (self.width, self.height))
 
         # log the number of seconds it took to read the image
         self.logs["delta_timestamp_s"] = time.perf_counter() - start_time

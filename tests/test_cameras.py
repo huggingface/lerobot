@@ -11,7 +11,11 @@ import numpy as np
 import pytest
 
 from lerobot import available_robots
-from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera, save_images_from_cameras
+from lerobot.common.robot_devices.cameras.opencv import (
+    OpenCVCamera,
+    OpenCVCameraConfig,
+    save_images_from_cameras,
+)
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from tests.utils import require_robot
 
@@ -129,6 +133,20 @@ def test_camera(request, robot_type):
     with pytest.raises(OSError):
         camera.connect()
     del camera
+
+
+@pytest.mark.parametrize("robot_type", available_robots)
+@require_robot
+def test_camera_resize(*_):
+    """Check that resizing to a resolution not supported by the camera still works."""
+    height = 10
+    width = 10
+    camera = OpenCVCamera(CAMERA_INDEX, OpenCVCameraConfig(height=height, width=width))
+    camera.connect()
+    assert camera.height == height
+    assert camera.width == width
+    img = camera.read()
+    assert img.shape[:2] == (height, width)
 
 
 @pytest.mark.parametrize("robot_type", available_robots)
