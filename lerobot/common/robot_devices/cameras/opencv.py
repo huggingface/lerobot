@@ -279,7 +279,7 @@ class OpenCVCamera:
             )
         resolution_info_fstring = (
             "The provided {name} ({value}) could not be set natively on your camera. The settings "
-            f"are now (width={int(actual_width)}, height={int(actual_height)}. This class will resize the "
+            f"are now (width={int(actual_width)}, height={int(actual_height)}). This class will resize the "
             "frames to your desired resolution before returning them."
         )
         if self.width is not None and self.width != actual_width:
