@@ -332,9 +332,9 @@ class IntelRealSenseCamera:
                 f"Can't set {self.height=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_height}."
             )
 
-        self.fps = actual_fps
-        self.width = actual_width
-        self.height = actual_height
+        self.fps = round(actual_fps)
+        self.width = round(actual_width)
+        self.height = round(actual_height)
 
         self.is_connected = True
 

@@ -40,6 +40,8 @@ def test_robot(tmpdir, request, robot_type, mock):
     # TODO(rcadene): test logs
     # TODO(rcadene): add compatibility with other robots
 
+    robot_kwargs = {"robot_type": robot_type}
+
     if robot_type == "aloha" and mock:
         # To simplify unit test, we do not rerun manual calibration for Aloha mock=True.
         # Instead, we use the files from '.cache/calibration/aloha_default'
@@ -52,15 +54,16 @@ def test_robot(tmpdir, request, robot_type, mock):
         tmpdir = Path(tmpdir)
         calibration_dir = tmpdir / robot_type
         overrides_calibration_dir = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
 
     # Test connecting without devices raises an error
-    robot = ManipulatorRobot()
+    robot = ManipulatorRobot(**robot_kwargs)
     with pytest.raises(ValueError):
         robot.connect()
     del robot
 
     # Test using robot before connecting raises an error
-    robot = ManipulatorRobot()
+    robot = ManipulatorRobot(**robot_kwargs)
     with pytest.raises(RobotDeviceNotConnectedError):
         robot.teleop_step()
     with pytest.raises(RobotDeviceNotConnectedError):
@@ -84,8 +87,9 @@ def test_robot(tmpdir, request, robot_type, mock):
     with pytest.raises(RobotDeviceAlreadyConnectedError):
         robot.connect()
 
-    # Test disconnecting with `__del__`
-    del robot
+    # TODO(rcadene, aliberts): Test disconnecting with `__del__` instead of `disconnect`
+    # del robot
+    robot.disconnect()
 
     # Test teleop can run
     robot = make_robot(robot_type, overrides=overrides_calibration_dir, mock=mock)
@@ -136,4 +140,3 @@ def test_robot(tmpdir, request, robot_type, mock):
         assert not robot.leader_arms[name].is_connected
     for name in robot.cameras:
         assert not robot.cameras[name].is_connected
-    del robot

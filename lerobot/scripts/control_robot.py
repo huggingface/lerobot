@@ -370,6 +370,7 @@ def record(
     tags=None,
     num_image_writers_per_camera=4,
     force_override=False,
+    display_cameras=True,
 ):
     # TODO(rcadene): Add option to record logs
     # TODO(rcadene): Clean this function via decomposition in higher level functions
@@ -403,7 +404,7 @@ def record(
         episode_index = 0
 
     if is_headless():
-        logging.info(
+        logging.warning(
             "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
         )
 
@@ -471,7 +472,7 @@ def record(
         else:
             observation = robot.capture_observation()
 
-        if not is_headless():
+        if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
                 cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
@@ -515,7 +516,7 @@ def record(
                 for key in image_keys:
                     frame_queue.put((observation[key], key, frame_index, episode_index, videos_dir))
 
-                if not is_headless():
+                if display_cameras and not is_headless():
                     image_keys = [key for key in observation if "image" in key]
                     for key in image_keys:
                         cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
@@ -663,7 +664,7 @@ def record(
         stop_workers(frame_workers, frame_queue)
 
     robot.disconnect()
-    if not is_headless():
+    if display_cameras and not is_headless():
         cv2.destroyAllWindows()
 
     num_episodes = episode_index

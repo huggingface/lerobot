@@ -36,11 +36,20 @@ from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, require_r
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_teleoperate(request, robot_type, mock):
+def test_teleoperate(tmpdir, request, robot_type, mock):
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
-    robot = make_robot(robot_type, mock=mock)
+        # Create an empty calibration directory to trigger manual calibration
+        # and avoid writing calibration files in user .cache/calibration folder
+        tmpdir = Path(tmpdir)
+        calibration_dir = tmpdir / robot_type
+        overrides = [f"calibration_dir={calibration_dir}"]
+    else:
+        # Use the default .cache/calibration folder when mock=False
+        overrides = None
+
+    robot = make_robot(robot_type, overrides=overrides, mock=mock)
     teleoperate(robot, teleop_time_s=1)
     teleoperate(robot, fps=30, teleop_time_s=1)
     teleoperate(robot, fps=60, teleop_time_s=1)
@@ -53,6 +62,7 @@ def test_calibrate(tmpdir, request, robot_type, mock):
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
+    # Create an empty calibration directory to trigger manual calibration
     tmpdir = Path(tmpdir)
     calibration_dir = tmpdir / robot_type
     overrides_calibration_dir = [f"calibration_dir={calibration_dir}"]
@@ -65,13 +75,21 @@ def test_calibrate(tmpdir, request, robot_type, mock):
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
 def test_record_without_cameras(tmpdir, request, robot_type, mock):
+    # Avoid using cameras
+    overrides = ["~cameras"]
+
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
-    root = Path(tmpdir)
+        # Create an empty calibration directory to trigger manual calibration
+        # and avoid writing calibration files in user .cache/calibration folder
+        calibration_dir = Path(tmpdir) / robot_type
+        overrides.append(f"calibration_dir={calibration_dir}")
+
+    root = Path(tmpdir) / "data"
     repo_id = "lerobot/debug"
 
-    robot = make_robot(robot_type, overrides=["~cameras"], mock=mock)
+    robot = make_robot(robot_type, overrides=overrides, mock=mock)
     record(
         robot,
         fps=30,
@@ -92,10 +110,24 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
-    root = Path(tmpdir)
+        # Create an empty calibration directory to trigger manual calibration
+        # and avoid writing calibration files in user .cache/calibration folder
+        calibration_dir = Path(tmpdir) / robot_type
+        overrides = [f"calibration_dir={calibration_dir}"]
+    else:
+        # Use the default .cache/calibration folder when mock=False
+        overrides = None
+
+    if robot_type == "aloha":
+        pytest.skip("TODO(rcadene): enable test once aloha_real and act_aloha_real are merged")
+
+    env_name = "koch_real"
+    policy_name = "act_koch_real"
+
+    root = Path(tmpdir) / "data"
     repo_id = "lerobot/debug"
 
-    robot = make_robot(robot_type, mock=mock)
+    robot = make_robot(robot_type, overrides=overrides, mock=mock)
     dataset = record(
         robot,
         fps=30,
@@ -107,6 +139,8 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         push_to_hub=False,
         # TODO(rcadene, aliberts): test video=True
         video=False,
+        # TODO(rcadene): display cameras through cv2 sometimes crashes on mac
+        display_cameras=False,
     )
 
     replay(robot, episode=0, fps=30, root=root, repo_id=repo_id)
@@ -147,6 +181,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         run_compute_stats=False,
         push_to_hub=False,
         video=False,
+        display_cameras=False,
     )
 
     del robot
