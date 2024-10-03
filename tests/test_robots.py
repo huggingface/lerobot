@@ -84,8 +84,9 @@ def test_robot(tmpdir, request, robot_type, mock):
     with pytest.raises(RobotDeviceAlreadyConnectedError):
         robot.connect()
 
-    # Test disconnecting with `__del__`
-    del robot
+    # TODO(rcadene, aliberts): Test disconnecting with `__del__` instead of `disconnect`
+    # del robot
+    robot.disconnect()
 
     # Test teleop can run
     robot = make_robot(robot_type, overrides=overrides_calibration_dir, mock=mock)
@@ -136,4 +137,3 @@ def test_robot(tmpdir, request, robot_type, mock):
         assert not robot.leader_arms[name].is_connected
     for name in robot.cameras:
         assert not robot.cameras[name].is_connected
-    del robot

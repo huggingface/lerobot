@@ -113,6 +113,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         push_to_hub=False,
         # TODO(rcadene, aliberts): test video=True
         video=False,
+        # TODO(rcadene): display cameras through cv2 sometimes crashes on mac
         display_cameras=False,
     )
 
