@@ -146,19 +146,15 @@ from lerobot.scripts.push_dataset_to_hub import (
 def say(text, blocking=False):
     # Check if mac, linux, or windows.
     if platform.system() == "Darwin":
-        cmd = f'say "{text}"'
+        cmd = f'say "{text}"{"" if blocking else " &"}'
     elif platform.system() == "Linux":
-        cmd = f'spd-say "{text}"'
+        cmd = f'spd-say "{text}"{"  --wait" if blocking else ""}'
     elif platform.system() == "Windows":
+        # TODO(rcadene): Make blocking option work for Windows
         cmd = (
             'PowerShell -Command "Add-Type -AssemblyName System.Speech; '
             f"(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')\""
         )
-
-    if not blocking and platform.system() in ["Darwin", "Linux"]:
-        # TODO(rcadene): Make it work for Windows
-        # Use the ampersand to run command in the background
-        cmd += " &"
 
     os.system(cmd)
 
