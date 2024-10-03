@@ -341,7 +341,13 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         return np.count_nonzero(self._data[self.OCCUPANCY_MASK_KEY])
 
     def get_unique_episode_indices(self) -> np.ndarray:
-        return np.unique(self._data[self.EPISODE_INDEX_KEY][self._data[self.OCCUPANCY_MASK_KEY]])
+        """
+        Return (sorted) unique episode indices from the dataset, or an empty array if the dataset is empty.
+        """
+        if len(self) > 0:
+            return np.sort(np.unique(self._data[self.EPISODE_INDEX_KEY][self._data[self.OCCUPANCY_MASK_KEY]]))
+        else:
+            return np.empty(shape=(0,), dtype=int)
 
     def _infer_image_modes(self) -> list[LeRobotDatasetV2ImageMode]:
         """Infer which image modes are available according to what is in the storage directory"""

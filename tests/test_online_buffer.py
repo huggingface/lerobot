@@ -136,16 +136,17 @@ def test_get_data_by_key(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
             assert np.array_equal(new_episodes[k], dataset.get_data_by_key(k))
 
 
-def test_get_unique_episode_indices(tmp_path: Path):
+@pytest.mark.parametrize("n_episodes", [0, 2])
+def test_get_unique_episode_indices(tmp_path: Path, n_episodes: int):
     dataset = LeRobotDatasetV2(
         tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
     )  # arbitrary fps
     # Note: choices for args to make_spoof_data_frames are mostly arbitrary. Just make sure there is more
     # than one episode.
-    n_episodes = 2
-    new_episodes = make_spoof_data_frames(n_episodes=n_episodes, n_frames_per_episode=25)
-    dataset.add_episodes(new_episodes)
-    assert np.array_equal(np.sort(dataset.get_unique_episode_indices()), np.arange(n_episodes))
+    if n_episodes > 0:
+        new_episodes = make_spoof_data_frames(n_episodes=n_episodes, n_frames_per_episode=25)
+        dataset.add_episodes(new_episodes)
+    assert np.array_equal(dataset.get_unique_episode_indices(), np.arange(n_episodes))
 
 
 def test_non_mutate(tmp_path: Path):
