@@ -227,14 +227,6 @@ class OpenCVCamera:
         self.camera = None
         self.is_connected = False
         self.thread = None
-        # Using Lock to avoid race condition and segfault when threads access the
-        # same camera. Though not currently a use case for LeRobot, lock ensures
-        # safety if users want to use this class with threads. As a result, threads
-        # will go sequentially through the code logic protected by a lock, instead of
-        # in parallel. Also, we use Recursive Lock to avoid deadlock by allowing each
-        # thread to acquire the lock multiple times.
-        # TODO(rcadene, aliberts): Add RLock on every robot devices where it makes sense?
-        self.lock = threading.RLock()
         self.stop_event = None
         self.color_image = None
         self.logs = {}
@@ -264,17 +256,16 @@ class OpenCVCamera:
             setNumThreads(1)
 
         camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
-        with self.lock:
-            # First create a temporary camera trying to access `camera_index`,
-            # and verify it is a valid camera by calling `isOpened`.
-            tmp_camera = VideoCapture(camera_idx)
-            is_camera_open = tmp_camera.isOpened()
-            # Release camera to make it accessible for `find_camera_indices`
-            tmp_camera.release()
-            del tmp_camera
+        # First create a temporary camera trying to access `camera_index`,
+        # and verify it is a valid camera by calling `isOpened`.
+        tmp_camera = VideoCapture(camera_idx)
+        is_camera_open = tmp_camera.isOpened()
+        # Release camera to make it accessible for `find_camera_indices`
+        tmp_camera.release()
+        del tmp_camera
 
-            # If the camera doesn't work, display the camera indices corresponding to
-            # valid cameras.
+        # If the camera doesn't work, display the camera indices corresponding to
+        # valid cameras.
         if not is_camera_open:
             # Verify that the provided `camera_index` is valid before printing the traceback
             available_cam_ids = find_camera_indices()
@@ -289,40 +280,39 @@ class OpenCVCamera:
         # Secondly, create the camera that will be used downstream.
         # Note: For some unknown reason, calling `isOpened` blocks the camera which then
         # needs to be re-created.
-        with self.lock:
-            self.camera = VideoCapture(camera_idx)
+        self.camera = VideoCapture(camera_idx)
 
-            if self.fps is not None:
-                self.camera.set(CAP_PROP_FPS, self.fps)
-            if self.width is not None:
-                self.camera.set(CAP_PROP_FRAME_WIDTH, self.width)
-            if self.height is not None:
-                self.camera.set(CAP_PROP_FRAME_HEIGHT, self.height)
+        if self.fps is not None:
+            self.camera.set(CAP_PROP_FPS, self.fps)
+        if self.width is not None:
+            self.camera.set(CAP_PROP_FRAME_WIDTH, self.width)
+        if self.height is not None:
+            self.camera.set(CAP_PROP_FRAME_HEIGHT, self.height)
 
-            actual_fps = self.camera.get(CAP_PROP_FPS)
-            actual_width = self.camera.get(CAP_PROP_FRAME_WIDTH)
-            actual_height = self.camera.get(CAP_PROP_FRAME_HEIGHT)
+        actual_fps = self.camera.get(CAP_PROP_FPS)
+        actual_width = self.camera.get(CAP_PROP_FRAME_WIDTH)
+        actual_height = self.camera.get(CAP_PROP_FRAME_HEIGHT)
 
-            # Using `math.isclose` since actual fps can be a float (e.g. 29.9 instead of 30)
-            if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
-                # Using `OSError` since it's a broad that encompasses issues related to device communication
-                raise OSError(
-                    f"Can't set {self.fps=} for OpenCVCamera({self.camera_index}). Actual value is {actual_fps}."
-                )
-            if self.width is not None and self.width != actual_width:
-                raise OSError(
-                    f"Can't set {self.width=} for OpenCVCamera({self.camera_index}). Actual value is {actual_width}."
-                )
-            if self.height is not None and self.height != actual_height:
-                raise OSError(
-                    f"Can't set {self.height=} for OpenCVCamera({self.camera_index}). Actual value is {actual_height}."
-                )
+        # Using `math.isclose` since actual fps can be a float (e.g. 29.9 instead of 30)
+        if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
+            # Using `OSError` since it's a broad that encompasses issues related to device communication
+            raise OSError(
+                f"Can't set {self.fps=} for OpenCVCamera({self.camera_index}). Actual value is {actual_fps}."
+            )
+        if self.width is not None and self.width != actual_width:
+            raise OSError(
+                f"Can't set {self.width=} for OpenCVCamera({self.camera_index}). Actual value is {actual_width}."
+            )
+        if self.height is not None and self.height != actual_height:
+            raise OSError(
+                f"Can't set {self.height=} for OpenCVCamera({self.camera_index}). Actual value is {actual_height}."
+            )
 
-            self.fps = round(actual_fps)
-            self.width = round(actual_width)
-            self.height = round(actual_height)
+        self.fps = round(actual_fps)
+        self.width = round(actual_width)
+        self.height = round(actual_height)
 
-            self.is_connected = True
+        self.is_connected = True
 
     def read(self, temporary_color_mode: str | None = None) -> np.ndarray:
         """Read a frame from the camera returned in the format (height, width, channels)
@@ -338,8 +328,7 @@ class OpenCVCamera:
 
         start_time = time.perf_counter()
 
-        with self.lock:
-            ret, color_image = self.camera.read()
+        ret, color_image = self.camera.read()
 
         if not ret:
             raise OSError(f"Can't capture color image from camera {self.camera_index}.")
@@ -374,8 +363,7 @@ class OpenCVCamera:
         # log the utc time at which the image was received
         self.logs["timestamp_utc"] = capture_timestamp_utc()
 
-        with self.lock:
-            self.color_image = color_image
+        self.color_image = color_image
 
         return color_image
 
@@ -393,15 +381,13 @@ class OpenCVCamera:
             )
 
         if self.thread is None:
-            with self.lock:
-                self.stop_event = threading.Event()
-                self.thread = Thread(target=self.read_loop, args=())
-                self.thread.daemon = True
-                self.thread.start()
+            self.stop_event = threading.Event()
+            self.thread = Thread(target=self.read_loop, args=())
+            self.thread.daemon = True
+            self.thread.start()
 
         num_tries = 0
         while True:
-            # Do not use `with self.lock` here, as it reduces fps
             if self.color_image is not None:
                 return self.color_image
 
@@ -417,21 +403,18 @@ class OpenCVCamera:
             )
 
         if self.thread is not None:
-            with self.lock:
-                self.stop_event.set()
+            self.stop_event.set()
             self.thread.join()  # wait for the thread to finish
             self.thread = None
             self.stop_event = None
 
-        with self.lock:
-            self.camera.release()
-            self.camera = None
-            self.is_connected = False
+        self.camera.release()
+        self.camera = None
+        self.is_connected = False
 
     def __del__(self):
-        with self.lock:
-            if getattr(self, "is_connected", False):
-                self.disconnect()
+        if getattr(self, "is_connected", False):
+            self.disconnect()
 
 
 if __name__ == "__main__":

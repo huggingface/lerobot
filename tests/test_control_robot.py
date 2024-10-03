@@ -113,6 +113,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         push_to_hub=False,
         # TODO(rcadene, aliberts): test video=True
         video=False,
+        display_cameras=False,
     )
 
     replay(robot, episode=0, fps=30, root=root, repo_id=repo_id)
@@ -138,6 +139,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         run_compute_stats=False,
         push_to_hub=False,
         video=False,
+        display_cameras=False,
     )
 
     del robot
