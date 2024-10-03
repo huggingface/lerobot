@@ -54,13 +54,13 @@ def test_robot(tmpdir, request, robot_type, mock):
         overrides_calibration_dir = [f"calibration_dir={calibration_dir}"]
 
     # Test connecting without devices raises an error
-    robot = ManipulatorRobot()
+    robot = ManipulatorRobot(calibration_dir=calibration_dir)
     with pytest.raises(ValueError):
         robot.connect()
     del robot
 
     # Test using robot before connecting raises an error
-    robot = ManipulatorRobot()
+    robot = ManipulatorRobot(calibration_dir=calibration_dir)
     with pytest.raises(RobotDeviceNotConnectedError):
         robot.teleop_step()
     with pytest.raises(RobotDeviceNotConnectedError):
