@@ -13,8 +13,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import platform
 import traceback
 
+import cv2
 import pytest
 
 from lerobot.common.utils.utils import init_hydra_config
@@ -41,3 +43,14 @@ def is_robot_available(robot_type):
         traceback.print_exc()
         print(f"\nA {robot_type} robot is not available.")
         return False
+
+
+@pytest.fixture
+def is_camera_available(request: pytest.FixtureRequest):
+    camera_index = request.param
+    if platform.system() == "Linux":
+        tmp_camera = cv2.VideoCapture(f"/dev/video{camera_index}")
+    else:
+        tmp_camera = cv2.VideoCapture(camera_index)
+
+    return tmp_camera.isOpened()
