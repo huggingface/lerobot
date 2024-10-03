@@ -46,7 +46,7 @@ def is_robot_available(robot_type):
 
 
 @pytest.fixture
-def is_camera_available(request: pytest.FixtureRequest):
+def is_camera_available(request: pytest.FixtureRequest) -> bool:
     camera_index = request.param
     if platform.system() == "Linux":
         tmp_camera = cv2.VideoCapture(f"/dev/video{camera_index}")
