@@ -148,7 +148,7 @@ def say(text, blocking=False):
     if platform.system() == "Darwin":
         cmd = f'say "{text}"{"" if blocking else " &"}'
     elif platform.system() == "Linux":
-        cmd = f'spd-say "{text}"{"  --wait" if blocking else ""}'
+        cmd = f'spd-say "{text}"{" --wait" if blocking else ""}'
     elif platform.system() == "Windows":
         # TODO(rcadene): Make blocking option work for Windows
         cmd = (
