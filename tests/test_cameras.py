@@ -138,12 +138,12 @@ def test_camera(request, robot_type):
     del camera
 
 
-# Note: indirect=True passes the CAMERA_INDEX to the `is_camera_available` fixture, then this returns the
-# `is_camera_available` parameter for the test.
 @pytest.mark.parametrize("request_resolution", [(10, 10)])
 # This parameter is only used when the camera is not available. Checks for various configurations of
 # (mis)match between the requested resolution and the target resolution.
 @pytest.mark.parametrize("read_resolution", [(10, 10), (10, 20), (20, 10), (20, 20)])
+# Note: indirect=True passes the CAMERA_INDEX to the `is_camera_available` fixture, then this returns the
+# `is_camera_available` parameter for the test.
 @pytest.mark.parametrize("is_camera_available", [CAMERA_INDEX], indirect=True)
 def test_camera_resize(
     request_resolution: tuple[int, int], read_resolution: tuple[int, int], is_camera_available: bool
