@@ -140,8 +140,14 @@ def test_camera(request, robot_type):
 
 # Note: indirect=True passes the CAMERA_INDEX to the `is_camera_available` fixture, then this returns the
 # `is_camera_available` parameter for the test.
+@pytest.mark.parametrize("request_resolution", [(10, 10)])
+# This parameter is only used when the camera is not available. Checks for various configurations of
+# (mis)match between the requested resolution and the target resolution.
+@pytest.mark.parametrize("read_resolution", [(10, 10), (10, 20), (20, 10), (20, 20)])
 @pytest.mark.parametrize("is_camera_available", [CAMERA_INDEX], indirect=True)
-def test_camera_resize(is_camera_available: bool):
+def test_camera_resize(
+    request_resolution: tuple[int, int], read_resolution: tuple[int, int], is_camera_available: bool
+):
     """
     Check that, even if the requested resolution is not supported natively, the `OpenCVCamera.read` method
     returns an image with the requested resolution.
@@ -150,22 +156,20 @@ def test_camera_resize(is_camera_available: bool):
     unsupported resolutions, otherwise if `is_camera_available=False` we have to use a mock patch which
     unfortunately can't test this.
     """
-    height = 10
-    width = 10
-    camera = OpenCVCamera(0, OpenCVCameraConfig(height=height, width=width))
+    camera = OpenCVCamera(0, OpenCVCameraConfig(height=request_resolution[0], width=request_resolution[1]))
     with nullcontext() if is_camera_available else patch("cv2.VideoCapture") as mock_video_capture:
         if not is_camera_available:
             # Set an output resolution that is different from the requested one.
             mock_video_capture.return_value.read.return_value = (
                 True,
-                np.zeros((2 * height, 2 * width), dtype=np.uint8),
+                np.zeros(read_resolution, dtype=np.uint8),
             )
             mock_video_capture.return_value.isOpened.return_value = True
         camera.connect()
-    assert camera.height == height
-    assert camera.width == width
+    assert camera.height == request_resolution[0]
+    assert camera.width == request_resolution[1]
     img = camera.read()
-    assert img.shape[:2] == (height, width)
+    assert img.shape[:2] == request_resolution
 
 
 @pytest.mark.parametrize("robot_type", available_robots)
