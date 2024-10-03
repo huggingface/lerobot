@@ -118,10 +118,15 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
         if brand == "feetech":
             motor_bus.write("Goal_Position", 2047)
             time.sleep(4)
-            motor_bus.write("Offset", 2047)
+            print("Present Position", motor_bus.read("Present_Position"))
+
+            motor_bus.write("Offset", 2027)
             time.sleep(4)
-            breakpoint()
-            motor_bus.read("Present_Position")
+            print("Offset", motor_bus.read("Offset"))
+
+            while True:
+                print("Present Position", motor_bus.read("Present_Position"))
+                time.sleep(0.5)
 
     except Exception as e:
         print(f"Error occurred during motor configuration: {e}")
