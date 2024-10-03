@@ -5112,7 +5112,7 @@ drake-lca = ["gym-drake-lca"]
 dynamixel = ["dynamixel-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
 pusht = ["gym-pusht"]
-test = ["pytest", "pytest-cov"]
+test = ["pyserial", "pytest", "pytest-cov"]
 umi = ["imagecodecs"]
 video-benchmark = ["pandas", "scikit-image"]
 xarm = ["gym-xarm"]
@@ -5120,4 +5120,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "04eaf5f40c629653326f87c740ac706dae7393a2f6fb4661a91791d12ce28f13"
+content-hash = "63e1a2b5ca5c99f5ab3d6ae1f1d8d618d47b3e5ab9776a9ee5e70e09c5380f21"
