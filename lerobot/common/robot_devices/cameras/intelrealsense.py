@@ -5,6 +5,7 @@ This file contains utilities for recording frames from Intel Realsense cameras.
 import argparse
 import concurrent.futures
 import logging
+import math
 import shutil
 import threading
 import time
@@ -13,9 +14,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Thread
 
-import cv2
 import numpy as np
-import pyrealsense2 as rs
 from PIL import Image
 
 from lerobot.common.robot_devices.utils import (
@@ -28,14 +27,23 @@ from lerobot.scripts.control_robot import busy_wait
 SERIAL_NUMBER_INDEX = 1
 
 
-def find_camera_indices(raise_when_empty=True) -> list[int]:
+def find_camera_indices(raise_when_empty=True, mock=False) -> list[int]:
     """
     Find the serial numbers of the Intel RealSense cameras
     connected to the computer.
     """
+    if mock:
+        from tests.mock_pyrealsense2 import (
+            RSCameraInfo,
+            RSContext,
+        )
+    else:
+        from pyrealsense2 import camera_info as RSCameraInfo  # noqa: N812
+        from pyrealsense2 import context as RSContext  # noqa: N812
+
     camera_ids = []
-    for device in rs.context().query_devices():
-        serial_number = int(device.get_info(rs.camera_info(SERIAL_NUMBER_INDEX)))
+    for device in RSContext().query_devices():
+        serial_number = int(device.get_info(RSCameraInfo(SERIAL_NUMBER_INDEX)))
         camera_ids.append(serial_number)
 
     if raise_when_empty and len(camera_ids) == 0:
@@ -64,18 +72,24 @@ def save_images_from_cameras(
     width=None,
     height=None,
     record_time_s=2,
+    mock=False,
 ):
     """
     Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
     associated to a given camera index.
     """
     if camera_ids is None:
-        camera_ids = find_camera_indices()
+        camera_ids = find_camera_indices(mock=mock)
+
+    if mock:
+        from tests.mock_cv2 import COLOR_RGB2BGR, cvtColor
+    else:
+        from cv2 import COLOR_RGB2BGR, cvtColor
 
     print("Connecting cameras")
     cameras = []
     for cam_idx in camera_ids:
-        camera = IntelRealSenseCamera(cam_idx, fps=fps, width=width, height=height)
+        camera = IntelRealSenseCamera(cam_idx, fps=fps, width=width, height=height, mock=mock)
         camera.connect()
         print(
             f"IntelRealSenseCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
@@ -103,7 +117,8 @@ def save_images_from_cameras(
                     image = camera.read() if fps is None else camera.async_read()
                     if image is None:
                         print("No Frame")
-                    bgr_converted_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+                    bgr_converted_image = cvtColor(image, COLOR_RGB2BGR)
 
                     executor.submit(
                         save_image,
@@ -149,6 +164,7 @@ class IntelRealSenseCameraConfig:
     color_mode: str = "rgb"
     use_depth: bool = False
     force_hardware_reset: bool = True
+    mock: bool = False
 
     def __post_init__(self):
         if self.color_mode not in ["rgb", "bgr"]:
@@ -156,7 +172,9 @@ class IntelRealSenseCameraConfig:
                 f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
             )
 
-        if (self.fps or self.width or self.height) and not (self.fps and self.width and self.height):
+        at_least_one_is_not_none = self.fps is not None or self.width is not None or self.height is not None
+        at_least_one_is_none = self.fps is None or self.width is None or self.height is None
+        if at_least_one_is_not_none and at_least_one_is_none:
             raise ValueError(
                 "For `fps`, `width` and `height`, either all of them need to be set, or none of them, "
                 f"but {self.fps=}, {self.width=}, {self.height=} were provided."
@@ -228,6 +246,7 @@ class IntelRealSenseCamera:
         self.color_mode = config.color_mode
         self.use_depth = config.use_depth
         self.force_hardware_reset = config.force_hardware_reset
+        self.mock = config.mock
 
         self.camera = None
         self.is_connected = False
@@ -243,24 +262,37 @@ class IntelRealSenseCamera:
                 f"IntelRealSenseCamera({self.camera_index}) is already connected."
             )
 
-        config = rs.config()
+        if self.mock:
+            from tests.mock_pyrealsense2 import (
+                RSConfig,
+                RSFormat,
+                RSPipeline,
+                RSStream,
+            )
+        else:
+            from pyrealsense2 import config as RSConfig  # noqa: N812
+            from pyrealsense2 import format as RSFormat  # noqa: N812
+            from pyrealsense2 import pipeline as RSPipeline  # noqa: N812
+            from pyrealsense2 import stream as RSStream  # noqa: N812
+
+        config = RSConfig()
         config.enable_device(str(self.camera_index))
 
         if self.fps and self.width and self.height:
             # TODO(rcadene): can we set rgb8 directly?
-            config.enable_stream(rs.stream.color, self.width, self.height, rs.format.rgb8, self.fps)
+            config.enable_stream(RSStream.color, self.width, self.height, RSFormat.rgb8, self.fps)
         else:
-            config.enable_stream(rs.stream.color)
+            config.enable_stream(RSStream.color)
 
         if self.use_depth:
             if self.fps and self.width and self.height:
-                config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
+                config.enable_stream(RSStream.depth, self.width, self.height, RSFormat.z16, self.fps)
             else:
-                config.enable_stream(rs.stream.depth)
+                config.enable_stream(RSStream.depth)
 
-        self.camera = rs.pipeline()
+        self.camera = RSPipeline()
         try:
-            self.camera.start(config)
+            profile = self.camera.start(config)
             is_camera_open = True
         except RuntimeError:
             is_camera_open = False
@@ -278,6 +310,31 @@ class IntelRealSenseCamera:
                 )
 
             raise OSError(f"Can't access IntelRealSenseCamera({self.camera_index}).")
+
+        color_stream = profile.get_stream(RSStream.color)
+        color_profile = color_stream.as_video_stream_profile()
+        actual_fps = color_profile.fps()
+        actual_width = color_profile.width()
+        actual_height = color_profile.height()
+
+        # Using `math.isclose` since actual fps can be a float (e.g. 29.9 instead of 30)
+        if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
+            # Using `OSError` since it's a broad that encompasses issues related to device communication
+            raise OSError(
+                f"Can't set {self.fps=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_fps}."
+            )
+        if self.width is not None and self.width != actual_width:
+            raise OSError(
+                f"Can't set {self.width=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_width}."
+            )
+        if self.height is not None and self.height != actual_height:
+            raise OSError(
+                f"Can't set {self.height=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_height}."
+            )
+
+        self.fps = round(actual_fps)
+        self.width = round(actual_width)
+        self.height = round(actual_height)
 
         self.is_connected = True
 
@@ -315,7 +372,12 @@ class IntelRealSenseCamera:
 
         # IntelRealSense uses RGB format as default (red, green, blue).
         if requested_color_mode == "bgr":
-            color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+            if self.mock:
+                from tests.mock_cv2 import COLOR_RGB2BGR, cvtColor
+            else:
+                from cv2 import COLOR_RGB2BGR, cvtColor
+
+            color_image = cvtColor(color_image, COLOR_RGB2BGR)
 
         h, w, _ = color_image.shape
         if h != self.height or w != self.width:
@@ -347,7 +409,7 @@ class IntelRealSenseCamera:
             return color_image
 
     def read_loop(self):
-        while self.stop_event is None or not self.stop_event.is_set():
+        while not self.stop_event.is_set():
             if self.use_depth:
                 self.color_image, self.depth_map = self.read()
             else:
@@ -368,6 +430,7 @@ class IntelRealSenseCamera:
 
         num_tries = 0
         while self.color_image is None:
+            # TODO(rcadene, aliberts): intelrealsense has diverged compared to opencv over here
             num_tries += 1
             time.sleep(1 / self.fps)
             if num_tries > self.fps and (self.thread.ident is None or not self.thread.is_alive()):
