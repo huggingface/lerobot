@@ -1412,13 +1412,13 @@ subdirectory = "gym_dora"
 
 [[package]]
 name = "gym-drake-lca"
-version = "0.0.7"
+version = "0.0.9"
 description = "A Gym implementation of the Low Cost Arm (LCA) in the Drake simulator."
 optional = true
 python-versions = "<4.0,>=3.10"
 files = [
-    {file = "gym_drake_lca-0.0.7-py3-none-any.whl", hash = "sha256:47d8d644d085ea9bdde06f54334e5ae633ef848f4ce3df3220181cd6ad201969"},
-    {file = "gym_drake_lca-0.0.7.tar.gz", hash = "sha256:83a8a8df8acd3db834d4a64ae8c6006c2bde517fb72d1effefb805627880d2ad"},
+    {file = "gym_drake_lca-0.0.9-py3-none-any.whl", hash = "sha256:d9ec467ea111768ea9c3a0798bb9b811e9fa05543b197ed192febdc4c7096f77"},
+    {file = "gym_drake_lca-0.0.9.tar.gz", hash = "sha256:7fd0d12d4b6861092d601f6c72a2c6ef91530022bbe045dd842644d01040491b"},
 ]
 
 [package.dependencies]
@@ -5120,4 +5120,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "221cae3f33fefab8634be0cf09543831b1d4af3c71f132382e6221ad32e11418"
+content-hash = "04eaf5f40c629653326f87c740ac706dae7393a2f6fb4661a91791d12ce28f13"
