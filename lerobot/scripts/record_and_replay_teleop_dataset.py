@@ -665,7 +665,7 @@ def run_sim_while_recording_dataset(*, replay_helper: ReplayHelper | None = None
     return lerobot_dataset
 
 
-def teleop_robot_and_record_data(*) -> LeRobotDataset:
+def teleop_robot_and_record_data() -> LeRobotDataset:
     (start_teleoperation_fn, stop_teleoperation_fn) = set_up_teleop(args.teleop_method)
 
     # start teleoperation listener
@@ -734,6 +734,7 @@ def process_args():
 
 if __name__ == "__main__":
     import yaml
+    from pprint import pprint 
     args = process_args()
     logging.basicConfig(level=logging.CRITICAL)
 
@@ -744,18 +745,23 @@ if __name__ == "__main__":
     module_obj = import_module_containing_gym(module_name)
 
     print("Recording initial dataset w/ teleop")
-    env_kwargs = yaml.safe_load(args.gym_config_yaml)
+    with open(args.gym_config_yaml, 'r') as f:
+        env_kwargs = yaml.safe_load(f)
+    pprint(env_kwargs)
     lerobot_dataset = teleop_robot_and_record_data()
 
     is_first_replay = True
     for reconfig_yaml in args.gym_reconfig_yamls.split(sep=';'):
-        env_kwargs = yaml.safe_load(reconfig_yaml)
+        print("Replaying from previous dataset")
+        with open(reconfig_yaml, 'r') as f:
+            env_kwargs = yaml.safe_load(f)
+        pprint(env_kwargs)
 
         if is_first_replay:
-            print("Replaying from previous dataset (from disk)")
+            print(" -- from disk (previous run)")
             replay_dataset_actions_in_sim()
             is_first_replay = False
         else:
             # Automatically re-record datasets with different models for the cube.
-            print("Replaying from dataset (in memory)")
+            print(" -- from dataset in memory")
             replay_dataset_actions_in_sim(source_dataset=lerobot_dataset)
