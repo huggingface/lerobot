@@ -129,17 +129,26 @@ def test_camera(request, camera_type, mock):
     for rotation in [None, 90, 180, -90]:
         camera = make_camera(camera_type, rotation=rotation, mock=mock)
         camera.connect()
-        assert camera.rotation == rotation
-        rot_color_image = camera.read()
+
+        if mock:
+            import tests.mock_cv2 as cv2
+        else:
+            import cv2
 
         if rotation is None:
             manual_rot_img = ori_color_image
+            assert camera.rotation is None
         elif rotation == 90:
             manual_rot_img = np.rot90(color_image, k=1)
+            assert camera.rotation == cv2.ROTATE_90_CLOCKWISE
         elif rotation == 180:
             manual_rot_img = np.rot90(color_image, k=2)
+            assert camera.rotation == cv2.ROTATE_180
         elif rotation == -90:
             manual_rot_img = np.rot90(color_image, k=3)
+            assert camera.rotation == cv2.ROTATE_90_CLOCKWISE
+
+        rot_color_image = camera.read()
 
         np.testing.assert_allclose(
             rot_color_image, manual_rot_img, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE, err_msg=error_msg

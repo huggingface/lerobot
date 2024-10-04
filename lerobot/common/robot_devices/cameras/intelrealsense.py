@@ -70,7 +70,7 @@ def save_image(img_array, serial_number, frame_index, images_dir):
 
 def save_images_from_cameras(
     images_dir: Path,
-    serial_numbers: list[int | None],
+    serial_numbers: list[int] | None = None,
     fps=None,
     width=None,
     height=None,
@@ -81,7 +81,7 @@ def save_images_from_cameras(
     Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
     associated to a given serial number.
     """
-    if len(serial_numbers) == 0:
+    if serial_numbers is None or len(serial_numbers) == 0:
         camera_infos = find_cameras(mock=mock)
         serial_numbers = [cam["serial_number"] for cam in camera_infos]
 
@@ -517,11 +517,11 @@ if __name__ == "__main__":
         description="Save a few frames using `IntelRealSenseCamera` for all cameras connected to the computer, or a selected subset."
     )
     parser.add_argument(
-        "--camera-ids",
+        "--serial-numbers",
         type=int,
         nargs="*",
         default=None,
-        help="List of camera indices used to instantiate the `IntelRealSenseCamera`. If not provided, find and use all available camera indices.",
+        help="List of serial numbers used to instantiate the `IntelRealSenseCamera`. If not provided, find and use all available camera indices.",
     )
     parser.add_argument(
         "--fps",
