@@ -43,39 +43,73 @@ conda create -y -n lerobot python=3.10 && conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-6. Install LeRobot
+6. Install LeRobot with stretch dependencies:
 ```bash
 cd ~/lerobot && pip install -e ".[stretch]"
+```
 
+> **Note:** If you get this message, you can ignore it: `ERROR: pip's dependency resolver does not currently take into account all the packages that are installed.`
+
+And install extra dependencies for recording datasets on Linux:
+```bash
 conda install -y -c conda-forge ffmpeg
 pip uninstall -y opencv-python
 conda install -y -c conda-forge "opencv>=4.10.0"
 ```
 
-7. You can make sure everyting is working with your robot by running a [system check](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#system-check):
+7. Run a [system check](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#system-check) to make sure your robot is ready:
 ```bash
 stretch_system_check.py
 ```
 
+> **Note:** You may need to free the "robot process" after booting Stretch by running `stretch_free_robot_process.py`. For more info this Stretch's [doc](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#turning-off-gamepad-teleoperation).
+
+You should get something like this:
+```bash
+For use with S T R E T C H (R) from Hello Robot Inc.
+---------------------------------------------------------------------
+
+Model = Stretch 3
+Tool = DexWrist 3 w/ Gripper
+Serial Number = stretch-se3-3054
+
+---- Checking Hardware ----
+[Pass] Comms are ready
+[Pass] Actuators are ready
+[Warn] Sensors not ready (IMU AZ = -10.19 out of range -10.1 to -9.5)
+[Pass] Battery voltage is 13.6 V
+
+---- Checking Software ----
+[Pass] Ubuntu 22.04 is ready
+[Pass] All APT pkgs are setup correctly
+[Pass] Firmware is up-to-date
+[Pass] Python pkgs are up-to-date
+[Pass] ROS2 Humble is ready
+```
+
 ## Teleoperate, record a dataset and run a policy
 
-> **Note:** As indicated in Stretch's [doc](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#turning-off-gamepad-teleoperation), you may need to free the "robot process" after booting Stretch by running `stretch_free_robot_process.py`
-
-Before operating Stretch, you need to [home](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#homing) it first. In the scripts used below, if the robot is not already homed it will be automatically homed first. Be mindful about giving Stretch some space as this procedure will move the robot's arm and gripper. If you want to "manually" home Stretch first, you can simply run this command:
+**Calibrate (Optional)**
+Before operating Stretch, you need to [home](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#homing) it first. Be mindful about giving Stretch some space as this procedure will move the robot's arm and gripper. Now run this command:
 ```bash
 python lerobot/scripts/control_robot.py calibrate \
     --robot-path lerobot/configs/robot/stretch.yaml
 ```
 This is equivalent to running `stretch_robot_home.py`
 
-Try out teleoperation (you can learn about the controls in Stretch's [documentation](https://docs.hello-robot.com/0.3/getting_started/hello_robot/#gamepad-teleoperation)):
+> **Note:** If you run any of the LeRobot scripts below and Stretch is not poperly homed, it will automatically home/calibrate first.
+
+**Teleoperate**
+Before trying teleoperation, you need activate the gamepad controller by pressing the middle button. For more info, see Stretch's [doc](https://docs.hello-robot.com/0.3/getting_started/hello_robot/#gamepad-teleoperation).
+
+Now try out teleoperation (see above documentation to learn about the gamepad controls):
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
     --robot-path lerobot/configs/robot/stretch.yaml
 ```
 This is essentially the same as running `stretch_gamepad_teleop.py`
 
-
+**Record a dataset**
 Once you're familiar with the gamepad controls and after a bit of practice, you can try to record your first dataset with Stretch.
 
 If you want to use the Hugging Face hub features for uploading your dataset and you haven't previously done it, make sure you've logged in using a write-access token, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
@@ -104,8 +138,9 @@ python lerobot/scripts/control_robot.py record \
     --push-to-hub 0
 ```
 
-Note that if you're using ssh to connect to Stretch and run this script, you won't be able to visualize its cameras feed (though they'll still be recording).
+> **Note:** If you're using ssh to connect to Stretch and run this script, you won't be able to visualize its cameras feed (though they will still be recording). To see the cameras stream, use [tethered](https://docs.hello-robot.com/0.3/getting_started/connecting_to_stretch/#tethered-setup) or [untethered setup](https://docs.hello-robot.com/0.3/getting_started/connecting_to_stretch/#untethered-setup).
 
+**Replay an episode**
 Now try to replay this episode (make sure the robot's initial position is the same):
 ```bash
 python lerobot/scripts/control_robot.py replay \
@@ -115,3 +150,9 @@ python lerobot/scripts/control_robot.py replay \
     --repo-id ${HF_USER}/stretch_test \
     --episode 0
 ```
+
+Follow [previous tutorial](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#4-train-a-policy-on-your-data) to train a policy on your data and run inference on your robot. You will need to adapt the code for Stretch.
+
+> TODO(rcadene, aliberts): Add already setup environment and policy yaml configuration files
+
+If you need help, please reach out on Discord in the channel `#stretch3-mobile-arm`.
