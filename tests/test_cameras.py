@@ -120,6 +120,41 @@ def test_camera(request, camera_type, mock):
     )
     del camera
 
+    # Test acquiring a rotated image
+    camera = make_camera(camera_type, mock=mock)
+    camera.connect()
+    ori_color_image = camera.read()
+    del camera
+
+    for rotation in [None, 90, 180, -90]:
+        camera = make_camera(camera_type, rotation=rotation, mock=mock)
+        camera.connect()
+
+        if mock:
+            import tests.mock_cv2 as cv2
+        else:
+            import cv2
+
+        if rotation is None:
+            manual_rot_img = ori_color_image
+            assert camera.rotation is None
+        elif rotation == 90:
+            manual_rot_img = np.rot90(color_image, k=1)
+            assert camera.rotation == cv2.ROTATE_90_CLOCKWISE
+        elif rotation == 180:
+            manual_rot_img = np.rot90(color_image, k=2)
+            assert camera.rotation == cv2.ROTATE_180
+        elif rotation == -90:
+            manual_rot_img = np.rot90(color_image, k=3)
+            assert camera.rotation == cv2.ROTATE_90_COUNTERCLOCKWISE
+
+        rot_color_image = camera.read()
+
+        np.testing.assert_allclose(
+            rot_color_image, manual_rot_img, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE, err_msg=error_msg
+        )
+        del camera
+
     # TODO(rcadene): Add a test for a camera that doesnt support fps=60 and raises an OSError
     # TODO(rcadene): Add a test for a camera that supports fps=60
 
@@ -152,4 +187,5 @@ def test_save_images_from_cameras(tmpdir, request, camera_type, mock):
     elif camera_type == "intelrealsense":
         from lerobot.common.robot_devices.cameras.intelrealsense import save_images_from_cameras
 
-    save_images_from_cameras(tmpdir, record_time_s=1, mock=mock)
+    # Small `record_time_s` to speedup unit tests
+    save_images_from_cameras(tmpdir, record_time_s=0.02, mock=mock)

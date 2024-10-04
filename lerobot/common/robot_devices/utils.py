@@ -16,6 +16,20 @@ def busy_wait(seconds):
             time.sleep(seconds)
 
 
+def safe_disconnect(func):
+    # TODO(aliberts): Allow to pass custom exceptions
+    # (e.g. ThreadServiceExit, KeyboardInterrupt, SystemExit, UnpluggedError, DynamixelCommError)
+    def wrapper(robot, *args, **kwargs):
+        try:
+            return func(robot, *args, **kwargs)
+        except Exception as e:
+            if robot.is_connected:
+                robot.disconnect()
+            raise e
+
+    return wrapper
+
+
 class RobotDeviceNotConnectedError(Exception):
     """Exception raised when the robot device is not connected."""
 

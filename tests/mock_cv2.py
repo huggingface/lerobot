@@ -8,6 +8,10 @@ CAP_PROP_FRAME_HEIGHT = 4
 COLOR_RGB2BGR = 4
 COLOR_BGR2RGB = 4
 
+ROTATE_90_COUNTERCLOCKWISE = 2
+ROTATE_90_CLOCKWISE = 0
+ROTATE_180 = 1
+
 
 @cache
 def _generate_image(width: int, height: int):
@@ -19,6 +23,19 @@ def cvtColor(color_image, color_convertion):  # noqa: N802
         return color_image[:, :, [2, 1, 0]]
     else:
         raise NotImplementedError(color_convertion)
+
+
+def rotate(color_image, rotation):
+    if rotation is None:
+        return color_image
+    elif rotation == ROTATE_90_CLOCKWISE:
+        return np.rot90(color_image, k=1)
+    elif rotation == ROTATE_180:
+        return np.rot90(color_image, k=2)
+    elif rotation == ROTATE_90_COUNTERCLOCKWISE:
+        return np.rot90(color_image, k=3)
+    else:
+        raise NotImplementedError(rotation)
 
 
 class VideoCapture:
