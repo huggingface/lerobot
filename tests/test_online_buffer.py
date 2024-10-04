@@ -460,25 +460,25 @@ def test_dynamic_memmap_size(tmp_path: Path):
             assert np.array_equal(dataset.get_data_by_key(k), all_episodes[k])
 
 
-def test_filo_needs_buffer_capacity(tmp_path: Path):
+def test_fifo_needs_buffer_capacity(tmp_path: Path):
     with pytest.raises(ValueError):
         LeRobotDatasetV2(
             tmp_path / f"dataset_{uuid4().hex}",
             fps=10,
-            use_as_filo_buffer=True,
+            use_as_fifo_buffer=True,
             image_mode=LeRobotDatasetV2ImageMode.MEMMAP,
         )
 
 
 @pytest.mark.parametrize("image_mode", list(LeRobotDatasetV2ImageMode))
-def test_filo(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
+def test_fifo(tmp_path: Path, image_mode: LeRobotDatasetV2ImageMode):
     """Checks that if data is added beyond the buffer capacity, we discard the oldest data first."""
     buffer_capacity = 100
     dataset = LeRobotDatasetV2(
         tmp_path / f"dataset_{uuid4().hex}",
         fps=10,
         buffer_capacity=buffer_capacity,
-        use_as_filo_buffer=True,
+        use_as_fifo_buffer=True,
         image_mode=image_mode,
     )
     # Note: choices for args to make_spoof_data_frames are mostly arbitrary. Of interest is:
