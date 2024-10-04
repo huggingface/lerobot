@@ -3,33 +3,31 @@ import enum
 import numpy as np
 
 
-class RSStream(enum.Enum):
+class stream(enum.Enum):  # noqa: N801
     color = 0
     depth = 1
 
 
-class RSFormat(enum.Enum):
+class format(enum.Enum):  # noqa: N801
     rgb8 = 0
     z16 = 1
 
 
-class RSConfig:
+class config:  # noqa: N801
     def enable_device(self, device_id: str):
         self.device_enabled = device_id
 
-    def enable_stream(
-        self, stream_type: RSStream, width=None, height=None, color_format: RSFormat = None, fps=None
-    ):
+    def enable_stream(self, stream_type: stream, width=None, height=None, color_format=None, fps=None):
         self.stream_type = stream_type
         # Overwrite default values when possible
         self.width = 848 if width is None else width
         self.height = 480 if height is None else height
-        self.color_format = RSFormat.rgb8 if color_format is None else color_format
+        self.color_format = format.rgb8 if color_format is None else color_format
         self.fps = 30 if fps is None else fps
 
 
 class RSColorProfile:
-    def __init__(self, config: RSConfig):
+    def __init__(self, config):
         self.config = config
 
     def fps(self):
@@ -43,7 +41,7 @@ class RSColorProfile:
 
 
 class RSColorStream:
-    def __init__(self, config: RSConfig):
+    def __init__(self, config):
         self.config = config
 
     def as_video_stream_profile(self):
@@ -51,20 +49,20 @@ class RSColorStream:
 
 
 class RSProfile:
-    def __init__(self, config: RSConfig):
+    def __init__(self, config):
         self.config = config
 
-    def get_stream(self, color_format: RSFormat):
+    def get_stream(self, color_format):
         del color_format  # unused
         return RSColorStream(self.config)
 
 
-class RSPipeline:
+class pipeline:  # noqa: N801
     def __init__(self):
         self.started = False
         self.config = None
 
-    def start(self, config: RSConfig):
+    def start(self, config):
         self.started = True
         self.config = config
         return RSProfile(self.config)
@@ -81,7 +79,7 @@ class RSPipeline:
 
 
 class RSFrames:
-    def __init__(self, config: RSConfig):
+    def __init__(self, config):
         self.config = config
 
     def get_color_frame(self):
@@ -92,7 +90,7 @@ class RSFrames:
 
 
 class RSColorFrame:
-    def __init__(self, config: RSConfig):
+    def __init__(self, config):
         self.config = config
 
     def get_data(self):
@@ -103,7 +101,7 @@ class RSColorFrame:
 
 
 class RSDepthFrame:
-    def __init__(self, config: RSConfig):
+    def __init__(self, config):
         self.config = config
 
     def get_data(self):
@@ -120,7 +118,7 @@ class RSDevice:
         return "123456789"
 
 
-class RSContext:
+class context:  # noqa: N801
     def __init__(self):
         pass
 
@@ -128,7 +126,10 @@ class RSContext:
         return [RSDevice()]
 
 
-class RSCameraInfo:
+class camera_info:  # noqa: N801
+    # fake name
+    name = "Intel RealSense D435I"
+
     def __init__(self, serial_number):
         del serial_number
         pass
