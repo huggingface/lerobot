@@ -146,7 +146,7 @@ def test_camera(request, camera_type, mock):
             assert camera.rotation == cv2.ROTATE_180
         elif rotation == -90:
             manual_rot_img = np.rot90(color_image, k=3)
-            assert camera.rotation == cv2.ROTATE_90_CLOCKWISE
+            assert camera.rotation == cv2.ROTATE_90_COUNTERCLOCKWISE
 
         rot_color_image = camera.read()
 
@@ -187,4 +187,5 @@ def test_save_images_from_cameras(tmpdir, request, camera_type, mock):
     elif camera_type == "intelrealsense":
         from lerobot.common.robot_devices.cameras.intelrealsense import save_images_from_cameras
 
-    save_images_from_cameras(tmpdir, record_time_s=1, mock=mock)
+    # Small `record_time_s` to speedup unit tests
+    save_images_from_cameras(tmpdir, record_time_s=0.02, mock=mock)

@@ -28,11 +28,11 @@ def cvtColor(color_image, color_convertion):  # noqa: N802
 def rotate(color_image, rotation):
     if rotation is None:
         return color_image
-    elif rotation == 90:
+    elif rotation == ROTATE_90_CLOCKWISE:
         return np.rot90(color_image, k=1)
-    elif rotation == 180:
+    elif rotation == ROTATE_180:
         return np.rot90(color_image, k=2)
-    elif rotation == -90:
+    elif rotation == ROTATE_90_COUNTERCLOCKWISE:
         return np.rot90(color_image, k=3)
     else:
         raise NotImplementedError(rotation)

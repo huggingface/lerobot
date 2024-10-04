@@ -361,15 +361,15 @@ class IntelRealSenseCamera:
         if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             # Using `OSError` since it's a broad that encompasses issues related to device communication
             raise OSError(
-                f"Can't set {self.fps=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_fps}."
+                f"Can't set {self.fps=} for IntelRealSenseCamera({self.serial_number}). Actual value is {actual_fps}."
             )
         if self.width is not None and self.width != actual_width:
             raise OSError(
-                f"Can't set {self.width=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_width}."
+                f"Can't set {self.width=} for IntelRealSenseCamera({self.serial_number}). Actual value is {actual_width}."
             )
         if self.height is not None and self.height != actual_height:
             raise OSError(
-                f"Can't set {self.height=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_height}."
+                f"Can't set {self.height=} for IntelRealSenseCamera({self.serial_number}). Actual value is {actual_height}."
             )
 
         self.fps = round(actual_fps)
@@ -393,6 +393,11 @@ class IntelRealSenseCamera:
                 f"IntelRealSenseCamera({self.serial_number}) is not connected. Try running `camera.connect()` first."
             )
 
+        if self.mock:
+            import tests.mock_cv2 as cv2
+        else:
+            import cv2
+
         start_time = time.perf_counter()
 
         frame = self.camera.wait_for_frames(timeout_ms=5000)
@@ -412,11 +417,6 @@ class IntelRealSenseCamera:
 
         # IntelRealSense uses RGB format as default (red, green, blue).
         if requested_color_mode == "bgr":
-            if self.mock:
-                import tests.mock_cv2 as cv2
-            else:
-                import cv2
-
             color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
 
         h, w, _ = color_image.shape
