@@ -478,7 +478,6 @@ def record(
                     observation = robot.capture_observation()
 
                 image_keys = [key for key in observation if "image" in key]
-                not_image_keys = [key for key in observation if "image" not in key]
 
                 for key in image_keys:
                     futures += [
@@ -488,7 +487,6 @@ def record(
                     ]
 
                 depth_keys = [key for key in observation if "depth" in key]
-                # not_depth_keys = [key for key in observation if "depth" not in key]
 
                 not_image_depth_keys = [key for key in observation if "image" not in key and "depth" not in key]
 
