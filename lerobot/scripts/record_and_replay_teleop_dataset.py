@@ -256,7 +256,6 @@ class OutputHelper:
         for ep_idx in range(len(episode_fps)):
             for img_key in self.image_keys:
                 encode_video_frames(
-                    vcodec="libx265",
                     imgs_dir=self.images_data_path /
                     f"{img_key}_episode_{ep_idx:06d}",
                     video_path=self.videos_data_path /
