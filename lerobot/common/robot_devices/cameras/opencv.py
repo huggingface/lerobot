@@ -47,7 +47,6 @@ def find_cameras(max_index_search_range=MAX_OPENCV_INDEX) -> list[dict]:
         for port in ports:
             cameras.append(
                 {
-                    "type": "OpenCV",
                     "port": port,
                     "index": int(port.removeprefix("/dev/video")),
                 }
@@ -62,7 +61,6 @@ def find_cameras(max_index_search_range=MAX_OPENCV_INDEX) -> list[dict]:
         for index in indices:
             cameras.append(
                 {
-                    "type": "OpenCV",
                     "port": None,
                     "index": index,
                 }
@@ -116,8 +114,8 @@ def save_images_from_cameras(
     associated to a given camera index.
     """
     if camera_ids is None or len(camera_ids) == 0:
-        cameras_info = find_cameras()
-        camera_ids = [cam["index"] for cam in cameras_info]
+        camera_infos = find_cameras()
+        camera_ids = [cam["index"] for cam in camera_infos]
 
     print("Connecting cameras")
     cameras = []
@@ -125,7 +123,7 @@ def save_images_from_cameras(
         camera = OpenCVCamera(cam_idx, fps=fps, width=width, height=height)
         camera.connect()
         print(
-            f"OpenCVCamera({camera.index}, fps={camera.fps}, width={camera.width}, "
+            f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, "
             f"height={camera.height}, color_mode={camera.color_mode})"
         )
         cameras.append(camera)
@@ -246,17 +244,17 @@ class OpenCVCamera:
         # Overwrite config arguments using kwargs
         config = replace(config, **kwargs)
 
-        self.index = camera_index
+        self.camera_index = camera_index
         self.port = None
 
         # Linux uses ports for connecting to cameras
         if platform.system() == "Linux":
-            if isinstance(self.index, int):
-                self.port = Path(f"/dev/video{self.index}")
-            elif isinstance(self.index, str) and is_valid_unix_path(self.index):
-                self.port = Path(self.index)
+            if isinstance(self.camera_index, int):
+                self.port = Path(f"/dev/video{self.camera_index}")
+            elif isinstance(self.camera_index, str) and is_valid_unix_path(self.camera_index):
+                self.port = Path(self.camera_index)
                 # Retrieve the camera index from a potentially symlinked path
-                self.index = get_camera_index_from_unix_port(self.port)
+                self.camera_index = get_camera_index_from_unix_port(self.port)
             else:
                 raise ValueError(f"Please check the provided camera_index: {camera_index}")
 
@@ -283,11 +281,11 @@ class OpenCVCamera:
 
     def connect(self):
         if self.is_connected:
-            raise RobotDeviceAlreadyConnectedError(f"OpenCVCamera({self.index}) is already connected.")
+            raise RobotDeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")
 
         # First create a temporary camera trying to access `camera_index`,
         # and verify it is a valid camera by calling `isOpened`.
-        tmp_camera = cv2.VideoCapture(self.index)
+        tmp_camera = cv2.VideoCapture(self.camera_index)
         is_camera_open = tmp_camera.isOpened()
         # Release camera to make it accessible for `find_camera_indices`
         del tmp_camera
@@ -298,18 +296,18 @@ class OpenCVCamera:
             # Verify that the provided `camera_index` is valid before printing the traceback
             cameras_info = find_cameras()
             available_cam_ids = [cam["index"] for cam in cameras_info]
-            if self.index not in available_cam_ids:
+            if self.camera_index not in available_cam_ids:
                 raise ValueError(
-                    f"`camera_index` is expected to be one of these available cameras {available_cam_ids}, but {self.index} is provided instead. "
+                    f"`camera_index` is expected to be one of these available cameras {available_cam_ids}, but {self.camera_index} is provided instead. "
                     "To find the camera index you should use, run `python lerobot/common/robot_devices/cameras/opencv.py`."
                 )
 
-            raise OSError(f"Can't access OpenCVCamera({self.index}).")
+            raise OSError(f"Can't access OpenCVCamera({self.camera_index}).")
 
         # Secondly, create the camera that will be used downstream.
         # Note: For some unknown reason, calling `isOpened` blocks the camera which then
         # needs to be re-created.
-        self.camera = cv2.VideoCapture(self.index)
+        self.camera = cv2.VideoCapture(self.camera_index)
 
         if self.fps is not None:
             self.camera.set(cv2.CAP_PROP_FPS, self.fps)
@@ -324,15 +322,15 @@ class OpenCVCamera:
 
         if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             raise OSError(
-                f"Can't set {self.fps=} for OpenCVCamera({self.index}). Actual value is {actual_fps}."
+                f"Can't set {self.fps=} for OpenCVCamera({self.camera_index}). Actual value is {actual_fps}."
             )
         if self.width is not None and not math.isclose(self.width, actual_width, rel_tol=1e-3):
             raise OSError(
-                f"Can't set {self.width=} for OpenCVCamera({self.index}). Actual value is {actual_width}."
+                f"Can't set {self.width=} for OpenCVCamera({self.camera_index}). Actual value is {actual_width}."
             )
         if self.height is not None and not math.isclose(self.height, actual_height, rel_tol=1e-3):
             raise OSError(
-                f"Can't set {self.height=} for OpenCVCamera({self.index}). Actual value is {actual_height}."
+                f"Can't set {self.height=} for OpenCVCamera({self.camera_index}). Actual value is {actual_height}."
             )
 
         self.fps = int(actual_fps)
@@ -350,14 +348,14 @@ class OpenCVCamera:
         """
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                f"OpenCVCamera({self.index}) is not connected. Try running `camera.connect()` first."
+                f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
         start_time = time.perf_counter()
 
         ret, color_image = self.camera.read()
         if not ret:
-            raise OSError(f"Can't capture color image from camera {self.index}.")
+            raise OSError(f"Can't capture color image from camera {self.camera_index}.")
 
         requested_color_mode = self.color_mode if temporary_color_mode is None else temporary_color_mode
 
@@ -396,7 +394,7 @@ class OpenCVCamera:
     def async_read(self):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                f"OpenCVCamera({self.index}) is not connected. Try running `camera.connect()` first."
+                f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
         if self.thread is None:
@@ -419,7 +417,7 @@ class OpenCVCamera:
     def disconnect(self):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                f"OpenCVCamera({self.index}) is not connected. Try running `camera.connect()` first."
+                f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
         if self.thread is not None and self.thread.is_alive():
