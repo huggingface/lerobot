@@ -433,8 +433,9 @@ def convert_dataset(
         repo_type="dataset",
         revision="main",
     )
+
     metadata_v2_0.pop("episodes")
-    card_text = f"```json\n{json.dumps(metadata_v2_0, indent=4)}\n```"
+    card_text = f"[meta/info.json](meta/info.json)\n```json\n{json.dumps(metadata_v2_0, indent=4)}\n```"
     push_dataset_card_to_hub(repo_id=repo_id, revision="main", tags=repo_tags, text=card_text)
     create_branch(repo_id=repo_id, branch=V2_0, repo_type="dataset")
 
