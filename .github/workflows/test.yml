@@ -35,6 +35,7 @@ jobs:
           lfs: true  # Ensure LFS files are pulled
 
       - name: Install apt dependencies
+      # portaudio19-dev is needed to install pyaudio
         run: |
           sudo apt-get update && \
           sudo apt-get install -y libegl1-mesa-dev ffmpeg portaudio19-dev
@@ -112,6 +113,7 @@ jobs:
           lfs: true  # Ensure LFS files are pulled
 
       - name: Install apt dependencies
+      # portaudio19-dev is needed to install pyaudio
         run: |
           sudo apt-get update && \
           sudo apt-get install -y libegl1-mesa-dev portaudio19-dev
