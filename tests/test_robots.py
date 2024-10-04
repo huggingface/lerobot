@@ -1,9 +1,25 @@
 """
-Tests meant to be used locally and launched manually.
+Tests for physical robots and their mocked versions.
+If the physical robots are not connected to the computer, or not working,
+the test will be skipped.
 
-Example usage:
+Example of running a specific test:
 ```bash
 pytest -sx tests/test_robots.py::test_robot
+```
+
+Example of running test on real robots connected to the computer:
+```bash
+pytest -sx 'tests/test_robots.py::test_robot[koch-False]'
+pytest -sx 'tests/test_robots.py::test_robot[koch_bimanual-False]'
+pytest -sx 'tests/test_robots.py::test_robot[aloha-False]'
+```
+
+Example of running test on a mocked version of robots:
+```bash
+pytest -sx 'tests/test_robots.py::test_robot[koch-True]'
+pytest -sx 'tests/test_robots.py::test_robot[koch_bimanual-True]'
+pytest -sx 'tests/test_robots.py::test_robot[aloha-True]'
 ```
 """
 
@@ -12,41 +28,42 @@ from pathlib import Path
 import pytest
 import torch
 
-from lerobot import available_robots
-from lerobot.common.robot_devices.robots.factory import make_robot as make_robot_from_cfg
-from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from lerobot.common.utils.utils import init_hydra_config
-from tests.utils import ROBOT_CONFIG_PATH_TEMPLATE, require_robot
+from tests.utils import TEST_ROBOT_TYPES, make_robot, require_robot
 
 
-def make_robot(robot_type: str, overrides: list[str] | None = None) -> Robot:
-    config_path = ROBOT_CONFIG_PATH_TEMPLATE.format(robot=robot_type)
-    robot_cfg = init_hydra_config(config_path, overrides)
-    robot = make_robot_from_cfg(robot_cfg)
-    return robot
-
-
-@pytest.mark.parametrize("robot_type", available_robots)
+@pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_robot(tmpdir, request, robot_type):
+def test_robot(tmpdir, request, robot_type, mock):
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
     # TODO(rcadene): add compatibility with other robots
-    from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
-    # Save calibration preset
-    tmpdir = Path(tmpdir)
-    calibration_dir = tmpdir / robot_type
+    robot_kwargs = {"robot_type": robot_type}
+
+    if robot_type == "aloha" and mock:
+        # To simplify unit test, we do not rerun manual calibration for Aloha mock=True.
+        # Instead, we use the files from '.cache/calibration/aloha_default'
+        overrides_calibration_dir = None
+    else:
+        if mock:
+            request.getfixturevalue("patch_builtins_input")
+
+        # Create an empty calibration directory to trigger manual calibration
+        tmpdir = Path(tmpdir)
+        calibration_dir = tmpdir / robot_type
+        overrides_calibration_dir = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
 
     # Test connecting without devices raises an error
-    robot = ManipulatorRobot()
+    robot = ManipulatorRobot(**robot_kwargs)
     with pytest.raises(ValueError):
         robot.connect()
     del robot
 
     # Test using robot before connecting raises an error
-    robot = ManipulatorRobot()
+    robot = ManipulatorRobot(**robot_kwargs)
     with pytest.raises(RobotDeviceNotConnectedError):
         robot.teleop_step()
     with pytest.raises(RobotDeviceNotConnectedError):
@@ -61,21 +78,23 @@ def test_robot(tmpdir, request, robot_type):
     # Test deleting the object without connecting first
     del robot
 
-    # Test connecting
-    robot = make_robot(robot_type, overrides=[f"calibration_dir={calibration_dir}"])
-    robot.connect()  # run the manual calibration precedure
+    # Test connecting (triggers manual calibration)
+    robot = make_robot(robot_type, overrides=overrides_calibration_dir, mock=mock)
+    robot.connect()
     assert robot.is_connected
 
     # Test connecting twice raises an error
     with pytest.raises(RobotDeviceAlreadyConnectedError):
         robot.connect()
 
-    # Test disconnecting with `__del__`
-    del robot
+    # TODO(rcadene, aliberts): Test disconnecting with `__del__` instead of `disconnect`
+    # del robot
+    robot.disconnect()
 
     # Test teleop can run
-    robot = make_robot(robot_type, overrides=[f"calibration_dir={calibration_dir}"])
-    robot.calibration_dir = calibration_dir
+    robot = make_robot(robot_type, overrides=overrides_calibration_dir, mock=mock)
+    if overrides_calibration_dir is not None:
+        robot.calibration_dir = calibration_dir
     robot.connect()
     robot.teleop_step()
 
@@ -121,4 +140,3 @@ def test_robot(tmpdir, request, robot_type):
         assert not robot.leader_arms[name].is_connected
     for name in robot.cameras:
         assert not robot.cameras[name].is_connected
-    del robot

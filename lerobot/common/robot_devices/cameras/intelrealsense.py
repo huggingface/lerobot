@@ -5,6 +5,7 @@ This file contains utilities for recording frames from Intel Realsense cameras.
 import argparse
 import concurrent.futures
 import logging
+import math
 import shutil
 import threading
 import time
@@ -14,9 +15,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Thread
 
-import cv2
 import numpy as np
-import pyrealsense2 as rs
 from PIL import Image
 
 from lerobot.common.robot_devices.utils import (
@@ -29,11 +28,16 @@ from lerobot.scripts.control_robot import busy_wait
 SERIAL_NUMBER_INDEX = 1
 
 
-def find_cameras(raise_when_empty=True) -> list[dict]:
+def find_cameras(raise_when_empty=True, mock=False) -> list[dict]:
     """
     Find the names and the serial numbers of the Intel RealSense cameras
     connected to the computer.
     """
+    if mock:
+        import tests.mock_pyrealsense2 as rs
+    else:
+        import pyrealsense2 as rs
+
     cameras = []
     for device in rs.context().query_devices():
         serial_number = int(device.get_info(rs.camera_info(SERIAL_NUMBER_INDEX)))
@@ -71,20 +75,26 @@ def save_images_from_cameras(
     width=None,
     height=None,
     record_time_s=2,
+    mock=False,
 ):
     """
     Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
     associated to a given serial number.
     """
     if len(serial_numbers) == 0:
-        camera_infos = find_cameras()
+        camera_infos = find_cameras(mock=mock)
         serial_numbers = [cam["serial_number"] for cam in camera_infos]
+
+    if mock:
+        import tests.mock_cv2 as cv2
+    else:
+        import cv2
 
     print("Connecting cameras")
     cameras = []
     for cam_sn in serial_numbers:
         print(f"{cam_sn=}")
-        camera = IntelRealSenseCamera(cam_sn, fps=fps, width=width, height=height)
+        camera = IntelRealSenseCamera(cam_sn, fps=fps, width=width, height=height, mock=mock)
         camera.connect()
         print(
             f"IntelRealSenseCamera({camera.serial_number}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
@@ -112,6 +122,7 @@ def save_images_from_cameras(
                     image = camera.read() if fps is None else camera.async_read()
                     if image is None:
                         print("No Frame")
+
                     bgr_converted_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
                     executor.submit(
@@ -160,6 +171,7 @@ class IntelRealSenseCameraConfig:
     use_depth: bool = False
     force_hardware_reset: bool = True
     rotation: int | None = None
+    mock: bool = False
 
     def __post_init__(self):
         if self.color_mode not in ["rgb", "bgr"]:
@@ -167,7 +179,9 @@ class IntelRealSenseCameraConfig:
                 f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
             )
 
-        if (self.fps or self.width or self.height) and not (self.fps and self.width and self.height):
+        at_least_one_is_not_none = self.fps is not None or self.width is not None or self.height is not None
+        at_least_one_is_none = self.fps is None or self.width is None or self.height is None
+        if at_least_one_is_not_none and at_least_one_is_none:
             raise ValueError(
                 "For `fps`, `width` and `height`, either all of them need to be set, or none of them, "
                 f"but {self.fps=}, {self.width=}, {self.height=} were provided."
@@ -243,6 +257,7 @@ class IntelRealSenseCamera:
         self.color_mode = config.color_mode
         self.use_depth = config.use_depth
         self.force_hardware_reset = config.force_hardware_reset
+        self.mock = config.mock
 
         self.camera = None
         self.is_connected = False
@@ -251,6 +266,11 @@ class IntelRealSenseCamera:
         self.color_image = None
         self.depth_map = None
         self.logs = {}
+
+        if self.mock:
+            import tests.mock_cv2 as cv2
+        else:
+            import cv2
 
         # TODO(alibets): Do we keep original width/height or do we define them after rotation?
         self.rotation = None
@@ -289,6 +309,11 @@ class IntelRealSenseCamera:
                 f"IntelRealSenseCamera({self.serial_number}) is already connected."
             )
 
+        if self.mock:
+            import tests.mock_pyrealsense2 as rs
+        else:
+            import pyrealsense2 as rs
+
         config = rs.config()
         config.enable_device(str(self.serial_number))
 
@@ -306,7 +331,7 @@ class IntelRealSenseCamera:
 
         self.camera = rs.pipeline()
         try:
-            self.camera.start(config)
+            profile = self.camera.start(config)
             is_camera_open = True
         except RuntimeError:
             is_camera_open = False
@@ -325,6 +350,31 @@ class IntelRealSenseCamera:
                 )
 
             raise OSError(f"Can't access IntelRealSenseCamera({self.serial_number}).")
+
+        color_stream = profile.get_stream(rs.stream.color)
+        color_profile = color_stream.as_video_stream_profile()
+        actual_fps = color_profile.fps()
+        actual_width = color_profile.width()
+        actual_height = color_profile.height()
+
+        # Using `math.isclose` since actual fps can be a float (e.g. 29.9 instead of 30)
+        if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
+            # Using `OSError` since it's a broad that encompasses issues related to device communication
+            raise OSError(
+                f"Can't set {self.fps=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_fps}."
+            )
+        if self.width is not None and self.width != actual_width:
+            raise OSError(
+                f"Can't set {self.width=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_width}."
+            )
+        if self.height is not None and self.height != actual_height:
+            raise OSError(
+                f"Can't set {self.height=} for IntelRealSenseCamera({self.camera_index}). Actual value is {actual_height}."
+            )
+
+        self.fps = round(actual_fps)
+        self.width = round(actual_width)
+        self.height = round(actual_height)
 
         self.is_connected = True
 
@@ -362,6 +412,11 @@ class IntelRealSenseCamera:
 
         # IntelRealSense uses RGB format as default (red, green, blue).
         if requested_color_mode == "bgr":
+            if self.mock:
+                import tests.mock_cv2 as cv2
+            else:
+                import cv2
+
             color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
 
         h, w, _ = color_image.shape
@@ -400,7 +455,7 @@ class IntelRealSenseCamera:
             return color_image
 
     def read_loop(self):
-        while self.stop_event is None or not self.stop_event.is_set():
+        while not self.stop_event.is_set():
             if self.use_depth:
                 self.color_image, self.depth_map = self.read()
             else:
@@ -421,6 +476,7 @@ class IntelRealSenseCamera:
 
         num_tries = 0
         while self.color_image is None:
+            # TODO(rcadene, aliberts): intelrealsense has diverged compared to opencv over here
             num_tries += 1
             time.sleep(1 / self.fps)
             if num_tries > self.fps and (self.thread.ident is None or not self.thread.is_alive()):
