@@ -53,9 +53,10 @@ def check_format(raw_dir) -> bool:
     compressed_images = "sim" not in raw_dir.name
     print(f"Checking format of {raw_dir} with compressed images: {compressed_images}")
 
-    hdf5_paths = list(raw_dir.glob("episode_*.hdf5"))
+    hdf5_paths = sorted(list(raw_dir.rglob("episode_*.hdf5")))
     assert len(hdf5_paths) != 0
     for hdf5_path in hdf5_paths:
+        print(f"Checking {hdf5_path}")
         with h5py.File(hdf5_path, "r") as data:
             assert "/action" in data
             assert "/observations/qpos" in data
@@ -88,8 +89,10 @@ def load_from_raw(
     # only frames from simulation are uncompressed
     compressed_images = "sim" not in raw_dir.name
 
-    hdf5_files = sorted(raw_dir.glob("episode_*.hdf5"))
+    hdf5_files = sorted(raw_dir.rglob("episode_*.hdf5"))
     num_episodes = len(hdf5_files)
+
+    print("Found", num_episodes, "episodes")
 
     ep_dicts = []
     ep_ids = episodes if episodes else range(num_episodes)

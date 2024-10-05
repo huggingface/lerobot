@@ -17,11 +17,11 @@ hydra:
 # regardless of what's provided with the training command at the time of resumption.
 resume: false
 # Overwrite checkpoint config
-overwrite_config: false
+overwrite_config: true
 device: cuda  # cpu
 # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
 # automatic gradient scaling is used.
-use_amp: false
+use_amp: true
 # `seed` is used for training (eg: model initialization, dataset shuffling)
 # AND for the evaluation environments.
 seed: ???
