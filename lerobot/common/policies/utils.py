@@ -13,6 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections import deque
+
 import torch
 from torch import nn
 
@@ -47,3 +49,33 @@ def get_dtype_from_parameters(module: nn.Module) -> torch.dtype:
     Note: assumes that all parameters have the same dtype.
     """
     return next(iter(module.parameters())).dtype
+
+
+class TemporalQueue:
+    def __init__(self, maxlen):
+        # TODO(rcadene): set proper maxlen
+        self.items = deque(maxlen=maxlen)
+        self.timestamps = deque(maxlen=maxlen)
+
+    def add(self, item, timestamp):
+        self.items.append(item)
+        self.timestamps.append(timestamp)
+
+    def get_latest(self):
+        return self.items[-1], self.timestamps[-1]
+
+    def get(self, timestamp):
+        import numpy as np
+
+        timestamps = np.array(list(self.timestamps))
+        distances = np.abs(timestamps - timestamp)
+        nearest_idx = distances.argmin()
+
+        # print(float(distances[nearest_idx]))
+        if float(distances[nearest_idx]) > 1 / 5:
+            raise ValueError()
+
+        return self.items[nearest_idx], self.timestamps[nearest_idx]
+
+    def __len__(self):
+        return len(self.items)
