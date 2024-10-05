@@ -57,6 +57,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 from huggingface_hub import snapshot_download
+from huggingface_hub.errors import RepositoryNotFoundError
 from huggingface_hub.utils._validators import HFValidationError
 from torch import Tensor, nn
 from tqdm import trange
@@ -511,7 +512,7 @@ def main(
 def get_pretrained_policy_path(pretrained_policy_name_or_path, revision=None):
     try:
         pretrained_policy_path = Path(snapshot_download(pretrained_policy_name_or_path, revision=revision))
-    except (HFValidationError) as e:
+    except (HFValidationError, RepositoryNotFoundError) as e:
         if isinstance(e, HFValidationError):
             error_message = (
                 "The provided pretrained_policy_name_or_path is not a valid Hugging Face Hub repo ID."

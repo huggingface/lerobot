@@ -918,8 +918,7 @@ if __name__ == "__main__":
 
         policy_cfg = None
         if pretrained_policy_name_or_path is not None:
-            pretrained_policy_path = pretrained_policy_name_or_path
-            # pretrained_policy_path = get_pretrained_policy_path(pretrained_policy_name_or_path)
+            pretrained_policy_path = get_pretrained_policy_path(pretrained_policy_name_or_path)
             policy_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", policy_overrides)
             policy = make_policy(hydra_cfg=policy_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
             record(robot, policy, policy_cfg, **kwargs)

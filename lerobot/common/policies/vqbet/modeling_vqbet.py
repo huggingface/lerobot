@@ -747,7 +747,7 @@ class VQBeTRgbEncoder(nn.Module):
         # use the height and width from `config.crop_shape` if it is provided, otherwise it should use the
         # height and width from `config.input_shapes`.
         image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
-        # assert len(image_keys) == 1
+        assert len(image_keys) == 1
         image_key = image_keys[0]
         dummy_input_h_w = (
             config.crop_shape if config.crop_shape is not None else config.input_shapes[image_key][1:]

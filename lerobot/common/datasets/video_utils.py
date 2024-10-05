@@ -41,7 +41,6 @@ def load_from_videos(
     """
     # since video path already contains "videos" (e.g. videos_dir="data/videos", path="videos/episode_0.mp4")
     data_dir = videos_dir.parent
-    tolerance_s = 0.2
 
     for key in video_frame_keys:
         if isinstance(item[key], list):
