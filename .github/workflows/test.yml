@@ -11,6 +11,7 @@ on:
       - ".github/**"
       - "poetry.lock"
       - "Makefile"
+      - ".cache/**"
   push:
     branches:
       - main
@@ -21,6 +22,7 @@ on:
       - ".github/**"
       - "poetry.lock"
       - "Makefile"
+      - ".cache/**"
 
 jobs:
   pytest:
@@ -35,7 +37,10 @@ jobs:
           lfs: true  # Ensure LFS files are pulled
 
       - name: Install apt dependencies
-        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev ffmpeg
+      # portaudio19-dev is needed to install pyaudio
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y libegl1-mesa-dev ffmpeg portaudio19-dev
 
       - name: Install poetry
         run: |
@@ -59,7 +64,6 @@ jobs:
             -W ignore::UserWarning:torch.utils.data.dataloader:558 \
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
             && rm -rf tests/outputs outputs
-
 
   pytest-minimal:
     name: Pytest (minimal install)
@@ -110,7 +114,10 @@ jobs:
           lfs: true  # Ensure LFS files are pulled
 
       - name: Install apt dependencies
-        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
+      # portaudio19-dev is needed to install pyaudio
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y libegl1-mesa-dev portaudio19-dev
 
       - name: Install poetry
         run: |

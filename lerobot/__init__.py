@@ -28,6 +28,8 @@ Example:
         print(lerobot.available_policies)
         print(lerobot.available_policies_per_env)
         print(lerobot.available_robots)
+        print(lerobot.available_cameras)
+        print(lerobot.available_motors)
     ```
 
 When implementing a new dataset loadable with LeRobotDataset follow these steps:
@@ -196,6 +198,17 @@ available_robots = [
     "koch",
     "koch_bimanual",
     "aloha",
+]
+
+# lists all available cameras from `lerobot/common/robot_devices/cameras`
+available_cameras = [
+    "opencv",
+    "intelrealsense",
+]
+
+# lists all available motors from `lerobot/common/robot_devices/motors`
+available_motors = [
+    "dynamixel",
 ]
 
 # keys and values refer to yaml files

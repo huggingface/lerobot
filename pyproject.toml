@@ -64,9 +64,11 @@ pandas = {version = ">=2.2.2", optional = true}
 scikit-image = {version = ">=0.23.2", optional = true}
 dynamixel-sdk = {version = ">=3.7.31", optional = true}
 pynput = {version = ">=1.7.7", optional = true}
-# TODO(rcadene, salibert): 71.0.1 has a bug
-setuptools = {version = "!=71.0.1", optional = true}
-pyrealsense2 = {version = ">=2.55.1.6486", markers = "sys_platform != 'darwin'", optional = true}
+setuptools = {version = "!=71.0.1", optional = true}  # TODO(rcadene, aliberts): 71.0.1 has a bug
+pyrealsense2 = {version = ">=2.55.1.6486", markers = "sys_platform != 'darwin'", optional = true}  # TODO(rcadene, aliberts): Fix on Mac
+pyrender = {git = "https://github.com/mmatl/pyrender.git", markers = "sys_platform == 'linux'", optional = true}
+hello-robot-stretch-body = {version = ">=0.7.27", markers = "sys_platform == 'linux'", optional = true}
+pyserial = {version = ">=3.5", optional = true}
 
 
 [tool.poetry.extras]
@@ -75,11 +77,12 @@ pusht = ["gym-pusht"]
 xarm = ["gym-xarm"]
 aloha = ["gym-aloha"]
 dev = ["pre-commit", "debugpy"]
-test = ["pytest", "pytest-cov"]
+test = ["pytest", "pytest-cov", "pyserial"]
 umi = ["imagecodecs"]
 video_benchmark = ["scikit-image", "pandas"]
 dynamixel = ["dynamixel-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
+stretch = ["hello-robot-stretch-body", "pyrender", "pyrealsense2", "pynput"]
 
 [tool.ruff]
 line-length = 110
