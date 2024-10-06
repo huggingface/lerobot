@@ -1,0 +1,90 @@
+# @package _global_
+
+seed: 1000
+dataset_repo_id: lerobot/aloha_sim_insertion_human
+prompt: "Please insert the tube into the socket."
+
+override_dataset_stats:
+  observation.images.top:
+    # Stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+
+training:
+  offline_steps: 100000
+  online_steps: 0
+  eval_freq: 20000
+  save_freq: 20000
+  save_checkpoint: true
+
+  batch_size: 8
+  lr: 1e-5
+  lr_backbone: 1e-5
+  weight_decay: 1e-4
+  grad_clip_norm: 10
+  online_steps_between_rollouts: 1
+
+  delta_timestamps:
+    action: "[i / ${fps} for i in range(${policy.chunk_size})]"
+
+eval:
+  n_episodes: 50
+  batch_size: 50
+
+# See `configuration_act.py` for more details.
+policy:
+  name: qwen_act_policy
+
+  # Input / output structure.
+  n_obs_steps: 1
+  chunk_size: 100
+  n_action_steps: 100
+
+  input_shapes:
+    observation.images.top: [3, 480, 640]  # Video inputs (from video frames)
+    observation.state: [128]               # State input dimension
+    text.input: [256]                      # Text input processed by Qwen-VL
+  output_shapes:
+    action: [4]  # Action output dimension (Example: 4D actions)
+
+  # Normalization / Unnormalization
+  input_normalization_modes:
+    observation.images.top: mean_std
+    observation.state: mean_std
+    text.input: none  # No normalization needed for text input
+  output_normalization_modes:
+    action: mean_std
+
+  # Architecture.
+  # State encoder
+  state_encoder:
+    hidden_dim: 256
+    latent_dim: 64
+
+  # Vision-Language Model (Qwen-VL)
+  vlm_backbone: qwen_vl
+  pretrained_backbone_weights: Qwen/Qwen-VL-2  # Pretrained weights for Qwen-VL
+  replace_final_stride_with_dilation: false
+  
+  # Combining state, video, and text
+  combined_dim: 128  # Dimension after combining state and VLM outputs
+
+  # Action decoder
+  action_decoder:
+    vlm_hidden_dim: 128  # Input dim for action decoder (combined dimension)
+    action_dim: 4  # Output dimension (action space)
+
+  # Transformer layers for action decoding
+  dim_model: 512
+  n_heads: 8
+  dim_feedforward: 3200
+  feedforward_activation: relu
+  n_encoder_layers: 4
+  n_decoder_layers: 1
+  latent_dim: 32
+
+  # Inference
+  temporal_ensemble_coeff: null
+
+  # Training and loss computation
+  dropout: 0.1
