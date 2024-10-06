@@ -155,6 +155,7 @@ def push_dataset_to_hub(
     cache_dir: Path = Path("/tmp"),
     tests_data_dir: Path | None = None,
     encoding: dict | None = None,
+    compressed_images: bool = True
 ):
     check_repo_id(repo_id)
     user_id, dataset_id = repo_id.split("/")
@@ -207,6 +208,7 @@ def push_dataset_to_hub(
         "video": video,
         "episodes": episodes,
         "encoding": encoding,
+        "compressed_images": compressed_images
     }
 
     if "openx_rlds." in raw_format:
@@ -328,11 +330,18 @@ def main():
         default=8,
         help="Number of processes of Dataloader for computing the dataset statistics.",
     )
+    # TODO: Fix the out-of-index error when using the episodes option.
     parser.add_argument(
         "--episodes",
         type=int,
         nargs="*",
         help="When provided, only converts the provided episodes (e.g `--episodes 2 3 4`). Useful to test the code on 1 episode.",
+    )
+    parser.add_argument(
+        "--compressed_images",
+        type=int,
+        default=1,
+        help="When set to 1, use compressed image with channel 2.",
     )
     parser.add_argument(
         "--force-override",

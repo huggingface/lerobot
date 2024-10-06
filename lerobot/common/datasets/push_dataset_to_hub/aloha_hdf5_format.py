@@ -48,9 +48,8 @@ def get_cameras(hdf5_data):
     return rgb_cameras
 
 
-def check_format(raw_dir) -> bool:
+def check_format(raw_dir, compressed_images) -> bool:
     # only frames from simulation are uncompressed
-    compressed_images = "sim" not in raw_dir.name
 
     hdf5_paths = list(raw_dir.glob("episode_*.hdf5"))
     assert len(hdf5_paths) != 0
@@ -83,9 +82,8 @@ def load_from_raw(
     video: bool,
     episodes: list[int] | None = None,
     encoding: dict | None = None,
+    compressed_images: bool,
 ):
-    # only frames from simulation are uncompressed
-    compressed_images = "sim" not in raw_dir.name
 
     hdf5_files = sorted(raw_dir.glob("episode_*.hdf5"))
     num_episodes = len(hdf5_files)
@@ -214,12 +212,12 @@ def from_raw_to_lerobot_format(
     encoding: dict | None = None,
 ):
     # sanity check
-    check_format(raw_dir)
+    check_format(raw_dir, compressed_images)
 
     if fps is None:
         fps = 50
 
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding)
+    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding, compressed_images)
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {

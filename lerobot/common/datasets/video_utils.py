@@ -166,7 +166,7 @@ def encode_video_frames(
     imgs_dir: Path,
     video_path: Path,
     fps: int,
-    vcodec: str = "libsvtav1",
+    vcodec: str = "libaom-av1", # or "libsvtav1"
     pix_fmt: str = "yuv420p",
     g: int | None = 2,
     crf: int | None = 30,
