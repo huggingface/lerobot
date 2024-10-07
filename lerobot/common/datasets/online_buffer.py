@@ -810,7 +810,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                     / self.VIDEOS_DIR
                     / self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=episode_index),
                     timestamps=self._data[self.TIMESTAMP_KEY][data_mask],
-                    tolerance_s=1e-8,
+                    tolerance_s=1e-4,
                     backend="pyav",
                     to_pytorch_format=False,
                 )
@@ -949,7 +949,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                     / self.VIDEOS_DIR
                     / self.VIDEO_NAME_FSTRING.format(data_key=k, episode_index=item[self.EPISODE_INDEX_KEY]),
                     timestamps=[item[self.TIMESTAMP_KEY]],
-                    tolerance_s=1e-8,  # we expect the timestamp to match exactly
+                    tolerance_s=1e-4,  # we expect the timestamp to match exactly
                     backend="pyav",
                     to_pytorch_format=True,
                 )[0]
@@ -1098,7 +1098,7 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
                         data_dict[k] = decode_video_frames_torchvision(
                             lerobot_dataset_videos_path.parent / hf_episode_data[k][0]["path"],
                             timestamps=np.array(hf_episode_data["timestamp"]),
-                            tolerance_s=1e-8,
+                            tolerance_s=1e-4,
                             to_pytorch_format=False,
                         )
                     else:
