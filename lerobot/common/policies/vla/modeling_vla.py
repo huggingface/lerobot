@@ -3,7 +3,6 @@ import torch.nn.functional as F
 from torch import nn
 from transformers import BertModel
 from configuration_vla import Qwen2VLConfig, Qwen2VLVisionConfig
-#from act.configuration_act import ACTConfig
 from modeling_vision import Qwen2VisionTransformerPretrainedModel
 from modeling_language import Qwen2VLDecoderLayer, Qwen2RMSNorm, Qwen2VLRotaryEmbedding
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -11,104 +10,68 @@ from transformers.modeling_outputs import ModelOutput, BaseModelOutputWithPast
 from transformers.cache_utils import Cache, StaticCache  
 from transformers.modeling_utils import PreTrainedModel
 
-class ActionDecoderLayer(nn.Module):
+class VLAPolicy(nn.Module):
+    """
+    Vision-Language Action Policy (VLAPolicy).
+    This policy uses a Vision-Language Model (VLA) for action prediction based on vision and language inputs.
+    """
+
     def __init__(self, config: Qwen2VLConfig):
-        super().__init__()
-        self.self_attn = nn.MultiheadAttention(config.hidden_size, config.num_attention_heads, dropout=config.attention_dropout)
-        self.cross_attn = nn.MultiheadAttention(config.hidden_size, config.num_attention_heads, dropout=config.attention_dropout)
-
-        # Feed forward layers.
-        self.linear1 = nn.Linear(config.hidden_size, config.intermediate_size)
-        self.dropout = nn.Dropout(config.attention_dropout)
-        self.linear2 = nn.Linear(config.intermediate_size, config.hidden_size)
-
-        self.norm1 = nn.LayerNorm(config.hidden_size)
-        self.norm2 = nn.LayerNorm(config.hidden_size)
-        self.norm3 = nn.LayerNorm(config.hidden_size)
-        self.dropout1 = nn.Dropout(config.attention_dropout)
-        self.dropout2 = nn.Dropout(config.attention_dropout)
-        self.dropout3 = nn.Dropout(config.attention_dropout)
-
-        self.activation = nn.GELU()
-        self.pre_norm = True  # Assumed pre-norm architecture; can adjust based on config
-
-    def maybe_add_pos_embed(self, tensor: torch.Tensor, pos_embed: torch.Tensor | None) -> torch.Tensor:
-        return tensor if pos_embed is None else tensor + pos_embed
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        encoder_out: torch.Tensor,
-        decoder_pos_embed: torch.Tensor | None = None,
-        encoder_pos_embed: torch.Tensor | None = None,
-    ) -> torch.Tensor:
         """
+        Initialize the VLAPolicy class with model configuration.
+        
         Args:
-            x: (Decoder Sequence, Batch, Hidden Size) tensor of input tokens.
-            encoder_out: (Encoder Sequence, Batch, Hidden Size) output features from the last layer of the encoder we are cross-attending with.
-            decoder_pos_embed: (Sequence, 1, Hidden Size) positional embedding for decoder queries.
-            encoder_pos_embed: (Sequence, 1, Hidden Size) positional embedding for encoder keys.
-        Returns:
-            (Sequence, Batch, Hidden Size) tensor of decoder output features.
+        config (Qwen2VLConfig): Configuration for the Qwen2VL model.
         """
-        skip = x
-        if self.pre_norm:
-            x = self.norm1(x)
-        q = k = self.maybe_add_pos_embed(x, decoder_pos_embed)
-        
-        # Self-attention
-        x = self.self_attn(q, k, value=x)[0]  # select just the output, not attention weights
-        x = skip + self.dropout1(x)
-        
-        if self.pre_norm:
-            skip = x
-            x = self.norm2(x)
-        else:
-            x = self.norm1(x)
-            skip = x
-
-        # Cross-attention with encoder outputs
-        x = self.cross_attn(
-            query=self.maybe_add_pos_embed(x, decoder_pos_embed),
-            key=self.maybe_add_pos_embed(encoder_out, encoder_pos_embed),
-            value=encoder_out,
-        )[0]  # select just the output, not attention weights
-        x = skip + self.dropout2(x)
-
-        if self.pre_norm:
-            skip = x
-            x = self.norm3(x)
-        else:
-            x = self.norm2(x)
-            skip = x
-
-        # Feed-forward network
-        x = self.linear2(self.dropout(self.activation(self.linear1(x))))
-        x = skip + self.dropout3(x)
-        
-        if not self.pre_norm:
-            x = self.norm3(x)
-
-        return x
-
-class ActionDecoder(nn.Module):
-    def __init__(self, config: Qwen2VLConfig):
-        """Runs multiple decoder layers followed by normalization."""
         super().__init__()
-        self.layers = nn.ModuleList([ActionDecoderLayer(config) for _ in range(config.num_decoder_layers)])
-        self.norm = nn.LayerNorm(config.hidden_size)
+        self.model = VLA(config)  # Use the VLA model instead of directly using Qwen2VLModel
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        encoder_out: torch.Tensor,
-        decoder_pos_embed: torch.Tensor | None = None,
-        encoder_pos_embed: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        for layer in self.layers:
-            x = layer(x, encoder_out, decoder_pos_embed=decoder_pos_embed, encoder_pos_embed=encoder_pos_embed)
-        x = self.norm(x)
-        return x
+    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """
+        Forward pass through the model.
+        
+        Args:
+            batch (dict): Dictionary containing the following keys:
+                - "input_ids": Tensor of tokenized inputs (input to language model).
+                - "attention_mask": Tensor mask for the input tokens.
+                - "observation.state": Tensor containing the robot's state.
+                - "action": Tensor containing the ground-truth actions (optional for training).
+
+        Returns:
+            dict: A dictionary containing the loss and predicted actions.
+        """
+        # Extract inputs for the model
+        input_ids = batch.get("input_ids")
+        attention_mask = batch.get("attention_mask")
+
+        # Forward pass through the VLA model
+        predicted_actions = self.model(batch, input_ids=input_ids, attention_mask=attention_mask)
+
+        loss_dict = {}
+
+        # If ground-truth actions are available, compute L2 loss for training
+        if "action" in batch:
+            true_actions = batch["action"]  # Ground-truth actions
+            l2_loss = F.mse_loss(predicted_actions, true_actions, reduction="mean")  # L2 loss
+            loss_dict["l2_loss"] = l2_loss.item()
+            loss_dict["loss"] = l2_loss
+
+        return loss_dict
+
+    @torch.no_grad()
+    def select_action(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        Select an action based on the model's prediction given an input batch.
+        
+        Args:
+            batch (dict): A batch containing "input_ids", "attention_mask", and "observation.state".
+
+        Returns:
+            torch.Tensor: The predicted actions.
+        """
+        # Forward pass without computing gradients
+        predicted_actions = self.model(batch, input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
+        return predicted_actions
 
 class Qwen2VLPreTrainedModel(PreTrainedModel):
     config_class = Qwen2VLConfig
@@ -142,13 +105,12 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         self.use_robot_state = "observation.state" in config.input_shapes
         self.use_images = any(k.startswith("observation.image") for k in config.input_shapes)
         self.use_env_state = "observation.environment_state" in config.input_shapes
-        breakpoint()
+
         # Embedding layers for robot observation state and action
         if self.use_robot_state:
             self.robot_state_embed = nn.Linear(
                 config.input_shapes["observation.state"][0], config.hidden_size
             )
-        breakpoint()
         # Embedding layer for robot action
         self.action_embed = nn.Linear(
             config.output_shapes["action"][0], config.hidden_size
@@ -406,6 +368,106 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
 
         return causal_mask
 
+
+class ActionDecoderLayer(nn.Module):
+    def __init__(self, config: Qwen2VLConfig):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(config.hidden_size, config.num_attention_heads, dropout=config.attention_dropout)
+        self.cross_attn = nn.MultiheadAttention(config.hidden_size, config.num_attention_heads, dropout=config.attention_dropout)
+
+        # Feed forward layers.
+        self.linear1 = nn.Linear(config.hidden_size, config.intermediate_size)
+        self.dropout = nn.Dropout(config.attention_dropout)
+        self.linear2 = nn.Linear(config.intermediate_size, config.hidden_size)
+
+        self.norm1 = nn.LayerNorm(config.hidden_size)
+        self.norm2 = nn.LayerNorm(config.hidden_size)
+        self.norm3 = nn.LayerNorm(config.hidden_size)
+        self.dropout1 = nn.Dropout(config.attention_dropout)
+        self.dropout2 = nn.Dropout(config.attention_dropout)
+        self.dropout3 = nn.Dropout(config.attention_dropout)
+
+        self.activation = nn.GELU()
+        self.pre_norm = True  # Assumed pre-norm architecture; can adjust based on config
+
+    def maybe_add_pos_embed(self, tensor: torch.Tensor, pos_embed: torch.Tensor | None) -> torch.Tensor:
+        return tensor if pos_embed is None else tensor + pos_embed
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        encoder_out: torch.Tensor,
+        decoder_pos_embed: torch.Tensor | None = None,
+        encoder_pos_embed: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Args:
+            x: (Decoder Sequence, Batch, Hidden Size) tensor of input tokens.
+            encoder_out: (Encoder Sequence, Batch, Hidden Size) output features from the last layer of the encoder we are cross-attending with.
+            decoder_pos_embed: (Sequence, 1, Hidden Size) positional embedding for decoder queries.
+            encoder_pos_embed: (Sequence, 1, Hidden Size) positional embedding for encoder keys.
+        Returns:
+            (Sequence, Batch, Hidden Size) tensor of decoder output features.
+        """
+        skip = x
+        if self.pre_norm:
+            x = self.norm1(x)
+        q = k = self.maybe_add_pos_embed(x, decoder_pos_embed)
+        
+        # Self-attention
+        x = self.self_attn(q, k, value=x)[0]  # select just the output, not attention weights
+        x = skip + self.dropout1(x)
+        
+        if self.pre_norm:
+            skip = x
+            x = self.norm2(x)
+        else:
+            x = self.norm1(x)
+            skip = x
+
+        # Cross-attention with encoder outputs
+        x = self.cross_attn(
+            query=self.maybe_add_pos_embed(x, decoder_pos_embed),
+            key=self.maybe_add_pos_embed(encoder_out, encoder_pos_embed),
+            value=encoder_out,
+        )[0]  # select just the output, not attention weights
+        x = skip + self.dropout2(x)
+
+        if self.pre_norm:
+            skip = x
+            x = self.norm3(x)
+        else:
+            x = self.norm2(x)
+            skip = x
+
+        # Feed-forward network
+        x = self.linear2(self.dropout(self.activation(self.linear1(x))))
+        x = skip + self.dropout3(x)
+        
+        if not self.pre_norm:
+            x = self.norm3(x)
+
+        return x
+
+class ActionDecoder(nn.Module):
+    def __init__(self, config: Qwen2VLConfig):
+        """Runs multiple decoder layers followed by normalization."""
+        super().__init__()
+        self.layers = nn.ModuleList([ActionDecoderLayer(config) for _ in range(config.num_decoder_layers)])
+        self.norm = nn.LayerNorm(config.hidden_size)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        encoder_out: torch.Tensor,
+        decoder_pos_embed: torch.Tensor | None = None,
+        encoder_pos_embed: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        for layer in self.layers:
+            x = layer(x, encoder_out, decoder_pos_embed=decoder_pos_embed, encoder_pos_embed=encoder_pos_embed)
+        x = self.norm(x)
+        return x
+
 class VLA(nn.Module):
     def __init__(self, config: Qwen2VLConfig):
         super(VLA, self).__init__()
@@ -439,87 +501,3 @@ class VLA(nn.Module):
         
         return action_logits
 
-class VLAPolicy(nn.Module):
-    """
-    Vision-Language Action Policy (VLAPolicy).
-    This policy uses a Vision-Language Model (VLA) for action prediction based on vision and language inputs.
-    """
-
-    def __init__(self, config: Qwen2VLConfig):
-        """
-        Initialize the VLAPolicy class with model configuration.
-        
-        Args:
-        config (Qwen2VLConfig): Configuration for the Qwen2VL model.
-        """
-        super().__init__()
-        self.model = Qwen2VLModel(config)  # Load the Qwen2VL model
-        self.action_decoder = ActionDecoder(config)  # Use the action decoder
-        self.action_head = nn.Linear(config.hidden_size, config.output_shapes["action"][0])  # Final action output
-
-    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        """
-        Forward pass through the model.
-        
-        Args:
-            batch (dict): Dictionary containing the following keys:
-                - "input_ids": Tensor of tokenized inputs (input to language model).
-                - "attention_mask": Tensor mask for the input tokens.
-                - "observation.state": Tensor containing the robot's state.
-                - "action": Tensor containing the ground-truth actions (optional for training).
-
-        Returns:
-            dict: A dictionary containing the loss and predicted actions.
-        """
-        # Extract inputs for the Qwen2VL model
-        input_ids = batch.get("input_ids")
-        attention_mask = batch.get("attention_mask")
-        observation_state = batch.get("observation.state")
-
-        # Forward pass through the Qwen2VL model
-        model_output = self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            batch=batch  # Includes observation state
-        )
-
-        # Extract the hidden states from the model output
-        hidden_states = model_output.last_hidden_state  # Shape: (batch_size, sequence_length, hidden_size)
-
-        # Decode actions using the ActionDecoder
-        action_logits = self.action_decoder(hidden_states, encoder_out=hidden_states)
-        predicted_actions = self.action_head(action_logits)  # Shape: (batch_size, sequence_length, action_dim)
-
-        loss_dict = {}
-
-        # If ground-truth actions are available, compute L2 loss for training
-        if "action" in batch:
-            true_actions = batch["action"]  # Ground-truth actions
-            l2_loss = F.mse_loss(predicted_actions, true_actions, reduction="mean")  # L2 loss
-            loss_dict["l2_loss"] = l2_loss.item()
-            loss_dict["loss"] = l2_loss
-
-        return loss_dict
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
-        """
-        Select an action based on the model's prediction given an input batch.
-        
-        Args:
-            batch (dict): A batch containing "input_ids", "attention_mask", and "observation.state".
-
-        Returns:
-            torch.Tensor: The predicted actions.
-        """
-        # Forward pass without computing gradients
-        model_output = self.model(
-            input_ids=batch["input_ids"],
-            attention_mask=batch["attention_mask"],
-            batch=batch
-        )
-        hidden_states = model_output.last_hidden_state
-        action_logits = self.action_decoder(hidden_states, encoder_out=hidden_states)
-        predicted_actions = self.action_head(action_logits)
-
-        return predicted_actions

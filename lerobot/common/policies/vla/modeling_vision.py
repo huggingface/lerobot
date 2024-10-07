@@ -7,6 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
 from torch.nn import CrossEntropyLoss, LayerNorm
+from transformers.modeling_utils import PreTrainedModel
+from transformers.activations import ACT2FN
 
 from configuration_vla import Qwen2VLConfig, Qwen2VLVisionConfig
 
@@ -21,7 +23,7 @@ def apply_rotary_pos_emb_vision(tensor: torch.Tensor, freqs: torch.Tensor) -> to
     output = output.to(orig_dtype)
     return output
 
-class Qwen2VLPreTrainedModel:
+class Qwen2VLPreTrainedModel(PreTrainedModel):
     config_class = Qwen2VLConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
@@ -42,6 +44,7 @@ class Qwen2VLPreTrainedModel:
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+
 
 class VisionRotaryEmbedding(nn.Module):
     def __init__(self, dim: int, theta: float = 10000.0) -> None:
@@ -137,6 +140,11 @@ class VisionAttention(nn.Module):
         attn_output = attn_output.reshape(seq_length, -1)
         attn_output = self.proj(attn_output)
         return attn_output
+
+
+QWEN2_VL_VISION_ATTENTION_CLASSES = {
+    "eager": VisionAttention
+    }
 
 class Qwen2VLVisionBlock(nn.Module):
     def __init__(self, config, attn_implementation: str = "sdpa") -> None:
