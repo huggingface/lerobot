@@ -1,20 +1,26 @@
-from collections import deque
 import inspect
+from collections import deque
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import torch
 import torch.nn.functional as F
-from torch import nn
+from huggingface_hub import PyTorchModelHubMixin
+from torch import Tensor, nn
+from transformers.cache_utils import Cache, StaticCache
+from transformers.generation import GenerationMixin
+from transformers.modeling_outputs import BaseModelOutputWithPast, ModelOutput
+from transformers.modeling_utils import PreTrainedModel
+
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.vla.configuration_qwen2_vl import Qwen2VLConfig
 from lerobot.common.policies.vla.configuration_vla import VLAConfig
+from lerobot.common.policies.vla.modeling_language import (
+    Qwen2RMSNorm,
+    Qwen2VLDecoderLayer,
+    Qwen2VLRotaryEmbedding,
+)
 from lerobot.common.policies.vla.modeling_vision import Qwen2VisionTransformerPretrainedModel
-from lerobot.common.policies.vla.modeling_language import Qwen2VLDecoderLayer, Qwen2RMSNorm, Qwen2VLRotaryEmbedding
-from typing import Any, Dict, List, Optional, Tuple, Union
-from transformers.modeling_outputs import ModelOutput, BaseModelOutputWithPast
-from transformers.cache_utils import Cache, StaticCache  
-from transformers.modeling_utils import PreTrainedModel
-from transformers.generation import GenerationMixin
-from huggingface_hub import PyTorchModelHubMixin
-from torch import Tensor, nn
+
 
 class VLAPolicy(
     nn.Module,
@@ -27,15 +33,17 @@ class VLAPolicy(
     Vision-Language Action Policy (VLAPolicy).
     This policy uses a Vision-Language Model (VLA) for action prediction based on vision and language inputs.
     """
+
     name = "vla"
 
-    def __init__(self,
-                 config: VLAConfig,
-                dataset_stats: dict[str, dict[str, Tensor]] | None = None,
-                 ):
+    def __init__(
+        self,
+        config: VLAConfig,
+        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+    ):
         """
         Initialize the VLAPolicy class with model configuration.
-        
+
         Args:
         config (VLAConfig): Configuration for the Qwen2VL model.
         """
@@ -66,8 +74,7 @@ class VLAPolicy(
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Select a single action given environment observations.
-        """
+        """Select a single action given environment observations."""
         self.eval()
 
         batch = self.normalize_inputs(batch)
@@ -79,7 +86,9 @@ class VLAPolicy(
         # querying the policy.
         if len(self._action_queue) == 0:
             # actions = self.model(batch)[0][:, : self.config.n_action_steps]
-            predicted_actions = self.model(batch, input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
+            predicted_actions = self.model(
+                batch, input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]
+            )
             breakpoint()
 
             # TODO(rcadene): make _forward return output dictionary?
@@ -89,11 +98,11 @@ class VLAPolicy(
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
-    
+
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Forward pass through the model.
-        
+
         Args:
             batch (dict): Dictionary containing the following keys:
                 - "input_ids": Tensor of tokenized inputs (input to language model).
@@ -122,6 +131,7 @@ class VLAPolicy(
 
         return loss_dict
 
+
 class Qwen2VLPreTrainedModel(PreTrainedModel):
     config_class = VLAConfig
     base_model_prefix = "model"
@@ -143,6 +153,7 @@ class Qwen2VLPreTrainedModel(PreTrainedModel):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+
 
 class Qwen2VLCausalLMOutputWithPast(ModelOutput):
     """
@@ -181,6 +192,7 @@ class Qwen2VLCausalLMOutputWithPast(ModelOutput):
     attentions: Optional[Tuple[torch.FloatTensor]] = None
     rope_deltas: Optional[torch.LongTensor] = None
 
+
 class Qwen2VLModel(Qwen2VLPreTrainedModel):
     def __init__(self, config: VLAConfig):
         super().__init__(config)
@@ -204,7 +216,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
 
     def set_input_embeddings(self, value):
         self.embed_tokens = value
-    
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -218,7 +230,9 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_attentions = (
+            output_attentions if output_attentions is not None else self.config.output_attentions
+        )
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
@@ -310,7 +324,9 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         next_cache = next_decoder_cache if use_cache else None
 
         if not return_dict:
-            return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
+            return tuple(
+                v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None
+            )
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=next_cache,
@@ -439,8 +455,12 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
 class ActionDecoderLayer(nn.Module):
     def __init__(self, config: VLAConfig):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(config.hidden_size, config.num_attention_heads, dropout=config.attention_dropout)
-        self.cross_attn = nn.MultiheadAttention(config.hidden_size, config.num_attention_heads, dropout=config.attention_dropout)
+        self.self_attn = nn.MultiheadAttention(
+            config.hidden_size, config.num_attention_heads, dropout=config.attention_dropout
+        )
+        self.cross_attn = nn.MultiheadAttention(
+            config.hidden_size, config.num_attention_heads, dropout=config.attention_dropout
+        )
 
         # Feed forward layers.
         self.linear1 = nn.Linear(config.hidden_size, config.intermediate_size)
@@ -480,11 +500,11 @@ class ActionDecoderLayer(nn.Module):
         if self.pre_norm:
             x = self.norm1(x)
         q = k = self.maybe_add_pos_embed(x, decoder_pos_embed)
-        
+
         # Self-attention
         x = self.self_attn(q, k, value=x)[0]  # select just the output, not attention weights
         x = skip + self.dropout1(x)
-        
+
         if self.pre_norm:
             skip = x
             x = self.norm2(x)
@@ -510,11 +530,12 @@ class ActionDecoderLayer(nn.Module):
         # Feed-forward network
         x = self.linear2(self.dropout(self.activation(self.linear1(x))))
         x = skip + self.dropout3(x)
-        
+
         if not self.pre_norm:
             x = self.norm3(x)
 
         return x
+
 
 class ActionDecoder(nn.Module):
     def __init__(self, config: VLAConfig):
@@ -531,17 +552,18 @@ class ActionDecoder(nn.Module):
         encoder_pos_embed: torch.Tensor | None = None,
     ) -> torch.Tensor:
         for layer in self.layers:
-            x = layer(x, encoder_out, decoder_pos_embed=decoder_pos_embed, encoder_pos_embed=encoder_pos_embed)
+            x = layer(
+                x, encoder_out, decoder_pos_embed=decoder_pos_embed, encoder_pos_embed=encoder_pos_embed
+            )
         x = self.norm(x)
         return x
-
-
 
 
 def make_qwen2_vl_config(config):
     expected_keys = set(inspect.signature(Qwen2VLConfig).parameters)
 
-    keys_from_pretrained_config_kwargs = ["name_or_path",
+    keys_from_pretrained_config_kwargs = [
+        "name_or_path",
         "output_hidden_states",
         "output_attentions",
         "return_dict",
@@ -568,10 +590,11 @@ def make_qwen2_vl_config(config):
         "eos_token_id",
         "decoder_start_token_id",
         "sep_token_id",
-        #> PyTorch specific parameters
+        # > PyTorch specific parameters
         "torchscript",
         "tie_word_embeddings",
-        "torch_dtype"]
+        "torch_dtype",
+    ]
     expected_keys = list(expected_keys) + keys_from_pretrained_config_kwargs
 
     qwen2_vl_config_kwargs = {}
@@ -586,55 +609,54 @@ def make_qwen2_vl_config(config):
 
 class VLA(nn.Module):
     def __init__(self, config: VLAConfig):
-        super(VLA, self).__init__()
-        
+        super().__init__()
+
         # Initialize the Qwen2VLForConditionalGeneration and ActionDecoder
         qwen2_vl_config = make_qwen2_vl_config(config)
-        self.model = Qwen2VLForConditionalGeneration(qwen2_vl_config)  # Updated Qwen2VL without loss and lm_head
+        self.model = Qwen2VLForConditionalGeneration(
+            qwen2_vl_config
+        )  # Updated Qwen2VL without loss and lm_head
         self.action_decoder = ActionDecoder(config)  # Use the updated ActionDecoder
         self.action_head = nn.Linear(config.hidden_size, config.output_shapes["action"][0])
 
     def forward(self, batch, input_ids=None, attention_mask=None):
         # Get the hidden states from the Qwen2VLForConditionalGeneration model
         model_output = self.model(
-            batch=batch,
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            return_dict=True
+            batch=batch, input_ids=input_ids, attention_mask=attention_mask, return_dict=True
         )
-        
+
         hidden_states = model_output.hidden_states
-        
+
         # Use the last hidden state for action decoding
         action_embedding = hidden_states[:, -1:, :]  # Assuming last token is the action token
         encoder_out = action_embedding
-        
+
         # Decode the action
-        action_logits = self.action_decoder(
-            x=action_embedding,
-            encoder_out=encoder_out
-        )
+        action_logits = self.action_decoder(x=action_embedding, encoder_out=encoder_out)
 
         # Final action logits through the action head
         action_logits = self.action_head(action_logits.squeeze())
-        
+
         return action_logits
 
 
 class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
-    #_tied_weights_keys = ["lm_head.weight"]
+    # _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config):
         super().__init__(config)
         self.visual = Qwen2VisionTransformerPretrainedModel._from_config(
-            config.vision_config, attn_implementation='eager',
+            config.vision_config,
+            attn_implementation="eager",
         )
         self.model = Qwen2VLModel(config)
         self.vocab_size = config.vocab_size
-        #self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        # self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.padding_side = "left"  # set it to left by default, user can use setter to change padding_sides
         if "observation.state" in config.input_shapes:
-            self.robot_state_embed = nn.Linear(config.input_shapes["observation.state"][0], config.hidden_size)
+            self.robot_state_embed = nn.Linear(
+                config.input_shapes["observation.state"][0], config.hidden_size
+            )
         self.action_embed = nn.Linear(config.output_shapes["action"][0], config.hidden_size)
 
         # Initialize weights and apply final processing
@@ -677,7 +699,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
         action_token_id = self.config.action_token_id  # Assuming a token ID is set for action
 
         mrope_position_deltas = []
-        
+
         # Check if vision features are included (images/videos)
         if image_grid_thw is not None or video_grid_thw is not None:
             total_input_ids = input_ids
@@ -688,7 +710,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
             for i, input_ids in enumerate(total_input_ids):
                 if attention_mask is not None:
                     input_ids = input_ids[attention_mask[i] == 1]
-                    
+
                 image_nums, video_nums = 0, 0
                 vision_start_indices = torch.argwhere(input_ids == vision_start_token_id).squeeze(1)
                 vision_tokens = input_ids[vision_start_indices + 1]
@@ -735,9 +757,15 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                     st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
                     llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
 
-                    t_index = torch.arange(llm_grid_t).view(-1, 1).expand(-1, llm_grid_h * llm_grid_w).flatten()
-                    h_index = torch.arange(llm_grid_h).view(1, -1, 1).expand(llm_grid_t, -1, llm_grid_w).flatten()
-                    w_index = torch.arange(llm_grid_w).view(1, 1, -1).expand(llm_grid_t, llm_grid_h, -1).flatten()
+                    t_index = (
+                        torch.arange(llm_grid_t).view(-1, 1).expand(-1, llm_grid_h * llm_grid_w).flatten()
+                    )
+                    h_index = (
+                        torch.arange(llm_grid_h).view(1, -1, 1).expand(llm_grid_t, -1, llm_grid_w).flatten()
+                    )
+                    w_index = (
+                        torch.arange(llm_grid_w).view(1, 1, -1).expand(llm_grid_t, llm_grid_h, -1).flatten()
+                    )
                     llm_pos_ids_list.append(torch.stack([t_index, h_index, w_index]) + text_len + st_idx)
                     st = ed + llm_grid_t * llm_grid_h * llm_grid_w
 
@@ -746,18 +774,14 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                     robot_state_idx = input_tokens.index(robot_state_token_id, st)
                     robot_state_len = 1  # Single token length
                     st_idx = llm_pos_ids_list[-1].max() + 1
-                    llm_pos_ids_list.append(
-                        torch.arange(robot_state_len).view(1, -1).expand(3, -1) + st_idx
-                    )
+                    llm_pos_ids_list.append(torch.arange(robot_state_len).view(1, -1).expand(3, -1) + st_idx)
                     st = robot_state_idx + robot_state_len
 
                 if action_token_id in input_tokens:
                     action_idx = input_tokens.index(action_token_id, st)
                     action_len = 1  # Single token length
                     st_idx = llm_pos_ids_list[-1].max() + 1
-                    llm_pos_ids_list.append(
-                        torch.arange(action_len).view(1, -1).expand(3, -1) + st_idx
-                    )
+                    llm_pos_ids_list.append(torch.arange(action_len).view(1, -1).expand(3, -1) + st_idx)
                     st = action_idx + action_len
 
                 if st < len(input_tokens):
@@ -800,7 +824,6 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
         is_encoder_decoder: bool = False,
         num_new_tokens: int = 1,
     ) -> Dict[str, Any]:
-       
         model_kwargs = super()._update_model_kwargs_for_generation(
             outputs=outputs,
             model_kwargs=model_kwargs,
@@ -812,7 +835,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
             model_kwargs["rope_deltas"] = outputs.rope_deltas
 
         return model_kwargs
- 
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -831,9 +854,12 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
         robot_state: Optional[torch.Tensor] = None,
         action: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, Qwen2VLCausalLMOutputWithPast]:
-        
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        output_attentions = (
+            output_attentions if output_attentions is not None else self.config.output_attentions
+        )
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if inputs_embeds is None:
@@ -923,7 +949,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
         # If we have cache: let's slice `input_ids` through `cache_position`, to keep only the unprocessed tokens
         if past_key_values is not None:
             if inputs_embeds is not None:
-                input_ids = input_ids[:, -cache_position.shape[0]:]
+                input_ids = input_ids[:, -cache_position.shape[0] :]
             elif input_ids.shape[1] != cache_position.shape[0]:
                 input_ids = input_ids[:, cache_position]
 
@@ -936,7 +962,9 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
             else:
                 batch_size, seq_length = input_ids.shape
                 delta = (
-                    cache_position[0] + rope_deltas if cache_position is not None and rope_deltas is not None else 0
+                    cache_position[0] + rope_deltas
+                    if cache_position is not None and rope_deltas is not None
+                    else 0
                 )
                 position_ids = torch.arange(seq_length, device=input_ids.device)
                 position_ids = position_ids.view(1, -1).expand(batch_size, -1)
@@ -991,18 +1019,18 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
         return model_inputs
 
 
-'''
+"""
 class Qwen2VLModel(Qwen2VLPreTrainedModel):
     def __init__(self, config: VLAConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
-        
+
         # Initialize flags for using robot state and environment state
         self.use_robot_state = "observation.state" in config.input_shapes
         self.use_images = any(k.startswith("observation.image") for k in config.input_shapes)
         self.use_env_state = "observation.environment_state" in config.input_shapes
-        
+
         # Embedding layers for robot observation state and action
         if self.use_robot_state:
             self.robot_state_embed = nn.Linear(
@@ -1012,7 +1040,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         self.action_embed = nn.Linear(
             config.output_shapes["action"][0], config.hidden_size
         )
-        
+
         # Token embedding for text
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
 
@@ -1023,10 +1051,10 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         self._attn_implementation = config._attn_implementation
         self.norm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = Qwen2VLRotaryEmbedding(config=config)
-       
+
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
-        
+
         self.post_init()
 
     def get_input_embeddings(self):
@@ -1049,7 +1077,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-        
+
         # Step 1: Embed the text input if provided
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -1058,7 +1086,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         robot_state_embedding = None
         if self.use_robot_state:
             robot_state_embedding = self.robot_state_embed(batch["observation.state"]).unsqueeze(1)
-        
+
         action_embedding = self.action_embed(batch["action"]).unsqueeze(1)
 
         # Step 3: Combine text, robot state, and action embeddings
@@ -1079,7 +1107,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
             position_ids = cache_position.view(1, 1, -1).expand(3, combined_embedding.shape[0], -1)
         elif position_ids.dim() == 2:
             position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
-   
+
         causal_mask = self._update_causal_mask(
             attention_mask, combined_embedding, cache_position, past_key_values, output_attentions
         )
@@ -1147,4 +1175,4 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
         )
-'''
+"""

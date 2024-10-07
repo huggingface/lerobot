@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass, field
-from transformers.configuration_utils import PretrainedConfig
 
 
 @dataclass
@@ -119,27 +118,27 @@ class VLAConfig:
     # Architecture.
 
     # Language + Main transformer
-    vocab_size: int =152064
-    hidden_size: int =8192
-    intermediate_size: int =29568
-    num_hidden_layers: int =80
-    num_decoder_layers : int = 1
+    vocab_size: int = 152064
+    hidden_size: int = 8192
+    intermediate_size: int = 29568
+    num_hidden_layers: int = 80
+    num_decoder_layers: int = 1
     attn_implementation: str = "eager"
-    num_attention_heads: int =64
-    num_key_value_heads: int =8
-    dim_feedforward : int = 3200
-    hidden_act: str ="silu"
-    pad_token_id:int =0
-    max_position_embeddings:int =32768
-    initializer_range: float =0.02
-    rms_norm_eps: float =1e-05
-    use_cache: bool=True
-    tie_word_embeddings: bool=False
-    rope_theta: float =1000000.0
-    use_sliding_window: bool=False
-    sliding_window=4096
-    max_window_layers=80
-    attention_dropout=0.0
+    num_attention_heads: int = 64
+    num_key_value_heads: int = 8
+    dim_feedforward: int = 3200
+    hidden_act: str = "silu"
+    pad_token_id: int = 0
+    max_position_embeddings: int = 32768
+    initializer_range: float = 0.02
+    rms_norm_eps: float = 1e-05
+    use_cache: bool = True
+    tie_word_embeddings: bool = False
+    rope_theta: float = 1000000.0
+    use_sliding_window: bool = False
+    sliding_window = 4096
+    max_window_layers = 80
+    attention_dropout = 0.0
     rope_scaling: dict = field(
         default_factory=lambda: {
             "type": "mrope",
@@ -173,7 +172,8 @@ class VLAConfig:
             "spatial_merge_size": 2,
             "temporal_patch_size": 2,
             "attn_implementation": "eager",
-        })
+        }
+    )
 
     def __post_init__(self):
         """Input validation (not exhaustive)."""

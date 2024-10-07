@@ -1,16 +1,15 @@
 import math
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
-from torch.nn import CrossEntropyLoss, LayerNorm
-from transformers.modeling_utils import PreTrainedModel
+from torch.nn import LayerNorm
 from transformers.activations import ACT2FN
+from transformers.modeling_utils import PreTrainedModel
 
 from lerobot.common.policies.vla.configuration_vla import VLAConfig
+
 
 def apply_rotary_pos_emb_vision(tensor: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
     orig_dtype = tensor.dtype
@@ -22,6 +21,7 @@ def apply_rotary_pos_emb_vision(tensor: torch.Tensor, freqs: torch.Tensor) -> to
     output = (tensor * cos) + (rotate_half(tensor) * sin)
     output = output.to(orig_dtype)
     return output
+
 
 class Qwen2VLPreTrainedModel(PreTrainedModel):
     config_class = VLAConfig
@@ -57,6 +57,7 @@ class VisionRotaryEmbedding(nn.Module):
         freqs = torch.outer(seq, self.inv_freq)
         return freqs
 
+
 class PatchEmbed(nn.Module):
     def __init__(
         self,
@@ -82,6 +83,7 @@ class PatchEmbed(nn.Module):
         hidden_states = self.proj(hidden_states.to(dtype=target_dtype)).view(-1, self.embed_dim)
         return hidden_states
 
+
 class PatchMerger(nn.Module):
     def __init__(self, dim: int, context_dim: int, spatial_merge_size: int = 2) -> None:
         super().__init__()
@@ -97,6 +99,7 @@ class PatchMerger(nn.Module):
         x = self.mlp(self.ln_q(x).view(-1, self.hidden_size))
         return x
 
+
 class VisionMlp(nn.Module):
     def __init__(self, dim: int, hidden_dim: int, hidden_act: str) -> None:
         super().__init__()
@@ -106,6 +109,7 @@ class VisionMlp(nn.Module):
 
     def forward(self, x) -> torch.Tensor:
         return self.fc2(self.act(self.fc1(x)))
+
 
 class VisionAttention(nn.Module):
     def __init__(self, dim: int, num_heads: int = 16) -> None:
@@ -119,7 +123,9 @@ class VisionAttention(nn.Module):
         self, hidden_states: torch.Tensor, cu_seqlens: torch.Tensor, rotary_pos_emb: torch.Tensor = None
     ) -> torch.Tensor:
         seq_length = hidden_states.shape[0]
-        q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+        q, k, v = (
+            self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+        )
         q = apply_rotary_pos_emb_vision(q.unsqueeze(0), rotary_pos_emb).squeeze(0)
         k = apply_rotary_pos_emb_vision(k.unsqueeze(0), rotary_pos_emb).squeeze(0)
 
@@ -142,9 +148,8 @@ class VisionAttention(nn.Module):
         return attn_output
 
 
-QWEN2_VL_VISION_ATTENTION_CLASSES = {
-    "eager": VisionAttention
-    }
+QWEN2_VL_VISION_ATTENTION_CLASSES = {"eager": VisionAttention}
+
 
 class Qwen2VLVisionBlock(nn.Module):
     def __init__(self, config, attn_implementation: str = "sdpa") -> None:
@@ -196,7 +201,6 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
 
     def get_device(self) -> torch.device:
         return self.blocks[0].mlp.fc2.weight.device
-
 
     def rot_pos_emb(self, grid_thw):
         pos_ids = []

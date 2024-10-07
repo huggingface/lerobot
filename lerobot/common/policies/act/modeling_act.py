@@ -97,8 +97,7 @@ class ACTPolicy(
 
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select a single action given environment observations.
-        """
+        """Select a single action given environment observations."""
         self.eval()
 
         batch = self.normalize_inputs(batch)

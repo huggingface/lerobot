@@ -465,4 +465,6 @@ def test_act_temporal_ensembler():
 
 
 if __name__ == "__main__":
-    test_policy("aloha", "vla", ["env.task=AlohaInsertion-v0", "dataset_repo_id=lerobot/aloha_sim_insertion_human"])
+    test_policy(
+        "aloha", "vla", ["env.task=AlohaInsertion-v0", "dataset_repo_id=lerobot/aloha_sim_insertion_human"]
+    )

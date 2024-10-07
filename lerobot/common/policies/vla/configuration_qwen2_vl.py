@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2024 The Qwen team, Alibaba Group and the HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,18 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Qwen2VL model configuration"""
+
 import os
 from typing import Union
-from transformers.utils import logging # Using standard Python logging module instead of `transformers.utils.logging`
-from transformers.configuration_utils import PretrainedConfig
 
+from transformers.configuration_utils import PretrainedConfig
+from transformers.utils import (
+    logging,  # Using standard Python logging module instead of `transformers.utils.logging`
+)
 
 logger = logging.get_logger(__name__)
 
 
 def _validate_default_rope_parameters(config: PretrainedConfig, ignore_keys: set | None = None):
     rope_scaling = config.rope_scaling
-    rope_type = rope_scaling.get("rope_type", rope_scaling.get("type", None))  # BC: "rope_type" was originally "type"
+    rope_type = rope_scaling.get(
+        "rope_type", rope_scaling.get("type", None)
+    )  # BC: "rope_type" was originally "type"
     required_keys = {"rope_type"}
     received_keys = set(rope_scaling.keys())
     # _check_received_keys(rope_type, received_keys, required_keys, ignore_keys=ignore_keys)
@@ -59,6 +63,7 @@ def rope_config_validation(config: PretrainedConfig, ignore_keys: set | None = N
             f"Missing validation function mapping in `ROPE_VALIDATION_FUNCTIONS` for 'rope_type'='{rope_type}'"
         )
 
+
 class Qwen2VLVisionConfig(PretrainedConfig):
     model_type = "qwen2_vl"
 
@@ -89,9 +94,10 @@ class Qwen2VLVisionConfig(PretrainedConfig):
         self.spatial_merge_size = spatial_merge_size
         self.temporal_patch_size = temporal_patch_size
 
-
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs) -> "PretrainedConfig":
+    def from_pretrained(
+        cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs
+    ) -> "PretrainedConfig":
         cls._set_token_in_kwargs(kwargs)
 
         config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs)
@@ -99,7 +105,11 @@ class Qwen2VLVisionConfig(PretrainedConfig):
         if config_dict.get("model_type") == "qwen2_vl":
             config_dict = config_dict["vision_config"]
 
-        if "model_type" in config_dict and hasattr(cls, "model_type") and config_dict["model_type"] != cls.model_type:
+        if (
+            "model_type" in config_dict
+            and hasattr(cls, "model_type")
+            and config_dict["model_type"] != cls.model_type
+        ):
             logger.warning(
                 f"You are using a model of type {config_dict['model_type']} to instantiate a model of type "
                 f"{cls.model_type}. This is not supported for all configurations of models and can yield errors."
@@ -107,12 +117,12 @@ class Qwen2VLVisionConfig(PretrainedConfig):
 
         return cls.from_dict(config_dict, **kwargs)
 
-      
 
 class Qwen2VLConfig(PretrainedConfig):
     r"""
     A simplified version of the Qwen2VL model configuration class without the `transformers` dependencies.
     """
+
     model_type = "qwen2_vl"
     keys_to_ignore_at_inference = ["past_key_values"]
 
@@ -122,7 +132,7 @@ class Qwen2VLConfig(PretrainedConfig):
         hidden_size=8192,
         intermediate_size=29568,
         num_hidden_layers=80,
-        num_decoder_layers = 1,
+        num_decoder_layers=1,
         num_attention_heads=64,
         num_key_value_heads=8,
         # dim_feedforward = 3200,
@@ -166,7 +176,7 @@ class Qwen2VLConfig(PretrainedConfig):
         self.use_sliding_window = use_sliding_window
         self.sliding_window = sliding_window
         self.max_window_layers = max_window_layers
-        self.pad_token_id = pad_token_id 
+        self.pad_token_id = pad_token_id
         self.pruned_heads = pruned_heads or {}
         self.rope_scaling = rope_scaling
         self.num_decoder_layers = num_decoder_layers
