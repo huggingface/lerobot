@@ -279,7 +279,11 @@ def stop_workers(workers, frame_queue):
 
     # Wait for all processes to terminate
     for process in workers:
-        process.join()
+        process.join(timeout=10)
+
+    # If not terminated after 10 seconds, force termination
+    if process.is_alive():
+        process.terminate()
 
 
 def has_method(_object: object, method_name: str):
