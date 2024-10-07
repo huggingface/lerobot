@@ -1,0 +1,20 @@
+_target_: lerobot.common.robot_devices.robots.arx5.ARX5Robot
+follower_arms:
+  main:
+    model: L5
+    interface_name: enx5c5310ecc38c
+    urdf_path: lerobot/models/arx5.urdf
+    dof: 6
+cameras:
+  front:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 0
+    fps: 30
+    width: 640
+    height: 480
+  wrist:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 2
+    fps: 30
+    width: 640
+    height: 480
