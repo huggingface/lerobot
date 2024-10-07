@@ -19,6 +19,7 @@ from transformers.utils import logging # Using standard Python logging module in
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_rope_utils import rope_config_validation
 
+
 logger = logging.get_logger(__name__)
 
 class Qwen2VLVisionConfig(PretrainedConfig):
@@ -37,6 +38,7 @@ class Qwen2VLVisionConfig(PretrainedConfig):
         spatial_merge_size=2,
         temporal_patch_size=2,
         _attn_implementation_internal = 'default',
+        _attn_implementation="eager",
         **kwargs,
     ):
         self.depth = depth
@@ -151,6 +153,8 @@ class Qwen2VLConfig(PretrainedConfig):
                 self.rope_scaling["type"] = "default"
             self.rope_scaling["rope_type"] = self.rope_scaling["type"]
         rope_config_validation(self)
+
+        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
