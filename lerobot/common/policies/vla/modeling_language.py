@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
 from torch.nn import CrossEntropyLoss, LayerNorm
-from configuration_vla import Qwen2VLConfig, Qwen2VLVisionConfig
+from lerobot.common.policies.vla.configuration_vla import VLAConfig
 from transformers.modeling_outputs import ModelOutput, BaseModelOutputWithPast  
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers.activations import ACT2FN
@@ -64,7 +64,7 @@ class Qwen2VLRotaryEmbedding(nn.Module):
         device=None,
         scaling_factor=1.0,
         rope_type="default",
-        config: Optional[Qwen2VLConfig] = None,
+        config: Optional[VLAConfig] = None,
     ):
         super().__init__()
         # TODO (joao): remove the `if` below, only used for BC
@@ -299,7 +299,7 @@ class Qwen2VLAttention(nn.Module):
     and "Generating Long Sequences with Sparse Transformers".
     """
 
-    def __init__(self, config: Qwen2VLConfig, layer_idx: Optional[int] = None):
+    def __init__(self, config: VLAConfig, layer_idx: Optional[int] = None):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
@@ -422,7 +422,8 @@ QWEN2_VL_ATTENTION_CLASSES = {
 }
 
 class Qwen2VLDecoderLayer(nn.Module):
-    def __init__(self, config: Qwen2VLConfig, layer_idx: int):
+    # TODO(rcadene, dana): update config type VLAConfig 
+    def __init__(self, config: VLAConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
 
@@ -431,6 +432,7 @@ class Qwen2VLDecoderLayer(nn.Module):
                 f"Sliding Window Attention is enabled but not implemented for `{config._attn_implementation}`; "
                 "unexpected results may be encountered."
             )
+        config._attn_implementation = "eager"
         self.self_attn = QWEN2_VL_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx)
 
         self.mlp = Qwen2MLP(config)

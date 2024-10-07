@@ -98,10 +98,6 @@ class ACTPolicy(
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.
-
-        This method wraps `select_actions` in order to return one action at a time for execution in the
-        environment. It works by managing the actions in a queue and only calling `select_actions` when the
-        queue is empty.
         """
         self.eval()
 

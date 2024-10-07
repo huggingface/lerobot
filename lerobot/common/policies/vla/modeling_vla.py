@@ -1,32 +1,95 @@
+from collections import deque
+import inspect
 import torch
 import torch.nn.functional as F
 from torch import nn
-from transformers import BertModel
-from configuration_vla import Qwen2VLConfig, Qwen2VLVisionConfig
-from modeling_vision import Qwen2VisionTransformerPretrainedModel
-from modeling_language import Qwen2VLDecoderLayer, Qwen2RMSNorm, Qwen2VLRotaryEmbedding
+from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.vla.configuration_qwen2_vl import Qwen2VLConfig
+from lerobot.common.policies.vla.configuration_vla import VLAConfig
+from lerobot.common.policies.vla.modeling_vision import Qwen2VisionTransformerPretrainedModel
+from lerobot.common.policies.vla.modeling_language import Qwen2VLDecoderLayer, Qwen2RMSNorm, Qwen2VLRotaryEmbedding
 from typing import Any, Dict, List, Optional, Tuple, Union
 from transformers.modeling_outputs import ModelOutput, BaseModelOutputWithPast
 from transformers.cache_utils import Cache, StaticCache  
 from transformers.modeling_utils import PreTrainedModel
 from transformers.generation import GenerationMixin
+from huggingface_hub import PyTorchModelHubMixin
+from torch import Tensor, nn
 
-class VLAPolicy(nn.Module):
+class VLAPolicy(
+    nn.Module,
+    PyTorchModelHubMixin,
+    library_name="lerobot",
+    repo_url="https://github.com/huggingface/lerobot",
+    tags=["robotics", "act"],
+):
     """
     Vision-Language Action Policy (VLAPolicy).
     This policy uses a Vision-Language Model (VLA) for action prediction based on vision and language inputs.
     """
+    name = "vla"
 
-    def __init__(self, config: Qwen2VLConfig):
+    def __init__(self,
+                 config: VLAConfig,
+                dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+                 ):
         """
         Initialize the VLAPolicy class with model configuration.
         
         Args:
-        config (Qwen2VLConfig): Configuration for the Qwen2VL model.
+        config (VLAConfig): Configuration for the Qwen2VL model.
         """
         super().__init__()
-        self.model = VLA(config)  # Use the VLA model instead of directly using Qwen2VLModel
+        if config is None:
+            config = VLAConfig()
+        self.config: VLAConfig = config
 
+        self.normalize_inputs = Normalize(
+            config.input_shapes, config.input_normalization_modes, dataset_stats
+        )
+        self.normalize_targets = Normalize(
+            config.output_shapes, config.output_normalization_modes, dataset_stats
+        )
+        self.unnormalize_outputs = Unnormalize(
+            config.output_shapes, config.output_normalization_modes, dataset_stats
+        )
+
+        self.model = VLA(config)
+
+        self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+
+        self.reset()
+
+    def reset(self):
+        """This should be called whenever the environment is reset."""
+        self._action_queue = deque([], maxlen=self.config.n_action_steps)
+
+    @torch.no_grad()
+    def select_action(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Select a single action given environment observations.
+        """
+        self.eval()
+
+        batch = self.normalize_inputs(batch)
+        if len(self.expected_image_keys) > 0:
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+
+        # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
+        # querying the policy.
+        if len(self._action_queue) == 0:
+            # actions = self.model(batch)[0][:, : self.config.n_action_steps]
+            predicted_actions = self.model(batch, input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
+            breakpoint()
+
+            # TODO(rcadene): make _forward return output dictionary?
+            actions = self.unnormalize_outputs({"action": actions})["action"]
+
+            # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
+            # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
+            self._action_queue.extend(actions.transpose(0, 1))
+        return self._action_queue.popleft()
+    
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Forward pass through the model.
@@ -59,23 +122,8 @@ class VLAPolicy(nn.Module):
 
         return loss_dict
 
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
-        """
-        Select an action based on the model's prediction given an input batch.
-        
-        Args:
-            batch (dict): A batch containing "input_ids", "attention_mask", and "observation.state".
-
-        Returns:
-            torch.Tensor: The predicted actions.
-        """
-        # Forward pass without computing gradients
-        predicted_actions = self.model(batch, input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
-        return predicted_actions
-
 class Qwen2VLPreTrainedModel(PreTrainedModel):
-    config_class = Qwen2VLConfig
+    config_class = VLAConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
     _no_split_modules = ["Qwen2VLDecoderLayer", "Qwen2VLVisionBlock"]
@@ -134,7 +182,7 @@ class Qwen2VLCausalLMOutputWithPast(ModelOutput):
     rope_deltas: Optional[torch.LongTensor] = None
 
 class Qwen2VLModel(Qwen2VLPreTrainedModel):
-    def __init__(self, config: Qwen2VLConfig):
+    def __init__(self, config: VLAConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
@@ -389,7 +437,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
 
 
 class ActionDecoderLayer(nn.Module):
-    def __init__(self, config: Qwen2VLConfig):
+    def __init__(self, config: VLAConfig):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.hidden_size, config.num_attention_heads, dropout=config.attention_dropout)
         self.cross_attn = nn.MultiheadAttention(config.hidden_size, config.num_attention_heads, dropout=config.attention_dropout)
@@ -469,7 +517,7 @@ class ActionDecoderLayer(nn.Module):
         return x
 
 class ActionDecoder(nn.Module):
-    def __init__(self, config: Qwen2VLConfig):
+    def __init__(self, config: VLAConfig):
         """Runs multiple decoder layers followed by normalization."""
         super().__init__()
         self.layers = nn.ModuleList([ActionDecoderLayer(config) for _ in range(config.num_decoder_layers)])
@@ -487,12 +535,62 @@ class ActionDecoder(nn.Module):
         x = self.norm(x)
         return x
 
+
+
+
+def make_qwen2_vl_config(config):
+    expected_keys = set(inspect.signature(Qwen2VLConfig).parameters)
+
+    keys_from_pretrained_config_kwargs = ["name_or_path",
+        "output_hidden_states",
+        "output_attentions",
+        "return_dict",
+        "is_encoder_decoder",
+        "is_decoder",
+        "cross_attention_hidden_size",
+        "add_cross_attention",
+        "tie_encoder_decoder",
+        "prune_heads",
+        "chunk_size_feed_forward",
+        # > Parameters for fine-tuning tasks
+        "architectures",
+        "finetuning_task",
+        "id2label",
+        "label2id",
+        "num_labels",
+        "task_specific_params",
+        "problem_type",
+        # > Parameters linked to the tokenizer
+        "tokenizer_class",
+        "prefix",
+        "bos_token_id",
+        "pad_token_id",
+        "eos_token_id",
+        "decoder_start_token_id",
+        "sep_token_id",
+        #> PyTorch specific parameters
+        "torchscript",
+        "tie_word_embeddings",
+        "torch_dtype"]
+    expected_keys = list(expected_keys) + keys_from_pretrained_config_kwargs
+
+    qwen2_vl_config_kwargs = {}
+    for key in expected_keys:
+        if key == "kwargs":
+            continue
+        if hasattr(config, key):
+            qwen2_vl_config_kwargs[key] = getattr(config, key)
+
+    return Qwen2VLConfig(**qwen2_vl_config_kwargs)
+
+
 class VLA(nn.Module):
-    def __init__(self, config: Qwen2VLConfig):
+    def __init__(self, config: VLAConfig):
         super(VLA, self).__init__()
         
         # Initialize the Qwen2VLForConditionalGeneration and ActionDecoder
-        self.model = Qwen2VLForConditionalGeneration(config)  # Updated Qwen2VL without loss and lm_head
+        qwen2_vl_config = make_qwen2_vl_config(config)
+        self.model = Qwen2VLForConditionalGeneration(qwen2_vl_config)  # Updated Qwen2VL without loss and lm_head
         self.action_decoder = ActionDecoder(config)  # Use the updated ActionDecoder
         self.action_head = nn.Linear(config.hidden_size, config.output_shapes["action"][0])
 
@@ -895,7 +993,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
 
 '''
 class Qwen2VLModel(Qwen2VLPreTrainedModel):
-    def __init__(self, config: Qwen2VLConfig):
+    def __init__(self, config: VLAConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size

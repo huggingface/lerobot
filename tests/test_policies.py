@@ -83,6 +83,7 @@ def test_get_policy_and_config_classes(policy_name: str):
         ("pusht", "act", ["env.task=PushT-v0", "dataset_repo_id=lerobot/pusht"]),
         ("dora_aloha_real", "act_real", []),
         ("dora_aloha_real", "act_real_no_state", []),
+        ("aloha", "vla", ["env.task=AlohaInsertion-v0", "dataset_repo_id=lerobot/aloha_sim_insertion_human"]),
     ],
 )
 @require_env
@@ -464,4 +465,4 @@ def test_act_temporal_ensembler():
 
 
 if __name__ == "__main__":
-    test_act_temporal_ensembler()
+    test_policy("aloha", "vla", ["env.task=AlohaInsertion-v0", "dataset_repo_id=lerobot/aloha_sim_insertion_human"])

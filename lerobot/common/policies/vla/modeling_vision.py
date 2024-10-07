@@ -10,7 +10,7 @@ from torch.nn import CrossEntropyLoss, LayerNorm
 from transformers.modeling_utils import PreTrainedModel
 from transformers.activations import ACT2FN
 
-from configuration_vla import Qwen2VLConfig, Qwen2VLVisionConfig
+from lerobot.common.policies.vla.configuration_vla import VLAConfig
 
 def apply_rotary_pos_emb_vision(tensor: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
     orig_dtype = tensor.dtype
@@ -24,7 +24,7 @@ def apply_rotary_pos_emb_vision(tensor: torch.Tensor, freqs: torch.Tensor) -> to
     return output
 
 class Qwen2VLPreTrainedModel(PreTrainedModel):
-    config_class = Qwen2VLConfig
+    config_class = VLAConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
     _no_split_modules = ["Qwen2VLDecoderLayer", "Qwen2VLVisionBlock"]
@@ -167,7 +167,7 @@ class Qwen2VLVisionBlock(nn.Module):
 
 
 class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
-    config_class = Qwen2VLVisionConfig
+    config_class = VLAConfig
     _no_split_modules = ["Qwen2VLVisionBlock"]
 
     def __init__(self, config) -> None:

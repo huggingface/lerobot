@@ -24,6 +24,7 @@ from lerobot.common.utils.utils import get_safe_torch_device
 
 def _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg):
     expected_kwargs = set(inspect.signature(policy_cfg_class).parameters)
+
     if not set(hydra_cfg.policy).issuperset(expected_kwargs):
         logging.warning(
             f"Hydra config is missing arguments: {set(expected_kwargs).difference(hydra_cfg.policy)}"
@@ -66,6 +67,11 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
         from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
         return VQBeTPolicy, VQBeTConfig
+    elif name == "vla":
+        from lerobot.common.policies.vla.configuration_vla import VLAConfig
+        from lerobot.common.policies.vla.modeling_vla import VLAPolicy
+
+        return VLAPolicy, VLAConfig
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
