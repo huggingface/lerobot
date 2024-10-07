@@ -619,8 +619,11 @@ class LeRobotDatasetV2(torch.utils.data.Dataset):
         if n_excess > 0:
             if self._buffer_capacity is None:
                 # A buffer capacity was not explicitly provided, so dynamically resize the memmaps (double the
-                # capacity).
-                self._extend_memmaps(capacity * 2)
+                # capacity) as much as is needed to fit the new data.
+                new_capacity = capacity
+                while new_capacity < capacity + n_excess:
+                    new_capacity *= 2
+                self._extend_memmaps(new_capacity)
             elif self._use_as_fifo_buffer:
                 # A buffer capacity was provided and we wish to use the dataset as a FIFO buffer. Wrap to the
                 # start.

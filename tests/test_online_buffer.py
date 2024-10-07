@@ -424,7 +424,7 @@ def test_buffer_capacity(tmp_path: Path):
         dataset.add_episodes(new_episodes)
 
 
-def test_dynamic_memmap_size(tmp_path: Path):
+def test_dynamic_memmap_resize(tmp_path: Path):
     """Check that the memmap is dynamically resized when trying to add episodes over the capacity.
 
     Check that the existing data is not corrupted.
@@ -458,6 +458,24 @@ def test_dynamic_memmap_size(tmp_path: Path):
         assert len(dataset._data[LeRobotDatasetV2.INDEX_KEY]) == expected_capacity
         for k in dataset.data_keys:
             assert np.array_equal(dataset.get_data_by_key(k), all_episodes[k])
+
+
+def test_dynamic_memmap_resize_2x(tmp_path: Path):
+    """
+    Checks special case of dynamic memmap resizing: suppose the memmap has capacity for n frames, and the
+    next episode that is added requires not only that the capacity is > n, but that it is > 2n. Since the
+    underling mechanism is to double the memmap size whenever needed, here we are checking that it doesn't
+    stop at doubling once.
+    """
+    dataset = LeRobotDatasetV2(
+        tmp_path / f"dataset_{uuid4().hex}", fps=10, image_mode=LeRobotDatasetV2ImageMode.MEMMAP
+    )  # arbitrary fps
+    new_episodes = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=10, seed=0)
+    # This should trigger the creation of memmaps with 10 frame capacity.
+    dataset.add_episodes(new_episodes)
+    # This would require the memmaps to be dynamically resized to be at least 2.05 times larger.
+    new_episodes = make_spoof_data_frames(n_episodes=1, n_frames_per_episode=11)
+    dataset.add_episodes(new_episodes)
 
 
 def test_fifo_needs_buffer_capacity(tmp_path: Path):
