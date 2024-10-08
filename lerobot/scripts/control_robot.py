@@ -247,20 +247,23 @@ def loop_to_save_frame_in_threads(frame_queue, num_image_writers):
             # Blocks until a frame is available
             frame_data = frame_queue.get()
 
-            # Exit if we send None to stop the worker
+            # As usually done, exit loop when receiving None to stop the worker
             if frame_data is None:
-                # Wait for all submitted futures to complete before exiting
-                for _ in tqdm.tqdm(
-                    concurrent.futures.as_completed(futures), total=len(futures), desc="Writting images"
-                ):
-                    pass
                 break
 
             frame, key, frame_index, episode_index, videos_dir = frame_data
             futures.append(executor.submit(save_image, frame, key, frame_index, episode_index, videos_dir))
 
+        # Before exiting function, wait for all image writers to complete
+        with tqdm.tqdm(total=len(futures), desc="Writing images") as progress_bar:
+            concurrent.futures.wait(futures)
+            progress_bar.update(len(futures))
+
 
 def start_frame_workers(frame_queue, num_image_writers, num_workers=1):
+    if num_workers < 1:
+        raise NotImplementedError("Only `num_workers>=1` is supported for now.")
+
     workers = []
     for _ in range(num_workers):
         worker = multiprocessing.Process(
@@ -273,17 +276,23 @@ def start_frame_workers(frame_queue, num_image_writers, num_workers=1):
 
 
 def stop_workers(workers, frame_queue):
-    # Send None to each process to signal it to stop
+    # Send None to each process to signal them to stop
     for _ in workers:
         frame_queue.put(None)
 
-    # Wait for all processes to terminate
+    # Close the queue, no more items can be put in the queue
+    frame_queue.close()
+
+    # Wait maximum 10 seconds for all processes to terminate
     for process in workers:
         process.join(timeout=10)
 
     # If not terminated after 10 seconds, force termination
     if process.is_alive():
         process.terminate()
+
+    # Ensure all background queue threads have finished
+    frame_queue.join_thread()
 
 
 def has_method(_object: object, method_name: str):
