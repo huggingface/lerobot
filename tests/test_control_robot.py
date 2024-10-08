@@ -108,6 +108,9 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
 @require_robot
 def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     if mock:
+        import multiprocessing
+
+        multiprocessing.set_start_method("spawn", force=True)
         request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
