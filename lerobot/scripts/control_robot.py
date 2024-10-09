@@ -263,19 +263,6 @@ def loop_to_save_images_in_threads(image_queue, num_image_writers):
             progress_bar.update(len(futures))
 
 
-def loop_to_save_images(image_queue):
-    while True:
-        # Blocks until a frame is available
-        frame_data = image_queue.get()
-
-        # As usually done, exit loop when receiving None to stop the worker
-        if frame_data is None:
-            break
-
-        image, key, frame_index, episode_index, videos_dir = frame_data
-        save_image(image, key, frame_index, episode_index, videos_dir)
-
-
 def start_image_workers(image_queue, num_image_writers, num_image_workers):
     if num_image_workers < 1:
         raise NotImplementedError("Only `num_image_workers>=1` is supported for now.")
@@ -283,8 +270,8 @@ def start_image_workers(image_queue, num_image_writers, num_image_workers):
     workers = []
     for _ in range(num_image_workers):
         worker = multiprocessing.Process(
-            target=loop_to_save_images,
-            args=(image_queue,),
+            target=loop_to_save_images_in_threads,
+            args=(image_queue, num_image_writers),
         )
         worker.start()
         workers.append(worker)
@@ -544,7 +531,7 @@ def record(
         # might be better than `multiprocessing.Queue()`. Source: https://www.geeksforgeeks.org/python-multiprocessing-queue-vs-multiprocessing-manager-queue
         image_queue = multiprocessing.Queue()
         num_image_writers = num_image_writers_per_camera * len(robot.cameras)
-        image_workers = start_image_workers(image_queue, num_image_writers, num_image_workers=2)
+        image_workers = start_image_workers(image_queue, num_image_writers, num_image_workers=1)
 
     # Using `try` to exist smoothly if an exception is raised
     try:
