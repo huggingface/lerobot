@@ -23,7 +23,6 @@ pytest -sx 'tests/test_control_robot.py::test_teleoperate[aloha-True]'
 ```
 """
 
-import multiprocessing
 from pathlib import Path
 
 import pytest
@@ -111,7 +110,8 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
 def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     if mock:
         # TODO(rcadene, aliberts): hack DO NOT MERGE
-        multiprocessing.set_start_method("spawn", force=True)
+        # import multiprocessing
+        # multiprocessing.set_start_method("spawn", force=True)
 
         request.getfixturevalue("patch_builtins_input")
 
