@@ -99,15 +99,14 @@ python lerobot/scripts/control_robot.py record \
 """
 
 import argparse
-import concurrent.futures
 import json
 import logging
-import multiprocessing
 import os
 import platform
 import shutil
 import time
 import traceback
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
@@ -166,7 +165,7 @@ def say(text, blocking=False):
 
 def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
     img = Image.fromarray(img_tensor.numpy())
-    path = videos_dir / f"{key}_episode_{episode_index:06d}" / f"frame_{frame_index:06d}.png"
+    path = Path(videos_dir) / f"{key}_episode_{episode_index:06d}" / f"frame_{frame_index:06d}.png"
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(path), quality=100)
 
@@ -238,77 +237,6 @@ def is_headless():
         traceback.print_exc()
         print()
         return True
-
-
-def loop_to_save_images_in_threads(image_queue, num_image_writers):
-    if num_image_writers < 1:
-        raise NotImplementedError("Only `num_image_writers>=1` is supported for now.")
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
-        futures = []
-        while True:
-            # Blocks until a frame is available
-            frame_data = image_queue.get()
-
-            # As usually done, exit loop when receiving None to stop the worker
-            if frame_data is None:
-                break
-
-            image, key, frame_index, episode_index, videos_dir = frame_data
-            futures.append(executor.submit(save_image, image, key, frame_index, episode_index, videos_dir))
-
-        # Before exiting function, wait for all image writers to complete
-        with tqdm.tqdm(total=len(futures), desc="Writing images") as progress_bar:
-            concurrent.futures.wait(futures)
-            progress_bar.update(len(futures))
-
-
-def loop_to_save_images(image_queue):
-    while True:
-        # Blocks until a frame is available
-        frame_data = image_queue.get()
-
-        # As usually done, exit loop when receiving None to stop the worker
-        if frame_data is None:
-            break
-
-        image, key, frame_index, episode_index, videos_dir = frame_data
-        save_image(image, key, frame_index, episode_index, videos_dir)
-
-
-def start_image_workers(image_queue, num_image_writers, num_image_workers):
-    if num_image_workers < 1:
-        raise NotImplementedError("Only `num_image_workers>=1` is supported for now.")
-
-    workers = []
-    for _ in range(num_image_workers):
-        worker = multiprocessing.Process(
-            target=loop_to_save_images,
-            args=(image_queue,),
-        )
-        worker.start()
-        workers.append(worker)
-    return workers
-
-
-def stop_workers(workers, queue, timeout=20):
-    # Send None to each process to signal them to stop
-    for _ in workers:
-        queue.put(None)
-
-    # Close the queue, no more items can be put in the queue
-    queue.close()
-
-    # Wait maximum 20 seconds for all processes to terminate
-    for process in workers:
-        process.join(timeout=timeout)
-
-    # If not terminated after 20 seconds, force termination
-    if process.is_alive():
-        process.terminate()
-
-    # Ensure all background queue threads have finished
-    queue.join_thread()
 
 
 def has_method(_object: object, method_name: str):
@@ -539,12 +467,7 @@ def record(
 
     has_camera = len(robot.cameras) > 0
     if has_camera:
-        # Save images in a dedicated subprocess with multithreading to reach high fps (30 and more).
-        # TODO(rcadene): When using num_workers>1, `multiprocessing.manager().Queue()`
-        # might be better than `multiprocessing.Queue()`. Source: https://www.geeksforgeeks.org/python-multiprocessing-queue-vs-multiprocessing-manager-queue
-        image_queue = multiprocessing.Queue()
-        num_image_writers = num_image_writers_per_camera * len(robot.cameras)
-        image_workers = start_image_workers(image_queue, num_image_writers, num_image_workers=2)
+        save_image_executor = ProcessPoolExecutor(max_workers=2)
 
     # Using `try` to exist smoothly if an exception is raised
     try:
@@ -571,7 +494,8 @@ def record(
                 if has_camera > 0:
                     for key in image_keys:
                         image = observation[key]
-                        image_queue.put((image, key, frame_index, episode_index, videos_dir))
+                        save_image_args = (image, key, frame_index, episode_index, str(videos_dir))
+                        save_image_executor.submit(save_image, *save_image_args)
 
                 if display_cameras and not is_headless():
                     image_keys = [key for key in observation if "image" in key]
@@ -721,12 +645,12 @@ def record(
 
                 if has_camera > 0:
                     logging.info("Waiting for subprocess writing the images on disk to terminate...")
-                    stop_workers(image_workers, image_queue)
+                    save_image_executor.shutdown(wait=True)
 
     except Exception as e:
         if has_camera > 0:
             logging.info("Waiting for subprocess writing the images on disk to terminate...")
-            stop_workers(image_workers, image_queue)
+            save_image_executor.shutdown(wait=True)
         raise e
 
     robot.disconnect()
