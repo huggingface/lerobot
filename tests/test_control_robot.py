@@ -110,7 +110,7 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
 @require_robot
 def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     if mock:
-        # TODO(rcadene, aliberts): hack DO NOT MERGE
+        # Avoid hanging issue when running two consecutive tests
         multiprocessing.set_start_method("spawn", force=True)
 
         request.getfixturevalue("patch_builtins_input")
