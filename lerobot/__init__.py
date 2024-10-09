@@ -197,7 +197,7 @@ available_policies = [
 available_robots = [
     "koch",
     "koch_bimanual",
-    # "aloha",
+    "aloha",
 ]
 
 # lists all available cameras from `lerobot/common/robot_devices/cameras`
