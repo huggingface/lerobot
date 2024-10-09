@@ -164,9 +164,9 @@ def say(text, blocking=False):
     os.system(cmd)
 
 
-def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
+def save_image(img_tensor, key, frame_index, episode_index, videos_dir: str):
     img = Image.fromarray(img_tensor.numpy())
-    path = videos_dir / f"{key}_episode_{episode_index:06d}" / f"frame_{frame_index:06d}.png"
+    path = Path(videos_dir) / f"{key}_episode_{episode_index:06d}" / f"frame_{frame_index:06d}.png"
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(path), quality=100)
 
@@ -558,7 +558,7 @@ def record(
                 if has_camera > 0:
                     for key in image_keys:
                         image = observation[key]
-                        image_queue.put((image, key, frame_index, episode_index, videos_dir))
+                        image_queue.put((image, key, frame_index, episode_index, str(videos_dir)))
 
                 if display_cameras and not is_headless():
                     image_keys = [key for key in observation if "image" in key]
