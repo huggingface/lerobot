@@ -110,7 +110,18 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
 @require_robot
 def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     if mock:
-        # Avoid hanging issue when running two consecutive tests
+        # `multiprocessing.set_start_method("spawn", force=True)` avoids a hanging issue
+        # before exiting pytest. However, it outputs the following error in the log:
+        # Traceback (most recent call last):
+        #     File "<string>", line 1, in <module>
+        #     File "/Users/rcadene/miniconda3/envs/lerobot/lib/python3.10/multiprocessing/spawn.py", line 116, in spawn_main
+        #         exitcode = _main(fd, parent_sentinel)
+        #     File "/Users/rcadene/miniconda3/envs/lerobot/lib/python3.10/multiprocessing/spawn.py", line 126, in _main
+        #         self = reduction.pickle.load(from_parent)
+        #     File "/Users/rcadene/miniconda3/envs/lerobot/lib/python3.10/multiprocessing/synchronize.py", line 110, in __setstate__
+        #         self._semlock = _multiprocessing.SemLock._rebuild(*state)
+        # FileNotFoundError: [Errno 2] No such file or directory
+        # TODO(rcadene, aliberts): fix FileNotFoundError in multiprocessing
         multiprocessing.set_start_method("spawn", force=True)
 
         request.getfixturevalue("patch_builtins_input")
