@@ -240,9 +240,16 @@ def is_headless():
         return True
 
 
+########################################################################################
+# Asynchrounous saving of images on disk
+########################################################################################
+
+
 def loop_to_save_images_in_threads(image_queue, num_threads):
     if num_threads < 1:
-        raise NotImplementedError("Only `num_threads>=1` is supported for now.")
+        raise NotImplementedError(
+            "Only `num_threads_per_process>=1` is supported for now, but {num_threads_per_process=} given."
+        )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = []
@@ -257,40 +264,42 @@ def loop_to_save_images_in_threads(image_queue, num_threads):
             image, key, frame_index, episode_index, videos_dir = frame_data
             futures.append(executor.submit(save_image, image, key, frame_index, episode_index, videos_dir))
 
-        # Before exiting function, wait for all image writers to complete
+        # Before exiting function, wait for all threads to complete
         with tqdm.tqdm(total=len(futures), desc="Writing images") as progress_bar:
             concurrent.futures.wait(futures)
             progress_bar.update(len(futures))
 
 
-def start_image_workers(image_queue, num_processes, num_threads_per_process):
+def start_image_writer_processes(image_queue, num_processes, num_threads_per_process):
     if num_processes < 1:
-        raise NotImplementedError("Only `num_processes>=1` is supported for now.")
+        raise ValueError(f"Only `num_processes>=1` is supported, but {num_processes=} given.")
 
     if num_threads_per_process < 1:
-        raise NotImplementedError("Only `num_threads_per_process>=1` is supported for now.")
+        raise NotImplementedError(
+            "Only `num_threads_per_process>=1` is supported for now, but {num_threads_per_process=} given."
+        )
 
-    workers = []
+    processes = []
     for _ in range(num_processes):
-        worker = multiprocessing.Process(
+        process = multiprocessing.Process(
             target=loop_to_save_images_in_threads,
             args=(image_queue, num_threads_per_process),
         )
-        worker.start()
-        workers.append(worker)
-    return workers
+        process.start()
+        processes.append(process)
+    return processes
 
 
-def stop_workers(workers, queue, timeout=20):
+def stop_processes(processes, queue, timeout):
     # Send None to each process to signal them to stop
-    for _ in workers:
+    for _ in processes:
         queue.put(None)
 
     # Close the queue, no more items can be put in the queue
     queue.close()
 
     # Wait maximum 20 seconds for all processes to terminate
-    for process in workers:
+    for process in processes:
         process.join(timeout=timeout)
 
     # If not terminated after 20 seconds, force termination
@@ -299,6 +308,61 @@ def stop_workers(workers, queue, timeout=20):
 
     # Ensure all background queue threads have finished
     queue.join_thread()
+
+
+def start_image_writer(num_processes, num_threads):
+    """This function abstract away the initialisation of processes or/and threads to
+    save images on disk asynchrounously, which is critical to control a robot and record data
+    at a high frame rate.
+
+    When `num_processes=0`, it returns a dictionary containing a threads pool of size `num_threads`.
+    When `num_processes>0`, it returns a dictionary containing a processes pool of size `num_processes`,
+    where each subprocess starts their own threads pool of size `num_threads`.
+
+    The optimal number of processes and threads depends on your computer capabilities.
+    We advise to use 4 threads per camera with 0 processes. If the fps is not stable, try to increase or lower
+    the number of threads. If it is still not stable, try to use 1 subprocess, or more.
+    """
+    image_writer = {}
+
+    if num_processes == 0:
+        futures = []
+        threads_pool = concurrent.futures.ThreadPoolExecutor(max_workers=num_threads)
+        image_writer["threads_pool"], image_writer["futures"] = threads_pool, futures
+    else:
+        # TODO(rcadene): When using num_processes>1, `multiprocessing.manager().Queue()`
+        # might be better than `multiprocessing.Queue()`. Source: https://www.geeksforgeeks.org/python-multiprocessing-queue-vs-multiprocessing-manager-queue
+        image_queue = multiprocessing.Queue()
+        processes_pool = start_image_writer_processes(
+            image_queue, num_processes=num_processes, num_threads_per_process=num_threads
+        )
+        image_writer["processes_pool"], image_writer["image_queue"] = processes_pool, image_queue
+
+    return image_writer
+
+
+def async_save_image(image_writer, image, key, frame_index, episode_index, videos_dir):
+    """This function abstract away the saving of an image on disk asynchrounously. It uses a dictionary
+    called image writer which contains either a pool of processes or a pool of threads.
+    """
+    if "threads_pool" in image_writer:
+        threads_pool, futures = image_writer["threads_pool"], image_writer["futures"]
+        futures.append(threads_pool.submit(save_image, image, key, frame_index, episode_index, videos_dir))
+    else:
+        image_queue = image_writer["image_queue"]
+        image_queue.put((image, key, frame_index, episode_index, videos_dir))
+
+
+def stop_image_writer(image_writer, timeout):
+    if "threads_pool" in image_writer:
+        futures = image_writer["futures"]
+        # Before exiting function, wait for all threads to complete
+        with tqdm.tqdm(total=len(futures), desc="Writing images") as progress_bar:
+            concurrent.futures.wait(futures, timeout=timeout)
+            progress_bar.update(len(futures))
+    else:
+        processes_pool, image_queue = image_writer["processes_pool"], image_writer["image_queue"]
+        stop_processes(processes_pool, image_queue, timeout=timeout)
 
 
 def has_method(_object: object, method_name: str):
@@ -404,7 +468,8 @@ def record(
     run_compute_stats=True,
     push_to_hub=True,
     tags=None,
-    num_image_writers_per_camera=4,
+    num_image_writer_processes=0,
+    num_image_writer_threads_per_camera=4,
     force_override=False,
     display_cameras=True,
     play_sounds=True,
@@ -529,13 +594,11 @@ def record(
 
     has_camera = len(robot.cameras) > 0
     if has_camera:
-        # Save images in a dedicated subprocess with multithreading to reach high fps (30 and more).
-        # TODO(rcadene): When using num_workers>1, `multiprocessing.manager().Queue()`
-        # might be better than `multiprocessing.Queue()`. Source: https://www.geeksforgeeks.org/python-multiprocessing-queue-vs-multiprocessing-manager-queue
-        image_queue = multiprocessing.Queue()
-        num_image_writers = num_image_writers_per_camera * len(robot.cameras)
-        image_workers = start_image_workers(
-            image_queue, num_processes=1, num_threads_per_process=num_image_writers
+        # Initialize processes or/and threads dedicated to save images on disk asynchronously,
+        # which is critical to control a robot and record data at a high frame rate.
+        image_writer = start_image_writer(
+            num_processes=num_image_writer_processes,
+            num_threads=num_image_writer_threads_per_camera * len(robot.cameras),
         )
 
     # Using `try` to exist smoothly if an exception is raised
@@ -562,8 +625,14 @@ def record(
 
                 if has_camera > 0:
                     for key in image_keys:
-                        image = observation[key]
-                        image_queue.put((image, key, frame_index, episode_index, str(videos_dir)))
+                        async_save_image(
+                            image_writer,
+                            image=observation[key],
+                            key=key,
+                            frame_index=frame_index,
+                            episode_index=episode_index,
+                            videos_dir=str(videos_dir),
+                        )
 
                 if display_cameras and not is_headless():
                     image_keys = [key for key in observation if "image" in key]
@@ -713,12 +782,12 @@ def record(
 
                 if has_camera > 0:
                     logging.info("Waiting for subprocess writing the images on disk to terminate...")
-                    stop_workers(image_workers, image_queue)
+                    stop_image_writer(image_writer, timeout=20)
 
     except Exception as e:
         if has_camera > 0:
             logging.info("Waiting for subprocess writing the images on disk to terminate...")
-            stop_workers(image_workers, image_queue)
+            stop_image_writer(image_writer, timeout=20)
         raise e
 
     robot.disconnect()
@@ -922,12 +991,23 @@ if __name__ == "__main__":
         help="Add tags to your dataset on the hub.",
     )
     parser_record.add_argument(
-        "--num-image-writers-per-camera",
+        "--num-image-writer-processes",
+        type=int,
+        default=0,
+        help=(
+            "Number of subprocesses handling the saving of frames as PNGs. Set to 0 to use threads only; "
+            "set to ≥1 to use subprocesses, each using threads to write images. The best number of processes "
+            "and threads depends on your system. We recommend 4 threads per camera with 0 processes. "
+            "If fps is unstable, adjust the thread count. If still unstable, try using 1 or more subprocesses."
+        ),
+    )
+    parser_record.add_argument(
+        "--num-image-writer-threads-per-camera",
         type=int,
         default=4,
         help=(
             "Number of threads writing the frames as png images on disk, per camera. "
-            "Too much threads might cause unstable teleoperation fps due to main thread being blocked. "
+            "Too many threads might cause unstable teleoperation fps due to main thread being blocked. "
             "Not enough threads might cause low camera fps."
         ),
     )
