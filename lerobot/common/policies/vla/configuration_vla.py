@@ -115,11 +115,13 @@ class VLAConfig:
         }
     )
 
+    prompt: str = "Please insert the tube into the socket."
+
     # Architecture.
 
     # Language + Main transformer
     vocab_size: int = 152064
-    hidden_size: int = 8192
+    hidden_size: int = 3584
     intermediate_size: int = 29568
     num_hidden_layers: int = 80
     num_decoder_layers: int = 1

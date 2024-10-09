@@ -2,7 +2,6 @@
 
 seed: 1000
 dataset_repo_id: lerobot/aloha_sim_insertion_human
-prompt: "Please insert the tube into the socket."
 
 override_dataset_stats:
   observation.images.top:
@@ -37,15 +36,15 @@ policy:
 
   # Input / output structure.
   n_obs_steps: 1
-  chunk_size: 100
-  n_action_steps: 100
-
+  chunk_size: 4
+  n_action_steps: 4
+  
   input_shapes:
     observation.images.top: [3, 480, 640]  # Video inputs (from video frames)
     observation.state: [128]               # State input dimension
     text.input: [256]                      # Text input processed by Qwen-VL
   output_shapes:
-    action: [4]  # Action output dimension (Example: 4D actions)
+    action: [14]  # Action output dimension (Example: 4D actions)
 
   # Normalization / Unnormalization
   input_normalization_modes:
@@ -60,6 +59,7 @@ policy:
   state_encoder:
     hidden_dim: 256
     latent_dim: 64
+  prompt: "Please insert the tube into the socket."
 
   # Vision-Language Model (Qwen-VL)
   vlm_backbone: qwen_vl
