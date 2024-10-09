@@ -236,7 +236,6 @@ def main():
             action = (0.253410, -0.647988, 0.102317, 169.232040, 7.532587, 54.388241)
             robot_controller.send_action(action)
 
-
         # 获取一次观察数据
         observation = robot_controller.capture_observation()
         print("Captured Observation:", observation)

@@ -3086,7 +3086,6 @@ def test_process_demo():
     except RobotError as e:
         logger.error("robot Event:{0}".format(e))
 
-
     finally:
         # 断开服务器链接
         if robot.connected:

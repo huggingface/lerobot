@@ -10,6 +10,7 @@ import PySpin
 class CameraHandlerError(Exception):
     pass
 
+
 class Camera:
     def __init__(self, output_dir, capture_interval_seconds=None):
         self.output_dir = output_dir
