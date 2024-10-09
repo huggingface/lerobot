@@ -240,3 +240,4 @@ class SpinnakerCamera(Camera):
         else:
             self.logger.info("Released Spinnaker camera.")
 
+
