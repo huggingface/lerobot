@@ -123,9 +123,6 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         # Use the default .cache/calibration folder when mock=False
         overrides = None
 
-    if robot_type == "aloha":
-        pytest.skip("TODO(rcadene): enable test once aloha_real and act_aloha_real are merged")
-
     env_name = "koch_real"
     policy_name = "act_koch_real"
 
