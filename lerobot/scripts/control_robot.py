@@ -705,14 +705,14 @@ def record(
                     logging.info("Waiting for subprocess writing the images on disk to terminate...")
                     stop_workers(image_workers, image_queue)
 
-    except Exception:
-        traceback.print_exc()
-
+    except Exception as e:
         if has_camera > 0:
             logging.info("Waiting for subprocess writing the images on disk to terminate...")
             stop_workers(image_workers, image_queue)
+        raise e
 
     robot.disconnect()
+
     if display_cameras and not is_headless():
         cv2.destroyAllWindows()
 
