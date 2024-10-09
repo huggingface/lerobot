@@ -145,6 +145,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         video=False,
         # TODO(rcadene): display cameras through cv2 sometimes crashes on mac
         display_cameras=False,
+        play_sounds=False,
     )
 
     replay(robot, episode=0, fps=30, root=root, repo_id=repo_id)
@@ -186,6 +187,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         push_to_hub=False,
         video=False,
         display_cameras=False,
+        play_sounds=False,
     )
 
     del robot

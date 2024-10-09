@@ -404,6 +404,7 @@ def record(
     num_image_writers_per_camera=4,
     force_override=False,
     display_cameras=True,
+    play_sounds=True,
 ):
     # TODO(rcadene): Add option to record logs
     # TODO(rcadene): Clean this function via decomposition in higher level functions
@@ -495,7 +496,8 @@ def record(
     while timestamp < warmup_time_s:
         if not is_warmup_print:
             logging.info("Warming up (no data recording)")
-            say("Warming up")
+            if play_sounds:
+                say("Warming up")
             is_warmup_print = True
 
         start_loop_t = time.perf_counter()
@@ -536,7 +538,8 @@ def record(
         # Start recording all episodes
         while episode_index < num_episodes:
             logging.info(f"Recording episode {episode_index}")
-            say(f"Recording episode {episode_index}")
+            if play_sounds:
+                say(f"Recording episode {episode_index}")
             ep_dict = {}
             frame_index = 0
             timestamp = 0
@@ -625,7 +628,8 @@ def record(
             if not stop_recording:
                 # Start resetting env while the executor are finishing
                 logging.info("Reset the environment")
-                say("Reset the environment")
+                if play_sounds:
+                    say("Reset the environment")
 
             timestamp = 0
             start_vencod_t = time.perf_counter()
@@ -697,7 +701,8 @@ def record(
 
             if is_last_episode:
                 logging.info("Done recording")
-                say("Done recording", blocking=True)
+                if play_sounds:
+                    say("Done recording", blocking=True)
                 if not is_headless():
                     listener.stop()
 
@@ -720,7 +725,8 @@ def record(
 
     if video:
         logging.info("Encoding videos")
-        say("Encoding videos")
+        if play_sounds:
+            say("Encoding videos")
         # Use ffmpeg to convert frames stored as png into mp4 videos
         for episode_index in tqdm.tqdm(range(num_episodes)):
             for key in image_keys:
@@ -765,7 +771,8 @@ def record(
     )
     if run_compute_stats:
         logging.info("Computing dataset statistics")
-        say("Computing dataset statistics")
+        if play_sounds:
+            say("Computing dataset statistics")
         stats = compute_stats(lerobot_dataset)
         lerobot_dataset.stats = stats
     else:
@@ -787,11 +794,14 @@ def record(
         create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
 
     logging.info("Exiting")
-    say("Exiting")
+    if play_sounds:
+        say("Exiting")
     return lerobot_dataset
 
 
-def replay(robot: Robot, episode: int, fps: int | None = None, root="data", repo_id="lerobot/debug"):
+def replay(
+    robot: Robot, episode: int, fps: int | None = None, root="data", repo_id="lerobot/debug", play_sounds=True
+):
     # TODO(rcadene): Add option to record logs
     local_dir = Path(root) / repo_id
     if not local_dir.exists():
@@ -806,7 +816,8 @@ def replay(robot: Robot, episode: int, fps: int | None = None, root="data", repo
         robot.connect()
 
     logging.info("Replaying episode")
-    say("Replaying episode", blocking=True)
+    if play_sounds:
+        say("Replaying episode", blocking=True)
     for idx in range(from_idx, to_idx):
         start_episode_t = time.perf_counter()
 
