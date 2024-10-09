@@ -240,11 +240,11 @@ def is_headless():
         return True
 
 
-def loop_to_save_images_in_threads(image_queue, num_image_writers):
-    if num_image_writers < 1:
-        raise NotImplementedError("Only `num_image_writers>=1` is supported for now.")
+def loop_to_save_images_in_threads(image_queue, num_threads):
+    if num_threads < 1:
+        raise NotImplementedError("Only `num_threads>=1` is supported for now.")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = []
         while True:
             # Blocks until a frame is available
@@ -263,15 +263,18 @@ def loop_to_save_images_in_threads(image_queue, num_image_writers):
             progress_bar.update(len(futures))
 
 
-def start_image_workers(image_queue, num_image_writers, num_image_workers):
-    if num_image_workers < 1:
-        raise NotImplementedError("Only `num_image_workers>=1` is supported for now.")
+def start_image_workers(image_queue, num_processes, num_threads_per_process):
+    if num_processes < 1:
+        raise NotImplementedError("Only `num_processes>=1` is supported for now.")
+
+    if num_threads_per_process < 1:
+        raise NotImplementedError("Only `num_threads_per_process>=1` is supported for now.")
 
     workers = []
-    for _ in range(num_image_workers):
+    for _ in range(num_processes):
         worker = multiprocessing.Process(
             target=loop_to_save_images_in_threads,
-            args=(image_queue, num_image_writers),
+            args=(image_queue, num_threads_per_process),
         )
         worker.start()
         workers.append(worker)
@@ -531,7 +534,9 @@ def record(
         # might be better than `multiprocessing.Queue()`. Source: https://www.geeksforgeeks.org/python-multiprocessing-queue-vs-multiprocessing-manager-queue
         image_queue = multiprocessing.Queue()
         num_image_writers = num_image_writers_per_camera * len(robot.cameras)
-        image_workers = start_image_workers(image_queue, num_image_writers, num_image_workers=1)
+        image_workers = start_image_workers(
+            image_queue, num_processes=1, num_threads_per_process=num_image_writers
+        )
 
     # Using `try` to exist smoothly if an exception is raised
     try:
