@@ -102,6 +102,7 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
         run_compute_stats=False,
         push_to_hub=False,
         video=False,
+        play_sounds=False,
     )
 
 
@@ -148,7 +149,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         play_sounds=False,
     )
 
-    replay(robot, episode=0, fps=30, root=root, repo_id=repo_id)
+    replay(robot, episode=0, fps=30, root=root, repo_id=repo_id, play_sounds=False)
 
     # TODO(rcadene, aliberts): rethink this design
     if robot_type == "aloha":
