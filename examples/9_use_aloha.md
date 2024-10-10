@@ -123,8 +123,6 @@ DATA_DIR=data python lerobot/scripts/train.py \
   dataset_repo_id=${HF_USER}/aloha_test \
   policy=act_aloha_real \
   env=aloha_real \
-  env.state_dim=18 \
-  env.action_dim=18 \
   hydra.run.dir=outputs/train/act_aloha_test \
   hydra.job.name=act_aloha_test \
   device=cuda \
@@ -134,7 +132,7 @@ DATA_DIR=data python lerobot/scripts/train.py \
 Let's explain it:
 1. We provided the dataset as argument with `dataset_repo_id=${HF_USER}/aloha_test`.
 2. We provided the policy with `policy=act_aloha_real`. This loads configurations from [`lerobot/configs/policy/act_aloha_real.yaml`](../lerobot/configs/policy/act_aloha_real.yaml). Importantly, this policy uses 4 cameras as input `cam_right_wrist`, `cam_left_wrist`, `cam_high`, and `cam_low`.
-3. We provided an environment as argument with `env=aloha_real`. This loads configurations from [`lerobot/configs/env/aloha_real.yaml`](../lerobot/configs/env/aloha_real.yaml). We also overrided the default `state_dim` and `action_dim` defined in this yaml to fit our number of motors. This is because, we include the `shoulder_shadow` and `elbow_shadow` motors for simplicity.
+3. We provided an environment as argument with `env=aloha_real`. This loads configurations from [`lerobot/configs/env/aloha_real.yaml`](../lerobot/configs/env/aloha_real.yaml). Note: this yaml defines 18 dimensions for the `state_dim` and `action_dim`, corresponding to 18 motors, not 14 motors as used in previous Aloha work. This is because, we include the `shoulder_shadow` and `elbow_shadow` motors for simplicity.
 4. We provided `device=cuda` since we are training on a Nvidia GPU.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
 6. We added `DATA_DIR=data` to access your dataset stored in your local `data` directory. If you dont provide `DATA_DIR`, your dataset will be downloaded from Hugging Face hub to your cache folder `$HOME/.cache/hugginface`. In future versions of `lerobot`, both directories will be in sync.
