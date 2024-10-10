@@ -10,6 +10,7 @@ from camera_handlers import SpinnakerCamera, USBCamera
 import h5py
 from PIL import Image
 import asyncio
+import torch
 
 CONTROL_DT = 1 / 5
 TIME_FORMAT = "%Y%m%d_%H%M%S_%f"
@@ -117,34 +118,70 @@ class Auboi5RobotController:
         return robot_pos, joint
 
     # def capture_observation(self):
+    #     if not self.is_connected:
+    #         raise ConnectionError("Robot is not connected.")
+    #     # 获取机器人状态
     #     joint = self.robot_controller.get_joint_position()
+    #     print("joint: ", joint)
     #     robot_pos = self.get_robot_pose(joint)
-    #     return {"robot_pos": robot_pos, "joint_positions": joint}
+    #     print("robot_pos: ", robot_pos)
+    #     # 使用 save_camera_frames 获取相机图片
+    #     image_data = self.save_camera_frames()
+    #     for i, (image_path, image) in enumerate(image_data):
+    #         # print("image.shape: ",image.shape)
+    #         if image.shape != (480, 640, 3):
+    #             image_rgb = np.stack([image] * 3, axis=-1)
+    #             image_resized = Image.fromarray(image_rgb).resize((640, 480))
+    #             image = np.array(image_resized)
+    #             # print("image_resized.shape: ",image.shape)
+    #     images = {f"camera_{i + 1}": img for i, (_, img) in enumerate(image_data)}
+    #     # 组合状态和图像数据
+    #     observation = {
+    #         "robot_pos": robot_pos,
+    #         "joint_positions": joint,
+    #         "images": images
+    #     }
+    #     return observation
 
     def capture_observation(self):
+        """Capture the observation data and return it as a dictionary of torch.tensors."""
         if not self.is_connected:
             raise ConnectionError("Robot is not connected.")
-        # 获取机器人状态
+
+        # Get the robot's joint positions
         joint = self.robot_controller.get_joint_position()
-        print("joint: ", joint)
         robot_pos = self.get_robot_pose(joint)
-        print("robot_pos: ", robot_pos)
-        # 使用 save_camera_frames 获取相机图片
+
+        # Capture images from cameras
         image_data = self.save_camera_frames()
+
+        # Convert robot position and joint data to torch.tensor
+        joint_tensor = torch.tensor(joint, dtype=torch.float32)
+        robot_pos_tensor = torch.tensor(robot_pos, dtype=torch.float32)
+
+        # Convert images to torch.tensor
+        images = {}
         for i, (image_path, image) in enumerate(image_data):
-            # print("image.shape: ",image.shape)
             if image.shape != (480, 640, 3):
+                # If the image is grayscale, convert it to RGB
                 image_rgb = np.stack([image] * 3, axis=-1)
                 image_resized = Image.fromarray(image_rgb).resize((640, 480))
                 image = np.array(image_resized)
-                # print("image_resized.shape: ",image.shape)
-        images = {f"camera_{i + 1}": img for i, (_, img) in enumerate(image_data)}
-        # 组合状态和图像数据
+            # Convert the image to a tensor
+            image_tensor = torch.from_numpy(image).permute(2, 0, 1).float()  # Convert to (C, H, W) format
+            images[f"camera_{i + 1}"] = image_tensor
+
+        # Create the observation dictionary
         observation = {
-            "robot_pos": robot_pos,
-            "joint_positions": joint,
-            "images": images
+            "observation.state": torch.cat([robot_pos_tensor, joint_tensor]),
+            "observation.joint_positions": joint_tensor,
+            "observation.robot_pos": robot_pos_tensor,
         }
+
+        # Add image tensors to the observation dictionary
+        for key, image_tensor in images.items():
+            observation[f"observation.images.{key}"] = image_tensor
+
         return observation
 
     def send_action(self, action):
@@ -249,5 +286,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
