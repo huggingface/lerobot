@@ -154,12 +154,14 @@ python lerobot/scripts/control_robot.py record \
   --episode-time-s 40 \
   --reset-time-s 10 \
   --num-episodes 10 \
+  --num-image-writer-processes 1 \
   -p outputs/train/act_aloha_test/checkpoints/last/pretrained_model
 ```
 
 As you can see, it's almost the same command as previously used to record your training dataset. Two things changed:
 1. There is an additional `-p` argument which indicates the path to your policy checkpoint with  (e.g. `-p outputs/train/eval_aloha_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `-p ${HF_USER}/act_aloha_test`).
 2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `--repo-id ${HF_USER}/eval_act_aloha_test`).
+3. We use `--num-image-writer-processes 1` instead of the default value (`0`). On our computer, using a dedicated process to write images from the 4 cameras on disk allows to reach constent 30 fps during inference. Feel free to explore different values for `--num-image-writer-processes`.
 
 ## More
 
