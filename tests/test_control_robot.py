@@ -38,7 +38,7 @@ from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, require_r
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
 def test_teleoperate(tmpdir, request, robot_type, mock):
-    if mock:
+    if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
@@ -79,7 +79,7 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
     # Avoid using cameras
     overrides = ["~cameras"]
 
-    if mock:
+    if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
@@ -109,7 +109,7 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
 def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
-    if mock:
+    if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
@@ -117,7 +117,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         calibration_dir = Path(tmpdir) / robot_type
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
-        # Use the default .cache/calibration folder when mock=False
+        # Use the default .cache/calibration folder when mock=False or for aloha
         overrides = None
 
     env_name = "koch_real"

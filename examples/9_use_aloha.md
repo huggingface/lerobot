@@ -50,7 +50,9 @@ python lerobot/scripts/control_robot.py teleoperate \
     --robot-path lerobot/configs/robot/aloha.yaml
 ```
 
-You will certainly notice some lag or latency. This is because, we limit the magnitude of the movements by default to ensure safety. When you feel confident, you can disable it by adding `--robot-overrides max_relative_target=null`:
+> **Note:** You don't need to calibrate your robot. Instead, you are using our pre-defined calibration files in `.cache/calibration/aloha_default`. Avoiding calibration is possible since all aloha robots are expected to be assembled in the exact same way. If you replace a motor, make sure you follow the exact installation instructions from Trossen Robotics.
+
+For this first teleoperation, you will certainly notice some lag or latency. This is because, the magnitude of movements of your robot is limited by default to ensure safety. When you feel confident, you can disable this limit by adding `--robot-overrides max_relative_target=null` to the command line:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
     --robot-path lerobot/configs/robot/aloha.yaml \
