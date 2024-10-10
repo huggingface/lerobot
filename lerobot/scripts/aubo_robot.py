@@ -151,10 +151,8 @@ class Auboi5RobotController:
         # Get the robot's joint positions
         joint = self.robot_controller.get_joint_position()
         robot_pos = self.get_robot_pose(joint)
-
         # Capture images from cameras
         image_data = self.save_camera_frames()
-
         # Convert robot position and joint data to torch.tensor
         joint_tensor = torch.tensor(joint, dtype=torch.float32)
         robot_pos_tensor = torch.tensor(robot_pos, dtype=torch.float32)
