@@ -240,6 +240,22 @@ def is_headless():
         return True
 
 
+def has_method(_object: object, method_name: str):
+    return hasattr(_object, method_name) and callable(getattr(_object, method_name))
+
+
+def get_available_arms(robot):
+    # TODO(rcadene): moves this function in manipulator class?
+    available_arms = []
+    for name in robot.follower_arms:
+        arm_id = get_arm_id(name, "follower")
+        available_arms.append(arm_id)
+    for name in robot.leader_arms:
+        arm_id = get_arm_id(name, "leader")
+        available_arms.append(arm_id)
+    return available_arms
+
+
 ########################################################################################
 # Asynchrounous saving of images on disk
 ########################################################################################
@@ -363,22 +379,6 @@ def stop_image_writer(image_writer, timeout):
     else:
         processes_pool, image_queue = image_writer["processes_pool"], image_writer["image_queue"]
         stop_processes(processes_pool, image_queue, timeout=timeout)
-
-
-def has_method(_object: object, method_name: str):
-    return hasattr(_object, method_name) and callable(getattr(_object, method_name))
-
-
-def get_available_arms(robot):
-    # TODO(rcadene): moves this function in manipulator class?
-    available_arms = []
-    for name in robot.follower_arms:
-        arm_id = get_arm_id(name, "follower")
-        available_arms.append(arm_id)
-    for name in robot.leader_arms:
-        arm_id = get_arm_id(name, "leader")
-        available_arms.append(arm_id)
-    return available_arms
 
 
 ########################################################################################
