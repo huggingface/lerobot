@@ -126,8 +126,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         are not close enough from the requested frames. It is only used when `delta_timestamps`
         is provided or when loading video frames from mp4 files.
         """
-        # 1e-4 to account for possible numerical error
-        return 1 / self.fps - 1e-4
+        # Add 1e-4 seconds to expected step size to account for possible numerical error
+        return 1 / self.fps + 1e-4
 
     def __len__(self):
         return self.num_samples
@@ -357,8 +357,8 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         are not close enough from the requested frames. It is only used when `delta_timestamps`
         is provided or when loading video frames from mp4 files.
         """
-        # 1e-4 to account for possible numerical error
-        return 1 / self.fps - 1e-4
+        # Add 1e-4 seconds to expected step size to account for possible numerical error
+        return 1 / self.fps + 1e-4
 
     def __len__(self):
         return self.num_samples
