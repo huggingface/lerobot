@@ -44,15 +44,19 @@ conda install -y -c conda-forge "opencv>=4.10.0"
 
 ## Teleoperate
 
-Now try out teleoperation by manually operating the leader arms to move the follower arms:
+**/!\ FOR SAFETY, READ THIS /!\**
+Teleoperation consists in manually operating the leader arms to move the follower arms. Importantly:
+1. Make sure your leader arms are in the same position as the follower arms, so that the follower arms don't move too fast to match the leader arms,
+2. Our code assumes that your robot has been assembled following Trossen Robotics instructions. This allows us to skip calibration, as we use the pre-defined calibration files in `.cache/calibration/aloha_default`. If you replace a motor, make sure you follow the exact instructions from Trossen Robotics.
+
+By running the following code, you can start your first **SAFE** teleoperation:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
-    --robot-path lerobot/configs/robot/aloha.yaml
+    --robot-path lerobot/configs/robot/aloha.yaml \
+    --robot-overrides max_relative_target=5
 ```
 
-> **Note:** You don't need to calibrate your robot. Instead, you are using our pre-defined calibration files in `.cache/calibration/aloha_default`. Avoiding calibration is possible since all aloha robots are expected to be assembled in the exact same way. If you replace a motor, make sure you follow the exact installation instructions from Trossen Robotics.
-
-For this first teleoperation, you will certainly notice some lag or latency. This is because, the magnitude of movements of your robot is limited by default to ensure safety. When you feel confident, you can disable this limit by adding `--robot-overrides max_relative_target=null` to the command line:
+By adding `--robot-overrides max_relative_target=5`, we override the default value for `max_relative_target` defined in `lerobot/configs/robot/aloha.yaml`. It is expected to be `5` to limit the magnitude of the movement for more safety, but the teloperation won't be smooth. When you feel confident, you can disable this limit by adding `--robot-overrides max_relative_target=null` to the command line:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
     --robot-path lerobot/configs/robot/aloha.yaml \
@@ -61,7 +65,7 @@ python lerobot/scripts/control_robot.py teleoperate \
 
 ## Record a dataset
 
-Once you're familiar with teleoperation, you can try to record your first dataset with Aloha.
+Once you're familiar with teleoperation, you can record your first dataset with Aloha.
 
 If you want to use the Hugging Face hub features for uploading your dataset and you haven't previously done it, make sure you've logged in using a write-access token, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
 ```bash
@@ -74,7 +78,7 @@ HF_USER=$(huggingface-cli whoami | head -n 1)
 echo $HF_USER
 ```
 
-Record 2 episodes and push your dataset on the hub:
+Record 2 episodes and upload your dataset to the hub:
 ```bash
 python lerobot/scripts/control_robot.py record \
     --robot-path lerobot/configs/robot/aloha.yaml \
@@ -92,12 +96,12 @@ python lerobot/scripts/control_robot.py record \
 
 ## Visualize a dataset
 
-If you pushed on the hub with `--push-to-hub 1`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
+If you uploaded your dataset to the hub with `--push-to-hub 1`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
 ```bash
 echo ${HF_USER}/aloha_test
 ```
 
-If you didn't push it with `--push-to-hub 0`, you can also visualize it locally with:
+If you didn't upload with `--push-to-hub 0`, you can also visualize it locally with:
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
   --root data \
@@ -106,7 +110,10 @@ python lerobot/scripts/visualize_dataset_html.py \
 
 ## Replay an episode
 
-Now try to replay the first episode, but before, make sure the current initial position of your robot is similar to the one in your dataset:
+**/!\ FOR SAFETY, READ THIS /!\**
+Replay consists in automatically replaying the sequence of actions (i.e. goal positions for your motors) recorded in a given dataset episode. Make sure the current initial position of your robot is similar to the one in your episode, so that your follower arms don't move too fast to go to the first goal positions. For safety, you might want to add `--robot-overrides max_relative_target=5` to your command line as explained above.
+
+Now try to replay the first episode on your robot:
 ```bash
 python lerobot/scripts/control_robot.py replay \
     --robot-path lerobot/configs/robot/aloha.yaml \
@@ -167,6 +174,6 @@ As you can see, it's almost the same command as previously used to record your t
 
 ## More
 
-Follow [previous tutorial](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#4-train-a-policy-on-your-data) to train a policy on your data and run inference on your robot. You will need to adapt the code for Aloha.
+Follow this [previous tutorial](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#4-train-a-policy-on-your-data) for a more in-depth explaination.
 
-If you need help, please reach out on Discord in the channel `#aloha-arm`.
+If you have any question or need help, please reach out on Discord in the channel `#aloha-arm`.

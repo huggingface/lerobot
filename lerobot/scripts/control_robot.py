@@ -263,9 +263,7 @@ def get_available_arms(robot):
 
 def loop_to_save_images_in_threads(image_queue, num_threads):
     if num_threads < 1:
-        raise NotImplementedError(
-            "Only `num_threads_per_process>=1` is supported for now, but {num_threads_per_process=} given."
-        )
+        raise NotImplementedError(f"Only `num_threads>=1` is supported for now, but {num_threads=} given.")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = []
@@ -346,7 +344,7 @@ def start_image_writer(num_processes, num_threads):
         threads_pool = concurrent.futures.ThreadPoolExecutor(max_workers=num_threads)
         image_writer["threads_pool"], image_writer["futures"] = threads_pool, futures
     else:
-        # TODO(rcadene): When using num_processes>1, `multiprocessing.manager().Queue()`
+        # TODO(rcadene): When using num_processes>1, `multiprocessing.Manager().Queue()`
         # might be better than `multiprocessing.Queue()`. Source: https://www.geeksforgeeks.org/python-multiprocessing-queue-vs-multiprocessing-manager-queue
         image_queue = multiprocessing.Queue()
         processes_pool = start_image_writer_processes(
@@ -781,12 +779,12 @@ def record(
                     listener.stop()
 
                 if has_camera > 0:
-                    logging.info("Waiting for subprocess writing the images on disk to terminate...")
+                    logging.info("Waiting for image writer to terminate...")
                     stop_image_writer(image_writer, timeout=20)
 
     except Exception as e:
         if has_camera > 0:
-            logging.info("Waiting for subprocess writing the images on disk to terminate...")
+            logging.info("Waiting for image writer to terminate...")
             stop_image_writer(image_writer, timeout=20)
         raise e
 
