@@ -36,8 +36,8 @@ policy:
 
   # Input / output structure.
   n_obs_steps: 1
-  chunk_size: 4
-  n_action_steps: 4
+  chunk_size: 100
+  n_action_steps: 100
   
   input_shapes:
     observation.images.top: [3, 480, 640]  # Video inputs (from video frames)
