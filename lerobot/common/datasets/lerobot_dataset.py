@@ -178,9 +178,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         will only download those episodes (selected by their episode_index). If 'episodes' is None, the whole
         dataset will be downloaded. Thanks to the behavior of snapshot_download, if the files are already present
         in 'local_dir', they won't be downloaded again.
-
-        Note: Currently, if you're running this code offline but you already have the files in 'local_dir',
-        snapshot_download will still fail. This behavior will be fixed in an upcoming update of huggingface_hub.
         """
         # TODO(rcadene, aliberts): implement faster transfer
         # https://huggingface.co/docs/huggingface_hub/en/guides/download#faster-downloads
