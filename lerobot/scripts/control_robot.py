@@ -743,7 +743,7 @@ def record(
             ep_dict["next.done"] = done
 
             ep_path = episodes_dir / f"episode_{episode_index}.pth"
-            print("Saving episode dictionary...")
+            print(f"Saving episode dictionary {episode_index}...")
             torch.save(ep_dict, ep_path)
 
             rec_info = {
