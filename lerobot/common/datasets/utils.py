@@ -263,6 +263,10 @@ def check_timestamps_sync(
 def check_delta_timestamps(
     delta_timestamps: dict[str, list[float]], fps: int, tolerance_s: float, raise_value_error: bool = True
 ) -> bool:
+    """This will check if all the values in delta_timestamps are multiples of 1/fps +/- tolerance.
+    This is to ensure that these delta_timestamps added to any timestamp from a dataset will themselves be
+    actual timestamps from the dataset.
+    """
     outside_tolerance = {}
     for key, delta_ts in delta_timestamps.items():
         abs_delta_ts = torch.abs(torch.tensor(delta_ts))

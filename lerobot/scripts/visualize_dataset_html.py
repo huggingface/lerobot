@@ -171,8 +171,7 @@ def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]
     # get first frame of episode (hack to get video_path of the episode)
     first_frame_idx = dataset.episode_data_index["from"][ep_index].item()
     return [
-        dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"]
-        for key in dataset.video_frame_keys
+        dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"] for key in dataset.camera_keys
     ]
 
 
