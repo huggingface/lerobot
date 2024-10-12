@@ -123,7 +123,6 @@ from lerobot.common.robot_devices.control_robot import (
     record_episode,
     reset_environment,
     sanity_check_dataset_name,
-    say,
     warmup_record,
 )
 from lerobot.common.robot_devices.robots.factory import make_robot
@@ -325,9 +324,7 @@ def replay(
     if not robot.is_connected:
         robot.connect()
 
-    logging.info("Replaying episode")
-    if play_sounds:
-        say("Replaying episode", blocking=True)
+    log_say("Replaying episode", blocking=True)
     for idx in range(from_idx, to_idx):
         start_episode_t = time.perf_counter()
 
