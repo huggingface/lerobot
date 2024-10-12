@@ -28,9 +28,11 @@ from pathlib import Path
 
 import pytest
 
+from lerobot.common.logger import Logger
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils.utils import init_hydra_config
-from lerobot.scripts.control_robot import calibrate, get_available_arms, record, replay, teleoperate
+from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
+from lerobot.scripts.train import make_optimizer_and_scheduler
 from tests.test_robots import make_robot
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, require_robot
 
@@ -69,7 +71,7 @@ def test_calibrate(tmpdir, request, robot_type, mock):
     overrides_calibration_dir = [f"calibration_dir={calibration_dir}"]
 
     robot = make_robot(robot_type, overrides=overrides_calibration_dir, mock=mock)
-    calibrate(robot, arms=get_available_arms(robot))
+    calibrate(robot, arms=robot.available_arms)
     del robot
 
 
@@ -109,12 +111,14 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
 def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
+    tmpdir = Path(tmpdir)
+
     if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = Path(tmpdir) / robot_type
+        calibration_dir = tmpdir / robot_type
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False or for aloha
@@ -123,7 +127,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     env_name = "koch_real"
     policy_name = "act_koch_real"
 
-    root = Path(tmpdir) / "data"
+    root = tmpdir / "data"
     repo_id = "lerobot/debug"
 
     robot = make_robot(robot_type, overrides=overrides, mock=mock)
@@ -170,6 +174,17 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     )
 
     policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.stats)
+    optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+    out_dir = tmpdir / "logger"
+    logger = Logger(cfg, out_dir, wandb_job_name="debug")
+    logger.save_checkpoint(
+        0,
+        policy,
+        optimizer,
+        lr_scheduler,
+        identifier=0,
+    )
+    pretrained_policy_name_or_path = out_dir / "checkpoints/last/pretrained_model"
 
     # In `examples/9_use_aloha.md`, we advise using `num_image_writer_processes=1`
     # during inference, to reach constent fps, so we test this here.
@@ -194,8 +209,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
 
     record(
         robot,
-        policy,
-        cfg,
+        pretrained_policy_name_or_path,
         warmup_time_s=1,
         episode_time_s=1,
         num_episodes=2,
