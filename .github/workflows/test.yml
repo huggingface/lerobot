@@ -47,6 +47,7 @@ jobs:
   #         pipx install poetry && poetry config virtualenvs.in-project true
   #         echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
 
+      # TODO(rcadene, aliberts): python 3.12 seems to be used in the tests, not python 3.10
   #     - name: Set up Python 3.10
   #       uses: actions/setup-python@v5
   #       with:
@@ -79,15 +80,16 @@ jobs:
       - name: Install apt dependencies
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
       - name: Install poetry
         run: |
           pipx install poetry && poetry config virtualenvs.in-project true
           echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+
+      # TODO(rcadene, aliberts): python 3.12 seems to be used in the tests, not python 3.10
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
       - name: Install poetry dependencies
         run: |
@@ -95,7 +97,7 @@ jobs:
 
       - name: Test with pytest
         run: |
-          pytest -sx 'tests/test_control_robot.py::test_record_and_replay_and_policy[koch-True]' -v --cov=./lerobot --durations=0 \
+          pytest tests/test_control_robot.py -v --cov=./lerobot --durations=0 \
             -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
             -W ignore::UserWarning:torch.utils.data.dataloader:558 \
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
