@@ -25,9 +25,11 @@ pytest -sx 'tests/test_control_robot.py::test_teleoperate[aloha-True]'
 
 import multiprocessing
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from lerobot.common.datasets.populate_dataset import add_frame
 from lerobot.common.logger import Logger
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils.utils import init_hydra_config
@@ -222,3 +224,148 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     )
 
     del robot
+
+
+@pytest.mark.parametrize("robot_type, mock", [("koch", True)])
+@require_robot
+def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
+    if mock and robot_type != "aloha":
+        request.getfixturevalue("patch_builtins_input")
+
+        # Create an empty calibration directory to trigger manual calibration
+        # and avoid writing calibration files in user .cache/calibration folder
+        calibration_dir = tmpdir / robot_type
+        overrides = [f"calibration_dir={calibration_dir}"]
+    else:
+        # Use the default .cache/calibration folder when mock=False or for aloha
+        overrides = []
+
+    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    with (
+        patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener,
+        patch("lerobot.common.robot_devices.control_robot.add_frame", wraps=add_frame) as mock_add_frame,
+    ):
+        mock_events = {}
+        mock_events["exit_early"] = True
+        mock_events["rerecord_episode"] = True
+        mock_events["stop_recording"] = False
+        mock_listener.return_value = (None, mock_events)
+
+        root = Path(tmpdir) / "data"
+        repo_id = "lerobot/debug"
+
+        dataset = record(
+            robot,
+            fps=1,
+            root=root,
+            repo_id=repo_id,
+            warmup_time_s=0,
+            episode_time_s=1,
+            num_episodes=1,
+            push_to_hub=False,
+            video=False,
+            display_cameras=False,
+            play_sounds=False,
+        )
+
+        assert not mock_events["rerecord_episode"], "`rerecord_episode` wasn't properly reset to False"
+        assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
+        assert mock_add_frame.call_count == 2, "`add_frame` should have been called 2 times"
+        assert len(dataset) == 1, "`dataset` should contain only 1 frame"
+
+
+@pytest.mark.parametrize("robot_type, mock", [("koch", True)])
+@require_robot
+def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
+        # Create an empty calibration directory to trigger manual calibration
+        # and avoid writing calibration files in user .cache/calibration folder
+        calibration_dir = tmpdir / robot_type
+        overrides = [f"calibration_dir={calibration_dir}"]
+    else:
+        # Use the default .cache/calibration folder when mock=False or for aloha
+        overrides = []
+
+    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    with (
+        patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener,
+        patch("lerobot.common.robot_devices.control_robot.add_frame", wraps=add_frame) as mock_add_frame,
+    ):
+        mock_events = {}
+        mock_events["exit_early"] = True
+        mock_events["rerecord_episode"] = False
+        mock_events["stop_recording"] = False
+        mock_listener.return_value = (None, mock_events)
+
+        root = Path(tmpdir) / "data"
+        repo_id = "lerobot/debug"
+
+        dataset = record(
+            robot,
+            fps=2,
+            root=root,
+            repo_id=repo_id,
+            warmup_time_s=0,
+            episode_time_s=1,
+            num_episodes=1,
+            push_to_hub=False,
+            video=False,
+            display_cameras=False,
+            play_sounds=False,
+        )
+
+        assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
+        assert mock_add_frame.call_count == 1, "`add_frame` should have been called 1 time"
+        assert len(dataset) == 1, "`dataset` should contain only 1 frame"
+
+
+@pytest.mark.parametrize(
+    "robot_type, mock, num_image_writer_processes", [("koch", True, 0), ("koch", True, 1)]
+)
+@require_robot
+def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num_image_writer_processes):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
+        # Create an empty calibration directory to trigger manual calibration
+        # and avoid writing calibration files in user .cache/calibration folder
+        calibration_dir = tmpdir / robot_type
+        overrides = [f"calibration_dir={calibration_dir}"]
+    else:
+        # Use the default .cache/calibration folder when mock=False or for aloha
+        overrides = []
+
+    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    with (
+        patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener,
+        patch("lerobot.common.robot_devices.control_robot.add_frame", wraps=add_frame) as mock_add_frame,
+    ):
+        mock_events = {}
+        mock_events["exit_early"] = True
+        mock_events["rerecord_episode"] = False
+        mock_events["stop_recording"] = True
+        mock_listener.return_value = (None, mock_events)
+
+        root = Path(tmpdir) / "data"
+        repo_id = "lerobot/debug"
+
+        dataset = record(
+            robot,
+            fps=1,
+            root=root,
+            repo_id=repo_id,
+            warmup_time_s=0,
+            episode_time_s=1,
+            num_episodes=2,
+            push_to_hub=False,
+            video=False,
+            display_cameras=False,
+            play_sounds=False,
+            num_image_writer_processes=num_image_writer_processes,
+        )
+
+        assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
+        assert mock_add_frame.call_count == 1, "`add_frame` should have been called 2 times"
+        assert len(dataset) == 1, "`dataset` should contain only 1 frame"

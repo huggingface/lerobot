@@ -202,9 +202,9 @@ def init_dataset(
     if rec_info_path.exists():
         with open(rec_info_path) as f:
             rec_info = json.load(f)
-        episode_index = rec_info["last_episode_index"] + 1
+        num_episodes = rec_info["last_episode_index"] + 1
     else:
-        episode_index = 0
+        num_episodes = 0
 
     dataset = {
         "repo_id": repo_id,
@@ -214,7 +214,7 @@ def init_dataset(
         "fps": fps,
         "video": video,
         "rec_info_path": rec_info_path,
-        "current_episode_index": episode_index,
+        "num_episodes": num_episodes,
     }
 
     if write_images:
@@ -249,7 +249,7 @@ def add_frame(dataset, observation, action):
         dataset["current_frame_index"] = 0
 
     ep_dict = dataset["current_episode"]
-    episode_index = dataset["current_episode_index"]
+    episode_index = dataset["num_episodes"]
     frame_index = dataset["current_frame_index"]
     videos_dir = dataset["videos_dir"]
     video = dataset["video"]
@@ -300,15 +300,19 @@ def add_frame(dataset, observation, action):
     dataset["current_frame_index"] += 1
 
 
-def delete_episode(dataset):
+def delete_current_episode(dataset):
     del dataset["current_episode"]
     del dataset["current_frame_index"]
 
-    # TODO(rcadene): remove images and videos, etc.
+    # delete temporary images
+    episode_index = dataset["num_episodes"]
+    videos_dir = dataset["videos_dir"]
+    for tmp_imgs_dir in videos_dir.glob(f"*_episode_{episode_index:06d}"):
+        shutil.rmtree(tmp_imgs_dir)
 
 
-def save_episode(dataset):
-    episode_index = dataset["current_episode_index"]
+def save_current_episode(dataset):
+    episode_index = dataset["num_episodes"]
     ep_dict = dataset["current_episode"]
     episodes_dir = dataset["episodes_dir"]
     rec_info_path = dataset["rec_info_path"]
@@ -337,14 +341,13 @@ def save_episode(dataset):
     # force re-initialization of episode dictionnary during add_frame
     del dataset["current_episode"]
 
-    dataset["current_episode_index"] += 1
+    dataset["num_episodes"] += 1
 
 
-def encode_videos(dataset, play_sounds):
+def encode_videos(dataset, image_keys, play_sounds):
     log_say("Encoding videos", play_sounds)
 
-    num_episodes = dataset["current_episode_index"]
-    image_keys = dataset["image_keys"]
+    num_episodes = dataset["num_episodes"]
     videos_dir = dataset["videos_dir"]
     local_dir = dataset["local_dir"]
     fps = dataset["fps"]
@@ -368,7 +371,7 @@ def encode_videos(dataset, play_sounds):
 def from_dataset_to_lerobot_dataset(dataset, play_sounds):
     log_say("Consolidate episodes", play_sounds)
 
-    num_episodes = dataset["current_episode_index"]
+    num_episodes = dataset["num_episodes"]
     episodes_dir = dataset["episodes_dir"]
     videos_dir = dataset["videos_dir"]
     video = dataset["video"]
@@ -381,6 +384,10 @@ def from_dataset_to_lerobot_dataset(dataset, play_sounds):
         ep_dict = torch.load(ep_path)
         ep_dicts.append(ep_dict)
     data_dict = concatenate_episodes(ep_dicts)
+
+    if video:
+        image_keys = [key for key in data_dict if "image" in key]
+        encode_videos(dataset, image_keys, play_sounds)
 
     total_frames = data_dict["frame_index"].shape[0]
     data_dict["index"] = torch.arange(0, total_frames, 1)
@@ -443,15 +450,10 @@ def push_lerobot_dataset_to_hub(lerobot_dataset, tags):
 
 
 def create_lerobot_dataset(dataset, run_compute_stats, push_to_hub, tags, play_sounds):
-    video = dataset["video"]
-
     if "image_writer" in dataset:
         logging.info("Waiting for image writer to terminate...")
         image_writer = dataset["image_writer"]
         stop_image_writer(image_writer, timeout=20)
-
-    if video:
-        encode_videos(dataset, play_sounds)
 
     lerobot_dataset = from_dataset_to_lerobot_dataset(dataset, play_sounds)
 

@@ -99,7 +99,6 @@ python lerobot/scripts/control_robot.py record \
 """
 
 import argparse
-import logging
 import time
 from pathlib import Path
 from typing import List
@@ -108,21 +107,20 @@ from typing import List
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.populate_dataset import (
     create_lerobot_dataset,
-    delete_episode,
+    delete_current_episode,
     init_dataset,
-    save_episode,
+    save_current_episode,
 )
 from lerobot.common.robot_devices.control_robot import (
-    done_recording,
     has_method,
     init_keyboard_listener,
     init_policy,
-    is_headless,
     log_control_info,
     log_say,
     record_episode,
     reset_environment,
     sanity_check_dataset_name,
+    stop_recording,
     warmup_record,
 )
 from lerobot.common.robot_devices.robots.factory import make_robot
@@ -229,9 +227,6 @@ def record(
     device = None
     use_amp = None
 
-    if not robot.is_connected:
-        robot.connect()
-
     # Load pretrained policy
     if pretrained_policy_name_or_path is not None:
         policy, fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides, fps)
@@ -249,58 +244,72 @@ def record(
         num_image_writer_threads=num_image_writer_threads_per_camera * robot.num_cameras,
     )
 
-    if is_headless():
-        logging.warning(
-            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
-        )
-    else:
-        listener, events = init_keyboard_listener()
+    if not robot.is_connected:
+        robot.connect()
 
-    # Execute a few seconds without recording data to:
+    listener, events = init_keyboard_listener()
+
+    # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
-    warmup_record(robot, enable_teleoperation, warmup_time_s, display_cameras, play_sounds, fps)
+    warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, play_sounds, fps)
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
     while True:
-        episode_index = dataset["current_episode_index"]
-        if episode_index >= num_episodes:
+        if dataset["num_episodes"] >= num_episodes:
             break
 
+        episode_index = dataset["num_episodes"]
+        log_say(f"Recording episode {episode_index}", play_sounds)
         record_episode(
             dataset=dataset,
             robot=robot,
-            episode_index=episode_index,
             events=events,
             episode_time_s=episode_time_s,
             display_cameras=display_cameras,
-            play_sounds=play_sounds,
             policy=policy,
             device=device,
             use_amp=use_amp,
             fps=fps,
         )
 
-        # Do not reset for the last episode to be recorded
-        if episode_index < num_episodes - 1:
-            reset_environment(robot, events, reset_time_s, play_sounds)
-
-        if events is not None and events["rerecord_episode"]:
-            events["rerecord_episode"] = False
-            delete_episode(dataset)
-            continue
-
-        save_episode(dataset)
-
-        if events is not None and events["exit_early"]:
-            num_episodes = episode_index
+        # In case stop recording is requested during `record_episode`
+        if events is not None and events["stop_recording"]:
+            save_current_episode(dataset)
             break
 
-    done_recording(robot, listener, display_cameras, play_sounds)
+        # Execute a few seconds without recording to give time to manually reset the environment
+        # Current code logic doesn't allow to teleoperate during this time.
+        # TODO(rcadene): add an option to enable teleoperation during reset
+        # Skip reset for the last episode to be recorded
+        if episode_index < num_episodes - 1:
+            log_say("Reset the environment", play_sounds)
+            reset_environment(robot, events, reset_time_s)
+
+        # In case stop recording is requested during `reset_environment`
+        if events is not None and events["stop_recording"]:
+            save_current_episode(dataset)
+            break
+
+        if events is not None and events["rerecord_episode"]:
+            log_say("Re-record episode", play_sounds)
+            events["rerecord_episode"] = False
+            events["exit_early"] = False
+            delete_current_episode(dataset)
+            # Force reset
+            log_say("Reset the environment", play_sounds)
+            reset_environment(robot, events, reset_time_s)
+            continue
+
+        # Increment by one dataset["current_episode_index"]
+        save_current_episode(dataset)
+
+    log_say("Stop recording", play_sounds, blocking=True)
+    stop_recording(robot, listener, display_cameras)
 
     lerobot_dataset = create_lerobot_dataset(dataset, run_compute_stats, push_to_hub, tags, play_sounds)
 

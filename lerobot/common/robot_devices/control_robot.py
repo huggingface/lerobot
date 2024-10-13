@@ -116,9 +116,6 @@ def predict_action(observation, policy, device, use_amp):
 
 
 def init_keyboard_listener():
-    # Only import pynput if not in a headless environment
-    from pynput import keyboard
-
     # Allow to exit early while recording an episode or resetting the environment,
     # by tapping the right arrow key '->'. This might require a sudo permission
     # to allow your terminal to monitor keyboard events.
@@ -126,6 +123,16 @@ def init_keyboard_listener():
     events["exit_early"] = False
     events["rerecord_episode"] = False
     events["stop_recording"] = False
+
+    if is_headless():
+        logging.warning(
+            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
+        )
+        listener = None
+        return listener, events
+
+    # Only import pynput if not in a headless environment
+    from pynput import keyboard
 
     def on_press(key):
         try:
@@ -175,7 +182,8 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides, fps):
     return policy, fps, device, use_amp
 
 
-def warmup_record(robot, enable_teloperation, warmup_time_s, display_cameras, play_sounds, fps):
+def warmup_record(robot, events, enable_teloperation, warmup_time_s, display_cameras, play_sounds, fps):
+    # TODO(rcadene): refactor warmup_record and reset_environment
     timestamp = 0
     start_warmup_t = time.perf_counter()
 
@@ -203,24 +211,23 @@ def warmup_record(robot, enable_teloperation, warmup_time_s, display_cameras, pl
         log_control_info(robot, dt_s, fps=fps)
 
         timestamp = time.perf_counter() - start_warmup_t
+        if events is not None and events["exit_early"]:
+            events["exit_early"] = False
+            break
 
 
 @safe_stop_image_writer
 def record_episode(
     dataset,
     robot,
-    episode_index,
     events,
     episode_time_s,
     display_cameras,
-    play_sounds,
     policy,
     device,
     use_amp,
     fps,
 ):
-    log_say(f"Recording episode {episode_index}", play_sounds)
-
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < episode_time_s:
@@ -258,9 +265,8 @@ def record_episode(
             break
 
 
-def reset_environment(robot, events, reset_time_s, play_sounds):
-    log_say("Reset the environment", play_sounds)
-
+def reset_environment(robot, events, reset_time_s):
+    # TODO(rcadene): refactor warmup_record and reset_environment
     # TODO(alibets): allow for teleop during reset
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
@@ -279,9 +285,7 @@ def reset_environment(robot, events, reset_time_s, play_sounds):
                 break
 
 
-def done_recording(robot, listener, display_cameras, play_sounds):
-    log_say("Done recording", play_sounds, blocking=True)
-
+def stop_recording(robot, listener, display_cameras):
     robot.disconnect()
 
     if not is_headless():
