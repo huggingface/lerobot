@@ -29,7 +29,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lerobot.common.datasets.populate_dataset import add_frame
+from lerobot.common.datasets.populate_dataset import add_frame, init_dataset
 from lerobot.common.logger import Logger
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils.utils import init_hydra_config
@@ -131,13 +131,14 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
 
     root = tmpdir / "data"
     repo_id = "lerobot/debug"
+    eval_repo_id = "lerobot/eval_debug"
 
     robot = make_robot(robot_type, overrides=overrides, mock=mock)
     dataset = record(
         robot,
-        fps=30,
-        root=root,
-        repo_id=repo_id,
+        root,
+        repo_id,
+        fps=1,
         warmup_time_s=1,
         episode_time_s=1,
         reset_time_s=1,
@@ -149,8 +150,10 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         display_cameras=False,
         play_sounds=False,
     )
+    assert dataset.num_episodes == 2
+    assert len(dataset) == 2
 
-    replay(robot, episode=0, fps=30, root=root, repo_id=repo_id, play_sounds=False)
+    replay(robot, episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False)
 
     # TODO(rcadene, aliberts): rethink this design
     if robot_type == "aloha":
@@ -170,6 +173,9 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
 
     if robot_type == "koch_bimanual":
         overrides += ["env.state_dim=12", "env.action_dim=12"]
+
+    overrides += ["wandb.enable=false"]
+    overrides += ["env.fps=1"]
 
     cfg = init_hydra_config(
         DEFAULT_CONFIG_PATH,
@@ -212,6 +218,8 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
 
     record(
         robot,
+        root,
+        eval_repo_id,
         pretrained_policy_name_or_path,
         warmup_time_s=1,
         episode_time_s=1,
@@ -225,7 +233,73 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         num_image_writer_processes=num_image_writer_processes,
     )
 
+    assert dataset.num_episodes == 2
+    assert len(dataset) == 2
+
     del robot
+
+
+@pytest.mark.parametrize("robot_type, mock", [("koch", True)])
+@require_robot
+def test_resume_record(tmpdir, request, robot_type, mock):
+    if mock and robot_type != "aloha":
+        request.getfixturevalue("patch_builtins_input")
+
+        # Create an empty calibration directory to trigger manual calibration
+        # and avoid writing calibration files in user .cache/calibration folder
+        calibration_dir = tmpdir / robot_type
+        overrides = [f"calibration_dir={calibration_dir}"]
+    else:
+        # Use the default .cache/calibration folder when mock=False or for aloha
+        overrides = []
+
+    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+
+    root = Path(tmpdir) / "data"
+    repo_id = "lerobot/debug"
+
+    dataset = record(
+        robot,
+        root,
+        repo_id,
+        fps=1,
+        warmup_time_s=0,
+        episode_time_s=1,
+        num_episodes=1,
+        push_to_hub=False,
+        video=False,
+        display_cameras=False,
+        play_sounds=False,
+        run_compute_stats=False,
+    )
+    assert len(dataset) == 1, "`dataset` should contain only 1 frame"
+
+    init_dataset_return_value = {}
+
+    def wrapped_init_dataset(*args, **kwargs):
+        nonlocal init_dataset_return_value
+        init_dataset_return_value = init_dataset(*args, **kwargs)
+        return init_dataset_return_value
+
+    with patch("lerobot.scripts.control_robot.init_dataset", wraps=wrapped_init_dataset):
+        dataset = record(
+            robot,
+            root,
+            repo_id,
+            fps=1,
+            warmup_time_s=0,
+            episode_time_s=1,
+            num_episodes=2,
+            push_to_hub=False,
+            video=False,
+            display_cameras=False,
+            play_sounds=False,
+            run_compute_stats=False,
+        )
+        assert len(dataset) == 2, "`dataset` should contain only 1 frame"
+        assert (
+            init_dataset_return_value["num_episodes"] == 2
+        ), "`init_dataset` should load the previous episode"
 
 
 @pytest.mark.parametrize("robot_type, mock", [("koch", True)])
@@ -258,9 +332,9 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
 
         dataset = record(
             robot,
+            root,
+            repo_id,
             fps=1,
-            root=root,
-            repo_id=repo_id,
             warmup_time_s=0,
             episode_time_s=1,
             num_episodes=1,
@@ -268,6 +342,7 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
             video=False,
             display_cameras=False,
             play_sounds=False,
+            run_compute_stats=False,
         )
 
         assert not mock_events["rerecord_episode"], "`rerecord_episode` wasn't properly reset to False"
@@ -316,6 +391,7 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
             video=False,
             display_cameras=False,
             play_sounds=False,
+            run_compute_stats=False,
         )
 
         assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
@@ -355,9 +431,9 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
 
         dataset = record(
             robot,
+            root,
+            repo_id,
             fps=1,
-            root=root,
-            repo_id=repo_id,
             warmup_time_s=0,
             episode_time_s=1,
             num_episodes=2,
@@ -365,6 +441,7 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
             video=False,
             display_cameras=False,
             play_sounds=False,
+            run_compute_stats=False,
             num_image_writer_processes=num_image_writer_processes,
         )
 

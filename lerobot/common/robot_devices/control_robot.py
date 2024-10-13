@@ -7,6 +7,7 @@ import logging
 import time
 import traceback
 from contextlib import nullcontext
+from copy import copy
 from functools import cache
 
 import cv2
@@ -90,6 +91,7 @@ def has_method(_object: object, method_name: str):
 
 
 def predict_action(observation, policy, device, use_amp):
+    observation = copy(observation)
     with (
         torch.inference_mode(),
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
@@ -297,7 +299,9 @@ def stop_recording(robot, listener, display_cameras):
 
 def sanity_check_dataset_name(repo_id, policy):
     _, dataset_name = repo_id.split("/")
-    if dataset_name.startswith("eval_") and policy is None:
+    # either repo_id doesnt start with "eval_" and there is no policy
+    # or repo_id starts with "eval_" and there is a policy
+    if dataset_name.startswith("eval_") == (policy is None):
         raise ValueError(
             f"Your dataset name begins by 'eval_' ({dataset_name}) but no policy is provided ({policy})."
         )

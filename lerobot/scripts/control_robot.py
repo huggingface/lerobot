@@ -201,11 +201,11 @@ def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | Non
 @safe_disconnect
 def record(
     robot: Robot,
+    root: str,
+    repo_id: str,
     pretrained_policy_name_or_path: str | None = None,
     policy_overrides: List[str] | None = None,
     fps: int | None = None,
-    root="data",
-    repo_id="lerobot/debug",
     warmup_time_s=2,
     episode_time_s=10,
     reset_time_s=5,

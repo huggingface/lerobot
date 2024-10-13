@@ -296,7 +296,6 @@ def add_frame(dataset, observation, action):
 
         ep_dict[key].append(frame_info)
 
-    dataset["image_keys"] = img_keys  # used for video generation
     dataset["current_frame_index"] += 1
 
 
@@ -388,9 +387,6 @@ def from_dataset_to_lerobot_dataset(dataset, play_sounds):
     if video:
         image_keys = [key for key in data_dict if "image" in key]
         encode_videos(dataset, image_keys, play_sounds)
-
-    total_frames = data_dict["frame_index"].shape[0]
-    data_dict["index"] = torch.arange(0, total_frames, 1)
 
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
