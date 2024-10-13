@@ -93,6 +93,10 @@ jobs:
         run: |
           poetry install --extras "test"
 
+      - name: Display python
+        run: |
+          python --version
+
       - name: Test with pytest
         run: |
           pytest 'tests/test_control_robot.py::test_record_and_replay_and_policy[koch-True]' -v --cov=./lerobot --durations=0 \
