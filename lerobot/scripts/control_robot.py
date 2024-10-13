@@ -324,7 +324,7 @@ def replay(
     if not robot.is_connected:
         robot.connect()
 
-    log_say("Replaying episode", blocking=True)
+    log_say("Replaying episode", play_sounds, blocking=True)
     for idx in range(from_idx, to_idx):
         start_episode_t = time.perf_counter()
 
