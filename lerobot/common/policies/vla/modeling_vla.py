@@ -6,10 +6,6 @@ import torch
 import torch.nn.functional as F
 from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
-from transformers.cache_utils import Cache, StaticCache
-from transformers.generation import GenerationMixin
-from transformers.modeling_outputs import BaseModelOutputWithPast, ModelOutput
-from transformers.modeling_utils import PreTrainedModel
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.vla.configuration_vla import VLAConfig
@@ -56,7 +52,7 @@ class VLAPolicy(
         )
         
         self.language_model = LlavaOnevisionForConditionalGeneration.from_pretrained("llava-hf/llava-onevision-qwen2-7b-ov-hf", torch_dtype=torch.float16, device_map = 'cuda')
-        self.device= self.language_model.device
+        self.device = self.language_model.device
         self.model = VLA(config).to(self.device)
         self.processor = AutoProcessor.from_pretrained("llava-hf/llava-onevision-qwen2-7b-ov-hf")# Updated Qwen2VL without loss and lm_head
         
@@ -112,21 +108,26 @@ class VLAPolicy(
         
         if len(self.expected_image_keys) > 0:
             batch = dict(batch)  
-            batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4).to(self.device)
+            #batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4).to(self.device
+            batch["observation.images"] = [img for k in self.expected_image_keys for img in batch[k]]
+            #torch.cat([batch[k] for k in self.expected_image_keys], dim=0).to(self.device)
+
+            breakpoint()
         
         batch["prompt"] = self.config.prompt
  
         processed_inputs = self.processor(
-            text=batch["prompt"], videos=list(batch["observation.images"]), return_tensors="pt", padding=True, do_rescale=False
+            text=batch["prompt"], images=batch["observation.images"], return_tensors="pt", padding=True, do_rescale=False
         ).to(self.device)
-        processed_inputs["pixel_values_videos"] = processed_inputs["pixel_values_videos"].to(self.device).to(torch.float16)
-     
+        processed_inputs["pixel_values"] = processed_inputs["pixel_values"].to(self.device).to(torch.float16)
+        breakpoint()
         # Pass inputs through Llava and VLA
         llava_output = self.language_model(
             **processed_inputs,
             return_dict=True,
             output_hidden_states=True
         )
+        breakpoint()
         hidden_states = llava_output.hidden_states[-1]
         hidden_states = hidden_states[:, -4:, :]
         #hidden_states.to(dtype=torch.float16).to(self.device)
@@ -192,7 +193,6 @@ class ActionDecoderLayer(nn.Module):
         if self.pre_norm:
             x = self.norm1(x)
         q = k = self.maybe_add_pos_embed(x, decoder_pos_embed)
-        breakpoint()
 
         # Self-attention
         x = self.self_attn(q, k, value=x)[0]  # select just the output, not attention weights
