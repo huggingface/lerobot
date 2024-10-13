@@ -200,6 +200,20 @@ def to_hf_dataset(data_dict, video) -> Dataset:
     features["next.done"] = Value(dtype="bool", id=None)
     features["index"] = Value(dtype="int64", id=None)
 
+    # for key in data_dict:
+    #     if isinstance(data_dict[key], list):
+    #         print(key, len(data_dict[key]))
+    #     elif isinstance(data_dict[key], torch.Tensor):
+    #         print(key, data_dict[key].shape)
+    #     else:
+    #         print(key, data_dict[key])
+
+    data_dict["episode_index"] = data_dict["episode_index"].tolist()
+    data_dict["frame_index"] = data_dict["frame_index"].tolist()
+    data_dict["timestamp"] = data_dict["timestamp"].tolist()
+    data_dict["next.done"] = data_dict["next.done"].tolist()
+    data_dict["index"] = data_dict["index"].tolist()
+
     hf_dataset = Dataset.from_dict(data_dict, features=Features(features))
     hf_dataset.set_transform(hf_transform_to_torch)
     return hf_dataset
