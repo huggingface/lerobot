@@ -279,8 +279,9 @@ def control_loop(
                 cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
             cv2.waitKey(1)
 
-        dt_s = time.perf_counter() - start_loop_t
-        busy_wait(1 / fps - dt_s)
+        if fps is not None:
+            dt_s = time.perf_counter() - start_loop_t
+            busy_wait(1 / fps - dt_s)
 
         dt_s = time.perf_counter() - start_loop_t
         log_control_info(robot, dt_s, fps=fps)
