@@ -319,7 +319,7 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
     robot = make_robot(robot_type, overrides=overrides, mock=mock)
     with (
         patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener,
-        patch("lerobot.common.robot_devices.control_robot.add_frame", wraps=add_frame) as mock_add_frame,
+        patch("lerobot.common.robot_devices.control_utils.add_frame", wraps=add_frame) as mock_add_frame,
     ):
         mock_events = {}
         mock_events["exit_early"] = True
@@ -368,7 +368,7 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
     robot = make_robot(robot_type, overrides=overrides, mock=mock)
     with (
         patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener,
-        patch("lerobot.common.robot_devices.control_robot.add_frame", wraps=add_frame) as mock_add_frame,
+        patch("lerobot.common.robot_devices.control_utils.add_frame", wraps=add_frame) as mock_add_frame,
     ):
         mock_events = {}
         mock_events["exit_early"] = True
@@ -418,7 +418,7 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
     robot = make_robot(robot_type, overrides=overrides, mock=mock)
     with (
         patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener,
-        patch("lerobot.common.robot_devices.control_robot.add_frame", wraps=add_frame) as mock_add_frame,
+        patch("lerobot.common.robot_devices.control_utils.add_frame", wraps=add_frame) as mock_add_frame,
     ):
         mock_events = {}
         mock_events["exit_early"] = True
