@@ -117,7 +117,6 @@ from lerobot.common.robot_devices.control_utils import (
     init_keyboard_listener,
     init_policy,
     log_control_info,
-    log_say,
     record_episode,
     reset_environment,
     sanity_check_dataset_name,
@@ -127,7 +126,7 @@ from lerobot.common.robot_devices.control_utils import (
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
-from lerobot.common.utils.utils import init_hydra_config, init_logging, none_or_int
+from lerobot.common.utils.utils import init_hydra_config, init_logging, log_say, none_or_int
 
 ########################################################################################
 # Control modes
