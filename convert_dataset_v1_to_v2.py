@@ -393,8 +393,8 @@ def convert_dataset(
     tasks_col: Path | None = None,
     robot_config: dict | None = None,
 ):
-    v1 = get_hub_safe_version(repo_id, V16)
-    v1x_dir = local_dir / v1 / repo_id
+    v1 = get_hub_safe_version(repo_id, V16, enforce_v2=False)
+    v1x_dir = local_dir / V16 / repo_id
     v20_dir = local_dir / V20 / repo_id
     v1x_dir.mkdir(parents=True, exist_ok=True)
     v20_dir.mkdir(parents=True, exist_ok=True)
@@ -493,10 +493,10 @@ def convert_dataset(
     convert_stats_to_json(v1x_dir / "meta_data", v20_dir / "meta")
 
     #### TODO: delete
-    # repo_id = f"aliberts/{repo_id.split('/')[1]}"
+    repo_id = f"aliberts/{repo_id.split('/')[1]}"
     # if hub_api.repo_exists(repo_id=repo_id, repo_type="dataset"):
     #     hub_api.delete_repo(repo_id=repo_id, repo_type="dataset")
-    # hub_api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
+    hub_api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
     ####
 
     with contextlib.suppress(EntryNotFoundError):
