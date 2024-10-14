@@ -19,7 +19,7 @@ from lerobot.common.datasets.populate_dataset import add_frame, safe_stop_image_
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
-from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, log_say, set_global_seed
+from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 
 
@@ -184,44 +184,27 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides, fps):
     return policy, fps, device, use_amp
 
 
-def warmup_record(robot, events, enable_teloperation, warmup_time_s, display_cameras, play_sounds, fps):
-    # TODO(rcadene): refactor warmup_record and reset_environment
-    timestamp = 0
-    start_warmup_t = time.perf_counter()
-
-    if warmup_time_s > 0:
-        log_say("Warming up (no data recording)", play_sounds)
-
-    while timestamp < warmup_time_s:
-        start_loop_t = time.perf_counter()
-
-        if enable_teloperation:
-            observation, _ = robot.teleop_step(record_data=True)
-        else:
-            observation = robot.capture_observation()
-
-        if display_cameras and not is_headless():
-            image_keys = [key for key in observation if "image" in key]
-            for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
-
-        dt_s = time.perf_counter() - start_loop_t
-        busy_wait(1 / fps - dt_s)
-
-        dt_s = time.perf_counter() - start_loop_t
-        log_control_info(robot, dt_s, fps=fps)
-
-        timestamp = time.perf_counter() - start_warmup_t
-        if events is not None and events["exit_early"]:
-            events["exit_early"] = False
-            break
-
-
-@safe_stop_image_writer
-def record_episode(
-    dataset,
+def warmup_record(
     robot,
+    events,
+    enable_teloperation,
+    warmup_time_s,
+    display_cameras,
+    fps,
+):
+    control_loop(
+        robot=robot,
+        control_time_s=warmup_time_s,
+        display_cameras=display_cameras,
+        events=events,
+        fps=fps,
+        teleoperate=enable_teloperation,
+    )
+
+
+def record_episode(
+    robot,
+    dataset,
     events,
     episode_time_s,
     display_cameras,
@@ -230,24 +213,65 @@ def record_episode(
     use_amp,
     fps,
 ):
+    control_loop(
+        robot=robot,
+        control_time_s=episode_time_s,
+        display_cameras=display_cameras,
+        dataset=dataset,
+        events=events,
+        policy=policy,
+        device=device,
+        use_amp=use_amp,
+        fps=fps,
+        teleoperate=policy is None,
+    )
+
+
+@safe_stop_image_writer
+def control_loop(
+    robot,
+    control_time_s,
+    teleoperate=False,
+    display_cameras=False,
+    dataset=None,
+    events=None,
+    policy=None,
+    device=None,
+    use_amp=None,
+    fps=None,
+):
+    # TODO(rcadene): Add option to record logs
+    if not robot.is_connected:
+        robot.connect()
+
+    if events is None:
+        events = {}
+
+    if teleoperate and policy is not None:
+        raise ValueError("When `teleoperate` is True, `policy` should be None.")
+
+    if dataset is not None and fps is not None and dataset["fps"] != fps:
+        raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
+
     timestamp = 0
     start_episode_t = time.perf_counter()
-    while timestamp < episode_time_s:
+    while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
-        if policy is None:
+        if teleoperate:
             observation, action = robot.teleop_step(record_data=True)
         else:
             observation = robot.capture_observation()
 
-            pred_action = predict_action(observation, policy, device, use_amp)
+            if policy is not None:
+                pred_action = predict_action(observation, policy, device, use_amp)
+                # Action can eventually be clipped using `max_relative_target`,
+                # so action actually sent is saved in the dataset.
+                action = robot.send_action(pred_action)
+                action = {"action": action}
 
-            # Action can eventually be clipped using `max_relative_target`,
-            # so action actually sent is saved in the dataset.
-            action = robot.send_action(pred_action)
-            action = {"action": action}
-
-        add_frame(dataset, observation, action)
+        if dataset is not None:
+            add_frame(dataset, observation, action)
 
         if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]
@@ -262,7 +286,7 @@ def record_episode(
         log_control_info(robot, dt_s, fps=fps)
 
         timestamp = time.perf_counter() - start_episode_t
-        if events is not None and events["exit_early"]:
+        if events["exit_early"]:
             events["exit_early"] = False
             break
 
@@ -282,7 +306,7 @@ def reset_environment(robot, events, reset_time_s):
             time.sleep(1)
             timestamp = time.perf_counter() - start_vencod_t
             pbar.update(1)
-            if events is not None and events["exit_early"]:
+            if events["exit_early"]:
                 events["exit_early"] = False
                 break
 

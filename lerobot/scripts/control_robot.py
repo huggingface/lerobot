@@ -111,7 +111,8 @@ from lerobot.common.datasets.populate_dataset import (
     init_dataset,
     save_current_episode,
 )
-from lerobot.common.robot_devices.control_robot import (
+from lerobot.common.robot_devices.control_utils import (
+    control_loop,
     has_method,
     init_keyboard_listener,
     init_policy,
@@ -177,25 +178,16 @@ def calibrate(robot: Robot, arms: list[str] | None):
 
 
 @safe_disconnect
-def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | None = None):
-    # TODO(rcadene): Add option to record logs
-    if not robot.is_connected:
-        robot.connect()
-
-    start_teleop_t = time.perf_counter()
-    while True:
-        start_loop_t = time.perf_counter()
-        robot.teleop_step()
-
-        if fps is not None:
-            dt_s = time.perf_counter() - start_loop_t
-            busy_wait(1 / fps - dt_s)
-
-        dt_s = time.perf_counter() - start_loop_t
-        log_control_info(robot, dt_s, fps=fps)
-
-        if teleop_time_s is not None and time.perf_counter() - start_teleop_t > teleop_time_s:
-            break
+def teleoperate(
+    robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
+):
+    control_loop(
+        robot,
+        control_time_s=teleop_time_s,
+        fps=fps,
+        teleoperate=True,
+        display_cameras=display_cameras,
+    )
 
 
 @safe_disconnect
@@ -254,7 +246,8 @@ def record(
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
-    warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, play_sounds, fps)
+    log_say("Warmup record", play_sounds)
+    warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
@@ -277,32 +270,21 @@ def record(
             fps=fps,
         )
 
-        # In case stop recording is requested during `record_episode`
-        if events is not None and events["stop_recording"]:
-            save_current_episode(dataset)
-            break
-
         # Execute a few seconds without recording to give time to manually reset the environment
         # Current code logic doesn't allow to teleoperate during this time.
         # TODO(rcadene): add an option to enable teleoperation during reset
         # Skip reset for the last episode to be recorded
-        if episode_index < num_episodes - 1:
+        if not events["stop_recording"] and (
+            (episode_index < num_episodes - 1) or events["rerecord_episode"]
+        ):
             log_say("Reset the environment", play_sounds)
             reset_environment(robot, events, reset_time_s)
 
-        # In case stop recording is requested during `reset_environment`
-        if events is not None and events["stop_recording"]:
-            save_current_episode(dataset)
-            break
-
-        if events is not None and events["rerecord_episode"]:
+        if events["rerecord_episode"]:
             log_say("Re-record episode", play_sounds)
             events["rerecord_episode"] = False
             events["exit_early"] = False
             delete_current_episode(dataset)
-            # Force reset
-            log_say("Reset the environment", play_sounds)
-            reset_environment(robot, events, reset_time_s)
             continue
 
         # Increment by one dataset["current_episode_index"]
@@ -320,6 +302,7 @@ def record(
 def replay(
     robot: Robot, episode: int, fps: int | None = None, root="data", repo_id="lerobot/debug", play_sounds=True
 ):
+    # TODO(rcadene, aliberts): refactor with control_loop, once `dataset` is an instance of LeRobotDataset
     # TODO(rcadene): Add option to record logs
     local_dir = Path(root) / repo_id
     if not local_dir.exists():
@@ -377,6 +360,12 @@ if __name__ == "__main__":
     parser_teleop = subparsers.add_parser("teleoperate", parents=[base_parser])
     parser_teleop.add_argument(
         "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
+    )
+    parser_teleop.add_argument(
+        "--display-cameras",
+        type=int,
+        default=1,
+        help="Display all cameras on screen (set to 1 to display or 0).",
     )
 
     parser_record = subparsers.add_parser("record", parents=[base_parser])
