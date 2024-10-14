@@ -289,6 +289,9 @@ def record(
         # Increment by one dataset["current_episode_index"]
         save_current_episode(dataset)
 
+        if events["stop_recording"]:
+            break
+
     log_say("Stop recording", play_sounds, blocking=True)
     stop_recording(robot, listener, display_cameras)
 

@@ -446,5 +446,5 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
         )
 
         assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
-        assert mock_add_frame.call_count == 1, "`add_frame` should have been called 2 times"
+        assert mock_add_frame.call_count == 1, "`add_frame` should have been called 1 time"
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"

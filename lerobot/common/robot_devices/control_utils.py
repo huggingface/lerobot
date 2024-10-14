@@ -316,7 +316,8 @@ def stop_recording(robot, listener, display_cameras):
     robot.disconnect()
 
     if not is_headless():
-        listener.stop()
+        if listener is not None:
+            listener.stop()
 
         if display_cameras:
             cv2.destroyAllWindows()
