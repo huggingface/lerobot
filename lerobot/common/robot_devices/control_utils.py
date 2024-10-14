@@ -245,7 +245,7 @@ def control_loop(
         robot.connect()
 
     if events is None:
-        events = {}
+        events = {"exit_early": False}
 
     if teleoperate and policy is not None:
         raise ValueError("When `teleoperate` is True, `policy` should be None.")
