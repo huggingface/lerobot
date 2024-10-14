@@ -40,15 +40,18 @@ def main(env_name, policy_name, extra_overrides):
 
     fps = 30
 
-    for i in range(100):
+    for i in range(200):
         start_loop_t = time.perf_counter()
 
-        next_action, timestamp = policy.select_action(obs)
+        next_action, present_time, action_ts = policy.select_action(obs)
 
         dt_s = time.perf_counter() - start_loop_t
-        print(f"{i=}, {timestamp}, {dt_s * 1000:5.2f} ({1/ dt_s:3.1f}hz)")  # , {next_action.mean().item()}")
-
         busy_wait(1 / fps - dt_s)
+
+        dt_s = time.perf_counter() - start_loop_t
+        print(
+            f"{i=}, {dt_s * 1000:5.2f} ({1/ dt_s:3.1f}hz) \t{present_time}\t{action_ts}"
+        )  # , {next_action.mean().item()}")
 
         # time.sleep(1/30)  # frequency at which we receive a new observation (30 Hz = 0.03 s)
         # time.sleep(0.5)  # frequency at which we receive a new observation (5 Hz = 0.2 s)
