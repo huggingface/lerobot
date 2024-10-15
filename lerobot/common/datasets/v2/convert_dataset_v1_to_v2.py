@@ -3,11 +3,16 @@ This script will help you convert any LeRobot dataset already pushed to the hub 
 2.0. You will be required to provide the 'tasks', which is a short but accurate description in plain English
 for each of the task performed in the dataset. This will allow to easily train models with task-conditionning.
 
-We support 3 different scenarios for these tasks:
+We support 3 different scenarios for these tasks (see instructions below):
     1. Single task dataset: all episodes of your dataset have the same single task.
     2. Single task episodes: the episodes of your dataset each contain a single task but they can differ from
       one episode to the next.
     3. Multi task episodes: episodes of your dataset may each contain several different tasks.
+
+
+Can you can also provide a robot config .yaml file (not mandatory) to this script via the option
+'--robot-config' so that it writes information about the robot (robot type, motors names) this dataset was
+recorded with. For now, only Aloha/Koch type robots are supported with this option.
 
 
 # 1. Single task dataset
@@ -17,7 +22,7 @@ If your dataset contains a single task, you can simply provide it directly via t
 Examples:
 
 ```bash
-python convert_dataset_v1_to_v2.py \
+python lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py \
     --repo-id lerobot/aloha_sim_insertion_human_image \
     --single-task "Insert the peg into the socket." \
     --robot-config lerobot/configs/robot/aloha.yaml \
@@ -25,7 +30,7 @@ python convert_dataset_v1_to_v2.py \
 ```
 
 ```bash
-python convert_dataset_v1_to_v2.py \
+python lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py \
     --repo-id aliberts/koch_tutorial \
     --single-task "Pick the Lego block and drop it in the box on the right." \
     --robot-config lerobot/configs/robot/koch.yaml \
@@ -42,7 +47,7 @@ If your dataset is a multi-task dataset, you have two options to provide the tas
     Example:
 
     ```bash
-    python convert_dataset_v1_to_v2.py \
+    python lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py \
         --repo-id lerobot/stanford_kuka_multimodal_dataset \
         --tasks-col "language_instruction" \
         --local-dir data
@@ -71,7 +76,7 @@ parquet file, and you must provide this column's name with the '--tasks-col' arg
 Example:
 
 ```bash
-python convert_dataset_v1_to_v2.py \
+python lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py \
     --repo-id lerobot/stanford_kuka_multimodal_dataset \
     --tasks-col "language_instruction" \
     --local-dir data
@@ -321,6 +326,7 @@ def get_videos_info(repo_id: str, local_dir: Path, video_keys: list[str]) -> dic
     hub_api = HfApi()
     videos_info_dict = {"videos_path": VIDEO_PATH}
     for vid_key in video_keys:
+        # Assumes first episode
         video_path = VIDEO_PATH.format(video_key=vid_key, episode_index=0)
         video_path = hub_api.hf_hub_download(
             repo_id=repo_id, repo_type="dataset", local_dir=local_dir, filename=video_path
@@ -437,7 +443,7 @@ def convert_dataset(
     episode_lengths = split_parquet_by_episodes(dataset, keys, total_episodes, episode_indices, v20_dir)
 
     # Shapes
-    sequence_shapes = {key: len(dataset[key][0]) for key in keys["sequence"]}
+    sequence_shapes = {key: dataset.features[key].length for key in keys["sequence"]}
     image_shapes = get_image_shapes(dataset, keys["image"]) if len(keys["image"]) > 0 else {}
     if len(keys["video"]) > 0:
         assert metadata_v1.get("video", False)
@@ -479,6 +485,7 @@ def convert_dataset(
         "data_path": PARQUET_PATH,
         "robot_type": robot_type,
         "total_episodes": total_episodes,
+        "total_frames": len(dataset),
         "total_tasks": len(tasks),
         "fps": metadata_v1["fps"],
         "splits": {"train": f"0:{total_episodes}"},
@@ -509,13 +516,6 @@ def convert_dataset(
         repo_id=repo_id,
         path_in_repo="data",
         folder_path=v20_dir / "data",
-        repo_type="dataset",
-        revision="main",
-    )
-    hub_api.upload_folder(
-        repo_id=repo_id,
-        path_in_repo="videos",
-        folder_path=v1x_dir / "videos",
         repo_type="dataset",
         revision="main",
     )
