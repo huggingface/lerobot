@@ -99,6 +99,7 @@ python lerobot/scripts/control_robot.py record \
 """
 
 import argparse
+import logging
 import time
 from pathlib import Path
 from typing import List
@@ -220,7 +221,12 @@ def record(
 
     # Load pretrained policy
     if pretrained_policy_name_or_path is not None:
-        policy, fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides, fps)
+        policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
+
+        if fps != policy_fps:
+            logging.warning(
+                f"There is a mismatch between the provided fps ({fps}) and the one from policy config {policy_fps}."
+            )
 
     # Create empty dataset or load existing saved episodes
     sanity_check_dataset_name(repo_id, policy)
