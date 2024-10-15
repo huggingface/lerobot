@@ -359,7 +359,6 @@ class ManipulatorRobot:
 
     @property
     def available_arms(self):
-        # TODO(rcadene): moves this function in manipulator class?
         available_arms = []
         for name in self.follower_arms:
             arm_id = get_arm_id(name, "follower")
