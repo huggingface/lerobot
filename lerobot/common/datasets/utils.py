@@ -180,15 +180,7 @@ def load_info(repo_id: str, version: str, local_dir: Path) -> dict:
 
 
 def load_tasks(repo_id: str, version: str, local_dir: Path) -> dict:
-    """tasks contains all the tasks of the dataset, indexed by their task_index.
-
-    Example:
-    ```json
-    {
-        "0": "Pick the Lego block and drop it in the box on the right."
-    }
-    ```
-    """
+    """tasks contains all the tasks of the dataset, indexed by their task_index."""
     fpath = hf_hub_download(
         repo_id, filename="meta/tasks.json", local_dir=local_dir, repo_type="dataset", revision=version
     )
