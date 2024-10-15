@@ -167,6 +167,7 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides):
     # Check device is available
     device = get_safe_torch_device(hydra_cfg.device, log=True)
     use_amp = hydra_cfg.use_amp
+    policy_fps = hydra_cfg.env.fps
 
     policy.eval()
     policy.to(device)
@@ -174,8 +175,6 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides):
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     set_global_seed(hydra_cfg.seed)
-
-    policy_fps = hydra_cfg.env.fps
     return policy, policy_fps, device, use_amp
 
 

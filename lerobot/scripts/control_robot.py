@@ -223,9 +223,12 @@ def record(
     if pretrained_policy_name_or_path is not None:
         policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
 
-        if fps != policy_fps:
+        if fps is None:
+            fps = policy_fps
+            logging.warning(f"No fps provided, so using the fps from policy config ({policy_fps}).")
+        elif fps != policy_fps:
             logging.warning(
-                f"There is a mismatch between the provided fps ({fps}) and the one from policy config {policy_fps}."
+                f"There is a mismatch between the provided fps ({fps}) and the one from policy config ({policy_fps})."
             )
 
     # Create empty dataset or load existing saved episodes
