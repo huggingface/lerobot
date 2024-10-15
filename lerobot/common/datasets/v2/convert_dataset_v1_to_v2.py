@@ -88,6 +88,7 @@ import contextlib
 import json
 import math
 import subprocess
+import warnings
 from pathlib import Path
 
 import datasets
@@ -414,6 +415,14 @@ def convert_dataset(
     dataset = datasets.load_dataset("parquet", data_dir=v1x_dir / "data", split="train")
     keys = get_keys(dataset)
 
+    if single_task and "language_instruction" in dataset.column_names:
+        warnings.warn(
+            "'single_task' provided but 'language_instruction' tasks_col found. Using 'language_instruction'.",
+            stacklevel=1,
+        )
+        single_task = None
+        tasks_col = "language_instruction"
+
     # Episodes
     episode_indices = sorted(dataset.unique("episode_index"))
     total_episodes = len(episode_indices)
@@ -462,6 +471,10 @@ def convert_dataset(
     if robot_config is not None:
         robot_type = robot_config["robot_type"]
         names = robot_config["names"]
+        if "observation.effort" in keys["sequence"]:
+            names["observation.effort"] = names["observation.state"]
+        if "observation.velocity" in keys["sequence"]:
+            names["observation.velocity"] = names["observation.state"]
         repo_tags = [robot_type]
     else:
         robot_type = "unknown"
@@ -500,10 +513,10 @@ def convert_dataset(
     convert_stats_to_json(v1x_dir / "meta_data", v20_dir / "meta")
 
     #### TODO: delete
-    repo_id = f"aliberts/{repo_id.split('/')[1]}"
+    # repo_id = f"aliberts/{repo_id.split('/')[1]}"
     # if hub_api.repo_exists(repo_id=repo_id, repo_type="dataset"):
     #     hub_api.delete_repo(repo_id=repo_id, repo_type="dataset")
-    hub_api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
+    # hub_api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
     ####
 
     with contextlib.suppress(EntryNotFoundError):
