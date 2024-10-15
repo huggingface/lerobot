@@ -1,0 +1,83 @@
+# Inspired by
+# https://github.com/huggingface/peft/blob/main/.github/workflows/nightly.yml
+name: Nightly
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+env:
+  DATA_DIR: tests/data
+  # SLACK_API_TOKEN: ${{ secrets.SLACK_API_TOKEN }}
+
+jobs:
+  run_all_tests_cpu:
+    name: CPU
+    strategy:
+      fail-fast: false
+    runs-on:
+      group: aws-general-8-plus
+    container:
+      image: huggingface/lerobot-cpu:latest
+      options: --shm-size "16gb"
+      credentials:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: /lerobot
+    steps:
+      - name: Tests
+        env:
+          DATA_DIR: tests/data
+        run: pytest -v --cov=./lerobot --disable-warnings tests
+
+      - name: Tests end-to-end
+        env:
+          DATA_DIR: tests/data
+        run: make test-end-to-end
+
+
+  run_all_tests_single_gpu:
+    name: GPU
+    strategy:
+      fail-fast: false
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      CUDA_VISIBLE_DEVICES: "0"
+      TEST_TYPE: "single_gpu"
+    container:
+      image: huggingface/lerobot-gpu:latest
+      options: --gpus all --shm-size "16gb"
+      credentials:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: /lerobot
+    steps:
+      - name: Nvidia-smi
+        run: nvidia-smi
+
+      - name: Test
+        run: pytest -v --cov=./lerobot --cov-report=xml --disable-warnings tests
+      #   TODO(aliberts): Link with HF Codecov account
+      # - name: Upload coverage reports to Codecov with GitHub Action
+      #   uses: codecov/codecov-action@v4
+      #   with:
+      #     files: ./coverage.xml
+      #     verbose: true
+      - name: Tests end-to-end
+        env:
+          DEVICE: cuda
+        run: make test-end-to-end
+
+    #   - name: Generate Report
+    #     if: always()
+    #     run: |
+    #       pip install slack_sdk tabulate
+    #       python scripts/log_reports.py >> $GITHUB_STEP_SUMMARY

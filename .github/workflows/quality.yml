@@ -1,0 +1,84 @@
+name: Quality
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+env:
+  PYTHON_VERSION: "3.10"
+
+jobs:
+  style:
+    name: Style
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Get Ruff Version from pre-commit-config.yaml
+        id: get-ruff-version
+        run: |
+          RUFF_VERSION=$(awk '/repo: https:\/\/github.com\/astral-sh\/ruff-pre-commit/{flag=1;next}/rev:/{if(flag){print $2;exit}}' .pre-commit-config.yaml)
+          echo "RUFF_VERSION=${RUFF_VERSION}" >> $GITHUB_ENV
+
+      - name: Install Ruff
+        run: python -m pip install "ruff==${{ env.RUFF_VERSION }}"
+
+      - name: Ruff check
+        run: ruff check
+
+      - name: Ruff format
+        run: ruff format --diff
+
+
+  poetry_check:
+    name: Poetry check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Install poetry
+        run: pipx install poetry
+
+      - name: Poetry check
+        run: poetry check
+
+
+  poetry_relax:
+    name: Poetry relax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Install poetry
+        run: pipx install poetry
+
+      - name: Install poetry-relax
+        run: poetry self add poetry-relax
+
+      - name: Poetry relax
+        id: poetry_relax
+        run: |
+          output=$(poetry relax --check 2>&1)
+          if echo "$output" | grep -q "Proposing updates"; then
+            echo "$output"
+            echo ""
+            echo "Some dependencies have caret '^' version requirement added by poetry by default."
+            echo "Please replace them with '>='. You can do this by hand or use poetry-relax to do this."
+            exit 1
+          else
+            echo "$output"
+          fi

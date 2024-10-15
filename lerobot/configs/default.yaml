@@ -1,0 +1,130 @@
+defaults:
+  - _self_
+  - env: pusht
+  - policy: diffusion
+
+hydra:
+  run:
+    # Set `dir` to where you would like to save all of the run outputs. If you run another training session
+    # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
+    dir: outputs/train/${now:%Y-%m-%d}/${now:%H-%M-%S}_${env.name}_${policy.name}_${hydra.job.name}
+  job:
+    name: default
+
+# Set `resume` to true to resume a previous run. In order for this to work, you will need to make sure
+# `hydra.run.dir` is the directory of an existing run with at least one checkpoint in it.
+# Note that when resuming a run, the default behavior is to use the configuration from the checkpoint,
+# regardless of what's provided with the training command at the time of resumption.
+resume: false
+device: cuda  # cpu
+# `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
+# automatic gradient scaling is used.
+use_amp: false
+# `seed` is used for training (eg: model initialization, dataset shuffling)
+# AND for the evaluation environments.
+seed: ???
+# You may provide a list of datasets here. `train.py` creates them all and concatenates them. Note: only data
+# keys common between the datasets are kept. Each dataset gets and additional transform that inserts the
+# "dataset_index" into the returned item. The index mapping is made according to the order in which the
+# datsets are provided.
+dataset_repo_id: lerobot/pusht
+video_backend: pyav
+
+training:
+  offline_steps: ???
+
+  # Number of workers for the offline training dataloader.
+  num_workers: 4
+
+  batch_size: ???
+
+  eval_freq: ???
+  log_freq: 200
+  save_checkpoint: true
+  # Checkpoint is saved every `save_freq` training iterations and after the last training step.
+  save_freq: ???
+
+  # Online training. Note that the online training loop adopts most of the options above apart from the
+  # dataloader options. Unless otherwise specified.
+  # The online training look looks something like:
+  #
+  # for i in range(online_steps):
+  #     do_online_rollout_and_update_online_buffer()
+  #     for j in range(online_steps_between_rollouts):
+  #         batch = next(dataloader_with_offline_and_online_data)
+  #         loss = policy(batch)
+  #         loss.backward()
+  #         optimizer.step()
+  #
+  online_steps: ???
+  # How many episodes to collect at once when we reach the online rollout part of the training loop.
+  online_rollout_n_episodes: 1
+  # The number of environments to use in the gym.vector.VectorEnv. This ends up also being the batch size for
+  # the policy. Ideally you should set this to by an even divisor or online_rollout_n_episodes.
+  online_rollout_batch_size: 1
+  # How many optimization steps (forward, backward, optimizer step) to do between running rollouts.
+  online_steps_between_rollouts: null
+  # The proportion of online samples (vs offline samples) to include in the online training batches.
+  online_sampling_ratio: 0.5
+  # First seed to use for the online rollout environment. Seeds for subsequent rollouts are incremented by 1.
+  online_env_seed: null
+  # Sets the maximum number of frames that are stored in the online buffer for online training. The buffer is
+  # FIFO.
+  online_buffer_capacity: null
+  # The minimum number of frames to have in the online buffer before commencing online training.
+  # If online_buffer_seed_size > online_rollout_n_episodes, the rollout will be run multiple times until the
+  # seed size condition is satisfied.
+  online_buffer_seed_size: 0
+  # Whether to run the online rollouts asynchronously. This means we can run the online training steps in
+  # parallel with the rollouts. This might be advised if your GPU has the bandwidth to handle training
+  # + eval + environment rendering simultaneously.
+  do_online_rollout_async: false
+
+  image_transforms:
+  # These transforms are all using standard torchvision.transforms.v2
+  # You can find out how these transformations affect images here:
+  # https://pytorch.org/vision/0.18/auto_examples/transforms/plot_transforms_illustrations.html
+  # We use a custom RandomSubsetApply container to sample them.
+  # For each transform, the following parameters are available:
+  #   weight: This represents the multinomial probability (with no replacement)
+  #           used for sampling the transform. If the sum of the weights is not 1,
+  #           they will be normalized.
+  #   min_max: Lower & upper bound respectively used for sampling the transform's parameter
+  #           (following uniform distribution) when it's applied.
+    # Set this flag to `true` to enable transforms during training
+    enable: false
+    # This is the maximum number of transforms (sampled from these below) that will be applied to each frame.
+    # It's an integer in the interval [1, number of available transforms].
+    max_num_transforms: 3
+    # By default, transforms are applied in Torchvision's suggested order (shown below).
+    # Set this to True to apply them in a random order.
+    random_order: false
+    brightness:
+      weight: 1
+      min_max: [0.8, 1.2]
+    contrast:
+      weight: 1
+      min_max: [0.8, 1.2]
+    saturation:
+      weight: 1
+      min_max: [0.5, 1.5]
+    hue:
+      weight: 1
+      min_max: [-0.05, 0.05]
+    sharpness:
+      weight: 1
+      min_max: [0.8, 1.2]
+
+eval:
+  n_episodes: 1
+  # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
+  batch_size: 1
+  # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
+  use_async_envs: false
+
+wandb:
+  enable: false
+  # Set to true to disable saving an artifact despite save_checkpoint == True
+  disable_artifact: false
+  project: lerobot
+  notes: ""
