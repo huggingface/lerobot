@@ -310,6 +310,7 @@ def record(
     return lerobot_dataset
 
 
+@safe_disconnect
 def replay(
     robot: Robot, episode: int, fps: int | None = None, root="data", repo_id="lerobot/debug", play_sounds=True
 ):
