@@ -367,8 +367,7 @@ def test_normalize(insert_temporal_dim):
         ),
         ("aloha", "act", ["policy.n_action_steps=10"], ""),
         ("aloha", "act", ["policy.n_action_steps=1000", "policy.chunk_size=1000"], "_1000_steps"),
-        ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"], ""),
-        ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"], ""),
+        ("dora_aloha_real", "act_aloha_real", ["policy.n_action_steps=10"], ""),
     ],
 )
 # As artifacts have been generated on an x86_64 kernel, this test won't

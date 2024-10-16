@@ -8,17 +8,6 @@ from pathlib import Path
 
 import numpy as np
 import tqdm
-from dynamixel_sdk import (
-    COMM_SUCCESS,
-    DXL_HIBYTE,
-    DXL_HIWORD,
-    DXL_LOBYTE,
-    DXL_LOWORD,
-    GroupSyncRead,
-    GroupSyncWrite,
-    PacketHandler,
-    PortHandler,
-)
 
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
@@ -166,24 +155,29 @@ def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str
     return steps
 
 
-def convert_to_bytes(value, bytes):
+def convert_to_bytes(value, bytes, mock=False):
+    if mock:
+        return value
+
+    import dynamixel_sdk as dxl
+
     # Note: No need to convert back into unsigned int, since this byte preprocessing
     # already handles it for us.
     if bytes == 1:
         data = [
-            DXL_LOBYTE(DXL_LOWORD(value)),
+            dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
         ]
     elif bytes == 2:
         data = [
-            DXL_LOBYTE(DXL_LOWORD(value)),
-            DXL_HIBYTE(DXL_LOWORD(value)),
+            dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
+            dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
         ]
     elif bytes == 4:
         data = [
-            DXL_LOBYTE(DXL_LOWORD(value)),
-            DXL_HIBYTE(DXL_LOWORD(value)),
-            DXL_LOBYTE(DXL_HIWORD(value)),
-            DXL_HIBYTE(DXL_HIWORD(value)),
+            dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
+            dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
+            dxl.DXL_LOBYTE(dxl.DXL_HIWORD(value)),
+            dxl.DXL_HIBYTE(dxl.DXL_HIWORD(value)),
         ]
     else:
         raise NotImplementedError(
@@ -333,9 +327,11 @@ class DynamixelMotorsBus:
         motors: dict[str, tuple[int, str]],
         extra_model_control_table: dict[str, list[tuple]] | None = None,
         extra_model_resolution: dict[str, int] | None = None,
+        mock=False,
     ):
         self.port = port
         self.motors = motors
+        self.mock = mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
         if extra_model_control_table:
@@ -359,8 +355,13 @@ class DynamixelMotorsBus:
                 f"DynamixelMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice."
             )
 
-        self.port_handler = PortHandler(self.port)
-        self.packet_handler = PacketHandler(PROTOCOL_VERSION)
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
+        self.port_handler = dxl.PortHandler(self.port)
+        self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)
 
         try:
             if not self.port_handler.openPort():
@@ -392,10 +393,17 @@ class DynamixelMotorsBus:
             self.configure_motors()
 
     def reconnect(self):
-        self.port_handler = PortHandler(self.port)
-        self.packet_handler = PacketHandler(PROTOCOL_VERSION)
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
+        self.port_handler = dxl.PortHandler(self.port)
+        self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)
+
         if not self.port_handler.openPort():
             raise OSError(f"Failed to open port '{self.port}'.")
+
         self.is_connected = True
 
     def are_motors_configured(self):
@@ -781,6 +789,11 @@ class DynamixelMotorsBus:
         return values
 
     def _read_with_motor_ids(self, motor_models, motor_ids, data_name):
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
         return_list = True
         if not isinstance(motor_ids, list):
             return_list = False
@@ -788,12 +801,12 @@ class DynamixelMotorsBus:
 
         assert_same_address(self.model_ctrl_table, self.motor_models, data_name)
         addr, bytes = self.model_ctrl_table[motor_models[0]][data_name]
-        group = GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
+        group = dxl.GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
         for idx in motor_ids:
             group.addParam(idx)
 
         comm = group.txRxPacket()
-        if comm != COMM_SUCCESS:
+        if comm != dxl.COMM_SUCCESS:
             raise ConnectionError(
                 f"Read failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
@@ -817,6 +830,11 @@ class DynamixelMotorsBus:
 
         start_time = time.perf_counter()
 
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
         if motor_names is None:
             motor_names = self.motor_names
 
@@ -836,16 +854,18 @@ class DynamixelMotorsBus:
 
         if data_name not in self.group_readers:
             # create new group reader
-            self.group_readers[group_key] = GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
+            self.group_readers[group_key] = dxl.GroupSyncRead(
+                self.port_handler, self.packet_handler, addr, bytes
+            )
             for idx in motor_ids:
                 self.group_readers[group_key].addParam(idx)
 
         for _ in range(NUM_READ_RETRY):
             comm = self.group_readers[group_key].txRxPacket()
-            if comm == COMM_SUCCESS:
+            if comm == dxl.COMM_SUCCESS:
                 break
 
-        if comm != COMM_SUCCESS:
+        if comm != dxl.COMM_SUCCESS:
             raise ConnectionError(
                 f"Read failed due to communication error on port {self.port} for group_key {group_key}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
@@ -876,6 +896,11 @@ class DynamixelMotorsBus:
         return values
 
     def _write_with_motor_ids(self, motor_models, motor_ids, data_name, values):
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
         if not isinstance(motor_ids, list):
             motor_ids = [motor_ids]
         if not isinstance(values, list):
@@ -883,13 +908,13 @@ class DynamixelMotorsBus:
 
         assert_same_address(self.model_ctrl_table, motor_models, data_name)
         addr, bytes = self.model_ctrl_table[motor_models[0]][data_name]
-        group = GroupSyncWrite(self.port_handler, self.packet_handler, addr, bytes)
+        group = dxl.GroupSyncWrite(self.port_handler, self.packet_handler, addr, bytes)
         for idx, value in zip(motor_ids, values, strict=True):
-            data = convert_to_bytes(value, bytes)
+            data = convert_to_bytes(value, bytes, self.mock)
             group.addParam(idx, data)
 
         comm = group.txPacket()
-        if comm != COMM_SUCCESS:
+        if comm != dxl.COMM_SUCCESS:
             raise ConnectionError(
                 f"Write failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
@@ -902,6 +927,11 @@ class DynamixelMotorsBus:
             )
 
         start_time = time.perf_counter()
+
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
 
         if motor_names is None:
             motor_names = self.motor_names
@@ -932,19 +962,19 @@ class DynamixelMotorsBus:
 
         init_group = data_name not in self.group_readers
         if init_group:
-            self.group_writers[group_key] = GroupSyncWrite(
+            self.group_writers[group_key] = dxl.GroupSyncWrite(
                 self.port_handler, self.packet_handler, addr, bytes
             )
 
         for idx, value in zip(motor_ids, values, strict=True):
-            data = convert_to_bytes(value, bytes)
+            data = convert_to_bytes(value, bytes, self.mock)
             if init_group:
                 self.group_writers[group_key].addParam(idx, data)
             else:
                 self.group_writers[group_key].changeParam(idx, data)
 
         comm = self.group_writers[group_key].txPacket()
-        if comm != COMM_SUCCESS:
+        if comm != dxl.COMM_SUCCESS:
             raise ConnectionError(
                 f"Write failed due to communication error on port {self.port} for group_key {group_key}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"

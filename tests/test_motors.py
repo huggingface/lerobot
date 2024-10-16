@@ -1,10 +1,22 @@
 """
-Tests meant to be used locally and launched manually.
+Tests for physical motors and their mocked versions.
+If the physical motors are not connected to the computer, or not working,
+the test will be skipped.
 
-Example usage:
+Example of running a specific test:
 ```bash
 pytest -sx tests/test_motors.py::test_find_port
 pytest -sx tests/test_motors.py::test_motors_bus
+```
+
+Example of running test on real dynamixel motors connected to the computer:
+```bash
+pytest -sx 'tests/test_motors.py::test_motors_bus[dynamixel-False]'
+```
+
+Example of running test on a mocked version of dynamixel motors:
+```bash
+pytest -sx 'tests/test_motors.py::test_motors_bus[dynamixel-True]'
 ```
 """
 
@@ -18,38 +30,31 @@ import time
 import numpy as np
 import pytest
 
-from lerobot import available_robots
-from lerobot.common.robot_devices.motors.utils import MotorsBus
-from lerobot.common.robot_devices.robots.factory import make_robot
+from lerobot.common.robot_devices.motors.dynamixel import find_port
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from lerobot.common.utils.utils import init_hydra_config
-from tests.utils import ROBOT_CONFIG_PATH_TEMPLATE, require_robot
+from tests.utils import TEST_MOTOR_TYPES, make_motors_bus, require_motor
 
 
-def make_motors_bus(robot_type: str) -> MotorsBus:
-    # Instantiate a robot and return one of its leader arms
-    config_path = ROBOT_CONFIG_PATH_TEMPLATE.format(robot=robot_type)
-    robot_cfg = init_hydra_config(config_path)
-    robot = make_robot(robot_cfg)
-    first_bus_name = list(robot.leader_arms.keys())[0]
-    motors_bus = robot.leader_arms[first_bus_name]
-    return motors_bus
+@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
+@require_motor
+def test_find_port(request, motor_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+        with pytest.raises(OSError):
+            find_port()
+    else:
+        find_port()
 
 
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
-def test_find_port(request, robot_type):
-    from lerobot.common.robot_devices.motors.dynamixel import find_port
+@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
+@require_motor
+def test_configure_motors_all_ids_1(request, motor_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
 
-    find_port()
-
-
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
-def test_configure_motors_all_ids_1(request, robot_type):
     input("Are you sure you want to re-configure the motors? Press enter to continue...")
     # This test expect the configuration was already correct.
-    motors_bus = make_motors_bus(robot_type)
+    motors_bus = make_motors_bus(motor_type, mock=mock)
     motors_bus.connect()
     motors_bus.write("Baud_Rate", [0] * len(motors_bus.motors))
     motors_bus.set_bus_baudrate(9_600)
@@ -57,16 +62,19 @@ def test_configure_motors_all_ids_1(request, robot_type):
     del motors_bus
 
     # Test configure
-    motors_bus = make_motors_bus(robot_type)
+    motors_bus = make_motors_bus(motor_type, mock=mock)
     motors_bus.connect()
     assert motors_bus.are_motors_configured()
     del motors_bus
 
 
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
-def test_motors_bus(request, robot_type):
-    motors_bus = make_motors_bus(robot_type)
+@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
+@require_motor
+def test_motors_bus(request, motor_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
+    motors_bus = make_motors_bus(motor_type, mock=mock)
 
     # Test reading and writting before connecting raises an error
     with pytest.raises(RobotDeviceNotConnectedError):
@@ -80,7 +88,7 @@ def test_motors_bus(request, robot_type):
     del motors_bus
 
     # Test connecting
-    motors_bus = make_motors_bus(robot_type)
+    motors_bus = make_motors_bus(motor_type, mock=mock)
     motors_bus.connect()
 
     # Test connecting twice raises an error

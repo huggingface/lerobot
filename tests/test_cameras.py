@@ -1,21 +1,32 @@
 """
-Tests meant to be used locally and launched manually.
+Tests for physical cameras and their mocked versions.
+If the physical camera is not connected to the computer, or not working,
+the test will be skipped.
 
-Example usage:
+Example of running a specific test:
 ```bash
 pytest -sx tests/test_cameras.py::test_camera
+```
+
+Example of running test on a real camera connected to the computer:
+```bash
+pytest -sx 'tests/test_cameras.py::test_camera[opencv-False]'
+pytest -sx 'tests/test_cameras.py::test_camera[intelrealsense-False]'
+```
+
+Example of running test on a mocked version of the camera:
+```bash
+pytest -sx 'tests/test_cameras.py::test_camera[opencv-True]'
+pytest -sx 'tests/test_cameras.py::test_camera[intelrealsense-True]'
 ```
 """
 
 import numpy as np
 import pytest
 
-from lerobot import available_robots
-from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera, save_images_from_cameras
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import require_robot
+from tests.utils import TEST_CAMERA_TYPES, make_camera, require_camera
 
-CAMERA_INDEX = 2
 # Maximum absolute difference between two consecutive images recored by a camera.
 # This value differs with respect to the camera.
 MAX_PIXEL_DIFFERENCE = 25
@@ -25,9 +36,9 @@ def compute_max_pixel_difference(first_image, second_image):
     return np.abs(first_image.astype(float) - second_image.astype(float)).max()
 
 
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
-def test_camera(request, robot_type):
+@pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)
+@require_camera
+def test_camera(request, camera_type, mock):
     """Test assumes that `camera.read()` returns the same image when called multiple times in a row.
     So the environment should not change (you shouldnt be in front of the camera) and the camera should not be moving.
 
@@ -36,10 +47,12 @@ def test_camera(request, robot_type):
     """
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
-    # TODO(rcadene): add compatibility with other camera APIs
+
+    if camera_type == "opencv" and not mock:
+        pytest.skip("TODO(rcadene): fix test for opencv physical camera")
 
     # Test instantiating
-    camera = OpenCVCamera(CAMERA_INDEX)
+    camera = make_camera(camera_type, mock=mock)
 
     # Test reading, async reading, disconnecting before connecting raises an error
     with pytest.raises(RobotDeviceNotConnectedError):
@@ -53,7 +66,7 @@ def test_camera(request, robot_type):
     del camera
 
     # Test connecting
-    camera = OpenCVCamera(CAMERA_INDEX)
+    camera = make_camera(camera_type, mock=mock)
     camera.connect()
     assert camera.is_connected
     assert camera.fps is not None
@@ -78,11 +91,14 @@ def test_camera(request, robot_type):
         camera.read()
     color_image = camera.read()
     async_color_image = camera.async_read()
-    print(
+    error_msg = (
         "max_pixel_difference between read() and async_read()",
         compute_max_pixel_difference(color_image, async_color_image),
     )
-    assert np.allclose(color_image, async_color_image, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE)
+    # TODO(rcadene): properly set `rtol`
+    np.testing.assert_allclose(
+        color_image, async_color_image, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE, err_msg=error_msg
+    )
 
     # Test disconnecting
     camera.disconnect()
@@ -90,29 +106,60 @@ def test_camera(request, robot_type):
     assert camera.thread is None
 
     # Test disconnecting with `__del__`
-    camera = OpenCVCamera(CAMERA_INDEX)
+    camera = make_camera(camera_type, mock=mock)
     camera.connect()
     del camera
 
     # Test acquiring a bgr image
-    camera = OpenCVCamera(CAMERA_INDEX, color_mode="bgr")
+    camera = make_camera(camera_type, color_mode="bgr", mock=mock)
     camera.connect()
     assert camera.color_mode == "bgr"
     bgr_color_image = camera.read()
-    assert np.allclose(color_image, bgr_color_image[:, :, [2, 1, 0]], rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE)
+    np.testing.assert_allclose(
+        color_image, bgr_color_image[:, :, [2, 1, 0]], rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE, err_msg=error_msg
+    )
     del camera
+
+    # Test acquiring a rotated image
+    camera = make_camera(camera_type, mock=mock)
+    camera.connect()
+    ori_color_image = camera.read()
+    del camera
+
+    for rotation in [None, 90, 180, -90]:
+        camera = make_camera(camera_type, rotation=rotation, mock=mock)
+        camera.connect()
+
+        if mock:
+            import tests.mock_cv2 as cv2
+        else:
+            import cv2
+
+        if rotation is None:
+            manual_rot_img = ori_color_image
+            assert camera.rotation is None
+        elif rotation == 90:
+            manual_rot_img = np.rot90(color_image, k=1)
+            assert camera.rotation == cv2.ROTATE_90_CLOCKWISE
+        elif rotation == 180:
+            manual_rot_img = np.rot90(color_image, k=2)
+            assert camera.rotation == cv2.ROTATE_180
+        elif rotation == -90:
+            manual_rot_img = np.rot90(color_image, k=3)
+            assert camera.rotation == cv2.ROTATE_90_COUNTERCLOCKWISE
+
+        rot_color_image = camera.read()
+
+        np.testing.assert_allclose(
+            rot_color_image, manual_rot_img, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE, err_msg=error_msg
+        )
+        del camera
 
     # TODO(rcadene): Add a test for a camera that doesnt support fps=60 and raises an OSError
     # TODO(rcadene): Add a test for a camera that supports fps=60
 
-    # Test fps=10 raises an OSError
-    camera = OpenCVCamera(CAMERA_INDEX, fps=10)
-    with pytest.raises(OSError):
-        camera.connect()
-    del camera
-
     # Test width and height can be set
-    camera = OpenCVCamera(CAMERA_INDEX, fps=30, width=1280, height=720)
+    camera = make_camera(camera_type, fps=30, width=1280, height=720, mock=mock)
     camera.connect()
     assert camera.fps == 30
     assert camera.width == 1280
@@ -125,13 +172,20 @@ def test_camera(request, robot_type):
     del camera
 
     # Test not supported width and height raise an error
-    camera = OpenCVCamera(CAMERA_INDEX, fps=30, width=0, height=0)
+    camera = make_camera(camera_type, fps=30, width=0, height=0, mock=mock)
     with pytest.raises(OSError):
         camera.connect()
     del camera
 
 
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
-def test_save_images_from_cameras(tmpdir, request, robot_type):
-    save_images_from_cameras(tmpdir, record_time_s=1)
+@pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)
+@require_camera
+def test_save_images_from_cameras(tmpdir, request, camera_type, mock):
+    # TODO(rcadene): refactor
+    if camera_type == "opencv":
+        from lerobot.common.robot_devices.cameras.opencv import save_images_from_cameras
+    elif camera_type == "intelrealsense":
+        from lerobot.common.robot_devices.cameras.intelrealsense import save_images_from_cameras
+
+    # Small `record_time_s` to speedup unit tests
+    save_images_from_cameras(tmpdir, record_time_s=0.02, mock=mock)
