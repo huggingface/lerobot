@@ -40,17 +40,17 @@ def main(env_name, policy_name, extra_overrides):
 
     fps = 30
 
-    for i in range(200):
+    for i in range(400):
         start_loop_t = time.perf_counter()
 
-        next_action, present_time, action_ts = policy.select_action(obs)
+        next_action = policy.select_action(obs)  # noqa: F841
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
 
         dt_s = time.perf_counter() - start_loop_t
         print(
-            f"{i=}, {dt_s * 1000:5.2f} ({1/ dt_s:3.1f}hz) \t{present_time}\t{action_ts}"
+            f"{i=}, {dt_s * 1000:5.2f} ({1/ dt_s:3.1f}hz) \t{policy._present_timestamp}\t{policy._present_action_timestamp}"
         )  # , {next_action.mean().item()}")
 
         # time.sleep(1/30)  # frequency at which we receive a new observation (30 Hz = 0.03 s)
