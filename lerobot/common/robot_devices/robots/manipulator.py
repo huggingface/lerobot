@@ -128,7 +128,7 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     calib_mode = [CalibrationMode.DEGREE.name] * len(arm.motor_names)
 
     # TODO(rcadene): make type of joints (DEGREE or LINEAR) configurable from yaml?
-    if robot_type == "aloha" and "gripper" in arm.motor_names:
+    if robot_type in ["aloha", "so_100"] and "gripper" in arm.motor_names:
         # Joints with linear motions (like gripper of Aloha) are experessed in nominal range of [0, 100]
         calib_idx = arm.motor_names.index("gripper")
         calib_mode[calib_idx] = CalibrationMode.LINEAR.name
@@ -555,13 +555,14 @@ class ManipulatorRobot:
         for name in self.follower_arms:
             self.follower_arms[name].write("Mode", 0)
             # self.follower_arms[name].write("P_Coefficient", 255, "shoulder_pan")
-            self.follower_arms[name].write("P_Coefficient", 32, "shoulder_pan")
+            self.follower_arms[name].write("P_Coefficient", 16, "shoulder_pan")
             # self.follower_arms[name].write("D_Coefficient", 230, "shoulder_pan")
             self.follower_arms[name].write("D_Coefficient", 32, "shoulder_pan")
-            # self.follower_arms[name].write("Acceleration", 254)
-            # self.follower_arms[name].write("Minimum_Startup_Force", 16)
+            # self.follower_arms[name].write("Acceleration", 0)
+            # self.follower_arms[name].write("Minimum_Startup_Force", 0)
             self.follower_arms[name].write("Lock", 0)
-            self.follower_arms[name].write("Maximum_Acceleration", 250)
+            # self.follower_arms[name].write("Maximum_Acceleration", 250)
+            self.follower_arms[name].write("Maximum_Acceleration", 150)
 
         # for name in self.leader_arms:
         #     self.leader_arms[name].write("Max_Torque_Limit", 50, "gripper")

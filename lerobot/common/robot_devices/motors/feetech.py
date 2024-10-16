@@ -392,8 +392,7 @@ class FeetechMotorsBus:
         return [idx for idx, _ in self.motors.values()]
 
     def set_calibration(self, calibration: dict[str, list]):
-        pass
-        # self.calibration = calibration
+        self.calibration = calibration
 
     def apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
         """This function apply the calibration, automatically detects out of range errors for motors values and attempt to correct.
