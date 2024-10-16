@@ -11,6 +11,7 @@ on:
       - ".github/**"
       - "poetry.lock"
       - "Makefile"
+      - ".cache/**"
   push:
     branches:
       - main
@@ -21,6 +22,7 @@ on:
       - ".github/**"
       - "poetry.lock"
       - "Makefile"
+      - ".cache/**"
 
 jobs:
   pytest:
@@ -35,13 +37,17 @@ jobs:
           lfs: true  # Ensure LFS files are pulled
 
       - name: Install apt dependencies
-        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev ffmpeg
+      # portaudio19-dev is needed to install pyaudio
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y libegl1-mesa-dev ffmpeg portaudio19-dev
 
       - name: Install poetry
         run: |
           pipx install poetry && poetry config virtualenvs.in-project true
           echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
 
+      # TODO(rcadene, aliberts): python 3.12 seems to be used in the tests, not python 3.10
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
@@ -59,7 +65,6 @@ jobs:
             -W ignore::UserWarning:torch.utils.data.dataloader:558 \
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
             && rm -rf tests/outputs outputs
-
 
   pytest-minimal:
     name: Pytest (minimal install)
@@ -80,6 +85,7 @@ jobs:
           pipx install poetry && poetry config virtualenvs.in-project true
           echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
 
+      # TODO(rcadene, aliberts): python 3.12 seems to be used in the tests, not python 3.10
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
@@ -110,7 +116,10 @@ jobs:
           lfs: true  # Ensure LFS files are pulled
 
       - name: Install apt dependencies
-        run: sudo apt-get update && sudo apt-get install -y libegl1-mesa-dev
+      # portaudio19-dev is needed to install pyaudio
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y libegl1-mesa-dev portaudio19-dev
 
       - name: Install poetry
         run: |

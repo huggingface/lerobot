@@ -68,7 +68,7 @@ def get_stats_einops_patterns(dataset, num_workers=0):
     return stats_patterns
 
 
-def compute_stats(dataset, batch_size=32, num_workers=16, max_num_samples=None):
+def compute_stats(dataset, batch_size=8, num_workers=8, max_num_samples=None):
     """Compute mean/std and min/max statistics of all data keys in a LeRobotDataset."""
     if max_num_samples is None:
         max_num_samples = len(dataset)

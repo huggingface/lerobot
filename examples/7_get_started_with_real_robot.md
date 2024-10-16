@@ -45,7 +45,7 @@ poetry install --sync --extras "dynamixel"
 ```bash
 conda install -c conda-forge ffmpeg
 pip uninstall opencv-python
-conda install -c conda-forge opencv>=4.10.0
+conda install -c conda-forge "opencv>=4.10.0"
 ```
 
 You are now ready to plug the 5V power supply to the motor bus of the leader arm (the smaller one) since all its motors only require 5V.
