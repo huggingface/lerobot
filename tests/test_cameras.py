@@ -7,12 +7,15 @@ pytest -sx tests/test_cameras.py::test_camera
 ```
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from lerobot import available_robots
-from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera, save_images_from_cameras
+from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.scripts.save_images_from_cameras import save_images_from_cameras
 from tests.utils import require_robot
 
 CAMERA_INDEX = 2
@@ -131,7 +134,8 @@ def test_camera(request, robot_type):
     del camera
 
 
-@pytest.mark.parametrize("robot_type", available_robots)
-@require_robot
-def test_save_images_from_cameras(tmpdir, request, robot_type):
-    save_images_from_cameras(tmpdir, record_time_s=1)
+def test_save_images_from_cameras():
+    # Set the path relative to the project root (lerobot) where 'outputs' already exists
+    images_dir = Path("outputs/images_from_opencv_cameras")
+    images_dir.mkdir(parents=True, exist_ok=True)
+    save_images_from_cameras(driver="opencv", images_dir=images_dir)

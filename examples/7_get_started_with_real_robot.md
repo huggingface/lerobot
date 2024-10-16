@@ -544,7 +544,8 @@ To instantiate an [`OpenCVCamera`](../lerobot/common/robot_devices/cameras/openc
 
 To find the camera indices, run the following utility script, which will save a few frames from each detected camera:
 ```bash
-python lerobot/common/robot_devices/cameras/opencv.py \
+python lerobot/scripts/save_images_from_cameras.py \
+    --driver opencv \
     --images-dir outputs/images_from_opencv_cameras
 ```
 
