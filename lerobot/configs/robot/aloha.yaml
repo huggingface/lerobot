@@ -23,7 +23,7 @@ calibration_dir: .cache/calibration/aloha_default
 # Also, everything is expected to work safely out-of-the-box, but we highly advise to
 # first try to teleoperate the grippers only (by commenting out the rest of the motors in this yaml),
 # then to gradually add more motors (by uncommenting), until you can teleoperate both arms fully
-max_relative_target: 5
+max_relative_target: null
 
 leader_arms:
   left:
@@ -91,25 +91,25 @@ follower_arms:
 cameras:
   cam_high:
     _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
-    camera_index: 128422271347
+    serial_number: 128422271609
     fps: 30
     width: 640
     height: 480
   cam_low:
     _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
-    camera_index: 130322270656
+    serial_number: 128422271393
     fps: 30
     width: 640
     height: 480
   cam_left_wrist:
     _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
-    camera_index: 218622272670
+    serial_number: 128422271614
     fps: 30
     width: 640
     height: 480
   cam_right_wrist:
     _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
-    camera_index: 130322272300
+    serial_number: 128422270109
     fps: 30
     width: 640
     height: 480
