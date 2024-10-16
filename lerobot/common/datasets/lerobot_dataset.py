@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from copy import deepcopy
 import logging
 import os
 from pathlib import Path
@@ -133,7 +134,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        item = self.hf_dataset[idx]
+        item = deepcopy(self.hf_dataset[idx])
 
         if self.delta_timestamps is not None:
             item = load_previous_and_future_frames(
