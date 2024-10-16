@@ -178,24 +178,6 @@ class DiffusionModel(nn.Module):
         # Build observation encoders (depending on which observations are provided).
         global_cond_dim = config.input_shapes["observation.state"][0]
         num_images = len([k for k in config.input_shapes if k.startswith("observation.image")])
-<<<<<<< HEAD
-
-        if config.use_transformer:
-            self.net = TransformerForDiffusion(
-                config,
-                cond_dim=(
-                    config.input_shapes["observation.state"][0] + self.rgb_encoder.feature_dim * num_images
-                ),
-            )
-        else:
-            self.net = DiffusionConditionalUnet1d(
-                config,
-                global_cond_dim=(
-                    config.input_shapes["observation.state"][0] + self.rgb_encoder.feature_dim * num_images
-                )
-                * config.n_obs_steps,
-            )
-=======
         self._use_images = False
         self._use_env_state = False
         if num_images > 0:
@@ -206,8 +188,12 @@ class DiffusionModel(nn.Module):
             self._use_env_state = True
             global_cond_dim += config.input_shapes["observation.environment_state"][0]
 
-        self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim * config.n_obs_steps)
->>>>>>> cc2f6e7 (Train diffusion pusht_keypoints (#307))
+        if config.use_transformer:
+            self.net = TransformerForDiffusion(config, cond_dim=global_cond_dim)
+        else:
+            self.net = DiffusionConditionalUnet1d(
+                config, global_cond_dim=global_cond_dim * config.n_obs_steps
+            )
 
         self.noise_scheduler = _make_noise_scheduler(
             config.noise_scheduler_type,
