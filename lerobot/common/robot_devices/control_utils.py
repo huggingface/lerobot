@@ -224,7 +224,7 @@ def record_episode(
 @safe_stop_image_writer
 def control_loop(
     robot,
-    control_time_s,
+    control_time_s=None,
     teleoperate=False,
     display_cameras=False,
     dataset=None,
@@ -240,6 +240,9 @@ def control_loop(
 
     if events is None:
         events = {"exit_early": False}
+
+    if control_time_s is None:
+        control_time_s = float("inf")
 
     if teleoperate and policy is not None:
         raise ValueError("When `teleoperate` is True, `policy` should be None.")
