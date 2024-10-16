@@ -127,6 +127,7 @@ def test_robot(tmpdir, request, robot_type, mock):
             # TODO(rcadene): skipping image for now as it's challenging to assess equality between two consecutive frames
             continue
         assert torch.allclose(captured_observation[name], observation[name], atol=1)
+        assert captured_observation[name].shape == observation[name].shape
 
     # Test send_action can run
     robot.send_action(action["action"])
