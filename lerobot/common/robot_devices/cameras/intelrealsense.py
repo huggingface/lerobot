@@ -21,9 +21,9 @@ from PIL import Image
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
+    busy_wait,
 )
 from lerobot.common.utils.utils import capture_timestamp_utc
-from lerobot.scripts.control_robot import busy_wait
 
 SERIAL_NUMBER_INDEX = 1
 
@@ -200,7 +200,9 @@ class IntelRealSenseCamera:
 
     To find the camera indices of your cameras, you can run our utility script that will save a few frames for each camera:
     ```bash
-    python lerobot/common/robot_devices/cameras/intelrealsense.py --images-dir outputs/images_from_intelrealsense_cameras
+    python lerobot/scripts/save_images_from_cameras.py \
+    --driver intelrealsense \
+    --images-dir outputs/images_from_intelrealsense_cameras
     ```
 
     When an IntelRealSenseCamera is instantiated, if no specific config is provided, the default fps, width, height and color_mode

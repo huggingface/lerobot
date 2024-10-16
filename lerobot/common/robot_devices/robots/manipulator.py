@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from lerobot.common.robot_devices.cameras.utils import Camera
-from lerobot.common.robot_devices.motors.dynamixel import (
+from lerobot.common.robot_devices.motors.feetech import (
     CalibrationMode,
     TorqueMode,
     convert_degrees_to_steps,
@@ -49,9 +49,10 @@ def apply_drive_mode(position, drive_mode):
 
 
 def compute_nearest_rounded_position(position, models):
-    delta_turn = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, models)
-    nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
-    return nearest_pos.astype(position.dtype)
+    # delta_turn = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, models)
+    # nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
+    # return nearest_pos.astype(position.dtype)
+    return position
 
 
 def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
@@ -127,7 +128,7 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     calib_mode = [CalibrationMode.DEGREE.name] * len(arm.motor_names)
 
     # TODO(rcadene): make type of joints (DEGREE or LINEAR) configurable from yaml?
-    if robot_type == "aloha" and "gripper" in arm.motor_names:
+    if robot_type in ["aloha", "so_100"] and "gripper" in arm.motor_names:
         # Joints with linear motions (like gripper of Aloha) are experessed in nominal range of [0, 100]
         calib_idx = arm.motor_names.index("gripper")
         calib_mode[calib_idx] = CalibrationMode.LINEAR.name
@@ -401,6 +402,8 @@ class ManipulatorRobot:
             self.set_koch_robot_preset()
         elif self.robot_type == "aloha":
             self.set_aloha_robot_preset()
+        elif self.robot_type == "so_100":
+            self.set_so_100_robot_preset()
         else:
             warnings.warn(f"No preset found for robot type: {self.robot_type}", stacklevel=1)
 
@@ -415,6 +418,12 @@ class ManipulatorRobot:
             for name in self.leader_arms:
                 self.leader_arms[name].write("Torque_Enable", 1, "gripper")
                 self.leader_arms[name].write("Goal_Position", self.config.gripper_open_degree, "gripper")
+
+        # Check both arms can be read
+        for name in self.follower_arms:
+            self.follower_arms[name].read("Present_Position")
+        for name in self.leader_arms:
+            self.leader_arms[name].read("Present_Position")
 
         # Connect the cameras
         for name in self.cameras:
@@ -541,6 +550,25 @@ class ManipulatorRobot:
                 f"`gripper_open_degree` is set to {self.config.gripper_open_degree}, but None is expected for Aloha instead",
                 stacklevel=1,
             )
+
+    def set_so_100_robot_preset(self):
+        for name in self.follower_arms:
+            self.follower_arms[name].write("Mode", 0)
+            # self.follower_arms[name].write("P_Coefficient", 255, "shoulder_pan")
+            self.follower_arms[name].write("P_Coefficient", 16, "shoulder_pan")
+            # self.follower_arms[name].write("D_Coefficient", 230, "shoulder_pan")
+            self.follower_arms[name].write("D_Coefficient", 32, "shoulder_pan")
+            # self.follower_arms[name].write("Acceleration", 0)
+            # self.follower_arms[name].write("Minimum_Startup_Force", 0)
+            self.follower_arms[name].write("Lock", 0)
+            # self.follower_arms[name].write("Maximum_Acceleration", 250)
+            self.follower_arms[name].write("Maximum_Acceleration", 150)
+
+        # for name in self.leader_arms:
+        #     self.leader_arms[name].write("Max_Torque_Limit", 50, "gripper")
+        #     self.leader_arms[name].write("Torque_Limit", 1000, "gripper")
+        #     self.leader_arms[name].write("Torque_Enable", 1, "gripper")
+        #     self.leader_arms[name].write("Goal_Position", 2048, "gripper")
 
     def teleop_step(
         self, record_data=False
