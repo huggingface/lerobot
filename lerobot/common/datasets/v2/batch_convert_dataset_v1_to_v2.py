@@ -100,8 +100,6 @@ ALOHA_SINGLE_TASKS_REAL = {
     "aloha_mobile_cabinet": "Open the top cabinet, store the pot inside it then close the cabinet.",
     "aloha_mobile_chair": "Push the chairs in front of the desk to place them against it.",
     "aloha_mobile_elevator": "Take the elevator to the 1st floor.",
-    # Alternative version, not sure what's best.
-    # 'aloha_mobile_elevator': "Navigate to the elevator and call it. When it arrives, get inside et push the 1st floor button.",
     "aloha_mobile_shrimp": "Sauté the raw shrimp on both sides, then serve it in the bowl.",
     "aloha_mobile_wash_pan": "Pick up the pan, rinse it in the sink and then place it in the drying rack.",
     "aloha_mobile_wipe_wine": "Pick up the wet cloth on the faucet and use it to clean the spilled wine on the table and underneath the glass.",
@@ -132,13 +130,6 @@ def batch_convert():
         print("---------------------------------------------------------")
         name = repo_id.split("/")[1]
         single_task, tasks_col, robot_config = None, None, None
-
-        # TODO(aliberts) issues with these datasets:
-        # if name in [
-        #     "aloha_mobile_shrimp",  # 18 videos files per camera but 17 episodes in the parquet
-        #     # "aloha_mobile_wash_pan",  #
-        # ]:
-        #     continue
 
         if "aloha" in name:
             robot_config = parse_robot_config(ALOHA_CONFIG)
