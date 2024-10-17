@@ -95,10 +95,6 @@ from pathlib import Path
 from lerobot import available_datasets
 from lerobot.common.datasets.v2.convert_dataset_v1_to_v2 import convert_dataset, parse_robot_config
 
-# import tensorflow_datasets as tfds
-# builder = tfds.builder("columbia_cairlab_pusht_real")
-# builder.info.features
-
 LOCAL_DIR = Path("data/")
 ALOHA_SINGLE_TASKS_REAL = {
     "aloha_mobile_cabinet": "Open the top cabinet, store the pot inside it then close the cabinet.",
@@ -129,10 +125,21 @@ ALOHA_CONFIG = Path("lerobot/configs/robot/aloha.yaml")
 
 
 def batch_convert():
+    status = {}
+    logfile = LOCAL_DIR / "conversion_log.txt"
     for num, repo_id in enumerate(available_datasets):
-        print(f"Converting {repo_id} ({num}/{len(available_datasets)})")
+        print(f"\nConverting {repo_id} ({num}/{len(available_datasets)})")
+        print("---------------------------------------------------------")
         name = repo_id.split("/")[1]
         single_task, tasks_col, robot_config = None, None, None
+
+        # TODO(aliberts) issues with these datasets:
+        # if name in [
+        #     "aloha_mobile_shrimp",  # 18 videos files per camera but 17 episodes in the parquet
+        #     # "aloha_mobile_wash_pan",  #
+        # ]:
+        #     continue
+
         if "aloha" in name:
             robot_config = parse_robot_config(ALOHA_CONFIG)
             if "sim_insertion" in name:
@@ -148,13 +155,22 @@ def batch_convert():
         else:
             tasks_col = "language_instruction"
 
-        convert_dataset(
-            repo_id=repo_id,
-            local_dir=LOCAL_DIR,
-            single_task=single_task,
-            tasks_col=tasks_col,
-            robot_config=robot_config,
-        )
+        try:
+            convert_dataset(
+                repo_id=repo_id,
+                local_dir=LOCAL_DIR,
+                single_task=single_task,
+                tasks_col=tasks_col,
+                robot_config=robot_config,
+            )
+            status = f"{repo_id}: success."
+            with open(logfile, "a") as file:
+                file.write(status + "\n")
+        except Exception as e:
+            status = f"{repo_id}: {e}"
+            with open(logfile, "a") as file:
+                file.write(status + "\n")
+            continue
 
 
 if __name__ == "__main__":
