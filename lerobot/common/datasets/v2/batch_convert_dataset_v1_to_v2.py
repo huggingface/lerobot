@@ -90,6 +90,7 @@
 # 'lerobot/xarm_push_medium_replay',
 # 'lerobot/xarm_push_medium_replay_image',
 
+import traceback
 from pathlib import Path
 
 from lerobot import available_datasets
@@ -139,10 +140,23 @@ def batch_convert():
                 single_task = "Pick up the cube with the right arm and transfer it to the left arm."
             else:
                 single_task = ALOHA_SINGLE_TASKS_REAL[name]
+        elif "unitreeh1" in name:
+            if "fold_clothes" in name:
+                single_task = "Fold the sweatshirt."
+            elif "rearrange_objects" in name or "rearrange_objects" in name:
+                single_task = "Put the object into the bin."
+            elif "two_robot_greeting" in name:
+                single_task = "Greet the other robot with a high five."
+            elif "warehouse" in name:
+                single_task = (
+                    "Grab the spray paint on the shelf and place it in the bin on top of the robot dog."
+                )
         elif name != "columbia_cairlab_pusht_real" and "pusht" in name:
             single_task = "Push the T-shaped block onto the T-shaped target."
         elif "xarm_lift" in name or "xarm_push" in name:
             single_task = "Pick up the cube and lift it."
+        elif name == "umi_cup_in_the_wild":
+            single_task = "Put the cup on the plate."
         else:
             tasks_col = "language_instruction"
 
@@ -157,8 +171,8 @@ def batch_convert():
             status = f"{repo_id}: success."
             with open(logfile, "a") as file:
                 file.write(status + "\n")
-        except Exception as e:
-            status = f"{repo_id}: {e}"
+        except Exception:
+            status = f"{repo_id}: failed\n    {traceback.format_exc()}"
             with open(logfile, "a") as file:
                 file.write(status + "\n")
             continue
