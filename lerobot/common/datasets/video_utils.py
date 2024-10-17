@@ -27,45 +27,8 @@ import torchvision
 from datasets.features.features import register_feature
 
 
-def load_from_videos(
-    item: dict[str, torch.Tensor],
-    video_frame_keys: list[str],
-    videos_dir: Path,
-    tolerance_s: float,
-    backend: str = "pyav",
-):
-    """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
-    in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a Segmentation Fault.
-    This probably happens because a memory reference to the video loader is created in the main process and a
-    subprocess fails to access it.
-    """
-    # since video path already contains "videos" (e.g. videos_dir="data/videos", path="videos/episode_0.mp4")
-    data_dir = videos_dir.parent
-
-    for key in video_frame_keys:
-        if isinstance(item[key], list):
-            # load multiple frames at once (expected when delta_timestamps is not None)
-            timestamps = [frame["timestamp"] for frame in item[key]]
-            paths = [frame["path"] for frame in item[key]]
-            if len(set(paths)) > 1:
-                raise NotImplementedError("All video paths are expected to be the same for now.")
-            video_path = data_dir / paths[0]
-
-            frames = decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
-            item[key] = frames
-        else:
-            # load one frame
-            timestamps = [item[key]["timestamp"]]
-            video_path = data_dir / item[key]["path"]
-
-            frames = decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
-            item[key] = frames[0]
-
-    return item
-
-
 def decode_video_frames_torchvision(
-    video_path: str,
+    video_path: Path | str,
     timestamps: list[float],
     tolerance_s: float,
     backend: str = "pyav",

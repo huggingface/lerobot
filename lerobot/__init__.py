@@ -181,8 +181,8 @@ available_real_world_datasets = [
     "lerobot/usc_cloth_sim",
 ]
 
-available_datasets = list(
-    itertools.chain(*available_datasets_per_env.values(), available_real_world_datasets)
+available_datasets = sorted(
+    set(itertools.chain(*available_datasets_per_env.values(), available_real_world_datasets))
 )
 
 # lists all available policies from `lerobot/common/policies`
