@@ -83,25 +83,37 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         In terms of files, a typical LeRobotDataset looks like this from its root path:
         .
-        ├── README.md
         ├── data
-        │   ├── train-00000-of-00050.parquet
-        │   ├── train-00001-of-00050.parquet
-        │   ├── train-00002-of-00050.parquet
-        │   ...
+        │   ├── chunk-000
+        │   │   ├── train-00000-of-03603.parquet
+        │   │   ├── train-00001-of-03603.parquet
+        │   │   ├── train-00002-of-03603.parquet
+        │   │   └── ...
+        │   ├── chunk-001
+        │   │   ├── train-01000-of-03603.parquet
+        │   │   ├── train-01001-of-03603.parquet
+        │   │   ├── train-01002-of-03603.parquet
+        │   │   └── ...
+        │   └── ...
         ├── meta
+        │   ├── episodes.jsonl
         │   ├── info.json
         │   ├── stats.json
         │   └── tasks.json
         └── videos (optional)
-            ├── observation.images.laptop_episode_000000.mp4
-            ├── observation.images.laptop_episode_000001.mp4
-            ├── observation.images.laptop_episode_000002.mp4
-            ...
-            ├── observation.images.phone_episode_000000.mp4
-            ├── observation.images.phone_episode_000001.mp4
-            ├── observation.images.phone_episode_000002.mp4
-            ...
+            ├── chunk-000
+            │   ├── observation.images.laptop
+            │   │   ├── episode_000000.mp4
+            │   │   ├── episode_000001.mp4
+            │   │   ├── episode_000002.mp4
+            │   │   └── ...
+            │   ├── observation.images.phone
+            │   │   ├── episode_000000.mp4
+            │   │   ├── episode_000001.mp4
+            │   │   ├── episode_000002.mp4
+            │   │   └── ...
+            ├── chunk-001
+            └── ...
 
         Note that this file-based structure is designed to be as versatile as possible. The files are split by
         episodes which allows a more granular control over which episodes one wants to use and download. The
