@@ -47,6 +47,7 @@ jobs:
           pipx install poetry && poetry config virtualenvs.in-project true
           echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
 
+      # TODO(rcadene, aliberts): python 3.12 seems to be used in the tests, not python 3.10
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
@@ -84,6 +85,7 @@ jobs:
           pipx install poetry && poetry config virtualenvs.in-project true
           echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
 
+      # TODO(rcadene, aliberts): python 3.12 seems to be used in the tests, not python 3.10
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:

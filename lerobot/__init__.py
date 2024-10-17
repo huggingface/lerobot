@@ -216,7 +216,9 @@ available_policies_per_env = {
     "aloha": ["act"],
     "pusht": ["diffusion", "vqbet"],
     "xarm": ["tdmpc"],
-    "dora_aloha_real": ["act_real"],
+    "koch_real": ["act_koch_real"],
+    "aloha_real": ["act_aloha_real"],
+    "dora_aloha_real": ["act_aloha_real"],
 }
 
 env_task_pairs = [(env, task) for env, tasks in available_tasks_per_env.items() for task in tasks]

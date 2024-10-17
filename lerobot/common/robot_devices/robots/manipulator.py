@@ -349,6 +349,25 @@ class ManipulatorRobot:
         self.is_connected = False
         self.logs = {}
 
+    @property
+    def has_camera(self):
+        return len(self.cameras) > 0
+
+    @property
+    def num_cameras(self):
+        return len(self.cameras)
+
+    @property
+    def available_arms(self):
+        available_arms = []
+        for name in self.follower_arms:
+            arm_id = get_arm_id(name, "follower")
+            available_arms.append(arm_id)
+        for name in self.leader_arms:
+            arm_id = get_arm_id(name, "leader")
+            available_arms.append(arm_id)
+        return available_arms
+
     def connect(self):
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
@@ -364,6 +383,7 @@ class ManipulatorRobot:
         for name in self.follower_arms:
             print(f"Connecting {name} follower arm.")
             self.follower_arms[name].connect()
+        for name in self.leader_arms:
             print(f"Connecting {name} leader arm.")
             self.leader_arms[name].connect()
 
