@@ -177,7 +177,7 @@ When you start the training process, you will first see your full configuration 
 After that, you will see training log like this one:
 
 ```
-INFO 2024-08-14 13:35:12 ts/train.py:192 step:0 smpl:64 ep:1 epch:0.00 loss:1.112 grdn:15.387 lr:2.0e-07 updt_s:1.738 data_s:4.774
+INFO 2024-08-14 13:35:12 ts/train.py:192 smpl:2K ep:3 epch:0.06 loss:3.706 grdn:94.749 lr:1.0e-05 updt_max|avg:1472|1159 data_max|avg:22|10
 ```
 
 or evaluation log like:
@@ -186,17 +186,7 @@ or evaluation log like:
 INFO 2024-08-14 13:38:45 ts/train.py:226 step:100 smpl:6K ep:52 epch:0.25 ∑rwrd:20.693 success:0.0% eval_s:120.266
 ```
 
-These logs will also be saved in wandb if `wandb.enable` is set to `true`. Here are the meaning of some abbreviations:
-
-- `smpl`: number of samples seen during training.
-- `ep`: number of episodes seen during training. An episode contains multiple samples in a complete manipulation task.
-- `epch`: number of time all unique samples are seen (epoch).
-- `grdn`: gradient norm.
-- `∑rwrd`: compute the sum of rewards in every evaluation episode and then take an average of them.
-- `success`: average success rate of eval episodes. Reward and success are usually different except for the sparsing reward setting, where reward=1 only when the task is completed successfully.
-- `eval_s`: time to evaluate the policy in the environment, in second.
-- `updt_s`: time to update the network parameters, in second.
-- `data_s`: time to load a batch of data, in second.
+These logs will also be saved in wandb if `wandb.enable` is set to `true`. The meaning of logging abbreviations are present in the [training](https://github.com/huggingface/lerobot/blob/429a463aff2f9b55b44055916a41e7b05d107f48/lerobot/scripts/train.py#L177) and [evaluation](https://github.com/huggingface/lerobot/blob/429a463aff2f9b55b44055916a41e7b05d107f48/lerobot/scripts/train.py#L214) code comments.
 
 Some metrics are useful for initial performance profiling. For example, if you find the current GPU utilization is low via the `nvidia-smi` command and `data_s` sometimes is too high, you may need to modify batch size or number of dataloading workers to accelerate dataloading. We also recommend [pytorch profiler](https://github.com/huggingface/lerobot?tab=readme-ov-file#improve-your-code-with-profiling) for detailed performance probing.
 
