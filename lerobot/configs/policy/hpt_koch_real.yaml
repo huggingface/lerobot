@@ -1,0 +1,130 @@
+# @package _global_
+
+# Use `hpt_koch_real.yaml` to train on real-world datasets collected on Alexander Koch's robots.
+# Compared to `hpt.yaml`, it contains 2 cameras (i.e. laptop, phone) instead of 1 camera (i.e. top).
+# Also, `training.eval_freq` is set to -1. This config is used to evaluate checkpoints at a certain frequency of training steps.
+# When it is set to -1, it deactivates evaluation. This is because real-world evaluation is done through our `control_robot.py` script.
+# Look at the documentation in header of `control_robot.py` for more information on how to collect data , train and evaluate a policy.
+#
+# Example of usage for training:
+# ```bash
+# python lerobot/scripts/train.py \
+#   policy=hpt_koch_real \
+#   env=koch_real
+# ```
+
+seed: 1000
+dataset_repo_id: lerobot/koch_pick_place_lego
+
+override_dataset_stats:
+  observation.images.laptop:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.phone:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+
+training:
+  offline_steps: 80000
+  online_steps: 0
+  eval_freq: -1
+  save_freq: 10000
+  log_freq: 100
+  save_checkpoint: true
+
+  batch_size: 8
+  lr: 1.0e-5
+  lr_scheduler: constant_with_warmup
+  lr_warmup_steps: 500
+  adam_betas: [0.95, 0.999]
+  adam_eps: 1.0e-8
+  adam_weight_decay: 1.0e-4
+  grad_clip_norm: 10
+  online_steps_between_rollouts: 1
+
+
+  delta_timestamps:
+    action: "[i / ${fps} for i in range(${policy.action_chunk_size})]"
+
+eval:
+  n_episodes: 50
+  batch_size: 50
+
+# See `configuration_act.py` for more details.
+policy:
+  name: hpt
+
+  # Input / output structure.
+  vision_backbone: "resnet18"
+  pretrained_backbone_weights: "ResNet18_Weights.IMAGENET1K_V1"
+  head_architecture: "transformer"
+  n_obs_steps: 1
+  action_chunk_size: 100
+  n_action_steps: 100
+
+  input_shapes:
+    # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
+    observation.images.laptop: [3, 480, 640]
+    observation.images.phone: [3, 480, 640]
+    observation.state: ["${env.state_dim}"]
+  output_shapes:
+    action: ["${env.action_dim}"]
+
+  # Normalization / Unnormalization
+  input_normalization_modes:
+    observation.images.laptop: mean_std
+    observation.images.phone: mean_std
+    observation.state: mean_std
+  output_normalization_modes:
+    action: mean_std
+
+  # Architecture.
+  # HPT trunk config
+  embed_dim: 768
+  num_blocks: 32
+  num_heads: 16
+  use_modality_embedding: False
+  use_domain_embedding: False
+  token_postprocessing: "no-op"
+  weight_init_style: 'pytorch'
+  drop_path: 0.0
+  no_trunk: False
+  load_pretrained: "xlarge" # load pre-trained model
+  freeze_trunk: False
+
+  # stem network (projectors) for different modalities
+  modalities: ['image', 'state']
+  modality_embed_dim: "${policy.embed_dim}"
+  normalize_state: True # normalize state vectors
+  state_embedding_dim: 1
+  image_encoder: resnet
+  crossattn_dim_head: 64
+  crossattn_heads: 8
+  crossattn_modality_dropout: 0.1
+  random_horizon_masking: True # whether to randomize observation input length
+  add_pos_embedding_to_state: False
+
+  image_crossattn_latent: 16
+  state_crossattn_latent: 16
+
+  image_input_dim: 512 # need modifications based on the vision encoders
+  image_output_dim: "${policy.embed_dim}"
+  image_widths: [512, 512]
+  image_num_of_copy: 1
+
+  state_input_dim: "${env.state_dim}" # ovewrite based on the dataset
+  state_output_dim: "${policy.embed_dim}"
+  state_widths: [512, 512]
+  state_num_of_copy: 1
+
+  # ACT Head
+  dim_model: "${policy.embed_dim}"
+  n_heads: 8
+  dim_feedforward: 3200
+  feedforward_activation: "relu"
+  n_decoder_layers: 1
+  dropout: 0.1
+  pre_norm: False
+  head_action_dim: "${env.action_dim}"

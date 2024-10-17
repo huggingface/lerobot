@@ -1,0 +1,151 @@
+# @package _global_
+
+seed: 1000
+dataset_repo_id: lerobot/aloha_sim_insertion_human
+
+
+override_dataset_stats:
+  observation.image:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.state:
+    min: [13.456424, 32.938293]
+    max: [496.14618, 510.9579]
+  action:
+    min: [12.0, 25.0]
+    max: [511.0, 511.0]
+
+training:
+  offline_steps: 100000
+  online_steps: 0
+  eval_freq: 5000 # 20000
+  save_freq: 20000 # 20000
+  save_checkpoint: false
+
+  batch_size: 64
+  lr: 1.0e-4
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  adam_betas: [0.95, 0.999]
+  adam_eps: 1.0e-8
+  adam_weight_decay: 1.0e-6
+  grad_clip_norm: 10
+  online_steps_between_rollouts: 1
+
+  delta_timestamps:
+    observation.image: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.action_chunk_size})]"
+
+  drop_n_last_frames: 7  # ${policy.horizon} - ${policy.n_action_steps} - ${policy.n_obs_steps} + 1
+
+eval:
+  n_episodes: 50 # 50
+  batch_size: 50 # 50
+
+# See `configuration_act.py` for more details.
+policy:
+  name: hpt
+  domain_name: "diffusion_pusht"
+  vision_backbone: "resnet18"
+  pretrained_backbone_weights: "ResNet18_Weights.IMAGENET1K_V1"
+  head_architecture: "diffusion"
+  action_chunk_size: 16 # tuned for aloha
+  n_action_steps: 8
+  n_obs_steps: 2
+
+  # Input / output structure.
+  input_shapes:
+    # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
+    # change to observation.images.top for aloha
+    observation.image: [3, 96, 96]
+    observation.state: ["${env.state_dim}"]
+  output_shapes:
+    action: ["${env.action_dim}"]
+
+  # Normalization / Unnormalization
+  input_normalization_modes:
+    observation.image: mean_std
+    observation.state: min_max
+  output_normalization_modes:
+    action: min_max
+
+  # full policy configurations.
+  # HPT trunk config
+  embed_dim: 256
+  num_blocks: 16
+  num_heads: 8
+  use_modality_embedding: False
+  use_domain_embedding: False
+  token_postprocessing: "mean"
+  weight_init_style: 'pytorch'
+  drop_path: 0.0
+  no_trunk: False
+  load_pretrained: "" # load pre-trained model
+  freeze_trunk: False
+
+  # stem network (projectors) for different modalities
+  modalities: ['image', 'state']
+  modality_embed_dim: "${policy.embed_dim}"
+  normalize_state: True # normalize state vectors
+  state_embedding_dim: 1
+  image_encoder: resnet
+  crossattn_dim_head: 64
+  crossattn_heads: 8
+  crossattn_modality_dropout: 0.1
+  random_horizon_masking: False # whether to randomize observation input length
+  add_pos_embedding_to_state: False
+
+  image_crossattn_latent: 16
+  state_crossattn_latent: 16
+
+  image_input_dim: 512 # need modifications based on the vision encoders
+  image_output_dim: "${policy.embed_dim}"
+  image_widths: [128]
+  image_num_of_copy: 1
+
+  state_input_dim: "${env.state_dim}" # ovewrite based on the dataset
+  state_output_dim: "${policy.embed_dim}"
+  state_widths: [128]
+  state_num_of_copy: 1
+
+  # MLP Head
+  head_input_dim: "${policy.embed_dim}"
+  head_tanh_end: True # normalized action output
+  head_action_dim: "${env.action_dim}" # overwrite based on dataset
+  head_dropout: True
+  head_widths: [1024, 512, 256]
+
+  # Diffusion Head
+  down_dims: [256, 512, 1024]
+  kernel_size: 5
+  n_groups: 8
+  diffusion_step_embed_dim: 128
+  use_film_scale_modulation: True
+
+  # Noise scheduler.
+  noise_scheduler_type: DDIM
+  num_train_timesteps: 100
+  beta_schedule: squaredcos_cap_v2
+  beta_start: 0.0001
+  beta_end: 0.02
+  prediction_type: epsilon # epsilon / sample
+  clip_sample: True
+  clip_sample_range: 1.0
+
+  # Inference
+  num_inference_steps: 30  # if not provided, defaults to `num_train_timesteps`
+
+  # Loss computation
+  do_mask_loss_for_padding: false
+
+
+  # ACT Head
+  dim_model: "${policy.embed_dim}"
+  n_heads: 8
+  dim_feedforward: 3200
+  feedforward_activation: "relu"
+  n_decoder_layers: 1
+  dropout: 0.1
+  pre_norm: False
