@@ -148,7 +148,6 @@ def visualize_dataset(
 
     logging.info("Logging to Rerun")
 
-    data_dir = dataset.videos_dir.parent
     sent_videos = {}
 
     # Video file heuristic doesn't trigger the correct layout, so set up a blueprint
@@ -167,18 +166,20 @@ def visualize_dataset(
 
             # display each camera image
             for key in dataset.camera_keys:
-                if decode_video:
+                if isinstance(batch[key], torch.Tensor):
                     rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
-                else:
+                elif "path" in batch[key] and "timestamp" in batch[key]:
                     if sent_videos.get(key) != batch[key]["path"][i]:
                         sent_videos[key] = batch[key]["path"][i]
-                        rr.log(key, rr.AssetVideo(path=data_dir / batch[key]["path"][i]))
+                        rr.log(key, rr.AssetVideo(path=dataset.videos_dir.parent / batch[key]["path"][i]))
                     rr.log(
                         key,
                         rr.VideoFrameReference(
                             timestamp=rr.components.VideoTimestamp(seconds=batch[key]["timestamp"][i])
                         ),
                     )
+                else:
+                    logging.warning(f"Unsupported image schema for key {key}")
 
             # display each dimension of action space (e.g. actuators command)
             if "action" in batch:
