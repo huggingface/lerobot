@@ -69,6 +69,7 @@ pyrealsense2 = {version = ">=2.55.1.6486", markers = "sys_platform != 'darwin'",
 pyrender = {git = "https://github.com/mmatl/pyrender.git", markers = "sys_platform == 'linux'", optional = true}
 hello-robot-stretch-body = {version = ">=0.7.27", markers = "sys_platform == 'linux'", optional = true}
 pyserial = {version = ">=3.5", optional = true}
+jsonlines = "^4.0.0"
 
 
 [tool.poetry.extras]
