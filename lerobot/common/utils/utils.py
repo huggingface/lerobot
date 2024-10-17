@@ -196,18 +196,18 @@ def say(text, blocking=False):
     # Check if mac, linux, or windows.
     if platform.system() == "Darwin":
         cmd = f'say "{text}"'
+        if not blocking:
+            cmd += " &"
     elif platform.system() == "Linux":
         cmd = f'spd-say "{text}"'
+        if blocking:
+            cmd += "  --wait"
     elif platform.system() == "Windows":
+        # TODO(rcadene): Make blocking option work for Windows
         cmd = (
             'PowerShell -Command "Add-Type -AssemblyName System.Speech; '
             f"(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')\""
         )
-
-    if not blocking and platform.system() in ["Darwin", "Linux"]:
-        # TODO(rcadene): Make it work for Windows
-        # Use the ampersand to run command in the background
-        cmd += " &"
 
     os.system(cmd)
 
