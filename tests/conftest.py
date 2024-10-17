@@ -52,8 +52,9 @@ def is_robot_available(robot_type):
             print(f"\nInstall module '{e.name}'")
         elif isinstance(e, SerialException):
             print("\nNo physical motors bus detected.")
+        else:
+            traceback.print_exc()
 
-        traceback.print_exc()
         return False
 
 
@@ -77,8 +78,9 @@ def is_camera_available(camera_type):
             print(f"\nInstall module '{e.name}'")
         elif isinstance(e, ValueError) and "camera_index" in e.args[0]:
             print("\nNo physical camera detected.")
+        else:
+            traceback.print_exc()
 
-        traceback.print_exc()
         return False
 
 
@@ -102,8 +104,9 @@ def is_motor_available(motor_type):
             print(f"\nInstall module '{e.name}'")
         elif isinstance(e, SerialException):
             print("\nNo physical motors bus detected.")
+        else:
+            traceback.print_exc()
 
-        traceback.print_exc()
         return False
 
 
