@@ -144,7 +144,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self.tolerance_s,
             )
 
-        if self.video:
+        if self.video and self.video_backend != "raw":
             item = load_from_videos(
                 item,
                 self.video_frame_keys,
