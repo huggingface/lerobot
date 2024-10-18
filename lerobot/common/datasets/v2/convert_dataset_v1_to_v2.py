@@ -662,7 +662,7 @@ def convert_dataset(
 
     # Episodes
     episodes = [
-        {"episode_index": ep_idx, "tasks": [tasks_by_episodes[ep_idx]], "length": episode_lengths[ep_idx]}
+        {"episode_index": ep_idx, "tasks": tasks_by_episodes[ep_idx], "length": episode_lengths[ep_idx]}
         for ep_idx in episode_indices
     ]
     write_jsonlines(episodes, v20_dir / "meta" / "episodes.jsonl")
