@@ -18,26 +18,26 @@ import time
 
 def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     if brand == "feetech":
-        from lerobot.common.robot_devices.motors.feetech import MODEL_BAUDRATE_TABLE as model_baud_rate_table
-        from lerobot.common.robot_devices.motors.feetech import NUM_WRITE_RETRY as num_write_retry
-        from lerobot.common.robot_devices.motors.feetech import SCS_SERIES_BAUDRATE_TABLE as baudrate_table
-        from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus as motor_bus_class
-    elif brand == "dynamixel":
-        from lerobot.common.robot_devices.motors.dynamixel import (
-            MODEL_BAUDRATE_TABLE as model_baud_rate_table,
+        from lerobot.common.robot_devices.motors.feetech import MODEL_BAUDRATE_TABLE, NUM_WRITE_RETRY
+        from lerobot.common.robot_devices.motors.feetech import (
+            SCS_SERIES_BAUDRATE_TABLE as SERIES_BAUDRATE_TABLE,
         )
-        from lerobot.common.robot_devices.motors.dynamixel import NUM_WRITE_RETRY as num_write_retry
-        from lerobot.common.robot_devices.motors.dynamixel import X_SERIES_BAUDRATE_TABLE as baudrate_table
-        from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus as motor_bus_class
+        from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus as MotorsBusClass
+    elif brand == "dynamixel":
+        from lerobot.common.robot_devices.motors.dynamixel import MODEL_BAUDRATE_TABLE, NUM_WRITE_RETRY
+        from lerobot.common.robot_devices.motors.dynamixel import (
+            X_SERIES_BAUDRATE_TABLE as SERIES_BAUDRATE_TABLE,
+        )
+        from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus as MotorsBusClass
     else:
         raise ValueError(
             f"Currently we do not support this motor brand: {brand}. We currently support feetech and dynamixel motors."
         )
 
     # Check if the provided model exists in the model_baud_rate_table
-    if model not in model_baud_rate_table:
+    if model not in MODEL_BAUDRATE_TABLE:
         raise ValueError(
-            f"Invalid model '{model}' for brand '{brand}'. Supported models: {list(model_baud_rate_table.keys())}"
+            f"Invalid model '{model}' for brand '{brand}'. Supported models: {list(MODEL_BAUDRATE_TABLE.keys())}"
         )
 
     # Setup motor names, indices, and models
@@ -46,7 +46,7 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     motor_model = model  # Use the motor model passed via argument
 
     # Initialize the MotorBus with the correct port and motor configurations
-    motor_bus = motor_bus_class(port=port, motors={motor_name: (motor_index_arbitrary, motor_model)})
+    motor_bus = MotorsBusClass(port=port, motors={motor_name: (motor_index_arbitrary, motor_model)})
 
     # Try to connect to the motor bus and handle any connection-specific errors
     try:
@@ -59,7 +59,7 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     # Motor bus is connected, proceed with the rest of the operations
     try:
         print("Scanning all baudrates and motor indices")
-        all_baudrates = set(baudrate_table.values())
+        all_baudrates = set(SERIES_BAUDRATE_TABLE.values())
         motor_index = -1  # Set the motor index to an out-of-range value.
 
         for baudrate in all_baudrates:
@@ -84,10 +84,10 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
 
         if baudrate != baudrate_des:
             print(f"Setting its baudrate to {baudrate_des}")
-            baudrate_idx = list(baudrate_table.values()).index(baudrate_des)
+            baudrate_idx = list(SERIES_BAUDRATE_TABLE.values()).index(baudrate_des)
 
             # The write can fail, so we allow retries
-            for _ in range(num_write_retry):
+            for _ in range(NUM_WRITE_RETRY):
                 motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Baud_Rate", baudrate_idx)
                 time.sleep(0.5)
                 motor_bus.set_bus_baudrate(baudrate_des)
@@ -124,7 +124,8 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
             time.sleep(4)
             print("Offset", motor_bus.read("Offset"))
 
-            while True:
+            # Read present position for 15 seconds
+            for _ in range(30):
                 print("Present Position", motor_bus.read("Present_Position"))
                 time.sleep(0.5)
 

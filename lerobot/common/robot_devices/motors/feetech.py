@@ -45,6 +45,8 @@ UPPER_BOUND_LINEAR = 110
 HALF_TURN_DEGREE = 180
 
 
+# See this link for STS3215 Memory Table:
+# https://docs.google.com/spreadsheets/d/1GVs7W1VS1PqdhA1nW-abeyAHhTUxKUdR/edit?usp=sharing&ouid=116566590112741600240&rtpof=true&sd=true
 # data_name: (address, size_byte)
 SCS_SERIES_CONTROL_TABLE = {
     "Model": (3, 2),
@@ -325,7 +327,7 @@ class FeetechMotorsBus:
         except Exception:
             traceback.print_exc()
             print(
-                "\nTry running `python lerobot/common/robot_devices/motors/feetech.py` to make sure you are using the correct port.\n"
+                "\nTry running `python lerobot/scripts/find_motors_bus_port.py` to make sure you are using the correct port.\n"
             )
             raise
 
@@ -739,8 +741,6 @@ class FeetechMotorsBus:
         # Convert to signed int to use range [-2048, 2048] for our motor positions.
         if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
             values = values.astype(np.int32)
-
-        print(values)
 
         if data_name in CALIBRATION_REQUIRED:
             values = self.avoid_rotation_reset(values, motor_names, data_name)

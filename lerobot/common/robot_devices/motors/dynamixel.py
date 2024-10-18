@@ -260,7 +260,7 @@ class DynamixelMotorsBus:
     A DynamixelMotorsBus instance requires a port (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`)).
     To find the port, you can run our utility script:
     ```bash
-    python lerobot/common/robot_devices/motors/dynamixel.py
+    python lerobot/scripts/find_motors_bus_port.py
     >>> Finding all available ports for the DynamixelMotorsBus.
     >>> ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
     >>> Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
@@ -339,7 +339,7 @@ class DynamixelMotorsBus:
         except Exception:
             traceback.print_exc()
             print(
-                "\nTry running `python lerobot/common/robot_devices/motors/dynamixel.py` to make sure you are using the correct port.\n"
+                "\nTry running `python lerobot/scripts/find_motors_bus_port.py` to make sure you are using the correct port.\n"
             )
             raise
 

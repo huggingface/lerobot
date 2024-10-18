@@ -78,7 +78,7 @@ To begin, create two instances of the  [`DynamixelMotorsBus`](../lerobot/common/
 
 To find the correct ports for each arm, run the utility script twice:
 ```bash
-python lerobot/common/robot_devices/motors/dynamixel.py
+python lerobot/scripts/find_motors_bus_port.py
 ```
 
 Example output when identifying the leader arm's port (e.g., `/dev/tty.usbmodem575E0031751` on Mac, or possibly `/dev/ttyACM0` on Linux):

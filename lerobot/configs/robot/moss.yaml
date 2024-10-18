@@ -1,6 +1,14 @@
+# [Moss v1 robot arm](https://github.com/jess-moss/moss-robot-arms)
+
+# Requires installing extras packages
+# With pip: `pip install -e ".[feetech]"`
+# With poetry: `poetry install --sync --extras "feetech"`
+
+# See [tutorial](https://github.com/huggingface/lerobot/blob/main/examples/11_use_moss.md)
+
 _target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
-robot_type: so_100
-calibration_dir: .cache/calibration/so_100
+robot_type: moss
+calibration_dir: .cache/calibration/moss
 
 # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
 # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
@@ -46,8 +54,3 @@ cameras:
     fps: 30
     width: 640
     height: 480
-
-# ~ Koch specific settings ~
-# Sets the leader arm in torque mode with the gripper motor set to this angle. This makes it possible
-# to squeeze the gripper and have it spring back to an open position on its own.
-# gripper_open_degree: 35.156
