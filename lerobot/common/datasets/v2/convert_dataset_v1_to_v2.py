@@ -120,12 +120,15 @@ from huggingface_hub.errors import EntryNotFoundError
 from PIL import Image
 from safetensors.torch import load_file
 
-from lerobot.common.datasets.lerobot_dataset import (
+from lerobot.common.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_PARQUET_PATH,
     DEFAULT_VIDEO_PATH,
+    create_branch,
+    flatten_dict,
+    get_hub_safe_version,
+    unflatten_dict,
 )
-from lerobot.common.datasets.utils import create_branch, flatten_dict, get_hub_safe_version, unflatten_dict
 from lerobot.common.utils.utils import init_hydra_config
 from lerobot.scripts.push_dataset_to_hub import push_dataset_card_to_hub
 
@@ -607,8 +610,8 @@ def convert_dataset(
         raise ValueError
 
     assert set(tasks) == {task for ep_tasks in tasks_by_episodes.values() for task in ep_tasks}
-    task_json = [{"task_index": task_idx, "task": task} for task_idx, task in enumerate(tasks)]
-    write_json(task_json, v20_dir / "meta" / "tasks.json")
+    tasks = [{"task_index": task_idx, "task": task} for task_idx, task in enumerate(tasks)]
+    write_jsonlines(tasks, v20_dir / "meta" / "tasks.json")
 
     # Shapes
     sequence_shapes = {key: dataset.features[key].length for key in keys["sequence"]}

@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import logging
 import os
 from pathlib import Path
@@ -27,6 +28,7 @@ from lerobot.common.datasets.compute_stats import aggregate_stats
 from lerobot.common.datasets.utils import (
     check_delta_timestamps,
     check_timestamps_sync,
+    create_dataset_info,
     get_delta_indices,
     get_episode_data_index,
     get_hub_safe_version,
@@ -34,16 +36,11 @@ from lerobot.common.datasets.utils import (
     load_metadata,
 )
 from lerobot.common.datasets.video_utils import VideoFrame, decode_video_frames_torchvision
+from lerobot.common.robot_devices.robots.utils import Robot
 
 # For maintainers, see lerobot/common/datasets/push_dataset_to_hub/CODEBASE_VERSION.md
 CODEBASE_VERSION = "v2.0"
 LEROBOT_HOME = Path(os.getenv("LEROBOT_HOME", "~/.cache/huggingface/lerobot")).expanduser()
-
-DEFAULT_CHUNK_SIZE = 1000
-DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
-DEFAULT_PARQUET_PATH = (
-    "data/chunk-{episode_chunk:03d}/train-{episode_index:05d}-of-{total_episodes:05d}.parquet"
-)
 
 
 class LeRobotDataset(torch.utils.data.Dataset):
@@ -400,6 +397,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         return item
 
+    def write_info(self) -> None:
+        with open(self.root / "meta/info.json", "w") as f:
+            json.dump(self.info, f, indent=4, ensure_ascii=False)
+
     def __repr__(self):
         return (
             f"{self.__class__.__name__}(\n"
@@ -419,17 +420,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def create(
         cls,
         repo_id: str,
+        fps: int,
+        robot: Robot,
         root: Path | None = None,
-        image_transforms: Callable | None = None,
-        delta_timestamps: dict[list[float]] | None = None,
         tolerance_s: float = 1e-4,
-        video_backend: str | None = None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
-        # create an empty object of type LeRobotDataset
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
         obj.root = root if root is not None else LEROBOT_HOME / repo_id
+        obj._version = CODEBASE_VERSION
+
+        obj.root.mkdir(exist_ok=True, parents=True)
+        obj.info = create_dataset_info(obj._version, fps, robot)
+        obj.write_info()
+        obj.fps = fps
+
         # obj.episodes = None
         # obj.image_transforms = None
         # obj.delta_timestamps = None
