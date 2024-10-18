@@ -5389,7 +5389,7 @@ docs = ["sphinx", "sphinx-automodapi", "sphinx-rtd-theme"]
 name = "pyserial"
 version = "3.5"
 description = "Python Serial Port Extension"
-optional = false
+optional = true
 python-versions = "*"
 files = [
     {file = "pyserial-3.5-py2.py3-none-any.whl", hash = "sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0"},
@@ -7576,4 +7576,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "b79d32bec01c53a3ca48548b85e6f991c9d8fc091f3f528e0b54c6e9fac63ff9"
+content-hash = "a89f20d969c8cabb45732282832c7d997385399d436e45830a48584f11fa3135"
