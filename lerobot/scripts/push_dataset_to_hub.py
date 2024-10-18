@@ -260,7 +260,7 @@ def push_dataset_to_hub(
         episode_index = 0
         tests_videos_dir = tests_data_dir / repo_id / "videos"
         tests_videos_dir.mkdir(parents=True, exist_ok=True)
-        for key in lerobot_dataset.video_frame_keys:
+        for key in lerobot_dataset.camera_keys:
             fname = f"{key}_episode_{episode_index:06d}.mp4"
             shutil.copy(videos_dir / fname, tests_videos_dir / fname)
 
