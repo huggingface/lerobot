@@ -127,8 +127,8 @@ MODEL_BAUDRATE_TABLE = {
     "sts3215": SCS_SERIES_BAUDRATE_TABLE,
 }
 
-NUM_READ_RETRY = 2
-NUM_WRITE_RETRY = 2
+NUM_READ_RETRY = 20
+NUM_WRITE_RETRY = 20
 
 
 def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str]) -> np.ndarray:
@@ -656,7 +656,7 @@ class FeetechMotorsBus:
 
         return values
 
-    def read_with_motor_ids(self, motor_models, motor_ids, data_name):
+    def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
         return_list = True
         if not isinstance(motor_ids, list):
             return_list = False
@@ -668,7 +668,7 @@ class FeetechMotorsBus:
         for idx in motor_ids:
             group.addParam(idx)
 
-        for _ in range(NUM_READ_RETRY):
+        for _ in range(num_retry):
             comm = group.txRxPacket()
             if comm == COMM_SUCCESS:
                 break
@@ -758,7 +758,7 @@ class FeetechMotorsBus:
 
         return values
 
-    def write_with_motor_ids(self, motor_models, motor_ids, data_name, values):
+    def write_with_motor_ids(self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY):
         if not isinstance(motor_ids, list):
             motor_ids = [motor_ids]
         if not isinstance(values, list):
@@ -771,7 +771,11 @@ class FeetechMotorsBus:
             data = convert_to_bytes(value, bytes)
             group.addParam(idx, data)
 
-        comm = group.txPacket()
+        for _ in range(num_retry):
+            comm = group.txPacket()
+            if comm == COMM_SUCCESS:
+                break
+
         if comm != COMM_SUCCESS:
             raise ConnectionError(
                 f"Write failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "
@@ -796,8 +800,6 @@ class FeetechMotorsBus:
             values = [int(values)] * len(motor_names)
 
         values = np.array(values)
-
-        print(values)
 
         motor_ids = []
         models = []

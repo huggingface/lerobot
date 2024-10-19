@@ -332,10 +332,22 @@ class ManipulatorRobot:
 
                 if self.robot_type in ["koch", "aloha"]:
                     from lerobot.common.robot_devices.robots.dynamixel_calibration import run_arm_calibration
-                elif self.robot_type in ["so100", "moss"]:
-                    from lerobot.common.robot_devices.robots.feetech_calibration import run_arm_calibration
 
-                calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
+                    calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
+
+                elif self.robot_type in ["so100", "moss"]:
+                    from lerobot.common.robot_devices.robots.feetech_calibration import (
+                        run_arm_auto_calibration,
+                        run_arm_manual_calibration,
+                    )
+
+                    if arm_type == "leader":
+                        calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
+
+                    elif arm_type == "follower":
+                        calibration = run_arm_auto_calibration(arm, self.robot_type, name, arm_type)
+                    else:
+                        raise ValueError(arm_type)
 
                 print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
                 arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
@@ -454,9 +466,11 @@ class ManipulatorRobot:
             # Close the write lock so that Maximum_Acceleration gets written to EPROM address,
             # which is mandatory for Maximum_Acceleration to take effect after rebooting.
             self.follower_arms[name].write("Lock", 0)
-            # Set Maximum_Acceleration to 250 to speedup acceleration and deceleration of
+            # Set Maximum_Acceleration to 254 to speedup acceleration and deceleration of
             # the motors. Note: this configuration is not in the official STS3215 Memory Table
-            self.follower_arms[name].write("Maximum_Acceleration", 250)
+            self.follower_arms[name].write("Maximum_Acceleration", 254)
+            self.follower_arms[name].write("Acceleration", 254)
+            time.sleep(1)
 
     def teleop_step(
         self, record_data=False

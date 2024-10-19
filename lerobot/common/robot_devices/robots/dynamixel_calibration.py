@@ -36,9 +36,9 @@ def apply_drive_mode(position, drive_mode):
 
 
 def compute_nearest_rounded_position(position, models):
-    # delta_turn = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, models)
-    # nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
-    # return nearest_pos.astype(position.dtype)
+    delta_turn = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, models)
+    nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
+    return nearest_pos.astype(position.dtype)
     return position
 
 

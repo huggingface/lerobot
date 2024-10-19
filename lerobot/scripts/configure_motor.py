@@ -18,13 +18,13 @@ import time
 
 def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     if brand == "feetech":
-        from lerobot.common.robot_devices.motors.feetech import MODEL_BAUDRATE_TABLE, NUM_WRITE_RETRY
+        from lerobot.common.robot_devices.motors.feetech import MODEL_BAUDRATE_TABLE
         from lerobot.common.robot_devices.motors.feetech import (
             SCS_SERIES_BAUDRATE_TABLE as SERIES_BAUDRATE_TABLE,
         )
         from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus as MotorsBusClass
     elif brand == "dynamixel":
-        from lerobot.common.robot_devices.motors.dynamixel import MODEL_BAUDRATE_TABLE, NUM_WRITE_RETRY
+        from lerobot.common.robot_devices.motors.dynamixel import MODEL_BAUDRATE_TABLE
         from lerobot.common.robot_devices.motors.dynamixel import (
             X_SERIES_BAUDRATE_TABLE as SERIES_BAUDRATE_TABLE,
         )
@@ -82,40 +82,39 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
 
         print(f"Motor index found at: {motor_index}")
 
+        if brand == "feetech":
+            # Allows ID and BAUDRATE to be written in memory
+            motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Lock", 0)
+
         if baudrate != baudrate_des:
             print(f"Setting its baudrate to {baudrate_des}")
             baudrate_idx = list(SERIES_BAUDRATE_TABLE.values()).index(baudrate_des)
 
             # The write can fail, so we allow retries
-            for _ in range(NUM_WRITE_RETRY):
-                motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Baud_Rate", baudrate_idx)
-                time.sleep(0.5)
-                motor_bus.set_bus_baudrate(baudrate_des)
-                try:
-                    present_baudrate_idx = motor_bus.read_with_motor_ids(
-                        motor_bus.motor_models, motor_index, "Baud_Rate"
-                    )
-                except ConnectionError:
-                    print("Failed to write baudrate. Retrying.")
-                    motor_bus.set_bus_baudrate(baudrate)
-                    continue
-                break
-            else:
-                raise OSError("Failed to write baudrate.")
+            motor_bus.write_with_motor_ids(
+                motor_bus.motor_models, motor_index, "Baud_Rate", baudrate_idx, num_retry=2
+            )
+            time.sleep(0.5)
+            motor_bus.set_bus_baudrate(baudrate_des)
+            present_baudrate_idx = motor_bus.read_with_motor_ids(
+                motor_bus.motor_models, motor_index, "Baud_Rate", num_retry=2
+            )
 
             if present_baudrate_idx != baudrate_idx:
                 raise OSError("Failed to write baudrate.")
 
-        motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Lock", 0)
-
         print(f"Setting its index to desired index {motor_idx_des}")
         motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "ID", motor_idx_des)
 
-        present_idx = motor_bus.read_with_motor_ids(motor_bus.motor_models, motor_idx_des, "ID")
+        present_idx = motor_bus.read_with_motor_ids(motor_bus.motor_models, motor_idx_des, "ID", num_retry=2)
         if present_idx != motor_idx_des:
             raise OSError("Failed to write index.")
 
         if brand == "feetech":
+            # Set Maximum_Acceleration to 254 to speedup acceleration and deceleration of
+            # the motors. Note: this configuration is not in the official STS3215 Memory Table
+            motor_bus.write("Maximum_Acceleration", 254)
+
             motor_bus.write("Goal_Position", 2047)
             time.sleep(4)
             print("Present Position", motor_bus.read("Present_Position"))
