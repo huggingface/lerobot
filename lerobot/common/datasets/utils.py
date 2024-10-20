@@ -75,6 +75,12 @@ def unflatten_dict(d, sep="/"):
     return outdict
 
 
+def write_json(data: dict, fpath: Path) -> None:
+    fpath.parent.mkdir(exist_ok=True, parents=True)
+    with open(fpath, "w") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+
 def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     """Get a transform function that convert items from Hugging Face dataset (pyarrow)
     to torch tensors. Importantly, images are converted from PIL, which corresponds to
@@ -146,7 +152,16 @@ def load_metadata(local_dir: Path) -> tuple[dict | list]:
     return info, episode_dicts, stats, tasks
 
 
-def create_dataset_info(codebase_version: str, fps: int, robot: Robot) -> dict:
+def create_empty_dataset_info(codebase_version: str, fps: int, robot: Robot, use_videos: bool = True) -> dict:
+    shapes = {key: len(names) for key, names in robot.names.items()}
+    camera_shapes = {}
+    for key, cam in robot.cameras.items():
+        video_key = f"observation.images.{key}"
+        camera_shapes[video_key] = {
+            "width": cam.width,
+            "height": cam.height,
+            "channels": cam.channels,
+        }
     return {
         "codebase_version": codebase_version,
         "data_path": DEFAULT_PARQUET_PATH,
@@ -159,12 +174,12 @@ def create_dataset_info(codebase_version: str, fps: int, robot: Robot) -> dict:
         "chunks_size": DEFAULT_CHUNK_SIZE,
         "fps": fps,
         "splits": {},
-        # "keys": keys,
-        # "video_keys": video_keys,
-        # "image_keys": image_keys,
-        # "shapes": {**sequence_shapes, **video_shapes, **image_shapes},
-        # "names": names,
-        # "videos": {"videos_path": DEFAULT_VIDEO_PATH} if video_keys else None,
+        "keys": list(robot.names),
+        "video_keys": list(camera_shapes) if use_videos else [],
+        "image_keys": [] if use_videos else list(camera_shapes),
+        "shapes": {**shapes, **camera_shapes},
+        "names": robot.names,
+        "videos": {"videos_path": DEFAULT_VIDEO_PATH} if use_videos else None,
     }
 
 
@@ -270,6 +285,7 @@ def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dic
     return delta_indices
 
 
+# TODO(aliberts): remove
 def load_previous_and_future_frames(
     item: dict[str, torch.Tensor],
     hf_dataset: datasets.Dataset,
@@ -363,6 +379,7 @@ def load_previous_and_future_frames(
     return item
 
 
+# TODO(aliberts): remove
 def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> Dict[str, torch.Tensor]:
     """
     Calculate episode data index for the provided HuggingFace Dataset. Relies on episode_index column of hf_dataset.
@@ -417,6 +434,7 @@ def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> Dict[str, torc
     return episode_data_index
 
 
+# TODO(aliberts): remove
 def reset_episode_index(hf_dataset: datasets.Dataset) -> datasets.Dataset:
     """Reset the `episode_index` of the provided HuggingFace Dataset.
 
@@ -454,7 +472,7 @@ def cycle(iterable):
             iterator = iter(iterable)
 
 
-def create_branch(repo_id, *, branch: str, repo_type: str | None = None):
+def create_branch(repo_id, *, branch: str, repo_type: str | None = None) -> None:
     """Create a branch on a existing Hugging Face repo. Delete the branch if it already
     exists before creating it.
     """

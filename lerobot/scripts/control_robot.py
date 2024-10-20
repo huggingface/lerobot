@@ -105,11 +105,11 @@ from pathlib import Path
 from typing import List
 
 # from safetensors.torch import load_file, save_file
+from lerobot.common.datasets.image_writer import ImageWriter
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.populate_dataset import (
     create_lerobot_dataset,
     delete_current_episode,
-    init_dataset,
     save_current_episode,
 )
 from lerobot.common.robot_devices.control_utils import (
@@ -233,16 +233,12 @@ def record(
 
     # Create empty dataset or load existing saved episodes
     sanity_check_dataset_name(repo_id, policy)
-    dataset = init_dataset(
-        repo_id,
-        root,
-        force_override,
-        fps,
-        video,
-        write_images=robot.has_camera,
+    image_writer = ImageWriter(
+        write_dir=root,
         num_image_writer_processes=num_image_writer_processes,
         num_image_writer_threads=num_image_writer_threads_per_camera * robot.num_cameras,
     )
+    dataset = LeRobotDataset.create(repo_id, fps, robot, image_writer=image_writer)
 
     if not robot.is_connected:
         robot.connect()
@@ -260,8 +256,9 @@ def record(
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
+    recorded_episodes = 0
     while True:
-        if dataset["num_episodes"] >= num_episodes:
+        if recorded_episodes >= num_episodes:
             break
 
         episode_index = dataset["num_episodes"]
