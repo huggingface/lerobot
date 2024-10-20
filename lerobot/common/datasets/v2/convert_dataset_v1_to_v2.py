@@ -125,12 +125,12 @@ from lerobot.common.datasets.utils import (
     DEFAULT_PARQUET_PATH,
     DEFAULT_VIDEO_PATH,
     create_branch,
+    create_lerobot_dataset_card,
     flatten_dict,
     get_hub_safe_version,
     unflatten_dict,
 )
 from lerobot.common.utils.utils import init_hydra_config
-from lerobot.scripts.push_dataset_to_hub import push_dataset_card_to_hub
 
 V16 = "v1.6"
 V20 = "v2.0"
@@ -716,8 +716,9 @@ def convert_dataset(
         revision=branch,
     )
 
-    card_text = f"[meta/info.json](meta/info.json)\n```json\n{json.dumps(metadata_v2_0, indent=4)}\n```"
-    push_dataset_card_to_hub(repo_id=repo_id, revision=branch, tags=repo_tags, text=card_text)
+    card = create_lerobot_dataset_card(tags=repo_tags, info=metadata_v2_0)
+    card.push_to_hub(repo_id=repo_id, repo_type="dataset", revision=branch)
+
     if not test_branch:
         create_branch(repo_id=repo_id, branch=V20, repo_type="dataset")
 
