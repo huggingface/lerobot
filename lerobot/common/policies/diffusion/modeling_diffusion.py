@@ -211,6 +211,20 @@ class DiffusionModel(nn.Module):
         else:
             self.num_inference_steps = config.num_inference_steps
 
+    def get_optimizer(
+        self,
+        transformer_weight_decay: float = 1e-3,
+        rgb_encoder_weight_decay: float = 1e-6,
+        learning_rate: float = 1e-4,
+        betas: Tuple[float, float] = [0.9, 0.95],
+    ) -> torch.optim.Optimizer:
+        optim_groups = self.net.get_optim_groups(weight_decay=transformer_weight_decay)
+        optim_groups.append(
+            {"params": self.rgb_encoder.parameters(), "weight_decay": rgb_encoder_weight_decay}
+        )
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas)
+        return optimizer
+
     # ========= inference  ============
     def conditional_sample(
         self, batch_size: int, global_cond: Tensor | None = None, generator: torch.Generator | None = None
