@@ -1,8 +1,3 @@
-<<<<<<< HEAD
-version https://git-lfs.github.com/spec/v1
-oid sha256:58d5366d523b55a2230904cb90346f64629aad2568e428f8979b068e22209598
-size 506
-=======
 {
     "homing_offset": [
         2048,
@@ -71,4 +66,3 @@ size 506
         "gripper"
     ]
 }
->>>>>>> 9d0c6fe (Fix nightlies & untrack json files from git lfs (#414))
