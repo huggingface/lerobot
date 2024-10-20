@@ -335,7 +335,7 @@ class ManipulatorRobot:
 
                     calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
 
-                elif self.robot_type in ["so100", "moss"]:
+                elif self.robot_type in ["so100"]:
                     from lerobot.common.robot_devices.robots.feetech_calibration import (
                         run_arm_auto_calibration,
                         run_arm_manual_calibration,
@@ -343,9 +343,18 @@ class ManipulatorRobot:
 
                     if arm_type == "leader":
                         calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
-
                     elif arm_type == "follower":
                         calibration = run_arm_auto_calibration(arm, self.robot_type, name, arm_type)
+                    else:
+                        raise ValueError(arm_type)
+
+                elif self.robot_type in ["moss"]:
+                    from lerobot.common.robot_devices.robots.feetech_calibration import (
+                        run_arm_manual_calibration,
+                    )
+
+                    if arm_type == "leader" or arm_type == "follower":
+                        calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
                     else:
                         raise ValueError(arm_type)
 

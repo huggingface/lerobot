@@ -352,14 +352,14 @@ class FeetechMotorsBus:
             print(e)
             return False
 
-    def find_motor_indices(self, possible_ids=None):
+    def find_motor_indices(self, possible_ids=None, num_retry=2):
         if possible_ids is None:
             possible_ids = range(MAX_ID_RANGE)
 
         indices = []
         for idx in tqdm.tqdm(possible_ids):
             try:
-                present_idx = self.read_with_motor_ids(self.motor_models, [idx], "ID")[0]
+                present_idx = self.read_with_motor_ids(self.motor_models, [idx], "ID", num_retry=num_retry)[0]
             except ConnectionError:
                 continue
 

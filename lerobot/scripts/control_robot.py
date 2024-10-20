@@ -144,6 +144,9 @@ def calibrate(robot: Robot, arms: list[str] | None):
             robot.home()
         return
 
+    if arms is None:
+        arms = robot.available_arms
+
     unknown_arms = [arm_id for arm_id in arms if arm_id not in robot.available_arms]
     available_arms_str = " ".join(robot.available_arms)
     unknown_arms_str = " ".join(unknown_arms)
