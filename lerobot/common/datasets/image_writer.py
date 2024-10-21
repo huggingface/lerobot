@@ -107,6 +107,12 @@ class ImageWriter:
         )
         return str(self.dir / fpath) if return_str else self.dir / fpath
 
+    def get_episode_dir(self, episode_index: int, image_key: str, return_str: bool = True) -> str | Path:
+        dir_path = self.get_image_file_path(
+            episode_index=episode_index, image_key=image_key, frame_index=0, return_str=False
+        ).parent
+        return str(dir_path) if return_str else dir_path
+
     def stop(self, timeout=20) -> None:
         """Stop the image writer, waiting for all processes or threads to finish."""
         if self.type == "threads":

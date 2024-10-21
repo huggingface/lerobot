@@ -15,6 +15,7 @@
 # limitations under the License.
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import Callable
 
@@ -25,7 +26,7 @@ import torch.utils
 from datasets import load_dataset
 from huggingface_hub import snapshot_download, upload_folder
 
-from lerobot.common.datasets.compute_stats import aggregate_stats
+from lerobot.common.datasets.compute_stats import aggregate_stats, compute_stats
 from lerobot.common.datasets.image_writer import ImageWriter
 from lerobot.common.datasets.utils import (
     append_jsonl,
@@ -630,9 +631,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
         append_jsonl(episode_dict, self.root / "meta/episodes.jsonl")
 
     def delete_episode(self) -> None:
-        pass  # TODO
+        episode_index = self.episode_buffer["episode_index"]
+        if self.image_writer is not None:
+            for cam_key in self.camera_keys:
+                cam_dir = self.image_writer.get_episode_dir(episode_index, cam_key)
+                if cam_dir.is_dir():
+                    shutil.rmtree(cam_dir)
 
-    def consolidate(self) -> None:
+        # Reset the buffer
+        self.episode_buffer = self._create_episode_buffer()
+
+    def consolidate(self, run_compute_stats: bool = True) -> None:
+        if run_compute_stats:
+            logging.info("Computing dataset statistics")
+            self.hf_dataset = self.load_hf_dataset()
+            self.stats = compute_stats(self)
+            write_json()
         pass  # TODO
         # Sanity checks:
         # - [ ] shapes
