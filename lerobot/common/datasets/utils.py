@@ -14,20 +14,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
-import re
 import warnings
-from functools import cache
+from itertools import accumulate
 from pathlib import Path
+from pprint import pformat
 from typing import Dict
 
 import datasets
+import jsonlines
 import torch
-from datasets import load_dataset, load_from_disk
-from huggingface_hub import DatasetCard, HfApi, hf_hub_download, snapshot_download
+from huggingface_hub import DatasetCard, HfApi
 from PIL import Image as PILImage
-from safetensors.torch import load_file
 from torchvision import transforms
 
+from lerobot.common.robot_devices.robots.utils import Robot
+
+DEFAULT_CHUNK_SIZE = 1000  # Max number of episodes per chunk
+DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
+DEFAULT_PARQUET_PATH = (
+    "data/chunk-{episode_chunk:03d}/train-{episode_index:05d}-of-{total_episodes:05d}.parquet"
+)
 DATASET_CARD_TEMPLATE = """
 ---
 # Metadata will go there
@@ -69,6 +75,17 @@ def unflatten_dict(d, sep="/"):
     return outdict
 
 
+def write_json(data: dict, fpath: Path) -> None:
+    fpath.parent.mkdir(exist_ok=True, parents=True)
+    with open(fpath, "w") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+
+def append_jsonl(data: dict, fpath: Path) -> None:
+    with jsonlines.open(fpath, "a") as writer:
+        writer.write(data)
+
+
 def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     """Get a transform function that convert items from Hugging Face dataset (pyarrow)
     to torch tensors. Importantly, images are converted from PIL, which corresponds to
@@ -80,14 +97,6 @@ def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
         if isinstance(first_item, PILImage.Image):
             to_tensor = transforms.ToTensor()
             items_dict[key] = [to_tensor(img) for img in items_dict[key]]
-        elif isinstance(first_item, str):
-            # TODO (michel-aractingi): add str2embedding via language tokenizer
-            # For now we leave this part up to the user to choose how to address
-            # language conditioned tasks
-            pass
-        elif isinstance(first_item, dict) and "path" in first_item and "timestamp" in first_item:
-            # video frame will be processed downstream
-            pass
         elif first_item is None:
             pass
         else:
@@ -95,8 +104,14 @@ def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     return items_dict
 
 
-@cache
-def get_hf_dataset_safe_version(repo_id: str, version: str) -> str:
+def get_hub_safe_version(repo_id: str, version: str, enforce_v2: bool = True) -> str:
+    num_version = float(version.strip("v"))
+    if num_version < 2 and enforce_v2:
+        raise ValueError(
+            f"""The dataset you requested ({repo_id}) is in {version} format. We introduced a new
+            format with v2.0 that is not backward compatible. Please use our conversion script
+            first (convert_dataset_v1_to_v2.py) to convert your dataset to this new format."""
+        )
     api = HfApi()
     dataset_info = api.list_repo_refs(repo_id, repo_type="dataset")
     branches = [b.name for b in dataset_info.branches]
@@ -116,106 +131,166 @@ def get_hf_dataset_safe_version(repo_id: str, version: str) -> str:
         return version
 
 
-def load_hf_dataset(repo_id: str, version: str, root: Path, split: str) -> datasets.Dataset:
-    """hf_dataset contains all the observations, states, actions, rewards, etc."""
-    if root is not None:
-        hf_dataset = load_from_disk(str(Path(root) / repo_id / "train"))
-        # TODO(rcadene): clean this which enables getting a subset of dataset
-        if split != "train":
-            if "%" in split:
-                raise NotImplementedError(f"We dont support splitting based on percentage for now ({split}).")
-            match_from = re.search(r"train\[(\d+):\]", split)
-            match_to = re.search(r"train\[:(\d+)\]", split)
-            if match_from:
-                from_frame_index = int(match_from.group(1))
-                hf_dataset = hf_dataset.select(range(from_frame_index, len(hf_dataset)))
-            elif match_to:
-                to_frame_index = int(match_to.group(1))
-                hf_dataset = hf_dataset.select(range(to_frame_index))
-            else:
-                raise ValueError(
-                    f'`split` ({split}) should either be "train", "train[INT:]", or "train[:INT]"'
-                )
-    else:
-        safe_version = get_hf_dataset_safe_version(repo_id, version)
-        hf_dataset = load_dataset(repo_id, revision=safe_version, split=split)
+def load_metadata(local_dir: Path) -> tuple[dict | list]:
+    """Loads metadata files from a dataset."""
+    info_path = local_dir / "meta/info.json"
+    episodes_path = local_dir / "meta/episodes.jsonl"
+    stats_path = local_dir / "meta/stats.json"
+    tasks_path = local_dir / "meta/tasks.jsonl"
 
-    hf_dataset.set_transform(hf_transform_to_torch)
-    return hf_dataset
-
-
-def load_episode_data_index(repo_id, version, root) -> dict[str, torch.Tensor]:
-    """episode_data_index contains the range of indices for each episode
-
-    Example:
-    ```python
-    from_id = episode_data_index["from"][episode_id].item()
-    to_id = episode_data_index["to"][episode_id].item()
-    episode_frames = [dataset[i] for i in range(from_id, to_id)]
-    ```
-    """
-    if root is not None:
-        path = Path(root) / repo_id / "meta_data" / "episode_data_index.safetensors"
-    else:
-        safe_version = get_hf_dataset_safe_version(repo_id, version)
-        path = hf_hub_download(
-            repo_id, "meta_data/episode_data_index.safetensors", repo_type="dataset", revision=safe_version
-        )
-
-    return load_file(path)
-
-
-def load_stats(repo_id, version, root) -> dict[str, dict[str, torch.Tensor]]:
-    """stats contains the statistics per modality computed over the full dataset, such as max, min, mean, std
-
-    Example:
-    ```python
-    normalized_action = (action - stats["action"]["mean"]) / stats["action"]["std"]
-    ```
-    """
-    if root is not None:
-        path = Path(root) / repo_id / "meta_data" / "stats.safetensors"
-    else:
-        safe_version = get_hf_dataset_safe_version(repo_id, version)
-        path = hf_hub_download(
-            repo_id, "meta_data/stats.safetensors", repo_type="dataset", revision=safe_version
-        )
-
-    stats = load_file(path)
-    return unflatten_dict(stats)
-
-
-def load_info(repo_id, version, root) -> dict:
-    """info contains useful information regarding the dataset that are not stored elsewhere
-
-    Example:
-    ```python
-    print("frame per second used to collect the video", info["fps"])
-    ```
-    """
-    if root is not None:
-        path = Path(root) / repo_id / "meta_data" / "info.json"
-    else:
-        safe_version = get_hf_dataset_safe_version(repo_id, version)
-        path = hf_hub_download(repo_id, "meta_data/info.json", repo_type="dataset", revision=safe_version)
-
-    with open(path) as f:
+    with open(info_path) as f:
         info = json.load(f)
-    return info
+
+    with jsonlines.open(episodes_path, "r") as reader:
+        episode_dicts = list(reader)
+
+    with open(stats_path) as f:
+        stats = json.load(f)
+
+    with jsonlines.open(tasks_path, "r") as reader:
+        tasks = list(reader)
+
+    stats = {key: torch.tensor(value) for key, value in flatten_dict(stats).items()}
+    stats = unflatten_dict(stats)
+    tasks = {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
+
+    return info, episode_dicts, stats, tasks
 
 
-def load_videos(repo_id, version, root) -> Path:
-    if root is not None:
-        path = Path(root) / repo_id / "videos"
-    else:
-        # TODO(rcadene): we download the whole repo here. see if we can avoid this
-        safe_version = get_hf_dataset_safe_version(repo_id, version)
-        repo_dir = snapshot_download(repo_id, repo_type="dataset", revision=safe_version)
-        path = Path(repo_dir) / "videos"
+def create_empty_dataset_info(codebase_version: str, fps: int, robot: Robot, use_videos: bool = True) -> dict:
+    shapes = {key: len(names) for key, names in robot.names.items()}
+    camera_shapes = {}
+    for key, cam in robot.cameras.items():
+        video_key = f"observation.images.{key}"
+        camera_shapes[video_key] = {
+            "width": cam.width,
+            "height": cam.height,
+            "channels": cam.channels,
+        }
+    return {
+        "codebase_version": codebase_version,
+        "data_path": DEFAULT_PARQUET_PATH,
+        "robot_type": robot.robot_type,
+        "total_episodes": 0,
+        "total_frames": 0,
+        "total_tasks": 0,
+        "total_videos": 0,
+        "total_chunks": 0,
+        "chunks_size": DEFAULT_CHUNK_SIZE,
+        "fps": fps,
+        "splits": {},
+        "keys": list(robot.names),
+        "video_keys": list(camera_shapes) if use_videos else [],
+        "image_keys": [] if use_videos else list(camera_shapes),
+        "shapes": {**shapes, **camera_shapes},
+        "names": robot.names,
+        "videos": {"videos_path": DEFAULT_VIDEO_PATH} if use_videos else None,
+    }
 
-    return path
+
+def get_episode_data_index(episodes: list, episode_dicts: list[dict]) -> dict[str, torch.Tensor]:
+    episode_lengths = {ep_idx: ep_dict["length"] for ep_idx, ep_dict in enumerate(episode_dicts)}
+    if episodes is not None:
+        episode_lengths = {ep_idx: episode_lengths[ep_idx] for ep_idx in episodes}
+
+    cumulative_lenghts = list(accumulate(episode_lengths.values()))
+    return {
+        "from": torch.LongTensor([0] + cumulative_lenghts[:-1]),
+        "to": torch.LongTensor(cumulative_lenghts),
+    }
 
 
+def check_timestamps_sync(
+    hf_dataset: datasets.Dataset,
+    episode_data_index: dict[str, torch.Tensor],
+    fps: int,
+    tolerance_s: float,
+    raise_value_error: bool = True,
+) -> bool:
+    """
+    This check is to make sure that each timestamps is separated to the next by 1/fps +/- tolerance to
+    account for possible numerical error.
+    """
+    timestamps = torch.stack(hf_dataset["timestamp"])
+    # timestamps[2] += tolerance_s  # TODO delete
+    # timestamps[-2] += tolerance_s/2  # TODO delete
+    diffs = torch.diff(timestamps)
+    within_tolerance = torch.abs(diffs - 1 / fps) <= tolerance_s
+
+    # We mask differences between the timestamp at the end of an episode
+    # and the one the start of the next episode since these are expected
+    # to be outside tolerance.
+    mask = torch.ones(len(diffs), dtype=torch.bool)
+    ignored_diffs = episode_data_index["to"][:-1] - 1
+    mask[ignored_diffs] = False
+    filtered_within_tolerance = within_tolerance[mask]
+
+    if not torch.all(filtered_within_tolerance):
+        # Track original indices before masking
+        original_indices = torch.arange(len(diffs))
+        filtered_indices = original_indices[mask]
+        outside_tolerance_filtered_indices = torch.nonzero(~filtered_within_tolerance).squeeze()
+        outside_tolerance_indices = filtered_indices[outside_tolerance_filtered_indices]
+        episode_indices = torch.stack(hf_dataset["episode_index"])
+
+        outside_tolerances = []
+        for idx in outside_tolerance_indices:
+            entry = {
+                "timestamps": [timestamps[idx], timestamps[idx + 1]],
+                "diff": diffs[idx],
+                "episode_index": episode_indices[idx].item(),
+            }
+            outside_tolerances.append(entry)
+
+        if raise_value_error:
+            raise ValueError(
+                f"""One or several timestamps unexpectedly violate the tolerance inside episode range.
+                This might be due to synchronization issues with timestamps during data collection.
+                \n{pformat(outside_tolerances)}"""
+            )
+        return False
+
+    return True
+
+
+def check_delta_timestamps(
+    delta_timestamps: dict[str, list[float]], fps: int, tolerance_s: float, raise_value_error: bool = True
+) -> bool:
+    """This will check if all the values in delta_timestamps are multiples of 1/fps +/- tolerance.
+    This is to ensure that these delta_timestamps added to any timestamp from a dataset will themselves be
+    actual timestamps from the dataset.
+    """
+    outside_tolerance = {}
+    for key, delta_ts in delta_timestamps.items():
+        abs_delta_ts = torch.abs(torch.tensor(delta_ts))
+        within_tolerance = (abs_delta_ts % (1 / fps)) <= tolerance_s
+        if not torch.all(within_tolerance):
+            outside_tolerance[key] = torch.tensor(delta_ts)[~within_tolerance]
+
+    if len(outside_tolerance) > 0:
+        if raise_value_error:
+            raise ValueError(
+                f"""
+                The following delta_timestamps are found outside of tolerance range.
+                Please make sure they are multiples of 1/{fps} +/- tolerance and adjust
+                their values accordingly.
+                \n{pformat(outside_tolerance)}
+                """
+            )
+        return False
+
+    return True
+
+
+def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dict[str, list[int]]:
+    delta_indices = {}
+    for key, delta_ts in delta_timestamps.items():
+        delta_indices[key] = (torch.tensor(delta_ts) * fps).long().tolist()
+
+    return delta_indices
+
+
+# TODO(aliberts): remove
 def load_previous_and_future_frames(
     item: dict[str, torch.Tensor],
     hf_dataset: datasets.Dataset,
@@ -309,6 +384,7 @@ def load_previous_and_future_frames(
     return item
 
 
+# TODO(aliberts): remove
 def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> Dict[str, torch.Tensor]:
     """
     Calculate episode data index for the provided HuggingFace Dataset. Relies on episode_index column of hf_dataset.
@@ -363,6 +439,7 @@ def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> Dict[str, torc
     return episode_data_index
 
 
+# TODO(aliberts): remove
 def reset_episode_index(hf_dataset: datasets.Dataset) -> datasets.Dataset:
     """Reset the `episode_index` of the provided HuggingFace Dataset.
 
@@ -400,7 +477,7 @@ def cycle(iterable):
             iterator = iter(iterable)
 
 
-def create_branch(repo_id, *, branch: str, repo_type: str | None = None):
+def create_branch(repo_id, *, branch: str, repo_type: str | None = None) -> None:
     """Create a branch on a existing Hugging Face repo. Delete the branch if it already
     exists before creating it.
     """
@@ -415,12 +492,17 @@ def create_branch(repo_id, *, branch: str, repo_type: str | None = None):
     api.create_branch(repo_id, repo_type=repo_type, branch=branch)
 
 
-def create_lerobot_dataset_card(tags: list | None = None, text: str | None = None) -> DatasetCard:
+def create_lerobot_dataset_card(
+    tags: list | None = None, text: str | None = None, info: dict | None = None
+) -> DatasetCard:
     card = DatasetCard(DATASET_CARD_TEMPLATE)
     card.data.task_categories = ["robotics"]
     card.data.tags = ["LeRobot"]
     if tags is not None:
         card.data.tags += tags
     if text is not None:
-        card.text += text
+        card.text += f"{text}\n"
+    if info is not None:
+        card.text += "[meta/info.json](meta/info.json)\n"
+        card.text += f"```json\n{json.dumps(info, indent=4)}\n```"
     return card

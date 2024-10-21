@@ -349,6 +349,13 @@ class ManipulatorRobot:
         self.is_connected = False
         self.logs = {}
 
+        action_names = [f"{arm}_{motor}" for arm, bus in self.leader_arms.items() for motor in bus.motors]
+        state_names = [f"{arm}_{motor}" for arm, bus in self.follower_arms.items() for motor in bus.motors]
+        self.names = {
+            "action": action_names,
+            "observation.state": state_names,
+        }
+
     @property
     def has_camera(self):
         return len(self.cameras) > 0
