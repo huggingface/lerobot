@@ -81,6 +81,11 @@ def write_json(data: dict, fpath: Path) -> None:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 
+def append_jsonl(data: dict, fpath: Path) -> None:
+    with jsonlines.open(fpath, "a") as writer:
+        writer.write(data)
+
+
 def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     """Get a transform function that convert items from Hugging Face dataset (pyarrow)
     to torch tensors. Importantly, images are converted from PIL, which corresponds to

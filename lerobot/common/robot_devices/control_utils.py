@@ -248,7 +248,7 @@ def control_loop(
     if teleoperate and policy is not None:
         raise ValueError("When `teleoperate` is True, `policy` should be None.")
 
-    if dataset is not None and fps is not None and dataset["fps"] != fps:
+    if dataset is not None and fps is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
 
     timestamp = 0
