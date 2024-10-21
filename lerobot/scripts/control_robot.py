@@ -107,9 +107,6 @@ from typing import List
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.image_writer import ImageWriter
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.populate_dataset import (
-    create_lerobot_dataset,
-)
 from lerobot.common.robot_devices.control_utils import (
     control_loop,
     has_method,
@@ -210,7 +207,7 @@ def record(
     force_override=False,
     display_cameras=True,
     play_sounds=True,
-):
+) -> LeRobotDataset:
     # TODO(rcadene): Add option to record logs
     listener = None
     events = None
@@ -242,7 +239,7 @@ def record(
         num_processes=num_image_writer_processes,
         num_threads=num_image_writer_threads_per_camera * robot.num_cameras,
     )
-    dataset = LeRobotDataset.create(repo_id, fps, robot, image_writer=image_writer)
+    dataset = LeRobotDataset.create(repo_id, fps, robot, root=root, image_writer=image_writer)
 
     if not robot.is_connected:
         robot.connect()
@@ -301,8 +298,8 @@ def record(
             dataset.delete_episode()
             continue
 
-        # Increment by one dataset["current_episode_index"]
         dataset.add_episode(task)
+        recorded_episodes += 1
 
         if events["stop_recording"]:
             break
@@ -310,10 +307,17 @@ def record(
     log_say("Stop recording", play_sounds, blocking=True)
     stop_recording(robot, listener, display_cameras)
 
-    lerobot_dataset = create_lerobot_dataset(dataset, run_compute_stats, push_to_hub, tags, play_sounds)
+    logging.info("Waiting for image writer to terminate...")
+    dataset.image_writer.stop()
+
+    dataset.consolidate(run_compute_stats)
+
+    # lerobot_dataset = create_lerobot_dataset(dataset, run_compute_stats, push_to_hub, tags, play_sounds)
+    if push_to_hub:
+        dataset.push_to_repo()
 
     log_say("Exiting", play_sounds)
-    return lerobot_dataset
+    return dataset
 
 
 @safe_disconnect
