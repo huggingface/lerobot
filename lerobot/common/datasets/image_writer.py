@@ -99,19 +99,16 @@ class ImageWriter:
         img = Image.fromarray(image.numpy())
         img.save(str(file_path), quality=100)
 
-    def get_image_file_path(
-        self, episode_index: int, image_key: str, frame_index: int, return_str: bool = True
-    ) -> str | Path:
+    def get_image_file_path(self, episode_index: int, image_key: str, frame_index: int) -> Path:
         fpath = self.image_path.format(
             image_key=image_key, episode_index=episode_index, frame_index=frame_index
         )
-        return str(self.dir / fpath) if return_str else self.dir / fpath
+        return self.dir / fpath
 
-    def get_episode_dir(self, episode_index: int, image_key: str, return_str: bool = True) -> str | Path:
-        dir_path = self.get_image_file_path(
-            episode_index=episode_index, image_key=image_key, frame_index=0, return_str=False
+    def get_episode_dir(self, episode_index: int, image_key: str) -> Path:
+        return self.get_image_file_path(
+            episode_index=episode_index, image_key=image_key, frame_index=0
         ).parent
-        return str(dir_path) if return_str else dir_path
 
     def stop(self, timeout=20) -> None:
         """Stop the image writer, waiting for all processes or threads to finish."""
