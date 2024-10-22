@@ -126,8 +126,8 @@ def decode_video_frames_torchvision(
 
 
 def encode_video_frames(
-    imgs_dir: Path,
-    video_path: Path,
+    imgs_dir: Path | str,
+    video_path: Path | str,
     fps: int,
     vcodec: str = "libsvtav1",
     pix_fmt: str = "yuv420p",
