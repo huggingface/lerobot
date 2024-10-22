@@ -37,9 +37,8 @@ STATS_PATH = "meta/stats.json"
 TASKS_PATH = "meta/tasks.jsonl"
 
 DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
-DEFAULT_PARQUET_PATH = (
-    "data/chunk-{episode_chunk:03d}/train-{episode_index:05d}-of-{total_episodes:05d}.parquet"
-)
+DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
+
 DATASET_CARD_TEMPLATE = """
 ---
 # Metadata will go there
@@ -88,6 +87,7 @@ def write_json(data: dict, fpath: Path) -> None:
 
 
 def append_jsonl(data: dict, fpath: Path) -> None:
+    fpath.parent.mkdir(exist_ok=True, parents=True)
     with jsonlines.open(fpath, "a") as writer:
         writer.write(data)
 
