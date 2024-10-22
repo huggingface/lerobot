@@ -109,14 +109,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         .
         ├── data
         │   ├── chunk-000
-        │   │   ├── train-00000-of-03603.parquet
-        │   │   ├── train-00001-of-03603.parquet
-        │   │   ├── train-00002-of-03603.parquet
+        │   │   ├── episode_000000.parquet
+        │   │   ├── episode_000001.parquet
+        │   │   ├── episode_000002.parquet
         │   │   └── ...
         │   ├── chunk-001
-        │   │   ├── train-01000-of-03603.parquet
-        │   │   ├── train-01001-of-03603.parquet
-        │   │   ├── train-01002-of-03603.parquet
+        │   │   ├── episode_001000.parquet
+        │   │   ├── episode_001001.parquet
+        │   │   ├── episode_001002.parquet
         │   │   └── ...
         │   └── ...
         ├── meta
