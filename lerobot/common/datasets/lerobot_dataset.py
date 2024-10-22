@@ -305,10 +305,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return Path(fpath)
 
     def get_episode_chunk(self, ep_index: int) -> int:
-        ep_chunk = ep_index // self.chunks_size
-        if ep_index > 0 and ep_index % self.chunks_size == 0:
-            ep_chunk -= 1
-        return ep_chunk
+        return ep_index // self.chunks_size
 
     @property
     def data_path(self) -> str:
