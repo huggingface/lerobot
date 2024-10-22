@@ -120,7 +120,7 @@ class ImageWriter:
                 wait(self.futures, timeout=timeout)
                 progress_bar.update(len(self.futures))
         else:
-            self._stop_processes(self.processes, self.image_queue, timeout)
+            self._stop_processes(timeout)
 
     def _stop_processes(self, timeout) -> None:
         for _ in self.processes:
