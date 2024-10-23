@@ -105,7 +105,6 @@ from pathlib import Path
 from typing import List
 
 # from safetensors.torch import load_file, save_file
-from lerobot.common.datasets.image_writer import ImageWriter
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.robot_devices.control_utils import (
     control_loop,
@@ -232,17 +231,14 @@ def record(
 
     # Create empty dataset or load existing saved episodes
     sanity_check_dataset_name(repo_id, policy)
-    if len(robot.cameras) > 0:
-        image_writer = ImageWriter(
-            write_dir=root,
-            num_processes=num_image_writer_processes,
-            num_threads=num_image_writer_threads_per_camera * robot.num_cameras,
-        )
-    else:
-        image_writer = None
-
     dataset = LeRobotDataset.create(
-        repo_id, fps, robot, root=root, image_writer=image_writer, use_videos=video
+        repo_id,
+        fps,
+        robot,
+        root=root,
+        image_writer_processes=num_image_writer_processes,
+        image_writer_threads_per_camera=num_image_writer_threads_per_camera,
+        use_videos=video,
     )
 
     if not robot.is_connected:
