@@ -54,7 +54,7 @@ class ImageWriter:
     """
 
     def __init__(self, write_dir: Path, num_processes: int = 0, num_threads: int = 1):
-        self.dir = write_dir / "images"
+        self.dir = write_dir
         self.dir.mkdir(parents=True, exist_ok=True)
         self.image_path = DEFAULT_IMAGE_PATH
         self.num_processes = num_processes

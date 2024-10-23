@@ -193,7 +193,7 @@ def load_episode_dicts(local_dir: Path) -> dict:
         return list(reader)
 
 
-def create_empty_dataset_info(codebase_version: str, fps: int, robot: Robot, use_videos: bool = True) -> dict:
+def _get_info_from_robot(robot: Robot, use_videos: bool) -> tuple[list | dict]:
     shapes = {key: len(names) for key, names in robot.names.items()}
     camera_shapes = {}
     for key, cam in robot.cameras.items():
@@ -203,10 +203,30 @@ def create_empty_dataset_info(codebase_version: str, fps: int, robot: Robot, use
             "height": cam.height,
             "channels": cam.channels,
         }
+    keys = list(robot.names)
+    image_keys = [] if use_videos else list(camera_shapes)
+    video_keys = list(camera_shapes) if use_videos else []
+    shapes = {**shapes, **camera_shapes}
+    names = robot.names
+    robot_type = robot.robot_type
+
+    return robot_type, keys, image_keys, video_keys, shapes, names
+
+
+def create_empty_dataset_info(
+    codebase_version: str,
+    fps: int,
+    robot_type: str,
+    keys: list[str],
+    image_keys: list[str],
+    video_keys: list[str],
+    shapes: dict,
+    names: dict,
+) -> dict:
     return {
         "codebase_version": codebase_version,
         "data_path": DEFAULT_PARQUET_PATH,
-        "robot_type": robot.robot_type,
+        "robot_type": robot_type,
         "total_episodes": 0,
         "total_frames": 0,
         "total_tasks": 0,
@@ -215,12 +235,12 @@ def create_empty_dataset_info(codebase_version: str, fps: int, robot: Robot, use
         "chunks_size": DEFAULT_CHUNK_SIZE,
         "fps": fps,
         "splits": {},
-        "keys": list(robot.names),
-        "video_keys": list(camera_shapes) if use_videos else [],
-        "image_keys": [] if use_videos else list(camera_shapes),
-        "shapes": {**shapes, **camera_shapes},
-        "names": robot.names,
-        "videos": {"videos_path": DEFAULT_VIDEO_PATH} if use_videos else None,
+        "keys": keys,
+        "video_keys": video_keys,
+        "image_keys": image_keys,
+        "shapes": shapes,
+        "names": names,
+        "videos": {"videos_path": DEFAULT_VIDEO_PATH} if len(video_keys) > 0 else None,
     }
 
 
