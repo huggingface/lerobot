@@ -786,7 +786,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             or shapes is None
             or names is None
         ):
-            raise ValueError()
+            raise ValueError(
+                "Dataset info (robot_type, keys, shapes...) must either come from a Robot or explicitly passed upon creation."
+            )
 
         if len(video_keys) > 0 and not use_videos:
             raise ValueError
