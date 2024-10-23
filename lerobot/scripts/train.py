@@ -75,13 +75,21 @@ def make_optimizer_and_scheduler(cfg, policy):
         )
         lr_scheduler = None
     elif cfg.policy.name == "diffusion":
-        optimizer = torch.optim.Adam(
-            policy.diffusion.parameters(),
-            cfg.training.lr,
-            cfg.training.adam_betas,
-            cfg.training.adam_eps,
-            cfg.training.adam_weight_decay,
-        )
+        if cfg.policy.use_transformer:
+            optimizer = policy.diffusion.get_optimizer(
+                transformer_weight_decay=cfg.training.transformer_weight_decay,
+                rgb_encoder_weight_decay=cfg.training.adam_weight_decay,
+                learning_rate=cfg.training.lr,
+                betas=cfg.training.adam_betas,
+            )
+        else:
+            optimizer = torch.optim.Adam(
+                policy.diffusion.parameters(),
+                cfg.training.lr,
+                cfg.training.adam_betas,
+                cfg.training.adam_eps,
+                cfg.training.adam_weight_decay,
+            )
         from diffusers.optimization import get_scheduler
 
         lr_scheduler = get_scheduler(
