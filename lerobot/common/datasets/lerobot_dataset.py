@@ -487,7 +487,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             frames = decode_video_frames_torchvision(
                 video_path, query_ts, self.tolerance_s, self.video_backend
             )
-            item[vid_key] = frames
+            item[vid_key] = frames.squeeze(0)
 
         return item
 
