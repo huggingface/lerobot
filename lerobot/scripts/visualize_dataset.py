@@ -70,6 +70,7 @@ from typing import Iterator
 
 import numpy as np
 import rerun as rr
+import rerun.blueprint as rrb
 import torch
 import torch.utils.data
 import tqdm
@@ -110,6 +111,7 @@ def visualize_dataset(
     save: bool = False,
     root: Path | None = None,
     output_dir: Path | None = None,
+    decode_video: bool = False,
 ) -> Path | None:
     if save:
         assert (
@@ -117,7 +119,7 @@ def visualize_dataset(
         ), "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
 
     logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id, root=root)
+    dataset = LeRobotDataset(repo_id, root=root, video_backend=None if decode_video else "raw")
 
     logging.info("Loading dataloader")
     episode_sampler = EpisodeSampler(dataset, episode_index)
@@ -146,6 +148,16 @@ def visualize_dataset(
 
     logging.info("Logging to Rerun")
 
+    sent_videos = {}
+
+    # Video file heuristic doesn't trigger the correct layout, so set up a blueprint
+    # manually.
+    blueprint = rrb.Vertical(
+        rrb.Grid(contents=[rrb.Spatial2DView(origin=key) for key in dataset.camera_keys]),
+        rrb.TimeSeriesView(),
+    )
+    rr.send_blueprint(blueprint, make_active=False)
+
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
         # iterate over the batch
         for i in range(len(batch["index"])):
@@ -154,8 +166,20 @@ def visualize_dataset(
 
             # display each camera image
             for key in dataset.camera_keys:
-                # TODO(rcadene): add `.compress()`? is it lossless?
-                rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
+                if isinstance(batch[key], torch.Tensor):
+                    rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
+                elif "path" in batch[key] and "timestamp" in batch[key]:
+                    if sent_videos.get(key) != batch[key]["path"][i]:
+                        sent_videos[key] = batch[key]["path"][i]
+                        rr.log(key, rr.AssetVideo(path=dataset.videos_dir.parent / batch[key]["path"][i]))
+                    rr.log(
+                        key,
+                        rr.VideoFrameReference(
+                            timestamp=rr.components.VideoTimestamp(seconds=batch[key]["timestamp"][i])
+                        ),
+                    )
+                else:
+                    logging.warning(f"Unsupported image schema for key {key}")
 
             # display each dimension of action space (e.g. actuators command)
             if "action" in batch:
@@ -264,6 +288,15 @@ def main():
             "Save a .rrd file in the directory provided by `--output-dir`. "
             "It also deactivates the spawning of a viewer. "
             "Visualize the data by running `rerun path/to/file.rrd` on your local machine."
+        ),
+    )
+    parser.add_argument(
+        "--decode-video",
+        action="store_true",
+        default=False,
+        help=(
+            "Decode the video frames into images."
+            "By default videos are sent to the viewer for direct visualization."
         ),
     )
 
