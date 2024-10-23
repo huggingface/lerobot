@@ -52,7 +52,7 @@ for motor_type in available_motors:
 OPENCV_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_OPENCV_CAMERA_INDEX", 0))
 INTELREALSENSE_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_INTELREALSENSE_CAMERA_INDEX", 128422271614))
 
-DYNAMIXEL_PORT = "/dev/tty.usbmodem575E0032081"
+DYNAMIXEL_PORT = os.environ.get("LEROBOT_TEST_DYNAMIXEL_PORT", "/dev/tty.usbmodem575E0032081")
 DYNAMIXEL_MOTORS = {
     "shoulder_pan": [1, "xl430-w250"],
     "shoulder_lift": [2, "xl430-w250"],
@@ -60,6 +60,16 @@ DYNAMIXEL_MOTORS = {
     "wrist_flex": [4, "xl330-m288"],
     "wrist_roll": [5, "xl330-m288"],
     "gripper": [6, "xl330-m288"],
+}
+
+FEETECH_PORT = os.environ.get("LEROBOT_TEST_FEETECH_PORT", "/dev/tty.usbmodem585A0080971")
+FEETECH_MOTORS = {
+    "shoulder_pan": [1, "sts3215"],
+    "shoulder_lift": [2, "sts3215"],
+    "elbow_flex": [3, "sts3215"],
+    "wrist_flex": [4, "sts3215"],
+    "wrist_roll": [5, "sts3215"],
+    "gripper": [6, "sts3215"],
 }
 
 
@@ -277,7 +287,7 @@ def make_robot(robot_type: str, overrides: list[str] | None = None, mock=False) 
 
         # Explicitely add mock argument to the cameras and set it to true
         # TODO(rcadene, aliberts): redesign when we drop hydra
-        if robot_type == "koch":
+        if robot_type in ["koch", "so100", "moss"]:
             overrides.append("+leader_arms.main.mock=true")
             overrides.append("+follower_arms.main.mock=true")
             if "~cameras" not in overrides:
@@ -337,6 +347,13 @@ def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
         port = kwargs.pop("port", DYNAMIXEL_PORT)
         motors = kwargs.pop("motors", DYNAMIXEL_MOTORS)
         return DynamixelMotorsBus(port, motors, **kwargs)
+
+    elif motor_type == "feetech":
+        from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus
+
+        port = kwargs.pop("port", FEETECH_PORT)
+        motors = kwargs.pop("motors", FEETECH_MOTORS)
+        return FeetechMotorsBus(port, motors, **kwargs)
 
     else:
         raise ValueError(f"The motor type '{motor_type}' is not valid.")

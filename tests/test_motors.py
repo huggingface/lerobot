@@ -52,12 +52,24 @@ def test_configure_motors_all_ids_1(request, motor_type, mock):
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
+    if motor_type == "dynamixel":
+        # see X_SERIES_BAUDRATE_TABLE
+        smaller_baudrate = 9_600
+        smaller_baudrate_value = 0
+    elif motor_type == "feetech":
+        # see SCS_SERIES_BAUDRATE_TABLE
+        smaller_baudrate = 19_200
+        smaller_baudrate_value = 7
+    else:
+        raise ValueError(motor_type)
+
     input("Are you sure you want to re-configure the motors? Press enter to continue...")
     # This test expect the configuration was already correct.
     motors_bus = make_motors_bus(motor_type, mock=mock)
     motors_bus.connect()
-    motors_bus.write("Baud_Rate", [0] * len(motors_bus.motors))
-    motors_bus.set_bus_baudrate(9_600)
+    motors_bus.write("Baud_Rate", [smaller_baudrate_value] * len(motors_bus.motors))
+
+    motors_bus.set_bus_baudrate(smaller_baudrate)
     motors_bus.write("ID", [1] * len(motors_bus.motors))
     del motors_bus
 

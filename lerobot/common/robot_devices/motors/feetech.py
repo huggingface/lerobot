@@ -7,17 +7,6 @@ from copy import deepcopy
 
 import numpy as np
 import tqdm
-from scservo_sdk import (
-    COMM_SUCCESS,
-    SCS_HIBYTE,
-    SCS_HIWORD,
-    SCS_LOBYTE,
-    SCS_LOWORD,
-    GroupSyncRead,
-    GroupSyncWrite,
-    PacketHandler,
-    PortHandler,
-)
 
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
@@ -144,24 +133,29 @@ def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str
     return steps
 
 
-def convert_to_bytes(value, bytes):
+def convert_to_bytes(value, bytes, mock=False):
+    if mock:
+        return value
+
+    import scservo_sdk as scs
+
     # Note: No need to convert back into unsigned int, since this byte preprocessing
     # already handles it for us.
     if bytes == 1:
         data = [
-            SCS_LOBYTE(SCS_LOWORD(value)),
+            scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
         ]
     elif bytes == 2:
         data = [
-            SCS_LOBYTE(SCS_LOWORD(value)),
-            SCS_HIBYTE(SCS_LOWORD(value)),
+            scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
+            scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
         ]
     elif bytes == 4:
         data = [
-            SCS_LOBYTE(SCS_LOWORD(value)),
-            SCS_HIBYTE(SCS_LOWORD(value)),
-            SCS_LOBYTE(SCS_HIWORD(value)),
-            SCS_HIBYTE(SCS_HIWORD(value)),
+            scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
+            scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
+            scs.SCS_LOBYTE(scs.SCS_HIWORD(value)),
+            scs.SCS_HIBYTE(scs.SCS_HIWORD(value)),
         ]
     else:
         raise NotImplementedError(
@@ -281,9 +275,11 @@ class FeetechMotorsBus:
         motors: dict[str, tuple[int, str]],
         extra_model_control_table: dict[str, list[tuple]] | None = None,
         extra_model_resolution: dict[str, int] | None = None,
+        mock=False,
     ):
         self.port = port
         self.motors = motors
+        self.mock = mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
         if extra_model_control_table:
@@ -319,8 +315,13 @@ class FeetechMotorsBus:
                 f"FeetechMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice."
             )
 
-        self.port_handler = PortHandler(self.port)
-        self.packet_handler = PacketHandler(PROTOCOL_VERSION)
+        if self.mock:
+            import tests.mock_scservo_sdk as scs
+        else:
+            import scservo_sdk as scs
+
+        self.port_handler = scs.PortHandler(self.port)
+        self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
 
         try:
             if not self.port_handler.openPort():
@@ -338,10 +339,17 @@ class FeetechMotorsBus:
         self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
 
     def reconnect(self):
-        self.port_handler = PortHandler(self.port)
-        self.packet_handler = PacketHandler(PROTOCOL_VERSION)
+        if self.mock:
+            import tests.mock_scservo_sdk as scs
+        else:
+            import scservo_sdk as scs
+
+        self.port_handler = scs.PortHandler(self.port)
+        self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
+
         if not self.port_handler.openPort():
             raise OSError(f"Failed to open port '{self.port}'.")
+
         self.is_connected = True
 
     def are_motors_configured(self):
@@ -658,6 +666,11 @@ class FeetechMotorsBus:
         return values
 
     def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
+        if self.mock:
+            import tests.mock_scservo_sdk as scs
+        else:
+            import scservo_sdk as scs
+
         return_list = True
         if not isinstance(motor_ids, list):
             return_list = False
@@ -665,16 +678,16 @@ class FeetechMotorsBus:
 
         assert_same_address(self.model_ctrl_table, self.motor_models, data_name)
         addr, bytes = self.model_ctrl_table[motor_models[0]][data_name]
-        group = GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
+        group = scs.GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
         for idx in motor_ids:
             group.addParam(idx)
 
         for _ in range(num_retry):
             comm = group.txRxPacket()
-            if comm == COMM_SUCCESS:
+            if comm == scs.COMM_SUCCESS:
                 break
 
-        if comm != COMM_SUCCESS:
+        if comm != scs.COMM_SUCCESS:
             raise ConnectionError(
                 f"Read failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
@@ -691,6 +704,11 @@ class FeetechMotorsBus:
             return values[0]
 
     def read(self, data_name, motor_names: str | list[str] | None = None):
+        if self.mock:
+            import tests.mock_scservo_sdk as scs
+        else:
+            import scservo_sdk as scs
+
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 f"FeetechMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
@@ -717,16 +735,18 @@ class FeetechMotorsBus:
 
         if data_name not in self.group_readers:
             # create new group reader
-            self.group_readers[group_key] = GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
+            self.group_readers[group_key] = scs.GroupSyncRead(
+                self.port_handler, self.packet_handler, addr, bytes
+            )
             for idx in motor_ids:
                 self.group_readers[group_key].addParam(idx)
 
         for _ in range(NUM_READ_RETRY):
             comm = self.group_readers[group_key].txRxPacket()
-            if comm == COMM_SUCCESS:
+            if comm == scs.COMM_SUCCESS:
                 break
 
-        if comm != COMM_SUCCESS:
+        if comm != scs.COMM_SUCCESS:
             raise ConnectionError(
                 f"Read failed due to communication error on port {self.port} for group_key {group_key}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
@@ -760,6 +780,11 @@ class FeetechMotorsBus:
         return values
 
     def write_with_motor_ids(self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY):
+        if self.mock:
+            import tests.mock_scservo_sdk as scs
+        else:
+            import scservo_sdk as scs
+
         if not isinstance(motor_ids, list):
             motor_ids = [motor_ids]
         if not isinstance(values, list):
@@ -767,17 +792,17 @@ class FeetechMotorsBus:
 
         assert_same_address(self.model_ctrl_table, motor_models, data_name)
         addr, bytes = self.model_ctrl_table[motor_models[0]][data_name]
-        group = GroupSyncWrite(self.port_handler, self.packet_handler, addr, bytes)
+        group = scs.GroupSyncWrite(self.port_handler, self.packet_handler, addr, bytes)
         for idx, value in zip(motor_ids, values, strict=True):
-            data = convert_to_bytes(value, bytes)
+            data = convert_to_bytes(value, bytes, self.mock)
             group.addParam(idx, data)
 
         for _ in range(num_retry):
             comm = group.txPacket()
-            if comm == COMM_SUCCESS:
+            if comm == scs.COMM_SUCCESS:
                 break
 
-        if comm != COMM_SUCCESS:
+        if comm != scs.COMM_SUCCESS:
             raise ConnectionError(
                 f"Write failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
@@ -790,6 +815,11 @@ class FeetechMotorsBus:
             )
 
         start_time = time.perf_counter()
+
+        if self.mock:
+            import tests.mock_scservo_sdk as scs
+        else:
+            import scservo_sdk as scs
 
         if motor_names is None:
             motor_names = self.motor_names
@@ -820,19 +850,19 @@ class FeetechMotorsBus:
 
         init_group = data_name not in self.group_readers
         if init_group:
-            self.group_writers[group_key] = GroupSyncWrite(
+            self.group_writers[group_key] = scs.GroupSyncWrite(
                 self.port_handler, self.packet_handler, addr, bytes
             )
 
         for idx, value in zip(motor_ids, values, strict=True):
-            data = convert_to_bytes(value, bytes)
+            data = convert_to_bytes(value, bytes, self.mock)
             if init_group:
                 self.group_writers[group_key].addParam(idx, data)
             else:
                 self.group_writers[group_key].changeParam(idx, data)
 
         comm = self.group_writers[group_key].txPacket()
-        if comm != COMM_SUCCESS:
+        if comm != scs.COMM_SUCCESS:
             raise ConnectionError(
                 f"Write failed due to communication error on port {self.port} for group_key {group_key}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
