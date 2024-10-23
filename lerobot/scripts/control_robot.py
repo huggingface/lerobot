@@ -299,7 +299,7 @@ def record(
             log_say("Re-record episode", play_sounds)
             events["rerecord_episode"] = False
             events["exit_early"] = False
-            dataset.delete_episode()
+            dataset.clear_episode_buffer()
             continue
 
         dataset.add_episode(task)

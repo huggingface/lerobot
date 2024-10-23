@@ -389,7 +389,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     @property
     def features(self) -> datasets.Features:
-        """Shapes for the different features."""
+        """Features of the hf_dataset."""
         if self.hf_dataset is not None:
             return self.hf_dataset.features
         elif self.episode_buffer is None:
@@ -664,7 +664,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.episode_dicts.append(episode_dict)
         append_jsonl(episode_dict, self.root / EPISODES_PATH)
 
-    def delete_episode(self) -> None:
+    def clear_episode_buffer(self) -> None:
         episode_index = self.episode_buffer["episode_index"]
         if self.image_writer is not None:
             for cam_key in self.camera_keys:
