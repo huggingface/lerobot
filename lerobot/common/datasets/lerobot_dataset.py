@@ -704,7 +704,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if len(self.video_keys) > 0:
             self.encode_videos()
 
-        if not keep_image_files:
+        if not keep_image_files and self.image_writer is not None:
             shutil.rmtree(self.image_writer.dir)
 
         if run_compute_stats:
