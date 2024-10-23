@@ -315,11 +315,14 @@ def record(
         logging.info("Waiting for image writer to terminate...")
         dataset.image_writer.stop()
 
+    if run_compute_stats:
+        logging.info("Computing dataset statistics")
+
     dataset.consolidate(run_compute_stats)
 
     # lerobot_dataset = create_lerobot_dataset(dataset, run_compute_stats, push_to_hub, tags, play_sounds)
     if push_to_hub:
-        dataset.push_to_repo()
+        dataset.push_to_hub()
 
     log_say("Exiting", play_sounds)
     return dataset

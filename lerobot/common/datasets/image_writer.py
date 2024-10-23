@@ -21,7 +21,7 @@ import torch
 import tqdm
 from PIL import Image
 
-DEFAULT_IMAGE_PATH = "images/{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png"
+DEFAULT_IMAGE_PATH = "{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png"
 
 
 def safe_stop_image_writer(func):
@@ -54,7 +54,8 @@ class ImageWriter:
     """
 
     def __init__(self, write_dir: Path, num_processes: int = 0, num_threads: int = 1):
-        self.dir = write_dir
+        self.dir = write_dir / "images"
+        self.dir.mkdir(parents=True, exist_ok=True)
         self.image_path = DEFAULT_IMAGE_PATH
         self.num_processes = num_processes
         self.num_threads = self.num_threads_per_process = num_threads
