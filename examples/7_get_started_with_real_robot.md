@@ -83,7 +83,7 @@ python lerobot/scripts/find_motors_bus_port.py
 
 Example output when identifying the leader arm's port (e.g., `/dev/tty.usbmodem575E0031751` on Mac, or possibly `/dev/ttyACM0` on Linux):
 ```
-Finding all available ports for the DynamixelMotorsBus.
+Finding all available ports for the MotorBus.
 ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
 Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
 
@@ -95,7 +95,7 @@ Reconnect the usb cable.
 
 Example output when identifying the follower arm's port (e.g., `/dev/tty.usbmodem575E0032081`, or possibly `/dev/ttyACM1` on Linux):
 ```
-Finding all available ports for the DynamixelMotorsBus.
+Finding all available ports for the MotorBus.
 ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
 Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
 
@@ -544,8 +544,7 @@ To instantiate an [`OpenCVCamera`](../lerobot/common/robot_devices/cameras/openc
 
 To find the camera indices, run the following utility script, which will save a few frames from each detected camera:
 ```bash
-python lerobot/scripts/save_images_from_cameras.py \
-    --driver opencv \
+python lerobot/common/robot_devices/cameras/opencv.py \
     --images-dir outputs/images_from_opencv_cameras
 ```
 

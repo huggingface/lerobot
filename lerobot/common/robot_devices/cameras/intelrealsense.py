@@ -200,8 +200,7 @@ class IntelRealSenseCamera:
 
     To find the camera indices of your cameras, you can run our utility script that will save a few frames for each camera:
     ```bash
-    python lerobot/scripts/save_images_from_cameras.py \
-    --driver intelrealsense \
+    python lerobot/common/robot_devices/cameras/intelrealsense.py \
     --images-dir outputs/images_from_intelrealsense_cameras
     ```
 

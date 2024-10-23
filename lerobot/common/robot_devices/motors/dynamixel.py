@@ -261,7 +261,7 @@ class DynamixelMotorsBus:
     To find the port, you can run our utility script:
     ```bash
     python lerobot/scripts/find_motors_bus_port.py
-    >>> Finding all available ports for the DynamixelMotorsBus.
+    >>> Finding all available ports for the MotorBus.
     >>> ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
     >>> Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
     >>> The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0031751.
@@ -371,14 +371,14 @@ class DynamixelMotorsBus:
             print(e)
             return False
 
-    def find_motor_indices(self, possible_ids=None):
+    def find_motor_indices(self, possible_ids=None, num_retry=2):
         if possible_ids is None:
             possible_ids = range(MAX_ID_RANGE)
 
         indices = []
         for idx in tqdm.tqdm(possible_ids):
             try:
-                present_idx = self.read_with_motor_ids(self.motor_models, [idx], "ID")[0]
+                present_idx = self.read_with_motor_ids(self.motor_models, [idx], "ID", num_retry=num_retry)[0]
             except ConnectionError:
                 continue
 
@@ -638,7 +638,7 @@ class DynamixelMotorsBus:
         values = np.round(values).astype(np.int32)
         return values
 
-    def read_with_motor_ids(self, motor_models, motor_ids, data_name):
+    def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
         if self.mock:
             import tests.mock_dynamixel_sdk as dxl
         else:
@@ -655,7 +655,11 @@ class DynamixelMotorsBus:
         for idx in motor_ids:
             group.addParam(idx)
 
-        comm = group.txRxPacket()
+        for _ in range(num_retry):
+            comm = group.txRxPacket()
+            if comm == dxl.COMM_SUCCESS:
+                break
+
         if comm != dxl.COMM_SUCCESS:
             raise ConnectionError(
                 f"Read failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "
@@ -745,7 +749,7 @@ class DynamixelMotorsBus:
 
         return values
 
-    def write_with_motor_ids(self, motor_models, motor_ids, data_name, values):
+    def write_with_motor_ids(self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY):
         if self.mock:
             import tests.mock_dynamixel_sdk as dxl
         else:
@@ -763,7 +767,11 @@ class DynamixelMotorsBus:
             data = convert_to_bytes(value, bytes, self.mock)
             group.addParam(idx, data)
 
-        comm = group.txPacket()
+        for _ in range(num_retry):
+            comm = group.txPacket()
+            if comm == dxl.COMM_SUCCESS:
+                break
+
         if comm != dxl.COMM_SUCCESS:
             raise ConnectionError(
                 f"Write failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "

@@ -216,8 +216,7 @@ class OpenCVCamera:
 
     To find the camera indices of your cameras, you can run our utility script that will be save a few frames for each camera:
     ```bash
-    python lerobot/scripts/save_images_from_cameras.py \
-    --driver opencv \
+    python lerobot/common/robot_devices/cameras/opencv.py \
     --images-dir outputs/images_from_opencv_cameras
     ```
 
@@ -325,7 +324,7 @@ class OpenCVCamera:
             if self.camera_index not in available_cam_ids:
                 raise ValueError(
                     f"`camera_index` is expected to be one of these available cameras {available_cam_ids}, but {self.camera_index} is provided instead. "
-                    "To find the camera index you should use, run `python lerobot/scripts/save_images_from_cameras.py --driver opencv`."
+                    "To find the camera index you should use, run `python lerobot/lerobot/common/robot_devices/cameras/opencv.py`."
                 )
 
             raise OSError(f"Can't access OpenCVCamera({camera_idx}).")

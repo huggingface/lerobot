@@ -39,7 +39,6 @@ def compute_nearest_rounded_position(position, models):
     delta_turn = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, models)
     nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
     return nearest_pos.astype(position.dtype)
-    return position
 
 
 def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):

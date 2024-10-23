@@ -94,6 +94,7 @@ SCS_SERIES_CONTROL_TABLE = {
     "Status": (65, 1),
     "Moving": (66, 1),
     "Present_Current": (69, 2),
+    # Not in the Memory Table
     "Maximum_Acceleration": (85, 2),
 }
 
@@ -127,6 +128,7 @@ MODEL_BAUDRATE_TABLE = {
     "sts3215": SCS_SERIES_BAUDRATE_TABLE,
 }
 
+# High number of retries is needed for feetech compared to dynamixel motors.
 NUM_READ_RETRY = 20
 NUM_WRITE_RETRY = 20
 
@@ -235,7 +237,6 @@ class JointOutOfRangeError(Exception):
 
 
 class FeetechMotorsBus:
-    # TODO(rcadene): Add a script to find the motor indices without feetechWizzard2
     """
     The FeetechMotorsBus class allows to efficiently read and write to the attached motors. It relies on
     the python feetech sdk to communicate with the motors. For more info, see the [feetech SDK Documentation](https://emanual.robotis.com/docs/en/software/feetech/feetech_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
@@ -243,8 +244,8 @@ class FeetechMotorsBus:
     A FeetechMotorsBus instance requires a port (e.g. `FeetechMotorsBus(port="/dev/tty.usbmodem575E0031751"`)).
     To find the port, you can run our utility script:
     ```bash
-    python lerobot/common/robot_devices/motors/feetech.py
-    >>> Finding all available ports for the FeetechMotorsBus.
+    python lerobot/scripts/find_motors_bus_port.py
+    >>> Finding all available ports for the MotorsBus.
     >>> ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
     >>> Remove the usb cable from your FeetechMotorsBus and press Enter when done.
     >>> The port of this FeetechMotorsBus is /dev/tty.usbmodem575E0031751.
@@ -255,7 +256,7 @@ class FeetechMotorsBus:
     ```python
     motor_name = "gripper"
     motor_index = 6
-    motor_model = "xl330-m288"
+    motor_model = "sts3215"
 
     motors_bus = FeetechMotorsBus(
         port="/dev/tty.usbmodem575E0031751",
