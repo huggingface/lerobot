@@ -337,24 +337,27 @@ class ManipulatorRobot:
 
                 elif self.robot_type in ["so100"]:
                     from lerobot.common.robot_devices.robots.feetech_calibration import (
-                        run_arm_auto_calibration,
+                        run_arm_auto_calibration_so100,
                         run_arm_manual_calibration,
                     )
 
                     if arm_type == "leader":
                         calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
                     elif arm_type == "follower":
-                        calibration = run_arm_auto_calibration(arm, self.robot_type, name, arm_type)
+                        calibration = run_arm_auto_calibration_so100(arm, self.robot_type, name, arm_type)
                     else:
                         raise ValueError(arm_type)
 
                 elif self.robot_type in ["moss"]:
                     from lerobot.common.robot_devices.robots.feetech_calibration import (
+                        run_arm_auto_calibration_moss,
                         run_arm_manual_calibration,
                     )
 
-                    if arm_type == "leader" or arm_type == "follower":
+                    if arm_type == "leader":
                         calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
+                    elif arm_type == "follower":
+                        calibration = run_arm_auto_calibration_moss(arm, self.robot_type, name, arm_type)
                     else:
                         raise ValueError(arm_type)
 
@@ -468,10 +471,10 @@ class ManipulatorRobot:
             # Mode=0 for Position Control
             self.follower_arms[name].write("Mode", 0)
             # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-            self.follower_arms[name].write("P_Coefficient", 16, "shoulder_pan")
+            self.follower_arms[name].write("P_Coefficient", 16)
             # Set I_Coefficient and D_Coefficient to default value 0 and 32
-            self.follower_arms[name].write("I_Coefficient", 0, "shoulder_pan")
-            self.follower_arms[name].write("D_Coefficient", 32, "shoulder_pan")
+            self.follower_arms[name].write("I_Coefficient", 0)
+            self.follower_arms[name].write("D_Coefficient", 32)
             # Close the write lock so that Maximum_Acceleration gets written to EPROM address,
             # which is mandatory for Maximum_Acceleration to take effect after rebooting.
             self.follower_arms[name].write("Lock", 0)

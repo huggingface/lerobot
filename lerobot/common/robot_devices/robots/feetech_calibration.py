@@ -37,18 +37,12 @@ def apply_drive_mode(position, drive_mode):
     return position
 
 
-def compute_nearest_rounded_position(position, models):
-    # delta_turn = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, models)
-    # nearest_pos = np.round(position.astype(float) / delta_turn) * delta_turn
-    # return nearest_pos.astype(position.dtype)
-    return position
-
-
 def move_until_block(arm, motor_name, positive_direction=True, while_move_hook=None):
     count = 0
     while True:
         present_pos = arm.read("Present_Position", motor_name)
         if positive_direction:
+            # Move +100 steps every time. Lower the steps to lower the speed at which the arm moves.
             arm.write("Goal_Position", present_pos + 100, motor_name)
         else:
             arm.write("Goal_Position", present_pos - 100, motor_name)
@@ -58,74 +52,67 @@ def move_until_block(arm, motor_name, positive_direction=True, while_move_hook=N
 
         present_pos = arm.read("Present_Position", motor_name).item()
         present_speed = arm.read("Present_Speed", motor_name).item()
-        present_load = arm.read("Present_Load", motor_name).item()
+        present_current = arm.read("Present_Current", motor_name).item()
+        # present_load = arm.read("Present_Load", motor_name).item()
         # present_voltage = arm.read("Present_Voltage", motor_name).item()
         # present_temperature = arm.read("Present_Temperature", motor_name).item()
 
         # print(f"{present_pos=}")
         # print(f"{present_speed=}")
+        # print(f"{present_current=}")
         # print(f"{present_load=}")
         # print(f"{present_voltage=}")
         # print(f"{present_temperature=}")
 
-        if present_load > 100 and present_speed == 0:
+        if present_speed == 0 and present_current > 50:
             count += 1
-            if count > 100:
+            if count > 100 or present_current > 300:
                 return present_pos
         else:
             count = 0
 
 
-def move_to_calibrate(arm, motor_name, positive_first=True, in_between_move_hook=None, while_move_hook=None):
+def move_to_calibrate(
+    arm,
+    motor_name,
+    invert_drive_mode=False,
+    positive_first=True,
+    in_between_move_hook=None,
+    while_move_hook=None,
+):
     initial_pos = arm.read("Present_Position", motor_name)
 
     if positive_first:
         p_present_pos = move_until_block(
             arm, motor_name, positive_direction=True, while_move_hook=while_move_hook
         )
-        p_delta_pos = abs(initial_pos - p_present_pos)
-
-        if in_between_move_hook is not None:
-            in_between_move_hook()
-
-        n_present_pos = move_until_block(
-            arm, motor_name, positive_direction=False, while_move_hook=while_move_hook
-        )
-        n_delta_pos = abs(initial_pos - n_present_pos)
     else:
         n_present_pos = move_until_block(
             arm, motor_name, positive_direction=False, while_move_hook=while_move_hook
         )
-        n_delta_pos = abs(initial_pos - n_present_pos)
 
-        if in_between_move_hook is not None:
-            in_between_move_hook()
+    if in_between_move_hook is not None:
+        in_between_move_hook()
 
+    if positive_first:
+        n_present_pos = move_until_block(
+            arm, motor_name, positive_direction=False, while_move_hook=while_move_hook
+        )
+    else:
         p_present_pos = move_until_block(
             arm, motor_name, positive_direction=True, while_move_hook=while_move_hook
         )
-        p_delta_pos = abs(initial_pos - p_present_pos)
 
-    if p_delta_pos < n_delta_pos:
-        invert_drive_mode = False
-        min_pos = n_present_pos
-        max_pos = p_present_pos
-        zero_pos = (min_pos + max_pos) / 2
-        homing_offset = -zero_pos
-    else:
-        invert_drive_mode = True
-        min_pos = p_present_pos
-        max_pos = n_present_pos
-        zero_pos = (min_pos + max_pos) / 2
-        homing_offset = zero_pos
+    zero_pos = (n_present_pos + p_present_pos) / 2
 
     calib_data = {
-        "homing_offset": homing_offset,
+        "initial_pos": initial_pos,
+        "homing_offset": zero_pos if invert_drive_mode else -zero_pos,
         "invert_drive_mode": invert_drive_mode,
         "drive_mode": -1 if invert_drive_mode else 0,
         "zero_pos": zero_pos,
-        "min_pos": min_pos,
-        "max_pos": max_pos,
+        "start_pos": n_present_pos if invert_drive_mode else p_present_pos,
+        "end_pos": p_present_pos if invert_drive_mode else n_present_pos,
     }
     return calib_data
 
@@ -139,9 +126,13 @@ def apply_offset(calib, offset):
     return calib
 
 
-def run_arm_auto_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
+def run_arm_auto_calibration_so100(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
+    """All the offsets and magic numbers are hand tuned, and are unique to SO-100 follower arms"""
     if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
         raise ValueError("To run calibration, the torque must be disabled on all motors.")
+
+    if not (robot_type == "so100" and arm_type == "follower"):
+        raise NotImplementedError("Auto calibration only supports the follower of so100 arms for now.")
 
     print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
 
@@ -149,66 +140,71 @@ def run_arm_auto_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
     print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="initial"))
     input("Press Enter to continue...")
 
+    # Lower the acceleration of the motors (in [0,254])
+    initial_acceleration = arm.read("Acceleration")
     arm.write("Lock", 0)
     arm.write("Acceleration", 10)
     time.sleep(1)
 
     arm.write("Torque_Enable", TorqueMode.ENABLED.value)
 
+    print(f'{arm.read("Present_Position", "elbow_flex")=}')
+
     calib = {}
 
-    # Calibrate shoulder_pan
+    init_wf_pos = arm.read("Present_Position", "wrist_flex")
+    init_sl_pos = arm.read("Present_Position", "shoulder_lift")
+    init_ef_pos = arm.read("Present_Position", "elbow_flex")
+    arm.write("Goal_Position", init_wf_pos - 800, "wrist_flex")
+    arm.write("Goal_Position", init_sl_pos + 150 + 1024, "shoulder_lift")
+    arm.write("Goal_Position", init_ef_pos - 2048, "elbow_flex")
+    time.sleep(2)
 
+    print("Calibrate shoulder_pan")
     calib["shoulder_pan"] = move_to_calibrate(arm, "shoulder_pan")
     arm.write("Goal_Position", calib["shoulder_pan"]["zero_pos"], "shoulder_pan")
     time.sleep(1)
 
-    # Calibrate elbow_flex
-
-    calib["elbow_flex"] = move_to_calibrate(arm, "elbow_flex")
-    calib["elbow_flex"] = apply_offset(calib["elbow_flex"], offset=130 - 1024)
-
-    arm.write("Goal_Position", calib["elbow_flex"]["zero_pos"] + 1024, "elbow_flex")
+    print("Calibrate gripper")
+    calib["gripper"] = move_to_calibrate(arm, "gripper", invert_drive_mode=True)
     time.sleep(1)
 
-    # Calibrate wrist_flex
-
+    print("Calibrate wrist_flex")
     calib["wrist_flex"] = move_to_calibrate(arm, "wrist_flex")
-    calib["wrist_flex"] = apply_offset(calib["wrist_flex"], offset=100)
-
-    arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"], "wrist_flex")
-    time.sleep(1)
-
-    # Calibrate gripper
-
-    calib["gripper"] = move_to_calibrate(arm, "gripper")
-
-    tmp_max_pos = calib["gripper"]["max_pos"]
-    calib["gripper"]["max_pos"] = calib["gripper"]["min_pos"]
-    calib["gripper"]["min_pos"] = tmp_max_pos
-
-    arm.write("Goal_Position", calib["gripper"]["min_pos"], "gripper")
-    time.sleep(1)
-    arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"] - 1350, "wrist_flex")
-    time.sleep(1)
-
-    # Calibrate shoulder_lift
+    calib["wrist_flex"] = apply_offset(calib["wrist_flex"], offset=80)
 
     def in_between_move_hook():
         nonlocal arm, calib
-        initial_pos = arm.read("Present_Position", "shoulder_lift")
-        arm.write("Goal_Position", initial_pos + 900, "shoulder_lift")
-        time.sleep(1)
-        arm.write("Goal_Position", calib["elbow_flex"]["zero_pos"] - 150, "elbow_flex")
-        time.sleep(1)
+        time.sleep(2)
+        ef_pos = arm.read("Present_Position", "elbow_flex")
+        sl_pos = arm.read("Present_Position", "shoulder_lift")
+        arm.write("Goal_Position", ef_pos + 1024, "elbow_flex")
+        arm.write("Goal_Position", sl_pos - 1024, "shoulder_lift")
+        time.sleep(2)
 
+    print("Calibrate elbow_flex")
+    calib["elbow_flex"] = move_to_calibrate(
+        arm, "elbow_flex", positive_first=False, in_between_move_hook=in_between_move_hook
+    )
+    calib["elbow_flex"] = apply_offset(calib["elbow_flex"], offset=80 - 1024)
+
+    arm.write("Goal_Position", calib["elbow_flex"]["zero_pos"] + 1024 + 512, "elbow_flex")
+    time.sleep(1)
+
+    def in_between_move_hook():
+        nonlocal arm, calib
+        arm.write("Goal_Position", calib["elbow_flex"]["zero_pos"], "elbow_flex")
+
+    print("Calibrate shoulder_lift")
     calib["shoulder_lift"] = move_to_calibrate(
-        arm, "shoulder_lift", positive_first=False, in_between_move_hook=in_between_move_hook
+        arm,
+        "shoulder_lift",
+        invert_drive_mode=True,
+        positive_first=False,
+        in_between_move_hook=in_between_move_hook,
     )
     # add an 30 steps as offset to align with body
-    calib["shoulder_lift"] = apply_offset(calib["shoulder_lift"], offset=30 + 1024 - 120)
-
-    # Calibrate wrist_roll
+    calib["shoulder_lift"] = apply_offset(calib["shoulder_lift"], offset=1024 - 50)
 
     def while_move_hook():
         nonlocal arm, calib
@@ -216,7 +212,7 @@ def run_arm_auto_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
             "shoulder_lift": round(calib["shoulder_lift"]["zero_pos"] - 1600),
             "elbow_flex": round(calib["elbow_flex"]["zero_pos"] + 1700),
             "wrist_flex": round(calib["wrist_flex"]["zero_pos"] + 800),
-            "gripper": round(calib["gripper"]["max_pos"] - 400),
+            "gripper": round(calib["gripper"]["end_pos"]),
         }
         arm.write("Goal_Position", list(positions.values()), list(positions.keys()))
 
@@ -226,16 +222,17 @@ def run_arm_auto_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
     time.sleep(2)
     arm.write("Goal_Position", round(calib["wrist_flex"]["zero_pos"] + 800), "wrist_flex")
     time.sleep(2)
-    arm.write("Goal_Position", round(calib["gripper"]["max_pos"] - 400), "gripper")
+    arm.write("Goal_Position", round(calib["gripper"]["end_pos"]), "gripper")
     time.sleep(2)
 
+    print("Calibrate wrist_roll")
     calib["wrist_roll"] = move_to_calibrate(
-        arm, "wrist_roll", positive_first=False, while_move_hook=while_move_hook
+        arm, "wrist_roll", invert_drive_mode=True, positive_first=False, while_move_hook=while_move_hook
     )
 
     arm.write("Goal_Position", calib["wrist_roll"]["zero_pos"], "wrist_roll")
     time.sleep(1)
-    arm.write("Goal_Position", calib["gripper"]["min_pos"], "gripper")
+    arm.write("Goal_Position", calib["gripper"]["start_pos"], "gripper")
     time.sleep(1)
     arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"], "wrist_flex")
     time.sleep(1)
@@ -255,11 +252,140 @@ def run_arm_auto_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
     calib_dict = {
         "homing_offset": [calib[name]["homing_offset"] for name in arm.motor_names],
         "drive_mode": [calib[name]["drive_mode"] for name in arm.motor_names],
-        "start_pos": [calib[name]["min_pos"] for name in arm.motor_names],
-        "end_pos": [calib[name]["max_pos"] for name in arm.motor_names],
+        "start_pos": [calib[name]["start_pos"] for name in arm.motor_names],
+        "end_pos": [calib[name]["end_pos"] for name in arm.motor_names],
         "calib_mode": calib_modes,
         "motor_names": arm.motor_names,
     }
+
+    # Re-enable original accerlation
+    arm.write("Lock", 0)
+    arm.write("Acceleration", initial_acceleration)
+    time.sleep(1)
+
+    return calib_dict
+
+
+def run_arm_auto_calibration_moss(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
+    """All the offsets and magic numbers are hand tuned, and are unique to SO-100 follower arms"""
+    if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
+        raise ValueError("To run calibration, the torque must be disabled on all motors.")
+
+    if not (robot_type == "moss" and arm_type == "follower"):
+        raise NotImplementedError("Auto calibration only supports the follower of moss arms for now.")
+
+    print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
+
+    print("\nMove arm to initial position")
+    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="initial"))
+    input("Press Enter to continue...")
+
+    # Lower the acceleration of the motors (in [0,254])
+    initial_acceleration = arm.read("Acceleration")
+    arm.write("Lock", 0)
+    arm.write("Acceleration", 10)
+    time.sleep(1)
+
+    arm.write("Torque_Enable", TorqueMode.ENABLED.value)
+
+    sl_pos = arm.read("Present_Position", "shoulder_lift")
+    arm.write("Goal_Position", sl_pos - 1024 - 450, "shoulder_lift")
+    ef_pos = arm.read("Present_Position", "elbow_flex")
+    arm.write("Goal_Position", ef_pos + 1024 + 450, "elbow_flex")
+    time.sleep(2)
+
+    calib = {}
+
+    print("Calibrate shoulder_pan")
+    calib["shoulder_pan"] = move_to_calibrate(arm, "shoulder_pan", load_threshold=350, count_threshold=200)
+    arm.write("Goal_Position", calib["shoulder_pan"]["zero_pos"], "shoulder_pan")
+    time.sleep(1)
+
+    print("Calibrate gripper")
+    calib["gripper"] = move_to_calibrate(arm, "gripper", invert_drive_mode=True, count_threshold=200)
+    time.sleep(1)
+
+    print("Calibrate wrist_flex")
+    calib["wrist_flex"] = move_to_calibrate(arm, "wrist_flex", invert_drive_mode=True, count_threshold=200)
+    calib["wrist_flex"] = apply_offset(calib["wrist_flex"], offset=-210 + 1024)
+
+    wr_pos = arm.read("Present_Position", "wrist_roll")
+    arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"] - 1024, "wrist_flex")
+    time.sleep(1)
+    arm.write("Goal_Position", wr_pos - 1024, "wrist_roll")
+    time.sleep(1)
+    arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"] - 2048, "wrist_flex")
+    time.sleep(1)
+    arm.write("Goal_Position", calib["gripper"]["end_pos"], "gripper")
+    time.sleep(1)
+
+    print("Calibrate wrist_roll")
+    calib["wrist_roll"] = move_to_calibrate(arm, "wrist_roll", invert_drive_mode=True, count_threshold=200)
+    calib["wrist_roll"] = apply_offset(calib["wrist_roll"], offset=790)
+
+    arm.write("Goal_Position", calib["wrist_roll"]["zero_pos"] - 1024, "wrist_roll")
+    arm.write("Goal_Position", calib["gripper"]["start_pos"], "gripper")
+    arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"] - 1024, "wrist_flex")
+    time.sleep(1)
+    arm.write("Goal_Position", calib["wrist_roll"]["zero_pos"], "wrist_roll")
+    arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"] - 2048, "wrist_flex")
+
+    def in_between_move_elbow_flex_hook():
+        nonlocal arm, calib
+        arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"], "wrist_flex")
+
+    print("Calibrate elbow_flex")
+    calib["elbow_flex"] = move_to_calibrate(
+        arm,
+        "elbow_flex",
+        invert_drive_mode=True,
+        count_threshold=200,
+        in_between_move_hook=in_between_move_elbow_flex_hook,
+    )
+    arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"] - 1024, "wrist_flex")
+
+    def in_between_move_shoulder_lift_hook():
+        nonlocal arm, calib
+        sl = arm.read("Present_Position", "shoulder_lift")
+        arm.write("Goal_Position", sl - 1500, "shoulder_lift")
+        time.sleep(1)
+        arm.write("Goal_Position", calib["elbow_flex"]["zero_pos"] + 1536, "elbow_flex")
+        time.sleep(1)
+        arm.write("Goal_Position", calib["wrist_flex"]["start_pos"], "wrist_flex")
+        time.sleep(1)
+
+    print("Calibrate shoulder_lift")
+    calib["shoulder_lift"] = move_to_calibrate(
+        arm, "shoulder_lift", in_between_move_hook=in_between_move_shoulder_lift_hook
+    )
+    calib["shoulder_lift"] = apply_offset(calib["shoulder_lift"], offset=-1024)
+
+    arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"] - 1024, "wrist_flex")
+    time.sleep(1)
+    arm.write("Goal_Position", calib["shoulder_lift"]["zero_pos"] + 2048, "shoulder_lift")
+    arm.write("Goal_Position", calib["elbow_flex"]["zero_pos"] - 1024 - 400, "elbow_flex")
+    time.sleep(2)
+
+    calib_modes = []
+    for name in arm.motor_names:
+        if name == "gripper":
+            calib_modes.append(CalibrationMode.LINEAR.name)
+        else:
+            calib_modes.append(CalibrationMode.DEGREE.name)
+
+    calib_dict = {
+        "homing_offset": [calib[name]["homing_offset"] for name in arm.motor_names],
+        "drive_mode": [calib[name]["drive_mode"] for name in arm.motor_names],
+        "start_pos": [calib[name]["start_pos"] for name in arm.motor_names],
+        "end_pos": [calib[name]["end_pos"] for name in arm.motor_names],
+        "calib_mode": calib_modes,
+        "motor_names": arm.motor_names,
+    }
+
+    # Re-enable original accerlation
+    arm.write("Lock", 0)
+    arm.write("Acceleration", initial_acceleration)
+    time.sleep(1)
 
     return calib_dict
 
@@ -283,7 +409,7 @@ def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, a
 
     Example of usage:
     ```python
-    run_arm_calibration(arm, "koch", "left", "follower")
+    run_arm_calibration(arm, "so100", "left", "follower")
     ```
     """
     if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
@@ -339,7 +465,7 @@ def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, a
         else:
             calib_modes.append(CalibrationMode.DEGREE.name)
 
-    calib_data = {
+    calib_dict = {
         "homing_offset": homing_offset.tolist(),
         "drive_mode": drive_mode.tolist(),
         "start_pos": zero_pos.tolist(),
@@ -347,4 +473,4 @@ def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, a
         "calib_mode": calib_modes,
         "motor_names": arm.motor_names,
     }
-    return calib_data
+    return calib_dict

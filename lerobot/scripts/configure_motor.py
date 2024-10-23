@@ -112,20 +112,16 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
         if brand == "feetech":
             # Set Maximum_Acceleration to 254 to speedup acceleration and deceleration of
             # the motors. Note: this configuration is not in the official STS3215 Memory Table
+            motor_bus.write("Lock", 0)
             motor_bus.write("Maximum_Acceleration", 254)
 
-            motor_bus.write("Goal_Position", 2047)
+            motor_bus.write("Goal_Position", 2048)
             time.sleep(4)
             print("Present Position", motor_bus.read("Present_Position"))
 
-            motor_bus.write("Offset", 2027)
+            motor_bus.write("Offset", 0)
             time.sleep(4)
             print("Offset", motor_bus.read("Offset"))
-
-            # Read present position for 15 seconds
-            for _ in range(30):
-                print("Present Position", motor_bus.read("Present_Position"))
-                time.sleep(0.5)
 
     except Exception as e:
         print(f"Error occurred during motor configuration: {e}")
