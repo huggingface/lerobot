@@ -298,10 +298,11 @@ def check_delta_timestamps(
     """
     outside_tolerance = {}
     for key, delta_ts in delta_timestamps.items():
-        abs_delta_ts = torch.abs(torch.tensor(delta_ts))
-        within_tolerance = (abs_delta_ts % (1 / fps)) <= tolerance_s
-        if not torch.all(within_tolerance):
-            outside_tolerance[key] = torch.tensor(delta_ts)[~within_tolerance]
+        within_tolerance = [abs(ts * fps - round(ts * fps)) <= tolerance_s for ts in delta_ts]
+        if not all(within_tolerance):
+            outside_tolerance[key] = [
+                ts for ts, is_within in zip(delta_ts, within_tolerance, strict=True) if not is_within
+            ]
 
     if len(outside_tolerance) > 0:
         if raise_value_error:
