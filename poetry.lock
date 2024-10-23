@@ -7441,4 +7441,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "6c4bdf158f8744a5ba190df7e02bf4cdd545daa0680ef019706581e514c9e198"
+content-hash = "7ff63d36a5524a77cba916d212741082adcb49dfdc0dc49f8bf8ccee53c02254"
