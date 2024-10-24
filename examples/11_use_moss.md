@@ -146,6 +146,13 @@ Follow step 6 of the [assembly video](https://youtu.be/ZqtPjuVFFpg) which illust
 |---|---|---|
 | <img src="../media/moss/leader_zero.webp?raw=true" alt="Moss v1 leader arm zero position" title="Moss v1 leader arm zero position" style="width:100%;"> | <img src="../media/moss/leader_rotated.webp?raw=true" alt="Moss v1 leader arm rotated position" title="Moss v1 leader arm rotated position" style="width:100%;"> | <img src="../media/moss/leader_rest.webp?raw=true" alt="Moss v1 leader arm rest position" title="Moss v1 leader arm rest position" style="width:100%;"> |
 
+Run this script to launch manual calibration:
+```bash
+python lerobot/scripts/control_robot.py calibrate \
+    --robot-path lerobot/configs/robot/moss.yaml \
+    --robot-overrides '~cameras' --arms main_leader
+```
+
 ## Teleoperate
 
 **Simple teleop**

@@ -298,16 +298,6 @@ class FeetechMotorsBus:
         self.logs = {}
 
         self.track_positions = {}
-        self.present_pos = {
-            "prev": [None] * len(self.motor_names),
-            "below_zero": [None] * len(self.motor_names),
-            "above_max": [None] * len(self.motor_names),
-        }
-        self.goal_pos = {
-            "prev": [None] * len(self.motor_names),
-            "below_zero": [None] * len(self.motor_names),
-            "above_max": [None] * len(self.motor_names),
-        }
 
     def connect(self):
         if self.is_connected:

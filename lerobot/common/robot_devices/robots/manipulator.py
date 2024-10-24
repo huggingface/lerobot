@@ -51,7 +51,7 @@ class ManipulatorRobotConfig:
     """
 
     # Define all components of the robot
-    robot_type: str = "koch"
+    robot_type: str | None = None
     leader_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     follower_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
@@ -81,7 +81,7 @@ class ManipulatorRobotConfig:
         super().__setattr__(prop, val)
 
     def __post_init__(self):
-        if self.robot_type not in ["koch", "koch_bimanual", "aloha", "so100", "moss"]:
+        if self.robot_type is None or self.robot_type not in ["koch", "aloha", "so100", "moss"]:
             raise ValueError(f"Provided robot type ({self.robot_type}) is not supported.")
 
 
@@ -292,7 +292,7 @@ class ManipulatorRobot:
             self.follower_arms[name].write("Torque_Enable", 1)
 
         if self.config.gripper_open_degree is not None:
-            if self.robot_type in ["aloha", "so100", "moss"]:
+            if self.robot_type != "koch":
                 raise NotImplementedError(
                     f"{self.robot_type} does not support position AND current control in the handle, which is require to set the gripper open."
                 )
@@ -328,6 +328,7 @@ class ManipulatorRobot:
                 with open(arm_calib_path) as f:
                     calibration = json.load(f)
             else:
+                # TODO(rcadene): display a warning in __init__ if calibration file not available
                 print(f"Missing calibration file '{arm_calib_path}'")
 
                 if self.robot_type in ["koch", "aloha"]:

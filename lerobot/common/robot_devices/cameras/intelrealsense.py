@@ -200,8 +200,7 @@ class IntelRealSenseCamera:
 
     To find the camera indices of your cameras, you can run our utility script that will save a few frames for each camera:
     ```bash
-    python lerobot/common/robot_devices/cameras/intelrealsense.py \
-    --images-dir outputs/images_from_intelrealsense_cameras
+    python lerobot/common/robot_devices/cameras/intelrealsense.py --images-dir outputs/images_from_intelrealsense_cameras
     ```
 
     When an IntelRealSenseCamera is instantiated, if no specific config is provided, the default fps, width, height and color_mode

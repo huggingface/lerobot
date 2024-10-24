@@ -162,7 +162,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     if robot_type == "aloha":
         env_name = "aloha_real"
         policy_name = "act_aloha_real"
-    elif robot_type in ["koch", "koch_bimanual", "so100", "moss"]:
+    elif robot_type in ["koch", "so100", "moss"]:
         env_name = "koch_real"
         policy_name = "act_koch_real"
     else:
