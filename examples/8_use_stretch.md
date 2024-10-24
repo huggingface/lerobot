@@ -50,7 +50,7 @@ cd ~/lerobot && pip install -e ".[stretch]"
 
 > **Note:** If you get this message, you can ignore it: `ERROR: pip's dependency resolver does not currently take into account all the packages that are installed.`
 
-And install extra dependencies for recording datasets on Linux:
+For Linux only (not Mac), install extra dependencies for recording datasets:
 ```bash
 conda install -y -c conda-forge ffmpeg
 pip uninstall -y opencv-python

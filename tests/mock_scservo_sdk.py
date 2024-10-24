@@ -7,7 +7,7 @@ from the original classes and functions (e.g. return types might be None instead
 
 # from dynamixel_sdk import COMM_SUCCESS
 
-DEFAULT_BAUDRATE = 9_600
+DEFAULT_BAUDRATE = 1_000_000
 COMM_SUCCESS = 0  # tx or rx packet communication success
 
 
@@ -20,14 +20,24 @@ def convert_to_bytes(value, bytes):
 
 def get_default_motor_values(motor_index):
     return {
-        # Key (int) are from X_SERIES_CONTROL_TABLE
-        7: motor_index,  # ID
-        8: DEFAULT_BAUDRATE,  # Baud_rate
+        # Key (int) are from SCS_SERIES_CONTROL_TABLE
+        5: motor_index,  # ID
+        6: DEFAULT_BAUDRATE,  # Baud_rate
         10: 0,  # Drive_Mode
-        64: 0,  # Torque_Enable
+        21: 32,  # P_Coefficient
+        22: 32,  # D_Coefficient
+        23: 0,  # I_Coefficient
+        40: 0,  # Torque_Enable
+        41: 254,  # Acceleration
+        31: -2047,  # Offset
+        33: 0,  # Mode
+        55: 1,  # Lock
         # Set 2560 since calibration values for Aloha gripper is between start_pos=2499 and end_pos=3144
         # For other joints, 2560 will be autocorrected to be in calibration range
-        132: 2560,  # Present_Position
+        56: 2560,  # Present_Position
+        58: 0,  # Present_Speed
+        69: 0,  # Present_Current
+        85: 150,  # Maximum_Acceleration
     }
 
 
@@ -82,7 +92,6 @@ class GroupSyncWrite:
         self.address = address
 
     def addParam(self, index, data):  # noqa: N802
-        # Initialize motor default values
         if index not in self.packet_handler.data:
             self.packet_handler.data[index] = get_default_motor_values(index)
         self.changeParam(index, data)

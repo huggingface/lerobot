@@ -1,0 +1,56 @@
+# [SO-100 robot arm](https://github.com/TheRobotStudio/SO-ARM100)
+
+# Requires installing extras packages
+# With pip: `pip install -e ".[feetech]"`
+# With poetry: `poetry install --sync --extras "feetech"`
+
+# See [tutorial](https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md)
+
+_target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
+robot_type: so100
+calibration_dir: .cache/calibration/so100
+
+# `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+# Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+# the number of motors in your follower arms.
+max_relative_target: null
+
+leader_arms:
+  main:
+    _target_: lerobot.common.robot_devices.motors.feetech.FeetechMotorsBus
+    port: /dev/tty.usbmodem585A0077581
+    motors:
+      # name: (index, model)
+      shoulder_pan: [1, "sts3215"]
+      shoulder_lift: [2, "sts3215"]
+      elbow_flex: [3, "sts3215"]
+      wrist_flex: [4, "sts3215"]
+      wrist_roll: [5, "sts3215"]
+      gripper: [6, "sts3215"]
+
+follower_arms:
+  main:
+    _target_: lerobot.common.robot_devices.motors.feetech.FeetechMotorsBus
+    port: /dev/tty.usbmodem585A0080971
+    motors:
+      # name: (index, model)
+      shoulder_pan: [1, "sts3215"]
+      shoulder_lift: [2, "sts3215"]
+      elbow_flex: [3, "sts3215"]
+      wrist_flex: [4, "sts3215"]
+      wrist_roll: [5, "sts3215"]
+      gripper: [6, "sts3215"]
+
+cameras:
+  laptop:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 0
+    fps: 30
+    width: 640
+    height: 480
+  phone:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 1
+    fps: 30
+    width: 640
+    height: 480

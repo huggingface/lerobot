@@ -198,6 +198,8 @@ available_robots = [
     "koch",
     "koch_bimanual",
     "aloha",
+    "so100",
+    "moss",
 ]
 
 # lists all available cameras from `lerobot/common/robot_devices/cameras`
@@ -209,6 +211,7 @@ available_cameras = [
 # lists all available motors from `lerobot/common/robot_devices/motors`
 available_motors = [
     "dynamixel",
+    "feetech",
 ]
 
 # keys and values refer to yaml files

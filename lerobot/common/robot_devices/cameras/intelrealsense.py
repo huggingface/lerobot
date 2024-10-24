@@ -21,9 +21,9 @@ from PIL import Image
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
+    busy_wait,
 )
 from lerobot.common.utils.utils import capture_timestamp_utc
-from lerobot.scripts.control_robot import busy_wait
 
 SERIAL_NUMBER_INDEX = 1
 
