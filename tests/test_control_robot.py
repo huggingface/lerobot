@@ -23,7 +23,6 @@ pytest -sx 'tests/test_control_robot.py::test_teleoperate[aloha-True]'
 ```
 """
 
-import json
 import multiprocessing
 from pathlib import Path
 from unittest.mock import patch
@@ -37,32 +36,7 @@ from lerobot.common.utils.utils import init_hydra_config
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
 from lerobot.scripts.train import make_optimizer_and_scheduler
 from tests.test_robots import make_robot
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, require_robot
-
-
-def mock_calibration_dir(calibration_dir):
-    # calibration file produced with Moss v1, but works with Koch, Koch bimanual and SO-100
-    example_calib = {
-        "homing_offset": [-1416, -845, 2130, 2872, 1950, -2211],
-        "drive_mode": [0, 0, 1, 1, 1, 0],
-        "start_pos": [1442, 843, 2166, 2849, 1988, 1835],
-        "end_pos": [2440, 1869, -1106, -1848, -926, 3235],
-        "calib_mode": ["DEGREE", "DEGREE", "DEGREE", "DEGREE", "DEGREE", "LINEAR"],
-        "motor_names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
-    }
-    calibration_dir.mkdir(parents=True, exist_ok=True)
-    with open(calibration_dir / "main_follower.json", "w") as f:
-        json.dump(example_calib, f)
-    with open(calibration_dir / "main_leader.json", "w") as f:
-        json.dump(example_calib, f)
-    with open(calibration_dir / "left_follower.json", "w") as f:
-        json.dump(example_calib, f)
-    with open(calibration_dir / "left_leader.json", "w") as f:
-        json.dump(example_calib, f)
-    with open(calibration_dir / "right_follower.json", "w") as f:
-        json.dump(example_calib, f)
-    with open(calibration_dir / "right_leader.json", "w") as f:
-        json.dump(example_calib, f)
+from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
