@@ -106,12 +106,6 @@ from typing import List
 
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.populate_dataset import (
-    create_lerobot_dataset,
-    delete_current_episode,
-    init_dataset,
-    save_current_episode,
-)
 from lerobot.common.robot_devices.control_utils import (
     control_loop,
     has_method,
@@ -195,29 +189,33 @@ def record(
     robot: Robot,
     root: str,
     repo_id: str,
+    single_task: str,
     pretrained_policy_name_or_path: str | None = None,
     policy_overrides: List[str] | None = None,
     fps: int | None = None,
-    warmup_time_s=2,
-    episode_time_s=10,
-    reset_time_s=5,
-    num_episodes=50,
-    video=True,
-    run_compute_stats=True,
-    push_to_hub=True,
-    tags=None,
-    num_image_writer_processes=0,
-    num_image_writer_threads_per_camera=4,
-    force_override=False,
-    display_cameras=True,
-    play_sounds=True,
-):
+    warmup_time_s: int | float = 2,
+    episode_time_s: int | float = 10,
+    reset_time_s: int | float = 5,
+    num_episodes: int = 50,
+    video: bool = True,
+    run_compute_stats: bool = True,
+    push_to_hub: bool = True,
+    num_image_writer_processes: int = 0,
+    num_image_writer_threads_per_camera: int = 4,
+    display_cameras: bool = True,
+    play_sounds: bool = True,
+) -> LeRobotDataset:
     # TODO(rcadene): Add option to record logs
     listener = None
     events = None
     policy = None
     device = None
     use_amp = None
+
+    if single_task:
+        task = single_task
+    else:
+        raise NotImplementedError("Only single-task recording is supported for now")
 
     # Load pretrained policy
     if pretrained_policy_name_or_path is not None:
@@ -233,15 +231,14 @@ def record(
 
     # Create empty dataset or load existing saved episodes
     sanity_check_dataset_name(repo_id, policy)
-    dataset = init_dataset(
+    dataset = LeRobotDataset.create(
         repo_id,
-        root,
-        force_override,
         fps,
-        video,
-        write_images=robot.has_camera,
-        num_image_writer_processes=num_image_writer_processes,
-        num_image_writer_threads=num_image_writer_threads_per_camera * robot.num_cameras,
+        robot,
+        root=root,
+        image_writer_processes=num_image_writer_processes,
+        image_writer_threads_per_camera=num_image_writer_threads_per_camera,
+        use_videos=video,
     )
 
     if not robot.is_connected:
@@ -260,11 +257,17 @@ def record(
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
+    recorded_episodes = 0
     while True:
-        if dataset["num_episodes"] >= num_episodes:
+        if recorded_episodes >= num_episodes:
             break
 
-        episode_index = dataset["num_episodes"]
+        # TODO(aliberts): add task prompt for multitask here. Might need to temporarily disable event if
+        # input() messes with them.
+        # if multi_task:
+        #     task = input("Enter your task description: ")
+
+        episode_index = dataset.episode_buffer["episode_index"]
         log_say(f"Recording episode {episode_index}", play_sounds)
         record_episode(
             dataset=dataset,
@@ -292,11 +295,11 @@ def record(
             log_say("Re-record episode", play_sounds)
             events["rerecord_episode"] = False
             events["exit_early"] = False
-            delete_current_episode(dataset)
+            dataset.clear_episode_buffer()
             continue
 
-        # Increment by one dataset["current_episode_index"]
-        save_current_episode(dataset)
+        dataset.add_episode(task)
+        recorded_episodes += 1
 
         if events["stop_recording"]:
             break
@@ -304,35 +307,47 @@ def record(
     log_say("Stop recording", play_sounds, blocking=True)
     stop_recording(robot, listener, display_cameras)
 
-    lerobot_dataset = create_lerobot_dataset(dataset, run_compute_stats, push_to_hub, tags, play_sounds)
+    if dataset.image_writer is not None:
+        logging.info("Waiting for image writer to terminate...")
+        dataset.image_writer.stop()
+
+    if run_compute_stats:
+        logging.info("Computing dataset statistics")
+
+    dataset.consolidate(run_compute_stats)
+
+    # lerobot_dataset = create_lerobot_dataset(dataset, run_compute_stats, push_to_hub, tags, play_sounds)
+    if push_to_hub:
+        dataset.push_to_hub()
 
     log_say("Exiting", play_sounds)
-    return lerobot_dataset
+    return dataset
 
 
 @safe_disconnect
 def replay(
-    robot: Robot, episode: int, fps: int | None = None, root="data", repo_id="lerobot/debug", play_sounds=True
+    robot: Robot,
+    root: Path,
+    repo_id: str,
+    episode: int,
+    fps: int | None = None,
+    play_sounds: bool = True,
+    local_files_only: bool = True,
 ):
     # TODO(rcadene, aliberts): refactor with control_loop, once `dataset` is an instance of LeRobotDataset
     # TODO(rcadene): Add option to record logs
-    local_dir = Path(root) / repo_id
-    if not local_dir.exists():
-        raise ValueError(local_dir)
 
-    dataset = LeRobotDataset(repo_id, root=root)
-    items = dataset.hf_dataset.select_columns("action")
-    from_idx = dataset.episode_data_index["from"][episode].item()
-    to_idx = dataset.episode_data_index["to"][episode].item()
+    dataset = LeRobotDataset(repo_id, root=root, episodes=[episode], local_files_only=local_files_only)
+    actions = dataset.hf_dataset.select_columns("action")
 
     if not robot.is_connected:
         robot.connect()
 
     log_say("Replaying episode", play_sounds, blocking=True)
-    for idx in range(from_idx, to_idx):
+    for idx in range(dataset.num_samples):
         start_episode_t = time.perf_counter()
 
-        action = items[idx]["action"]
+        action = actions[idx]["action"]
         robot.send_action(action)
 
         dt_s = time.perf_counter() - start_episode_t
@@ -381,9 +396,21 @@ if __name__ == "__main__":
     )
 
     parser_record = subparsers.add_parser("record", parents=[base_parser])
+    task_args = parser_record.add_mutually_exclusive_group(required=True)
     parser_record.add_argument(
         "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
     )
+    task_args.add_argument(
+        "--single-task",
+        type=str,
+        help="A short but accurate description of the task performed during the recording.",
+    )
+    # TODO(aliberts): add multi-task support
+    # task_args.add_argument(
+    #     "--multi-task",
+    #     type=int,
+    #     help="You will need to enter the task performed at the start of each episode.",
+    # )
     parser_record.add_argument(
         "--root",
         type=Path,

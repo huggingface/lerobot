@@ -15,7 +15,8 @@ import torch
 import tqdm
 from termcolor import colored
 
-from lerobot.common.datasets.populate_dataset import add_frame, safe_stop_image_writer
+from lerobot.common.datasets.image_writer import safe_stop_image_writer
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
@@ -227,7 +228,7 @@ def control_loop(
     control_time_s=None,
     teleoperate=False,
     display_cameras=False,
-    dataset=None,
+    dataset: LeRobotDataset | None = None,
     events=None,
     policy=None,
     device=None,
@@ -247,7 +248,7 @@ def control_loop(
     if teleoperate and policy is not None:
         raise ValueError("When `teleoperate` is True, `policy` should be None.")
 
-    if dataset is not None and fps is not None and dataset["fps"] != fps:
+    if dataset is not None and fps is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
 
     timestamp = 0
@@ -268,7 +269,8 @@ def control_loop(
                 action = {"action": action}
 
         if dataset is not None:
-            add_frame(dataset, observation, action)
+            frame = {**observation, **action}
+            dataset.add_frame(frame)
 
         if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]
