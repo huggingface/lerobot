@@ -42,7 +42,27 @@ from lerobot.common.datasets.utils import (
     unflatten_dict,
 )
 from lerobot.common.utils.utils import init_hydra_config, seeded_context
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE
+from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, make_robot
+
+TEST_REPO_ID = "aliberts/koch_tutorial"
+
+
+def test_same_attributes_defined():
+    # TODO(aliberts): test with keys, shapes, names etc. provided instead of robot
+    robot = make_robot("koch", mock=True)
+
+    # Instantiate both ways
+    dataset_init = LeRobotDataset(repo_id=TEST_REPO_ID)
+    dataset_create = LeRobotDataset.create(repo_id=TEST_REPO_ID, fps=30, robot=robot)
+
+    # Access the '_hub_version' cached_property in both instances to force its creation
+    _ = dataset_init._hub_version
+    _ = dataset_create._hub_version
+
+    init_attr = set(vars(dataset_init).keys())
+    create_attr = set(vars(dataset_create).keys())
+
+    assert init_attr == create_attr, "Attribute sets do not match between __init__ and .create()"
 
 
 @pytest.mark.parametrize(
