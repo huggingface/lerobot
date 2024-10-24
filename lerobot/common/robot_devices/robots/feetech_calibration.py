@@ -126,6 +126,15 @@ def apply_offset(calib, offset):
     return calib
 
 
+def run_arm_auto_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
+    if robot_type == "so100":
+        return run_arm_auto_calibration_so100(arm, robot_type, arm_name, arm_type)
+    elif robot_type == "moss":
+        return run_arm_auto_calibration_moss(arm, robot_type, arm_name, arm_type)
+    else:
+        raise ValueError(robot_type)
+
+
 def run_arm_auto_calibration_so100(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
     """All the offsets and magic numbers are hand tuned, and are unique to SO-100 follower arms"""
     if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():

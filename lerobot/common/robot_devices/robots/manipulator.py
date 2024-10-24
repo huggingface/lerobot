@@ -335,29 +335,17 @@ class ManipulatorRobot:
 
                     calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
 
-                elif self.robot_type in ["so100"]:
+                elif self.robot_type in ["so100", "moss"]:
                     from lerobot.common.robot_devices.robots.feetech_calibration import (
-                        run_arm_auto_calibration_so100,
+                        run_arm_auto_calibration,
                         run_arm_manual_calibration,
                     )
 
-                    if arm_type == "leader":
+                    # TODO(rcadene): better way to handle mocking + test run_arm_auto_calibration
+                    if arm_type == "leader" or arm.mock:
                         calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
                     elif arm_type == "follower":
-                        calibration = run_arm_auto_calibration_so100(arm, self.robot_type, name, arm_type)
-                    else:
-                        raise ValueError(arm_type)
-
-                elif self.robot_type in ["moss"]:
-                    from lerobot.common.robot_devices.robots.feetech_calibration import (
-                        run_arm_auto_calibration_moss,
-                        run_arm_manual_calibration,
-                    )
-
-                    if arm_type == "leader":
-                        calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
-                    elif arm_type == "follower":
-                        calibration = run_arm_auto_calibration_moss(arm, self.robot_type, name, arm_type)
+                        calibration = run_arm_auto_calibration(arm, self.robot_type, name, arm_type)
                     else:
                         raise ValueError(arm_type)
 
@@ -482,7 +470,6 @@ class ManipulatorRobot:
             # the motors. Note: this configuration is not in the official STS3215 Memory Table
             self.follower_arms[name].write("Maximum_Acceleration", 254)
             self.follower_arms[name].write("Acceleration", 254)
-            time.sleep(1)
 
     def teleop_step(
         self, record_data=False

@@ -18,6 +18,19 @@ def convert_to_bytes(value, bytes):
     return value
 
 
+def get_default_motor_values(motor_index):
+    return {
+        # Key (int) are from X_SERIES_CONTROL_TABLE
+        7: motor_index,  # ID
+        8: DEFAULT_BAUDRATE,  # Baud_rate
+        10: 0,  # Drive_Mode
+        64: 0,  # Torque_Enable
+        # Set 2560 since calibration values for Aloha gripper is between start_pos=2499 and end_pos=3144
+        # For other joints, 2560 will be autocorrected to be in calibration range
+        132: 2560,  # Present_Position
+    }
+
+
 class PortHandler:
     def __init__(self, port):
         self.port = port
@@ -52,18 +65,9 @@ class GroupSyncRead:
         self.packet_handler = packet_handler
 
     def addParam(self, motor_index):  # noqa: N802
+        # Initialize motor default values
         if motor_index not in self.packet_handler.data:
-            # Initialize motor default values
-            self.packet_handler.data[motor_index] = {
-                # Key (int) are from X_SERIES_CONTROL_TABLE
-                7: motor_index,  # ID
-                8: DEFAULT_BAUDRATE,  # Baud_rate
-                10: 0,  # Drive_Mode
-                64: 0,  # Torque_Enable
-                # Set 2560 since calibration values for Aloha gripper is between start_pos=2499 and end_pos=3144
-                # For other joints, 2560 will be autocorrected to be in calibration range
-                132: 2560,  # Present_Position
-            }
+            self.packet_handler.data[motor_index] = get_default_motor_values(motor_index)
 
     def txRxPacket(self):  # noqa: N802
         return COMM_SUCCESS
@@ -78,6 +82,9 @@ class GroupSyncWrite:
         self.address = address
 
     def addParam(self, index, data):  # noqa: N802
+        # Initialize motor default values
+        if index not in self.packet_handler.data:
+            self.packet_handler.data[index] = get_default_motor_values(index)
         self.changeParam(index, data)
 
     def txPacket(self):  # noqa: N802
