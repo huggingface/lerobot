@@ -1,8 +1,8 @@
-This tutorial explains how to use [SO-100](https://github.com/TheRobotStudio/SO-ARM100) with LeRobot.
+This tutorial explains how to use [Moss v1](https://github.com/jess-moss/moss-robot-arms) with LeRobot.
 
 ## Source the parts
 
-Follow this [README](https://github.com/TheRobotStudio/SO-ARM100). It contains the bill of materials, with link to source the parts, as well as the instructions to 3D print the parts, and advices if it's your first time printing or if you don't own a 3D printer already.
+Follow this [README](https://github.com/jess-moss/moss-robot-arms). It contains the bill of materials, with link to source the parts, as well as the instructions to 3D print the parts, and advices if it's your first time printing or if you don't own a 3D printer already.
 
 **Important**: Before assembling, you will first need to configure your motors. To this end, we provide a nice script, so let's first install LeRobot. After configuration, we will also guide you through assembly.
 
@@ -112,7 +112,7 @@ Redo the process for all your motors until ID 6. Do the same for the 6 motors of
 Follow step 2 of the [assembly video](https://youtu.be/ZqtPjuVFFpg). You need to remove the gear for the motors of the leader arm. As a result, you will only use the position encoding of the motor and reduce friction to more easily operate the leader arm.
 
 **Add motor horn to the motors**
-Follow step 3 of the [assembly video](https://youtu.be/ZqtPjuVFFpg). For SO-100, you need to align the holes on the motor horn to the motor spline to be approximately 1:30, 4:30, 7:30 and 10:30.
+Follow step 3 of the [assembly video](https://youtu.be/ZqtPjuVFFpg). For Moss v1, you need to align the holes on the motor horn to the motor spline to be approximately 3, 6, 9 and 12 o'clock.
 Try to avoid rotating the motor while doing so to keep position 2048 set during configuration. It is especially tricky for the leader motors as it is more sensible without the gears, but it's ok if it's a bit rotated.
 
 ## Assemble the arms
@@ -121,19 +121,19 @@ Follow step 4 of the [assembly video](https://youtu.be/ZqtPjuVFFpg). The first a
 
 ## Calibrate
 
-Next, you'll need to calibrate your SO-100 robot to ensure that the leader and follower arms have the same position values when they are in the same physical position. This calibration is essential because it allows a neural network trained on one SO-100 robot to work on another.
+Next, you'll need to calibrate your Moss v1 robot to ensure that the leader and follower arms have the same position values when they are in the same physical position. This calibration is essential because it allows a neural network trained on one Moss v1 robot to work on another.
 
 **Auto-calibration of follower arm**
 Follow step 5 of the [assembly video](https://youtu.be/ZqtPjuVFFpg) which illustrates the auto-calibration of the follower arm. You first need to manually move your follower arm to this initial position:
 
 <div style="text-align:center;">
-  <img src="../media/so100/follower_initial.webp?raw=true" alt="SO-100 follower arm initial position" title="SO-100 follower arm initial position" width="50%">
+  <img src="../media/moss/follower_initial.webp?raw=true" alt="Moss v1 follower arm initial position" title="Moss v1 follower arm initial position" width="50%">
 </div>
 
 Then run this script to launch auto-calibration:
 ```bash
 python lerobot/scripts/control_robot.py calibrate \
-    --robot-path lerobot/configs/robot/so100.yaml \
+    --robot-path lerobot/configs/robot/moss.yaml \
     --robot-overrides '~cameras' --arms main_follower
 ```
 
@@ -144,7 +144,7 @@ Follow step 6 of the [assembly video](https://youtu.be/ZqtPjuVFFpg) which illust
 
 | 1. Zero position | 2. Rotated position | 3. Rest position |
 |---|---|---|
-| <img src="../media/so100/leader_zero.webp?raw=true" alt="SO-100 leader arm zero position" title="SO-100 leader arm zero position" style="width:100%;"> | <img src="../media/so100/leader_rotated.webp?raw=true" alt="SO-100 leader arm rotated position" title="SO-100 leader arm rotated position" style="width:100%;"> | <img src="../media/so100/leader_rest.webp?raw=true" alt="SO-100 leader arm rest position" title="SO-100 leader arm rest position" style="width:100%;"> |
+| <img src="../media/moss/leader_zero.webp?raw=true" alt="Moss v1 leader arm zero position" title="Moss v1 leader arm zero position" style="width:100%;"> | <img src="../media/moss/leader_rotated.webp?raw=true" alt="Moss v1 leader arm rotated position" title="Moss v1 leader arm rotated position" style="width:100%;"> | <img src="../media/moss/leader_rest.webp?raw=true" alt="Moss v1 leader arm rest position" title="Moss v1 leader arm rest position" style="width:100%;"> |
 
 ## Teleoperate
 
@@ -152,7 +152,7 @@ Follow step 6 of the [assembly video](https://youtu.be/ZqtPjuVFFpg) which illust
 Then you are ready to teleoperate your robot! Run this simple script (it won't connect and display the cameras):
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
-    --robot-path lerobot/configs/robot/so100.yaml \
+    --robot-path lerobot/configs/robot/moss.yaml \
     --robot-overrides '~cameras' \
     --display-cameras 0
 ```
@@ -162,12 +162,12 @@ python lerobot/scripts/control_robot.py teleoperate \
 Follow [this guide to setup your cameras](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#c-add-your-cameras-with-opencvcamera). Then you will be able to display the cameras on your computer while you are teleoperating by running the following code. This is useful to prepare your setup before recording your first dataset.
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
-    --robot-path lerobot/configs/robot/so100.yaml
+    --robot-path lerobot/configs/robot/moss.yaml
 ```
 
 ## Record a dataset
 
-Once you're familiar with teleoperation, you can record your first dataset with SO-100.
+Once you're familiar with teleoperation, you can record your first dataset with Moss v1.
 
 If you want to use the Hugging Face hub features for uploading your dataset and you haven't previously done it, make sure you've logged in using a write-access token, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
 ```bash
@@ -183,11 +183,11 @@ echo $HF_USER
 Record 2 episodes and upload your dataset to the hub:
 ```bash
 python lerobot/scripts/control_robot.py record \
-    --robot-path lerobot/configs/robot/so100.yaml \
+    --robot-path lerobot/configs/robot/moss.yaml \
     --fps 30 \
     --root data \
-    --repo-id ${HF_USER}/so100_test \
-    --tags so100 tutorial \
+    --repo-id ${HF_USER}/moss_test \
+    --tags moss tutorial \
     --warmup-time-s 5 \
     --episode-time-s 40 \
     --reset-time-s 10 \
@@ -199,14 +199,14 @@ python lerobot/scripts/control_robot.py record \
 
 If you uploaded your dataset to the hub with `--push-to-hub 1`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
 ```bash
-echo ${HF_USER}/so100_test
+echo ${HF_USER}/moss_test
 ```
 
 If you didn't upload with `--push-to-hub 0`, you can also visualize it locally with:
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
   --root data \
-  --repo-id ${HF_USER}/so100_test
+  --repo-id ${HF_USER}/moss_test
 ```
 
 ## Replay an episode
@@ -214,10 +214,10 @@ python lerobot/scripts/visualize_dataset_html.py \
 Now try to replay the first episode on your robot:
 ```bash
 DATA_DIR=data python lerobot/scripts/control_robot.py replay \
-    --robot-path lerobot/configs/robot/so100.yaml \
+    --robot-path lerobot/configs/robot/moss.yaml \
     --fps 30 \
     --root data \
-    --repo-id ${HF_USER}/so100_test \
+    --repo-id ${HF_USER}/moss_test \
     --episode 0
 ```
 
@@ -226,48 +226,48 @@ DATA_DIR=data python lerobot/scripts/control_robot.py replay \
 To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
 DATA_DIR=data python lerobot/scripts/train.py \
-  dataset_repo_id=${HF_USER}/so100_test \
-  policy=act_so100_real \
-  env=so100_real \
-  hydra.run.dir=outputs/train/act_so100_test \
-  hydra.job.name=act_so100_test \
+  dataset_repo_id=${HF_USER}/moss_test \
+  policy=act_moss_real \
+  env=moss_real \
+  hydra.run.dir=outputs/train/act_moss_test \
+  hydra.job.name=act_moss_test \
   device=cuda \
   wandb.enable=true
 ```
 
 Let's explain it:
-1. We provided the dataset as argument with `dataset_repo_id=${HF_USER}/so100_test`.
-2. We provided the policy with `policy=act_so100_real`. This loads configurations from [`lerobot/configs/policy/act_so100_real.yaml`](../lerobot/configs/policy/act_so100_real.yaml). Importantly, this policy uses 2 cameras as input `laptop`, `phone`.
-3. We provided an environment as argument with `env=so100_real`. This loads configurations from [`lerobot/configs/env/so100_real.yaml`](../lerobot/configs/env/so100_real.yaml).
+1. We provided the dataset as argument with `dataset_repo_id=${HF_USER}/moss_test`.
+2. We provided the policy with `policy=act_moss_real`. This loads configurations from [`lerobot/configs/policy/act_moss_real.yaml`](../lerobot/configs/policy/act_moss_real.yaml). Importantly, this policy uses 2 cameras as input `laptop`, `phone`.
+3. We provided an environment as argument with `env=moss_real`. This loads configurations from [`lerobot/configs/env/moss_real.yaml`](../lerobot/configs/env/moss_real.yaml).
 4. We provided `device=cuda` since we are training on a Nvidia GPU, but you can also use `device=mps` if you are using a Mac with Apple silicon, or `device=cpu` otherwise.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
 6. We added `DATA_DIR=data` to access your dataset stored in your local `data` directory. If you dont provide `DATA_DIR`, your dataset will be downloaded from Hugging Face hub to your cache folder `$HOME/.cache/hugginface`. In future versions of `lerobot`, both directories will be in sync.
 
-Training should take several hours. You will find checkpoints in `outputs/train/act_so100_test/checkpoints`.
+Training should take several hours. You will find checkpoints in `outputs/train/act_moss_test/checkpoints`.
 
 ## Evaluate your policy
 
 You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
 ```bash
 python lerobot/scripts/control_robot.py record \
-  --robot-path lerobot/configs/robot/so100.yaml \
+  --robot-path lerobot/configs/robot/moss.yaml \
   --fps 30 \
   --root data \
-  --repo-id ${HF_USER}/eval_act_so100_test \
-  --tags so100 tutorial eval \
+  --repo-id ${HF_USER}/eval_act_moss_test \
+  --tags moss tutorial eval \
   --warmup-time-s 5 \
   --episode-time-s 40 \
   --reset-time-s 10 \
   --num-episodes 10 \
-  -p outputs/train/act_so100_test/checkpoints/last/pretrained_model
+  -p outputs/train/act_moss_test/checkpoints/last/pretrained_model
 ```
 
 As you can see, it's almost the same command as previously used to record your training dataset. Two things changed:
-1. There is an additional `-p` argument which indicates the path to your policy checkpoint with  (e.g. `-p outputs/train/eval_so100_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `-p ${HF_USER}/act_so100_test`).
-2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `--repo-id ${HF_USER}/eval_act_so100_test`).
+1. There is an additional `-p` argument which indicates the path to your policy checkpoint with  (e.g. `-p outputs/train/eval_moss_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `-p ${HF_USER}/act_moss_test`).
+2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `--repo-id ${HF_USER}/eval_act_moss_test`).
 
 ## More
 
 Follow this [previous tutorial](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#4-train-a-policy-on-your-data) for a more in-depth tutorial on controlling real robots with LeRobot.
 
-If you have any question or need help, please reach out on Discord in the channel `#so100-arm`.
+If you have any question or need help, please reach out on Discord in the channel `#moss-arm`.
