@@ -53,11 +53,13 @@ python lerobot/scripts/visualize_dataset_html.py \
 """
 
 import argparse
+import csv
 import logging
 import shutil
+from io import StringIO
 from pathlib import Path
 
-import tqdm
+import numpy as np
 from flask import Flask, redirect, render_template, url_for
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -91,6 +93,7 @@ def run_server(
 
     @app.route("/<string:dataset_namespace>/<string:dataset_name>/episode_<int:episode_id>")
     def show_episode(dataset_namespace, dataset_name, episode_id):
+        episode_data_csv_str = get_episode_data_csv_str(dataset, episode_id)
         dataset_info = {
             "repo_id": dataset.repo_id,
             "num_samples": dataset.num_samples,
@@ -105,15 +108,14 @@ def run_server(
         ]
         videos_info[0]["language_instruction"] = tasks
 
-        ep_csv_url = url_for("static", filename=get_ep_csv_fname(episode_id))
         return render_template(
             "visualize_dataset_template.html",
             episode_id=episode_id,
             episodes=episodes,
             dataset_info=dataset_info,
             videos_info=videos_info,
-            ep_csv_url=ep_csv_url,
             has_policy=False,
+            episode_data_csv_str=episode_data_csv_str,
         )
 
     app.run(host=host, port=port)
@@ -124,8 +126,8 @@ def get_ep_csv_fname(episode_id: int):
     return ep_csv_fname
 
 
-def write_episode_data_csv(output_dir, file_name, episode_index, dataset):
-    """Write a csv file containg timeseries data of an episode (e.g. state and action).
+def get_episode_data_csv_str(dataset, episode_index):
+    """Get a csv str containing timeseries data of an episode (e.g. state and action).
     This file will be loaded by Dygraph javascript to plot data in real time."""
     from_idx = dataset.episode_data_index["from"][episode_index]
     to_idx = dataset.episode_data_index["to"][episode_index]
@@ -148,22 +150,21 @@ def write_episode_data_csv(output_dir, file_name, episode_index, dataset):
     if has_action:
         columns += ["action"]
 
-    rows = []
-    data = dataset.hf_dataset.select_columns(columns)
-    for i in range(from_idx, to_idx):
-        row = [data[i]["timestamp"].item()]
-        if has_state:
-            row += data[i]["observation.state"].tolist()
-        if has_action:
-            row += data[i]["action"].tolist()
-        rows.append(row)
+    data = dataset.hf_dataset.select(range(from_idx, to_idx)).select_columns(columns).with_format("numpy")
+    rows = np.hstack(
+        (np.expand_dims(data["timestamp"], axis=1), *[data[col] for col in columns[1:]])
+    ).tolist()
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    with open(output_dir / file_name, "w") as f:
-        f.write(",".join(header) + "\n")
-        for row in rows:
-            row_str = [str(col) for col in row]
-            f.write(",".join(row_str) + "\n")
+    # Convert data to CSV string
+    csv_buffer = StringIO()
+    csv_writer = csv.writer(csv_buffer)
+    # Write header
+    csv_writer.writerow(header)
+    # Write data rows
+    csv_writer.writerows(rows)
+    csv_string = csv_buffer.getvalue()
+
+    return csv_string
 
 
 def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]:
@@ -229,13 +230,6 @@ def visualize_dataset_html(
 
     if episodes is None:
         episodes = list(range(dataset.num_episodes))
-
-    logging.info("Writing CSV files")
-    for episode_index in tqdm.tqdm(episodes):
-        # write states and actions in a csv (it can be slow for big datasets)
-        ep_csv_fname = get_ep_csv_fname(episode_index)
-        # TODO(rcadene): speedup script by loading directly from dataset, pyarrow, parquet, safetensors?
-        write_episode_data_csv(static_dir, ep_csv_fname, episode_index, dataset)
 
     if serve:
         run_server(dataset, episodes, host, port, static_dir, template_dir)
