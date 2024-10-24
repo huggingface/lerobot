@@ -110,7 +110,6 @@ import warnings
 from pathlib import Path
 
 import datasets
-import jsonlines
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import torch
@@ -132,7 +131,10 @@ from lerobot.common.datasets.utils import (
     create_lerobot_dataset_card,
     flatten_dict,
     get_hub_safe_version,
+    load_json,
     unflatten_dict,
+    write_json,
+    write_jsonlines,
 )
 from lerobot.common.datasets.video_utils import VideoFrame  # noqa: F401
 from lerobot.common.utils.utils import init_hydra_config
@@ -173,23 +175,6 @@ def parse_robot_config(config_path: Path, config_overrides: list[str] | None = N
             "action": action_names,
         },
     }
-
-
-def load_json(fpath: Path) -> dict:
-    with open(fpath) as f:
-        return json.load(f)
-
-
-def write_json(data: dict, fpath: Path) -> None:
-    fpath.parent.mkdir(exist_ok=True, parents=True)
-    with open(fpath, "w") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-
-
-def write_jsonlines(data: dict, fpath: Path) -> None:
-    fpath.parent.mkdir(exist_ok=True, parents=True)
-    with jsonlines.open(fpath, "w") as writer:
-        writer.write_all(data)
 
 
 def convert_stats_to_json(v1_dir: Path, v2_dir: Path) -> None:

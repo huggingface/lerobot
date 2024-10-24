@@ -18,7 +18,7 @@ import warnings
 from itertools import accumulate
 from pathlib import Path
 from pprint import pformat
-from typing import Dict
+from typing import Any, Dict
 
 import datasets
 import jsonlines
@@ -80,13 +80,29 @@ def unflatten_dict(d: dict, sep: str = "/") -> dict:
     return outdict
 
 
+def load_json(fpath: Path) -> Any:
+    with open(fpath) as f:
+        return json.load(f)
+
+
 def write_json(data: dict, fpath: Path) -> None:
     fpath.parent.mkdir(exist_ok=True, parents=True)
     with open(fpath, "w") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 
-def append_jsonl(data: dict, fpath: Path) -> None:
+def load_jsonlines(fpath: Path) -> list[Any]:
+    with jsonlines.open(fpath, "r") as reader:
+        return list(reader)
+
+
+def write_jsonlines(data: dict, fpath: Path) -> None:
+    fpath.parent.mkdir(exist_ok=True, parents=True)
+    with jsonlines.open(fpath, "w") as writer:
+        writer.write_all(data)
+
+
+def append_jsonlines(data: dict, fpath: Path) -> None:
     fpath.parent.mkdir(exist_ok=True, parents=True)
     with jsonlines.open(fpath, "a") as writer:
         writer.write(data)
@@ -170,27 +186,22 @@ def get_hub_safe_version(repo_id: str, version: str, enforce_v2: bool = True) ->
 
 
 def load_info(local_dir: Path) -> dict:
-    with open(local_dir / INFO_PATH) as f:
-        return json.load(f)
+    return load_json(local_dir / INFO_PATH)
 
 
 def load_stats(local_dir: Path) -> dict:
-    with open(local_dir / STATS_PATH) as f:
-        stats = json.load(f)
+    stats = load_json(local_dir / STATS_PATH)
     stats = {key: torch.tensor(value) for key, value in flatten_dict(stats).items()}
     return unflatten_dict(stats)
 
 
 def load_tasks(local_dir: Path) -> dict:
-    with jsonlines.open(local_dir / TASKS_PATH, "r") as reader:
-        tasks = list(reader)
-
+    tasks = load_jsonlines(local_dir / TASKS_PATH)
     return {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
 
 
 def load_episode_dicts(local_dir: Path) -> dict:
-    with jsonlines.open(local_dir / EPISODES_PATH, "r") as reader:
-        return list(reader)
+    return load_jsonlines(local_dir / EPISODES_PATH)
 
 
 def _get_info_from_robot(robot: Robot, use_videos: bool) -> tuple[list | dict]:

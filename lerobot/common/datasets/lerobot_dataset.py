@@ -36,7 +36,7 @@ from lerobot.common.datasets.utils import (
     STATS_PATH,
     TASKS_PATH,
     _get_info_from_robot,
-    append_jsonl,
+    append_jsonlines,
     check_delta_timestamps,
     check_timestamps_sync,
     check_version_compatibility,
@@ -648,7 +648,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 "task_index": task_index,
                 "task": task,
             }
-            append_jsonl(task_dict, self.root / TASKS_PATH)
+            append_jsonlines(task_dict, self.root / TASKS_PATH)
 
         chunk = self.get_episode_chunk(episode_index)
         if chunk >= self.total_chunks:
@@ -664,7 +664,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             "length": episode_length,
         }
         self.episode_dicts.append(episode_dict)
-        append_jsonl(episode_dict, self.root / EPISODES_PATH)
+        append_jsonlines(episode_dict, self.root / EPISODES_PATH)
 
     def clear_episode_buffer(self) -> None:
         episode_index = self.episode_buffer["episode_index"]
