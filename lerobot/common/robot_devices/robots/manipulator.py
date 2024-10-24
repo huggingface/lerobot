@@ -81,7 +81,7 @@ class ManipulatorRobotConfig:
         super().__setattr__(prop, val)
 
     def __post_init__(self):
-        if self.robot_type not in ["koch", "aloha", "so100", "moss"]:
+        if self.robot_type not in ["koch", "koch_bimanual", "aloha", "so100", "moss"]:
             raise ValueError(f"Provided robot type ({self.robot_type}) is not supported.")
 
 

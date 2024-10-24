@@ -23,6 +23,7 @@ pytest -sx 'tests/test_control_robot.py::test_teleoperate[aloha-True]'
 ```
 """
 
+import json
 import multiprocessing
 from pathlib import Path
 from unittest.mock import patch
@@ -39,6 +40,31 @@ from tests.test_robots import make_robot
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, require_robot
 
 
+def mock_calibration_dir(calibration_dir):
+    # calibration file produced with Moss v1, but works with Koch, Koch bimanual and SO-100
+    example_calib = {
+        "homing_offset": [-1416, -845, 2130, 2872, 1950, -2211],
+        "drive_mode": [0, 0, 1, 1, 1, 0],
+        "start_pos": [1442, 843, 2166, 2849, 1988, 1835],
+        "end_pos": [2440, 1869, -1106, -1848, -926, 3235],
+        "calib_mode": ["DEGREE", "DEGREE", "DEGREE", "DEGREE", "DEGREE", "LINEAR"],
+        "motor_names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+    }
+    calibration_dir.mkdir(parents=True, exist_ok=True)
+    with open(calibration_dir / "main_follower.json", "w") as f:
+        json.dump(example_calib, f)
+    with open(calibration_dir / "main_leader.json", "w") as f:
+        json.dump(example_calib, f)
+    with open(calibration_dir / "left_follower.json", "w") as f:
+        json.dump(example_calib, f)
+    with open(calibration_dir / "left_leader.json", "w") as f:
+        json.dump(example_calib, f)
+    with open(calibration_dir / "right_follower.json", "w") as f:
+        json.dump(example_calib, f)
+    with open(calibration_dir / "right_leader.json", "w") as f:
+        json.dump(example_calib, f)
+
+
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
 def test_teleoperate(tmpdir, request, robot_type, mock):
@@ -49,6 +75,7 @@ def test_teleoperate(tmpdir, request, robot_type, mock):
         # and avoid writing calibration files in user .cache/calibration folder
         tmpdir = Path(tmpdir)
         calibration_dir = tmpdir / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False
@@ -89,6 +116,7 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = Path(tmpdir) / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides.append(f"calibration_dir={calibration_dir}")
 
     root = Path(tmpdir) / "data"
@@ -121,6 +149,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False or for aloha
@@ -159,7 +188,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     if robot_type == "aloha":
         env_name = "aloha_real"
         policy_name = "act_aloha_real"
-    elif robot_type in ["koch", "koch_bimanual"]:
+    elif robot_type in ["koch", "koch_bimanual", "so100", "moss"]:
         env_name = "koch_real"
         policy_name = "act_koch_real"
     else:
@@ -248,6 +277,7 @@ def test_resume_record(tmpdir, request, robot_type, mock):
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False or for aloha
@@ -311,6 +341,7 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False or for aloha
@@ -360,6 +391,7 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False or for aloha
@@ -410,6 +442,7 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False or for aloha
