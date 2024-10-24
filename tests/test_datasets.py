@@ -44,6 +44,7 @@ from lerobot.common.datasets.utils import (
 from lerobot.common.utils.utils import init_hydra_config, seeded_context
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, make_robot
 
+# TODO(aliberts): create proper test repo
 TEST_REPO_ID = "aliberts/koch_tutorial"
 
 
