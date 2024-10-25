@@ -51,7 +51,7 @@ class ManipulatorRobotConfig:
     """
 
     # Define all components of the robot
-    robot_type: str | None = None
+    robot_type: str = "koch"
     leader_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     follower_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
@@ -81,7 +81,7 @@ class ManipulatorRobotConfig:
         super().__setattr__(prop, val)
 
     def __post_init__(self):
-        if self.robot_type is None or self.robot_type not in ["koch", "aloha", "so100", "moss"]:
+        if self.robot_type not in ["koch", "aloha", "so100", "moss"]:
             raise ValueError(f"Provided robot type ({self.robot_type}) is not supported.")
 
 
