@@ -116,7 +116,6 @@ import torch
 from datasets import Dataset
 from huggingface_hub import HfApi
 from huggingface_hub.errors import EntryNotFoundError
-from PIL import Image
 from safetensors.torch import load_file
 
 from lerobot.common.datasets.utils import (
@@ -136,7 +135,12 @@ from lerobot.common.datasets.utils import (
     write_json,
     write_jsonlines,
 )
-from lerobot.common.datasets.video_utils import VideoFrame  # noqa: F401
+from lerobot.common.datasets.video_utils import (
+    VideoFrame,  # noqa: F401
+    get_image_shapes,
+    get_video_info,
+    get_video_shapes,
+)
 from lerobot.common.utils.utils import init_hydra_config
 
 V16 = "v1.6"
@@ -391,83 +395,6 @@ def _get_lfs_untracked_videos(work_dir: Path, video_files: list[str]) -> list[st
     return [f for f in video_files if f not in lfs_tracked_files]
 
 
-def _get_audio_info(video_path: Path | str) -> dict:
-    ffprobe_audio_cmd = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-select_streams",
-        "a:0",
-        "-show_entries",
-        "stream=channels,codec_name,bit_rate,sample_rate,bit_depth,channel_layout,duration",
-        "-of",
-        "json",
-        str(video_path),
-    ]
-    result = subprocess.run(ffprobe_audio_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"Error running ffprobe: {result.stderr}")
-
-    info = json.loads(result.stdout)
-    audio_stream_info = info["streams"][0] if info.get("streams") else None
-    if audio_stream_info is None:
-        return {"has_audio": False}
-
-    # Return the information, defaulting to None if no audio stream is present
-    return {
-        "has_audio": True,
-        "audio.channels": audio_stream_info.get("channels", None),
-        "audio.codec": audio_stream_info.get("codec_name", None),
-        "audio.bit_rate": int(audio_stream_info["bit_rate"]) if audio_stream_info.get("bit_rate") else None,
-        "audio.sample_rate": int(audio_stream_info["sample_rate"])
-        if audio_stream_info.get("sample_rate")
-        else None,
-        "audio.bit_depth": audio_stream_info.get("bit_depth", None),
-        "audio.channel_layout": audio_stream_info.get("channel_layout", None),
-    }
-
-
-def _get_video_info(video_path: Path | str) -> dict:
-    ffprobe_video_cmd = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-select_streams",
-        "v:0",
-        "-show_entries",
-        "stream=r_frame_rate,width,height,codec_name,nb_frames,duration,pix_fmt",
-        "-of",
-        "json",
-        str(video_path),
-    ]
-    result = subprocess.run(ffprobe_video_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"Error running ffprobe: {result.stderr}")
-
-    info = json.loads(result.stdout)
-    video_stream_info = info["streams"][0]
-
-    # Calculate fps from r_frame_rate
-    r_frame_rate = video_stream_info["r_frame_rate"]
-    num, denom = map(int, r_frame_rate.split("/"))
-    fps = num / denom
-
-    pixel_channels = get_video_pixel_channels(video_stream_info["pix_fmt"])
-
-    video_info = {
-        "video.fps": fps,
-        "video.width": video_stream_info["width"],
-        "video.height": video_stream_info["height"],
-        "video.channels": pixel_channels,
-        "video.codec": video_stream_info["codec_name"],
-        "video.pix_fmt": video_stream_info["pix_fmt"],
-        "video.is_depth_map": False,
-        **_get_audio_info(video_path),
-    }
-
-    return video_info
-
-
 def get_videos_info(repo_id: str, local_dir: Path, video_keys: list[str], branch: str) -> dict:
     hub_api = HfApi()
     videos_info_dict = {"videos_path": DEFAULT_VIDEO_PATH}
@@ -481,60 +408,9 @@ def get_videos_info(repo_id: str, local_dir: Path, video_keys: list[str], branch
         repo_id=repo_id, repo_type="dataset", local_dir=local_dir, revision=branch, allow_patterns=video_files
     )
     for vid_key, vid_path in zip(video_keys, video_files, strict=True):
-        videos_info_dict[vid_key] = _get_video_info(local_dir / vid_path)
+        videos_info_dict[vid_key] = get_video_info(local_dir / vid_path)
 
     return videos_info_dict
-
-
-def get_video_pixel_channels(pix_fmt: str) -> int:
-    if "gray" in pix_fmt or "depth" in pix_fmt or "monochrome" in pix_fmt:
-        return 1
-    elif "rgba" in pix_fmt or "yuva" in pix_fmt:
-        return 4
-    elif "rgb" in pix_fmt or "yuv" in pix_fmt:
-        return 3
-    else:
-        raise ValueError("Unknown format")
-
-
-def get_image_pixel_channels(image: Image):
-    if image.mode == "L":
-        return 1  # Grayscale
-    elif image.mode == "LA":
-        return 2  # Grayscale + Alpha
-    elif image.mode == "RGB":
-        return 3  # RGB
-    elif image.mode == "RGBA":
-        return 4  # RGBA
-    else:
-        raise ValueError("Unknown format")
-
-
-def get_video_shapes(videos_info: dict, video_keys: list) -> dict:
-    video_shapes = {}
-    for img_key in video_keys:
-        channels = get_video_pixel_channels(videos_info[img_key]["video.pix_fmt"])
-        video_shapes[img_key] = {
-            "width": videos_info[img_key]["video.width"],
-            "height": videos_info[img_key]["video.height"],
-            "channels": channels,
-        }
-
-    return video_shapes
-
-
-def get_image_shapes(dataset: Dataset, image_keys: list) -> dict:
-    image_shapes = {}
-    for img_key in image_keys:
-        image = dataset[0][img_key]  # Assuming first row
-        channels = get_image_pixel_channels(image)
-        image_shapes[img_key] = {
-            "width": image.width,
-            "height": image.height,
-            "channels": channels,
-        }
-
-    return image_shapes
 
 
 def get_generic_motor_names(sequence_shapes: dict) -> dict:

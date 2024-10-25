@@ -234,8 +234,8 @@ def record(
     dataset = LeRobotDataset.create(
         repo_id,
         fps,
-        robot,
         root=root,
+        robot=robot,
         image_writer_processes=num_image_writer_processes,
         image_writer_threads_per_camera=num_image_writer_threads_per_camera,
         use_videos=video,
@@ -306,10 +306,6 @@ def record(
 
     log_say("Stop recording", play_sounds, blocking=True)
     stop_recording(robot, listener, display_cameras)
-
-    if dataset.image_writer is not None:
-        logging.info("Waiting for image writer to terminate...")
-        dataset.image_writer.stop()
 
     if run_compute_stats:
         logging.info("Computing dataset statistics")
