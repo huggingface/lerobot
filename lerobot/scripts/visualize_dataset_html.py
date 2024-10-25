@@ -61,6 +61,7 @@ from pathlib import Path
 
 import numpy as np
 from flask import Flask, redirect, render_template, url_for
+from datasets import load_dataset
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.utils.utils import init_logging
@@ -80,7 +81,7 @@ def run_server(
     @app.route("/")
     def index():
         # home page redirects to the first episode page
-        [dataset_namespace, dataset_name] = dataset.repo_id.split("/")
+        [dataset_namespace, dataset_name] = "lerobot/aloha_static_ziploc_slide".split("/")
         first_episode_id = episodes[0]
         return redirect(
             url_for(
@@ -95,17 +96,27 @@ def run_server(
     def show_episode(dataset_namespace, dataset_name, episode_id):
         episode_data_csv_str = get_episode_data_csv_str(dataset, episode_id)
         dataset_info = {
-            "repo_id": dataset.repo_id,
-            "num_samples": dataset.num_samples,
-            "num_episodes": dataset.num_episodes,
-            "fps": dataset.fps,
+            "repo_id": f"{dataset_namespace}/{dataset_name}",
+            "num_samples": dataset.num_samples if isinstance(dataset, LeRobotDataset) else dataset["total_frames"],
+            "num_episodes": dataset.num_episodes if isinstance(dataset, LeRobotDataset) else dataset["total_episodes"],
+            "fps": dataset.fps if isinstance(dataset, LeRobotDataset) else dataset["fps"],
         }
-        video_paths = [dataset.get_video_file_path(episode_id, key) for key in dataset.video_keys]
-        tasks = dataset.episode_dicts[episode_id]["tasks"]
-        videos_info = [
-            {"url": url_for("static", filename=video_path), "filename": video_path.name}
-            for video_path in video_paths
-        ]
+        if isinstance(dataset, LeRobotDataset):
+            video_paths = [dataset.get_video_file_path(episode_id, key) for key in dataset.video_keys]
+            videos_info = [
+                {"url": url_for("static", filename=video_path), "filename": video_path.name}
+                for video_path in video_paths
+            ]
+            tasks = dataset.episode_dicts[episode_id]["tasks"]
+        else:
+            videos_info = [
+                {"url": "https://huggingface.co/datasets/lerobot/aloha_static_ziploc_slide/resolve/main/"+dataset["videos"]["videos_path"].format(episode_chunk=0, video_key=video_key, episode_index=episode_id), "filename": video_key}
+                for video_key in dataset["video_keys"]
+            ]
+            tasks_jsonl = load_dataset('json', data_files='https://huggingface.co/datasets/lerobot/aloha_static_ziploc_slide/resolve/main/meta/episodes.jsonl', split="train")
+            filtered_tasks_jsonl = tasks_jsonl.filter(lambda x: x['episode_index'] == episode_id)
+            tasks = filtered_tasks_jsonl['tasks'][0] 
+
         videos_info[0]["language_instruction"] = tasks
 
         return render_template(
@@ -118,7 +129,7 @@ def run_server(
             episode_data_csv_str=episode_data_csv_str,
         )
 
-    app.run(host=host, port=port)
+    app.run(host=host, port=port, debug=True)
 
 
 def get_ep_csv_fname(episode_id: int):
@@ -126,34 +137,41 @@ def get_ep_csv_fname(episode_id: int):
     return ep_csv_fname
 
 
-def get_episode_data_csv_str(dataset, episode_index):
+def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
     """Get a csv str containing timeseries data of an episode (e.g. state and action).
     This file will be loaded by Dygraph javascript to plot data in real time."""
-    from_idx = dataset.episode_data_index["from"][episode_index]
-    to_idx = dataset.episode_data_index["to"][episode_index]
-
-    has_state = "observation.state" in dataset.hf_dataset.features
-    has_action = "action" in dataset.hf_dataset.features
+    has_state = "observation.state" in (dataset.hf_dataset.features if isinstance(dataset, LeRobotDataset) else dataset["keys"])
+    has_action = "action" in (dataset.hf_dataset.features if isinstance(dataset, LeRobotDataset) else dataset["keys"])
 
     # init header of csv with state and action names
     header = ["timestamp"]
     if has_state:
-        dim_state = dataset.shapes["observation.state"]
+        dim_state = (dataset.shapes if isinstance(dataset, LeRobotDataset) else dataset["shapes"])["observation.state"]
         header += [f"state_{i}" for i in range(dim_state)]
     if has_action:
-        dim_action = dataset.shapes["action"]
+        dim_action = (dataset.shapes if isinstance(dataset, LeRobotDataset) else dataset["shapes"])["action"]
         header += [f"action_{i}" for i in range(dim_action)]
 
-    columns = ["timestamp"]
-    if has_state:
-        columns += ["observation.state"]
-    if has_action:
-        columns += ["action"]
-
-    data = dataset.hf_dataset.select(range(from_idx, to_idx)).select_columns(columns).with_format("numpy")
-    rows = np.hstack(
-        (np.expand_dims(data["timestamp"], axis=1), *[data[col] for col in columns[1:]])
-    ).tolist()
+    if isinstance(dataset, LeRobotDataset):
+        from_idx = dataset.episode_data_index["from"][episode_index]
+        to_idx = dataset.episode_data_index["to"][episode_index]
+        columns = ["timestamp"]
+        if has_state:
+            columns += ["observation.state"]
+        if has_action:
+            columns += ["action"]
+        data = dataset.hf_dataset.select(range(from_idx, to_idx)).select_columns(columns).with_format("numpy")
+        rows = np.hstack(
+            (np.expand_dims(data["timestamp"], axis=1), *[data[col] for col in columns[1:]])
+        ).tolist()
+    else:
+        columns = ["timestamp","observation.state", "action"]
+        episode_parquet = load_dataset('parquet', data_files='https://huggingface.co/datasets/lerobot/aloha_static_ziploc_slide/resolve/main/data/chunk-000/episode_000003.parquet', split="train")
+        d = episode_parquet.select_columns(columns).with_format("numpy")
+        data = d.to_pandas()
+        rows = np.hstack(
+            (np.expand_dims(data["timestamp"], axis=1), *[np.vstack(data[col]) for col in columns[1:]])
+        ).tolist()
 
     # Convert data to CSV string
     csv_buffer = StringIO()
@@ -192,6 +210,7 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
 def visualize_dataset_html(
     repo_id: str,
     root: Path | None = None,
+    download_videos: bool = True,
     episodes: list[int] = None,
     output_dir: Path | None = None,
     serve: bool = True,
@@ -201,10 +220,12 @@ def visualize_dataset_html(
 ) -> Path | None:
     init_logging()
 
-    dataset = LeRobotDataset(repo_id, root=root)
+    # dataset = LeRobotDataset(repo_id, root=root, download_videos=download_videos)
+    dataset = load_dataset('json', data_files=f'https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json', split="train")[0]
 
-    if len(dataset.image_keys) > 0:
-        raise NotImplementedError(f"Image keys ({dataset.image_keys=}) are currently not supported.")
+    image_keys = dataset.image_keys if isinstance(dataset, LeRobotDataset) else dataset["image_keys"]
+    if len(image_keys) > 0:
+        raise NotImplementedError(f"Image keys ({image_keys=}) are currently not supported.")
 
     if output_dir is None:
         output_dir = f"outputs/visualize_dataset_html/{repo_id}"
@@ -222,14 +243,15 @@ def visualize_dataset_html(
     # so that the http server can get access to the mp4 files.
     static_dir = output_dir / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
-    ln_videos_dir = static_dir / "videos"
-    if not ln_videos_dir.exists():
-        ln_videos_dir.symlink_to((dataset.root / "videos").resolve())
+    if isinstance(dataset, LeRobotDataset):
+        ln_videos_dir = static_dir / "videos"
+        if download_videos and not ln_videos_dir.exists():
+            ln_videos_dir.symlink_to((dataset.root / "videos").resolve())
 
     template_dir = Path(__file__).resolve().parent.parent / "templates"
 
     if episodes is None:
-        episodes = list(range(dataset.num_episodes))
+        episodes = list(range(dataset.num_episodes if isinstance(dataset, LeRobotDataset) else dataset["total_episodes"]))
 
     if serve:
         run_server(dataset, episodes, host, port, static_dir, template_dir)
@@ -249,6 +271,12 @@ def main():
         type=Path,
         default=None,
         help="Root directory for a dataset stored locally (e.g. `--root data`). By default, the dataset will be loaded from hugging face cache folder, or downloaded from the hub if available.",
+    )
+    parser.add_argument(
+        "--download-videos",
+        type=int,
+        default=1,
+        help="Download LeRobotDataset videos locally.",
     )
     parser.add_argument(
         "--episodes",
