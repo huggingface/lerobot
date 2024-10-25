@@ -162,9 +162,15 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     if robot_type == "aloha":
         env_name = "aloha_real"
         policy_name = "act_aloha_real"
-    elif robot_type in ["koch", "so100", "moss"]:
+    elif robot_type in ["koch", "koch_bimanual"]:
         env_name = "koch_real"
         policy_name = "act_koch_real"
+    elif robot_type == "so100":
+        env_name = "so100_real"
+        policy_name = "act_so100_real"
+    elif robot_type == "moss":
+        env_name = "moss_real"
+        policy_name = "act_moss_real"
     else:
         raise NotImplementedError(robot_type)
 

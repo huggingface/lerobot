@@ -39,7 +39,6 @@ def test_robot(tmpdir, request, robot_type, mock):
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
     # TODO(rcadene): add compatibility with other robots
-
     robot_kwargs = {"robot_type": robot_type}
 
     if robot_type == "aloha" and mock:
