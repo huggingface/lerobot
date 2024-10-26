@@ -46,7 +46,7 @@ training:
   online_steps: 0
   eval_freq: -1
   save_freq: 10000
-  log_freq: 100
+  log_freq: 2
   save_checkpoint: true
 
   batch_size: 8
@@ -81,6 +81,7 @@ policy:
     observation.state: ["${env.state_dim}"]
   output_shapes:
     action: ["${env.action_dim}"]
+    end_of_episode: [1]
 
   # Normalization / Unnormalization
   input_normalization_modes:
@@ -91,6 +92,7 @@ policy:
     observation.state: mean_std
   output_normalization_modes:
     action: mean_std
+    # end_of_episode: none
 
   # Architecture.
   # Vision backbone.
