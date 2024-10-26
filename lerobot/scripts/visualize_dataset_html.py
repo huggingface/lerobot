@@ -65,11 +65,12 @@ from datasets import load_dataset
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.utils.utils import init_logging
+from lerobot import available_datasets
 
 
 def run_server(
-    dataset: LeRobotDataset,
-    episodes: list[int],
+    dataset: LeRobotDataset | dict | None,
+    episodes: list[int] | None,
     host: str,
     port: str,
     static_folder: Path,
@@ -79,10 +80,32 @@ def run_server(
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # specifying not to cache
 
     @app.route("/")
-    def index():
-        # home page redirects to the first episode page
-        [dataset_namespace, dataset_name] = "lerobot/aloha_static_ziploc_slide".split("/")
-        first_episode_id = episodes[0]
+    def hommepage(dataset=dataset):
+        if dataset:
+            dataset_namespace, dataset_name = (dataset.repo_id if isinstance(dataset, LeRobotDataset) else dataset["repo_id"]).split("/")
+            return redirect(
+                url_for(
+                "show_episode",
+                dataset_namespace=dataset_namespace,
+                dataset_name=dataset_name,
+                episode_id=0,
+                )
+            )
+
+        featured_datasets = [
+            "cadene/koch_bimanual_folding",
+            "lerobot/aloha_static_cups_open",
+            "lerobot/columbia_cairlab_pusht_real",
+        ]
+        return render_template(
+            "visualize_dataset_homepage.html",
+            featured_datasets=featured_datasets,
+            lerobot_datasets=available_datasets,
+        )
+
+    @app.route("/<string:dataset_namespace>/<string:dataset_name>")
+    def show_first_episode(dataset_namespace, dataset_name):
+        first_episode_id = 0
         return redirect(
             url_for(
                 "show_episode",
@@ -93,7 +116,10 @@ def run_server(
         )
 
     @app.route("/<string:dataset_namespace>/<string:dataset_name>/episode_<int:episode_id>")
-    def show_episode(dataset_namespace, dataset_name, episode_id):
+    def show_episode(dataset_namespace, dataset_name, episode_id, dataset=dataset, episodes=episodes):
+        if dataset is None:
+            dataset = get_dataset_info(f"{dataset_namespace}/{dataset_name}")
+
         episode_data_csv_str = get_episode_data_csv_str(dataset, episode_id)
         dataset_info = {
             "repo_id": f"{dataset_namespace}/{dataset_name}",
@@ -118,6 +144,9 @@ def run_server(
             tasks = filtered_tasks_jsonl['tasks'][0] 
 
         videos_info[0]["language_instruction"] = tasks
+
+        if episodes is None:
+            episodes = list(range(dataset.num_episodes if isinstance(dataset, LeRobotDataset) else dataset["total_episodes"]))
 
         return render_template(
             "visualize_dataset_template.html",
@@ -207,11 +236,16 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
     return language_instruction.removeprefix("tf.Tensor(b'").removesuffix("', shape=(), dtype=string)")
 
 
+def get_dataset_info(repo_id: str) -> dict:
+    dataset_info = load_dataset('json', data_files=f'https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json', split="train")[0]
+    dataset_info["repo_id"] = repo_id
+    return dataset_info
+
 def visualize_dataset_html(
-    repo_id: str,
+    repo_id: str | None = None,
     root: Path | None = None,
-    download_videos: bool = True,
-    episodes: list[int] = None,
+    load_from_hf_hub: bool = False,
+    episodes: list[int] | None = None,
     output_dir: Path | None = None,
     serve: bool = True,
     host: str = "127.0.0.1",
@@ -220,12 +254,7 @@ def visualize_dataset_html(
 ) -> Path | None:
     init_logging()
 
-    # dataset = LeRobotDataset(repo_id, root=root, download_videos=download_videos)
-    dataset = load_dataset('json', data_files=f'https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json', split="train")[0]
-
-    image_keys = dataset.image_keys if isinstance(dataset, LeRobotDataset) else dataset["image_keys"]
-    if len(image_keys) > 0:
-        raise NotImplementedError(f"Image keys ({image_keys=}) are currently not supported.")
+    template_dir = Path(__file__).resolve().parent.parent / "templates"
 
     if output_dir is None:
         output_dir = f"outputs/visualize_dataset_html/{repo_id}"
@@ -239,22 +268,28 @@ def visualize_dataset_html(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create a simlink from the dataset video folder containg mp4 files to the output directory
-    # so that the http server can get access to the mp4 files.
     static_dir = output_dir / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
-    if isinstance(dataset, LeRobotDataset):
-        ln_videos_dir = static_dir / "videos"
-        if download_videos and not ln_videos_dir.exists():
-            ln_videos_dir.symlink_to((dataset.root / "videos").resolve())
 
-    template_dir = Path(__file__).resolve().parent.parent / "templates"
+    if not repo_id:
+        if serve:
+            run_server(dataset=None, episodes=None, host=host, port=port, static_folder=static_dir, template_folder=template_dir)
+    else:
+        dataset = LeRobotDataset(repo_id, root=root) if not load_from_hf_hub else get_dataset_info(repo_id)
 
-    if episodes is None:
-        episodes = list(range(dataset.num_episodes if isinstance(dataset, LeRobotDataset) else dataset["total_episodes"]))
+        image_keys = dataset.image_keys if isinstance(dataset, LeRobotDataset) else dataset["image_keys"]
+        if len(image_keys) > 0:
+            raise NotImplementedError(f"Image keys ({image_keys=}) are currently not supported.")
 
-    if serve:
-        run_server(dataset, episodes, host, port, static_dir, template_dir)
+        # Create a simlink from the dataset video folder containg mp4 files to the output directory
+        # so that the http server can get access to the mp4 files.
+        if isinstance(dataset, LeRobotDataset):
+            ln_videos_dir = static_dir / "videos"
+            if not ln_videos_dir.exists():
+                ln_videos_dir.symlink_to((dataset.root / "videos").resolve())
+
+        if serve:
+            run_server(dataset, episodes, host, port, static_dir, template_dir)
 
 
 def main():
@@ -263,7 +298,7 @@ def main():
     parser.add_argument(
         "--repo-id",
         type=str,
-        required=True,
+        default=None,
         help="Name of hugging face repositery containing a LeRobotDataset dataset (e.g. `lerobot/pusht` for https://huggingface.co/datasets/lerobot/pusht).",
     )
     parser.add_argument(
@@ -273,10 +308,10 @@ def main():
         help="Root directory for a dataset stored locally (e.g. `--root data`). By default, the dataset will be loaded from hugging face cache folder, or downloaded from the hub if available.",
     )
     parser.add_argument(
-        "--download-videos",
+        "--load-from-hf-hub",
         type=int,
-        default=1,
-        help="Download LeRobotDataset videos locally.",
+        default=0,
+        help="Load videos and parquet files from HF Hub rather than local system.",
     )
     parser.add_argument(
         "--episodes",
