@@ -58,6 +58,7 @@ import logging
 import shutil
 from io import StringIO
 from pathlib import Path
+import re
 
 import numpy as np
 from flask import Flask, redirect, render_template, url_for, request
@@ -140,8 +141,19 @@ def run_server(
     @app.route("/<string:dataset_namespace>/<string:dataset_name>/episode_<int:episode_id>")
     def show_episode(dataset_namespace, dataset_name, episode_id, dataset=dataset, episodes=episodes):
         repo_id = f"{dataset_namespace}/{dataset_name}"
-        if dataset is None:
-            dataset = get_dataset_info(repo_id)
+        try:
+            if dataset is None:
+                dataset = get_dataset_info(repo_id)
+        except FileNotFoundError:
+            return "Make sure your convert your LeRobotDataset to v2 & above."
+        dataset_version = (
+            dataset._version if isinstance(dataset, LeRobotDataset) else dataset["codebase_version"]
+        )
+        match = re.search(r"v(\d+)\.", dataset_version)
+        if match:
+            major_version = int(match.group(1))
+            if major_version < 2:
+                return "Make sure your convert your LeRobotDataset to v2 & above."
 
         episode_data_csv_str = get_episode_data_csv_str(dataset, episode_id)
         dataset_info = {
@@ -201,7 +213,7 @@ def run_server(
             episode_data_csv_str=episode_data_csv_str,
         )
 
-    app.run(host=host, port=port)
+    app.run(host=host, port=port, debug=True)
 
 
 def get_ep_csv_fname(episode_id: int):
