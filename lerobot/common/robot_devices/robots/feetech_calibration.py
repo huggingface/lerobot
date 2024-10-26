@@ -64,7 +64,7 @@ def move_until_block(arm, motor_name, positive_direction=True, while_move_hook=N
         # print(f"{present_voltage=}")
         # print(f"{present_temperature=}")
 
-        if present_speed == 0 and present_current > 50:
+        if present_speed == 0 and present_current > 40:
             count += 1
             if count > 100 or present_current > 300:
                 return present_pos

@@ -11,13 +11,14 @@ import threading
 import time
 import traceback
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from threading import Thread
 
 import numpy as np
 from PIL import Image
 
+from lerobot.common.robot_devices.cameras.configs import IntelRealSenseCameraConfig
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
@@ -94,7 +95,7 @@ def save_images_from_cameras(
     cameras = []
     for cam_sn in serial_numbers:
         print(f"{cam_sn=}")
-        camera = IntelRealSenseCamera(cam_sn, fps=fps, width=width, height=height, mock=mock)
+        camera = IntelRealSenseCamera(serial_number=cam_sn, fps=fps, width=width, height=height, mock=mock)
         camera.connect()
         print(
             f"IntelRealSenseCamera({camera.serial_number}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
@@ -149,48 +150,6 @@ def save_images_from_cameras(
             camera.disconnect()
 
 
-@dataclass
-class IntelRealSenseCameraConfig:
-    """
-    Example of tested options for Intel Real Sense D405:
-
-    ```python
-    IntelRealSenseCameraConfig(30, 640, 480)
-    IntelRealSenseCameraConfig(60, 640, 480)
-    IntelRealSenseCameraConfig(90, 640, 480)
-    IntelRealSenseCameraConfig(30, 1280, 720)
-    IntelRealSenseCameraConfig(30, 640, 480, use_depth=True)
-    IntelRealSenseCameraConfig(30, 640, 480, rotation=90)
-    ```
-    """
-
-    fps: int | None = None
-    width: int | None = None
-    height: int | None = None
-    color_mode: str = "rgb"
-    use_depth: bool = False
-    force_hardware_reset: bool = True
-    rotation: int | None = None
-    mock: bool = False
-
-    def __post_init__(self):
-        if self.color_mode not in ["rgb", "bgr"]:
-            raise ValueError(
-                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
-            )
-
-        at_least_one_is_not_none = self.fps is not None or self.width is not None or self.height is not None
-        at_least_one_is_none = self.fps is None or self.width is None or self.height is None
-        if at_least_one_is_not_none and at_least_one_is_none:
-            raise ValueError(
-                "For `fps`, `width` and `height`, either all of them need to be set, or none of them, "
-                f"but {self.fps=}, {self.width=}, {self.height=} were provided."
-            )
-
-        if self.rotation not in [-90, None, 90, 180]:
-            raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
-
-
 class IntelRealSenseCamera:
     """
     The IntelRealSenseCamera class is similar to OpenCVCamera class but adds additional features for Intel Real Sense cameras:
@@ -209,7 +168,7 @@ class IntelRealSenseCamera:
     Example of usage:
     ```python
     # Instantiate with its serial number
-    camera = IntelRealSenseCamera(128422271347)
+    camera = IntelRealSenseCamera(serial_number=128422271347)
     # Or by its name if it's unique
     camera = IntelRealSenseCamera.init_from_name("Intel RealSense D405")
     camera.connect()
@@ -220,19 +179,19 @@ class IntelRealSenseCamera:
 
     Example of changing default fps, width, height and color_mode:
     ```python
-    camera = IntelRealSenseCamera(serial_number, fps=30, width=1280, height=720)
+    camera = IntelRealSenseCamera(serial_number=128422271347, fps=30, width=1280, height=720)
     camera = connect()  # applies the settings, might error out if these settings are not compatible with the camera
 
-    camera = IntelRealSenseCamera(serial_number, fps=90, width=640, height=480)
+    camera = IntelRealSenseCamera(serial_number=128422271347, fps=90, width=640, height=480)
     camera = connect()
 
-    camera = IntelRealSenseCamera(serial_number, fps=90, width=640, height=480, color_mode="bgr")
+    camera = IntelRealSenseCamera(serial_number=128422271347, fps=90, width=640, height=480, color_mode="bgr")
     camera = connect()
     ```
 
     Example of returning depth:
     ```python
-    camera = IntelRealSenseCamera(serial_number, use_depth=True)
+    camera = IntelRealSenseCamera(serial_number=128422271347, use_depth=True)
     camera.connect()
     color_image, depth_map = camera.read()
     ```
@@ -240,20 +199,16 @@ class IntelRealSenseCamera:
 
     def __init__(
         self,
-        serial_number: int,
         config: IntelRealSenseCameraConfig | None = None,
         **kwargs,
     ):
-        if config is None:
-            config = IntelRealSenseCameraConfig()
+        config = IntelRealSenseCameraConfig(**kwargs) if config is None else replace(config, **kwargs)
 
-        # Overwrite the config arguments using kwargs
-        config = replace(config, **kwargs)
-
-        self.serial_number = serial_number
+        self.serial_number = config.serial_number
         self.fps = config.fps
         self.width = config.width
         self.height = config.height
+        self.channels = config.channels
         self.color_mode = config.color_mode
         self.use_depth = config.use_depth
         self.force_hardware_reset = config.force_hardware_reset

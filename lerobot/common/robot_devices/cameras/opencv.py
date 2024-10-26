@@ -9,13 +9,14 @@ import platform
 import shutil
 import threading
 import time
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from threading import Thread
 
 import numpy as np
 from PIL import Image
 
+from lerobot.common.robot_devices.cameras.configs import OpenCVCameraConfig
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
@@ -126,7 +127,7 @@ def save_images_from_cameras(
     print("Connecting cameras")
     cameras = []
     for cam_idx in camera_ids:
-        camera = OpenCVCamera(cam_idx, fps=fps, width=width, height=height, mock=mock)
+        camera = OpenCVCamera(camera_index=cam_idx, fps=fps, width=width, height=height, mock=mock)
         camera.connect()
         print(
             f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, "
@@ -175,36 +176,6 @@ def save_images_from_cameras(
     print(f"Images have been saved to {images_dir}")
 
 
-@dataclass
-class OpenCVCameraConfig:
-    """
-    Example of tested options for Intel Real Sense D405:
-
-    ```python
-    OpenCVCameraConfig(30, 640, 480)
-    OpenCVCameraConfig(60, 640, 480)
-    OpenCVCameraConfig(90, 640, 480)
-    OpenCVCameraConfig(30, 1280, 720)
-    ```
-    """
-
-    fps: int | None = None
-    width: int | None = None
-    height: int | None = None
-    color_mode: str = "rgb"
-    rotation: int | None = None
-    mock: bool = False
-
-    def __post_init__(self):
-        if self.color_mode not in ["rgb", "bgr"]:
-            raise ValueError(
-                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
-            )
-
-        if self.rotation not in [-90, None, 90, 180]:
-            raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
-
-
 class OpenCVCamera:
     """
     The OpenCVCamera class allows to efficiently record images from cameras. It relies on opencv2 to communicate
@@ -233,25 +204,21 @@ class OpenCVCamera:
 
     Example of changing default fps, width, height and color_mode:
     ```python
-    camera = OpenCVCamera(0, fps=30, width=1280, height=720)
+    camera = OpenCVCamera(camera_index=0, fps=30, width=1280, height=720)
     camera = connect()  # applies the settings, might error out if these settings are not compatible with the camera
 
-    camera = OpenCVCamera(0, fps=90, width=640, height=480)
+    camera = OpenCVCamera(camera_index=0, fps=90, width=640, height=480)
     camera = connect()
 
-    camera = OpenCVCamera(0, fps=90, width=640, height=480, color_mode="bgr")
+    camera = OpenCVCamera(camera_index=0, fps=90, width=640, height=480, color_mode="bgr")
     camera = connect()
     ```
     """
 
-    def __init__(self, camera_index: int | str, config: OpenCVCameraConfig | None = None, **kwargs):
-        if config is None:
-            config = OpenCVCameraConfig()
+    def __init__(self, config: OpenCVCameraConfig | None = None, **kwargs):
+        config = OpenCVCameraConfig(**kwargs) if config is None else replace(config, **kwargs)
 
-        # Overwrite config arguments using kwargs
-        config = replace(config, **kwargs)
-
-        self.camera_index = camera_index
+        self.camera_index = config.camera_index
         self.port = None
 
         # Linux uses ports for connecting to cameras
@@ -263,11 +230,12 @@ class OpenCVCamera:
                 # Retrieve the camera index from a potentially symlinked path
                 self.camera_index = get_camera_index_from_unix_port(self.port)
             else:
-                raise ValueError(f"Please check the provided camera_index: {camera_index}")
+                raise ValueError(f"Please check the provided camera_index: {self.camera_index}")
 
         self.fps = config.fps
         self.width = config.width
         self.height = config.height
+        self.channels = config.channels
         self.color_mode = config.color_mode
         self.mock = config.mock
 

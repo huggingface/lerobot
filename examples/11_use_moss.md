@@ -123,21 +123,21 @@ Follow step 4 of the [assembly video](https://www.youtube.com/watch?v=DA91NJOtMi
 
 Next, you'll need to calibrate your Moss v1 robot to ensure that the leader and follower arms have the same position values when they are in the same physical position. This calibration is essential because it allows a neural network trained on one Moss v1 robot to work on another.
 
-**Auto-calibration of follower arm**
-Follow step 5 of the [assembly video](https://www.youtube.com/watch?v=DA91NJOtMic) which illustrates the auto-calibration of the follower arm. You first need to manually move your follower arm to this initial position:
+**Manual calibration of follower arm**
+/!\ Contrarily to step 6 of the [assembly video](https://www.youtube.com/watch?v=DA91NJOtMic) which illustrates the auto calibration, we will actually do manual calibration of follower for now.
 
-<div style="text-align:center;">
-  <img src="../media/moss/follower_initial.webp?raw=true" alt="Moss v1 follower arm initial position" title="Moss v1 follower arm initial position" width="50%">
-</div>
+You will need to move the follower arm to these positions sequentially:
 
-Then run this script to launch auto-calibration:
+| 1. Zero position | 2. Rotated position | 3. Rest position |
+|---|---|---|
+| <img src="../media/moss/follower_zero.webp?raw=true" alt="Moss v1 follower arm zero position" title="Moss v1 follower arm zero position" style="width:100%;"> | <img src="../media/moss/follower_rotated.webp?raw=true" alt="Moss v1 follower arm rotated position" title="Moss v1 follower arm rotated position" style="width:100%;"> | <img src="../media/moss/follower_rest.webp?raw=true" alt="Moss v1 follower arm rest position" title="Moss v1 follower arm rest position" style="width:100%;"> |
+
+Make sure both arms are connected and run this script to launch manual calibration:
 ```bash
 python lerobot/scripts/control_robot.py calibrate \
     --robot-path lerobot/configs/robot/moss.yaml \
     --robot-overrides '~cameras' --arms main_follower
 ```
-
-Note: You can't run auto-calibration for the leader arm, since we removed the gears. Thus, you will need to manually calibrate the leader arm. It's less precise than auto-calibration, but precision is not as critical for the leader arm.
 
 **Manual calibration of leader arm**
 Follow step 6 of the [assembly video](https://www.youtube.com/watch?v=DA91NJOtMic) which illustrates the manual calibration. You will need to move the leader arm to these positions sequentially:
@@ -192,7 +192,6 @@ Record 2 episodes and upload your dataset to the hub:
 python lerobot/scripts/control_robot.py record \
     --robot-path lerobot/configs/robot/moss.yaml \
     --fps 30 \
-    --root data \
     --repo-id ${HF_USER}/moss_test \
     --tags moss tutorial \
     --warmup-time-s 5 \
@@ -212,7 +211,6 @@ echo ${HF_USER}/moss_test
 If you didn't upload with `--push-to-hub 0`, you can also visualize it locally with:
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
-  --root data \
   --repo-id ${HF_USER}/moss_test
 ```
 
@@ -220,10 +218,9 @@ python lerobot/scripts/visualize_dataset_html.py \
 
 Now try to replay the first episode on your robot:
 ```bash
-DATA_DIR=data python lerobot/scripts/control_robot.py replay \
+python lerobot/scripts/control_robot.py replay \
     --robot-path lerobot/configs/robot/moss.yaml \
     --fps 30 \
-    --root data \
     --repo-id ${HF_USER}/moss_test \
     --episode 0
 ```
@@ -232,7 +229,7 @@ DATA_DIR=data python lerobot/scripts/control_robot.py replay \
 
 To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
-DATA_DIR=data python lerobot/scripts/train.py \
+python lerobot/scripts/train.py \
   dataset_repo_id=${HF_USER}/moss_test \
   policy=act_moss_real \
   env=moss_real \
@@ -248,7 +245,6 @@ Let's explain it:
 3. We provided an environment as argument with `env=moss_real`. This loads configurations from [`lerobot/configs/env/moss_real.yaml`](../lerobot/configs/env/moss_real.yaml).
 4. We provided `device=cuda` since we are training on a Nvidia GPU, but you can also use `device=mps` if you are using a Mac with Apple silicon, or `device=cpu` otherwise.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
-6. We added `DATA_DIR=data` to access your dataset stored in your local `data` directory. If you dont provide `DATA_DIR`, your dataset will be downloaded from Hugging Face hub to your cache folder `$HOME/.cache/hugginface`. In future versions of `lerobot`, both directories will be in sync.
 
 Training should take several hours. You will find checkpoints in `outputs/train/act_moss_test/checkpoints`.
 
@@ -259,7 +255,6 @@ You can use the `record` function from [`lerobot/scripts/control_robot.py`](../l
 python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/moss.yaml \
   --fps 30 \
-  --root data \
   --repo-id ${HF_USER}/eval_act_moss_test \
   --tags moss tutorial eval \
   --warmup-time-s 5 \
