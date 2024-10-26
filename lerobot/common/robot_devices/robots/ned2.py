@@ -70,12 +70,12 @@ class Ned2Robot:
     def connect(self) -> None:
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
-                "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
+                "Ned2Robot is already connected. Do not run `robot.connect()` twice."
             )
 
         if not self.leader_arms and not self.follower_arms and not self.cameras:
             raise ValueError(
-                "ManipulatorRobot doesn't have any device to connect. See example of usage in docstring of the class."
+                "Ned2Robot doesn't have any device to connect. See example of usage in docstring of the class."
             )
 
         pass  # TODO
