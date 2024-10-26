@@ -1,10 +1,11 @@
-import lerobot
+import time
+import tqdm
 from lerobot.common.robot_devices.motors.ufactory import xArmWrapper
 from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
 # Defines how to communicate with the motors of the leader and follower arms
 leader_arms = {
-    "main": lerobot.common.robot_devices.motors.ufactory.xArmWrapper(
+    "main": xArmWrapper(
         port="192.168.1.236",
         motors={
             # name: (index, model)
@@ -19,7 +20,7 @@ leader_arms = {
     ),
 }
 follower_arms = {
-    "main": lerobot.common.robot_devices.motors.ufactory.xArmWrapper(
+    "main": xArmWrapper(
         port="192.168.1.218",
         motors={
             # name: (index, model)
@@ -45,8 +46,25 @@ robot.connect()
 
 try:
     while True:
-        robot.teleop_step()
+        # robot.teleop_step()
+        # time.sleep(0.004)  # 250 Hz
+
+        leader_pos = robot.leader_arms["main"].get_position()
+        follower_pos = robot.follower_arms["main"].get_position()
+        observation, action = robot.teleop_step(record_data=True)
+
+        print(follower_pos)
+        print(observation)
+        print(leader_pos)
+        print(action)
+        print("---")
+
 except KeyboardInterrupt:
     print('Operation interrupted by user.')
+
+# seconds = 30
+# frequency = 200
+# for _ in tqdm.tqdm(range(seconds*frequency)):
+#     robot.teleop_step()
 
 robot.disconnect()
