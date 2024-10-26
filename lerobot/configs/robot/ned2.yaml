@@ -3,7 +3,8 @@ robot_type: ned2
 
 leader_arms:
   main:
-    port: TODO
+    port: "tcp://169.254.200.201:5555"
+    state_topic: "/leader_arm/robot_state"
     motors:
       # name: index
       shoulder_pan: 2
@@ -16,7 +17,8 @@ leader_arms:
 
 follower_arms:
   main:
-    port: TODO
+    port: "tcp://169.254.200.202:5555"
+    state_topic: "/follower_arm/robot_state"
     motors:
       # name: index
       shoulder_pan: 2
@@ -34,9 +36,9 @@ cameras:
     fps: 30
     width: 640
     height: 480
-  phone:
-    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 1
-    fps: 30
-    width: 640
-    height: 480
+  # phone:
+  #   _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+  #   camera_index: 1
+  #   fps: 30
+  #   width: 640
+  #   height: 480
