@@ -213,7 +213,7 @@ def run_server(
             episode_data_csv_str=episode_data_csv_str,
         )
 
-    app.run(host=host, port=port, debug=True)
+    app.run(host=host, port=port)
 
 
 def get_ep_csv_fname(episode_id: int):
@@ -256,7 +256,11 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
         ).tolist()
     else:
         repo_id = dataset["repo_id"]
-        columns = ["timestamp", "observation.state", "action"]
+        columns = ["timestamp"]
+        if "observation.state" in dataset["keys"]:
+            columns.append("observation.state")
+        if "action" in dataset["keys"]:
+            columns.append("action")
         episode_parquet = load_dataset(
             "parquet",
             data_files=f"https://huggingface.co/datasets/{repo_id}/resolve/main/"
