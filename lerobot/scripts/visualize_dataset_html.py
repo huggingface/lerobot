@@ -82,13 +82,15 @@ def run_server(
     @app.route("/")
     def hommepage(dataset=dataset):
         if dataset:
-            dataset_namespace, dataset_name = (dataset.repo_id if isinstance(dataset, LeRobotDataset) else dataset["repo_id"]).split("/")
+            dataset_namespace, dataset_name = (
+                dataset.repo_id if isinstance(dataset, LeRobotDataset) else dataset["repo_id"]
+            ).split("/")
             return redirect(
                 url_for(
-                "show_episode",
-                dataset_namespace=dataset_namespace,
-                dataset_name=dataset_name,
-                episode_id=0,
+                    "show_episode",
+                    dataset_namespace=dataset_namespace,
+                    dataset_name=dataset_name,
+                    episode_id=0,
                 )
             )
 
@@ -124,8 +126,12 @@ def run_server(
         episode_data_csv_str = get_episode_data_csv_str(dataset, episode_id)
         dataset_info = {
             "repo_id": f"{dataset_namespace}/{dataset_name}",
-            "num_samples": dataset.num_samples if isinstance(dataset, LeRobotDataset) else dataset["total_frames"],
-            "num_episodes": dataset.num_episodes if isinstance(dataset, LeRobotDataset) else dataset["total_episodes"],
+            "num_samples": dataset.num_samples
+            if isinstance(dataset, LeRobotDataset)
+            else dataset["total_frames"],
+            "num_episodes": dataset.num_episodes
+            if isinstance(dataset, LeRobotDataset)
+            else dataset["total_episodes"],
             "fps": dataset.fps if isinstance(dataset, LeRobotDataset) else dataset["fps"],
         }
         if isinstance(dataset, LeRobotDataset):
@@ -137,17 +143,31 @@ def run_server(
             tasks = dataset.episode_dicts[episode_id]["tasks"]
         else:
             videos_info = [
-                {"url": f"https://huggingface.co/datasets/{repo_id}/resolve/main/"+dataset["videos"]["videos_path"].format(episode_chunk=0, video_key=video_key, episode_index=episode_id), "filename": video_key}
+                {
+                    "url": f"https://huggingface.co/datasets/{repo_id}/resolve/main/"
+                    + dataset["videos"]["videos_path"].format(
+                        episode_chunk=0, video_key=video_key, episode_index=episode_id
+                    ),
+                    "filename": video_key,
+                }
                 for video_key in dataset["video_keys"]
             ]
-            tasks_jsonl = load_dataset('json', data_files=f'https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl', split="train")
-            filtered_tasks_jsonl = tasks_jsonl.filter(lambda x: x['episode_index'] == episode_id)
-            tasks = filtered_tasks_jsonl['tasks'][0] 
+            tasks_jsonl = load_dataset(
+                "json",
+                data_files=f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl",
+                split="train",
+            )
+            filtered_tasks_jsonl = tasks_jsonl.filter(lambda x: x["episode_index"] == episode_id)
+            tasks = filtered_tasks_jsonl["tasks"][0]
 
         videos_info[0]["language_instruction"] = tasks
 
         if episodes is None:
-            episodes = list(range(dataset.num_episodes if isinstance(dataset, LeRobotDataset) else dataset["total_episodes"]))
+            episodes = list(
+                range(
+                    dataset.num_episodes if isinstance(dataset, LeRobotDataset) else dataset["total_episodes"]
+                )
+            )
 
         return render_template(
             "visualize_dataset_template.html",
@@ -170,13 +190,19 @@ def get_ep_csv_fname(episode_id: int):
 def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
     """Get a csv str containing timeseries data of an episode (e.g. state and action).
     This file will be loaded by Dygraph javascript to plot data in real time."""
-    has_state = "observation.state" in (dataset.hf_dataset.features if isinstance(dataset, LeRobotDataset) else dataset["keys"])
-    has_action = "action" in (dataset.hf_dataset.features if isinstance(dataset, LeRobotDataset) else dataset["keys"])
+    has_state = "observation.state" in (
+        dataset.hf_dataset.features if isinstance(dataset, LeRobotDataset) else dataset["keys"]
+    )
+    has_action = "action" in (
+        dataset.hf_dataset.features if isinstance(dataset, LeRobotDataset) else dataset["keys"]
+    )
 
     # init header of csv with state and action names
     header = ["timestamp"]
     if has_state:
-        dim_state = (dataset.shapes if isinstance(dataset, LeRobotDataset) else dataset["shapes"])["observation.state"]
+        dim_state = (dataset.shapes if isinstance(dataset, LeRobotDataset) else dataset["shapes"])[
+            "observation.state"
+        ]
         header += [f"state_{i}" for i in range(dim_state)]
     if has_action:
         dim_action = (dataset.shapes if isinstance(dataset, LeRobotDataset) else dataset["shapes"])["action"]
@@ -196,8 +222,13 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
         ).tolist()
     else:
         repo_id = dataset["repo_id"]
-        columns = ["timestamp","observation.state", "action"]
-        episode_parquet = load_dataset('parquet', data_files=f"https://huggingface.co/datasets/{repo_id}/resolve/main/"+dataset["data_path"].format(episode_chunk=0, episode_index=episode_index), split="train")
+        columns = ["timestamp", "observation.state", "action"]
+        episode_parquet = load_dataset(
+            "parquet",
+            data_files=f"https://huggingface.co/datasets/{repo_id}/resolve/main/"
+            + dataset["data_path"].format(episode_chunk=0, episode_index=episode_index),
+            split="train",
+        )
         d = episode_parquet.select_columns(columns).with_format("numpy")
         data = d.to_pandas()
         rows = np.hstack(
@@ -239,9 +270,14 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
 
 
 def get_dataset_info(repo_id: str) -> dict:
-    dataset_info = load_dataset('json', data_files=f'https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json', split="train")[0]
+    dataset_info = load_dataset(
+        "json",
+        data_files=f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json",
+        split="train",
+    )[0]
     dataset_info["repo_id"] = repo_id
     return dataset_info
+
 
 def visualize_dataset_html(
     repo_id: str | None = None,
@@ -275,7 +311,14 @@ def visualize_dataset_html(
 
     if not repo_id:
         if serve:
-            run_server(dataset=None, episodes=None, host=host, port=port, static_folder=static_dir, template_folder=template_dir)
+            run_server(
+                dataset=None,
+                episodes=None,
+                host=host,
+                port=port,
+                static_folder=static_dir,
+                template_folder=template_dir,
+            )
     else:
         dataset = LeRobotDataset(repo_id, root=root) if not load_from_hf_hub else get_dataset_info(repo_id)
 
