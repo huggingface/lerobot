@@ -335,7 +335,9 @@ def visualize_dataset_html(
     template_dir = Path(__file__).resolve().parent.parent / "templates"
 
     if output_dir is None:
-        output_dir = f"outputs/visualize_dataset_html/{repo_id}"
+        output_dir = "outputs/visualize_dataset_html"
+        if repo_id:
+            output_dir += f"/{repo_id}"
 
     output_dir = Path(output_dir)
     if output_dir.exists():
