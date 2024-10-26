@@ -179,7 +179,7 @@ def run_server(
             episode_data_csv_str=episode_data_csv_str,
         )
 
-    app.run(host=host, port=port, debug=True)
+    app.run(host=host, port=port)
 
 
 def get_ep_csv_fname(episode_id: int):
