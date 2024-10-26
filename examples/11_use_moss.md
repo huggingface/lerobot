@@ -123,21 +123,21 @@ Follow step 4 of the [assembly video](https://www.youtube.com/watch?v=DA91NJOtMi
 
 Next, you'll need to calibrate your Moss v1 robot to ensure that the leader and follower arms have the same position values when they are in the same physical position. This calibration is essential because it allows a neural network trained on one Moss v1 robot to work on another.
 
-**Auto-calibration of follower arm**
-Follow step 5 of the [assembly video](https://www.youtube.com/watch?v=DA91NJOtMic) which illustrates the auto-calibration of the follower arm. You first need to manually move your follower arm to this initial position:
+**Manual calibration of follower arm**
+/!\ Contrarily to step 6 of the [assembly video](https://www.youtube.com/watch?v=DA91NJOtMic) which illustrates the auto calibration, we will actually do manual calibration of follower for now.
 
-<div style="text-align:center;">
-  <img src="../media/moss/follower_initial.webp?raw=true" alt="Moss v1 follower arm initial position" title="Moss v1 follower arm initial position" width="50%">
-</div>
+You will need to move the follower arm to these positions sequentially:
 
-Then run this script to launch auto-calibration:
+| 1. Zero position | 2. Rotated position | 3. Rest position |
+|---|---|---|
+| <img src="../media/moss/follower_zero.webp?raw=true" alt="Moss v1 follower arm zero position" title="Moss v1 follower arm zero position" style="width:100%;"> | <img src="../media/moss/follower_rotated.webp?raw=true" alt="Moss v1 follower arm rotated position" title="Moss v1 follower arm rotated position" style="width:100%;"> | <img src="../media/moss/follower_rest.webp?raw=true" alt="Moss v1 follower arm rest position" title="Moss v1 follower arm rest position" style="width:100%;"> |
+
+Make sure both arms are connected and run this script to launch manual calibration:
 ```bash
 python lerobot/scripts/control_robot.py calibrate \
     --robot-path lerobot/configs/robot/moss.yaml \
     --robot-overrides '~cameras' --arms main_follower
 ```
-
-Note: You can't run auto-calibration for the leader arm, since we removed the gears. Thus, you will need to manually calibrate the leader arm. It's less precise than auto-calibration, but precision is not as critical for the leader arm.
 
 **Manual calibration of leader arm**
 Follow step 6 of the [assembly video](https://www.youtube.com/watch?v=DA91NJOtMic) which illustrates the manual calibration. You will need to move the leader arm to these positions sequentially:

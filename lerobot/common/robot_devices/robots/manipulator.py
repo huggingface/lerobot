@@ -338,17 +338,10 @@ class ManipulatorRobot:
 
                 elif self.robot_type in ["so100", "moss"]:
                     from lerobot.common.robot_devices.robots.feetech_calibration import (
-                        run_arm_auto_calibration,
                         run_arm_manual_calibration,
                     )
 
-                    # TODO(rcadene): better way to handle mocking + test run_arm_auto_calibration
-                    if arm_type == "leader" or arm.mock:
-                        calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
-                    elif arm_type == "follower":
-                        calibration = run_arm_auto_calibration(arm, self.robot_type, name, arm_type)
-                    else:
-                        raise ValueError(arm_type)
+                    calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
 
                 print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
                 arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
