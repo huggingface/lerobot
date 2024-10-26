@@ -59,6 +59,8 @@ import shutil
 from io import StringIO
 from pathlib import Path
 import re
+import tempfile
+import os
 
 import numpy as np
 from flask import Flask, redirect, render_template, url_for, request
@@ -335,9 +337,9 @@ def visualize_dataset_html(
     template_dir = Path(__file__).resolve().parent.parent / "templates"
 
     if output_dir is None:
-        output_dir = "outputs/visualize_dataset_html"
-        if repo_id:
-            output_dir += f"/{repo_id}"
+        # Create a temporary directory that will be automatically cleaned up
+        temp_base = tempfile.mkdtemp(prefix="lerobot_visualize_dataset_")
+        output_dir = temp_base if not repo_id else os.path.join(temp_base, repo_id)
 
     output_dir = Path(output_dir)
     if output_dir.exists():
