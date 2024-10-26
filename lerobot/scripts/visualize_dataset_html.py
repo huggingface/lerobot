@@ -166,7 +166,9 @@ def run_server(
                 {
                     "url": f"https://huggingface.co/datasets/{repo_id}/resolve/main/"
                     + dataset["videos"]["videos_path"].format(
-                        episode_chunk=0, video_key=video_key, episode_index=episode_id
+                        episode_chunk=int(episode_id) // dataset["chunks_size"],
+                        video_key=video_key,
+                        episode_index=episode_id,
                     ),
                     "filename": video_key,
                 }
@@ -246,7 +248,9 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
         episode_parquet = load_dataset(
             "parquet",
             data_files=f"https://huggingface.co/datasets/{repo_id}/resolve/main/"
-            + dataset["data_path"].format(episode_chunk=0, episode_index=episode_index),
+            + dataset["data_path"].format(
+                episode_chunk=int(episode_index) // dataset["chunks_size"], episode_index=episode_index
+            ),
             split="train",
         )
         d = episode_parquet.select_columns(columns).with_format("numpy")
