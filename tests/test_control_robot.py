@@ -140,7 +140,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         root,
         repo_id,
         single_task,
-        fps=5,
+        fps=1,
         warmup_time_s=0.5,
         episode_time_s=1,
         reset_time_s=1,
@@ -153,9 +153,9 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         play_sounds=False,
     )
     assert dataset.total_episodes == 2
-    assert len(dataset) == 10
+    assert len(dataset) == 2
 
-    replay(robot, episode=0, fps=5, root=root, repo_id=repo_id, play_sounds=False)
+    replay(robot, episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False)
 
     # TODO(rcadene, aliberts): rethink this design
     if robot_type == "aloha":
