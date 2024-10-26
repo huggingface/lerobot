@@ -116,9 +116,9 @@ def run_server(
             )
 
         featured_datasets = [
-            "cadene/koch_bimanual_folding",
             "lerobot/aloha_static_cups_open",
             "lerobot/columbia_cairlab_pusht_real",
+            "lerobot/taco_play",
         ]
         return render_template(
             "visualize_dataset_homepage.html",
