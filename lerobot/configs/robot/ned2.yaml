@@ -1,0 +1,42 @@
+_target_: lerobot.common.robot_devices.robots.ned2.Ned2Robot
+robot_type: ned2
+
+leader_arms:
+  main:
+    port: TODO
+    motors:
+      # name: index
+      shoulder_pan: 2
+      shoulder_lift: 3
+      elbow_flex: 4
+      forearm_roll: 5
+      wrist_pitch: 6
+      wrist_roll: 7
+      gripper: 11
+
+follower_arms:
+  main:
+    port: TODO
+    motors:
+      # name: index
+      shoulder_pan: 2
+      shoulder_lift: 3
+      elbow_flex: 4
+      forearm_roll: 5
+      wrist_pitch: 6
+      wrist_roll: 7
+      gripper: 11
+
+cameras:
+  laptop:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 0
+    fps: 30
+    width: 640
+    height: 480
+  phone:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 1
+    fps: 30
+    width: 640
+    height: 480
