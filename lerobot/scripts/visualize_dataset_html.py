@@ -117,8 +117,9 @@ def run_server(
 
     @app.route("/<string:dataset_namespace>/<string:dataset_name>/episode_<int:episode_id>")
     def show_episode(dataset_namespace, dataset_name, episode_id, dataset=dataset, episodes=episodes):
+        repo_id = f"{dataset_namespace}/{dataset_name}"
         if dataset is None:
-            dataset = get_dataset_info(f"{dataset_namespace}/{dataset_name}")
+            dataset = get_dataset_info(repo_id)
 
         episode_data_csv_str = get_episode_data_csv_str(dataset, episode_id)
         dataset_info = {
@@ -136,10 +137,10 @@ def run_server(
             tasks = dataset.episode_dicts[episode_id]["tasks"]
         else:
             videos_info = [
-                {"url": "https://huggingface.co/datasets/lerobot/aloha_static_ziploc_slide/resolve/main/"+dataset["videos"]["videos_path"].format(episode_chunk=0, video_key=video_key, episode_index=episode_id), "filename": video_key}
+                {"url": f"https://huggingface.co/datasets/{repo_id}/resolve/main/"+dataset["videos"]["videos_path"].format(episode_chunk=0, video_key=video_key, episode_index=episode_id), "filename": video_key}
                 for video_key in dataset["video_keys"]
             ]
-            tasks_jsonl = load_dataset('json', data_files='https://huggingface.co/datasets/lerobot/aloha_static_ziploc_slide/resolve/main/meta/episodes.jsonl', split="train")
+            tasks_jsonl = load_dataset('json', data_files=f'https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl', split="train")
             filtered_tasks_jsonl = tasks_jsonl.filter(lambda x: x['episode_index'] == episode_id)
             tasks = filtered_tasks_jsonl['tasks'][0] 
 
@@ -194,8 +195,9 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
             (np.expand_dims(data["timestamp"], axis=1), *[data[col] for col in columns[1:]])
         ).tolist()
     else:
+        repo_id = dataset["repo_id"]
         columns = ["timestamp","observation.state", "action"]
-        episode_parquet = load_dataset('parquet', data_files='https://huggingface.co/datasets/lerobot/aloha_static_ziploc_slide/resolve/main/data/chunk-000/episode_000003.parquet', split="train")
+        episode_parquet = load_dataset('parquet', data_files=f"https://huggingface.co/datasets/{repo_id}/resolve/main/"+dataset["data_path"].format(episode_chunk=0, episode_index=episode_index), split="train")
         d = episode_parquet.select_columns(columns).with_format("numpy")
         data = d.to_pandas()
         rows = np.hstack(
