@@ -60,7 +60,7 @@ from io import StringIO
 from pathlib import Path
 
 import numpy as np
-from flask import Flask, redirect, render_template, url_for
+from flask import Flask, redirect, render_template, url_for, request
 from datasets import load_dataset
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -91,6 +91,26 @@ def run_server(
                     dataset_namespace=dataset_namespace,
                     dataset_name=dataset_name,
                     episode_id=0,
+                )
+            )
+
+        dataset_param, episode_param, time_param = None, None, None
+        all_params = request.args
+        if "dataset" in all_params:
+            dataset_param = all_params["dataset"]
+        if "episode" in all_params:
+            episode_param = int(all_params["episode"])
+        if "t" in all_params:
+            time_param = all_params["t"]
+
+        if dataset_param:
+            dataset_namespace, dataset_name = dataset_param.split("/")
+            return redirect(
+                url_for(
+                    "show_episode",
+                    dataset_namespace=dataset_namespace,
+                    dataset_name=dataset_name,
+                    episode_id=episode_param if episode_param is not None else 0,
                 )
             )
 
