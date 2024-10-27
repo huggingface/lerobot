@@ -35,7 +35,8 @@ follower_arms:
       joint4: [4, "ufactory-850"]  # +/- 360 degrees
       joint5: [5, "ufactory-850"]  # +/- 124 degrees
       joint6: [6, "ufactory-850"]  # +/- 360 degrees
-      gripper: [7, "ufactory-850"]  
+      joint7: [7, "ufactory-850"]  # NOT PRESENT in 850
+      gripper: [8, "ufactory-850"]  # gripper
 
 cameras:
   top:
