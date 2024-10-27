@@ -591,7 +591,12 @@ class ManipulatorRobot:
         follower_pos = {}
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
-            follower_pos[name] = self.follower_arms[name].read("Present_Position")
+
+            if self.robot_type == "u850":
+                follower_pos[name] = np.array(self.follower_arms[name].get_position())
+            else:
+                follower_pos[name] = self.follower_arms[name].read("Present_Position")
+
             follower_pos[name] = torch.from_numpy(follower_pos[name])
             self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
@@ -645,7 +650,10 @@ class ManipulatorRobot:
             # Cap goal position when too far away from present position.
             # Slower fps expected due to reading from the follower.
             if self.config.max_relative_target is not None:
-                present_pos = self.follower_arms[name].read("Present_Position")
+                if self.robot_type == "u850":
+                    present_pos = np.array(self.follower_arms[name].get_position())
+                else:
+                    present_pos = self.follower_arms[name].read("Present_Position")
                 present_pos = torch.from_numpy(present_pos)
                 goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
 
