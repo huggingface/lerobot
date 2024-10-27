@@ -63,6 +63,8 @@ class Ned2Robot:
         self.request_socket_leader = context.socket(zmq.REQ)
         self.request_socket_follower = context.socket(zmq.REQ)
 
+        self.pub_follower_socket = context.socket(zmq.PUB)
+
         # Needed for dataset v2
         action_names = [f"{arm}_{motor}" for arm, bus in self.config.leader_arms.items() for motor in bus.motors]
         state_names = [f"{arm}_{motor}" for arm, bus in self.config.follower_arms.items() for motor in bus.motors]
@@ -154,6 +156,7 @@ class Ned2Robot:
         
         self.request_socket_follower.connect(f"{self.config.follower_arms.main.port}:6666")
         self.request_socket_leader.connect(f"{self.config.leader_arms.main.port}:6666")
+        self.pub_follower_socket.bind(f"{self.config.follower_arms.main.port}:5555")
 
         # Start subscription threads for follower and leader states
         threading.Thread(target=self.sub_follower_state, daemon=True).start()
@@ -246,14 +249,16 @@ class Ned2Robot:
     def send_action(self, action):
         if not self.is_connected:
             raise ConnectionError()
+        
+        self.pub_follower_socket.send_string("%d %d" % (self.config.leader_arms.main.state_topic, str(action)))
 
     def disconnect(self):
 
         # self.trigger_freemotion(False)
         
-        self.sub_follower_socket.disconnect(f"{self.config.follower_arms.main.port}")
-        self.request_socket_follower.disconnect(f"{self.config.follower_arms.main.port}")
-        self.sub_leader_socket.disconnect(f"{self.config.leader_arms.main.port}")
-        self.request_socket_leader.disconnect(f"{self.config.leader_arms.main.port}")
+        # self.sub_follower_socket.disconnect(f"{self.config.follower_arms.main.port}")
+        # self.request_socket_follower.disconnect(f"{self.config.follower_arms.main.port}")
+        # self.sub_leader_socket.disconnect(f"{self.config.leader_arms.main.port}")
+        # self.request_socket_leader.disconnect(f"{self.config.leader_arms.main.port}")
 
         self.is_connected = False
