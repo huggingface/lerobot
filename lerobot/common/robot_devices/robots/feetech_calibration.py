@@ -64,7 +64,7 @@ def move_until_block(arm, motor_name, positive_direction=True, while_move_hook=N
         # print(f"{present_voltage=}")
         # print(f"{present_temperature=}")
 
-        if present_speed == 0 and present_current > 50:
+        if present_speed == 0 and present_current > 40:
             count += 1
             if count > 100 or present_current > 300:
                 return present_pos
@@ -306,16 +306,16 @@ def run_arm_auto_calibration_moss(arm: MotorsBus, robot_type: str, arm_name: str
     calib = {}
 
     print("Calibrate shoulder_pan")
-    calib["shoulder_pan"] = move_to_calibrate(arm, "shoulder_pan", load_threshold=350, count_threshold=200)
+    calib["shoulder_pan"] = move_to_calibrate(arm, "shoulder_pan")
     arm.write("Goal_Position", calib["shoulder_pan"]["zero_pos"], "shoulder_pan")
     time.sleep(1)
 
     print("Calibrate gripper")
-    calib["gripper"] = move_to_calibrate(arm, "gripper", invert_drive_mode=True, count_threshold=200)
+    calib["gripper"] = move_to_calibrate(arm, "gripper", invert_drive_mode=True)
     time.sleep(1)
 
     print("Calibrate wrist_flex")
-    calib["wrist_flex"] = move_to_calibrate(arm, "wrist_flex", invert_drive_mode=True, count_threshold=200)
+    calib["wrist_flex"] = move_to_calibrate(arm, "wrist_flex", invert_drive_mode=True)
     calib["wrist_flex"] = apply_offset(calib["wrist_flex"], offset=-210 + 1024)
 
     wr_pos = arm.read("Present_Position", "wrist_roll")
@@ -329,7 +329,7 @@ def run_arm_auto_calibration_moss(arm: MotorsBus, robot_type: str, arm_name: str
     time.sleep(1)
 
     print("Calibrate wrist_roll")
-    calib["wrist_roll"] = move_to_calibrate(arm, "wrist_roll", invert_drive_mode=True, count_threshold=200)
+    calib["wrist_roll"] = move_to_calibrate(arm, "wrist_roll", invert_drive_mode=True)
     calib["wrist_roll"] = apply_offset(calib["wrist_roll"], offset=790)
 
     arm.write("Goal_Position", calib["wrist_roll"]["zero_pos"] - 1024, "wrist_roll")
@@ -348,7 +348,6 @@ def run_arm_auto_calibration_moss(arm: MotorsBus, robot_type: str, arm_name: str
         arm,
         "elbow_flex",
         invert_drive_mode=True,
-        count_threshold=200,
         in_between_move_hook=in_between_move_elbow_flex_hook,
     )
     arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"] - 1024, "wrist_flex")
