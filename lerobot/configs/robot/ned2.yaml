@@ -3,7 +3,7 @@ robot_type: ned2
 
 leader_arms:
   main:
-    port: "tcp://169.254.200.201:5555"
+    port: "tcp://169.254.200.201"
     state_topic: "/leader_arm/robot_state"
     motors:
       # name: index
@@ -17,7 +17,7 @@ leader_arms:
 
 follower_arms:
   main:
-    port: "tcp://169.254.200.202:5555"
+    port: "tcp://169.254.200.202"
     state_topic: "/follower_arm/robot_state"
     motors:
       # name: index

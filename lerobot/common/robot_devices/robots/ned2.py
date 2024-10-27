@@ -10,6 +10,8 @@ from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError
 
+# TODO use this class to receive from leader and forward to follower in order to sync data for the dataset
+
 
 @dataclass
 class Ned2RobotConfig:
@@ -92,7 +94,7 @@ class Ned2Robot:
 
     def sub_follower_state(self) -> None:
         try:
-            self.sub_follower_socket.connect(f"{self.config.follower_arms.main.port}")
+            self.sub_follower_socket.connect(f"{self.config.follower_arms.main.port}:5555")
             self.sub_follower_socket.setsockopt_string(zmq.SUBSCRIBE, self.config.follower_arms.main.state_topic)
             while True:
                 message = self.sub_follower_socket.recv_multipart()
@@ -106,7 +108,7 @@ class Ned2Robot:
 
     def sub_leader_state(self) -> None:
         try:
-            self.sub_leader_socket.connect(f"{self.config.leader_arms.main.port}")
+            self.sub_leader_socket.connect(f"{self.config.leader_arms.main.port}:5555")
             self.sub_leader_socket.setsockopt_string(zmq.SUBSCRIBE, self.config.leader_arms.main.state_topic)
             while True:
                 message = self.sub_leader_socket.recv_multipart()
@@ -128,6 +130,15 @@ class Ned2Robot:
         with self.leader_lock:
             return self.latest_leader_state
         
+    def trigger_freemotion(self, activate: bool) -> None:
+        freemotion_msg = {
+            "action": "freemotion",
+            "payload": {
+                "enable": f'{activate}'
+            }
+        }
+        self.request_socket_leader.send_string(json.dumps(freemotion_msg))
+        
 # ---------------------------- LeRobot Methods ----------------------------
 
     def connect(self) -> None:
@@ -141,8 +152,8 @@ class Ned2Robot:
                 "Ned2Robot doesn't have any device to connect. See example of usage in docstring of the class."
             )
         
-        self.request_socket_follower.connect(f"{self.config.follower_arms.main.port}")
-        self.request_socket_leader.connect(f"{self.config.leader_arms.main.port}")
+        self.request_socket_follower.connect(f"{self.config.follower_arms.main.port}:6666")
+        self.request_socket_leader.connect(f"{self.config.leader_arms.main.port}:6666")
 
         # Start subscription threads for follower and leader states
         threading.Thread(target=self.sub_follower_state, daemon=True).start()
@@ -166,7 +177,9 @@ class Ned2Robot:
             print("Could not connect to the cameras, check that all cameras are plugged-in.")
             raise ConnectionError()    
 
-        self.run_calibration()
+        # self.run_calibration()
+
+        # self.trigger_freemotion(True)
 
     def run_calibration(self):
         calibrate_msg = {
@@ -192,9 +205,9 @@ class Ned2Robot:
 
         if not record_data:
             return
-
-        state = torch.as_tensor(state)
-        action = torch.as_tensor(action)
+        print(str(state[:-1]))
+        state = torch.as_tensor(state[:-1])
+        action = torch.as_tensor(action[:-1])
 
         # Capture images from cameras
         images = {}
@@ -235,8 +248,12 @@ class Ned2Robot:
             raise ConnectionError()
 
     def disconnect(self):
-        self.is_connected =False
+
+        # self.trigger_freemotion(False)
+        
         self.sub_follower_socket.disconnect(f"{self.config.follower_arms.main.port}")
         self.request_socket_follower.disconnect(f"{self.config.follower_arms.main.port}")
         self.sub_leader_socket.disconnect(f"{self.config.leader_arms.main.port}")
         self.request_socket_leader.disconnect(f"{self.config.leader_arms.main.port}")
+
+        self.is_connected = False
