@@ -749,6 +749,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if not keep_image_files and self.image_writer is not None:
             shutil.rmtree(self.image_writer.write_dir)
 
+        video_files = list(self.root.rglob("*.mp4"))
+        assert len(video_files) == self.num_episodes * len(self.video_keys)
+
+        parquet_files = list(self.root.rglob("*.parquet"))
+        assert len(parquet_files) == self.num_episodes
+
         if run_compute_stats:
             self.stop_image_writer()
             self.stats = compute_stats(self)
@@ -762,9 +768,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # TODO(aliberts)
         # - [X] add video info in info.json
         # Sanity checks:
+        # - [X] number of files
         # - [ ] shapes
         # - [ ] ep_lenghts
-        # - [ ] number of files
 
     @classmethod
     def create(
