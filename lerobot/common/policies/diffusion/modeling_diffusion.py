@@ -244,9 +244,10 @@ class DiffusionModel(nn.Module):
         """Encode image features and concatenate them all together along with the state vector."""
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
         global_cond_feats = [batch["observation.state"]]
-        # Extract image feature (first combine batch, sequence, and camera index dims).
+        # Extract image features.
         if self._use_images:
             if self.config.use_separate_rgb_encoder_per_camera:
+                # Combine batch and sequence dims while rearranging to make the camera index dimension first.
                 images_per_camera = einops.rearrange(batch["observation.images"], "b s n ... -> n (b s) ...")
                 img_features_list = torch.cat(
                     [
@@ -254,10 +255,13 @@ class DiffusionModel(nn.Module):
                         for encoder, images in zip(self.rgb_encoder, images_per_camera, strict=True)
                     ]
                 )
+                # Separate batch and sequence dims back out. The camera index dim gets absorbed into the
+                # feature dim (effectively concatenating the camera features).
                 img_features = einops.rearrange(
                     img_features_list, "(n b s) ... -> b s (n ...)", b=batch_size, s=n_obs_steps
                 )
             else:
+               # Combine batch, sequence, and "which camera" dims before passing to shared encoder.
                 img_features = self.rgb_encoder(
                     einops.rearrange(batch["observation.images"], "b s n ... -> (b s n) ...")
                 )
