@@ -23,6 +23,7 @@ from typing import Any, Dict
 import datasets
 import jsonlines
 import torch
+from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, HfApi
 from PIL import Image as PILImage
 from torchvision import transforms
@@ -80,6 +81,15 @@ def unflatten_dict(d: dict, sep: str = "/") -> dict:
     return outdict
 
 
+def write_parquet(dataset: datasets.Dataset, fpath: Path) -> None:
+    # Embed image bytes into the table before saving to parquet
+    format = dataset.format
+    dataset = dataset.with_format("arrow")
+    dataset = dataset.map(embed_table_storage, batched=False)
+    dataset = dataset.with_format(**format)
+    dataset.to_parquet(fpath)
+
+
 def load_json(fpath: Path) -> Any:
     with open(fpath) as f:
         return json.load(f)
@@ -112,6 +122,25 @@ def write_stats(stats: dict[str, torch.Tensor | dict], fpath: Path) -> None:
     serialized_stats = {key: value.tolist() for key, value in flatten_dict(stats).items()}
     serialized_stats = unflatten_dict(serialized_stats)
     write_json(serialized_stats, fpath)
+
+
+def load_info(local_dir: Path) -> dict:
+    return load_json(local_dir / INFO_PATH)
+
+
+def load_stats(local_dir: Path) -> dict:
+    stats = load_json(local_dir / STATS_PATH)
+    stats = {key: torch.tensor(value) for key, value in flatten_dict(stats).items()}
+    return unflatten_dict(stats)
+
+
+def load_tasks(local_dir: Path) -> dict:
+    tasks = load_jsonlines(local_dir / TASKS_PATH)
+    return {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
+
+
+def load_episode_dicts(local_dir: Path) -> dict:
+    return load_jsonlines(local_dir / EPISODES_PATH)
 
 
 def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
@@ -183,25 +212,6 @@ def get_hub_safe_version(repo_id: str, version: str, enforce_v2: bool = True) ->
         return "main"
     else:
         return version
-
-
-def load_info(local_dir: Path) -> dict:
-    return load_json(local_dir / INFO_PATH)
-
-
-def load_stats(local_dir: Path) -> dict:
-    stats = load_json(local_dir / STATS_PATH)
-    stats = {key: torch.tensor(value) for key, value in flatten_dict(stats).items()}
-    return unflatten_dict(stats)
-
-
-def load_tasks(local_dir: Path) -> dict:
-    tasks = load_jsonlines(local_dir / TASKS_PATH)
-    return {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
-
-
-def load_episode_dicts(local_dir: Path) -> dict:
-    return load_jsonlines(local_dir / EPISODES_PATH)
 
 
 def _get_info_from_robot(robot: Robot, use_videos: bool) -> tuple[list | dict]:
