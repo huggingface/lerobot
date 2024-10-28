@@ -182,7 +182,7 @@ class DiffusionModel(nn.Module):
         self._use_env_state = False
         if num_images > 0:
             self._use_images = True
-            if self.config.rgb_encoder_per_camera:
+            if self.config.use_separate_rgb_encoder_per_camera:
                 encoders = [DiffusionRgbEncoder(config) for _ in range(num_images)]
                 self.rgb_encoder = nn.ModuleList(encoders)
                 global_cond_dim += encoders[0].feature_dim * num_images
@@ -246,7 +246,7 @@ class DiffusionModel(nn.Module):
         global_cond_feats = [batch["observation.state"]]
         # Extract image feature (first combine batch, sequence, and camera index dims).
         if self._use_images:
-            if self.config.rgb_encoder_per_camera:
+            if self.config.use_separate_rgb_encoder_per_camera:
                 images_per_camera = einops.rearrange(batch["observation.images"], "b s n ... -> n (b s) ...")
                 img_features_list = torch.cat(
                     [
