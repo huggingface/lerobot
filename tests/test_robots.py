@@ -30,7 +30,7 @@ import torch
 
 from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import TEST_ROBOT_TYPES, make_robot, require_robot
+from tests.utils import TEST_ROBOT_TYPES, make_robot, mock_calibration_dir, require_robot
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
@@ -39,7 +39,6 @@ def test_robot(tmpdir, request, robot_type, mock):
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
     # TODO(rcadene): add compatibility with other robots
-
     robot_kwargs = {"robot_type": robot_type}
 
     if robot_type == "aloha" and mock:
@@ -54,6 +53,7 @@ def test_robot(tmpdir, request, robot_type, mock):
         tmpdir = Path(tmpdir)
         calibration_dir = tmpdir / robot_type
         overrides_calibration_dir = [f"calibration_dir={calibration_dir}"]
+        mock_calibration_dir(calibration_dir)
         robot_kwargs["calibration_dir"] = calibration_dir
 
     # Test connecting without devices raises an error

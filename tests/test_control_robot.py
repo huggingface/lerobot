@@ -36,7 +36,7 @@ from lerobot.common.utils.utils import init_hydra_config
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
 from lerobot.scripts.train import make_optimizer_and_scheduler
 from tests.test_robots import make_robot
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, require_robot
+from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
@@ -49,6 +49,7 @@ def test_teleoperate(tmpdir, request, robot_type, mock):
         # and avoid writing calibration files in user .cache/calibration folder
         tmpdir = Path(tmpdir)
         calibration_dir = tmpdir / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False
@@ -89,6 +90,7 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = Path(tmpdir) / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides.append(f"calibration_dir={calibration_dir}")
 
     root = Path(tmpdir) / "data"
@@ -121,6 +123,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False or for aloha
@@ -162,6 +165,12 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     elif robot_type in ["koch", "koch_bimanual"]:
         env_name = "koch_real"
         policy_name = "act_koch_real"
+    elif robot_type == "so100":
+        env_name = "so100_real"
+        policy_name = "act_so100_real"
+    elif robot_type == "moss":
+        env_name = "moss_real"
+        policy_name = "act_moss_real"
     else:
         raise NotImplementedError(robot_type)
 
@@ -248,6 +257,7 @@ def test_resume_record(tmpdir, request, robot_type, mock):
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False or for aloha
@@ -311,6 +321,7 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False or for aloha
@@ -360,6 +371,7 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False or for aloha
@@ -410,6 +422,7 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
+        mock_calibration_dir(calibration_dir)
         overrides = [f"calibration_dir={calibration_dir}"]
     else:
         # Use the default .cache/calibration folder when mock=False or for aloha
