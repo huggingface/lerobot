@@ -72,6 +72,7 @@ try:
         print(observation["observation.images.top"].min().item())
         print(observation["observation.images.top"].max().item())
         print("---")
+        time.sleep(0.033)  # 30 Hz -> barely smooth
 
 except KeyboardInterrupt:
     print('Operation interrupted by user.')
