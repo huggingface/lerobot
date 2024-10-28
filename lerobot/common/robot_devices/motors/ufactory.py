@@ -246,3 +246,8 @@ class xArmWrapper:
                 print(f"Error in monitor_digital_input: {e}")  # Debug print
             time.sleep(0.01)  # Check every 10ms for more precise detection
         print("Exiting monitor_digital_input")  # Debug print
+
+
+    def robot_reset(self):
+        """Reset the robot to a safe state"""
+        self.api.set_gripper_position(pos=600, wait=True)  # Open gripper

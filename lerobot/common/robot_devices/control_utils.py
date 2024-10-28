@@ -98,6 +98,11 @@ def predict_action(observation, policy, device, use_amp):
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
+
+            # Check if tensor is double precision and convert if needed
+            if observation[name].dtype == torch.float64:  # Explicitly check for double
+                observation[name] = observation[name].double().float()  # Convert double to float32
+
             if "image" in name:
                 observation[name] = observation[name].type(torch.float32) / 255
                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
@@ -294,6 +299,9 @@ def reset_environment(robot, events, reset_time_s, episode_index):
     # TODO(alibets): allow for teleop during reset
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
+
+    if has_method(robot, "robot_reset"):
+        robot.robot_reset()
 
     timestamp = 0
     start_vencod_t = time.perf_counter()
