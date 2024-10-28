@@ -13,10 +13,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import os
 import platform
 from copy import copy
 from functools import wraps
+from pathlib import Path
 
 import pytest
 import torch
@@ -52,7 +54,7 @@ for motor_type in available_motors:
 OPENCV_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_OPENCV_CAMERA_INDEX", 0))
 INTELREALSENSE_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_INTELREALSENSE_CAMERA_INDEX", 128422271614))
 
-DYNAMIXEL_PORT = "/dev/tty.usbmodem575E0032081"
+DYNAMIXEL_PORT = os.environ.get("LEROBOT_TEST_DYNAMIXEL_PORT", "/dev/tty.usbmodem575E0032081")
 DYNAMIXEL_MOTORS = {
     "shoulder_pan": [1, "xl430-w250"],
     "shoulder_lift": [2, "xl430-w250"],
@@ -60,6 +62,16 @@ DYNAMIXEL_MOTORS = {
     "wrist_flex": [4, "xl330-m288"],
     "wrist_roll": [5, "xl330-m288"],
     "gripper": [6, "xl330-m288"],
+}
+
+FEETECH_PORT = os.environ.get("LEROBOT_TEST_FEETECH_PORT", "/dev/tty.usbmodem585A0080971")
+FEETECH_MOTORS = {
+    "shoulder_pan": [1, "sts3215"],
+    "shoulder_lift": [2, "sts3215"],
+    "elbow_flex": [3, "sts3215"],
+    "wrist_flex": [4, "sts3215"],
+    "wrist_roll": [5, "sts3215"],
+    "gripper": [6, "sts3215"],
 }
 
 
@@ -271,13 +283,39 @@ def require_motor(func):
     return wrapper
 
 
+def mock_calibration_dir(calibration_dir):
+    # TODO(rcadene): remove this hack
+    # calibration file produced with Moss v1, but works with Koch, Koch bimanual and SO-100
+    example_calib = {
+        "homing_offset": [-1416, -845, 2130, 2872, 1950, -2211],
+        "drive_mode": [0, 0, 1, 1, 1, 0],
+        "start_pos": [1442, 843, 2166, 2849, 1988, 1835],
+        "end_pos": [2440, 1869, -1106, -1848, -926, 3235],
+        "calib_mode": ["DEGREE", "DEGREE", "DEGREE", "DEGREE", "DEGREE", "LINEAR"],
+        "motor_names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+    }
+    Path(str(calibration_dir)).mkdir(parents=True, exist_ok=True)
+    with open(calibration_dir / "main_follower.json", "w") as f:
+        json.dump(example_calib, f)
+    with open(calibration_dir / "main_leader.json", "w") as f:
+        json.dump(example_calib, f)
+    with open(calibration_dir / "left_follower.json", "w") as f:
+        json.dump(example_calib, f)
+    with open(calibration_dir / "left_leader.json", "w") as f:
+        json.dump(example_calib, f)
+    with open(calibration_dir / "right_follower.json", "w") as f:
+        json.dump(example_calib, f)
+    with open(calibration_dir / "right_leader.json", "w") as f:
+        json.dump(example_calib, f)
+
+
 def make_robot(robot_type: str, overrides: list[str] | None = None, mock=False) -> Robot:
     if mock:
         overrides = [] if overrides is None else copy(overrides)
 
         # Explicitely add mock argument to the cameras and set it to true
         # TODO(rcadene, aliberts): redesign when we drop hydra
-        if robot_type == "koch":
+        if robot_type in ["koch", "so100", "moss"]:
             overrides.append("+leader_arms.main.mock=true")
             overrides.append("+follower_arms.main.mock=true")
             if "~cameras" not in overrides:
@@ -337,6 +375,13 @@ def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
         port = kwargs.pop("port", DYNAMIXEL_PORT)
         motors = kwargs.pop("motors", DYNAMIXEL_MOTORS)
         return DynamixelMotorsBus(port, motors, **kwargs)
+
+    elif motor_type == "feetech":
+        from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus
+
+        port = kwargs.pop("port", FEETECH_PORT)
+        motors = kwargs.pop("motors", FEETECH_MOTORS)
+        return FeetechMotorsBus(port, motors, **kwargs)
 
     else:
         raise ValueError(f"The motor type '{motor_type}' is not valid.")

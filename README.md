@@ -23,15 +23,15 @@
 </div>
 
 <h2 align="center">
-    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md">Hot new tutorial: Getting started with real-world robots</a></p>
+    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">New robot in town: SO-100</a></p>
 </h2>
 
 <div align="center">
-    <img src="media/tutorial/koch_v1_1_leader_follower.webp?raw=true" alt="Koch v1.1 leader and follower arms" title="Koch v1.1 leader and follower arms" width="50%">
-    <p>We just dropped an in-depth tutorial on how to build your own robot!</p>
+    <img src="media/so100/leader_follower.webp?raw=true" alt="SO-100 leader and follower arms" title="SO-100 leader and follower arms" width="50%">
+    <p>We just added a new tutorial on how to build a more affordable robot, at the price of $110 per arm!</p>
     <p>Teach it new skills by showing it a few moves with just a laptop.</p>
     <p>Then watch your homemade robot act autonomously 🤯</p>
-    <p>For more info, see <a href="https://x.com/RemiCadene/status/1825455895561859185">our thread on X</a> or <a href="https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md">our tutorial page</a>.</p>
+    <p>Follow the link to the <a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">full tutorial for SO-100</a>.</p>
 </div>
 
 <br/>

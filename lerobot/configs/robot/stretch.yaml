@@ -1,3 +1,12 @@
+# [Stretch3 from Hello Robot](https://hello-robot.com/stretch-3-product)
+
+# Requires installing extras packages
+# With pip: `pip install -e ".[stretch]"`
+# With poetry: `poetry install --sync --extras "stretch"`
+
+# See [tutorial](https://github.com/huggingface/lerobot/blob/main/examples/8_use_stretch.md)
+
+
 _target_: lerobot.common.robot_devices.robots.stretch.StretchRobot
 robot_type: stretch3
 
