@@ -261,7 +261,7 @@ class DiffusionModel(nn.Module):
                     img_features_list, "(n b s) ... -> b s (n ...)", b=batch_size, s=n_obs_steps
                 )
             else:
-               # Combine batch, sequence, and "which camera" dims before passing to shared encoder.
+                # Combine batch, sequence, and "which camera" dims before passing to shared encoder.
                 img_features = self.rgb_encoder(
                     einops.rearrange(batch["observation.images"], "b s n ... -> (b s n) ...")
                 )
