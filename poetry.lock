@@ -1423,6 +1423,19 @@ files = [
 devel = ["colorama", "json-spec", "jsonschema", "pylint", "pytest", "pytest-benchmark", "pytest-cache", "validictory"]
 
 [[package]]
+name = "feetech-servo-sdk"
+version = "1.0.0"
+description = "This is source code from official feetech repository"
+optional = true
+python-versions = "*"
+files = [
+    {file = "feetech-servo-sdk-1.0.0.tar.gz", hash = "sha256:d4d3832e4b1b22a8222133a414db9f868224c2fb639426a1b11d96ddfe84e69c"},
+]
+
+[package.dependencies]
+pyserial = "*"
+
+[[package]]
 name = "filelock"
 version = "3.16.1"
 description = "A platform independent file lock."
@@ -7565,6 +7578,7 @@ aloha = ["gym-aloha"]
 dev = ["debugpy", "pre-commit"]
 dora = ["gym-dora"]
 dynamixel = ["dynamixel-sdk", "pynput"]
+feetech = ["feetech-servo-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
 pusht = ["gym-pusht"]
 stretch = ["hello-robot-stretch-body", "pynput", "pyrealsense2", "pyrender"]
@@ -7576,4 +7590,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "e7e53f51865d6e800c6eb99b19451db2b92328f6ba198a9d1f9a2087b7341202"
+content-hash = "41344f0eb2d06d9a378abcd10df8205aa3926ff0a08ac5ab1a0b1bcae7440fd8"
