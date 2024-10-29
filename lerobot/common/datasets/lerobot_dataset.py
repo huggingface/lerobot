@@ -78,7 +78,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         local_files_only: bool = False,
         video_backend: str | None = None,
-        image_writer: ImageWriter | None = None,
     ):
         """LeRobotDataset encapsulates 3 main things:
             - metadata:
@@ -168,6 +167,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             download_videos (bool, optional): Flag to download the videos. Note that when set to True but the
                 video files are already present on local disk, they won't be downloaded again. Defaults to
                 True.
+            local_files_only (bool, optional): Flag to use local files only. If True, no requests to the hub
+                will be made. Defaults to False.
             video_backend (str | None, optional): Video backend to use for decoding videos. There is currently
                 a single option which is the pyav decoder used by Torchvision. Defaults to pyav.
         """
