@@ -42,20 +42,26 @@ from lerobot.common.datasets.utils import (
     unflatten_dict,
 )
 from lerobot.common.utils.utils import init_hydra_config, seeded_context
+from tests.fixtures.defaults import DUMMY_REPO_ID
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, make_robot
 
-# TODO(aliberts): create proper test repo
-TEST_REPO_ID = "aliberts/koch_tutorial"
 
-
-def test_same_attributes_defined():
-    # TODO(aliberts): test with keys, shapes, names etc. provided instead of robot
+@pytest.fixture(scope="function")
+def dataset_create(tmp_path):
     robot = make_robot("koch", mock=True)
+    return LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=30, robot=robot, root=tmp_path)
 
-    # Instantiate both ways
-    dataset_init = LeRobotDataset(repo_id=TEST_REPO_ID)
-    dataset_create = LeRobotDataset.create(repo_id=TEST_REPO_ID, fps=30, robot=robot)
 
+@pytest.fixture(scope="function")
+def dataset_init(lerobot_dataset_factory, tmp_path):
+    return lerobot_dataset_factory(root=tmp_path)
+
+
+def test_same_attributes_defined(dataset_create, dataset_init):
+    """
+    Instantiate a LeRobotDataset both ways with '__init__()' and 'create()' and verify that instantiated
+    objects have the same sets of attributes defined.
+    """
     # Access the '_hub_version' cached_property in both instances to force its creation
     _ = dataset_init._hub_version
     _ = dataset_create._hub_version
