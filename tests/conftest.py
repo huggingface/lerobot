@@ -24,7 +24,7 @@ from lerobot.common.utils.utils import init_hydra_config
 from tests.utils import DEVICE, ROBOT_CONFIG_PATH_TEMPLATE, make_camera, make_motors_bus
 
 # Import fixture modules as plugins
-pytest_plugins = ["tests.fixtures.dataset"]
+pytest_plugins = ["tests.fixtures.dataset", "tests.fixtures.dataset_factories", "tests.fixtures.files"]
 
 
 def pytest_collection_finish():
