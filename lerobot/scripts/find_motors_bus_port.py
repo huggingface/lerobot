@@ -1,7 +1,9 @@
-import time
 import os
+import time
 from pathlib import Path
+
 from serial.tools import list_ports  # Part of pyserial library
+
 
 def find_available_ports():
     if os.name == "nt":  # Windows
@@ -11,6 +13,7 @@ def find_available_ports():
         # List /dev/tty* ports for Unix-based systems
         ports = [str(path) for path in Path("/dev").glob("tty*")]
     return ports
+
 
 def find_port():
     print("Finding all available ports for the MotorsBus.")
@@ -32,6 +35,7 @@ def find_port():
         raise OSError(f"Could not detect the port. No difference was found ({ports_diff}).")
     else:
         raise OSError(f"Could not detect the port. More than one port was found ({ports_diff}).")
+
 
 if __name__ == "__main__":
     # Helper to find the USB port associated with your MotorsBus.
