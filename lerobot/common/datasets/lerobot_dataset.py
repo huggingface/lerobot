@@ -202,7 +202,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Load actual data
         self.download_episodes(download_videos)
         self.hf_dataset = self.load_hf_dataset()
-        self.episode_data_index = get_episode_data_index(self.episodes, self.episode_dicts)
+        self.episode_data_index = get_episode_data_index(self.episode_dicts, self.episodes)
 
         # Check timestamps
         check_timestamps_sync(self.hf_dataset, self.episode_data_index, self.fps, self.tolerance_s)
@@ -740,7 +740,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def consolidate(self, run_compute_stats: bool = True, keep_image_files: bool = False) -> None:
         self.hf_dataset = self.load_hf_dataset()
-        self.episode_data_index = get_episode_data_index(self.episodes, self.episode_dicts)
+        self.episode_data_index = get_episode_data_index(self.episode_dicts, self.episodes)
         check_timestamps_sync(self.hf_dataset, self.episode_data_index, self.fps, self.tolerance_s)
 
         if len(self.video_keys) > 0:
