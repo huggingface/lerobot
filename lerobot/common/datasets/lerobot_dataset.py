@@ -79,7 +79,29 @@ class LeRobotDataset(torch.utils.data.Dataset):
         local_files_only: bool = False,
         video_backend: str | None = None,
     ):
-        """LeRobotDataset encapsulates 3 main things:
+        """
+        2 modes are available for instantiating this class, depending on 2 different use cases:
+
+        1. Your dataset already exists:
+            - On your local disk in the 'root' folder. This is typically the case when you recorded your
+              dataset locally and you may or may not have pushed it to the hub yet. Instantiating this class
+              with 'root' will load your dataset directly from disk. This can happen while you're offline (no
+              internet connection).
+
+            - On the Hugging Face Hub at the address https://huggingface.co/datasets/{repo_id} and is not on
+              your local disk in the 'root' folder. Instantiating this class with this 'repo_id' will download
+              the dataset from that address and load it, pending your dataset is compliant with
+              codebase_version v2.0. If your dataset has been created before this new format, you will be
+              prompted to convert it using our conversion script from v1.6 to v2.0, which you can find at
+              lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py.
+
+
+        2. Your dataset doesn't already exists (either on local disk or on the Hub):
+            You can create an empty LeRobotDataset with the 'create' classmethod. This can be used for
+            recording a dataset or port an existing dataset to the LeRobotDataset format.
+
+
+        In terms of files, LeRobotDataset encapsulates 3 main things:
             - metadata:
                 - info contains various information about the dataset like shapes, keys, fps etc.
                 - stats stores the dataset statistics of the different modalities for normalization
@@ -87,26 +109,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                   task-conditionned training.
             - hf_dataset (from datasets.Dataset), which will read any values from parquet files.
             - (optional) videos from which frames are loaded to be synchronous with data from parquet files.
-
-        3 modes are available for this class, depending on 3 different use cases:
-
-        1. Your dataset already exists on the Hugging Face Hub at the address
-        https://huggingface.co/datasets/{repo_id} and is not on your local disk in the 'root' folder:
-            Instantiating this class with this 'repo_id' will download the dataset from that address and load
-            it, pending your dataset is compliant with codebase_version v2.0. If your dataset has been created
-            before this new format, you will be prompted to convert it using our conversion script from v1.6
-            to v2.0, which you can find at lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py.
-
-        2. Your dataset already exists on your local disk in the 'root' folder:
-            This is typically the case when you recorded your dataset locally and you may or may not have
-            pushed it to the hub yet. Instantiating this class with 'root' will load your dataset directly
-            from disk. This can happen while you're offline (no internet connection).
-
-        3. Your dataset doesn't already exists (either on local disk or on the Hub):
-            [TODO(aliberts): add classmethod for this case?]
-
-
-        In terms of files, a typical LeRobotDataset looks like this from its root path:
+        A typical LeRobotDataset looks like this from its root path:
         .
         ├── data
         │   ├── chunk-000
