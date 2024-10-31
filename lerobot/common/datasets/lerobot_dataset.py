@@ -108,7 +108,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 - tasks contains the prompts for each task of the dataset, which can be used for
                   task-conditionned training.
             - hf_dataset (from datasets.Dataset), which will read any values from parquet files.
-            - (optional) videos from which frames are loaded to be synchronous with data from parquet files.
+            - videos (optional) from which frames are loaded to be synchronous with data from parquet files.
+
         A typical LeRobotDataset looks like this from its root path:
         .
         ├── data
@@ -128,7 +129,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         │   ├── info.json
         │   ├── stats.json
         │   └── tasks.jsonl
-        └── videos (optional)
+        └── videos
             ├── chunk-000
             │   ├── observation.images.laptop
             │   │   ├── episode_000000.mp4
