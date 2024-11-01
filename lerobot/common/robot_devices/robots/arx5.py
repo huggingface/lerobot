@@ -87,6 +87,13 @@ class ARXArm:
 
     def reset(self):
         if not self.is_connected:
+            raise RobotDeviceAlreadyConnectedError(
+                "ARXArm is not connected. Do not run `robot.disconnect()` twice."
+            )
+        self.joint_controller.reset_to_home()
+
+    def calibrate(self):
+        if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
@@ -132,6 +139,7 @@ class ARX5Robot:
     """
     A class for controlling a robot consisting of one or more ARX arms.
     """
+    robot_type: str | None = "arx5"
 
     def __init__(
         self,
@@ -187,13 +195,16 @@ class ARX5Robot:
         self.is_connected = True
 
     def run_calibration(self):
-        # TODO: there's no "calibration" here - rather we just reset the arm back to its home position. Is that ok?
         for name in self.follower_arms:
             print(f"Calibrating {name} follower arm: {self.follower_arms[name]}")
-            self.follower_arms[name].reset()
+            self.follower_arms[name].calibrate()
         for name in self.leader_arms:
             print(f"Calibrating {name} leader arm: {self.leader_arms[name]}")
-            self.leader_arms[name].reset()
+            self.leader_arms[name].calibrate()
+
+    def reset(self):
+        for name in self.follower_arms:
+            self.follower_arms[name].reset()
 
     def teleop_step(
         self, record_data=False

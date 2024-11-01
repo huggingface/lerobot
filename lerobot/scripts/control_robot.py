@@ -388,13 +388,14 @@ def record(
     exit_early = False
     rerecord_episode = False
     stop_recording = False
+    reset_robot = False
 
     # Only import pynput if not in a headless environment
     if not is_headless():
         from pynput import keyboard
 
         def on_press(key):
-            nonlocal exit_early, rerecord_episode, stop_recording
+            nonlocal exit_early, rerecord_episode, stop_recording, reset_robot
             try:
                 if key == keyboard.Key.right:
                     print("Right arrow key pressed. Exiting loop...")
@@ -407,6 +408,9 @@ def record(
                     print("Escape key pressed. Stopping data recording...")
                     stop_recording = True
                     exit_early = True
+                elif key == keyboard.Key.down:
+                    print("Resetting robot...")
+                    reset_robot = True
             except Exception as e:
                 print(f"Error handling key press: {e}")
 
@@ -625,6 +629,9 @@ def record(
                     if exit_early:
                         exit_early = False
                         break
+                    if reset_robot:
+                        robot.reset()
+                        reset_robot = False
 
             # Skip updating episode index which forces re-recording episode
             if rerecord_episode:

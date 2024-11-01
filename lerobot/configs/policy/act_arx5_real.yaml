@@ -27,7 +27,7 @@ override_dataset_stats:
     std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
 
 training:
-  offline_steps: 300000
+  offline_steps: 200000
   online_steps: 0
   eval_freq: -1
   save_freq: 10000
