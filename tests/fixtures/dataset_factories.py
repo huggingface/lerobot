@@ -297,6 +297,7 @@ def lerobot_dataset_factory(
 ):
     def _create_lerobot_dataset(
         root: Path,
+        repo_id: str = DUMMY_REPO_ID,
         info_dict: dict = info,
         stats_dict: dict = stats,
         task_dicts: list[dict] = tasks,
@@ -322,7 +323,7 @@ def lerobot_dataset_factory(
             mock_get_hub_safe_version_patch.side_effect = lambda repo_id, version, enforce_v2=True: version
             mock_snapshot_download_patch.side_effect = mock_snapshot_download
 
-            return LeRobotDataset(repo_id=DUMMY_REPO_ID, root=root, **kwargs)
+            return LeRobotDataset(repo_id=repo_id, root=root, **kwargs)
 
     return _create_lerobot_dataset
 
@@ -341,6 +342,7 @@ def lerobot_dataset_from_episodes_factory(
         total_frames: int = 150,
         total_tasks: int = 1,
         multi_task: bool = False,
+        repo_id: str = DUMMY_REPO_ID,
         **kwargs,
     ):
         info_dict = info_factory(
@@ -356,6 +358,7 @@ def lerobot_dataset_from_episodes_factory(
         hf_dataset = hf_dataset_factory(episode_dicts=episode_dicts, task_dicts=task_dicts)
         return lerobot_dataset_factory(
             root=root,
+            repo_id=repo_id,
             info_dict=info_dict,
             task_dicts=task_dicts,
             episode_dicts=episode_dicts,
