@@ -93,7 +93,7 @@ def run_server(
     def show_episode(dataset_namespace, dataset_name, episode_id):
         dataset_info = {
             "repo_id": dataset.repo_id,
-            "num_samples": dataset.num_samples,
+            "num_samples": dataset.num_frames,
             "num_episodes": dataset.num_episodes,
             "fps": dataset.fps,
         }

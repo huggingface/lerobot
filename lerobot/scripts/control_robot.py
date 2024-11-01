@@ -343,7 +343,7 @@ def replay(
         robot.connect()
 
     log_say("Replaying episode", play_sounds, blocking=True)
-    for idx in range(dataset.num_samples):
+    for idx in range(dataset.num_frames):
         start_episode_t = time.perf_counter()
 
         action = actions[idx]["action"]

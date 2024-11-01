@@ -180,13 +180,13 @@ def aggregate_stats(ls_datasets) -> dict[str, torch.Tensor]:
                 "n ... -> ...",
                 stat_key,
             )
-        total_samples = sum(d.num_samples for d in ls_datasets if data_key in d.stats)
+        total_samples = sum(d.num_frames for d in ls_datasets if data_key in d.stats)
         # Compute the "sum" statistic by multiplying each mean by the number of samples in the respective
         # dataset, then divide by total_samples to get the overall "mean".
-        # NOTE: the brackets around (d.num_samples / total_samples) are needed tor minimize the risk of
+        # NOTE: the brackets around (d.num_frames / total_samples) are needed tor minimize the risk of
         # numerical overflow!
         stats[data_key]["mean"] = sum(
-            d.stats[data_key]["mean"] * (d.num_samples / total_samples)
+            d.stats[data_key]["mean"] * (d.num_frames / total_samples)
             for d in ls_datasets
             if data_key in d.stats
         )
@@ -195,12 +195,12 @@ def aggregate_stats(ls_datasets) -> dict[str, torch.Tensor]:
         # Given two sets of data where the statistics are known:
         # σ_combined = sqrt[ (n1 * (σ1^2 + d1^2) + n2 * (σ2^2 + d2^2)) / (n1 + n2) ]
         # where d1 = μ1 - μ_combined, d2 = μ2 - μ_combined
-        # NOTE: the brackets around (d.num_samples / total_samples) are needed tor minimize the risk of
+        # NOTE: the brackets around (d.num_frames / total_samples) are needed tor minimize the risk of
         # numerical overflow!
         stats[data_key]["std"] = torch.sqrt(
             sum(
                 (d.stats[data_key]["std"] ** 2 + (d.stats[data_key]["mean"] - stats[data_key]["mean"]) ** 2)
-                * (d.num_samples / total_samples)
+                * (d.num_frames / total_samples)
                 for d in ls_datasets
                 if data_key in d.stats
             )
