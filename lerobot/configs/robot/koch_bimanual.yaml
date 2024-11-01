@@ -1,5 +1,5 @@
 _target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
-robot_type: koch
+robot_type: koch_bimanual
 calibration_dir: .cache/calibration/koch_bimanual
 
 # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
