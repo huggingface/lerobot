@@ -198,6 +198,8 @@ available_robots = [
     "koch",
     "koch_bimanual",
     "aloha",
+    "so100",
+    "moss",
 ]
 
 # lists all available cameras from `lerobot/common/robot_devices/cameras`
@@ -209,6 +211,7 @@ available_cameras = [
 # lists all available motors from `lerobot/common/robot_devices/motors`
 available_motors = [
     "dynamixel",
+    "feetech",
 ]
 
 # keys and values refer to yaml files
@@ -216,7 +219,9 @@ available_policies_per_env = {
     "aloha": ["act"],
     "pusht": ["diffusion", "vqbet"],
     "xarm": ["tdmpc"],
-    "dora_aloha_real": ["act_real"],
+    "koch_real": ["act_koch_real"],
+    "aloha_real": ["act_aloha_real"],
+    "dora_aloha_real": ["act_aloha_real"],
 }
 
 env_task_pairs = [(env, task) for env, tasks in available_tasks_per_env.items() for task in tasks]
