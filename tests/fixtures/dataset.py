@@ -1,7 +1,6 @@
 import datasets
 import pytest
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import get_episode_data_index
 from tests.fixtures.defaults import DUMMY_CAMERA_KEYS
 
@@ -66,9 +65,3 @@ def hf_dataset(hf_dataset_factory) -> datasets.Dataset:
 def hf_dataset_image(hf_dataset_factory) -> datasets.Dataset:
     image_keys = DUMMY_CAMERA_KEYS
     return hf_dataset_factory(image_keys=image_keys)
-
-
-@pytest.fixture(scope="session")
-def lerobot_dataset(lerobot_dataset_factory, tmp_path_factory) -> LeRobotDataset:
-    root = tmp_path_factory.getbasetemp()
-    return lerobot_dataset_factory(root=root)

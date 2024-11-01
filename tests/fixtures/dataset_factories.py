@@ -1,3 +1,4 @@
+import random
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,10 +13,16 @@ from lerobot.common.datasets.utils import (
     DEFAULT_VIDEO_PATH,
     hf_transform_to_torch,
 )
-from tests.fixtures.defaults import DUMMY_CAMERA_KEYS, DUMMY_KEYS, DUMMY_REPO_ID
+from tests.fixtures.defaults import (
+    DEFAULT_FPS,
+    DUMMY_CAMERA_KEYS,
+    DUMMY_KEYS,
+    DUMMY_REPO_ID,
+    DUMMY_ROBOT_TYPE,
+)
 
 
-def get_dummy_shapes(keys: list[str] | None = None, camera_keys: list[str] | None = None) -> dict:
+def make_dummy_shapes(keys: list[str] | None = None, camera_keys: list[str] | None = None) -> dict:
     shapes = {}
     if keys:
         shapes.update({key: 10 for key in keys})
@@ -25,10 +32,6 @@ def get_dummy_shapes(keys: list[str] | None = None, camera_keys: list[str] | Non
 
 
 def get_task_index(tasks_dicts: dict, task: str) -> int:
-    """
-    Given a task in natural language, returns its task_index if the task already exists in the dataset,
-    otherwise creates a new task_index.
-    """
     tasks = {d["task_index"]: d["task"] for d in tasks_dicts}
     task_to_task_index = {task: task_idx for task_idx, task in tasks.items()}
     return task_to_task_index[task]
@@ -46,8 +49,8 @@ def img_array_factory():
 def info_factory():
     def _create_info(
         codebase_version: str = CODEBASE_VERSION,
-        fps: int = 30,
-        robot_type: str = "dummy_robot",
+        fps: int = DEFAULT_FPS,
+        robot_type: str = DUMMY_ROBOT_TYPE,
         keys: list[str] = DUMMY_KEYS,
         image_keys: list[str] | None = None,
         video_keys: list[str] = DUMMY_CAMERA_KEYS,
@@ -65,7 +68,7 @@ def info_factory():
         if not image_keys:
             image_keys = []
         if not shapes:
-            shapes = get_dummy_shapes(keys=keys, camera_keys=[*image_keys, *video_keys])
+            shapes = make_dummy_shapes(keys=keys, camera_keys=[*image_keys, *video_keys])
         if not names:
             names = {key: [f"motor_{i}" for i in range(shapes[key])] for key in keys}
 
@@ -115,7 +118,7 @@ def stats_factory():
         if not image_keys:
             image_keys = []
         if not shapes:
-            shapes = get_dummy_shapes(keys=keys, camera_keys=[*image_keys, *video_keys])
+            shapes = make_dummy_shapes(keys=keys, camera_keys=[*image_keys, *video_keys])
         stats = {}
         for key in keys:
             shape = shapes[key]
@@ -139,6 +142,68 @@ def stats_factory():
 
 
 @pytest.fixture(scope="session")
+def tasks_factory():
+    def _create_tasks(total_tasks: int = 3) -> int:
+        tasks_list = []
+        for i in range(total_tasks):
+            task_dict = {"task_index": i, "task": f"Perform action {i}."}
+            tasks_list.append(task_dict)
+        return tasks_list
+
+    return _create_tasks
+
+
+@pytest.fixture(scope="session")
+def episodes_factory(tasks_factory):
+    def _create_episodes(
+        total_episodes: int = 3,
+        total_frames: int = 400,
+        task_dicts: dict | None = None,
+        multi_task: bool = False,
+    ):
+        if total_episodes <= 0 or total_frames <= 0:
+            raise ValueError("num_episodes and total_length must be positive integers.")
+        if total_frames < total_episodes:
+            raise ValueError("total_length must be greater than or equal to num_episodes.")
+
+        if not task_dicts:
+            min_tasks = 2 if multi_task else 1
+            total_tasks = random.randint(min_tasks, total_episodes)
+            task_dicts = tasks_factory(total_tasks)
+
+        if total_episodes < len(task_dicts) and not multi_task:
+            raise ValueError("The number of tasks should be less than the number of episodes.")
+
+        # Generate random lengths that sum up to total_length
+        lengths = np.random.multinomial(total_frames, [1 / total_episodes] * total_episodes).tolist()
+
+        tasks_list = [task_dict["task"] for task_dict in task_dicts]
+        num_tasks_available = len(tasks_list)
+
+        episodes_list = []
+        remaining_tasks = tasks_list.copy()
+        for ep_idx in range(total_episodes):
+            num_tasks_in_episode = random.randint(1, min(3, num_tasks_available)) if multi_task else 1
+            tasks_to_sample = remaining_tasks if remaining_tasks else tasks_list
+            episode_tasks = random.sample(tasks_to_sample, min(num_tasks_in_episode, len(tasks_to_sample)))
+            if remaining_tasks:
+                for task in episode_tasks:
+                    remaining_tasks.remove(task)
+
+            episodes_list.append(
+                {
+                    "episode_index": ep_idx,
+                    "tasks": episode_tasks,
+                    "length": lengths[ep_idx],
+                }
+            )
+
+        return episodes_list
+
+    return _create_episodes
+
+
+@pytest.fixture(scope="session")
 def hf_dataset_factory(img_array_factory, episodes, tasks):
     def _create_hf_dataset(
         episode_dicts: list[dict] = episodes,
@@ -146,12 +211,12 @@ def hf_dataset_factory(img_array_factory, episodes, tasks):
         keys: list[str] = DUMMY_KEYS,
         image_keys: list[str] | None = None,
         shapes: dict | None = None,
-        fps: int = 30,
+        fps: int = DEFAULT_FPS,
     ) -> datasets.Dataset:
         if not image_keys:
             image_keys = []
         if not shapes:
-            shapes = get_dummy_shapes(keys=keys, camera_keys=image_keys)
+            shapes = make_dummy_shapes(keys=keys, camera_keys=image_keys)
         key_features = {
             key: datasets.Sequence(length=shapes[key], feature=datasets.Value(dtype="float32"))
             for key in keys
@@ -225,8 +290,8 @@ def hf_dataset_factory(img_array_factory, episodes, tasks):
 def lerobot_dataset_factory(
     info,
     stats,
-    episodes,
     tasks,
+    episodes,
     hf_dataset,
     mock_snapshot_download_factory,
 ):
@@ -260,3 +325,42 @@ def lerobot_dataset_factory(
             return LeRobotDataset(repo_id=DUMMY_REPO_ID, root=root, **kwargs)
 
     return _create_lerobot_dataset
+
+
+@pytest.fixture(scope="session")
+def lerobot_dataset_from_episodes_factory(
+    info_factory,
+    tasks_factory,
+    episodes_factory,
+    hf_dataset_factory,
+    lerobot_dataset_factory,
+):
+    def _create_lerobot_dataset_total_episodes(
+        root: Path,
+        total_episodes: int = 3,
+        total_frames: int = 150,
+        total_tasks: int = 1,
+        multi_task: bool = False,
+        **kwargs,
+    ):
+        info_dict = info_factory(
+            total_episodes=total_episodes, total_frames=total_frames, total_tasks=total_tasks
+        )
+        task_dicts = tasks_factory(total_tasks)
+        episode_dicts = episodes_factory(
+            total_episodes=total_episodes,
+            total_frames=total_frames,
+            task_dicts=task_dicts,
+            multi_task=multi_task,
+        )
+        hf_dataset = hf_dataset_factory(episode_dicts=episode_dicts, task_dicts=task_dicts)
+        return lerobot_dataset_factory(
+            root=root,
+            info_dict=info_dict,
+            task_dicts=task_dicts,
+            episode_dicts=episode_dicts,
+            hf_ds=hf_dataset,
+            **kwargs,
+        )
+
+    return _create_lerobot_dataset_total_episodes

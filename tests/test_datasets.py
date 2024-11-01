@@ -16,6 +16,7 @@
 import json
 import logging
 from copy import deepcopy
+from itertools import chain
 from pathlib import Path
 
 import einops
@@ -29,9 +30,10 @@ import lerobot
 from lerobot.common.datasets.compute_stats import (
     aggregate_stats,
     compute_stats,
+    get_stats_einops_patterns,
 )
 from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
 from lerobot.common.datasets.utils import (
     create_branch,
     flatten_dict,
@@ -39,7 +41,7 @@ from lerobot.common.datasets.utils import (
     unflatten_dict,
 )
 from lerobot.common.utils.utils import init_hydra_config, seeded_context
-from tests.fixtures.defaults import DUMMY_REPO_ID
+from tests.fixtures.defaults import DEFAULT_FPS, DUMMY_REPO_ID, DUMMY_ROBOT_TYPE
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, make_robot
 
 
@@ -67,6 +69,34 @@ def test_same_attributes_defined(dataset_create, dataset_init):
     create_attr = set(vars(dataset_create).keys())
 
     assert init_attr == create_attr, "Attribute sets do not match between __init__ and .create()"
+
+
+def test_dataset_initialization(lerobot_dataset_from_episodes_factory, tmp_path):
+    total_episodes = 10
+    total_frames = 400
+    dataset = lerobot_dataset_from_episodes_factory(
+        root=tmp_path, total_episodes=total_episodes, total_frames=total_frames
+    )
+
+    assert dataset.repo_id == DUMMY_REPO_ID
+    assert dataset.num_episodes == total_episodes
+    assert dataset.num_samples == total_frames
+    assert dataset.info["fps"] == DEFAULT_FPS
+    assert dataset.info["robot_type"] == DUMMY_ROBOT_TYPE
+
+
+def test_dataset_length(dataset_init):
+    dataset = dataset_init
+    assert len(dataset) == 3  # Number of frames in the episode
+
+
+def test_dataset_item(dataset_init):
+    dataset = dataset_init
+    item = dataset[0]
+    assert item["episode_index"] == 0
+    assert item["frame_index"] == 0
+    assert item["state"].tolist() == [1, 2, 3]
+    assert item["action"].tolist() == [0.1, 0.2]
 
 
 @pytest.mark.skip("TODO after v2 migration / removing hydra")
@@ -141,97 +171,99 @@ def test_factory(env_name, repo_id, policy_name):
             assert key in item, f"{key}"
 
 
-# # TODO(alexander-soare): If you're hunting for savings on testing time, this takes about 5 seconds.
-# def test_multilerobotdataset_frames():
-#     """Check that all dataset frames are incorporated."""
-#     # Note: use the image variants of the dataset to make the test approx 3x faster.
-#     # Note: We really do need three repo_ids here as at some point this caught an issue with the chaining
-#     # logic that wouldn't be caught with two repo IDs.
-#     repo_ids = [
-#         "lerobot/aloha_sim_insertion_human_image",
-#         "lerobot/aloha_sim_transfer_cube_human_image",
-#         "lerobot/aloha_sim_insertion_scripted_image",
-#     ]
-#     sub_datasets = [LeRobotDataset(repo_id) for repo_id in repo_ids]
-#     dataset = MultiLeRobotDataset(repo_ids)
-#     assert len(dataset) == sum(len(d) for d in sub_datasets)
-#     assert dataset.num_samples == sum(d.num_samples for d in sub_datasets)
-#     assert dataset.num_episodes == sum(d.num_episodes for d in sub_datasets)
+# TODO(alexander-soare): If you're hunting for savings on testing time, this takes about 5 seconds.
+@pytest.mark.skip("TODO after v2 migration / removing hydra")
+def test_multilerobotdataset_frames():
+    """Check that all dataset frames are incorporated."""
+    # Note: use the image variants of the dataset to make the test approx 3x faster.
+    # Note: We really do need three repo_ids here as at some point this caught an issue with the chaining
+    # logic that wouldn't be caught with two repo IDs.
+    repo_ids = [
+        "lerobot/aloha_sim_insertion_human_image",
+        "lerobot/aloha_sim_transfer_cube_human_image",
+        "lerobot/aloha_sim_insertion_scripted_image",
+    ]
+    sub_datasets = [LeRobotDataset(repo_id) for repo_id in repo_ids]
+    dataset = MultiLeRobotDataset(repo_ids)
+    assert len(dataset) == sum(len(d) for d in sub_datasets)
+    assert dataset.num_samples == sum(d.num_samples for d in sub_datasets)
+    assert dataset.num_episodes == sum(d.num_episodes for d in sub_datasets)
 
-#     # Run through all items of the LeRobotDatasets in parallel with the items of the MultiLerobotDataset and
-#     # check they match.
-#     expected_dataset_indices = []
-#     for i, sub_dataset in enumerate(sub_datasets):
-#         expected_dataset_indices.extend([i] * len(sub_dataset))
+    # Run through all items of the LeRobotDatasets in parallel with the items of the MultiLerobotDataset and
+    # check they match.
+    expected_dataset_indices = []
+    for i, sub_dataset in enumerate(sub_datasets):
+        expected_dataset_indices.extend([i] * len(sub_dataset))
 
-#     for expected_dataset_index, sub_dataset_item, dataset_item in zip(
-#         expected_dataset_indices, chain(*sub_datasets), dataset, strict=True
-#     ):
-#         dataset_index = dataset_item.pop("dataset_index")
-#         assert dataset_index == expected_dataset_index
-#         assert sub_dataset_item.keys() == dataset_item.keys()
-#         for k in sub_dataset_item:
-#             assert torch.equal(sub_dataset_item[k], dataset_item[k])
+    for expected_dataset_index, sub_dataset_item, dataset_item in zip(
+        expected_dataset_indices, chain(*sub_datasets), dataset, strict=True
+    ):
+        dataset_index = dataset_item.pop("dataset_index")
+        assert dataset_index == expected_dataset_index
+        assert sub_dataset_item.keys() == dataset_item.keys()
+        for k in sub_dataset_item:
+            assert torch.equal(sub_dataset_item[k], dataset_item[k])
 
 
 # TODO(aliberts, rcadene): Refactor and move this to a tests/test_compute_stats.py
-# def test_compute_stats_on_xarm():
-#     """Check that the statistics are computed correctly according to the stats_patterns property.
+@pytest.mark.skip("TODO after v2 migration / removing hydra")
+def test_compute_stats_on_xarm():
+    """Check that the statistics are computed correctly according to the stats_patterns property.
 
-#     We compare with taking a straight min, mean, max, std of all the data in one pass (which we can do
-#     because we are working with a small dataset).
-#     """
-#     dataset = LeRobotDataset("lerobot/xarm_lift_medium")
+    We compare with taking a straight min, mean, max, std of all the data in one pass (which we can do
+    because we are working with a small dataset).
+    """
+    dataset = LeRobotDataset("lerobot/xarm_lift_medium")
 
-#     # reduce size of dataset sample on which stats compute is tested to 10 frames
-#     dataset.hf_dataset = dataset.hf_dataset.select(range(10))
+    # reduce size of dataset sample on which stats compute is tested to 10 frames
+    dataset.hf_dataset = dataset.hf_dataset.select(range(10))
 
-#     # Note: we set the batch size to be smaller than the whole dataset to make sure we are testing batched
-#     # computation of the statistics. While doing this, we also make sure it works when we don't divide the
-#     # dataset into even batches.
-#     computed_stats = compute_stats(dataset, batch_size=int(len(dataset) * 0.25), num_workers=0)
+    # Note: we set the batch size to be smaller than the whole dataset to make sure we are testing batched
+    # computation of the statistics. While doing this, we also make sure it works when we don't divide the
+    # dataset into even batches.
+    computed_stats = compute_stats(dataset, batch_size=int(len(dataset) * 0.25), num_workers=0)
 
-#     # get einops patterns to aggregate batches and compute statistics
-#     stats_patterns = get_stats_einops_patterns(dataset)
+    # get einops patterns to aggregate batches and compute statistics
+    stats_patterns = get_stats_einops_patterns(dataset)
 
-#     # get all frames from the dataset in the same dtype and range as during compute_stats
-#     dataloader = torch.utils.data.DataLoader(
-#         dataset,
-#         num_workers=0,
-#         batch_size=len(dataset),
-#         shuffle=False,
-#     )
-#     full_batch = next(iter(dataloader))
+    # get all frames from the dataset in the same dtype and range as during compute_stats
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        num_workers=0,
+        batch_size=len(dataset),
+        shuffle=False,
+    )
+    full_batch = next(iter(dataloader))
 
-#     # compute stats based on all frames from the dataset without any batching
-#     expected_stats = {}
-#     for k, pattern in stats_patterns.items():
-#         full_batch[k] = full_batch[k].float()
-#         expected_stats[k] = {}
-#         expected_stats[k]["mean"] = einops.reduce(full_batch[k], pattern, "mean")
-#         expected_stats[k]["std"] = torch.sqrt(
-#             einops.reduce((full_batch[k] - expected_stats[k]["mean"]) ** 2, pattern, "mean")
-#         )
-#         expected_stats[k]["min"] = einops.reduce(full_batch[k], pattern, "min")
-#         expected_stats[k]["max"] = einops.reduce(full_batch[k], pattern, "max")
+    # compute stats based on all frames from the dataset without any batching
+    expected_stats = {}
+    for k, pattern in stats_patterns.items():
+        full_batch[k] = full_batch[k].float()
+        expected_stats[k] = {}
+        expected_stats[k]["mean"] = einops.reduce(full_batch[k], pattern, "mean")
+        expected_stats[k]["std"] = torch.sqrt(
+            einops.reduce((full_batch[k] - expected_stats[k]["mean"]) ** 2, pattern, "mean")
+        )
+        expected_stats[k]["min"] = einops.reduce(full_batch[k], pattern, "min")
+        expected_stats[k]["max"] = einops.reduce(full_batch[k], pattern, "max")
 
-#     # test computed stats match expected stats
-#     for k in stats_patterns:
-#         assert torch.allclose(computed_stats[k]["mean"], expected_stats[k]["mean"])
-#         assert torch.allclose(computed_stats[k]["std"], expected_stats[k]["std"])
-#         assert torch.allclose(computed_stats[k]["min"], expected_stats[k]["min"])
-#         assert torch.allclose(computed_stats[k]["max"], expected_stats[k]["max"])
+    # test computed stats match expected stats
+    for k in stats_patterns:
+        assert torch.allclose(computed_stats[k]["mean"], expected_stats[k]["mean"])
+        assert torch.allclose(computed_stats[k]["std"], expected_stats[k]["std"])
+        assert torch.allclose(computed_stats[k]["min"], expected_stats[k]["min"])
+        assert torch.allclose(computed_stats[k]["max"], expected_stats[k]["max"])
 
-#     # load stats used during training which are expected to match the ones returned by computed_stats
-#     loaded_stats = dataset.stats  # noqa: F841
+    # load stats used during training which are expected to match the ones returned by computed_stats
+    loaded_stats = dataset.stats  # noqa: F841
 
-#     # TODO(rcadene): we can't test this because expected_stats is computed on a subset
-#     # # test loaded stats match expected stats
-#     # for k in stats_patterns:
-#     #     assert torch.allclose(loaded_stats[k]["mean"], expected_stats[k]["mean"])
-#     #     assert torch.allclose(loaded_stats[k]["std"], expected_stats[k]["std"])
-#     #     assert torch.allclose(loaded_stats[k]["min"], expected_stats[k]["min"])
-#     #     assert torch.allclose(loaded_stats[k]["max"], expected_stats[k]["max"])
+    # TODO(rcadene): we can't test this because expected_stats is computed on a subset
+    # # test loaded stats match expected stats
+    # for k in stats_patterns:
+    #     assert torch.allclose(loaded_stats[k]["mean"], expected_stats[k]["mean"])
+    #     assert torch.allclose(loaded_stats[k]["std"], expected_stats[k]["std"])
+    #     assert torch.allclose(loaded_stats[k]["min"], expected_stats[k]["min"])
+    #     assert torch.allclose(loaded_stats[k]["max"], expected_stats[k]["max"])
 
 
 def test_flatten_unflatten_dict():
@@ -269,6 +301,7 @@ def test_flatten_unflatten_dict():
         # "lerobot/cmu_stretch",
     ],
 )
+
 # TODO(rcadene, aliberts): all these tests fail locally on Mac M1, but not on Linux
 def test_backward_compatibility(repo_id):
     """The artifacts for this test have been generated by `tests/scripts/save_dataset_to_safetensors.py`."""
