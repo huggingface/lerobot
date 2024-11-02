@@ -590,7 +590,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 img_path.parent.mkdir(parents=True, exist_ok=True)
 
             self.image_writer.save_image(
-                image_array=frame[cam_key],
+                image=frame[cam_key],
                 fpath=img_path,
             )
 

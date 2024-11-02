@@ -59,7 +59,7 @@ def img_array_factory():
 def img_factory(img_array_factory):
     def _create_img(width=100, height=100) -> PIL.Image.Image:
         img_array = img_array_factory(width=width, height=height)
-        return PIL.Image.Image.fromarray(img_array)
+        return PIL.Image.fromarray(img_array)
 
     return _create_img
 
