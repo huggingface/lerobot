@@ -162,20 +162,24 @@ def test_check_timestamps_sync_single_timestamp():
     assert result is True
 
 
-# TODO(aliberts): change behavior of hf_transform_to_torch so that it can work with empty dataset
-# def test_check_timestamps_sync_empty_dataset():
-#     fps = 30
-#     tolerance_s = 1e-4
-#     empty_hf_dataset = Dataset.from_dict({'timestamp': [], 'episode_index': []})
-#     empty_hf_dataset.set_transform(hf_transform_to_torch)
-#     episode_data_index = {'to': torch.tensor([], dtype=torch.int64), 'from': torch.tensor([], dtype=torch.int64)}
-#     result = check_timestamps_sync(
-#         hf_dataset=empty_hf_dataset,
-#         episode_data_index=episode_data_index,
-#         fps=fps,
-#         tolerance_s=tolerance_s,
-#     )
-#     assert result is True
+# TODO(aliberts): Change behavior of hf_transform_to_torch so that it can work with empty dataset
+@pytest.mark.skip("TODO: fix")
+def test_check_timestamps_sync_empty_dataset():
+    fps = 30
+    tolerance_s = 1e-4
+    empty_hf_dataset = Dataset.from_dict({"timestamp": [], "episode_index": []})
+    empty_hf_dataset.set_transform(hf_transform_to_torch)
+    episode_data_index = {
+        "to": torch.tensor([], dtype=torch.int64),
+        "from": torch.tensor([], dtype=torch.int64),
+    }
+    result = check_timestamps_sync(
+        hf_dataset=empty_hf_dataset,
+        episode_data_index=episode_data_index,
+        fps=fps,
+        tolerance_s=tolerance_s,
+    )
+    assert result is True
 
 
 def test_check_delta_timestamps_valid(valid_delta_timestamps_factory):
