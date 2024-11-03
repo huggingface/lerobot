@@ -136,10 +136,10 @@ def write_episode_data_csv(output_dir, file_name, episode_index, dataset):
     # init header of csv with state and action names
     header = ["timestamp"]
     if has_state:
-        dim_state = dataset.shapes["observation.state"]
+        dim_state = dataset.meta.shapes["observation.state"]
         header += [f"state_{i}" for i in range(dim_state)]
     if has_action:
-        dim_action = dataset.shapes["action"]
+        dim_action = dataset.meta.shapes["action"]
         header += [f"action_{i}" for i in range(dim_action)]
 
     columns = ["timestamp"]
