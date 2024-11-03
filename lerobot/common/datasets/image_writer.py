@@ -80,6 +80,7 @@ def worker_process(queue: queue.Queue, num_threads: int):
     threads = []
     for _ in range(num_threads):
         t = threading.Thread(target=worker_thread_process, args=(queue,))
+        t.daemon = True
         t.start()
         threads.append(t)
     for t in threads:
@@ -129,6 +130,7 @@ class ImageWriter:
             self.queue = multiprocessing.JoinableQueue()
             for _ in range(self.num_processes):
                 p = multiprocessing.Process(target=worker_process, args=(self.queue, self.num_threads))
+                p.daemon = True
                 p.start()
                 self.processes.append(p)
 
