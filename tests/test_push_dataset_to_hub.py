@@ -250,6 +250,7 @@ def test_push_dataset_to_hub_out_dir_force_override_false(tmpdir):
         )
 
 
+@pytest.mark.skip("TODO after v2 migration / removing hydra")
 @pytest.mark.parametrize(
     "required_packages, raw_format, repo_id, make_test_data",
     [

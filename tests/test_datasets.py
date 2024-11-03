@@ -33,7 +33,11 @@ from lerobot.common.datasets.compute_stats import (
     get_stats_einops_patterns,
 )
 from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import (
+    LeRobotDataset,
+    LeRobotDatasetMetadata,
+    MultiLeRobotDataset,
+)
 from lerobot.common.datasets.utils import (
     create_branch,
     flatten_dict,
@@ -53,14 +57,17 @@ def test_same_attributes_defined(lerobot_dataset_factory, tmp_path):
     # Instantiate both ways
     robot = make_robot("koch", mock=True)
     root_create = tmp_path / "create"
-    dataset_create = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=30, robot=robot, root=root_create)
+    metadata_create = LeRobotDatasetMetadata.create(
+        repo_id=DUMMY_REPO_ID, fps=30, robot=robot, root=root_create
+    )
+    dataset_create = LeRobotDataset.create(metadata_create)
 
     root_init = tmp_path / "init"
     dataset_init = lerobot_dataset_factory(root=root_init)
 
     # Access the '_hub_version' cached_property in both instances to force its creation
-    _ = dataset_init._hub_version
-    _ = dataset_create._hub_version
+    _ = dataset_init.meta._hub_version
+    _ = dataset_create.meta._hub_version
 
     init_attr = set(vars(dataset_init).keys())
     create_attr = set(vars(dataset_create).keys())
@@ -78,8 +85,8 @@ def test_dataset_initialization(lerobot_dataset_from_episodes_factory, tmp_path)
     dataset = lerobot_dataset_from_episodes_factory(root=tmp_path, **kwargs)
 
     assert dataset.repo_id == kwargs["repo_id"]
-    assert dataset.total_episodes == kwargs["total_episodes"]
-    assert dataset.total_frames == kwargs["total_frames"]
+    assert dataset.meta.total_episodes == kwargs["total_episodes"]
+    assert dataset.meta.total_frames == kwargs["total_frames"]
     assert dataset.episodes == kwargs["episodes"]
     assert dataset.num_episodes == len(kwargs["episodes"])
     assert dataset.num_frames == len(dataset)
@@ -118,7 +125,7 @@ def test_factory(env_name, repo_id, policy_name):
     )
     dataset = make_dataset(cfg)
     delta_timestamps = dataset.delta_timestamps
-    camera_keys = dataset.camera_keys
+    camera_keys = dataset.meta.camera_keys
 
     item = dataset[0]
 
@@ -251,7 +258,7 @@ def test_compute_stats_on_xarm():
         assert torch.allclose(computed_stats[k]["max"], expected_stats[k]["max"])
 
     # load stats used during training which are expected to match the ones returned by computed_stats
-    loaded_stats = dataset.stats  # noqa: F841
+    loaded_stats = dataset.meta.stats  # noqa: F841
 
     # TODO(rcadene): we can't test this because expected_stats is computed on a subset
     # # test loaded stats match expected stats

@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# TODO(aliberts): Mute logging for these tests
+
 import io
 import subprocess
 import sys
@@ -29,6 +29,7 @@ def _find_and_replace(text: str, finds_and_replaces: list[tuple[str, str]]) -> s
     return text
 
 
+# TODO(aliberts): Remove usage of subprocess calls and patch code with fixtures
 def _run_script(path):
     subprocess.run([sys.executable, path], check=True)
 

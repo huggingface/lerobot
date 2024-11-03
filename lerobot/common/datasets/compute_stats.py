@@ -42,7 +42,7 @@ def get_stats_einops_patterns(dataset, num_workers=0):
         assert batch[key].dtype != torch.float64
 
         # if isinstance(feats_type, (VideoFrame, Image)):
-        if key in dataset.camera_keys:
+        if key in dataset.meta.camera_keys:
             # sanity check that images are channel first
             _, c, h, w = batch[key].shape
             assert c < h and c < w, f"expect channel first images, but instead {batch[key].shape}"

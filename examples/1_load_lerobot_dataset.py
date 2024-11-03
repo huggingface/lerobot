@@ -13,6 +13,7 @@ Features included in this script:
 The script ends with examples of how to batch process data using PyTorch's DataLoader.
 """
 
+# TODO(aliberts, rcadene): Update this script with the new v2 api
 from pathlib import Path
 from pprint import pprint
 
@@ -31,7 +32,7 @@ repo_id = "lerobot/pusht"
 # You can easily load a dataset from a Hugging Face repository
 dataset = LeRobotDataset(repo_id)
 
-# LeRobotDataset is actually a thin wrapper around an underlying Hugging Face dataset
+# LeRobotDataset actually wraps an underlying Hugging Face dataset
 # (see https://huggingface.co/docs/datasets/index for more information).
 print(dataset)
 print(dataset.hf_dataset)
@@ -39,7 +40,7 @@ print(dataset.hf_dataset)
 # And provides additional utilities for robotics and compatibility with Pytorch
 print(f"\naverage number of frames per episode: {dataset.num_frames / dataset.num_episodes:.3f}")
 print(f"frames per second used during data collection: {dataset.fps=}")
-print(f"keys to access images from cameras: {dataset.camera_keys=}\n")
+print(f"keys to access images from cameras: {dataset.meta.camera_keys=}\n")
 
 # Access frame indexes associated to first episode
 episode_index = 0
@@ -60,14 +61,15 @@ frames = [frame.permute((1, 2, 0)).numpy() for frame in frames]
 Path("outputs/examples/1_load_lerobot_dataset").mkdir(parents=True, exist_ok=True)
 imageio.mimsave("outputs/examples/1_load_lerobot_dataset/episode_0.mp4", frames, fps=dataset.fps)
 
+
 # For many machine learning applications we need to load the history of past observations or trajectories of
 # future actions. Our datasets can load previous and future frames for each key/modality, using timestamps
 # differences with the current loaded frame. For instance:
 delta_timestamps = {
     # loads 4 images: 1 second before current frame, 500 ms before, 200 ms before, and current frame
     "observation.image": [-1, -0.5, -0.20, 0],
-    # loads 8 state vectors: 1.5 seconds before, 1 second before, ... 20 ms, 10 ms, and current frame
-    "observation.state": [-1.5, -1, -0.5, -0.20, -0.10, -0.02, -0.01, 0],
+    # loads 8 state vectors: 1.5 seconds before, 1 second before, ... 200 ms, 100 ms, and current frame
+    "observation.state": [-1.5, -1, -0.5, -0.20, -0.10, 0],
     # loads 64 action vectors: current frame, 1 frame in the future, 2 frames, ... 63 frames in the future
     "action": [t / dataset.fps for t in range(64)],
 }

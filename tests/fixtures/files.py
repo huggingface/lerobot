@@ -36,11 +36,11 @@ def stats_path(stats):
 
 @pytest.fixture(scope="session")
 def tasks_path(tasks):
-    def _create_tasks_jsonl_file(dir: Path, tasks_dicts: list = tasks) -> Path:
+    def _create_tasks_jsonl_file(dir: Path, task_dicts: list = tasks) -> Path:
         fpath = dir / TASKS_PATH
         fpath.parent.mkdir(parents=True, exist_ok=True)
         with jsonlines.open(fpath, "w") as writer:
-            writer.write_all(tasks_dicts)
+            writer.write_all(task_dicts)
         return fpath
 
     return _create_tasks_jsonl_file

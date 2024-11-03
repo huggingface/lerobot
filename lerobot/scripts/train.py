@@ -328,7 +328,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     logging.info("make_policy")
     policy = make_policy(
         hydra_cfg=cfg,
-        dataset_stats=offline_dataset.stats if not cfg.resume else None,
+        dataset_stats=offline_dataset.meta.stats if not cfg.resume else None,
         pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
     )
     assert isinstance(policy, nn.Module)

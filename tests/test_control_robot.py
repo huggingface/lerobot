@@ -155,7 +155,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         display_cameras=False,
         play_sounds=False,
     )
-    assert dataset.total_episodes == 2
+    assert dataset.meta.total_episodes == 2
     assert len(dataset) == 2
 
     replay(robot, episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False)
@@ -193,7 +193,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         overrides=overrides,
     )
 
-    policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.stats)
+    policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.meta.stats)
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
     out_dir = tmpdir / "logger"
     logger = Logger(cfg, out_dir, wandb_job_name="debug")

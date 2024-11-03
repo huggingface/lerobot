@@ -153,7 +153,7 @@ def visualize_dataset(
             rr.set_time_seconds("timestamp", batch["timestamp"][i].item())
 
             # display each camera image
-            for key in dataset.camera_keys:
+            for key in dataset.meta.camera_keys:
                 # TODO(rcadene): add `.compress()`? is it lossless?
                 rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
 

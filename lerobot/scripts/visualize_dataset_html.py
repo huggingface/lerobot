@@ -97,8 +97,8 @@ def run_server(
             "num_episodes": dataset.num_episodes,
             "fps": dataset.fps,
         }
-        video_paths = [dataset.get_video_file_path(episode_id, key) for key in dataset.video_keys]
-        tasks = dataset.episode_dicts[episode_id]["tasks"]
+        video_paths = [dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys]
+        tasks = dataset.meta.episodes[episode_id]["tasks"]
         videos_info = [
             {"url": url_for("static", filename=video_path), "filename": video_path.name}
             for video_path in video_paths
@@ -170,7 +170,8 @@ def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]
     # get first frame of episode (hack to get video_path of the episode)
     first_frame_idx = dataset.episode_data_index["from"][ep_index].item()
     return [
-        dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"] for key in dataset.video_keys
+        dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"]
+        for key in dataset.meta.video_keys
     ]
 
 
@@ -202,8 +203,8 @@ def visualize_dataset_html(
 
     dataset = LeRobotDataset(repo_id, root=root)
 
-    if len(dataset.image_keys) > 0:
-        raise NotImplementedError(f"Image keys ({dataset.image_keys=}) are currently not supported.")
+    if len(dataset.meta.image_keys) > 0:
+        raise NotImplementedError(f"Image keys ({dataset.meta.image_keys=}) are currently not supported.")
 
     if output_dir is None:
         output_dir = f"outputs/visualize_dataset_html/{repo_id}"

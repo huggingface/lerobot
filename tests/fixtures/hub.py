@@ -26,7 +26,7 @@ def mock_snapshot_download_factory(
     """
 
     def _mock_snapshot_download_func(
-        info_dict=info, stats_dict=stats, tasks_dicts=tasks, episodes_dicts=episodes, hf_ds=hf_dataset
+        info_dict=info, stats_dict=stats, task_dicts=tasks, episode_dicts=episodes, hf_ds=hf_dataset
     ):
         def _extract_episode_index_from_path(fpath: str) -> int:
             path = Path(fpath)
@@ -53,7 +53,7 @@ def mock_snapshot_download_factory(
             all_files.extend(meta_files)
 
             data_files = []
-            for episode_dict in episodes_dicts:
+            for episode_dict in episode_dicts:
                 ep_idx = episode_dict["episode_index"]
                 ep_chunk = ep_idx // info_dict["chunks_size"]
                 data_path = info_dict["data_path"].format(episode_chunk=ep_chunk, episode_index=ep_idx)
@@ -75,9 +75,9 @@ def mock_snapshot_download_factory(
                 elif rel_path == STATS_PATH:
                     _ = stats_path(local_dir, stats_dict)
                 elif rel_path == TASKS_PATH:
-                    _ = tasks_path(local_dir, tasks_dicts)
+                    _ = tasks_path(local_dir, task_dicts)
                 elif rel_path == EPISODES_PATH:
-                    _ = episode_path(local_dir, episodes_dicts)
+                    _ = episode_path(local_dir, episode_dicts)
                 else:
                     pass
             return str(local_dir)
