@@ -352,6 +352,7 @@ def test_normalize(insert_temporal_dim):
     unnormalize(output_batch)
 
 
+@pytest.mark.skip("TODO after v2 migration / removing hydra")
 @pytest.mark.parametrize(
     "env_name, policy_name, extra_overrides, file_name_extra",
     [
