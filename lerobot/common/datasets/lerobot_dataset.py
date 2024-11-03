@@ -27,7 +27,7 @@ import PIL.Image
 import torch
 import torch.utils
 from datasets import load_dataset
-from huggingface_hub import snapshot_download, upload_folder
+from huggingface_hub import create_repo, snapshot_download, upload_folder
 
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_stats
 from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
@@ -437,7 +437,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             check_delta_timestamps(self.delta_timestamps, self.fps, self.tolerance_s)
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
-    def push_to_hub(self, push_videos: bool = True) -> None:
+    def push_to_hub(self, push_videos: bool = True, private: bool = False) -> None:
         if not self.consolidated:
             raise RuntimeError(
                 "You are trying to upload to the hub a LeRobotDataset that has not been consolidated yet."
@@ -446,6 +446,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ignore_patterns = ["images/"]
         if not push_videos:
             ignore_patterns.append("videos/")
+
+        create_repo(
+            repo_id=self.repo_id,
+            private=private,
+            repo_type="dataset",
+            exist_ok=True,
+        )
 
         upload_folder(
             repo_id=self.repo_id,
