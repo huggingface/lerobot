@@ -266,6 +266,8 @@ class LeRobotDatasetMetadata:
         obj.repo_id = repo_id
         obj.root = root if root is not None else LEROBOT_HOME / repo_id
 
+        obj.root.mkdir(parents=True, exist_ok=False)
+
         if robot is not None:
             features = get_features_from_robot(robot, use_videos)
             robot_type = robot.robot_type
@@ -753,7 +755,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Reset the buffer
         self.episode_buffer = self._create_episode_buffer()
 
-    def start_image_writer(self, num_processes: int = 0, num_threads: int = 1) -> None:
+    def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
         if isinstance(self.image_writer, AsyncImageWriter):
             logging.warning(
                 "You are starting a new AsyncImageWriter that is replacing an already exising one in the dataset."
@@ -844,7 +846,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         use_videos: bool = True,
         tolerance_s: float = 1e-4,
         image_writer_processes: int = 0,
-        image_writer_threads: int = 0,
+        image_writer_threads: int = 4,
         video_backend: str | None = None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
@@ -864,8 +866,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.tolerance_s = tolerance_s
         obj.image_writer = None
 
-        if image_writer_processes or image_writer_threads:
-            obj.start_image_writer(image_writer_processes, image_writer_threads)
+        obj.start_image_writer(image_writer_processes, image_writer_threads)
 
         # TODO(aliberts, rcadene, alexander-soare): Merge this with OnlineBuffer/DataBuffer
         obj.episode_buffer = obj._create_episode_buffer()

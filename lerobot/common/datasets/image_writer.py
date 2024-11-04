@@ -94,6 +94,7 @@ class AsyncImageWriter:
     When `num_processes=0`, it creates a threads pool of size `num_threads`.
     When `num_processes>0`, it creates processes pool of size `num_processes`, where each subprocess starts
     their own threads pool of size `num_threads`.
+    When `num_processes=0` and `num_threads=0`, it writes images in the main process which is slower but easier to debug.
 
     The optimal number of processes and threads depends on your computer capabilities.
     We advise to use 4 threads per camera with 0 processes. If the fps is not stable, try to increase or lower
@@ -108,10 +109,10 @@ class AsyncImageWriter:
         self.processes = []
         self._stopped = False
 
-        if num_threads <= 0 and num_processes <= 0:
-            raise ValueError("Number of threads and processes must be greater than zero.")
-
-        if self.num_processes == 0:
+        if self.num_processes == 0 and self.num_threads == 0:
+            # Writes in main process, easier to debug
+            pass
+        elif self.num_processes == 0:
             # Use threading
             self.queue = queue.Queue()
             for _ in range(self.num_threads):
@@ -132,12 +133,22 @@ class AsyncImageWriter:
         if isinstance(image, torch.Tensor):
             # Convert tensor to numpy array to minimize main process time
             image = image.cpu().numpy()
-        self.queue.put((image, fpath))
+
+        if self.num_processes == 0 and self.num_threads == 0:
+            write_image(image, fpath)
+        else:
+            self.queue.put((image, fpath))
 
     def wait_until_done(self):
+        if self.num_processes == 0 and self.num_threads == 0:
+            return
+
         self.queue.join()
 
     def stop(self):
+        if self.num_processes == 0 and self.num_threads == 0:
+            return
+
         if self._stopped:
             return
 
