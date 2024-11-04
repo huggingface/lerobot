@@ -123,7 +123,7 @@ class ACTPolicy(
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
-            actions, eoe_preds = self.model(batch) # TODO: do we need the self.model(batch)[0] here? Or on the line below?
+            actions, eoe_preds, _ = self.model(batch) # TODO: do we need the self.model(batch)[0] here? Or on the line below?
             actions = actions[:, :self.config.n_action_steps]
             eoe_preds = eoe_preds[:, :self.config.n_action_steps]
 
