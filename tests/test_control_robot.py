@@ -275,22 +275,25 @@ def test_resume_record(tmpdir, request, robot_type, mock):
     root = Path(tmpdir) / "data" / repo_id
     single_task = "Do something."
 
-    dataset = record(
-        robot,
-        root,
-        repo_id,
-        single_task,
-        fps=1,
-        warmup_time_s=0,
-        episode_time_s=1,
-        num_episodes=1,
-        push_to_hub=False,
-        video=False,
-        display_cameras=False,
-        play_sounds=False,
-        run_compute_stats=False,
-    )
-    assert len(dataset) == 1, "`dataset` should contain only 1 frame"
+    record_kwargs = {
+        "robot": robot,
+        "root": root,
+        "repo_id": repo_id,
+        "single_task": single_task,
+        "fps": 1,
+        "warmup_time_s": 0,
+        "episode_time_s": 1,
+        "push_to_hub": False,
+        "video": False,
+        "display_cameras": False,
+        "play_sounds": False,
+        "run_compute_stats": False,
+        "local_files_only": True,
+        "num_episodes": 1,
+    }
+
+    dataset = record(**record_kwargs)
+    assert len(dataset) == 1, f"`dataset` should contain 1 frame, not {len(dataset)}"
 
     # init_dataset_return_value = {}
 
@@ -300,22 +303,13 @@ def test_resume_record(tmpdir, request, robot_type, mock):
     #     return init_dataset_return_value
 
     # with patch("lerobot.scripts.control_robot.init_dataset", wraps=wrapped_init_dataset):
-    dataset = record(
-        robot,
-        root,
-        repo_id,
-        single_task,
-        fps=1,
-        warmup_time_s=0,
-        episode_time_s=1,
-        num_episodes=2,
-        push_to_hub=False,
-        video=False,
-        display_cameras=False,
-        play_sounds=False,
-        run_compute_stats=False,
-    )
-    assert len(dataset) == 2, "`dataset` should contain only 1 frame"
+
+    with pytest.raises(FileExistsError):
+        # Dataset already exists, but resume=False by default
+        record(**record_kwargs)
+
+    dataset = record(**record_kwargs, resume=True)
+    assert len(dataset) == 2, f"`dataset` should contain 2 frames, not {len(dataset)}"
     # assert (
     #     init_dataset_return_value["num_episodes"] == 2
     # ), "`init_dataset` should load the previous episode"

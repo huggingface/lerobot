@@ -101,7 +101,7 @@ class AsyncImageWriter:
     the number of threads. If it is still not stable, try to use 1 subprocess, or more.
     """
 
-    def __init__(self, num_processes: int = 0, num_threads: int = 1):
+    def __init__(self, num_processes: int = 0, num_threads: int = 4):
         self.num_processes = num_processes
         self.num_threads = num_threads
         self.queue = None

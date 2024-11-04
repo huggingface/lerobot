@@ -412,11 +412,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.video_backend = video_backend if video_backend is not None else "pyav"
         self.delta_indices = None
         self.local_files_only = local_files_only
-        self.consolidated = True
 
         # Unused attributes
         self.image_writer = None
-        self.episode_buffer = {}
 
         self.root.mkdir(exist_ok=True, parents=True)
 
@@ -438,6 +436,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.delta_timestamps is not None:
             check_delta_timestamps(self.delta_timestamps, self.fps, self.tolerance_s)
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
+
+        # Available stats implies all videos have been encoded and dataset is iterable
+        self.consolidated = self.meta.stats is not None
+
+        # Create an empty buffer to extend the dataset if required
+        self.episode_buffer = self._create_episode_buffer()
 
     def push_to_hub(self, push_videos: bool = True, private: bool = False) -> None:
         if not self.consolidated:

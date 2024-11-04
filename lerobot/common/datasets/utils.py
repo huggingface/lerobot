@@ -139,6 +139,8 @@ def load_info(local_dir: Path) -> dict:
 
 
 def load_stats(local_dir: Path) -> dict:
+    if not (local_dir / STATS_PATH).exists():
+        return None
     stats = load_json(local_dir / STATS_PATH)
     stats = {key: torch.tensor(value) for key, value in flatten_dict(stats).items()}
     return unflatten_dict(stats)

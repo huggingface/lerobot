@@ -17,6 +17,7 @@ from termcolor import colored
 
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.utils import _get_info_from_robot
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
@@ -329,4 +330,28 @@ def sanity_check_dataset_name(repo_id, policy):
     if dataset_name.startswith("eval_") == (policy is None):
         raise ValueError(
             f"Your dataset name begins by 'eval_' ({dataset_name}) but no policy is provided ({policy})."
+        )
+
+
+def sanity_check_dataset_robot_compatibility(dataset, robot, fps, use_videos):
+    robot_type, keys, image_keys, video_keys, shapes, names = _get_info_from_robot(robot, use_videos)
+
+    fields = [
+        ("robot_type", dataset.meta.info["robot_type"], robot_type),
+        ("fps", dataset.meta.info["fps"], fps),
+        ("keys", dataset.meta.info["keys"], keys),
+        ("image_keys", dataset.meta.info["image_keys"], image_keys),
+        ("video_keys", dataset.meta.info["video_keys"], video_keys),
+        ("shapes", dataset.meta.info["shapes"], shapes),
+        ("names", dataset.meta.info["names"], names),
+    ]
+
+    mismatches = []
+    for field, dataset_value, present_value in fields:
+        if dataset_value != present_value:
+            mismatches.append(f"{field}: expected {present_value}, got {dataset_value}")
+
+    if mismatches:
+        raise ValueError(
+            "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
         )
