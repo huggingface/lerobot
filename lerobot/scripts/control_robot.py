@@ -105,7 +105,7 @@ from pathlib import Path
 from typing import List
 
 # from safetensors.torch import load_file, save_file
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.robot_devices.control_utils import (
     control_loop,
     has_method,
@@ -234,15 +234,12 @@ def record(
 
     # Create empty dataset or load existing saved episodes
     sanity_check_dataset_name(repo_id, policy)
-    dataset_metadata = LeRobotDatasetMetadata.create(
+    dataset = LeRobotDataset.create(
         repo_id,
         fps,
         root=root,
         robot=robot,
         use_videos=video,
-    )
-    dataset = LeRobotDataset.create(
-        dataset_metadata,
         image_writer_processes=num_image_writer_processes,
         image_writer_threads=num_image_writer_threads_per_camera,
     )

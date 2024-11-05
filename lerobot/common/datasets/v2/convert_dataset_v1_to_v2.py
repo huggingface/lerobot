@@ -106,6 +106,7 @@ import json
 import math
 import shutil
 import subprocess
+import tempfile
 import warnings
 from pathlib import Path
 
@@ -137,9 +138,8 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import (
     VideoFrame,  # noqa: F401
-    get_image_shapes,
+    get_image_pixel_channels,
     get_video_info,
-    get_video_shapes,
 )
 from lerobot.common.utils.utils import init_hydra_config
 
@@ -202,21 +202,37 @@ def convert_stats_to_json(v1_dir: Path, v2_dir: Path) -> None:
         torch.testing.assert_close(stats_json[key], stats[key])
 
 
-def get_keys(dataset: Dataset) -> dict[str, list]:
-    sequence_keys, image_keys, video_keys = [], [], []
+def get_features_from_hf_dataset(dataset: Dataset, robot_config: dict | None = None) -> dict[str, list]:
+    features = {}
     for key, ft in dataset.features.items():
+        if isinstance(ft, datasets.Value):
+            dtype = ft.dtype
+            shape = (1,)
+            names = None
         if isinstance(ft, datasets.Sequence):
-            sequence_keys.append(key)
+            assert isinstance(ft.feature, datasets.Value)
+            dtype = ft.feature.dtype
+            shape = (ft.length,)
+            names = robot_config["names"][key] if robot_config else [f"motor_{i}" for i in range(ft.length)]
+            assert len(names) == shape[0]
         elif isinstance(ft, datasets.Image):
-            image_keys.append(key)
+            dtype = "image"
+            image = dataset[0][key]  # Assuming first row
+            channels = get_image_pixel_channels(image)
+            shape = (image.width, image.height, channels)
+            names = ["width", "height", "channel"]
         elif ft._type == "VideoFrame":
-            video_keys.append(key)
+            dtype = "video"
+            shape = None  # Add shape later
+            names = ["width", "height", "channel"]
 
-    return {
-        "sequence": sequence_keys,
-        "image": image_keys,
-        "video": video_keys,
-    }
+        features[key] = {
+            "dtype": dtype,
+            "shape": shape,
+            "names": names,
+        }
+
+    return features
 
 
 def add_task_index_by_episodes(dataset: Dataset, tasks_by_episodes: dict) -> tuple[Dataset, list[str]]:
@@ -259,17 +275,15 @@ def add_task_index_from_tasks_col(
 
 def split_parquet_by_episodes(
     dataset: Dataset,
-    keys: dict[str, list],
     total_episodes: int,
     total_chunks: int,
     output_dir: Path,
 ) -> list:
-    table = dataset.remove_columns(keys["video"])._data.table
+    table = dataset.data.table
     episode_lengths = []
     for ep_chunk in range(total_chunks):
         ep_chunk_start = DEFAULT_CHUNK_SIZE * ep_chunk
         ep_chunk_end = min(DEFAULT_CHUNK_SIZE * (ep_chunk + 1), total_episodes)
-
         chunk_dir = "/".join(DEFAULT_PARQUET_PATH.split("/")[:-1]).format(episode_chunk=ep_chunk)
         (output_dir / chunk_dir).mkdir(parents=True, exist_ok=True)
         for ep_idx in range(ep_chunk_start, ep_chunk_end):
@@ -396,25 +410,20 @@ def _get_lfs_untracked_videos(work_dir: Path, video_files: list[str]) -> list[st
 
 
 def get_videos_info(repo_id: str, local_dir: Path, video_keys: list[str], branch: str) -> dict:
-    hub_api = HfApi()
-    videos_info_dict = {"videos_path": DEFAULT_VIDEO_PATH}
-
     # Assumes first episode
     video_files = [
         DEFAULT_VIDEO_PATH.format(episode_chunk=0, video_key=vid_key, episode_index=0)
         for vid_key in video_keys
     ]
+    hub_api = HfApi()
     hub_api.snapshot_download(
         repo_id=repo_id, repo_type="dataset", local_dir=local_dir, revision=branch, allow_patterns=video_files
     )
+    videos_info_dict = {}
     for vid_key, vid_path in zip(video_keys, video_files, strict=True):
         videos_info_dict[vid_key] = get_video_info(local_dir / vid_path)
 
     return videos_info_dict
-
-
-def get_generic_motor_names(sequence_shapes: dict) -> dict:
-    return {key: [f"motor_{i}" for i in range(length)] for key, length in sequence_shapes.items()}
 
 
 def convert_dataset(
@@ -443,7 +452,8 @@ def convert_dataset(
 
     metadata_v1 = load_json(v1x_dir / V1_INFO_PATH)
     dataset = datasets.load_dataset("parquet", data_dir=v1x_dir / "data", split="train")
-    keys = get_keys(dataset)
+    features = get_features_from_hf_dataset(dataset, robot_config)
+    video_keys = [key for key, ft in features.items() if ft["dtype"] == "video"]
 
     if single_task and "language_instruction" in dataset.column_names:
         warnings.warn(
@@ -457,7 +467,7 @@ def convert_dataset(
     episode_indices = sorted(dataset.unique("episode_index"))
     total_episodes = len(episode_indices)
     assert episode_indices == list(range(total_episodes))
-    total_videos = total_episodes * len(keys["video"])
+    total_videos = total_episodes * len(video_keys)
     total_chunks = total_episodes // DEFAULT_CHUNK_SIZE
     if total_episodes % DEFAULT_CHUNK_SIZE != 0:
         total_chunks += 1
@@ -470,7 +480,6 @@ def convert_dataset(
     elif tasks_path:
         tasks_by_episodes = load_json(tasks_path)
         tasks_by_episodes = {int(ep_idx): task for ep_idx, task in tasks_by_episodes.items()}
-        # tasks = list(set(tasks_by_episodes.values()))
         dataset, tasks = add_task_index_by_episodes(dataset, tasks_by_episodes)
         tasks_by_episodes = {ep_idx: [task] for ep_idx, task in tasks_by_episodes.items()}
     elif tasks_col:
@@ -481,55 +490,49 @@ def convert_dataset(
     assert set(tasks) == {task for ep_tasks in tasks_by_episodes.values() for task in ep_tasks}
     tasks = [{"task_index": task_idx, "task": task} for task_idx, task in enumerate(tasks)]
     write_jsonlines(tasks, v20_dir / TASKS_PATH)
-
-    # Shapes
-    sequence_shapes = {key: dataset.features[key].length for key in keys["sequence"]}
-    image_shapes = get_image_shapes(dataset, keys["image"]) if len(keys["image"]) > 0 else {}
+    features["task_index"] = {
+        "dtype": "int64",
+        "shape": (1,),
+        "names": None,
+    }
 
     # Videos
-    if len(keys["video"]) > 0:
+    if video_keys:
         assert metadata_v1.get("video", False)
-        tmp_video_dir = local_dir / "videos" / V20 / repo_id
-        tmp_video_dir.mkdir(parents=True, exist_ok=True)
+        dataset = dataset.remove_columns(video_keys)
         clean_gitattr = Path(
             hub_api.hf_hub_download(
                 repo_id=GITATTRIBUTES_REF, repo_type="dataset", local_dir=local_dir, filename=".gitattributes"
             )
         ).absolute()
-        move_videos(
-            repo_id, keys["video"], total_episodes, total_chunks, tmp_video_dir, clean_gitattr, branch
-        )
-        videos_info = get_videos_info(repo_id, v1x_dir, video_keys=keys["video"], branch=branch)
-        video_shapes = get_video_shapes(videos_info, keys["video"])
-        for img_key in keys["video"]:
-            assert math.isclose(videos_info[img_key]["video.fps"], metadata_v1["fps"], rel_tol=1e-3)
+        with tempfile.TemporaryDirectory() as tmp_video_dir:
+            move_videos(
+                repo_id, video_keys, total_episodes, total_chunks, Path(tmp_video_dir), clean_gitattr, branch
+            )
+        videos_info = get_videos_info(repo_id, v1x_dir, video_keys=video_keys, branch=branch)
+        for key in video_keys:
+            features[key]["shape"] = (
+                videos_info[key].pop("video.width"),
+                videos_info[key].pop("video.height"),
+                videos_info[key].pop("video.channels"),
+            )
+            features[key]["video_info"] = videos_info[key]
+            assert math.isclose(videos_info[key]["video.fps"], metadata_v1["fps"], rel_tol=1e-3)
             if "encoding" in metadata_v1:
-                assert videos_info[img_key]["video.pix_fmt"] == metadata_v1["encoding"]["pix_fmt"]
+                assert videos_info[key]["video.pix_fmt"] == metadata_v1["encoding"]["pix_fmt"]
     else:
         assert metadata_v1.get("video", 0) == 0
         videos_info = None
-        video_shapes = {}
 
     # Split data into 1 parquet file by episode
-    episode_lengths = split_parquet_by_episodes(dataset, keys, total_episodes, total_chunks, v20_dir)
+    episode_lengths = split_parquet_by_episodes(dataset, total_episodes, total_chunks, v20_dir)
 
-    # Names
     if robot_config is not None:
         robot_type = robot_config["robot_type"]
-        names = robot_config["names"]
-        if "observation.effort" in keys["sequence"]:
-            names["observation.effort"] = names["observation.state"]
-        if "observation.velocity" in keys["sequence"]:
-            names["observation.velocity"] = names["observation.state"]
         repo_tags = [robot_type]
     else:
         robot_type = "unknown"
-        names = get_generic_motor_names(sequence_shapes)
         repo_tags = None
-
-    assert set(names) == set(keys["sequence"])
-    for key in sequence_shapes:
-        assert len(names[key]) == sequence_shapes[key]
 
     # Episodes
     episodes = [
@@ -541,7 +544,6 @@ def convert_dataset(
     # Assemble metadata v2.0
     metadata_v2_0 = {
         "codebase_version": V20,
-        "data_path": DEFAULT_PARQUET_PATH,
         "robot_type": robot_type,
         "total_episodes": total_episodes,
         "total_frames": len(dataset),
@@ -551,15 +553,13 @@ def convert_dataset(
         "chunks_size": DEFAULT_CHUNK_SIZE,
         "fps": metadata_v1["fps"],
         "splits": {"train": f"0:{total_episodes}"},
-        "keys": keys["sequence"],
-        "video_keys": keys["video"],
-        "image_keys": keys["image"],
-        "shapes": {**sequence_shapes, **video_shapes, **image_shapes},
-        "names": names,
-        "videos": videos_info,
+        "data_path": DEFAULT_PARQUET_PATH,
+        "video_path": DEFAULT_VIDEO_PATH if video_keys else None,
+        "features": features,
     }
     write_json(metadata_v2_0, v20_dir / INFO_PATH)
     convert_stats_to_json(v1x_dir, v20_dir)
+    card = create_lerobot_dataset_card(tags=repo_tags, info=metadata_v2_0)
 
     with contextlib.suppress(EntryNotFoundError):
         hub_api.delete_folder(repo_id=repo_id, path_in_repo="data", repo_type="dataset", revision=branch)
@@ -585,27 +585,10 @@ def convert_dataset(
         revision=branch,
     )
 
-    card = create_lerobot_dataset_card(tags=repo_tags, info=metadata_v2_0)
     card.push_to_hub(repo_id=repo_id, repo_type="dataset", revision=branch)
 
     if not test_branch:
         create_branch(repo_id=repo_id, branch=V20, repo_type="dataset")
-
-    # TODO:
-    # - [X] Add shapes
-    # - [X] Add keys
-    # - [X] Add paths
-    # - [X] convert stats.json
-    # - [X] Add task.json
-    # - [X] Add names
-    # - [X] Add robot_type
-    # - [X] Add splits
-    # - [X] Push properly to branch v2.0 and delete v1.6 stuff from that branch
-    # - [X] Handle multitask datasets
-    # - [X] Handle hf hub repo limits (add chunks logic)
-    # - [X] Add test-branch
-    # - [X] Use jsonlines for episodes
-    # - [X] Add sanity checks (encoding, shapes)
 
 
 def main():

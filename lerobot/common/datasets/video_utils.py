@@ -25,7 +25,6 @@ from typing import Any, ClassVar
 import pyarrow as pa
 import torch
 import torchvision
-from datasets import Dataset
 from datasets.features.features import register_feature
 from PIL import Image
 
@@ -290,33 +289,6 @@ def get_video_info(video_path: Path | str) -> dict:
     }
 
     return video_info
-
-
-def get_video_shapes(videos_info: dict, video_keys: list) -> dict:
-    video_shapes = {}
-    for img_key in video_keys:
-        channels = get_video_pixel_channels(videos_info[img_key]["video.pix_fmt"])
-        video_shapes[img_key] = {
-            "width": videos_info[img_key]["video.width"],
-            "height": videos_info[img_key]["video.height"],
-            "channels": channels,
-        }
-
-    return video_shapes
-
-
-def get_image_shapes(dataset: Dataset, image_keys: list) -> dict:
-    image_shapes = {}
-    for img_key in image_keys:
-        image = dataset[0][img_key]  # Assuming first row
-        channels = get_image_pixel_channels(image)
-        image_shapes[img_key] = {
-            "width": image.width,
-            "height": image.height,
-            "channels": channels,
-        }
-
-    return image_shapes
 
 
 def get_video_pixel_channels(pix_fmt: str) -> int:
