@@ -22,6 +22,7 @@ from typing import Any
 
 import datasets
 import jsonlines
+import pyarrow.compute as pc
 import torch
 from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, HfApi
@@ -39,6 +40,7 @@ TASKS_PATH = "meta/tasks.jsonl"
 
 DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
 DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
+DEFAULT_IMAGE_PATH = "images/{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png"
 
 DATASET_CARD_TEMPLATE = """
 ---
@@ -222,6 +224,24 @@ def get_hub_safe_version(repo_id: str, version: str, enforce_v2: bool = True) ->
         return version
 
 
+def get_hf_features_from_features(features: dict) -> datasets.Features:
+    hf_features = {}
+    for key, ft in features.items():
+        if ft["dtype"] == "video":
+            continue
+        elif ft["dtype"] == "image":
+            hf_features[key] = datasets.Image()
+        elif ft["shape"] == (1,):
+            hf_features[key] = datasets.Value(dtype=ft["dtype"])
+        else:
+            assert len(ft["shape"]) == 1
+            hf_features[key] = datasets.Sequence(
+                length=ft["shape"][0], feature=datasets.Value(dtype=ft["dtype"])
+            )
+
+    return datasets.Features(hf_features)
+
+
 def get_features_from_robot(robot: Robot, use_videos: bool = True) -> dict:
     camera_ft = {}
     if robot.cameras:
@@ -264,6 +284,31 @@ def get_episode_data_index(
         episode_lengths = {ep_idx: episode_lengths[ep_idx] for ep_idx in episodes}
 
     cumulative_lenghts = list(accumulate(episode_lengths.values()))
+    return {
+        "from": torch.LongTensor([0] + cumulative_lenghts[:-1]),
+        "to": torch.LongTensor(cumulative_lenghts),
+    }
+
+
+def calculate_total_episode(
+    hf_dataset: datasets.Dataset, raise_if_not_contiguous: bool = True
+) -> dict[str, torch.Tensor]:
+    episode_indices = sorted(hf_dataset.unique("episode_index"))
+    total_episodes = len(episode_indices)
+    if raise_if_not_contiguous and episode_indices != list(range(total_episodes)):
+        raise ValueError("episode_index values are not sorted and contiguous.")
+    return total_episodes
+
+
+def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> dict[str, torch.Tensor]:
+    episode_lengths = []
+    table = hf_dataset.data.table
+    total_episodes = calculate_total_episode(hf_dataset)
+    for ep_idx in range(total_episodes):
+        ep_table = table.filter(pc.equal(table["episode_index"], ep_idx))
+        episode_lengths.insert(ep_idx, len(ep_table))
+
+    cumulative_lenghts = list(accumulate(episode_lengths))
     return {
         "from": torch.LongTensor([0] + cumulative_lenghts[:-1]),
         "to": torch.LongTensor(cumulative_lenghts),

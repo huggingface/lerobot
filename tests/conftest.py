@@ -25,7 +25,6 @@ from tests.utils import DEVICE, ROBOT_CONFIG_PATH_TEMPLATE, make_camera, make_mo
 
 # Import fixture modules as plugins
 pytest_plugins = [
-    "tests.fixtures.dataset",
     "tests.fixtures.dataset_factories",
     "tests.fixtures.files",
     "tests.fixtures.hub",

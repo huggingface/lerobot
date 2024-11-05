@@ -22,8 +22,6 @@ import numpy as np
 import PIL.Image
 import torch
 
-DEFAULT_IMAGE_PATH = "{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png"
-
 
 def safe_stop_image_writer(func):
     def wrapper(*args, **kwargs):
@@ -87,7 +85,7 @@ def worker_process(queue: queue.Queue, num_threads: int):
         t.join()
 
 
-class ImageWriter:
+class AsyncImageWriter:
     """
     This class abstract away the initialisation of processes or/and threads to
     save images on disk asynchrounously, which is critical to control a robot and record data
@@ -102,11 +100,7 @@ class ImageWriter:
     the number of threads. If it is still not stable, try to use 1 subprocess, or more.
     """
 
-    def __init__(self, write_dir: Path, num_processes: int = 0, num_threads: int = 1):
-        self.write_dir = write_dir
-        self.write_dir.mkdir(parents=True, exist_ok=True)
-        self.image_path = DEFAULT_IMAGE_PATH
-
+    def __init__(self, num_processes: int = 0, num_threads: int = 1):
         self.num_processes = num_processes
         self.num_threads = num_threads
         self.queue = None
@@ -133,17 +127,6 @@ class ImageWriter:
                 p.daemon = True
                 p.start()
                 self.processes.append(p)
-
-    def get_image_file_path(self, episode_index: int, image_key: str, frame_index: int) -> Path:
-        fpath = self.image_path.format(
-            image_key=image_key, episode_index=episode_index, frame_index=frame_index
-        )
-        return self.write_dir / fpath
-
-    def get_episode_dir(self, episode_index: int, image_key: str) -> Path:
-        return self.get_image_file_path(
-            episode_index=episode_index, image_key=image_key, frame_index=0
-        ).parent
 
     def save_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path):
         if isinstance(image, torch.Tensor):

@@ -35,7 +35,6 @@ from lerobot.common.datasets.compute_stats import (
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.lerobot_dataset import (
     LeRobotDataset,
-    LeRobotDatasetMetadata,
     MultiLeRobotDataset,
 )
 from lerobot.common.datasets.utils import (
@@ -57,10 +56,7 @@ def test_same_attributes_defined(lerobot_dataset_factory, tmp_path):
     # Instantiate both ways
     robot = make_robot("koch", mock=True)
     root_create = tmp_path / "create"
-    metadata_create = LeRobotDatasetMetadata.create(
-        repo_id=DUMMY_REPO_ID, fps=30, robot=robot, root=root_create
-    )
-    dataset_create = LeRobotDataset.create(metadata_create)
+    dataset_create = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=30, robot=robot, root=root_create)
 
     root_init = tmp_path / "init"
     dataset_init = lerobot_dataset_factory(root=root_init)
@@ -75,14 +71,14 @@ def test_same_attributes_defined(lerobot_dataset_factory, tmp_path):
     assert init_attr == create_attr
 
 
-def test_dataset_initialization(lerobot_dataset_from_episodes_factory, tmp_path):
+def test_dataset_initialization(lerobot_dataset_factory, tmp_path):
     kwargs = {
         "repo_id": DUMMY_REPO_ID,
         "total_episodes": 10,
         "total_frames": 400,
         "episodes": [2, 5, 6],
     }
-    dataset = lerobot_dataset_from_episodes_factory(root=tmp_path, **kwargs)
+    dataset = lerobot_dataset_factory(root=tmp_path, **kwargs)
 
     assert dataset.repo_id == kwargs["repo_id"]
     assert dataset.meta.total_episodes == kwargs["total_episodes"]
