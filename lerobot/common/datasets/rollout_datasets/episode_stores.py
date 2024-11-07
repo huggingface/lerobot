@@ -32,10 +32,12 @@ class EpisodeVideoStore(object):
     def __init__(self, root_group: zarr.Group, info: dict = None):
         super().__init__()
         self.root_group = root_group
-        if 'info' in self.root_group.attrs:
+        if 'info' in self.root_group.attrs and 'data' in self.root_group:
             print("Connected to the exising zarr")
+            self.data_group = self.root_group['data']
         else:
             print("Create a new zarr")
+            self.data_group = self.root_group.create_group('data')
 
         if info is not None:
             self.root_group.attrs['info'] = info
@@ -49,11 +51,12 @@ class EpisodeVideoStore(object):
         episode_dict['episode_index'] = torch.tensor([self.num_episodes] * len(episode_dict['frame_index']),
                                                      dtype=torch.int64)
         episode_dict = self._cleansing_episode_dict(episode_dict)
-        _append_episode_to_zarr(episode_dict, self.root_group)
+        _append_episode_to_zarr(episode_dict, self.data_group)
         self.root_group.attrs['num_episodes'] += 1
+        print(f"Successfully added episode: {self.root_group.attrs['num_episodes']}")
 
-    def convert_to_lerobot_dataset(self, repo_id):
-        zarr_dict = read_data_from_zarr(self.root_group)
+    def convert_to_lerobot_dataset(self, repo_id, **kwargs):
+        zarr_dict = read_data_from_zarr(self.data_group)
         hf_dataset = to_hf_dataset(zarr_dict)
         episode_data_index = calculate_episode_data_index(hf_dataset)
 
@@ -64,6 +67,7 @@ class EpisodeVideoStore(object):
             episode_data_index=episode_data_index,
             info=info,
             videos_dir=Path(info['videos_dir']),
+            **kwargs
         )
 
     @classmethod

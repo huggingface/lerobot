@@ -12,7 +12,9 @@ from lerobot.common.datasets.video_utils import VideoFrame
 def zarr_data_generator(zarr_dict: Dict[str, zarr.core.Array]):
     data_size = _check_sanity_and_get_data_size(zarr_dict)
     for i in range(data_size):
-        yield {k: v[i] if not isinstance(v[i], np.ndarray) else torch.from_numpy(v[i]) for k, v in zarr_dict.items()}
+        record = {k: v[i] if not isinstance(v[i], np.ndarray) else torch.from_numpy(v[i]) for k, v in zarr_dict.items()}
+        record['index'] = i
+        yield record
 
 
 def _check_sanity_and_get_data_size(zarr_dict: Dict[str, zarr.core.Array]):
@@ -48,7 +50,5 @@ def to_hf_dataset(zarr_dict: Dict[str, zarr.core.Array]):
 
 
 def read_data_from_zarr(zarr_group) -> Dict[str, zarr.core.Array]:
-    data_dict = {}
-    for k, v in zarr_group.items():
-        data_dict[k] = v if not isinstance(v, np.ndarray) else torch.from_numpy(v)
-    return data_dict
+    zarr_dict = {k: v for k, v in zarr_group.items()}
+    return zarr_dict
