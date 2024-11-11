@@ -24,6 +24,7 @@ class MultiviewStack(nn.Module):
         orig_shape = x.shape  # NTVCHW or TVCHW
         x = einops.rearrange(x, "... V C H W -> (...) V C H W")
         outputs = []
+        # TODO: vectorize this for-statement
         for i, encoder in enumerate(self.encoders):
             this_view = x[:, i]
             this_view = self.normalizations[i](this_view)
