@@ -55,8 +55,10 @@ from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
 np.set_printoptions(precision=2)
 
+
 def tf_to_torch(data):
     return torch.from_numpy(data.numpy())
+
 
 def tf_img_convert(img):
     if img.dtype == tf.string:
@@ -64,6 +66,7 @@ def tf_img_convert(img):
     elif img.dtype != tf.uint8:
         raise ValueError(f"Unsupported image dtype: found with dtype {img.dtype}")
     return img.numpy()
+
 
 def _broadcast_metadata_rlds(i: tf.Tensor, traj: dict) -> dict:
     """
@@ -130,7 +133,7 @@ def load_from_raw(
     # search for 'image' keys in the observations
     image_keys = []
     state_keys = []
-    observation_info = dataset_info.features['steps']['observation'] 
+    observation_info = dataset_info.features["steps"]["observation"]
     for key in observation_info:
         # check whether the key is for an image or a vector observation
         if len(observation_info[key].shape) == 3:
@@ -254,7 +257,7 @@ def load_from_raw(
 
 def to_hf_dataset(data_dict, video) -> Dataset:
     features = {}
-        
+
     for key in data_dict:
         # check if vector state obs
         if key.startswith("observation.") and "observation.images." not in key:
@@ -272,7 +275,7 @@ def to_hf_dataset(data_dict, video) -> Dataset:
     features["action"] = Sequence(
         length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)
     )
-        
+
     features["is_terminal"] = Value(dtype="bool", id=None)
     features["is_first"] = Value(dtype="bool", id=None)
     features["discount"] = Value(dtype="float32", id=None)
@@ -297,7 +300,6 @@ def from_raw_to_lerobot_format(
     episodes: list[int] | None = None,
     encoding: dict | None = None,
 ):
-    
     data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding)
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
