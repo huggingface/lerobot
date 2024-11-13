@@ -30,6 +30,11 @@ class MyArmBaseClass(ABC):
     def connect(self) -> None:
         pass
 
+    def set_up_presets(self) -> None:
+        """Optional. Override this method to do further set up on a device."""
+
+
+
 
 class MyArmLeader(MyArmBaseClass):
     _handle: acton_ai.MyArmC
