@@ -200,24 +200,14 @@ def push_dataset_to_hub(
     # convert dataset from original raw format to LeRobot format
     from_raw_to_lerobot_format = get_from_raw_to_lerobot_format_fn(raw_format)
 
-    fmt_kwgs = {
-        "raw_dir": raw_dir,
-        "videos_dir": videos_dir,
-        "fps": fps,
-        "video": video,
-        "episodes": episodes,
-        "encoding": encoding,
-    }
-
-    if "openx_rlds." in raw_format:
-        # Support for official OXE dataset name inside `raw_format`.
-        # For instance, `raw_format="oxe_rlds"` uses the default formating (TODO what does that mean?),
-        # and `raw_format="oxe_rlds.bridge_orig"` uses the brdige_orig formating
-        _, openx_dataset_name = raw_format.split(".")
-        print(f"Converting dataset [{openx_dataset_name}] from 'openx_rlds' to LeRobot format.")
-        fmt_kwgs["openx_dataset_name"] = openx_dataset_name
-
-    hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(**fmt_kwgs)
+    hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(
+        raw_dir,
+        videos_dir,
+        fps,
+        video,
+        episodes,
+        encoding,
+    )
 
     lerobot_dataset = LeRobotDataset.from_preloaded(
         repo_id=repo_id,
