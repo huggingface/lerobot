@@ -6,6 +6,7 @@ import gymnasium as gym
 import numpy as np
 import imageio
 import torch
+import torch.nn.functional as F
 from huggingface_hub import snapshot_download
 import shortuuid
 
@@ -15,12 +16,21 @@ from lerobot.common.datasets.rollout_datasets.episode_stores import EpisodeVideo
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 
 
+def _resize_frame_tensors_to_frames(frames: list[torch.Tensor]) -> list[np.ndarray]:
+    num_frames = len(frames)  # H W C
+
+    frames_t = torch.stack(frames, dim=0).permute(0, 3, 1, 2)
+    resized_frames_t = F.interpolate(frames_t, size=[224, 224], mode='bilinear', align_corners=False)
+    resized_frames_t = resized_frames_t.permute(0, 2, 3, 1).numpy()
+    return [resized_frames_t[i] for i in range(num_frames)]
+
+
 def build_ep_dict(observation_states: list,
                   actions: list,
                   rewards: list,
                   dones: list,
                   successes: list,
-                  frames: list,
+                  frames: list[torch.Tensor],
                   videos_dir: Path,
                   fps=10):
     num_frames = len(frames)
@@ -31,6 +41,8 @@ def build_ep_dict(observation_states: list,
     assert len(successes) == num_frames
 
     ep_dict = {}
+
+    frames = _resize_frame_tensors_to_frames(frames)
 
     #  observation.image
     img_key = 'observation.image'
@@ -72,7 +84,7 @@ def rollout_for_ep_dicts(policy, env, device, episode_video_store, num_episodes,
         step = 0
         done = False
         while not done:
-            frames.append(env.render())
+            frames.append(torch.from_numpy(env.render()))
 
             # Prepare observation for the policy running in Pytorch
             state = torch.from_numpy(numpy_observation["agent_pos"])
@@ -143,6 +155,7 @@ def rollout_for_ep_dicts(policy, env, device, episode_video_store, num_episodes,
         episode_video_store.add_episode(ep_dict)
 
     return episode_video_store
+
 
 @click.command()
 @click.option('-o', '--output', required=True)
