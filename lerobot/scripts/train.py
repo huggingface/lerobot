@@ -50,6 +50,30 @@ from lerobot.common.utils.utils import (
 )
 from lerobot.scripts.eval import eval_policy
 
+OBJECT_NAME_LIST = [
+    't',
+    '0',
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '7',
+    '8',
+    '9',
+    'ellipse',
+    'rectangle',
+    'reg3',
+    'reg4',
+    'reg5',
+    'reg6',
+    'reg7',
+    'reg8',
+    'reg9',
+    'reg10'
+]
+
 
 def make_optimizer_and_scheduler(cfg, policy):
     if cfg.policy.name == "act":
@@ -198,6 +222,49 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_online):
     info["is_online"] = is_online
 
     logger.log_dict(info, step, mode="train")
+
+def log_aggregated_eval_info(logger, aggregated_info, step, cfg, dataset, is_online):
+    # Aggregate results across environments
+    eval_s = np.mean(aggregated_info["eval_s"]) if isinstance(aggregated_info["eval_s"], list) else aggregated_info["eval_s"]
+    avg_sum_reward = np.mean(aggregated_info["avg_sum_reward"]) if isinstance(aggregated_info["avg_sum_reward"], list) else aggregated_info["avg_sum_reward"]
+    avg_max_reward = np.max(aggregated_info["avg_max_reward"]) if isinstance(aggregated_info["avg_max_reward"], list) else aggregated_info["avg_max_reward"]
+    pc_success = np.mean(aggregated_info["pc_success"]) if isinstance(aggregated_info["pc_success"], list) else aggregated_info["pc_success"]
+    eval_ep_s = np.mean(aggregated_info["eval_ep_s"]) if isinstance(aggregated_info["eval_ep_s"], list) else aggregated_info["eval_ep_s"]
+
+    # Calculate number of samples, episodes, and epochs
+    num_samples = (step + 1) * cfg.training.batch_size
+    avg_samples_per_ep = dataset.num_samples / dataset.num_episodes
+    num_episodes = num_samples / avg_samples_per_ep
+    num_epochs = num_samples / dataset.num_samples
+
+    # Prepare log items
+    log_items = [
+        f"step:{format_big_number(step)}",
+        f"smpl:{format_big_number(num_samples)}",
+        f"ep:{format_big_number(num_episodes)}",
+        f"epch:{num_epochs:.2f}",
+        f"∑rwrd:{avg_sum_reward:.3f}",
+        f"max_rwrd:{avg_max_reward:.3f}",
+        f"success:{pc_success:.1f}%",
+        f"eval_s:{eval_s:.3f}",
+        f"eval_ep_s:{eval_ep_s:.3f}",
+    ]
+    logging.info(" ".join(log_items))
+
+    # Update info dictionary
+    aggregated_info["step"] = step
+    aggregated_info["num_samples"] = num_samples
+    aggregated_info["num_episodes"] = num_episodes
+    aggregated_info["num_epochs"] = num_epochs
+    aggregated_info["is_online"] = is_online
+    aggregated_info["avg_sum_reward"] = avg_sum_reward
+    aggregated_info["avg_max_reward"] = avg_max_reward
+    aggregated_info["pc_success"] = pc_success
+    aggregated_info["eval_s"] = eval_s
+    aggregated_info["eval_ep_s"] = eval_ep_s
+
+    # Log the dictionary
+    logger.log_dict(aggregated_info, step, mode="eval")
 
 
 def log_eval_info(logger, info, step, cfg, dataset, is_online):
@@ -356,24 +423,49 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     # Note: this helper will be used in offline and online training loops.
     def evaluate_and_checkpoint_if_needed(step, is_online):
+        _eval_env = eval_env
+        n_envs = 21 if cfg.env.name == "pushany" else 1
+        n_episodes = cfg.eval.n_episodes if cfg.env.name != "pushany" else cfg.eval.n_episodes // n_envs + 1
         _num_digits = max(6, len(str(cfg.training.offline_steps + cfg.training.online_steps)))
         step_identifier = f"{step:0{_num_digits}d}"
 
         if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
-            with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
-                assert eval_env is not None
-                eval_info = eval_policy(
-                    eval_env,
-                    policy,
-                    cfg.eval.n_episodes,
-                    videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
-                    max_episodes_rendered=4,
-                    start_seed=cfg.seed,
-                )
-            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_online=is_online)
+            aggregated_eval_info = {"aggregated": {}, "video_paths": [], "log_videos": []}
+            for i in range(n_envs):
+                with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
+                    assert eval_env is not None
+                    if n_envs > 1:  # multi-env eval in pushany
+                        cfg.env.gym.object_name = OBJECT_NAME_LIST[i]
+                        cfg.env.gym.render_mode = "rgb_array"
+                        _eval_env = make_env(cfg)
+                        logging.info(f"===> environment object : {cfg.env.gym.object_name}")
+
+                    eval_info = eval_policy(
+                        _eval_env,
+                        policy,
+                        n_episodes,
+                        videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}_env_{OBJECT_NAME_LIST[i]}",
+                        max_episodes_rendered=1,  # Save one video per environment
+                        start_seed=cfg.seed,
+                    )
+                    
+                    # Aggregate evaluation information
+                    for key, value in eval_info["aggregated"].items():
+                        if key not in aggregated_eval_info["aggregated"]:
+                            aggregated_eval_info["aggregated"][key] = []
+                        aggregated_eval_info["aggregated"][key].append(value)
+                    
+                    # Collect video paths
+                    aggregated_eval_info["video_paths"].extend(eval_info["video_paths"])
+                    aggregated_eval_info["log_videos"].append(eval_info["video_paths"][0])
+            # Log aggregated evaluation information
+            log_aggregated_eval_info(logger, aggregated_eval_info["aggregated"], step, cfg, offline_dataset, is_online=is_online)
+            
+            # Log videos to wandb
             if cfg.wandb.enable:
-                logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+                logger.log_videos(aggregated_eval_info["log_videos"], step, mode="eval")
+            
             logging.info("Resume training")
 
         if cfg.training.save_checkpoint and (

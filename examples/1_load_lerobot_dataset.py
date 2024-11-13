@@ -26,7 +26,7 @@ print("List of available datasets:")
 pprint(lerobot.available_datasets)
 
 # Let's take one for this example
-repo_id = "lerobot/pusht"
+repo_id = "lerobot/aloha_static_coffee"
 
 # You can easily load a dataset from a Hugging Face repository
 dataset = LeRobotDataset(repo_id)
@@ -45,6 +45,8 @@ print(f"keys to access images from cameras: {dataset.camera_keys=}\n")
 episode_index = 0
 from_idx = dataset.episode_data_index["from"][episode_index].item()
 to_idx = dataset.episode_data_index["to"][episode_index].item()
+
+breakpoint()
 
 # LeRobot datasets actually subclass PyTorch datasets so you can do everything you know and love from working
 # with the latter, like iterating through the dataset. Here we grab all the image frames.

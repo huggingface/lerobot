@@ -57,6 +57,7 @@ available_tasks_per_env = {
         "AlohaTransferCube-v0",
     ],
     "pusht": ["PushT-v0"],
+    "pushany": ["PushAny-v0"],
     "xarm": ["XarmLift-v0"],
     "dora_aloha_real": ["DoraAloha-v0", "DoraKoch-v0", "DoraReachy2-v0"],
 }
@@ -76,6 +77,7 @@ available_datasets_per_env = {
     # TODO(alexander-soare): Add "lerobot/pusht_keypoints". Right now we can't because this is too tightly
     # coupled with tests.
     "pusht": ["lerobot/pusht", "lerobot/pusht_image"],
+    "pushany": ["jhseon-holiday/pushany"],
     "xarm": [
         "lerobot/xarm_lift_medium",
         "lerobot/xarm_lift_medium_replay",
@@ -218,6 +220,7 @@ available_motors = [
 available_policies_per_env = {
     "aloha": ["act"],
     "pusht": ["diffusion", "vqbet"],
+    "pushany": ["diffusion"],
     "xarm": ["tdmpc"],
     "koch_real": ["act_koch_real"],
     "aloha_real": ["act_aloha_real"],

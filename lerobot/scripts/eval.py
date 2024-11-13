@@ -124,6 +124,7 @@ def rollout(
     policy.reset()
 
     observation, info = env.reset(seed=seeds)
+    # if observation is not a dict, we need to add the agent_pos key
     if render_callback is not None:
         render_callback(env)
 
@@ -148,7 +149,6 @@ def rollout(
         observation = preprocess_observation(observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
-
         observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
 
         with torch.inference_mode():

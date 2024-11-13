@@ -39,7 +39,7 @@ from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 
 
 def check_format(raw_dir):
-    zarr_path = raw_dir / "pusht_cchi_v7_replay.zarr"
+    zarr_path = raw_dir / "s_push_0.zarr"
     zarr_data = zarr.open(zarr_path, mode="r")
 
     required_datasets = {
@@ -81,7 +81,7 @@ def load_from_raw(
     # as define in gmy-pusht env: https://github.com/huggingface/gym-pusht/blob/e0684ff988d223808c0a9dcfaba9dc4991791370/gym_pusht/envs/pusht.py#L174
     success_threshold = 0.95  # 95% coverage,
 
-    zarr_path = raw_dir / "pusht_cchi_v7_replay.zarr"
+    zarr_path = raw_dir / "s_push_0.zarr"
     zarr_data = DiffusionPolicyReplayBuffer.copy_from_path(zarr_path)
 
     episode_ids = torch.from_numpy(zarr_data.get_episode_idxs())
@@ -177,7 +177,7 @@ def load_from_raw(
                 # encode images to a mp4 video
                 fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
                 video_path = videos_dir / fname
-                encode_video_frames(tmp_imgs_dir, video_path, fps, **(encoding or {}))
+                encode_video_frames(tmp_imgs_dir, video_path, fps, 'libx264', **(encoding or {}))
 
                 # clean temporary images directory
                 shutil.rmtree(tmp_imgs_dir)

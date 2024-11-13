@@ -10,8 +10,8 @@ dataset_repo_id: lerobot/pusht
 override_dataset_stats:
   # TODO(rcadene, alexander-soare): should we remove image stats as well? do we use a pretrained vision model?
   observation.image:
-    mean: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
-    std: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
+    mean: [[[0.5]], [[0.5]], [[0.5]]] # (c,1,1)
+    std: [[[0.5]], [[0.5]], [[0.5]]] # (c,1,1)
   # TODO(rcadene, alexander-soare): we override state and action stats to use the same as the pretrained model
   # from the original codebase, but we should remove these and train our own pretrained model
   observation.state:
@@ -22,15 +22,15 @@ override_dataset_stats:
     max: [511.0, 511.0]
 
 training:
-  offline_steps: 200000
+  offline_steps: 500000 #200000
   online_steps: 0
-  eval_freq: 25000
-  save_freq: 25000
+  eval_freq: 50000 #25000
+  save_freq: 50000 #25000
   save_checkpoint: true
 
-  batch_size: 64
+  batch_size: 128
   grad_clip_norm: 10
-  lr: 1.0e-4
+  lr: 2.0e-4
   lr_scheduler: cosine
   lr_warmup_steps: 500
   adam_betas: [0.95, 0.999]
@@ -45,7 +45,7 @@ training:
 
   # The original implementation doesn't sample frames for the last 7 steps,
   # which avoids excessive padding and leads to improved training results.
-  drop_n_last_frames: 7  # ${policy.horizon} - ${policy.n_action_steps} - ${policy.n_obs_steps} + 1
+  drop_n_last_frames: 7 # ${policy.horizon} - ${policy.n_action_steps} - ${policy.n_obs_steps} + 1
 
 eval:
   n_episodes: 50
@@ -98,7 +98,7 @@ policy:
   clip_sample_range: 1.0
 
   # Inference
-  num_inference_steps: null  # if not provided, defaults to `num_train_timesteps`
+  num_inference_steps: null # if not provided, defaults to `num_train_timesteps`
 
   # Loss computation
   do_mask_loss_for_padding: false
