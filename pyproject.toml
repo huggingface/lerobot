@@ -76,6 +76,7 @@ jsonlines = ">=4.0.0"
 [tool.poetry.extras]
 dora = ["gym-dora"]
 pusht = ["gym-pusht"]
+pushany = ["gym-pushany"]
 xarm = ["gym-xarm"]
 aloha = ["gym-aloha"]
 dev = ["pre-commit", "debugpy"]

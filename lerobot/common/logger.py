@@ -35,6 +35,30 @@ from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
 
 
+OBJECT_NAME_LIST = [
+    't',
+    '0',
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '7',
+    '8',
+    '9',
+    'ellipse',
+    'rectangle',
+    'reg3',
+    'reg4',
+    'reg5',
+    'reg6',
+    'reg7',
+    'reg8',
+    'reg9',
+    'reg10'
+]
+
 def log_output_dir(out_dir):
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {out_dir}")
 
@@ -244,3 +268,12 @@ class Logger:
         assert self._wandb is not None
         wandb_video = self._wandb.Video(video_path, fps=self._cfg.fps, format="mp4")
         self._wandb.log({f"{mode}/video": wandb_video}, step=step)
+
+
+ 
+    def log_videos(self, video_paths: list[str], step: int, mode: str = "train"):
+        assert mode in {"train", "eval"}
+        assert self._wandb is not None
+        for idx, video_path in enumerate(video_paths):
+            wandb_video = self._wandb.Video(video_path, fps=self._cfg.fps, format="mp4")
+            self._wandb.log({f"{mode}/{OBJECT_NAME_LIST[idx]}": wandb_video}, step=step)

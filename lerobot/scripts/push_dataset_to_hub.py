@@ -62,6 +62,8 @@ from lerobot.common.datasets.utils import create_branch, create_lerobot_dataset_
 def get_from_raw_to_lerobot_format_fn(raw_format: str):
     if raw_format == "pusht_zarr":
         from lerobot.common.datasets.push_dataset_to_hub.pusht_zarr_format import from_raw_to_lerobot_format
+    elif raw_format == "pushany_zarr":
+        from lerobot.common.datasets.push_dataset_to_hub.pushany_zarr_format import from_raw_to_lerobot_format
     elif raw_format == "umi_zarr":
         from lerobot.common.datasets.push_dataset_to_hub.umi_zarr_format import from_raw_to_lerobot_format
     elif raw_format == "aloha_hdf5":
