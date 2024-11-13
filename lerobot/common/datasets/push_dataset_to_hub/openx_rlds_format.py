@@ -208,11 +208,11 @@ def load_from_raw(
         ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames)
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
 
+        image_array_dict = {key: [] for key in image_keys}
+
         for im_key in image_keys:
             imgs = episode["observation"][im_key]
             image_array_dict[im_key] = [tf_img_convert(img) for img in imgs]
-
-        image_array_dict = {key: [] for key in image_keys}
 
         # loop through all cameras
         for im_key in image_keys:
