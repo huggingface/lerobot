@@ -14,13 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
+For all datasets in the RLDS format.
 For https://github.com/google-deepmind/open_x_embodiment (OPENX) datasets.
+
+NOTE: You need to install tensorflow and tensorflow_datsets before running this script.
 
 Example:
     python lerobot/scripts/push_dataset_to_hub.py \
-        --raw-dir /hdd/tensorflow_datasets/bridge_dataset/1.0.0/ \
-        --repo-id youliangtan/sampled_bridge_data_v2 \
-        --raw-format openx_rlds.bridge_orig \
+        --raw-dir /path/to/data/bridge_dataset/1.0.0/ \
+        --repo-id your_hub/sampled_bridge_data_v2 \
+        --raw-format rlds \
         --episodes 3 4 5 8 9
 
 Exact dataset fps defined in openx/config.py, obtained from:
@@ -35,7 +38,6 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import torch
 import tqdm
-import yaml
 from datasets import Dataset, Features, Image, Sequence, Value
 from PIL import Image as PILImage
 
