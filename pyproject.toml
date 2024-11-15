@@ -71,6 +71,7 @@ pyrealsense2 = {version = ">=2.55.1.6486", markers = "sys_platform != 'darwin'",
 pyrender = {git = "https://github.com/mmatl/pyrender.git", markers = "sys_platform == 'linux'", optional = true}
 hello-robot-stretch-body = {version = ">=0.7.27", markers = "sys_platform == 'linux'", optional = true}
 pyserial = {version = ">=3.5", optional = true}
+reachy2-sdk = {git = "https://github.com/pollen-robotics/reachy2-sdk", branch="450-opencv-dependency-version", optional = true}
 
 
 [tool.poetry.extras]
@@ -86,6 +87,7 @@ dynamixel = ["dynamixel-sdk", "pynput"]
 feetech = ["feetech-servo-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
 stretch = ["hello-robot-stretch-body", "pyrender", "pyrealsense2", "pynput"]
+reachy2 = ["reachy2-sdk"]
 
 [tool.ruff]
 line-length = 110
