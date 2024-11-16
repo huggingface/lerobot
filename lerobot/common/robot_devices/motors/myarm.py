@@ -82,9 +82,6 @@ class MyArmFollower(MyArmBaseClass):
     def disconnect(self) -> None:
         self.teleop_safety_stop()
 
-    def teleop_safety_stop(self) -> None:
-        self._handle.set_robot_power_off()
-
     def read(self, cmd: Literal["Present_Position"]) -> npt.NDArray[np.float64]:
         """This should mirror 'write' in the order of the data"""
         match cmd:
