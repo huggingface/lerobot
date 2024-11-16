@@ -47,7 +47,7 @@ sudo chmod a+rw /dev/ttyACM*
 
 3. Finally, run the teleop script to verify that you can control the arms:
 ```bash
-teleop
+acton_teleop
 ```
 
 Move the leader around and verify that the follower arm follows, and is accurate.
@@ -60,7 +60,7 @@ Pay attention to the logs and fix any issues before proceeding.
 
 If anything seems amiss, run 
 ```bash
-calibrate_robot
+acton_calibrate
 ```
 
 and follow directions in the console. This script is always being maintained, please add
@@ -71,7 +71,7 @@ issues on the `acton_ai` github so we can improve it.
 **Simple teleop**
 Then you are ready to teleoperate your robot via lerobot! Run this simple script (it won't connect and display the cameras):
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
+python3 lerobot/scripts/control_robot.py teleoperate \
     --robot-path lerobot/configs/robot/myarm.yaml \
     --robot-overrides '~cameras' \
     --display-cameras 0
@@ -81,7 +81,7 @@ python lerobot/scripts/control_robot.py teleoperate \
 **Teleop with displaying cameras**
 Follow [this guide to setup your cameras](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#c-add-your-cameras-with-opencvcamera). Then you will be able to display the cameras on your computer while you are teleoperating by running the following code. This is useful to prepare your setup before recording your first dataset.
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
+python3 lerobot/scripts/control_robot.py teleoperate \
     --robot-path lerobot/configs/robot/myarm.yaml
 ```
 

@@ -78,7 +78,7 @@ pyserial = {version = ">=3.5", optional = true}
 dora = ["gym-dora"]
 pusht = ["gym-pusht"]
 xarm = ["gym-xarm"]
-my_arm = ["acton_ai"]
+my_arm = ["acton_ai", "pynput"]
 aloha = ["gym-aloha"]
 dev = ["pre-commit", "debugpy"]
 test = ["pytest", "pytest-cov", "pyserial"]
