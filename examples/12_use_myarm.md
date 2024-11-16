@@ -88,3 +88,5 @@ python3 lerobot/scripts/control_robot.py teleoperate \
 # What Next?
 
 Well, now your robot is compatible with lerobot! Check out other tutorials for how to train a policy, visualize a dataset, train a model, and execute a model policy using a robot!
+
+You can start out by checking out the other commands `control_robot` supports using the `--help` menu, such as `record`!
