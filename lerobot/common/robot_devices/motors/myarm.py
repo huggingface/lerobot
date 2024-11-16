@@ -1,11 +1,10 @@
 from abc import abstractmethod, ABC
 from enum import Enum
-from typing import Literal
+from typing import Literal, Any
 
 import acton_ai
 import numpy as np
 import numpy.typing as npt
-
 
 class TorqueMode(Enum):
     ENABLED = 1
@@ -13,6 +12,7 @@ class TorqueMode(Enum):
 
 
 class MyArmBaseClass(ABC):
+    _handle: acton_ai.HelpfulMyArmC | acton_ai.HelpfulMyArmM
 
     def __init__(
             self,
@@ -30,26 +30,47 @@ class MyArmBaseClass(ABC):
     def connect(self) -> None:
         pass
 
+    @abstractmethod
+    def disconnect(self) -> None:
+        pass
+
+
     def set_up_presets(self) -> None:
         """Optional. Override this method to do further set up on a device."""
 
-
+    def set_calibration(self, _: Any) -> None:
+        """Calibration is not implemented on LeRobot. Use the MyArm interface."""
 
 
 class MyArmLeader(MyArmBaseClass):
-    _handle: acton_ai.MyArmC
+    _handle: acton_ai.HelpfulMyArmC
     """Instantiated in `connect`"""
 
     def connect(self) -> None:
         self._handle = acton_ai.find_myarm_controller()
 
+    def disconnect(self) -> None:
+        """There is no need to disconnect from the MyArmC"""
+        pass
+
     def read(self, cmd: Literal["Present_Position"]) -> npt.NDArray[np.float64]:
+        """This should mirror 'write' in the order of the data"""
         match cmd:
             case "Present_Position":
-                raise NotImplementedError()
+                joint_angles = self._handle.get_joint_angles_in_mover_space()
+                return np.array(joint_angles, dtype=np.float64)
             case _:
                 raise ValueError(f"Unsupported {cmd=}")
 
+    def write(self, cmd: Literal["Goal_Position"],
+              data: npt.NDArray[np.float64]) -> None:
+        """Nothing needs doing here"""
+        match cmd:
+            case "Torque_Enable":
+                # Doesn't make sense, but it does get requested to enable torque
+                pass
+            case _:
+                raise ValueError(f"Unexpected write to follower arm {cmd=}")
 
 class MyArmFollower(MyArmBaseClass):
     _handle: acton_ai.HelpfulMyArmM
@@ -58,14 +79,30 @@ class MyArmFollower(MyArmBaseClass):
     def connect(self) -> None:
         self._handle = acton_ai.find_myarm_motor()
 
+    def disconnect(self) -> None:
+        self.teleop_safety_stop()
+
+    def teleop_safety_stop(self) -> None:
+        self._handle.set_robot_power_off()
+
+    def read(self, cmd: Literal["Present_Position"]) -> npt.NDArray[np.float64]:
+        """This should mirror 'write' in the order of the data"""
+        match cmd:
+            case "Present_Position":
+                joint_angles = self._handle.get_joints_angle()
+                return np.array(joint_angles, dtype=np.float64)
+            case _:
+                raise ValueError(f"Unsupported {cmd=}")
+
     def write(self, cmd: Literal["Goal_Position"],
               data: npt.NDArray[np.float64]) -> None:
         """This should mirror 'read' in the order of the data"""
         # TODO: Implement
         match cmd:
             case "Goal_Position":
-                raise NotImplementedError()
+                self._handle.set_joints_from_controller_angles(data.tolist(), speed=20)
             case "Torque_Enable":
                 self._handle.bring_up_motors()
+                self._handle.prompt_user_to_bring_motors_into_bounds()
             case _:
                 raise ValueError(f"Unsupported {cmd=}")
