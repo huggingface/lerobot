@@ -346,6 +346,9 @@ class ManipulatorRobot:
                     )
 
                     calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
+                elif self.robot_type == "myarm":
+                    # MyArm calibration should be done using the MyArm interface
+                    calibration = {}
 
                 print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
                 arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
