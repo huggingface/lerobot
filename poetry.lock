@@ -13,18 +13,18 @@ files = [
 
 [[package]]
 name = "acton-ai"
-version = "0.1.0"
+version = "0.3.0"
 description = "My reppolicies for robot arms, and making them useful with multi-modal LLMs."
 optional = true
 python-versions = "<4.0,>=3.10"
 files = [
-    {file = "acton_ai-0.1.0-py3-none-any.whl", hash = "sha256:17388229220dca4b3380a44d57c8f2520fbc7013a0d1040be61be5c0da302206"},
-    {file = "acton_ai-0.1.0.tar.gz", hash = "sha256:c247c5a2603382347ef21ce552ccb478b95b1272e5ec5bf84df864c915660e6d"},
+    {file = "acton_ai-0.3.0-py3-none-any.whl", hash = "sha256:f9fa92da26756aefcdf4c75cc3ca5a5c21843dd73bc5d76b29bcdc41e06a7584"},
+    {file = "acton_ai-0.3.0.tar.gz", hash = "sha256:2cda0008872957298aeb6abcecda6141eddcf17b33364476ed68b84f02ddcae6"},
 ]
 
 [package.dependencies]
 opencv-python = ">=4.10.0.84,<5.0.0.0"
-pymycobot = ">=3.6.5,<4.0.0"
+pymycobot = ">=3.6.7,<4.0.0"
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -2878,13 +2878,13 @@ test = ["jupyter-server (>=2.0.0)", "pytest (>=7.0)", "pytest-jupyter[server] (>
 
 [[package]]
 name = "jupyterlab"
-version = "4.3.0"
+version = "4.3.1"
 description = "JupyterLab computational environment"
 optional = true
 python-versions = ">=3.8"
 files = [
-    {file = "jupyterlab-4.3.0-py3-none-any.whl", hash = "sha256:f67e1095ad61ae04349024f0b40345062ab108a0c6998d9810fec6a3c1a70cd5"},
-    {file = "jupyterlab-4.3.0.tar.gz", hash = "sha256:7c6835cbf8df0af0ec8a39332e85ff11693fb9a468205343b4fc0bfbc74817e5"},
+    {file = "jupyterlab-4.3.1-py3-none-any.whl", hash = "sha256:2d9a1c305bc748e277819a17a5d5e22452e533e835f4237b2f30f3b0e491e01f"},
+    {file = "jupyterlab-4.3.1.tar.gz", hash = "sha256:a4a338327556443521731d82f2a6ccf926df478914ca029616621704d47c3c65"},
 ]
 
 [package.dependencies]
@@ -7761,4 +7761,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "93b15ce2f595f944b9a83e09a485a8e1b658cffbc969b04f8f4c985d2b1a8662"
+content-hash = "cfc1d84ddef66ad106793a6d58d7072c56692613287b0d708ea9f4122d56b8dc"
