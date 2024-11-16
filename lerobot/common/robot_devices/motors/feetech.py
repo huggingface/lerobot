@@ -4,7 +4,9 @@ import math
 import time
 import traceback
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
+from numpy.typing import NDArray
 import numpy as np
 import tqdm
 
@@ -395,7 +397,9 @@ class FeetechMotorsBus:
     def set_calibration(self, calibration: dict[str, list]):
         self.calibration = calibration
 
-    def apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
+    def apply_calibration_autocorrect(
+        self, values: np.ndarray | list, motor_names: list[str] | None
+    ) -> NDArray[np.float32]:
         """This function apply the calibration, automatically detects out of range errors for motors values and attempt to correct.
 
         For more info, see docstring of `apply_calibration` and `autocorrect_calibration`.
@@ -408,7 +412,11 @@ class FeetechMotorsBus:
             values = self.apply_calibration(values, motor_names)
         return values
 
-    def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
+    def apply_calibration(
+        self,
+        values: NDArray[np.int64] | NDArray[np.float64] | list[int] | list[float],
+        motor_names: list[str] | None = None,
+    ) -> NDArray[np.int64] | NDArray[np.float64] | list[int] | list[float]:
         """Convert from unsigned int32 joint position range [0, 2**32[ to the universal float32 nominal degree range ]-180.0, 180.0[ with
         a "zero position" at 0 degree.
 
@@ -579,7 +587,11 @@ class FeetechMotorsBus:
                 # A full turn corresponds to 360 degrees but also to 4096 steps for a motor resolution of 4096.
                 self.calibration["homing_offset"][calib_idx] += resolution * factor
 
-    def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
+    def revert_calibration(
+        self,
+        values: NDArray[np.int64] | NDArray[np.float64] | list[int] | list[float],
+        motor_names: list[str] | None,
+    ) -> NDArray[np.int64] | NDArray[np.float64] | list[int] | list[float]:
         """Inverse of `apply_calibration`."""
         if motor_names is None:
             motor_names = self.motor_names
@@ -693,7 +705,9 @@ class FeetechMotorsBus:
         else:
             return values[0]
 
-    def read(self, data_name, motor_names: str | list[str] | None = None):
+    def read(
+        self, data_name: str, motor_names: str | list[str] | None = None
+    ) -> NDArray[np.int64]:
         if self.mock:
             import tests.mock_scservo_sdk as scs
         else:
@@ -798,7 +812,12 @@ class FeetechMotorsBus:
                 f"{self.packet_handler.getTxRxResult(comm)}"
             )
 
-    def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
+    def write(
+        self,
+        data_name: str,
+        values: int | float | NDArray[np.int64] | NDArray[np.float64],
+        motor_names: str | list[str] | None = None,
+    ):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 f"FeetechMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
@@ -885,3 +904,10 @@ class FeetechMotorsBus:
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
+
+
+if TYPE_CHECKING:
+    from lerobot.common.robot_devices.motors.utils import MotorsBus
+
+    # Check that we implement the protocol
+    _: MotorsBus = FeetechMotorsBus(port="", motors={})
