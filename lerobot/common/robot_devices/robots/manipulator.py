@@ -55,6 +55,7 @@ class ManipulatorRobotConfig:
     leader_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     follower_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
+    controller: dict = None  # Add controller to the config
 
     # Optionally limit the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length
@@ -220,7 +221,15 @@ class ManipulatorRobot:
         self.calibration_dir = Path(calibration_dir)
 
         self.robot_type = self.config.robot_type
-        self.leader_arms = self.config.leader_arms
+
+        self.controller = self.config.controller
+
+        # Adjust leader arms based on the presence of a controller
+        if self.controller is not None:
+            self.leader_arms = {}
+        else:
+            self.leader_arms = self.config.leader_arms
+
         self.follower_arms = self.config.follower_arms
         self.cameras = self.config.cameras
         self.is_connected = False
@@ -251,7 +260,7 @@ class ManipulatorRobot:
                 "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
             )
 
-        if not self.leader_arms and not self.follower_arms and not self.cameras:
+        if not self.leader_arms and not self.follower_arms and not self.cameras and not self.controller:
             raise ValueError(
                 "ManipulatorRobot doesn't have any device to connect. See example of usage in docstring of the class."
             )
@@ -473,19 +482,32 @@ class ManipulatorRobot:
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
-        # Prepare to assign the position of the leader to the follower
+        # Prepare to assign the position from the controller or the leader arms to the follower
         leader_pos = {}
-        for name in self.leader_arms:
-            before_lread_t = time.perf_counter()
-            leader_pos[name] = self.leader_arms[name].read("Present_Position")
-            leader_pos[name] = torch.from_numpy(leader_pos[name])
-            self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - before_lread_t
+        if self.controller is not None:
+            # Get positions from controller
+            before_controller_read_t = time.perf_counter()
+            controller_command = self.controller.get_command()
+            # Assuming controller_command is a dictionary with motor names as keys
+            leader_pos_values = [controller_command[name] for name in self.controller.motor_names]
+            leader_pos_array = np.array(leader_pos_values)
+            leader_pos["controller"] = torch.from_numpy(leader_pos_array)
+            self.logs[f"read_controller_pos_dt_s"] = time.perf_counter() - before_controller_read_t
+        else:
+            for name in self.leader_arms:
+                before_lread_t = time.perf_counter()
+                leader_pos[name] = self.leader_arms[name].read("Present_Position")
+                leader_pos[name] = torch.from_numpy(leader_pos[name])
+                self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - before_lread_t
 
         # Send goal position to the follower
         follower_goal_pos = {}
         for name in self.follower_arms:
             before_fwrite_t = time.perf_counter()
-            goal_pos = leader_pos[name]
+            if self.controller is not None:
+                goal_pos = leader_pos["controller"]
+            else:
+                goal_pos = leader_pos[name]
 
             # Cap goal position when too far away from present position.
             # Slower fps expected due to reading from the follower.
