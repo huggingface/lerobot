@@ -97,22 +97,31 @@ from datasets import Dataset, Features, Sequence, Value
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.compute_stats import compute_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
-from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
+from lerobot.common.datasets.video_utils import VideoFrame
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, get_default_encoding
-from lerobot.common.datasets.utils import calculate_episode_data_index, create_branch, hf_transform_to_torch
-from lerobot.common.datasets.video_utils import encode_video_frames
+from lerobot.common.datasets.utils import calculate_episode_data_index, hf_transform_to_torch
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
-from lerobot.common.envs.factory import make_env
-from lerobot.common.utils.utils import init_hydra_config, init_logging
-from lerobot.scripts.push_dataset_to_hub import (
-    push_dataset_card_to_hub,
-    push_meta_data_to_hub,
-    push_videos_to_hub,
-    save_meta_data,
-)
+from lerobot.common.utils.utils import init_hydra_config, init_logging, log_say
 
+from lerobot.common.datasets.populate_dataset import (
+    add_frame,
+    stop_image_writer,
+    delete_current_episode,
+    init_dataset,
+    save_current_episode,
+    encode_videos,
+    save_lerobot_dataset_on_disk,
+    push_lerobot_dataset_to_hub
+)
+from lerobot.common.robot_devices.control_utils import (
+    init_keyboard_listener,
+    init_policy,
+    log_control_info,
+    stop_recording,
+    predict_action
+)
 ########################################################################################
 # Utilities
 ########################################################################################
@@ -192,8 +201,56 @@ def init_sim_calibration(robot, cfg):
 def real_positions_to_sim(real_positions, axis_directions, start_pos, offsets):
     """Counts - starting position -> radians -> align axes -> offset"""
     return axis_directions * (real_positions - start_pos) * 2.0 * np.pi / 4096 + offsets
-        
-def create_rl_hf_dataset(data_dict):
+
+def add_frame_with_reward(dataset, observation, action, reward, success, seed):
+    add_frame(dataset, observation, action)
+    ep_dict = dataset["current_episode"]
+
+    if 'next.reward' not in ep_dict: ep_dict['next.reward'] = []
+    if 'next.sucess' not in ep_dict: ep_dict['next.success'] = []
+    if 'seed' not in ep_dict: ep_dict['seed'] = []
+
+    ep_dict['reward'].append(reward)
+    ep_dict['sucess'].append(success)
+    ep_dict['seed'].append(seed)
+
+def save_current_episode(dataset):
+    episode_index = dataset["num_episodes"]
+    ep_dict = dataset["current_episode"]
+    episodes_dir = dataset["episodes_dir"]
+    rec_info_path = dataset["rec_info_path"]
+
+    ep_dict["next.done"][-1] = True
+
+    for key in ep_dict:
+        if "observation" in key and "image" not in key:
+            ep_dict[key] = torch.stack(ep_dict[key])
+
+    ep_dict["action"] = torch.stack(ep_dict["action"])
+    ep_dict['next.reward'] = torch.tensor(ep_dict["next.reward"])
+    ep_dict['next.success'] = torch.tensor(ep_dict["next.success"])
+    ep_dict['seed'] = torch.tensor(ep_dict["seed"])
+    ep_dict["episode_index"] = torch.tensor(ep_dict["episode_index"])
+    ep_dict["frame_index"] = torch.tensor(ep_dict["frame_index"])
+    ep_dict["timestamp"] = torch.tensor(ep_dict["timestamp"])
+    ep_dict["next.done"] = torch.tensor(ep_dict["next.done"])
+
+    ep_path = episodes_dir / f"episode_{episode_index}.pth"
+    torch.save(ep_dict, ep_path)
+
+    rec_info = {
+        "last_episode_index": episode_index,
+    }
+    with open(rec_info_path, "w") as f:
+        json.dump(rec_info, f)
+
+    # force re-initialization of episode dictionnary during add_frame
+    del dataset["current_episode"]
+
+    dataset["num_episodes"] += 1
+
+
+def to_hf_dataset(data_dict):
     features = {}
 
     keys = [key for key in data_dict if "observation.images." in key]
@@ -231,10 +288,9 @@ def create_rl_hf_dataset(data_dict):
 # Control modes
 ########################################################################################
 
-
-def teleoperate(env, robot: Robot, process_action_fn, teleop_time_s=None):    
-    if not robot.is_connected:
-        robot.connect()
+def teleoperate(env, robot: Robot, process_action_fn, teleop_time_s=None):  
+    
+    env = env()
     env.reset()
     start_teleop_t = time.perf_counter() 
     while True:
@@ -248,246 +304,158 @@ def teleoperate(env, robot: Robot, process_action_fn, teleop_time_s=None):
 def record(
     env, 
     robot: Robot,
+    policy=None,
+    process_action_fn=None,
     fps: int | None = None,
     root="data",
     repo_id="lerobot/debug",
+    pretrained_policy_name_or_path=None,
+    policy_overrides=None,
     episode_time_s=30,
     num_episodes=50,
     video=True,
     run_compute_stats=True,
     push_to_hub=True,
     tags=None,
+    num_image_writer_processes=0,
     num_image_writers_per_camera=4,
     force_override=False,
-    visualize_images=0,
-    **kwargs
+    display_cameras=False,
+    play_sounds=True
 ):
 
-    local_dir = Path(root) / repo_id
-    if local_dir.exists() and force_override:
-        shutil.rmtree(local_dir)
+    listener = None
+    device = None
+    use_amp = None
 
-    episodes_dir = local_dir / "episodes"
-    episodes_dir.mkdir(parents=True, exist_ok=True)
-
-    videos_dir = local_dir / "videos"
-    videos_dir.mkdir(parents=True, exist_ok=True)
-
-    # Logic to resume data recording
-    rec_info_path = episodes_dir / "data_recording_info.json"
-    if rec_info_path.exists():
-        with open(rec_info_path) as f:
-            rec_info = json.load(f)
-        episode_index = rec_info["last_episode_index"] + 1
-    else:
-        episode_index = 0
-
-    if is_headless():
-        logging.warning(
-            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
-        )
-
-    # Allow to exit early while recording an episode or resetting the environment,
-    # by tapping the right arrow key '->'. This might require a sudo permission
-    # to allow your terminal to monitor keyboard events.
-    exit_early = False
-    rerecord_episode = False
-    stop_recording = False
-    # Only import pynput if not in a headless environment
-    if not is_headless():
-        from pynput import keyboard
-
-        def on_press(key):
-            nonlocal exit_early, rerecord_episode, stop_recording
-            try:
-                if key == keyboard.Key.right:
-                    print("Right arrow key pressed. Exiting loop...")
-                    exit_early = True
-                elif key == keyboard.Key.left:
-                    print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
-                    rerecord_episode = True
-                    exit_early = True
-                elif key == keyboard.Key.esc:
-                    print("Escape key pressed. Stopping data recording...")
-                    stop_recording = True
-                    exit_early = True
-            except Exception as e:
-                print(f"Error handling key press: {e}")
-
-        listener = keyboard.Listener(on_press=on_press)
-        listener.start()
+    if policy is None and process_action_fn is None:
+        raise ValueError('Either policy or process_action_fn has to be set to enable control in sim.')
     
-    # create env
+    # Load pretrained policy
+    if pretrained_policy_name_or_path is not None:
+        policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
+
+        if fps is None:
+            fps = policy_fps
+            logging.warning(f"No fps provided, so using the fps from policy config ({policy_fps}).")
+        elif fps != policy_fps:
+            logging.warning(
+                f"There is a mismatch between the provided fps ({fps}) and the one from policy config ({policy_fps})."
+            )
+
+    # initialize listener before sim env
+    listener, events = init_keyboard_listener()
+
+    # create sim env
     env = env()
 
-    # Save images using threads to reach high fps (30 and more)
-    # Using `with` to exist smoothly if an execption is raised.
-    futures = []
-    num_image_writers = num_image_writers_per_camera * 2 ###############
-    num_image_writers = max(num_image_writers, 1)
+    # Load pretrained policy
+    # Create empty dataset or load existing saved episodes
+    num_cameras = sum([1 if 'image' in key else 0 for key in env.observation_space])
+    num_image_writers = num_image_writers_per_camera * num_cameras 
 
-    read_leader, command_queue = init_read_leader(robot, fps, **kwargs)    
-    if not is_headless() and visualize_images:
-        observations_queue = multiprocessing.Queue(1000)
-        show_images = multiprocessing.Process(target=show_image_observations, args=(observations_queue, ))
-        show_images.start()
+    image_keys = [key for key in env.observation_space if "image" in key]
+    write_images = image_keys != []
 
-    state_keys_dict = env_cfg.state_keys
-    image_keys = env_cfg.image_keys
-    with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
-        # Start recording all episodes
-        # start reading from leader, disable stop flag in leader process
-        while episode_index < num_episodes:
-            logging.info(f"Recording episode {episode_index}")
-            say(f"Recording episode {episode_index}")
-            ep_dict = {'action':[], 'reward':[]}
-            for k in state_keys_dict:
-                ep_dict[k] = []
-            frame_index = 0
-            timestamp = 0
-            start_episode_t = time.perf_counter()
+    dataset = init_dataset(
+        repo_id,
+        root,
+        force_override,
+        fps,
+        video,
+        write_images=write_images,
+        num_image_writer_processes=num_image_writer_processes,
+        num_image_writer_threads=num_image_writers * num_cameras,
+    )
 
-            # save seed so we can restore the environment state when we want to replay the trajectories
-            seed = np.random.randint(0,1e5)
-            observation, info = env.reset(seed=seed)
-            read_leader.start()
-            while timestamp < episode_time_s:
-                action = command_queue.get()
-                for key in image_keys:
-                    str_key = key if key.startswith('observation.images.') else 'observation.images.' + key
-                    futures += [
-                        executor.submit(
-                            save_image, observation[key].squeeze(0), str_key, frame_index, episode_index, videos_dir)
-                    ]
+    while True:
+        if dataset["num_episodes"] >= num_episodes:
+            break
 
-                if not is_headless() and visualize_images:
-                    observations_queue.put(observation)
-          
-                for key, obs_key in state_keys_dict.items():
-                    ep_dict[key].append(torch.from_numpy(observation[obs_key]))
+        episode_index = dataset["num_episodes"]
+        log_say(f"Recording episode {episode_index}", play_sounds)
+    
+        if events is None:
+            events = {"exit_early": False}
+    
+        if episode_time_s is None:
+            episode_time_s = float("inf")
+            
+        timestamp = 0
+        start_episode_t = time.perf_counter()
 
-                # Advance the sim environment
-                if len(action.shape) == 1:
-                    action = np.expand_dims(action, 0)
-                observation, reward, _, _ , info = env.step(action)
-                ep_dict['action'].append(torch.from_numpy(action))
-                ep_dict['reward'].append(torch.tensor(reward))
-                print(reward)
+        seed = np.random.randint(0,1e5)
+        observation, info = env.reset(seed=seed)
 
-                frame_index += 1
-
-                timestamp = time.perf_counter() - start_episode_t
-                if exit_early:
-                    exit_early = False
-                    break
-
-            # enable stop reading leader flag
-            with stop_reading_leader.get_lock(): 
-                stop_reading_leader.Value = 1
-            # TODO (michel_aractinig): temp fix until I figure out the problem with shared memory
-            # stop_reading_leader is blocking
-
-            timestamp = 0
-
-            # During env reset we save the data and encode the videos
-            num_frames = frame_index
-
-            for key in image_keys:
-                if not key.startswith('observation.images.'):
-                    key = 'observation.images.' + key
-
-                if video:
-                    tmp_imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
-                    fname = f"{key}_episode_{episode_index:06d}.mp4"
-                    video_path = local_dir / "videos" / fname
-                    if video_path.exists():
-                        video_path.unlink()
-                    # Store the reference to the video frame, even tho the videos are not yet encoded
-                    ep_dict[key] = []
-                    for i in range(num_frames):
-                        ep_dict[key].append({"path": f"videos/{fname}", "timestamp": i / fps})
-
-                else:
-                    imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
-                    ep_dict[key] = []
-                    for i in range(num_frames):
-                        img_path = imgs_dir / f"frame_{i:06d}.png"
-                        ep_dict[key].append({"path": str(img_path)})
-
-            for key in state_keys_dict:
-                ep_dict[key] = torch.vstack(ep_dict[key]) * 180.0 / np.pi
-            ep_dict['action'] = torch.vstack(ep_dict['action']) * 180.0 / np.pi
-            ep_dict['reward'] = torch.stack(ep_dict['reward'])
-
-            ep_dict["seed"] = torch.tensor([seed] * num_frames)
-            ep_dict["episode_index"] = torch.tensor([episode_index] * num_frames)
-            ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
-            ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
-
-            done = torch.zeros(num_frames, dtype=torch.bool)
-            done[-1] = True
-            ep_dict["next.done"] = done
-
-            ep_path = episodes_dir / f"episode_{episode_index}.pth"
-            print("Saving episode dictionary...")
-            torch.save(ep_dict, ep_path)
-
-            rec_info = {
-                "last_episode_index": episode_index,
-            }
-            with open(rec_info_path, "w") as f:
-                json.dump(rec_info, f)
-
-            is_last_episode = stop_recording or (episode_index == (num_episodes - 1))
-                
-            # Skip updating episode index which forces re-recording episode
-            if rerecord_episode:
-                rerecord_episode = False
-                continue
-
-            episode_index += 1
-
-            if is_last_episode:
-                logging.info("Done recording")
-                say("Done recording", blocking=True)
-
-                logging.info("Waiting for threads writing the images on disk to terminate...")
-                for _ in tqdm.tqdm(
-                    concurrent.futures.as_completed(futures), total=len(futures), desc="Writting images"
-                ):
-                    pass
-                if not is_headless() and visualize_images:
-                    show_images.terminate()
-                    observations_queue.close()
-                break
+        while timestamp < episode_time_s:
+            start_loop_t = time.perf_counter()
+            
+            if policy is not None:
+                action = predict_action(observation, policy, device, use_amp)
             else:
-                print('Waiting for two seconds before starting the next recording session.....')
-                busy_wait(2)
+                leader_pos = robot.leader_arms.main.read('Present_Position')
+                action = process_action_fn(leader_pos)
 
+            action = {"action": action}
 
-    num_episodes = episode_index
+            observation, reward, terminated, _ , info = env.step(action)
+            
+            success = info.get('is_success', False)
+            
+            if policy is not None:
+                pred_action = predict_action(observation, policy, device, use_amp)
+                # Action can eventually be clipped using `max_relative_target`,
+                # so action actually sent is saved in the dataset.
+                action = robot.send_action(pred_action)
+                action = {"action": action}
+    
+            if dataset is not None:
+                add_frame_with_reward(dataset, observation, action, reward, success, seed)
+    
+            if display_cameras and not is_headless():
+                for key in image_keys:
+                    cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+                cv2.waitKey(1)
+    
+            if fps is not None:
+                dt_s = time.perf_counter() - start_loop_t
+                busy_wait(1 / fps - dt_s)
+    
+            dt_s = time.perf_counter() - start_loop_t
+            log_control_info(robot, dt_s, fps=fps)
+    
+            timestamp = time.perf_counter() - start_episode_t
+            if events["exit_early"] or terminated:
+                events["exit_early"] = False
+                break
 
-    if video:
-        logging.info("Encoding videos")
-        say("Encoding videos")
-        # Use ffmpeg to convert frames stored as png into mp4 videos
-        for episode_index in tqdm.tqdm(range(num_episodes)):
-            for key in image_keys:
-                if not key.startswith('observation.images.'):
-                    key = 'observation.images.' + key
+        if events["rerecord_episode"]:
+            log_say("Re-record episode", play_sounds)
+            events["rerecord_episode"] = False
+            events["exit_early"] = False
+            delete_current_episode(dataset)
+            continue
 
-                tmp_imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
-                fname = f"{key}_episode_{episode_index:06d}.mp4"
-                video_path = local_dir / "videos" / fname
-                if video_path.exists():
-                    # Skip if video is already encoded. Could be the case when resuming data recording.
-                    continue
-                # note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
-                # since video encoding with ffmpeg is already using multithreading.
-                encode_video_frames(tmp_imgs_dir, video_path, fps, overwrite=True)
-                shutil.rmtree(tmp_imgs_dir)
+        # Increment by one dataset["current_episode_index"]
+        save_current_episode(dataset)
 
-    logging.info("Concatenating episodes")
+        if events["stop_recording"]:
+            break
+
+    log_say("Stop recording", play_sounds, blocking=True)
+    stop_recording(robot, listener, display_cameras)
+
+    if "image_writer" in dataset:
+        logging.info("Waiting for image writer to terminate...")
+        image_writer = dataset["image_writer"]
+        stop_image_writer(image_writer, timeout=20)
+
+    log_say("Consolidate episodes", play_sounds)
+
+    num_episodes = dataset["num_episodes"]
+    episodes_dir = dataset["episodes_dir"]
+    videos_dir = dataset["videos_dir"]
+
     ep_dicts = []
     for episode_index in tqdm.tqdm(range(num_episodes)):
         ep_path = episodes_dir / f"episode_{episode_index}.pth"
@@ -495,11 +463,13 @@ def record(
         ep_dicts.append(ep_dict)
     data_dict = concatenate_episodes(ep_dicts)
 
-    total_frames = data_dict["frame_index"].shape[0]
-    data_dict["index"] = torch.arange(0, total_frames, 1)
+    if video:
+        image_keys = [key for key in data_dict if "image" in key]
+        encode_videos(dataset, image_keys, play_sounds)
 
-    hf_dataset = create_rl_hf_dataset(data_dict)
+    hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
+
     info = {
         "codebase_version": CODEBASE_VERSION,
         "fps": fps,
@@ -515,35 +485,26 @@ def record(
         info=info,
         videos_dir=videos_dir,
     )
+
     if run_compute_stats:
-        logging.info("Computing dataset statistics")
-        say("Computing dataset statistics")
-        stats = compute_stats(lerobot_dataset)
-        lerobot_dataset.stats = stats
+        log_say("Computing dataset statistics", play_sounds)
+        lerobot_dataset.stats = compute_stats(lerobot_dataset)
     else:
-        stats = {}
         logging.info("Skipping computation of the dataset statistics")
+        lerobot_dataset.stats = {}
 
-    hf_dataset = hf_dataset.with_format(None)  # to remove transforms that cant be saved
-    hf_dataset.save_to_disk(str(local_dir / "train"))
-
-    meta_data_dir = local_dir / "meta_data"
-    save_meta_data(info, stats, episode_data_index, meta_data_dir)
+    save_lerobot_dataset_on_disk(lerobot_dataset)
 
     if push_to_hub:
-        hf_dataset.push_to_hub(repo_id, revision="main")
-        push_meta_data_to_hub(repo_id, meta_data_dir, revision="main")
-        push_dataset_card_to_hub(repo_id, revision="main", tags=tags)
-        if video:
-            push_videos_to_hub(repo_id, videos_dir, revision="main")
-        create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
+        push_lerobot_dataset_to_hub(lerobot_dataset, tags)
 
-    logging.info("Exiting")
-    say("Exiting")
+    log_say("Exiting", play_sounds)
     return lerobot_dataset
 
 
 def replay(env, episodes: list, fps: int | None = None, root="data", repo_id="lerobot/debug"):
+
+    env = env()
 
     local_dir = Path(root) / repo_id
     if not local_dir.exists():
@@ -573,7 +534,6 @@ def replay(env, episodes: list, fps: int | None = None, root="data", repo_id="le
         busy_wait(5)
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="mode", required=True)
@@ -591,11 +551,6 @@ if __name__ == "__main__":
         "--sim-config",
         help="Path to a yaml config you want to use for initializing a sim environment based on gym ",
         )
-
-    parser_teleop = subparsers.add_parser("teleoperate", parents=[base_parser])
-    parser_teleop.add_argument(
-        "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
-    )
 
     parser_record = subparsers.add_parser("record", parents=[base_parser])
     parser_record.add_argument(
@@ -661,7 +616,7 @@ if __name__ == "__main__":
         help="By default, data recording is resumed. When set to 1, delete the local directory and start data recording from scratch.",
     )
     parser_record.add_argument(
-        "--visualize-images",
+        "--display-cameras",
         type=int,
         default=0,
         help="Visualize image observations with opencv.",
@@ -700,27 +655,31 @@ if __name__ == "__main__":
     # make gym env
     env_cfg = init_hydra_config(env_config_path)
     importlib.import_module(f"gym_{env_cfg.env.name}")
-    env = gym.make(env_cfg.env.handle, disable_env_checker=True, **env_cfg.env.gym)
+    env_constructor = lambda: gym.make(env_cfg.env.handle, disable_env_checker=True, **env_cfg.env.gym)
     
     robot = None
-    if control_mode != 'replay':
+
+    if control_mode in ['teleoperate', 'record']:
         # make robot
         robot_overrides = ['~cameras', '~follower_arms']
         robot_cfg = init_hydra_config(robot_path, robot_overrides)
         robot = make_robot(robot_cfg)
+        robot.connect()
 
         calib_kwgs = init_sim_calibration(robot, env_cfg.calibration)
         
         process_leader_actions_fn = lambda action: real_positions_to_sim(action, **calib_kwgs)
 
+        robot.leader_arms.main.calibration = None
+
     if control_mode == "teleoperate":
-        teleoperate(env, robot, process_leader_actions_fn)
+        teleoperate(env_constructor, robot, process_leader_actions_fn)
 
     elif control_mode == "record":
-        record(env, robot, **kwargs)
+        record(env_constructor, robot, process_leader_actions_fn, **kwargs)
 
     elif control_mode == "replay":
-        replay(env, **kwargs)
+        replay(env_constructor, **kwargs)
 
     else:
         raise ValueError(f"Invalid control mode: '{control_mode}', only valid modes are teleoperate, record and replay." )
