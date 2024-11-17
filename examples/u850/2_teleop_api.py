@@ -25,6 +25,9 @@ def initialize_limits(arm):
 
 
 def mimic_arm(arm_source, arm_target, stop_event):
+    start_time = time.time()
+    iteration_count = 0
+
     while not stop_event.is_set():
         code, angles = arm_source.get_servo_angle()
         code_gripper, pos_gripper = arm_source.get_gripper_position()
@@ -38,8 +41,17 @@ def mimic_arm(arm_source, arm_target, stop_event):
             # command the gripper to follow
             arm_target.set_gripper_position(pos=pos_gripper, wait=False)
 
+        iteration_count += 1
+        elapsed_time = time.time() - start_time
+
+        if elapsed_time >= 1.0:  # Print frequency every second
+            frequency = iteration_count / elapsed_time
+            print(f"Current teleoperation frequency: {frequency:.2f} Hz")
+            start_time = time.time()
+            iteration_count = 0
+
         # Small sleep to prevent CPU overuse
-        time.sleep(0.004)  # 250 Hz -> very smooth
+        # time.sleep(0.004)  # 250 Hz -> very smooth
         # time.sleep(0.02)  # 50 Hz -> smooth
         # time.sleep(0.033)  # 30 Hz -> barely smooth
         # time.sleep(0.05)   # 20 Hz  -> jerky motion

@@ -50,9 +50,24 @@ robot = ManipulatorRobot(
 robot.connect()
 
 try:
+    import time
+
+    start_time = time.time()
+    iteration_count = 0
+
     while True:
-        # robot.teleop_step()
-        # time.sleep(0.004)  # 250 Hz
+        robot.teleop_step()
+        # time.sleep(0.033)  # 30 Hz -> barely smooth
+        # time.sleep(0.004)  # 250 Hz -> very smooth
+
+        iteration_count += 1
+        elapsed_time = time.time() - start_time
+
+        if elapsed_time >= 1.0:  # Print frequency every second
+            frequency = iteration_count / elapsed_time
+            print(f"Current teleoperation frequency: {frequency:.2f} Hz")
+            start_time = time.time()
+            iteration_count = 0
 
         # # Recording data, only joints
         # leader_pos = robot.leader_arms["main"].get_position()
@@ -66,13 +81,13 @@ try:
         # print("---")
 
         # Recording data with cameras
-        observation, action = robot.teleop_step(record_data=True)
-        print(observation["observation.images.top"].shape)
-        print(observation["observation.images.wrist"].shape)
-        print(observation["observation.images.top"].min().item())
-        print(observation["observation.images.top"].max().item())
-        print("---")
-        time.sleep(0.033)  # 30 Hz -> barely smooth
+        # observation, action = robot.teleop_step(record_data=True)
+        # print(observation["observation.images.top"].shape)
+        # print(observation["observation.images.wrist"].shape)
+        # print(observation["observation.images.top"].min().item())
+        # print(observation["observation.images.top"].max().item())
+        # print("---")
+
 
 except KeyboardInterrupt:
     print('Operation interrupted by user.')
