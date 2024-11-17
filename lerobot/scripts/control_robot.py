@@ -335,7 +335,7 @@ def replay(
     for idx in range(from_idx, to_idx):
         start_episode_t = time.perf_counter()
 
-        action = items[idx]["action"]        
+        action = items[idx]["action"]
         robot.send_action(action)
 
         dt_s = time.perf_counter() - start_episode_t

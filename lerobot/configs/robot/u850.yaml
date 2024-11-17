@@ -11,7 +11,7 @@ max_relative_target: null
 
 leader_arms:  # L
   main:
-    _target_: lerobot.common.robot_devices.motors.ufactory.xArmWrapper
+    _target_: lerobot.common.robot_devices.motors.ufactory.XArmWrapper
     port: 192.168.1.236
     motors:
       # name: (index, model)
@@ -21,11 +21,11 @@ leader_arms:  # L
       joint4: [4, "ufactory-850"]  # +/- 360 degrees
       joint5: [5, "ufactory-850"]  # +/- 124 degrees
       joint6: [6, "ufactory-850"]  # +/- 360 degrees
-      gripper: [7, "ufactory-850"]  
+      gripper: [7, "ufactory-850"]
 
 follower_arms:
   main:
-    _target_: lerobot.common.robot_devices.motors.ufactory.xArmWrapper
+    _target_: lerobot.common.robot_devices.motors.ufactory.XArmWrapper
     port: 192.168.1.218
     motors:
       # name: (index, model)

@@ -98,7 +98,6 @@ def predict_action(observation, policy, device, use_amp):
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
-
             # Check if tensor is double precision and convert if needed
             if observation[name].dtype == torch.float64:  # Explicitly check for double
                 observation[name] = observation[name].double().float()  # Convert double to float32
@@ -309,7 +308,6 @@ def reset_environment(robot, events, reset_time_s, episode_index):
     # Wait if necessary
     with tqdm.tqdm(total=reset_time_s, desc=f"Waiting (next episode: {episode_index + 1})") as pbar:
         while timestamp < reset_time_s:
-
             ## previous implementation
             ##  increments in 1 second and not controllable
             #

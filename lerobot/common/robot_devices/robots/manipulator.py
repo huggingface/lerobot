@@ -512,7 +512,7 @@ class ManipulatorRobot:
                     leader_pos[name] = np.array(self.leader_arms[name].get_position())
                 else:
                     leader_pos[name] = self.leader_arms[name].read("Present_Position")
-                present_pos = torch.from_numpy(present_pos)
+                present_pos = torch.from_numpy(leader_pos[name])
                 goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
 
             # Used when record_data=True

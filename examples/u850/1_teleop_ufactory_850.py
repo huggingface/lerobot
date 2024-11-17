@@ -1,12 +1,12 @@
 import time
-import tqdm
-from lerobot.common.robot_devices.motors.ufactory import xArmWrapper
-from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
+
 from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
+from lerobot.common.robot_devices.motors.ufactory import XArmWrapper
+from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
 # Defines how to communicate with the motors of the leader and follower arms
 leader_arms = {
-    "main": xArmWrapper(
+    "main": XArmWrapper(
         port="192.168.1.236",
         motors={
             # name: (index, model)
@@ -21,7 +21,7 @@ leader_arms = {
     ),
 }
 follower_arms = {
-    "main": xArmWrapper(
+    "main": XArmWrapper(
         port="192.168.1.218",
         motors={
             # name: (index, model)
@@ -43,7 +43,7 @@ robot = ManipulatorRobot(
     cameras={
         "top": OpenCVCamera(4, fps=30, width=640, height=480),
         "wrist": OpenCVCamera(10, fps=30, width=640, height=480),
-    },    
+    },
 )
 
 # Connect motors buses and cameras if any (Required)
@@ -90,7 +90,7 @@ try:
 
 
 except KeyboardInterrupt:
-    print('Operation interrupted by user.')
+    print("Operation interrupted by user.")
 
 # seconds = 30
 # frequency = 200

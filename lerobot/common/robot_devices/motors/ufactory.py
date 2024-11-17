@@ -1,20 +1,19 @@
-from copy import deepcopy
 import enum
-from lerobot.common.robot_devices.utils import \
-    RobotDeviceAlreadyConnectedError, \
-    RobotDeviceNotConnectedError
-from xarm.wrapper import XArmAPI
-import numpy as np
 import threading
 import time
-import logging
+
+import numpy as np
+from xarm.wrapper import XArmAPI
+
+from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 
 
 class TorqueMode(enum.Enum):
     ENABLED = 1
     DISABLED = 0
 
-class xArmWrapper:
+
+class XArmWrapper:
     """Wrapper for the xArm Python SDK"""
 
     def __init__(
@@ -23,7 +22,7 @@ class xArmWrapper:
         motors: dict[str, tuple[int, str]],
         mock=False,
     ):
-        print("Initializing xArmWrapper")  # Debug print
+        print("Initializing XArmWrapper")  # Debug print
         self.port = port
         self.motors = motors
         self.mock = mock
@@ -42,8 +41,9 @@ class xArmWrapper:
 
         # Create and start the digital input monitoring thread
         print("Creating monitor thread")  # Debug print
-        self.monitor_input_thread = threading.Thread(target=self.monitor_digital_input, args=(self.stop_event,))
-
+        self.monitor_input_thread = threading.Thread(
+            target=self.monitor_digital_input, args=(self.stop_event,)
+        )
 
     @property
     def motor_names(self) -> list[str]:
@@ -75,7 +75,7 @@ class xArmWrapper:
                 raise OSError(f"Failed to connect to xArm API @ '{self.port}'.")
             print("Successfully connected to xArm")  # Debug print
         except Exception as e:
-            print(f"Exception while connecting in xArmWrapper: {e}")
+            print(f"Exception while connecting in XArmWrapper: {e}")
             raise
 
         # Allow to read and write
@@ -86,10 +86,10 @@ class xArmWrapper:
         print("Monitor thread started")  # Debug print
 
     def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
-        pass  # TODO (@vmayoral): implement if of interest
+        pass  # TODO (@vmayoral): implement if of interest
 
     def read(self, data_name, motor_names: str | list[str] | None = None):
-        pass  # TODO (@vmayoral): implement if of interest
+        pass  # TODO (@vmayoral): implement if of interest
 
     def enable(self, follower: bool = False):
         self.api.motion_enable(enable=True)
@@ -145,8 +145,8 @@ class xArmWrapper:
     def initialize_limits(self):
         # heuristic: 1/3 of the max speed and acceleration limits
         #  for testing purposes
-        self.MAX_SPEED_LIMIT = max(self.api.joint_speed_limit)/3
-        self.MAX_ACC_LIMIT = max(self.api.joint_acc_limit)/3
+        self.MAX_SPEED_LIMIT = max(self.api.joint_speed_limit) / 3
+        self.MAX_ACC_LIMIT = max(self.api.joint_acc_limit) / 3
 
     def get_position(self):
         code, angles = self.api.get_servo_angle()
@@ -159,20 +159,19 @@ class xArmWrapper:
         angles = position[:-1].tolist()
         gripper_pos = int(position[-1])
 
-        # joints        
+        # joints
         self.api.set_servo_angle_j(angles=angles, is_radian=False, wait=False)
-                
+
         # gripper
         self.api.set_gripper_position(pos=gripper_pos, wait=False)
 
     def monitor_digital_input(self, stop_event):
         print("Starting monitor_digital_input")  # Debug print
-        SINGLE_CLICK_TIME = 0.2
-        DOUBLE_CLICK_TIME = 0.5
-        LONG_CLICK_TIME = 1.0
+        single_click_time = 0.2
+        double_click_time = 0.5
+        long_click_time = 1.0
 
         last_press_time = 0
-        last_release_time = 0
         last_click_time = 0
         long_click_detected = False
         click_count = 0
@@ -185,11 +184,13 @@ class xArmWrapper:
                     # print(f"Digital input read: code={code}, value={value}")  # Debug print
                     if code == 0:
                         current_time = time.time()
-                        
+
                         if value == 1:  # Button pressed
                             if last_press_time == 0:
                                 last_press_time = current_time
-                            elif not long_click_detected and current_time - last_press_time >= LONG_CLICK_TIME:
+                            elif (
+                                not long_click_detected and current_time - last_press_time >= long_click_time
+                            ):
                                 print("Long click detected -> Switching manual mode")
                                 long_click_detected = True
                                 long_click_state = not long_click_state
@@ -210,18 +211,22 @@ class xArmWrapper:
                                 press_duration = current_time - last_press_time
 
                                 if not long_click_detected:
-                                    if press_duration < SINGLE_CLICK_TIME:
+                                    if press_duration < single_click_time:
                                         click_count += 1
                                         if click_count == 1:
                                             last_click_time = current_time
                                         elif click_count == 2:
-                                            if current_time - last_click_time < DOUBLE_CLICK_TIME:
+                                            if current_time - last_click_time < double_click_time:
                                                 print("Double click detected -> Open gripper")
-                                                self.api.set_gripper_position(pos=600, wait=False)  # Open gripper
+                                                self.api.set_gripper_position(
+                                                    pos=600, wait=False
+                                                )  # Open gripper
                                                 click_count = 0
                                             else:
                                                 print("Single click detected -> Close gripper")
-                                                self.api.set_gripper_position(pos=50, wait=False)  # Close gripper
+                                                self.api.set_gripper_position(
+                                                    pos=50, wait=False
+                                                )  # Close gripper
                                                 click_count = 1
                                                 last_click_time = current_time
                                     else:
@@ -229,12 +234,11 @@ class xArmWrapper:
                                         self.api.set_gripper_position(pos=50, wait=False)  # Close gripper
                                         click_count = 0
 
-                                last_release_time = current_time
                                 last_press_time = 0
                                 long_click_detected = False
 
                         # Reset click count if too much time has passed since last click
-                        if click_count == 1 and current_time - last_click_time >= DOUBLE_CLICK_TIME:
+                        if click_count == 1 and current_time - last_click_time >= double_click_time:
                             print("Single click detected -> Close gripper")
                             self.api.set_gripper_position(pos=50, wait=False)  # Close gripper
                             click_count = 0
@@ -246,7 +250,6 @@ class xArmWrapper:
                 print(f"Error in monitor_digital_input: {e}")  # Debug print
             time.sleep(0.01)  # Check every 10ms for more precise detection
         print("Exiting monitor_digital_input")  # Debug print
-
 
     def robot_reset(self):
         """Reset the robot to a safe state"""
