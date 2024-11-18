@@ -3,26 +3,27 @@
 # The PS4 controller should be connected via USB
 # So far only tested on Mac
 
-import math
 import logging
+import math
 import threading
-import hid
 import time
-import struct
+
+import hid
+
 
 class PS4JoystickController:
     def __init__(
         self,
         motor_names,
-        initial_position=[90, 170, 170, 0, 0, 10],
+        initial_position=None,
         l1=117.0,  # Length of first lever in mm
         l2=136.0,  # Length of second lever in mm
         *args,
-        **kwargs
+        **kwargs,
     ):
         self.motor_names = motor_names
-        self.initial_position = initial_position
-        self.current_positions = {name: pos for name, pos in zip(self.motor_names, self.initial_position)}
+        self.initial_position = initial_position if initial_position else [90, 170, 170, 0, 0, 10]
+        self.current_positions = dict(zip(self.motor_names, self.initial_position, strict=False))
         self.new_positions = self.current_positions.copy()
 
         # Inverse Kinematics parameters are used to compute x and y positions
@@ -30,35 +31,37 @@ class PS4JoystickController:
         self.l2 = l2
 
         # x and y are coordinates of the axis of wrist_flex motor relative to the axis of the shoulder_pan motor in mm
-        self.x, self.y = self._compute_position(self.current_positions['shoulder_lift'], self.current_positions['elbow_flex'])
+        self.x, self.y = self._compute_position(
+            self.current_positions["shoulder_lift"], self.current_positions["elbow_flex"]
+        )
 
         # Gamepad states
         self.axes = {
-            'RX': 0.0,
-            'RY': 0.0,
-            'LX': 0.0,
-            'LY': 0.0,
-            'L2': 0.0,
-            'R2': 0.0,
+            "RX": 0.0,
+            "RY": 0.0,
+            "LX": 0.0,
+            "LY": 0.0,
+            "L2": 0.0,
+            "R2": 0.0,
         }
         self.buttons = {
-            'L2': 0,
-            'R2': 0,
-            'DPAD_LEFT': 0,
-            'DPAD_RIGHT': 0,
-            'DPAD_UP': 0,
-            'DPAD_DOWN': 0,
-            'X': 0,
-            'O': 0,
-            'T': 0,
-            'S': 0,
-            'L1': 0,
-            'R1': 0,
-            'SHARE': 0,
-            'OPTIONS': 0,
-            'PS': 0,
-            'L3': 0,
-            'R3': 0,
+            "L2": 0,
+            "R2": 0,
+            "DPAD_LEFT": 0,
+            "DPAD_RIGHT": 0,
+            "DPAD_UP": 0,
+            "DPAD_DOWN": 0,
+            "X": 0,
+            "O": 0,
+            "T": 0,
+            "S": 0,
+            "L1": 0,
+            "R1": 0,
+            "SHARE": 0,
+            "OPTIONS": 0,
+            "PS": 0,
+            "L3": 0,
+            "R3": 0,
         }
 
         # PS4 Controller constants
@@ -119,9 +122,11 @@ class PS4JoystickController:
         try:
             self.device = hid.device()
             self.device.open(self.VENDOR_ID, self.PRODUCT_ID)
-            logging.info(f"Connected to {self.device.get_manufacturer_string()} {self.device.get_product_string()}")
+            logging.info(
+                f"Connected to {self.device.get_manufacturer_string()} {self.device.get_product_string()}"
+            )
             self.running = True
-        except IOError as e:
+        except OSError as e:
             logging.error(f"Unable to open device: {e}")
             self.device = None
 
@@ -152,10 +157,10 @@ class PS4JoystickController:
             right_stick_y = data[4] - 128
 
             # Normalize to -1.0 to 1.0
-            self.axes['LX'] = self._filter_deadzone(left_stick_x / 128.0)
-            self.axes['LY'] = self._filter_deadzone(-left_stick_y / 128.0)
-            self.axes['RX'] = self._filter_deadzone(right_stick_x / 128.0)
-            self.axes['RY'] = self._filter_deadzone(-right_stick_y / 128.0)
+            self.axes["LX"] = self._filter_deadzone(left_stick_x / 128.0)
+            self.axes["LY"] = self._filter_deadzone(-left_stick_y / 128.0)
+            self.axes["RX"] = self._filter_deadzone(right_stick_x / 128.0)
+            self.axes["RY"] = self._filter_deadzone(-right_stick_y / 128.0)
 
             # Byte 5: D-Pad and face buttons
             buttons_byte = data[5]
@@ -165,19 +170,19 @@ class PS4JoystickController:
             dpad_direction = self.DPAD_DIRECTIONS.get(dpad_bits, "DPAD_NEUTRAL")
 
             # Reset D-Pad buttons
-            self.buttons['DPAD_UP'] = 0
-            self.buttons['DPAD_DOWN'] = 0
-            self.buttons['DPAD_LEFT'] = 0
-            self.buttons['DPAD_RIGHT'] = 0
+            self.buttons["DPAD_UP"] = 0
+            self.buttons["DPAD_DOWN"] = 0
+            self.buttons["DPAD_LEFT"] = 0
+            self.buttons["DPAD_RIGHT"] = 0
 
             if "UP" in dpad_direction:
-                self.buttons['DPAD_UP'] = 1
+                self.buttons["DPAD_UP"] = 1
             if "DOWN" in dpad_direction:
-                self.buttons['DPAD_DOWN'] = 1
+                self.buttons["DPAD_DOWN"] = 1
             if "LEFT" in dpad_direction:
-                self.buttons['DPAD_LEFT'] = 1
+                self.buttons["DPAD_LEFT"] = 1
             if "RIGHT" in dpad_direction:
-                self.buttons['DPAD_RIGHT'] = 1
+                self.buttons["DPAD_RIGHT"] = 1
 
             # Face buttons are bits 4-7
             face_buttons_bits = buttons_byte & 0xF0
@@ -196,14 +201,14 @@ class PS4JoystickController:
 
             # Byte 8: L2 Analog
             l2_analog = data[8]
-            self.axes['L2'] = l2_analog / 255.0  # 0.0 to 1.0
+            self.axes["L2"] = l2_analog / 255.0  # 0.0 to 1.0
 
             # Byte 9: R2 Analog
             r2_analog = data[9]
-            self.axes['R2'] = r2_analog / 255.0  # 0.0 to 1.0
+            self.axes["R2"] = r2_analog / 255.0  # 0.0 to 1.0
 
-            axes=self.axes.copy()
-            buttons=self.buttons.copy()
+            axes = self.axes.copy()
+            buttons = self.buttons.copy()
 
         self._update_positions(axes, buttons)
 
@@ -223,7 +228,7 @@ class PS4JoystickController:
 
     def _update_positions(self, axes, buttons):
         # Compute new positions based on inputs
-        SPEED = 0.3
+        speed = 0.3
         # TODO: speed can be different for different directions
 
         temp_positions = self.current_positions.copy()
@@ -231,42 +236,50 @@ class PS4JoystickController:
         # Handle macro buttons
         # Buttons have assigned states where robot can move directly
         used_macros = False
-        macro_buttons = ['X', 'O', 'T', 'S'] # can use more if needed
+        macro_buttons = ["X", "O", "T", "S"]  # can use more if needed
         for button in macro_buttons:
             if buttons.get(button):
                 temp_positions = self._execute_macro(button, temp_positions)
-                temp_x, temp_y = self._compute_position(temp_positions['shoulder_lift'], temp_positions['elbow_flex'])
+                temp_x, temp_y = self._compute_position(
+                    temp_positions["shoulder_lift"], temp_positions["elbow_flex"]
+                )
                 correct_inverse_kinematics = True
                 used_macros = True
 
         if not used_macros:
             # Map joystick inputs to motor positions
             # Right joystick controls "wrist_roll" (left/right) and "wrist_flex" (up/down)
-            temp_positions['wrist_roll'] += axes['RX'] * SPEED  # degrees per update
-            temp_positions['wrist_flex'] -= axes['RY'] * SPEED  # degrees per update
+            temp_positions["wrist_roll"] += axes["RX"] * speed  # degrees per update
+            temp_positions["wrist_flex"] -= axes["RY"] * speed  # degrees per update
 
             # L2 and R2 control gripper
-            temp_positions['gripper'] -= SPEED * axes['R2']  # Close gripper
-            temp_positions['gripper'] += SPEED * axes['L2'] # Open gripper
+            temp_positions["gripper"] -= speed * axes["R2"]  # Close gripper
+            temp_positions["gripper"] += speed * axes["L2"]  # Open gripper
 
             # Left joystick and dpad left and right control shoulder_pan
-            temp_positions['shoulder_pan'] += (axes['LX'] - buttons['DPAD_LEFT'] + buttons['DPAD_RIGHT']) * SPEED  # degrees per update
+            temp_positions["shoulder_pan"] += (
+                axes["LX"] - buttons["DPAD_LEFT"] + buttons["DPAD_RIGHT"]
+            ) * speed  # degrees per update
 
             # Handle the linear movement of the arm
             # Left joystick up/down changes x
-            temp_x = self.x + axes['LY'] * SPEED  # mm per update
+            temp_x = self.x + axes["LY"] * speed  # mm per update
 
             # D-pad up/down change y
-            temp_y = self.y + (buttons['DPAD_UP'] - buttons['DPAD_DOWN']) * SPEED
+            temp_y = self.y + (buttons["DPAD_UP"] - buttons["DPAD_DOWN"]) * speed
 
             correct_inverse_kinematics = False
 
             # Compute shoulder_lift and elbow_flex angles based on x and y
             try:
-                temp_positions['shoulder_lift'], temp_positions['elbow_flex'] = self._compute_inverse_kinematics(temp_x, temp_y)
-                shoulder_lift_change = temp_positions['shoulder_lift'] - self.current_positions['shoulder_lift']
-                elbow_flex_change = temp_positions['elbow_flex'] - self.current_positions['elbow_flex']
-                temp_positions['wrist_flex'] +=  shoulder_lift_change - elbow_flex_change
+                temp_positions["shoulder_lift"], temp_positions["elbow_flex"] = (
+                    self._compute_inverse_kinematics(temp_x, temp_y)
+                )
+                shoulder_lift_change = (
+                    temp_positions["shoulder_lift"] - self.current_positions["shoulder_lift"]
+                )
+                elbow_flex_change = temp_positions["elbow_flex"] - self.current_positions["elbow_flex"]
+                temp_positions["wrist_flex"] += shoulder_lift_change - elbow_flex_change
                 correct_inverse_kinematics = True
             except ValueError as e:
                 logging.error(f"Error computing inverse kinematics: {e}")
@@ -289,28 +302,29 @@ class PS4JoystickController:
         Define the allowed ranges for each motor.
         """
         allowed_ranges = {
-            'shoulder_pan': (-10, 190),
-            'shoulder_lift': (-5, 185),
-            'elbow_flex': (-5, 185),
-            'wrist_flex': (-110, 110),
-            'wrist_roll': (-110, 110),
-            'gripper': (0, 100),
-            'x': (15, 250),
-            'y': (-110, 250),
+            "shoulder_pan": (-10, 190),
+            "shoulder_lift": (-5, 185),
+            "elbow_flex": (-5, 185),
+            "wrist_flex": (-110, 110),
+            "wrist_roll": (-110, 110),
+            "gripper": (0, 100),
+            "x": (15, 250),
+            "y": (-110, 250),
         }
 
         for motor, (min_val, max_val) in allowed_ranges.items():
-            if motor in positions:
-                if not (min_val <= positions[motor] <= max_val):
-                    logging.error(f"Motor '{motor}' position {positions[motor]} out of range [{min_val}, {max_val}].")
-                    return False
-                
+            if motor in positions and not (min_val <= positions[motor] <= max_val):
+                logging.error(
+                    f"Motor '{motor}' position {positions[motor]} out of range [{min_val}, {max_val}]."
+                )
+                return False
+
         # Check if x and y positions are within the allowed ranges
-        if x < allowed_ranges['x'][0] or x > allowed_ranges['x'][1]:
+        if x < allowed_ranges["x"][0] or x > allowed_ranges["x"][1]:
             logging.error(f"X position {x} out of range {allowed_ranges['x']}.")
             return False
-    
-        if y < allowed_ranges['y'][0] or y > allowed_ranges['y'][1]:
+
+        if y < allowed_ranges["y"][0] or y > allowed_ranges["y"][1]:
             logging.error(f"Y position {y} out of range {allowed_ranges['y']}.")
             return False
 
@@ -322,16 +336,16 @@ class PS4JoystickController:
         set the motors to predefined positions.
         """
         macros = {
-            'O': [90, 180, 180, 0, 0, 10], # initial position
-            'X': [90, 50, 130, -90, 90, 80], # low horizontal gripper
-            'T': [90, 130, 150, 70, 90, 80], # top down gripper
-            'S': [90, 160, 140, 20, 0, 0], # looking forward
+            "O": [90, 180, 180, 0, 0, 10],  # initial position
+            "X": [90, 50, 130, -90, 90, 80],  # low horizontal gripper
+            "T": [90, 130, 150, 70, 90, 80],  # top down gripper
+            "S": [90, 160, 140, 20, 0, 0],  # looking forward
             # can add more macros for all other buttons
         }
 
         if button in macros:
             motor_positions = macros[button][:6]
-            for name, pos in zip(self.motor_names, motor_positions):
+            for name, pos in zip(self.motor_names, motor_positions, strict=False):
                 positions[name] = pos
             logging.info(f"Macro '{button}' executed. Motors set to {motor_positions}.")
         return positions
@@ -340,8 +354,8 @@ class PS4JoystickController:
         """
         Compute motor 2 and motor 3 angles based on the desired x and y positions.
         """
-        #TODO: add explanation of the math behind this
-        #TODO: maybe the math can be optimized, check it
+        # TODO: add explanation of the math behind this
+        # TODO: maybe the math can be optimized, check it
 
         l1 = self.l1
         l2 = self.l2
@@ -361,7 +375,7 @@ class PS4JoystickController:
         theta2_deg = math.degrees(theta2_rad)
         # Adjust motor3 angle
 
-        offset = math.degrees(math.asin(32/l1))
+        offset = math.degrees(math.asin(32 / l1))
 
         motor3_angle = 180 - (theta2_deg - offset)
 
@@ -385,7 +399,7 @@ class PS4JoystickController:
         """
         l1 = self.l1
         l2 = self.l2
-        offset = math.degrees(math.asin(32/l1))
+        offset = math.degrees(math.asin(32 / l1))
 
         beta_deg = 180 - motor2_angle + offset
         beta_rad = math.radians(beta_deg)
@@ -394,7 +408,7 @@ class PS4JoystickController:
         theta2_rad = math.radians(theta2_deg)
 
         y = l1 * math.sin(beta_rad) - l2 * math.sin(beta_rad - theta2_rad)
-        x = - l1 * math.cos(beta_rad) + l2 * math.cos(beta_rad - theta2_rad)
+        x = -l1 * math.cos(beta_rad) + l2 * math.cos(beta_rad - theta2_rad)
         return x, y
 
     def stop(self):

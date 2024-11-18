@@ -492,7 +492,7 @@ class ManipulatorRobot:
             leader_pos_values = [controller_command[name] for name in self.controller.motor_names]
             leader_pos_array = np.array(leader_pos_values)
             leader_pos["controller"] = torch.from_numpy(leader_pos_array)
-            self.logs[f"read_controller_pos_dt_s"] = time.perf_counter() - before_controller_read_t
+            self.logs["read_controller_pos_dt_s"] = time.perf_counter() - before_controller_read_t
         else:
             for name in self.leader_arms:
                 before_lread_t = time.perf_counter()
@@ -504,10 +504,7 @@ class ManipulatorRobot:
         follower_goal_pos = {}
         for name in self.follower_arms:
             before_fwrite_t = time.perf_counter()
-            if self.controller is not None:
-                goal_pos = leader_pos["controller"]
-            else:
-                goal_pos = leader_pos[name]
+            goal_pos = leader_pos["controller"] if self.controller is not None else leader_pos[name]
 
             # Cap goal position when too far away from present position.
             # Slower fps expected due to reading from the follower.
