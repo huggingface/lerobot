@@ -59,6 +59,7 @@ def create_empty_dataset(repo_id, mode):
         fps=10,
         robot_type="2d pointer",
         features=features,
+        image_writer_threads=4,
     )
     return dataset
 

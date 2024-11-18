@@ -910,7 +910,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         use_videos: bool = True,
         tolerance_s: float = 1e-4,
         image_writer_processes: int = 0,
-        image_writer_threads: int = 4,
+        image_writer_threads: int = 0,
         video_backend: str | None = None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
