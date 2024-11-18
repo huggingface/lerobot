@@ -301,7 +301,7 @@ def record(
             dataset.clear_episode_buffer()
             continue
 
-        dataset.add_episode(task)
+        dataset.save_episode(task)
         recorded_episodes += 1
 
         if events["stop_recording"]:
