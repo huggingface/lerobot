@@ -450,6 +450,9 @@ def create_lerobot_dataset_card(
     citation: str | None = None,
     arxiv: str | None = None,
 ) -> DatasetCard:
+    """
+    If specified, license must be one of https://huggingface.co/docs/hub/repositories-licenses.
+    """
     card = DatasetCard(DATASET_CARD_TEMPLATE)
     card.data.configs = [
         {
