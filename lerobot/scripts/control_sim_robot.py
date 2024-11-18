@@ -56,7 +56,6 @@ python lerobot/scripts/control_sim_robot.py record \
     --repo-id $USER/robot_sim_test \
     --num-episodes 50 \
     --episode-time-s 30 \
-    --reset-time-s 10
 ```
 
 **NOTE**: You can use your keyboard to control data recording flow.
@@ -72,102 +71,48 @@ To avoid resuming by deleting the dataset, use `--force-override 1`.
 """
 
 import argparse
-import concurrent.futures
+import importlib
 import json
 import logging
-import multiprocessing.process
-import os
-import platform
-import shutil
 import time
 import traceback
 from functools import cache
 from pathlib import Path
-import gymnasium as gym
-import multiprocessing 
-import importlib
 
 import cv2
-import torch
+import gymnasium as gym
 import numpy as np
+import torch
 import tqdm
-from PIL import Image
 from datasets import Dataset, Features, Sequence, Value
+from PIL import Image
 
-# from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.compute_stats import compute_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
-from lerobot.common.datasets.video_utils import VideoFrame
 from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, get_default_encoding
 from lerobot.common.datasets.utils import calculate_episode_data_index, hf_transform_to_torch
+from lerobot.common.datasets.video_utils import VideoFrame
+from lerobot.common.robot_devices.control_utils import (
+    init_keyboard_listener,
+    init_policy,
+    log_control_info,
+    predict_action,
+    stop_recording,
+)
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import init_hydra_config, init_logging, log_say
 
-from lerobot.common.datasets.populate_dataset import (
-    add_frame,
-    stop_image_writer,
-    delete_current_episode,
-    init_dataset,
-    save_current_episode,
-    encode_videos,
-    save_lerobot_dataset_on_disk,
-    push_lerobot_dataset_to_hub
-)
-from lerobot.common.robot_devices.control_utils import (
-    init_keyboard_listener,
-    init_policy,
-    log_control_info,
-    stop_recording,
-    predict_action
-)
+
 ########################################################################################
 # Utilities
 ########################################################################################
-def say(text, blocking=False):
-    # Check if mac, linux, or windows.
-    if platform.system() == "Darwin":
-        cmd = f'say "{text}"'
-    elif platform.system() == "Linux":
-        cmd = f'spd-say "{text}"'
-    elif platform.system() == "Windows":
-        cmd = (
-            'PowerShell -Command "Add-Type -AssemblyName System.Speech; '
-            f"(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')\""
-        )
-
-    if not blocking and platform.system() in ["Darwin", "Linux"]:
-        # TODO(rcadene): Make it work for Windows
-        # Use the ampersand to run command in the background
-        cmd += " &"
-
-    os.system(cmd)
-
-
-def save_image(img_arr, key, frame_index, episode_index, videos_dir):
-    img = Image.fromarray(img_arr)
-    path = videos_dir / f"{key}_episode_{episode_index:06d}" / f"frame_{frame_index:06d}.png"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(str(path), quality=100)
-
-def show_image_observations(observation_queue:multiprocessing.Queue):
-    keys = None
-    while True:
-        observations = observation_queue.get()
-        images = []
-        if keys is None: keys = [k for k in observations if 'image' in k]
-        for key in keys:
-            images.append(observations[key].squeeze(0))
-        cat_image = np.concatenate(images, 1)
-        cv2.imshow('observations', cv2.cvtColor(cat_image, cv2.COLOR_RGB2BGR))
-        cv2.waitKey(1)
-
-
 def none_or_int(value):
     if value == "None":
         return None
     return int(value)
+
 
 @cache
 def is_headless():
@@ -184,35 +129,55 @@ def is_headless():
             "For more info, see traceback below.\n"
         )
         traceback.print_exc()
-        print() 
+        print()
         return True
+
 
 def init_sim_calibration(robot, cfg):
     # Constants necessary for transforming the joint pos of the real robot to the sim
     # depending on the robot discription used in that sim.
-    start_pos = np.array(robot.leader_arms.main.calibration['start_pos'])
-    axis_directions = np.array(cfg.get('axis_directions', [1]))
-    offsets = np.array(cfg.get('offsets', [0])) * np.pi
+    start_pos = np.array(robot.leader_arms.main.calibration["start_pos"])
+    axis_directions = np.array(cfg.get("axis_directions", [1]))
+    offsets = np.array(cfg.get("offsets", [0])) * np.pi
 
-    return {'start_pos': start_pos,
-            'axis_directions': axis_directions,
-            'offsets': offsets}
+    return {"start_pos": start_pos, "axis_directions": axis_directions, "offsets": offsets}
+
 
 def real_positions_to_sim(real_positions, axis_directions, start_pos, offsets):
     """Counts - starting position -> radians -> align axes -> offset"""
     return axis_directions * (real_positions - start_pos) * 2.0 * np.pi / 4096 + offsets
 
+
+def standardize_observation_key_names(observation, image_keys=None, state_keys_dict=None):
+    """Change key names for images and states to the standard keys in LeRobot dataset"""
+    if image_keys is None:
+        image_keys = []
+
+    for key in image_keys:
+        if not key.startswith("observation.image"):
+            observation["observation.images." + key] = observation.pop(key)
+
+    if state_keys_dict is None:
+        state_keys_dict = {}
+    for key, obs_key in state_keys_dict.items():
+        observation[key] = torch.from_numpy(observation.pop(obs_key))
+
+
 def add_frame_with_reward(dataset, observation, action, reward, success, seed):
     add_frame(dataset, observation, action)
     ep_dict = dataset["current_episode"]
 
-    if 'next.reward' not in ep_dict: ep_dict['next.reward'] = []
-    if 'next.sucess' not in ep_dict: ep_dict['next.success'] = []
-    if 'seed' not in ep_dict: ep_dict['seed'] = []
+    if "next.reward" not in ep_dict:
+        ep_dict["next.reward"] = []
+    if "next.success" not in ep_dict:
+        ep_dict["next.success"] = []
+    if "seed" not in ep_dict:
+        ep_dict["seed"] = []
 
-    ep_dict['reward'].append(reward)
-    ep_dict['sucess'].append(success)
-    ep_dict['seed'].append(seed)
+    ep_dict["next.reward"].append(reward)
+    ep_dict["next.success"].append(success)
+    ep_dict["seed"].append(seed)
+
 
 def save_current_episode(dataset):
     episode_index = dataset["num_episodes"]
@@ -227,9 +192,9 @@ def save_current_episode(dataset):
             ep_dict[key] = torch.stack(ep_dict[key])
 
     ep_dict["action"] = torch.stack(ep_dict["action"])
-    ep_dict['next.reward'] = torch.tensor(ep_dict["next.reward"])
-    ep_dict['next.success'] = torch.tensor(ep_dict["next.success"])
-    ep_dict['seed'] = torch.tensor(ep_dict["seed"])
+    ep_dict["next.reward"] = torch.tensor(ep_dict["next.reward"])
+    ep_dict["next.success"] = torch.tensor(ep_dict["next.success"])
+    ep_dict["seed"] = torch.tensor(ep_dict["seed"])
     ep_dict["episode_index"] = torch.tensor(ep_dict["episode_index"])
     ep_dict["frame_index"] = torch.tensor(ep_dict["frame_index"])
     ep_dict["timestamp"] = torch.tensor(ep_dict["timestamp"])
@@ -250,12 +215,15 @@ def save_current_episode(dataset):
     dataset["num_episodes"] += 1
 
 
-def to_hf_dataset(data_dict):
+def to_hf_dataset(data_dict, video):
     features = {}
 
     keys = [key for key in data_dict if "observation.images." in key]
     for key in keys:
-        features[key] = VideoFrame()
+        if video:
+            features[key] = VideoFrame()
+        else:
+            features[key] = Image()
 
     features["observation.state"] = Sequence(
         length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
@@ -271,7 +239,8 @@ def to_hf_dataset(data_dict):
     features["action"] = Sequence(
         length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)
     )
-    features["reward"] = Value(dtype="float32", id=None)
+    features["next.reward"] = Value(dtype="float32", id=None)
+    features["next.success"] = Value(dtype="bool", id=None)
 
     features["seed"] = Value(dtype="int64", id=None)
     features["episode_index"] = Value(dtype="int64", id=None)
@@ -288,23 +257,23 @@ def to_hf_dataset(data_dict):
 # Control modes
 ########################################################################################
 
-def teleoperate(env, robot: Robot, process_action_fn, teleop_time_s=None):  
-    
+
+def teleoperate(env, robot: Robot, process_action_fn, teleop_time_s=None):
     env = env()
     env.reset()
-    start_teleop_t = time.perf_counter() 
+    start_teleop_t = time.perf_counter()
     while True:
-        leader_pos = robot.leader_arms.main.read('Present_Position')
+        leader_pos = robot.leader_arms.main.read("Present_Position")
         action = process_action_fn(leader_pos)
         env.step(np.expand_dims(action, 0))
         if teleop_time_s is not None and time.perf_counter() - start_teleop_t > teleop_time_s:
             print("Teleoperation processes finished.")
             break
 
+
 def record(
-    env, 
+    env,
     robot: Robot,
-    policy=None,
     process_action_fn=None,
     fps: int | None = None,
     root="data",
@@ -321,17 +290,10 @@ def record(
     num_image_writers_per_camera=4,
     force_override=False,
     display_cameras=False,
-    play_sounds=True
+    play_sounds=True,
 ):
-
-    listener = None
-    device = None
-    use_amp = None
-
-    if policy is None and process_action_fn is None:
-        raise ValueError('Either policy or process_action_fn has to be set to enable control in sim.')
-    
     # Load pretrained policy
+    policy = None
     if pretrained_policy_name_or_path is not None:
         policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
 
@@ -343,19 +305,22 @@ def record(
                 f"There is a mismatch between the provided fps ({fps}) and the one from policy config ({policy_fps})."
             )
 
+    if policy is None and process_action_fn is None:
+        raise ValueError("Either policy or process_action_fn has to be set to enable control in sim.")
+
     # initialize listener before sim env
     listener, events = init_keyboard_listener()
 
     # create sim env
     env = env()
 
-    # Load pretrained policy
     # Create empty dataset or load existing saved episodes
-    num_cameras = sum([1 if 'image' in key else 0 for key in env.observation_space])
-    num_image_writers = num_image_writers_per_camera * num_cameras 
+    num_cameras = sum([1 if "image" in key else 0 for key in env.observation_space])
+    num_image_writers = num_image_writers_per_camera * num_cameras
 
     image_keys = [key for key in env.observation_space if "image" in key]
-    write_images = image_keys != []
+    state_keys_dict = env_cfg.state_keys
+    write_images = len(image_keys) > 0
 
     dataset = init_dataset(
         repo_id,
@@ -374,56 +339,49 @@ def record(
 
         episode_index = dataset["num_episodes"]
         log_say(f"Recording episode {episode_index}", play_sounds)
-    
+
         if events is None:
             events = {"exit_early": False}
-    
+
         if episode_time_s is None:
             episode_time_s = float("inf")
-            
+
         timestamp = 0
         start_episode_t = time.perf_counter()
 
-        seed = np.random.randint(0,1e5)
+        seed = np.random.randint(0, 1e5)
         observation, info = env.reset(seed=seed)
 
         while timestamp < episode_time_s:
             start_loop_t = time.perf_counter()
-            
+
             if policy is not None:
                 action = predict_action(observation, policy, device, use_amp)
             else:
-                leader_pos = robot.leader_arms.main.read('Present_Position')
+                leader_pos = robot.leader_arms.main.read("Present_Position")
                 action = process_action_fn(leader_pos)
 
-            action = {"action": action}
+            observation, reward, terminated, _, info = env.step(action)
 
-            observation, reward, terminated, _ , info = env.step(action)
-            
-            success = info.get('is_success', False)
-            
-            if policy is not None:
-                pred_action = predict_action(observation, policy, device, use_amp)
-                # Action can eventually be clipped using `max_relative_target`,
-                # so action actually sent is saved in the dataset.
-                action = robot.send_action(pred_action)
-                action = {"action": action}
-    
+            action = {"action": torch.from_numpy(action)}
+            success = info.get("is_success", False)
+
             if dataset is not None:
+                standardize_observation_key_names(observation, image_keys, state_keys_dict)
                 add_frame_with_reward(dataset, observation, action, reward, success, seed)
-    
+
             if display_cameras and not is_headless():
                 for key in image_keys:
                     cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
                 cv2.waitKey(1)
-    
+
             if fps is not None:
                 dt_s = time.perf_counter() - start_loop_t
                 busy_wait(1 / fps - dt_s)
-    
+
             dt_s = time.perf_counter() - start_loop_t
             log_control_info(robot, dt_s, fps=fps)
-    
+
             timestamp = time.perf_counter() - start_episode_t
             if events["exit_early"] or terminated:
                 events["exit_early"] = False
@@ -441,6 +399,9 @@ def record(
 
         if events["stop_recording"]:
             break
+        else:
+            logging.info("Waiting for a few seconds before starting next episode recording...")
+            busy_wait(3)
 
     log_say("Stop recording", play_sounds, blocking=True)
     stop_recording(robot, listener, display_cameras)
@@ -503,7 +464,6 @@ def record(
 
 
 def replay(env, episodes: list, fps: int | None = None, root="data", repo_id="lerobot/debug"):
-
     env = env()
 
     local_dir = Path(root) / repo_id
@@ -512,21 +472,21 @@ def replay(env, episodes: list, fps: int | None = None, root="data", repo_id="le
 
     dataset = LeRobotDataset(repo_id, root=root)
     items = dataset.hf_dataset.select_columns("action")
-    seeds = dataset.hf_dataset.select_columns("seed")['seed']
+    seeds = dataset.hf_dataset.select_columns("seed")["seed"]
 
     for episode in episodes:
         from_idx = dataset.episode_data_index["from"][episode].item()
         to_idx = dataset.episode_data_index["to"][episode].item()
         env.reset(seed=seeds[from_idx].item())
         logging.info("Replaying episode")
-        say("Replaying episode", blocking=True)
+        log_say("Replaying episode", play_sounds=True)
         for idx in range(from_idx, to_idx):
             start_episode_t = time.perf_counter()
-    
+
             action = items[idx]["action"]
-    
-            env.step(action.unsqueeze(0).numpy() * np.pi / 180.0)
-    
+
+            env.step(action.unsqueeze(0).numpy())
+
             dt_s = time.perf_counter() - start_episode_t
             busy_wait(1 / fps - dt_s)
 
@@ -546,11 +506,13 @@ if __name__ == "__main__":
         default="lerobot/configs/robot/koch.yaml",
         help="Path to robot yaml file used to instantiate the robot using `make_robot` factory function.",
     )
-    
+
     base_parser.add_argument(
         "--sim-config",
         help="Path to a yaml config you want to use for initializing a sim environment based on gym ",
-        )
+    )
+
+    parser_record = subparsers.add_parser("teleoperate", parents=[base_parser])
 
     parser_record = subparsers.add_parser("record", parents=[base_parser])
     parser_record.add_argument(
@@ -574,12 +536,6 @@ if __name__ == "__main__":
         default=60,
         help="Number of seconds for data recording for each episode.",
     )
-    parser_record.add_argument(
-        "--reset-time-s",
-        type=int,
-        default=60,
-        help="Number of seconds for resetting the environment after each episode.",
-    )
     parser_record.add_argument("--num-episodes", type=int, default=50, help="Number of episodes to record.")
     parser_record.add_argument(
         "--run-compute-stats",
@@ -598,6 +554,17 @@ if __name__ == "__main__":
         type=str,
         nargs="*",
         help="Add tags to your dataset on the hub.",
+    )
+    parser_record.add_argument(
+        "--num-image-writer-processes",
+        type=int,
+        default=0,
+        help=(
+            "Number of subprocesses handling the saving of frames as PNGs. Set to 0 to use threads only; "
+            "set to ≥1 to use subprocesses, each using threads to write images. The best number of processes "
+            "and threads depends on your system. We recommend 4 threads per camera with 0 processes. "
+            "If fps is unstable, adjust the thread count. If still unstable, try using 1 or more subprocesses."
+        ),
     )
     parser_record.add_argument(
         "--num-image-writers-per-camera",
@@ -638,7 +605,9 @@ if __name__ == "__main__":
         default="lerobot/test",
         help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
     )
-    parser_replay.add_argument("--episodes", nargs='+', type=int, default=[0], help="Indices of the episodes to replay.")
+    parser_replay.add_argument(
+        "--episodes", nargs="+", type=int, default=[0], help="Indices of the episodes to replay."
+    )
 
     args = parser.parse_args()
 
@@ -655,20 +624,23 @@ if __name__ == "__main__":
     # make gym env
     env_cfg = init_hydra_config(env_config_path)
     importlib.import_module(f"gym_{env_cfg.env.name}")
-    env_constructor = lambda: gym.make(env_cfg.env.handle, disable_env_checker=True, **env_cfg.env.gym)
-    
+
+    def env_constructor():
+        return gym.make(env_cfg.env.handle, disable_env_checker=True, **env_cfg.env.gym)
+
     robot = None
 
-    if control_mode in ['teleoperate', 'record']:
+    if control_mode in ["teleoperate", "record"]:
         # make robot
-        robot_overrides = ['~cameras', '~follower_arms']
+        robot_overrides = ["~cameras", "~follower_arms"]
         robot_cfg = init_hydra_config(robot_path, robot_overrides)
         robot = make_robot(robot_cfg)
         robot.connect()
 
         calib_kwgs = init_sim_calibration(robot, env_cfg.calibration)
-        
-        process_leader_actions_fn = lambda action: real_positions_to_sim(action, **calib_kwgs)
+
+        def process_leader_actions_fn(action):
+            return real_positions_to_sim(action, **calib_kwgs)
 
         robot.leader_arms.main.calibration = None
 
@@ -682,7 +654,9 @@ if __name__ == "__main__":
         replay(env_constructor, **kwargs)
 
     else:
-        raise ValueError(f"Invalid control mode: '{control_mode}', only valid modes are teleoperate, record and replay." )
+        raise ValueError(
+            f"Invalid control mode: '{control_mode}', only valid modes are teleoperate, record and replay."
+        )
 
     if robot and robot.is_connected:
         # Disconnect manually to avoid a "Core dump" during process
