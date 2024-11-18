@@ -87,6 +87,19 @@ feetech = ["feetech-servo-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
 stretch = ["hello-robot-stretch-body", "pyrender", "pyrealsense2", "pynput"]
 
+[tool.poetry.scripts]
+# Create executables for each lerobot script and put them in your (virtualenv) PATH
+lr_configure_motor = "lerobot.scripts.configure_motor:main"
+lr_control_robot = "lerobot.scripts.control_robot:main"
+lr_display_sys_info = "lerobot.scripts.display_sys_info:display_sys_info"
+lr_eval = "lerobot.scripts.eval:main"
+lr_find_motors_bus_port = "lerobot.scripts.find_motors_bus_port:find_port"
+lr_push_dataset_to_hub = "lerobot.scripts.push_dataset_to_hub:main"
+lr_train = "lerobot.scripts.train:train_cli"
+lr_visualize_dataset = "lerobot.scripts.visualize_dataset:main"
+lr_visualize_dataset_html = "lerobot.scripts.visualize_dataset_html:main"
+lr_visualize_image_transforms = "lerobot.scripts.visualize_image_transforms:visualize_transforms_cli"
+
 [tool.ruff]
 line-length = 110
 target-version = "py310"

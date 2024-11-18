@@ -345,7 +345,7 @@ def replay(
         log_control_info(robot, dt_s, fps=fps)
 
 
-if __name__ == "__main__":
+def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
@@ -528,3 +528,6 @@ if __name__ == "__main__":
         # Disconnect manually to avoid a "Core dump" during process
         # termination due to camera threads not properly exiting.
         robot.disconnect()
+
+if __name__ == "__main__":
+    main()

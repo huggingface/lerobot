@@ -442,12 +442,14 @@ def _compile_episode_data(
     return data_dict
 
 
-def main(
+def eval_and_export_policy(
     pretrained_policy_path: Path | None = None,
     hydra_cfg_path: str | None = None,
     out_dir: str | None = None,
     config_overrides: list[str] | None = None,
 ):
+    """Runs 'eval_policy' and saves the output to a directory."""
+
     assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
     if pretrained_policy_path is not None:
         hydra_cfg = init_hydra_config(str(pretrained_policy_path / "config.yaml"), config_overrides)
@@ -532,7 +534,8 @@ def get_pretrained_policy_path(pretrained_policy_name_or_path, revision=None):
     return pretrained_policy_path
 
 
-if __name__ == "__main__":
+
+def main() -> None:
     init_logging()
 
     parser = argparse.ArgumentParser(
@@ -571,14 +574,17 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.pretrained_policy_name_or_path is None:
-        main(hydra_cfg_path=args.config, out_dir=args.out_dir, config_overrides=args.overrides)
+        eval_and_export_policy(hydra_cfg_path=args.config, out_dir=args.out_dir, config_overrides=args.overrides)
     else:
         pretrained_policy_path = get_pretrained_policy_path(
             args.pretrained_policy_name_or_path, revision=args.revision
         )
 
-        main(
+        eval_and_export_policy(
             pretrained_policy_path=pretrained_policy_path,
             out_dir=args.out_dir,
             config_overrides=args.overrides,
         )
+
+if __name__ == "__main__":
+    main()

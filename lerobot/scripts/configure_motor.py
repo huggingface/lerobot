@@ -131,7 +131,7 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
         print("Disconnected from motor bus.")
 
 
-if __name__ == "__main__":
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=str, required=True, help="Motors bus port (e.g. dynamixel,feetech)")
     parser.add_argument("--brand", type=str, required=True, help="Motor brand (e.g. dynamixel,feetech)")
@@ -143,3 +143,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     configure_motor(args.port, args.brand, args.model, args.ID, args.baudrate)
+
+if __name__ == "__main__":
+    main()
