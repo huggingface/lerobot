@@ -66,7 +66,7 @@ class MyArmLeader(MyArmBaseClass):
             case _:
                 raise ValueError(f"Unsupported {cmd=}")
 
-    def write(self, cmd: Literal["Goal_Position"],
+    def write(self, cmd: Literal["Torque_Enable"],
               data: npt.NDArray[np.float32]) -> None:
         """Nothing needs doing here"""
         match cmd:
@@ -95,7 +95,7 @@ class MyArmFollower(MyArmBaseClass):
             case _:
                 raise ValueError(f"Unsupported {cmd=}")
 
-    def write(self, cmd: Literal["Goal_Position"],
+    def write(self, cmd: Literal["Goal_Position", "Torque_Enable"],
               data: npt.NDArray[np.float32]) -> None:
         """This should mirror 'read' in the order of the data"""
         # TODO: Implement
