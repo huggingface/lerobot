@@ -18,8 +18,11 @@ Contains utilities to process raw data format of HDF5 files like in: https://git
 """
 
 import gc
+import os
 import shutil
 from pathlib import Path
+import pickle
+import tempfile
 
 import h5py
 import numpy as np
@@ -85,8 +88,9 @@ def load_from_raw(
     video: bool,
     episodes: list[int] | None = None,
     encoding: dict | None = None,
+    chunk_size: int = 100, # episodes
 ):
-    # only frames from simulation are uncompressed
+    # Only frames from simulation are uncompressed
     compressed_images = "sim" not in raw_dir.name
 
     hdf5_files = sorted(raw_dir.rglob("episode_*.hdf5"))
@@ -94,9 +98,14 @@ def load_from_raw(
 
     print("Found", num_episodes, "episodes")
 
-    ep_dicts = []
     ep_ids = episodes if episodes else range(num_episodes)
-    for ep_idx in tqdm.tqdm(ep_ids):
+    pickle_file_names = []
+    features = None  # Will define features based on the first episode
+    chunk_ep_dicts = []  # Accumulator for episodes in the current chunk
+    chunk_count = 0
+    global_index = 0  # Initialize global index
+
+    for idx, ep_idx in enumerate(tqdm.tqdm(ep_ids)):
         ep_path = hdf5_files[ep_idx]
         with h5py.File(ep_path, "r") as ep:
             num_frames = ep["/action"].shape[0]
@@ -150,61 +159,101 @@ def load_from_raw(
                 else:
                     ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
 
-            ep_dict["observation.state"] = state
+            # Convert tensors to lists for pickling
+            ep_dict["observation.state"] = state.numpy().tolist()
             if "/observations/velocity" in ep:
-                ep_dict["observation.velocity"] = velocity
+                ep_dict["observation.velocity"] = velocity.numpy().tolist()
             if "/observations/effort" in ep:
-                ep_dict["observation.effort"] = effort
-            ep_dict["action"] = action
-            ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames)
-            ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
-            ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
-            ep_dict["next.done"] = done
-            # TODO(rcadene): add reward and success by computing them in sim
+                ep_dict["observation.effort"] = effort.numpy().tolist()
+            ep_dict["action"] = action.numpy().tolist()
+            ep_dict["episode_index"] = [int(ep_idx)] * num_frames
+            ep_dict["frame_index"] = list(range(num_frames))
+            ep_dict["timestamp"] = (np.arange(0, num_frames, 1) / fps).tolist()
+            ep_dict["next.done"] = done.tolist()
+            # We no longer set 'index' here; it will be set in concatenate_episodes
 
-            assert isinstance(ep_idx, int)
-            ep_dicts.append(ep_dict)
+            # Accumulate episodes in the current chunk
+            chunk_ep_dicts.append(ep_dict)
+            chunk_count += 1
 
-        gc.collect()
+            # Define features based on the first episode
+            if idx == 0:
+                features = {}
+                keys = [key for key in ep_dict if "observation.images." in key]
+                for key in keys:
+                    if video:
+                        features[key] = VideoFrame()
+                    else:
+                        features[key] = Image()
 
-    data_dict = concatenate_episodes(ep_dicts)
+                features["observation.state"] = Sequence(
+                    feature=Value(dtype="float32"), length=len(ep_dict["observation.state"][0])
+                )
+                if "observation.velocity" in ep_dict:
+                    features["observation.velocity"] = Sequence(
+                        feature=Value(dtype="float32"), length=len(ep_dict["observation.velocity"][0])
+                    )
+                if "observation.effort" in ep_dict:
+                    features["observation.effort"] = Sequence(
+                        feature=Value(dtype="float32"), length=len(ep_dict["observation.effort"][0])
+                    )
+                features["action"] = Sequence(
+                    feature=Value(dtype="float32"), length=len(ep_dict["action"][0])
+                )
+                features["episode_index"] = Value(dtype="int64")
+                features["frame_index"] = Value(dtype="int64")
+                features["timestamp"] = Value(dtype="float32")
+                features["next.done"] = Value(dtype="bool")
+                features["index"] = Value(dtype="int64")
 
-    total_frames = data_dict["frame_index"].shape[0]
-    data_dict["index"] = torch.arange(0, total_frames, 1)
-    return data_dict
+            # When chunk_size is reached, save the chunk to a pickle file
+            if chunk_count >= chunk_size:
+                # Concatenate episodes in the chunk, passing the global_index
+                chunk_data_dict = concatenate_episodes(chunk_ep_dicts, starting_index=global_index)
+                # Update the global_index
+                global_index += len(chunk_data_dict["index"])
+                # Save chunk_data_dict to a temporary pickle file
+                with tempfile.NamedTemporaryFile('wb', delete=False, suffix='.pkl') as tmp_file:
+                    pickle.dump(chunk_data_dict, tmp_file)
+                    pickle_file_name = tmp_file.name
+                pickle_file_names.append(pickle_file_name)
+                # Reset the chunk
+                chunk_ep_dicts = []
+                chunk_count = 0
+
+            gc.collect()
+
+    # Save any remaining episodes in the last chunk
+    if chunk_ep_dicts:
+        chunk_data_dict = concatenate_episodes(chunk_ep_dicts, starting_index=global_index)
+        global_index += len(chunk_data_dict["index"])
+        with tempfile.NamedTemporaryFile('wb', delete=False, suffix='.pkl') as tmp_file:
+            pickle.dump(chunk_data_dict, tmp_file)
+            pickle_file_name = tmp_file.name
+        pickle_file_names.append(pickle_file_name)
+
+    return pickle_file_names, features
 
 
-def to_hf_dataset(data_dict, video) -> Dataset:
-    features = {}
+def to_hf_dataset(pickle_file_names, features) -> Dataset:
+    from datasets import Dataset, Features
 
-    keys = [key for key in data_dict if "observation.images." in key]
-    for key in keys:
-        if video:
-            features[key] = VideoFrame()
-        else:
-            features[key] = Image()
+    def generator():
+        for pickle_file_name in pickle_file_names:
+            with open(pickle_file_name, "rb") as f:
+                chunk_data_dict = pickle.load(f)
+                num_examples = len(chunk_data_dict["index"])
+                for idx in range(num_examples):
+                    example = {
+                        key: value[idx] for key, value in chunk_data_dict.items()
+                    }
+                    yield example
 
-    features["observation.state"] = Sequence(
-        length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
-    )
-    if "observation.velocity" in data_dict:
-        features["observation.velocity"] = Sequence(
-            length=data_dict["observation.velocity"].shape[1], feature=Value(dtype="float32", id=None)
-        )
-    if "observation.effort" in data_dict:
-        features["observation.effort"] = Sequence(
-            length=data_dict["observation.effort"].shape[1], feature=Value(dtype="float32", id=None)
-        )
-    features["action"] = Sequence(
-        length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)
-    )
-    features["episode_index"] = Value(dtype="int64", id=None)
-    features["frame_index"] = Value(dtype="int64", id=None)
-    features["timestamp"] = Value(dtype="float32", id=None)
-    features["next.done"] = Value(dtype="bool", id=None)
-    features["index"] = Value(dtype="int64", id=None)
+            # After processing, delete the temporary file
+            os.remove(pickle_file_name)
 
-    hf_dataset = Dataset.from_dict(data_dict, features=Features(features))
+    # Create the dataset using Dataset.from_generator
+    hf_dataset = Dataset.from_generator(generator, features=Features(features))
     hf_dataset.set_transform(hf_transform_to_torch)
     return hf_dataset
 
@@ -223,8 +272,10 @@ def from_raw_to_lerobot_format(
     if fps is None:
         fps = 50
 
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding)
-    hf_dataset = to_hf_dataset(data_dict, video)
+    pickle_file_names, features = load_from_raw(
+        raw_dir, videos_dir, fps, video, episodes, encoding
+    )
+    hf_dataset = to_hf_dataset(pickle_file_names, features)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
         "codebase_version": CODEBASE_VERSION,

@@ -24,22 +24,17 @@ import torch
 from lerobot.common.datasets.video_utils import encode_video_frames
 
 
-def concatenate_episodes(ep_dicts):
+def concatenate_episodes(ep_dicts, starting_index=0):
     data_dict = {}
-
     keys = ep_dicts[0].keys()
     for key in keys:
-        if torch.is_tensor(ep_dicts[0][key][0]):
-            data_dict[key] = torch.cat([ep_dict[key] for ep_dict in ep_dicts])
-        else:
-            if key not in data_dict:
-                data_dict[key] = []
-            for ep_dict in ep_dicts:
-                for x in ep_dict[key]:
-                    data_dict[key].append(x)
-
-    total_frames = data_dict["frame_index"].shape[0]
-    data_dict["index"] = torch.arange(0, total_frames, 1)
+        # Initialize the key in data_dict if not already present
+        if key not in data_dict:
+            data_dict[key] = []
+        for ep_dict in ep_dicts:
+            data_dict[key].extend(ep_dict[key])
+    total_frames = len(data_dict["frame_index"])
+    data_dict["index"] = list(range(starting_index, starting_index + total_frames))
     return data_dict
 
 
