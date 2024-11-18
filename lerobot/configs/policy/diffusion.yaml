@@ -24,8 +24,8 @@ override_dataset_stats:
 training:
   offline_steps: 500000 #200000
   online_steps: 0
-  eval_freq: 50000 #25000
-  save_freq: 50000 #25000
+  eval_freq: 25000
+  save_freq: 25000
   save_checkpoint: true
 
   batch_size: 128
@@ -94,7 +94,7 @@ policy:
   beta_start: 0.0001
   beta_end: 0.02
   prediction_type: epsilon # epsilon / sample
-  clip_sample: True
+  clip_sample: True 
   clip_sample_range: 1.0
 
   # Inference
