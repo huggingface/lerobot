@@ -17,7 +17,6 @@ from termcolor import colored
 
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import _get_info_from_robot
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
@@ -334,7 +333,8 @@ def sanity_check_dataset_name(repo_id, policy):
 
 
 def sanity_check_dataset_robot_compatibility(dataset, robot, fps, use_videos):
-    robot_type, keys, image_keys, video_keys, shapes, names = _get_info_from_robot(robot, use_videos)
+    # TODO(rcadene): fix that before merging
+    robot_type, keys, image_keys, video_keys, shapes, names = _get_info_from_robot(robot, use_videos)  # noqa
 
     fields = [
         ("robot_type", dataset.meta.info["robot_type"], robot_type),

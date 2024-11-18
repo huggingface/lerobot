@@ -435,7 +435,7 @@ def create_branch(repo_id, *, branch: str, repo_type: str | None = None) -> None
 
 
 def create_lerobot_dataset_card(
-    tags: list | None = None, text: str | None = None, info: dict | None = None
+    tags: list | None = None, text: str | None = None, info: dict | None = None, license: str = "apache-2.0"
 ) -> DatasetCard:
     card = DatasetCard(DATASET_CARD_TEMPLATE)
     card.data.configs = [
@@ -445,6 +445,7 @@ def create_lerobot_dataset_card(
         }
     ]
     card.data.task_categories = ["robotics"]
+    card.data.license = license
     card.data.tags = ["LeRobot"]
     if tags is not None:
         card.data.tags += tags

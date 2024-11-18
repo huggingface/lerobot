@@ -243,6 +243,10 @@ class LeRobotDatasetMetadata:
         Warning: this function writes info from first episode videos, implicitly assuming that all videos have
         been encoded the same way. Also, this means it assumes the first episode exists.
         """
+        # TODO(rcadene): What should we do here?
+        if "videos" not in self.info:
+            self.info["videos"] = {}
+
         for key in self.video_keys:
             if key not in self.info["videos"]:
                 video_path = self.root / self.get_video_file_path(ep_index=0, vid_key=key)
@@ -260,6 +264,8 @@ class LeRobotDatasetMetadata:
         robot_type: str | None = None,
         features: dict | None = None,
         use_videos: bool = True,
+        # tags: list[str] | None = None,
+        # license_type: str | None = None,
     ) -> "LeRobotDatasetMetadata":
         """Creates metadata for a LeRobotDataset."""
         obj = cls.__new__(cls)
@@ -283,8 +289,12 @@ class LeRobotDatasetMetadata:
         else:
             features = {**features, **DEFAULT_FEATURES}
 
+        # TODO(rcadene): implement sanity check for features
+
         obj.tasks, obj.stats, obj.episodes = {}, {}, []
         obj.info = create_empty_dataset_info(CODEBASE_VERSION, fps, robot_type, features, use_videos)
+        # obj.tags = tags
+        # obj.license_type = license_type
         if len(obj.video_keys) > 0 and not use_videos:
             raise ValueError()
         write_json(obj.info, obj.root / INFO_PATH)
@@ -646,7 +656,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         current_ep_idx = self.meta.total_episodes if episode_index is None else episode_index
         return {
             "size": 0,
-            **{key: [] if key != "episode_index" else current_ep_idx for key in self.features},
+            **{key: current_ep_idx if key == "episode_index" else [] for key in self.features},
         }
 
     def _get_image_file_path(self, episode_index: int, image_key: str, frame_index: int) -> Path:
@@ -669,6 +679,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         temporary directory — nothing is written to disk. To save those frames, the 'add_episode()' method
         then needs to be called.
         """
+        # TODO(rcadene): Add sanity check for the input, check it's numpy or torch,
+        # check the dtype and shape matches, etc.
+
         frame_index = self.episode_buffer["size"]
         for key, ft in self.features.items():
             if key == "frame_index":
@@ -705,6 +718,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # TODO(aliberts): Add option to use existing episode_index
             raise NotImplementedError()
 
+        if episode_length == 0:
+            raise ValueError(
+                "You must add one or several frames with `add_frame` before calling `add_episode`."
+            )
+
         task_index = self.meta.get_task_index(task)
 
         if not set(self.episode_buffer.keys()) == set(self.features):
@@ -719,11 +737,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self.episode_buffer[key] = np.full((episode_length,), episode_index)
             elif key == "task_index":
                 self.episode_buffer[key] = np.full((episode_length,), task_index)
-            elif ft["dtype"] in ["image", "video"]:
+            elif ft["dtype"] == "image":
                 continue
+            elif ft["dtype"] == "video":
+                del self.episode_buffer[key]
             elif ft["shape"][0] == 1:
                 self.episode_buffer[key] = torch.tensor(self.episode_buffer[key])
             elif ft["shape"][0] > 1:
+                # TODO(rcadene): why torch over here?
                 self.episode_buffer[key] = torch.stack(self.episode_buffer[key])
             else:
                 raise ValueError()
