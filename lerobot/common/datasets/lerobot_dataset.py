@@ -250,10 +250,6 @@ class LeRobotDatasetMetadata:
         Warning: this function writes info from first episode videos, implicitly assuming that all videos have
         been encoded the same way. Also, this means it assumes the first episode exists.
         """
-        # TODO(rcadene): What should we do here?
-        if "videos" not in self.info:
-            self.info["videos"] = {}
-
         for key in self.video_keys:
             if not self.features[key].get("info", None):
                 video_path = self.root / self.get_video_file_path(ep_index=0, vid_key=key)
@@ -278,8 +274,6 @@ class LeRobotDatasetMetadata:
         robot_type: str | None = None,
         features: dict | None = None,
         use_videos: bool = True,
-        # tags: list[str] | None = None,
-        # license_type: str | None = None,
     ) -> "LeRobotDatasetMetadata":
         """Creates metadata for a LeRobotDataset."""
         obj = cls.__new__(cls)
@@ -301,14 +295,11 @@ class LeRobotDatasetMetadata:
                 "Dataset features must either come from a Robot or explicitly passed upon creation."
             )
         else:
+            # TODO(aliberts, rcadene): implement sanity check for features
             features = {**features, **DEFAULT_FEATURES}
-
-        # TODO(rcadene): implement sanity check for features
 
         obj.tasks, obj.stats, obj.episodes = {}, {}, []
         obj.info = create_empty_dataset_info(CODEBASE_VERSION, fps, robot_type, features, use_videos)
-        # obj.tags = tags
-        # obj.license_type = license_type
         if len(obj.video_keys) > 0 and not use_videos:
             raise ValueError()
         write_json(obj.info, obj.root / INFO_PATH)
@@ -439,6 +430,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Unused attributes
         self.image_writer = None
+        self.episode_buffer = None
 
         self.root.mkdir(exist_ok=True, parents=True)
 
@@ -463,9 +455,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Available stats implies all videos have been encoded and dataset is iterable
         self.consolidated = self.meta.stats is not None
-
-        # Create an empty buffer to extend the dataset if required
-        self.episode_buffer = self._create_episode_buffer()
 
     def push_to_hub(
         self,
@@ -704,8 +693,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         temporary directory — nothing is written to disk. To save those frames, the 'save_episode()' method
         then needs to be called.
         """
-        # TODO(rcadene): Add sanity check for the input, check it's numpy or torch,
+        # TODO(aliberts, rcadene): Add sanity check for the input, check it's numpy or torch,
         # check the dtype and shape matches, etc.
+
+        if self.episode_buffer is None:
+            self.episode_buffer = self._create_episode_buffer()
 
         frame_index = self.episode_buffer["size"]
         timestamp = frame["timestamp"] if "timestamp" in frame else frame_index / self.fps
@@ -930,7 +922,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.tolerance_s = tolerance_s
         obj.image_writer = None
 
-        obj.start_image_writer(image_writer_processes, image_writer_threads)
+        if image_writer_processes or image_writer_threads:
+            obj.start_image_writer(image_writer_processes, image_writer_threads)
 
         # TODO(aliberts, rcadene, alexander-soare): Merge this with OnlineBuffer/DataBuffer
         obj.episode_buffer = obj._create_episode_buffer()
