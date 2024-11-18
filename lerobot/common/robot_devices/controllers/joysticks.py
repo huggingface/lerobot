@@ -111,12 +111,22 @@ class PS4JoystickController:
         # Initialize hid device
         self.device = None
         self.running = False
+        self.light_bar_color = (0, 0, 255)  # Default blue color
         self.connect()
 
         # Start the thread to read inputs
         self.lock = threading.Lock()
         self.thread = threading.Thread(target=self.read_loop, daemon=True)
         self.thread.start()
+
+        # Set initial light bar color to default
+        self.send_output_report(
+            weak_rumble=0,
+            strong_rumble=0,
+            red=self.light_bar_color[0],
+            green=self.light_bar_color[1],
+            blue=self.light_bar_color[2],
+        )
 
     def connect(self):
         try:
@@ -142,13 +152,13 @@ class PS4JoystickController:
             try:
                 data = self.device.read(64, timeout_ms=100)
                 if data:
-                    self._process_gemepad_input(data)
+                    self._process_gamepad_input(data)
             except Exception as e:
                 logging.error(f"Error reading from device: {e}")
                 time.sleep(1)  # Wait before retrying
                 self.connect()
 
-    def _process_gemepad_input(self, data):
+    def _process_gamepad_input(self, data):
         with self.lock:
             # Byte 1-4: Analog sticks
             left_stick_x = data[1] - 128
@@ -293,8 +303,56 @@ class PS4JoystickController:
         else:
             # Invalid positions detected, do not update
             logging.warning("Invalid motor positions detected. Changes have been discarded.")
-            # TODO: reimplement rumble
-            # self.rumble(0.5, 0.5, 200)
+            self.indicate_error()
+
+    def indicate_error(self):
+        # Set light bar color to red and rumble
+        self.send_output_report(weak_rumble=128, strong_rumble=128, red=255, green=0, blue=0)
+
+        # Start a timer to reset light bar color and rumble after 0.2 seconds
+        threading.Thread(target=self._reset_after_delay, args=(0.2,), daemon=True).start()
+
+    def _reset_after_delay(self, delay):
+        time.sleep(delay)
+        # Stop rumble and set light bar color back to default
+        self.send_output_report(
+            weak_rumble=0,
+            strong_rumble=0,
+            red=self.light_bar_color[0],
+            green=self.light_bar_color[1],
+            blue=self.light_bar_color[2],
+        )
+
+    def send_output_report(self, weak_rumble=0, strong_rumble=0, red=None, green=None, blue=None):
+        if not self.device:
+            logging.error("Device not connected.")
+            return
+
+        if red is None or green is None or blue is None:
+            red, green, blue = self.light_bar_color
+
+        report = [
+            0x05,  # Report ID for USB
+            0xFF,  # Reserved byte
+            0x00,  # 0xFF to make colors flash or 0x00 to keep it
+            0x00,  # Reserved byte
+            weak_rumble,
+            strong_rumble,
+            red,
+            green,
+            blue,
+        ] + [0x00] * 23  # Pad to ensure the report is 32 bytes long
+
+        report = report[:32]
+
+        try:
+            num_bytes_written = self.device.write(bytes(report))
+            if num_bytes_written > 0:
+                logging.debug(f"Output report sent successfully ({num_bytes_written} bytes written).")
+            else:
+                logging.error("Failed to send output report.")
+        except Exception as e:
+            logging.error(f"Error sending output report: {e}")
 
     def _is_position_valid(self, positions, x, y):
         """
@@ -336,7 +394,7 @@ class PS4JoystickController:
         set the motors to predefined positions.
         """
         macros = {
-            "O": [90, 180, 180, 0, 0, 10],  # initial position
+            "O": [90, 170, 170, 0, 0, 10],  # initial position
             "X": [90, 50, 130, -90, 90, 80],  # low horizontal gripper
             "T": [90, 130, 150, 70, 90, 80],  # top down gripper
             "S": [90, 160, 140, 20, 0, 0],  # looking forward
