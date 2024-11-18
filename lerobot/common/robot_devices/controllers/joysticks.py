@@ -5,6 +5,7 @@
 
 import logging
 import math
+import struct
 import threading
 import time
 
@@ -63,6 +64,7 @@ class PS4JoystickController:
             "L3": 0,
             "R3": 0,
         }
+        self.previous_buttons = self.buttons.copy()
 
         # PS4 Controller constants
         self.VENDOR_ID = 0x054C  # Sony
@@ -113,6 +115,12 @@ class PS4JoystickController:
         self.running = False
         self.light_bar_color = (0, 0, 255)  # Default blue color
         self.connect()
+
+        # Gyro control mode variables
+        self.gyro_mode = False
+        self.gyro_reference = {"pitch": 0.0, "roll": 0.0}
+        self.pitch_deg = 0.0
+        self.roll_deg = 0.0
 
         # Start the thread to read inputs
         self.lock = threading.Lock()
@@ -217,10 +225,46 @@ class PS4JoystickController:
             r2_analog = data[9]
             self.axes["R2"] = r2_analog / 255.0  # 0.0 to 1.0
 
+            # Extract accelerometer data (bytes 19-24)
+            accel_x_raw = struct.unpack("<h", bytes(data[19:21]))[0]
+            accel_y_raw = struct.unpack("<h", bytes(data[21:23]))[0]
+            accel_z_raw = struct.unpack("<h", bytes(data[23:25]))[0]
+
+            # Compute pitch and roll from accelerometer data
+            roll_rad = -math.atan2(accel_x_raw, math.sqrt(accel_y_raw**2 + accel_z_raw**2))
+            pitch_rad = math.atan2(accel_y_raw, math.sqrt(accel_x_raw**2 + accel_z_raw**2))
+
+            # Noisy data, can add PID filter later to make it smoother
+            exp_smooth = 0.05
+            self.pitch_deg = self.pitch_deg * (1 - exp_smooth) + math.degrees(pitch_rad) * exp_smooth
+            self.roll_deg = self.roll_deg * (1 - exp_smooth) + math.degrees(roll_rad) * exp_smooth
+
+            # Detect PS button press to toggle gyro mode
+            if self.buttons["PS"] == 1 and self.previous_buttons["PS"] == 0:
+                self.toggle_gyro_mode()
+
+            # Copy current buttons to previous_buttons for next comparison
+            self.previous_buttons = self.buttons.copy()
+
             axes = self.axes.copy()
             buttons = self.buttons.copy()
 
         self._update_positions(axes, buttons)
+
+    def toggle_gyro_mode(self):
+        self.gyro_mode = not self.gyro_mode
+        if self.gyro_mode:
+            # Turn on gyro mode
+            self.light_bar_color = (0, 255, 0)  # Green
+            self.send_output_report(red=0, green=255, blue=0)
+            # Record the current pitch and roll as reference points
+            self.gyro_reference = {"pitch": self.pitch_deg, "roll": self.roll_deg}
+            logging.info("Gyro control mode activated")
+        else:
+            # Turn off gyro mode
+            self.light_bar_color = (0, 0, 255)  # Blue
+            self.send_output_report(red=0, green=0, blue=255)
+            logging.info("Gyro control mode deactivated")
 
     def _filter_deadzone(self, value, threshold=0.1):
         """
@@ -258,6 +302,15 @@ class PS4JoystickController:
 
         if not used_macros:
             # Map joystick inputs to motor positions
+            if self.gyro_mode:
+                # Use gyro data for wrist_flex and wrist_roll
+                delta_pitch = self.pitch_deg - self.gyro_reference["pitch"]
+                delta_roll = self.roll_deg - self.gyro_reference["roll"]
+                scaling_factor = 1.0  # Adjust as needed
+                temp_positions["wrist_flex"] += delta_pitch * scaling_factor
+                temp_positions["wrist_roll"] += delta_roll * scaling_factor
+                self.gyro_reference = {"pitch": self.pitch_deg, "roll": self.roll_deg}
+
             # Right joystick controls "wrist_roll" (left/right) and "wrist_flex" (up/down)
             temp_positions["wrist_roll"] += axes["RX"] * speed  # degrees per update
             temp_positions["wrist_flex"] -= axes["RY"] * speed  # degrees per update
