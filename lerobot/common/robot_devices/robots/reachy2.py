@@ -21,7 +21,7 @@ import numpy as np
 import torch
 from lerobot.common.robot_devices.cameras.utils import Camera
 from reachy2_sdk import ReachySDK
-
+from copy import copy
 
 
 
@@ -122,7 +122,7 @@ class ReachyRobot():
             images[name] = self.cameras[name].read() #Reachy cameras read() is not blocking?
             print(f'name: {name} img: {images[name]}')
             if images[name] is not None:
-                images[name] = torch.from_numpy(images[name][0])
+                images[name] = torch.from_numpy(copy(images[name][0])) #seems like I need to copy?
                 self.logs[f"read_camera_{name}_dt_s"] = images[name][1] #full timestamp, TODO dt
 
         # Populate output dictionnaries
