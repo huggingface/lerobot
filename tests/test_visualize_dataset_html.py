@@ -14,23 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
-
-import pytest
-
 from lerobot.scripts.visualize_dataset_html import visualize_dataset_html
 
 
-@pytest.mark.parametrize(
-    "repo_id",
-    ["lerobot/pusht"],
-)
-def test_visualize_dataset_html(tmpdir, repo_id):
-    tmpdir = Path(tmpdir)
+def test_visualize_dataset_html(tmp_path, lerobot_dataset_factory):
+    root = tmp_path / "dataset"
+    output_dir = tmp_path / "outputs"
+    dataset = lerobot_dataset_factory(root=root)
     visualize_dataset_html(
-        repo_id,
+        dataset,
         episodes=[0],
-        output_dir=tmpdir,
+        output_dir=output_dir,
         serve=False,
     )
-    assert (tmpdir / "static" / "episode_0.csv").exists()
+    assert (output_dir / "static" / "episode_0.csv").exists()

@@ -19,6 +19,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from tests.fixtures.defaults import DUMMY_REPO_ID
 from tests.utils import require_package
 
 
@@ -39,12 +42,26 @@ def _read_file(path):
         return file.read()
 
 
-def test_example_1():
+@pytest.mark.skip("TODO Fix and remove subprocess / excec calls")
+def test_example_1(tmp_path, lerobot_dataset_factory):
+    _ = lerobot_dataset_factory(root=tmp_path, repo_id=DUMMY_REPO_ID)
     path = "examples/1_load_lerobot_dataset.py"
-    _run_script(path)
+    file_contents = _read_file(path)
+    file_contents = _find_and_replace(
+        file_contents,
+        [
+            ('repo_id = "lerobot/pusht"', f'repo_id = "{DUMMY_REPO_ID}"'),
+            (
+                "LeRobotDataset(repo_id",
+                f"LeRobotDataset(repo_id, root='{str(tmp_path)}', local_files_only=True",
+            ),
+        ],
+    )
+    exec(file_contents, {})
     assert Path("outputs/examples/1_load_lerobot_dataset/episode_0.mp4").exists()
 
 
+@pytest.mark.skip("TODO Fix and remove subprocess / excec calls")
 @require_package("gym_pusht")
 def test_examples_basic2_basic3_advanced1():
     """

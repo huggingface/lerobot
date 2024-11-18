@@ -100,7 +100,7 @@ def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
 
 
 def visualize_dataset(
-    repo_id: str,
+    dataset: LeRobotDataset,
     episode_index: int,
     batch_size: int = 32,
     num_workers: int = 0,
@@ -108,7 +108,6 @@ def visualize_dataset(
     web_port: int = 9090,
     ws_port: int = 9087,
     save: bool = False,
-    root: Path | None = None,
     output_dir: Path | None = None,
 ) -> Path | None:
     if save:
@@ -116,8 +115,7 @@ def visualize_dataset(
             output_dir is not None
         ), "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
 
-    logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id, root=root)
+    repo_id = dataset.repo_id
 
     logging.info("Loading dataloader")
     episode_sampler = EpisodeSampler(dataset, episode_index)
@@ -268,7 +266,14 @@ def main():
     )
 
     args = parser.parse_args()
-    visualize_dataset(**vars(args))
+    kwargs = vars(args)
+    repo_id = kwargs.pop("repo_id")
+    root = kwargs.pop("root")
+
+    logging.info("Loading dataset")
+    dataset = LeRobotDataset(repo_id, root=root, local_files_only=True)
+
+    visualize_dataset(dataset, **vars(args))
 
 
 if __name__ == "__main__":
