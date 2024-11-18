@@ -96,14 +96,17 @@ class MyArmFollower(MyArmBaseClass):
                 raise ValueError(f"Unsupported {cmd=}")
 
     def write(self, cmd: Literal["Goal_Position", "Torque_Enable"],
-              data: npt.NDArray[np.float32]) -> None:
+              data: npt.NDArray[np.float32] | int) -> None:
         """This should mirror 'read' in the order of the data"""
         # TODO: Implement
         match cmd:
             case "Goal_Position":
                 self._handle.set_joints_from_controller_angles(data.tolist(), speed=20)
             case "Torque_Enable":
-                self._handle.bring_up_motors()
-                self._handle.prompt_user_to_bring_motors_into_bounds()
+                if data == TorqueMode.ENABLED.value:
+                    self._handle.bring_up_motors()
+                    self._handle.prompt_user_to_bring_motors_into_bounds()
+                elif data == TorqueMode.DISABLED.value:
+                    self._handle.set_servos_enabled(False)
             case _:
                 raise ValueError(f"Unsupported {cmd=}")
