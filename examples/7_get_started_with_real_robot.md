@@ -58,7 +58,7 @@ Finally, connect both arms to your computer via USB. Note that the USB doesn't p
 
 In the upcoming sections, you'll learn about our classes and functions by running some python code, in an interactive session, or by copy-pasting it in a python file. If this is your first time using the tutorial., we highly recommend going through these steps to get deeper intuition about how things work. Once you're more familiar, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
+lr_control_robot teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
   --robot-overrides '~cameras'  # do not instantiate the cameras
 ```
@@ -678,7 +678,7 @@ Instead of manually running the python code in a terminal window, you can use [`
 
 Try running this code to teleoperate your robot (if you dont have a camera, keep reading):
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
+lr_control_robot teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml
 ```
 
@@ -696,7 +696,7 @@ It contains
 
 Note: you can override any entry in the yaml file using `--robot-overrides` and the [hydra.cc](https://hydra.cc/docs/advanced/override_grammar/basic) syntax. If needed, you can override the ports like this:
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
+lr_control_robot teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
   --robot-overrides \
     leader_arms.main.port=/dev/tty.usbmodem575E0031751 \
@@ -705,7 +705,7 @@ python lerobot/scripts/control_robot.py teleoperate \
 
 Importantly: If you don't have any camera, you can remove them dynamically with this [hydra.cc](https://hydra.cc/docs/advanced/override_grammar/basic) syntax `'~cameras'`:
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
+lr_control_robot teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
   --robot-overrides \
     '~cameras'
@@ -775,7 +775,7 @@ If you don't want to push to hub, use `--push-to-hub 0`.
 
 Now run this to record 2 episodes:
 ```bash
-python lerobot/scripts/control_robot.py record \
+lr_control_robot record \
   --robot-path lerobot/configs/robot/koch.yaml \
   --fps 30 \
   --root data \
@@ -839,7 +839,7 @@ In the coming months, we plan to release a foundational model for robotics. We a
 
 You can visualize your dataset by running:
 ```bash
-python lerobot/scripts/visualize_dataset_html.py \
+lr_visualize_dataset_html \
   --root data \
   --repo-id ${HF_USER}/koch_test
 ```
@@ -855,7 +855,7 @@ A useful feature of [`lerobot/scripts/control_robot.py`](../lerobot/scripts/cont
 
 To replay the first episode of the dataset you just recorded, run the following command:
 ```bash
-python lerobot/scripts/control_robot.py replay \
+lr_control_robot replay \
   --robot-path lerobot/configs/robot/koch.yaml \
   --fps 30 \
   --root data \
@@ -869,9 +869,9 @@ Your robot should replicate movements similar to those you recorded. For example
 
 ### a. Use the `train` script
 
-To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`lr_train`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
-DATA_DIR=data python lerobot/scripts/train.py \
+DATA_DIR=data lr_train \
   dataset_repo_id=${HF_USER}/koch_test \
   policy=act_koch_real \
   env=koch_real \
@@ -988,7 +988,7 @@ Ideally, when controlling your robot with your neural network, you would want to
 
 To this end, you can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
 ```bash
-python lerobot/scripts/control_robot.py record \
+lr_control_robot record \
   --robot-path lerobot/configs/robot/koch.yaml \
   --fps 30 \
   --root data \
@@ -1009,7 +1009,7 @@ As you can see, it's almost the same command as previously used to record your t
 
 You can then visualize your evaluation dataset by running the same command as before but with the new inference dataset as argument:
 ```bash
-python lerobot/scripts/visualize_dataset.py \
+lr_visualize_dataset \
   --root data \
   --repo-id ${HF_USER}/eval_koch_test
 ```

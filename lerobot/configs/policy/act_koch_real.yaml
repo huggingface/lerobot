@@ -8,7 +8,7 @@
 #
 # Example of usage for training:
 # ```bash
-# python lerobot/scripts/train.py \
+# lr_train \
 #   policy=act_koch_real \
 #   env=koch_real
 # ```

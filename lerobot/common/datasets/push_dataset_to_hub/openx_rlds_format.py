@@ -17,7 +17,7 @@
 For https://github.com/google-deepmind/open_x_embodiment (OPENX) datasets.
 
 Example:
-    python lerobot/scripts/push_dataset_to_hub.py \
+    lr_push_dataset_to_hub \
         --raw-dir /hdd/tensorflow_datasets/bridge_dataset/1.0.0/ \
         --repo-id youliangtan/sampled_bridge_data_v2 \
         --raw-format openx_rlds.bridge_orig \

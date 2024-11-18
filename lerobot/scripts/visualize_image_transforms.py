@@ -23,14 +23,14 @@ Additionally, each individual transform can be visualized separately as well as 
 
 Increase hue jitter
 ```
-python lerobot/scripts/visualize_image_transforms.py \
+lr_visualize_image_transforms \
     dataset_repo_id=lerobot/aloha_mobile_shrimp \
     training.image_transforms.hue.min_max="[-0.25,0.25]"
 ```
 
 Increase brightness & brightness weight
 ```
-python lerobot/scripts/visualize_image_transforms.py \
+lr_visualize_image_transforms \
     dataset_repo_id=lerobot/aloha_mobile_shrimp \
     training.image_transforms.brightness.weight=10.0 \
     training.image_transforms.brightness.min_max="[1.0,2.0]"
@@ -38,7 +38,7 @@ python lerobot/scripts/visualize_image_transforms.py \
 
 Blur images and disable saturation & hue
 ```
-python lerobot/scripts/visualize_image_transforms.py \
+lr_visualize_image_transforms \
     dataset_repo_id=lerobot/aloha_mobile_shrimp \
     training.image_transforms.sharpness.weight=10.0 \
     training.image_transforms.sharpness.min_max="[0.0,1.0]" \
@@ -48,7 +48,7 @@ python lerobot/scripts/visualize_image_transforms.py \
 
 Use all transforms with random order
 ```
-python lerobot/scripts/visualize_image_transforms.py \
+lr_visualize_image_transforms \
     dataset_repo_id=lerobot/aloha_mobile_shrimp \
     training.image_transforms.max_num_transforms=5 \
     training.image_transforms.random_order=true

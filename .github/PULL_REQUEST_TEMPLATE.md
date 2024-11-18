@@ -24,7 +24,7 @@ Examples:
 DATA_DIR=tests/data pytest -sx tests/test_stuff.py::test_something
 ```
 ```bash
-python lerobot/scripts/train.py --some.option=true
+lr_train --some.option=true
 ```
 
 ## SECTION TO REMOVE BEFORE SUBMITTING YOUR PR

@@ -2,7 +2,7 @@
 
 # Train with:
 #
-# python lerobot/scripts/train.py \
+# lr_train \
 #   env=pusht \
 #   env.gym.obs_type=environment_state_agent_pos \
 #   policy=tdmpc_pusht_keypoints \

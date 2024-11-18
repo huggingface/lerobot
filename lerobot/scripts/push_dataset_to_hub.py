@@ -20,22 +20,22 @@ installation of neural net specific packages like pytorch, tensorflow, jax.
 
 Example of how to download raw datasets, convert them into LeRobotDataset format, and push them to the hub:
 ```
-python lerobot/scripts/push_dataset_to_hub.py \
+lr_push_dataset_to_hub \
 --raw-dir data/pusht_raw \
 --raw-format pusht_zarr \
 --repo-id lerobot/pusht
 
-python lerobot/scripts/push_dataset_to_hub.py \
+lr_push_dataset_to_hub \
 --raw-dir data/xarm_lift_medium_raw \
 --raw-format xarm_pkl \
 --repo-id lerobot/xarm_lift_medium
 
-python lerobot/scripts/push_dataset_to_hub.py \
+lr_push_dataset_to_hub \
 --raw-dir data/aloha_sim_insertion_scripted_raw \
 --raw-format aloha_hdf5 \
 --repo-id lerobot/aloha_sim_insertion_scripted
 
-python lerobot/scripts/push_dataset_to_hub.py \
+lr_push_dataset_to_hub \
 --raw-dir data/umi_cup_in_the_wild_raw \
 --raw-format umi_zarr \
 --repo-id lerobot/umi_cup_in_the_wild

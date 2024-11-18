@@ -21,13 +21,13 @@ You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/di
 for 10 episodes.
 
 ```
-python lerobot/scripts/eval.py -p lerobot/diffusion_pusht eval.n_episodes=10
+lr_eval -p lerobot/diffusion_pusht eval.n_episodes=10
 ```
 
 OR, you want to evaluate a model checkpoint from the LeRobot training script for 10 episodes.
 
 ```
-python lerobot/scripts/eval.py \
+lr_eval \
     -p outputs/train/diffusion_pusht/checkpoints/005000/pretrained_model \
     eval.n_episodes=10
 ```

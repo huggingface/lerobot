@@ -51,14 +51,14 @@ Teleoperation consists in manually operating the leader arms to move the followe
 
 By running the following code, you can start your first **SAFE** teleoperation:
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
+lr_control_robot teleoperate \
     --robot-path lerobot/configs/robot/aloha.yaml \
     --robot-overrides max_relative_target=5
 ```
 
 By adding `--robot-overrides max_relative_target=5`, we override the default value for `max_relative_target` defined in `lerobot/configs/robot/aloha.yaml`. It is expected to be `5` to limit the magnitude of the movement for more safety, but the teloperation won't be smooth. When you feel confident, you can disable this limit by adding `--robot-overrides max_relative_target=null` to the command line:
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
+lr_control_robot teleoperate \
     --robot-path lerobot/configs/robot/aloha.yaml \
     --robot-overrides max_relative_target=null
 ```
@@ -80,7 +80,7 @@ echo $HF_USER
 
 Record 2 episodes and upload your dataset to the hub:
 ```bash
-python lerobot/scripts/control_robot.py record \
+lr_control_robot record \
     --robot-path lerobot/configs/robot/aloha.yaml \
     --robot-overrides max_relative_target=null \
     --fps 30 \
@@ -103,7 +103,7 @@ echo ${HF_USER}/aloha_test
 
 If you didn't upload with `--push-to-hub 0`, you can also visualize it locally with:
 ```bash
-python lerobot/scripts/visualize_dataset_html.py \
+lr_visualize_dataset_html \
   --root data \
   --repo-id ${HF_USER}/aloha_test
 ```
@@ -115,7 +115,7 @@ Replay consists in automatically replaying the sequence of actions (i.e. goal po
 
 Now try to replay the first episode on your robot:
 ```bash
-python lerobot/scripts/control_robot.py replay \
+lr_control_robot replay \
     --robot-path lerobot/configs/robot/aloha.yaml \
     --robot-overrides max_relative_target=null \
     --fps 30 \
@@ -126,9 +126,9 @@ python lerobot/scripts/control_robot.py replay \
 
 ## Train a policy
 
-To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`lr_train`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
-DATA_DIR=data python lerobot/scripts/train.py \
+DATA_DIR=data lr_train \
   dataset_repo_id=${HF_USER}/aloha_test \
   policy=act_aloha_real \
   env=aloha_real \
@@ -152,7 +152,7 @@ Training should take several hours. You will find checkpoints in `outputs/train/
 
 You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
 ```bash
-python lerobot/scripts/control_robot.py record \
+lr_control_robot record \
   --robot-path lerobot/configs/robot/aloha.yaml \
   --robot-overrides max_relative_target=null \
   --fps 30 \

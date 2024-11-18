@@ -8,26 +8,26 @@ Examples of usage:
 
 - Recalibrate your robot:
 ```bash
-python lerobot/scripts/control_robot.py calibrate
+lr_control_robot calibrate
 ```
 
 - Unlimited teleoperation at highest frequency (~200 Hz is expected), to exit with CTRL+C:
 ```bash
-python lerobot/scripts/control_robot.py teleoperate
+lr_control_robot teleoperate
 
 # Remove the cameras from the robot definition. They are not used in 'teleoperate' anyway.
-python lerobot/scripts/control_robot.py teleoperate --robot-overrides '~cameras'
+lr_control_robot teleoperate --robot-overrides '~cameras'
 ```
 
 - Unlimited teleoperation at a limited frequency of 30 Hz, to simulate data recording frequency:
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
+lr_control_robot teleoperate \
     --fps 30
 ```
 
 - Record one episode in order to test replay:
 ```bash
-python lerobot/scripts/control_robot.py record \
+lr_control_robot record \
     --fps 30 \
     --root tmp/data \
     --repo-id $USER/koch_test \
@@ -37,7 +37,7 @@ python lerobot/scripts/control_robot.py record \
 
 - Visualize dataset:
 ```bash
-python lerobot/scripts/visualize_dataset.py \
+lr_visualize_dataset \
     --root tmp/data \
     --repo-id $USER/koch_test \
     --episode-index 0
@@ -45,7 +45,7 @@ python lerobot/scripts/visualize_dataset.py \
 
 - Replay this test episode:
 ```bash
-python lerobot/scripts/control_robot.py replay \
+lr_control_robot replay \
     --fps 30 \
     --root tmp/data \
     --repo-id $USER/koch_test \
@@ -55,7 +55,7 @@ python lerobot/scripts/control_robot.py replay \
 - Record a full dataset in order to train a policy, with 2 seconds of warmup,
 30 seconds of recording for each episode, and 10 seconds to reset the environment in between episodes:
 ```bash
-python lerobot/scripts/control_robot.py record \
+lr_control_robot record \
     --fps 30 \
     --root data \
     --repo-id $USER/koch_pick_place_lego \
@@ -77,7 +77,7 @@ To avoid resuming by deleting the dataset, use `--force-override 1`.
 
 - Train on this dataset with the ACT policy:
 ```bash
-DATA_DIR=data python lerobot/scripts/train.py \
+DATA_DIR=data lr_train \
     policy=act_koch_real \
     env=koch_real \
     dataset_repo_id=$USER/koch_pick_place_lego \
@@ -86,7 +86,7 @@ DATA_DIR=data python lerobot/scripts/train.py \
 
 - Run the pretrained policy on the robot:
 ```bash
-python lerobot/scripts/control_robot.py record \
+lr_control_robot record \
     --fps 30 \
     --root data \
     --repo-id $USER/eval_act_koch_real \

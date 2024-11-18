@@ -459,7 +459,7 @@ class FeetechMotorsBus:
                         f"with a maximum range of [{LOWER_BOUND_DEGREE}, {UPPER_BOUND_DEGREE}] degrees to account for joints that can rotate a bit more, "
                         f"but present value is {values[i]} degree. "
                         "This might be due to a cable connection issue creating an artificial 360 degrees jump in motor values. "
-                        "You need to recalibrate by running: `python lerobot/scripts/control_robot.py calibrate`"
+                        "You need to recalibrate by running: `lr_control_robot calibrate`"
                     )
 
             elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
@@ -477,7 +477,7 @@ class FeetechMotorsBus:
                         f"with a maximum range of [{LOWER_BOUND_LINEAR}, {UPPER_BOUND_LINEAR}] % to account for some imprecision during calibration, "
                         f"but present value is {values[i]} %. "
                         "This might be due to a cable connection issue creating an artificial jump in motor values. "
-                        "You need to recalibrate by running: `python lerobot/scripts/control_robot.py calibrate`"
+                        "You need to recalibrate by running: `lr_control_robot calibrate`"
                     )
 
         return values
