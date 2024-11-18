@@ -21,6 +21,8 @@ from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import (init_hydra_config, init_logging,
                                         log_say, none_or_int)
 
+
+import cv2
 if __name__ == '__main__':
     init_logging()
 
@@ -30,3 +32,6 @@ if __name__ == '__main__':
 
     robot_cfg = init_hydra_config(robot_path, robot_overrides)
     robot = make_robot(robot_cfg)
+
+    print(robot.get_state())
+    print(robot.capture_observation())
