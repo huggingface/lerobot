@@ -127,6 +127,8 @@ def load_from_raw(
     for zarr_path in zarr_paths:
         demonstrator = zarr_path.stem.split("_")[0]
         object_name = zarr_path.stem.split("_")[-1]
+        if object_name == 't':
+            continue
         assert demonstrator in DEMONSTRATOR_LIST, f"Demonstrator {demonstrator} not in {DEMONSTRATOR_LIST}"
         assert object_name in OBJECT_NAME_LIST, f"Object name {object_name} not in {OBJECT_NAME_LIST}"
 
