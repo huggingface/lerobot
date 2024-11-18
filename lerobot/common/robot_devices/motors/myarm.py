@@ -26,6 +26,10 @@ class MyArmBaseClass(ABC):
         self.motors = motors
         self.mock = mock
 
+    @property
+    def motor_names(self) -> list[str]:
+        return list(self.motors.keys())
+
     @abstractmethod
     def connect(self) -> None:
         pass
@@ -53,17 +57,17 @@ class MyArmLeader(MyArmBaseClass):
         """There is no need to disconnect from the MyArmC"""
         pass
 
-    def read(self, cmd: Literal["Present_Position"]) -> npt.NDArray[np.float64]:
+    def read(self, cmd: Literal["Present_Position"]) -> npt.NDArray[np.float32]:
         """This should mirror 'write' in the order of the data"""
         match cmd:
             case "Present_Position":
                 joint_angles = self._handle.get_joint_angles_in_mover_space()
-                return np.array(joint_angles, dtype=np.float64)
+                return np.array(joint_angles, dtype=np.float32)
             case _:
                 raise ValueError(f"Unsupported {cmd=}")
 
     def write(self, cmd: Literal["Goal_Position"],
-              data: npt.NDArray[np.float64]) -> None:
+              data: npt.NDArray[np.float32]) -> None:
         """Nothing needs doing here"""
         match cmd:
             case "Torque_Enable":
@@ -82,17 +86,17 @@ class MyArmFollower(MyArmBaseClass):
     def disconnect(self) -> None:
         self._handle.set_robot_power_off()
 
-    def read(self, cmd: Literal["Present_Position"]) -> npt.NDArray[np.float64]:
+    def read(self, cmd: Literal["Present_Position"]) -> npt.NDArray[np.float32]:
         """This should mirror 'write' in the order of the data"""
         match cmd:
             case "Present_Position":
                 joint_angles = self._handle.get_joints_angle()
-                return np.array(joint_angles, dtype=np.float64)
+                return np.array(joint_angles, dtype=np.float32)
             case _:
                 raise ValueError(f"Unsupported {cmd=}")
 
     def write(self, cmd: Literal["Goal_Position"],
-              data: npt.NDArray[np.float64]) -> None:
+              data: npt.NDArray[np.float32]) -> None:
         """This should mirror 'read' in the order of the data"""
         # TODO: Implement
         match cmd:
