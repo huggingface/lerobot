@@ -181,6 +181,31 @@ class EpisodeVideoStoreAsHDF5(object):
     def num_episodes(self):
         with h5py.File(self.hdf5_file_path, 'r') as hdf5_file:
             return hdf5_file.attrs['num_episodes']
+        
+    @classmethod
+    def load_and_split_data(cls, hdf5_file_path):
+        """
+        Load data from an HDF5 file and split it into required components.
+
+        Parameters:
+        hdf5_file_path (str): Path to the HDF5 file.
+
+        Returns:
+        dict: A dictionary containing split data.
+        """
+        split_data = {}
+
+        with h5py.File(hdf5_file_path, 'r') as hdf5_file:
+            # Iterate over each dataset in the file
+            for key in hdf5_file:
+                if key == 'data':
+                    continue
+                dataset = hdf5_file[key][:]
+                # Example: Split data based on some condition or logic
+                # Here, we simply store the dataset in the dictionary
+                split_data[key] = dataset
+
+        return split_data
 
     def _cleansing_episode_dict(self, episode_dict):
         return {k: v.cpu().numpy() if isinstance(v, torch.Tensor) else v for k, v in episode_dict.items()}
