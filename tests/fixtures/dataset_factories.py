@@ -325,7 +325,7 @@ def lerobot_dataset_metadata_factory(
                 "lerobot.common.datasets.lerobot_dataset.snapshot_download"
             ) as mock_snapshot_download_patch,
         ):
-            mock_get_hub_safe_version_patch.side_effect = lambda repo_id, version, enforce_v2=True: version
+            mock_get_hub_safe_version_patch.side_effect = lambda repo_id, version: version
             mock_snapshot_download_patch.side_effect = mock_snapshot_download
 
             return LeRobotDatasetMetadata(repo_id=repo_id, root=root, local_files_only=local_files_only)

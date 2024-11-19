@@ -700,7 +700,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.episode_buffer = self._create_episode_buffer()
 
         frame_index = self.episode_buffer["size"]
-        timestamp = frame["timestamp"] if "timestamp" in frame else frame_index / self.fps
+        timestamp = frame.pop("timestamp") if "timestamp" in frame else frame_index / self.fps
         self.episode_buffer["frame_index"].append(frame_index)
         self.episode_buffer["timestamp"].append(timestamp)
 

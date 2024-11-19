@@ -9,12 +9,42 @@ from lerobot.common.datasets.push_dataset_to_hub._download_raw import download_r
 
 
 def create_empty_dataset(repo_id, mode):
-    features = {}
+    features = {
+        "observation.state": {
+            "dtype": "float32",
+            "shape": (2,),
+            "names": [
+                ["x", "y"],
+            ],
+        },
+        "action": {
+            "dtype": "float32",
+            "shape": (2,),
+            "names": [
+                ["x", "y"],
+            ],
+        },
+        "next.reward": {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": None,
+        },
+        "next.success": {
+            "dtype": "bool",
+            "shape": (1,),
+            "names": None,
+        },
+    }
 
     if mode == "keypoints":
-        state_dim = 16
+        features["observation.environment_state"] = {
+            "dtype": "float32",
+            "shape": (16,),
+            "names": [
+                "keypoints",
+            ],
+        }
     else:
-        state_dim = 2
         features["observation.image"] = {
             "dtype": mode,
             "shape": (3, 96, 96),
@@ -24,35 +54,6 @@ def create_empty_dataset(repo_id, mode):
                 "width",
             ],
         }
-
-    features.update(
-        {
-            "observation.state": {
-                "dtype": "float32",
-                "shape": (state_dim,),
-                "names": [
-                    ["x", "y"],
-                ],
-            },
-            "action": {
-                "dtype": "float32",
-                "shape": (2,),
-                "names": [
-                    ["x", "y"],
-                ],
-            },
-            "next.reward": {
-                "dtype": "float32",
-                "shape": (1,),
-                "names": None,
-            },
-            "next.success": {
-                "dtype": "bool",
-                "shape": (1,),
-                "names": None,
-            },
-        }
-    )
 
     dataset = LeRobotDataset.create(
         repo_id=repo_id,
@@ -146,7 +147,7 @@ def calculate_reward(coverage, success_threshold):
     return np.clip(coverage / success_threshold, 0, 1)
 
 
-def populate_dataset(dataset, episode_data_index, episodes, image, state, action, reward, success):
+def populate_dataset(dataset, episode_data_index, episodes, image, state, env_state, action, reward, success):
     if episodes is None:
         episodes = range(len(episode_data_index["from"]))
 
@@ -160,20 +161,22 @@ def populate_dataset(dataset, episode_data_index, episodes, image, state, action
 
             frame = {
                 "action": torch.from_numpy(action[i]),
-                "timestamp": frame_idx / dataset.fps,
                 # Shift reward and success by +1 until the last item of the episode
                 "next.reward": reward[i + (frame_idx < num_frames - 1)],
                 "next.success": success[i + (frame_idx < num_frames - 1)],
             }
 
             frame["observation.state"] = torch.from_numpy(state[i])
+
+            if env_state is not None:
+                frame["observation.environment_state"] = torch.from_numpy(env_state[i])
+
             if image is not None:
                 frame["observation.image"] = torch.from_numpy(image[i])
 
-            # TODO(rcadene): add_frame_to_buffer, add_episode_from_buffer
             dataset.add_frame(frame)
 
-        dataset.add_episode(task="Push the T-shaped blue block onto the T-shaped green target surface.")
+        dataset.save_episode(task="Push the T-shaped blue block onto the T-shaped green target surface.")
 
     return dataset
 
@@ -205,7 +208,8 @@ def port_pusht(raw_dir, repo_id, episodes=None, mode="video", push_to_hub=True):
         episode_data_index,
         episodes,
         image=None if mode == "keypoints" else image,
-        state=keypoints if mode == "keypoints" else agent_pos,
+        state=agent_pos,
+        env_state=keypoints if mode == "keypoints" else None,
         action=action,
         reward=reward,
         success=success,
@@ -217,17 +221,26 @@ def port_pusht(raw_dir, repo_id, episodes=None, mode="video", push_to_hub=True):
 
 
 if __name__ == "__main__":
-    episodes = [0, 1]
-    # episodes = None
+    # To try this script, modify the repo id with your own HuggingFace user (e.g cadene/pusht)
+    repo_id = "lerobot/pusht"
 
-    # for mode in ["video"]:
-    for mode in ["image"]:
-        # for mode in ["keypoints"]:
-        # for mode in ["video", "image", "keypoints"]:
-        repo_id = "cadene/pusht_v2"
+    episodes = None
+    # Uncomment if you want to try with a subset (episode 0 and 1)
+    # episodes = [0, 1]
+
+    modes = ["video", "image", "keypoints"]
+    # Uncomment if you want to try with a specific mode
+    # modes = ["video"]
+    # modes = ["image"]
+    # modes = ["keypoints"]
+
+    for mode in ["video", "image", "keypoints"]:
         if mode in ["image", "keypoints"]:
             repo_id += f"_{mode}"
+
+        # download and load raw dataset, create LeRobotDataset, populate it, push to hub
         port_pusht("data/lerobot-raw/pusht_raw", repo_id=repo_id, mode=mode, episodes=episodes)
 
-    # dataset = LeRobotDataset(repo_id="cadene/pusht_v2", local_files_only=True)
-    # dataset_old = LeRobotDataset(repo_id="lerobot/pusht")
+        # Uncomment if you want to loal the local dataset and explore it
+        # dataset = LeRobotDataset(repo_id=repo_id, local_files_only=True)
+        # breakpoint()
