@@ -529,5 +529,6 @@ def main() -> None:
         # termination due to camera threads not properly exiting.
         robot.disconnect()
 
+
 if __name__ == "__main__":
     main()

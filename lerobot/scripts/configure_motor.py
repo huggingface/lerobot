@@ -144,5 +144,6 @@ def main() -> None:
 
     configure_motor(args.port, args.brand, args.model, args.ID, args.baudrate)
 
+
 if __name__ == "__main__":
     main()

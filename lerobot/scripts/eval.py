@@ -534,7 +534,6 @@ def get_pretrained_policy_path(pretrained_policy_name_or_path, revision=None):
     return pretrained_policy_path
 
 
-
 def main() -> None:
     init_logging()
 
@@ -574,7 +573,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.pretrained_policy_name_or_path is None:
-        eval_and_export_policy(hydra_cfg_path=args.config, out_dir=args.out_dir, config_overrides=args.overrides)
+        eval_and_export_policy(
+            hydra_cfg_path=args.config, out_dir=args.out_dir, config_overrides=args.overrides
+        )
     else:
         pretrained_policy_path = get_pretrained_policy_path(
             args.pretrained_policy_name_or_path, revision=args.revision
@@ -585,6 +586,7 @@ def main() -> None:
             out_dir=args.out_dir,
             config_overrides=args.overrides,
         )
+
 
 if __name__ == "__main__":
     main()
