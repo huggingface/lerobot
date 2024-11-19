@@ -278,7 +278,7 @@ def teleoperate(env, robot: Robot, process_action_fn, teleop_time_s=None):
 def record(
     env,
     robot: Robot,
-    process_action_fn=None,
+    process_action_from_leader=None,
     fps: int | None = None,
     root="data",
     repo_id="lerobot/debug",
@@ -304,12 +304,8 @@ def record(
         if fps is None:
             fps = policy_fps
             logging.warning(f"No fps provided, so using the fps from policy config ({policy_fps}).")
-        elif fps != policy_fps:
-            logging.warning(
-                f"There is a mismatch between the provided fps ({fps}) and the one from policy config ({policy_fps})."
-            )
 
-    if policy is None and process_action_fn is None:
+    if policy is None and process_action_from_leader is None:
         raise ValueError("Either policy or process_action_fn has to be set to enable control in sim.")
 
     # initialize listener before sim env
@@ -363,7 +359,7 @@ def record(
                 action = predict_action(observation, policy, device, use_amp)
             else:
                 leader_pos = robot.leader_arms.main.read("Present_Position")
-                action = process_action_fn(leader_pos)
+                action = process_action_from_leader(leader_pos)
 
             observation, reward, terminated, _, info = env.step(action)
 
