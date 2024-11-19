@@ -115,6 +115,7 @@ from lerobot.common.robot_devices.control_utils import (
     record_episode,
     reset_environment,
     sanity_check_dataset_name,
+    sanity_check_dataset_robot_compatibility,
     stop_recording,
     warmup_record,
 )
@@ -207,6 +208,9 @@ def record(
     num_image_writer_threads_per_camera: int = 4,
     display_cameras: bool = True,
     play_sounds: bool = True,
+    resume: bool = False,
+    # TODO(rcadene, aliberts): remove local_files_only when refactor with dataset as argument
+    local_files_only: bool = False,
 ) -> LeRobotDataset:
     # TODO(rcadene): Add option to record logs
     listener = None
@@ -232,17 +236,29 @@ def record(
                 f"There is a mismatch between the provided fps ({fps}) and the one from policy config ({policy_fps})."
             )
 
-    # Create empty dataset or load existing saved episodes
-    sanity_check_dataset_name(repo_id, policy)
-    dataset = LeRobotDataset.create(
-        repo_id,
-        fps,
-        root=root,
-        robot=robot,
-        use_videos=video,
-        image_writer_processes=num_image_writer_processes,
-        image_writer_threads=num_image_writer_threads_per_camera,
-    )
+    if resume:
+        dataset = LeRobotDataset(
+            repo_id,
+            root=root,
+            local_files_only=local_files_only,
+        )
+        dataset.start_image_writer(
+            num_processes=num_image_writer_processes,
+            num_threads=num_image_writer_threads_per_camera * len(robot.cameras),
+        )
+        sanity_check_dataset_robot_compatibility(dataset, robot, fps, video)
+    else:
+        # Create empty dataset or load existing saved episodes
+        sanity_check_dataset_name(repo_id, policy)
+        dataset = LeRobotDataset.create(
+            repo_id,
+            fps,
+            root=root,
+            robot=robot,
+            use_videos=video,
+            image_writer_processes=num_image_writer_processes,
+            image_writer_threads=num_image_writer_threads_per_camera * len(robot.cameras),
+        )
 
     if not robot.is_connected:
         robot.connect()
@@ -270,8 +286,7 @@ def record(
         # if multi_task:
         #     task = input("Enter your task description: ")
 
-        episode_index = dataset.episode_buffer["episode_index"]
-        log_say(f"Recording episode {episode_index}", play_sounds)
+        log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
         record_episode(
             dataset=dataset,
             robot=robot,
@@ -289,7 +304,7 @@ def record(
         # TODO(rcadene): add an option to enable teleoperation during reset
         # Skip reset for the last episode to be recorded
         if not events["stop_recording"] and (
-            (episode_index < num_episodes - 1) or events["rerecord_episode"]
+            (dataset.num_episodes < num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", play_sounds)
             reset_environment(robot, events, reset_time_s)

@@ -441,7 +441,7 @@ def convert_dataset(
     arxiv: str | None = None,
     test_branch: str | None = None,
 ):
-    v1 = get_hub_safe_version(repo_id, V16, enforce_v2=False)
+    v1 = get_hub_safe_version(repo_id, V16)
     v1x_dir = local_dir / V16 / repo_id
     v20_dir = local_dir / V20 / repo_id
     v1x_dir.mkdir(parents=True, exist_ok=True)

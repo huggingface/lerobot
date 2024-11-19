@@ -117,10 +117,14 @@ def push_meta_data_to_hub(repo_id: str, meta_data_dir: str | Path, revision: str
 
 
 def push_dataset_card_to_hub(
-    repo_id: str, revision: str | None, tags: list | None = None, text: str | None = None
+    repo_id: str,
+    revision: str | None,
+    tags: list | None = None,
+    text: str | None = None,
+    license: str = "apache-2.0",
 ):
     """Creates and pushes a LeRobotDataset Card with appropriate tags to easily find it on the hub."""
-    card = create_lerobot_dataset_card(tags=tags, text=text)
+    card = create_lerobot_dataset_card(tags=tags, text=text, license=license)
     card.push_to_hub(repo_id=repo_id, repo_type="dataset", revision=revision)
 
 
