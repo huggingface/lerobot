@@ -1,7 +1,8 @@
 from pathlib import Path
-
+import os
 import click
 import gym_pusht
+import gym_pushany
 import gymnasium as gym
 import numpy as np
 import imageio
@@ -12,8 +13,33 @@ import shortuuid
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
 from lerobot.common.datasets.push_dataset_to_hub.utils import get_default_encoding
-from lerobot.common.datasets.rollout_datasets.episode_stores import EpisodeVideoStore
+from lerobot.common.datasets.rollout_datasets.episode_stores import EpisodeVideoStore, EpisodeVideoStoreAsHDF5
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
+
+#After update gym-pushany, alter the object name list to gym_pushany.
+OBJECT_NAME_LIST = [
+    't',
+    '0',
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '7',
+    '8',
+    '9',
+    'ellipse',
+    'rectangle',
+    'reg3',
+    'reg4',
+    'reg5',
+    'reg6',
+    'reg7',
+    'reg8',
+    'reg9',
+    'reg10'
+]
 
 
 def _resize_frame_tensors_to_frames(frames: list[torch.Tensor]) -> list[np.ndarray]:
@@ -54,20 +80,31 @@ def build_ep_dict(observation_states: list,
         {'path': f"videos/{fname}", 'timestamp': i / fps} for i in range(num_frames)
     ]
 
-    #  observation.state (b x n)
-    ep_dict['observation.state'] = torch.stack(observation_states)
+    # #  observation.state (b x n)
+    # ep_dict['observation.state'] = torch.stack(observation_states)
+    # # action (b x 2)
+    # ep_dict['action'] = torch.stack(actions)
+    # # frame_index
+    # ep_dict['frame_index'] = torch.arange(0, num_frames, 1)
+    # ep_dict['timestamp'] = torch.arange(0, num_frames, 1) / fps
+    # ep_dict["next.reward"] = torch.tensor(rewards)
+    # ep_dict["next.done"] = torch.tensor(dones, dtype=torch.int8)
+    # ep_dict["next.success"] = torch.tensor(successes, dtype=torch.int8)
+    
+    # observation.state (b x n)
+    ep_dict['observation.state'] = np.array([state.numpy() for state in observation_states])
     # action (b x 2)
-    ep_dict['action'] = torch.stack(actions)
+    ep_dict['action'] = np.array([action.numpy() for action in actions])
     # frame_index
-    ep_dict['frame_index'] = torch.arange(0, num_frames, 1)
-    ep_dict['timestamp'] = torch.arange(0, num_frames, 1) / fps
-    ep_dict["next.reward"] = torch.tensor(rewards)
-    ep_dict["next.done"] = torch.tensor(dones)
-    ep_dict["next.success"] = torch.tensor(successes)
+    ep_dict['frame_index'] = np.array(range(num_frames))
+    ep_dict['timestamp'] = np.array([i / fps for i in range(num_frames)])
+    ep_dict["next.reward"] = np.array(rewards)
+    ep_dict["next.done"] = np.array([int(done) for done in dones])
+    ep_dict["next.success"] = np.array([int(success) for success in successes])
     return ep_dict
 
 
-def rollout_for_ep_dicts(policy, env, device, episode_video_store, num_episodes, videos_dir):
+def rollout_for_ep_dicts(policy, env, device, episode_video_store, num_episodes, videos_dir, object_name=None):
     for _ in range(num_episodes):
         policy.diffusion.num_inference_steps = np.random.randint(1, 20)
         policy.reset()
@@ -133,7 +170,6 @@ def rollout_for_ep_dicts(policy, env, device, episode_video_store, num_episodes,
             rewards.append(reward)
             successes.append(terminated)
             dones.append(done)
-
             step += 1
 
         if terminated:
@@ -203,6 +239,61 @@ def main(output, num_rollouts):
 
     rollout_for_ep_dicts(policy, env, device, episode_video_store, num_rollouts, videos_dir)
 
+@click.command()
+@click.option('-p', '--pretrained_policy_path', required=True)
+@click.option('-o', '--output', required=True)
+@click.option('-n', '--num_rollouts', required=True)
+@click.option('-t', '--task', required=True)
+def main_pushany(pretrained_policy_path, output, num_rollouts, task):
+    task_id = int(task)
+    num_rollouts = int(num_rollouts)
+    pretrained_policy_path = Path(pretrained_policy_path)
+    policy = DiffusionPolicy.from_pretrained(pretrained_policy_path)
+    policy.eval()
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        print("GPU is available. Device set to:", device)
+    else:
+        device = torch.device("cpu")
+        print(f"GPU is not available. Device set to: {device}. Inference will be slower than on GPU.")
+        # Decrease the number of reverse-diffusion steps (trades off a bit of quality for 10x speed)
+        policy.diffusion.num_inference_steps = 10
+
+    policy.diffusion.num_inference_steps = 1
+    policy = policy.to(device)
+
+    output_directory = Path(output) / f"{OBJECT_NAME_LIST[task_id]}"
+    output_directory.mkdir(parents=True, exist_ok=True)
+
+    videos_dir = output_directory / 'videos'
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    fps = 10
+    info = {
+        "codebase_version": CODEBASE_VERSION,
+        "fps": fps,
+        "video": True,
+        "encoding": get_default_encoding(),
+        "videos_dir": str(videos_dir)
+    }
+
+    # episode_video_store = EpisodeVideoStore.create_from_path(output_directory, info, mode='a')
+    
+    hdf5_file_path = os.path.join(output_directory, 'data.h5')
+
+    episode_video_store = EpisodeVideoStoreAsHDF5(hdf5_file_path, info)
+    print(episode_video_store.num_episodes)
+    print(episode_video_store.info)
+
+    env = gym.make(
+        "gym_pushany/PushAny-v0",
+        object_name=OBJECT_NAME_LIST[task_id],
+        max_episode_steps=300,
+    )
+
+    episode_video_store = rollout_for_ep_dicts(policy, env, device, episode_video_store, num_rollouts, videos_dir, object_name=OBJECT_NAME_LIST[task_id])
+
+
+
 
 if __name__ == '__main__':
-    main()
+    main_pushany()
