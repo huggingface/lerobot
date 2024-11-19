@@ -34,6 +34,8 @@ if __name__ == '__main__':
     robot_cfg = init_hydra_config(robot_path, robot_overrides)
     robot = make_robot(robot_cfg)
 
-    print(robot.get_state())
+    print(robot.is_connected)
+    # print(robot.get_state())
     print(robot.capture_observation())
-    time.sleep(6)
+    time.sleep(5)
+    robot.disconnect()

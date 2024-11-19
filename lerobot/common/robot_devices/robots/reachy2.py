@@ -45,16 +45,17 @@ class ReachyRobot():
 
         self.robot_type = self.config.robot_type
         self.cameras = self.config.cameras
-        self.is_connected = False #at init Reachy2 is in fact connected...
+        self.is_connected = False
         self.teleop = None
         self.logs = {}
         self.reachy=ReachySDK(host=config.ip_address)
-
+        self.is_connected=True  #at init Reachy2 is in fact connected...
 
         self.state_keys = None
         self.action_keys = None
 
     def connect(self) -> None:
+        print("Connecting to Reachy")
         self.reachy.is_connected = self.reachy.connect()
         if not self.is_connected:
             print(f'Cannot connect to Reachy at address {self.config.ip_address}. Maybe a connection already exists.')
@@ -81,64 +82,70 @@ class ReachyRobot():
 
     def get_state(self) -> dict:
 
-        return {
-            "neck_yaw.pos": np.radians(self.reachy.head.neck.yaw.present_position),
-            "neck_pitch.pos": np.radians(self.reachy.head.neck.pitch.present_position),
-            "neck_roll.pos": np.radians(self.reachy.head.neck.roll.present_position),
-            "r_shoulder_pitch.pos": np.radians(self.reachy.r_arm.shoulder.pitch.present_position),
-            "r_shoulder_roll.pos": np.radians(self.reachy.r_arm.shoulder.roll.present_position),
-            "r_elbow_yaw.pos": np.radians(self.reachy.r_arm.elbow.yaw.present_position),
-            "r_elbow_pitch.pos": np.radians(self.reachy.r_arm.elbow.pitch.present_position),
-            "r_wrist_roll.pos": np.radians(self.reachy.r_arm.wrist.roll.present_position),
-            "r_wrist_pitch.pos": np.radians(self.reachy.r_arm.wrist.pitch.present_position),
-            "r_wrist_yaw.pos": np.radians(self.reachy.r_arm.wrist.yaw.present_position),
-            "r_gripper.pos": np.radians(self.reachy.r_arm.gripper.present_position),
-            "l_shouldel_pitch.pos": np.radians(self.reachy.l_arm.shoulder.pitch.present_position),
-            "l_shouldel_roll.pos": np.radians(self.reachy.l_arm.shoulder.roll.present_position),
-            "l_elbow_yaw.pos": np.radians(self.reachy.l_arm.elbow.yaw.present_position),
-            "l_elbow_pitch.pos": np.radians(self.reachy.l_arm.elbow.pitch.present_position),
-            "l_wrist_roll.pos": np.radians(self.reachy.l_arm.wrist.roll.present_position),
-            "l_wrist_pitch.pos": np.radians(self.reachy.l_arm.wrist.pitch.present_position),
-            "l_wrist_yaw.pos": np.radians(self.reachy.l_arm.wrist.yaw.present_position),
-            "l_gripper.pos": np.radians(self.reachy.l_arm.gripper.present_position),
-            #TODO mobile base
-        }
+        if self.is_connected:
+            return {
+                "neck_yaw.pos": np.radians(self.reachy.head.neck.yaw.present_position),
+                "neck_pitch.pos": np.radians(self.reachy.head.neck.pitch.present_position),
+                "neck_roll.pos": np.radians(self.reachy.head.neck.roll.present_position),
+                "r_shoulder_pitch.pos": np.radians(self.reachy.r_arm.shoulder.pitch.present_position),
+                "r_shoulder_roll.pos": np.radians(self.reachy.r_arm.shoulder.roll.present_position),
+                "r_elbow_yaw.pos": np.radians(self.reachy.r_arm.elbow.yaw.present_position),
+                "r_elbow_pitch.pos": np.radians(self.reachy.r_arm.elbow.pitch.present_position),
+                "r_wrist_roll.pos": np.radians(self.reachy.r_arm.wrist.roll.present_position),
+                "r_wrist_pitch.pos": np.radians(self.reachy.r_arm.wrist.pitch.present_position),
+                "r_wrist_yaw.pos": np.radians(self.reachy.r_arm.wrist.yaw.present_position),
+                "r_gripper.pos": np.radians(self.reachy.r_arm.gripper.present_position),
+                "l_shouldel_pitch.pos": np.radians(self.reachy.l_arm.shoulder.pitch.present_position),
+                "l_shouldel_roll.pos": np.radians(self.reachy.l_arm.shoulder.roll.present_position),
+                "l_elbow_yaw.pos": np.radians(self.reachy.l_arm.elbow.yaw.present_position),
+                "l_elbow_pitch.pos": np.radians(self.reachy.l_arm.elbow.pitch.present_position),
+                "l_wrist_roll.pos": np.radians(self.reachy.l_arm.wrist.roll.present_position),
+                "l_wrist_pitch.pos": np.radians(self.reachy.l_arm.wrist.pitch.present_position),
+                "l_wrist_yaw.pos": np.radians(self.reachy.l_arm.wrist.yaw.present_position),
+                "l_gripper.pos": np.radians(self.reachy.l_arm.gripper.present_position),
+                #TODO mobile base
+            }
+        else:
+            return {}
 
     def capture_observation(self) -> dict:
 
-        before_read_t = time.perf_counter()
-        state = self.get_state()
-        self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
+        if self.is_connected:
 
-        if self.state_keys is None:
-            self.state_keys = list(state)
+            before_read_t = time.perf_counter()
+            state = self.get_state()
+            self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
-        state = torch.as_tensor(list(state.values()))
+            if self.state_keys is None:
+                self.state_keys = list(state)
 
-        # Capture images from cameras
-        images = {}
-        for name in self.cameras:
-            before_camread_t = time.perf_counter()
-            images[name] = self.cameras[name].read() #Reachy cameras read() is not blocking?
-            print(f'name: {name} img: {images[name]}')
-            if images[name] is not None:
-                images[name] = torch.from_numpy(copy(images[name][0])) #seems like I need to copy?
-                self.logs[f"read_camera_{name}_dt_s"] = images[name][1] #full timestamp, TODO dt
+            state = torch.as_tensor(list(state.values()))
 
-        # Populate output dictionnaries
-        obs_dict = {}
-        obs_dict["observation.state"] = state
-        for name in self.cameras:
-            obs_dict[f"observation.images.{name}"] = images[name]
+            # Capture images from cameras
+            images = {}
+            for name in self.cameras:
+                before_camread_t = time.perf_counter()
+                images[name] = self.cameras[name].read() #Reachy cameras read() is not blocking?
+                # print(f'name: {name} img: {images[name]}')
+                if images[name] is not None:
+                    images[name] = torch.from_numpy(copy(images[name][0])) #seems like I need to copy?
+                    self.logs[f"read_camera_{name}_dt_s"] = images[name][1] #full timestamp, TODO dt
 
-        return obs_dict
+            # Populate output dictionnaries
+            obs_dict = {}
+            obs_dict["observation.state"] = state
+            for name in self.cameras:
+                obs_dict[f"observation.images.{name}"] = images[name]
 
+            return obs_dict
+        else:
+            return {}
     def send_action(self, action: torch.Tensor) -> torch.Tensor:
 
         if not self.is_connected:
             raise ConnectionError()
 
-        #TODO
+        #TODO: what shape is the action tensor?
         return action
 
     def print_logs(self) -> None:
@@ -146,10 +153,10 @@ class ReachyRobot():
 
 
     def disconnect(self) -> None:
+        print("Disconnecting")
         self.is_connected = False
+        print("Turn off")
         self.reachy.turn_off_smoothly()
         # self.reachy.turn_off()
-        time.sleep(6)
-
-    def __del__(self):
-        self.disconnect()
+        print("\t turn off done")
+        self.reachy.disconnect()
