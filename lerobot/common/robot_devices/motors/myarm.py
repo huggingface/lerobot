@@ -1,10 +1,11 @@
-from abc import abstractmethod, ABC
+from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Literal, Any
+from typing import Any, Literal
 
 import acton_ai
 import numpy as np
 import numpy.typing as npt
+
 
 class TorqueMode(Enum):
     ENABLED = 1
@@ -15,12 +16,12 @@ class MyArmBaseClass(ABC):
     _handle: acton_ai.HelpfulMyArmC | acton_ai.HelpfulMyArmM
 
     def __init__(
-            self,
-            port: str,
-            motors: dict[str, tuple[int, str]],
-            extra_model_control_table: dict[str, list[tuple]] | None = None,
-            extra_model_resolution: dict[str, int] | None = None,
-            mock=False,
+        self,
+        port: str,
+        motors: dict[str, tuple[int, str]],
+        extra_model_control_table: dict[str, list[tuple]] | None = None,
+        extra_model_resolution: dict[str, int] | None = None,
+        mock=False,
     ):
         self.port = port
         self.motors = motors
@@ -38,12 +39,13 @@ class MyArmBaseClass(ABC):
     def disconnect(self) -> None:
         pass
 
-
     def set_up_presets(self) -> None:
         """Optional. Override this method to do further set up on a device."""
+        return
 
     def set_calibration(self, _: Any) -> None:
         """Calibration is not implemented on LeRobot. Use the MyArm interface."""
+        return
 
 
 class MyArmLeader(MyArmBaseClass):
@@ -66,8 +68,7 @@ class MyArmLeader(MyArmBaseClass):
             case _:
                 raise ValueError(f"Unsupported {cmd=}")
 
-    def write(self, cmd: Literal["Torque_Enable"],
-              data: npt.NDArray[np.float32]) -> None:
+    def write(self, cmd: Literal["Torque_Enable"], data: npt.NDArray[np.float32]) -> None:
         """Nothing needs doing here"""
         match cmd:
             case "Torque_Enable":
@@ -75,6 +76,7 @@ class MyArmLeader(MyArmBaseClass):
                 pass
             case _:
                 raise ValueError(f"Unexpected write to follower arm {cmd=}")
+
 
 class MyArmFollower(MyArmBaseClass):
     _handle: acton_ai.HelpfulMyArmM
@@ -95,8 +97,9 @@ class MyArmFollower(MyArmBaseClass):
             case _:
                 raise ValueError(f"Unsupported {cmd=}")
 
-    def write(self, cmd: Literal["Goal_Position", "Torque_Enable"],
-              data: npt.NDArray[np.float32] | int) -> None:
+    def write(
+        self, cmd: Literal["Goal_Position", "Torque_Enable"], data: npt.NDArray[np.float32] | int
+    ) -> None:
         """This should mirror 'read' in the order of the data"""
         # TODO: Implement
         match cmd:

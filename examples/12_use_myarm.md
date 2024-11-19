@@ -5,11 +5,11 @@ This tutorial explains how to use [Moss v1](https://github.com/jess-moss/moss-ro
 A MyArm can be purchased at the [Elephant Robotics M&C Store Section](https://shop.elephantrobotics.com/collections/myarm-mc)
 
 **Important** Make sure your MyArmM and MyArmC firmware is up to date. The
-firmware can be updated using the MyStudio app. 
+firmware can be updated using the MyStudio app.
 
 ## Install LeRobot
 
-This tutorial was tested on a Linux machine. 
+This tutorial was tested on a Linux machine.
 
 In the LeRobot repository, install the dependencies including the `myarm` extra:
 ```bash
@@ -18,25 +18,25 @@ poetry install --extras my_arm
 
 ## Verify Teleop Without LeRobot First
 
-1. Plug in both the MyArm M and MyArm C via USB to your computer. 
+1. Plug in both the MyArm M and MyArm C via USB to your computer.
 Ensure the following:
 - both power supplies are plugged in
 - the e-stop is disabled
 - the MyArmM power button is pressed
 
-**IMPORTANT:** 
-If you try to connect and it fails, then you find out it was an e-stop or other power issue, you will NEED to unplug the USB, restart the robot, fix the power issue, and then plug the USB back in. 
+**IMPORTANT:**
+If you try to connect and it fails, then you find out it was an e-stop or other power issue, you will NEED to unplug the USB, restart the robot, fix the power issue, and then plug the USB back in.
 
-2. Then, in both `MyArmM` and `MyArmC` interfaces select "Transponder -> USB UART". 
+2. Then, in both `MyArmM` and `MyArmC` interfaces select "Transponder -> USB UART".
 
 **Find USB ports associated to your arms**
 
 The `acton_ai` library will automatically scan for likely arms and connect
-to them. It will automatically identify which is the Mover and which is the Controller. 
+to them. It will automatically identify which is the Mover and which is the Controller.
 
 You can also hardcode the ports in the `lerobot/configs/robot/myarm.yaml` file.
 
-If you see exceptions relating to finding or connecting to arms, **read them**. 
+If you see exceptions relating to finding or connecting to arms, **read them**.
 
 The acton_ai library will provide descriptive error messages if it cannot find or connect to the arms.
 
@@ -53,18 +53,18 @@ acton_teleop
 Move the leader around and verify that the follower arm follows, and is accurate.
 
 If anything seems amis, follow the calibrate section below. This script will
-log debug issues relating to joints out of bounds, and other problems that might occur. 
+log debug issues relating to joints out of bounds, and other problems that might occur.
 Pay attention to the logs and fix any issues before proceeding.
 
 ## Calibrate
 
-If anything seems amiss, run 
+If anything seems amiss, run
 ```bash
 acton_calibrate
 ```
 
 and follow directions in the console. This script is always being maintained, please add
-issues on the `acton_ai` github so we can improve it. 
+issues on the `acton_ai` github so we can improve it.
 
 ## Teleoperate
 
