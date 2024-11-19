@@ -27,6 +27,8 @@ python lerobot/scripts/control_sim_robot.py record \
     --run-compute-stats 0
 ```
 
+Enable the --push-to-hub 1 to push the recorded dataset to the huggingface hub.
+
 - Visualize dataset:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
@@ -35,15 +37,17 @@ python lerobot/scripts/visualize_dataset.py \
     --episode-index 0
 ```
 
-- Replay this test episode:
+- Replay a sequence of test episodes: 
 ```bash
 python lerobot/scripts/control_sim_robot.py replay \
+    --robot-path lerobot/configs/robot/your_robot_config.yaml \
     --sim-config lerobot/configs/env/your_sim_config.yaml \
     --fps 30 \
     --root tmp/data \
-    --repo-id $USER/koch_test \
-    --episodes 0
+    --repo-id $USER/robot_sim_test \
+    --episodes 0 1 2 3
 ```
+Note: The seed is saved, therefore, during replay we can load the same environment state as the one during collection.
 
 - Record a full dataset in order to train a policy,
 30 seconds of recording for each episode, and 10 seconds to reset the environment in between episodes:
@@ -59,8 +63,8 @@ python lerobot/scripts/control_sim_robot.py record \
 ```
 
 **NOTE**: You can use your keyboard to control data recording flow.
-- Tap right arrow key '->' to early exit while recording an episode and go to resseting the environment.
-- Tap right arrow key '->' to early exit while resetting the environment and got to recording the next episode.
+- Tap right arrow key '->' to early exit while recording an episode and go to reseting the environment.
+- Tap right arrow key '->' to early exit while reseting the environment and got to recording the next episode.
 - Tap left arrow key '<-' to early exit and re-record the current episode.
 - Tap escape key 'esc' to stop the data recording.
 This might require a sudo permission to allow your terminal to monitor keyboard events.
