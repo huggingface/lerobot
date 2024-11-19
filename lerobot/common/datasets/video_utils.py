@@ -279,8 +279,8 @@ def get_video_info(video_path: Path | str) -> dict:
 
     video_info = {
         "video.fps": fps,
-        "video.width": video_stream_info["width"],
         "video.height": video_stream_info["height"],
+        "video.width": video_stream_info["width"],
         "video.channels": pixel_channels,
         "video.codec": video_stream_info["codec_name"],
         "video.pix_fmt": video_stream_info["pix_fmt"],

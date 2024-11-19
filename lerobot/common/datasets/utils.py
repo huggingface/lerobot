@@ -468,6 +468,7 @@ def create_lerobot_dataset_card(
     text: str | None = None,
     info: dict | None = None,
     license: str | None = None,
+    url: str | None = None,
     citation: str | None = None,
     arxiv: str | None = None,
 ) -> DatasetCard:
@@ -488,6 +489,8 @@ def create_lerobot_dataset_card(
         card.data.license = license
     if tags:
         card.data.tags += tags
+    if url:
+        card.text += f"## Homepage:\n{url}\n"
     if text:
         card.text += f"{text}\n"
     if info:

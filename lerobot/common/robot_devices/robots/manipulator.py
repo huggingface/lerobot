@@ -235,8 +235,8 @@ class ManipulatorRobot:
         for cam_key, cam in self.cameras.items():
             key = f"observation.images.{cam_key}"
             cam_ft[key] = {
-                "shape": (cam.width, cam.height, cam.channels),
-                "names": ["width", "height", "channels"],
+                "shape": (cam.height, cam.width, cam.channels),
+                "names": ["height", "width", "channels"],
                 "info": None,
             }
         return cam_ft

@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import json
 import logging
 import os
 import shutil
@@ -139,6 +138,11 @@ class LeRobotDatasetMetadata:
         return self.info["video_path"]
 
     @property
+    def robot_type(self) -> str | None:
+        """Robot type used in recording this dataset."""
+        return self.info["robot_type"]
+
+    @property
     def fps(self) -> int:
         """Frames per second used during data collection."""
         return self.info["fps"]
@@ -258,10 +262,14 @@ class LeRobotDatasetMetadata:
         write_json(self.info, self.root / INFO_PATH)
 
     def __repr__(self):
+        feature_keys = list(self.features)
         return (
-            f"{self.__class__.__name__}\n"
-            f"Repository ID: '{self.repo_id}',\n"
-            f"{json.dumps(self.meta.info, indent=4)}\n"
+            f"{self.__class__.__name__}({{\n"
+            f"    Repository ID: '{self.repo_id}',\n"
+            f"    Total episodes: '{self.total_episodes}',\n"
+            f"    Total frames: '{self.total_frames}',\n"
+            f"    Features: '{feature_keys}',\n"
+            "})',\n"
         )
 
     @classmethod
@@ -657,13 +665,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return item
 
     def __repr__(self):
+        feature_keys = list(self.features)
         return (
-            f"{self.__class__.__name__}\n"
-            f"  Repository ID: '{self.repo_id}',\n"
-            f"  Selected episodes: {self.episodes},\n"
-            f"  Number of selected episodes: {self.num_episodes},\n"
-            f"  Number of selected samples: {self.num_frames},\n"
-            f"\n{json.dumps(self.meta.info, indent=4)}\n"
+            f"{self.__class__.__name__}({{\n"
+            f"    Repository ID: '{self.repo_id}',\n"
+            f"    Number of selected episodes: '{self.num_episodes}',\n"
+            f"    Number of selected samples: '{self.num_frames}',\n"
+            f"    Features: '{feature_keys}',\n"
+            "})',\n"
         )
 
     def _create_episode_buffer(self, episode_index: int | None = None) -> dict:

@@ -265,7 +265,7 @@ def test_wait_until_done(tmp_path, img_array_factory):
     writer = AsyncImageWriter(num_processes=0, num_threads=4)
     try:
         num_images = 100
-        image_arrays = [img_array_factory(width=500, height=500) for _ in range(num_images)]
+        image_arrays = [img_array_factory(height=500, width=500) for _ in range(num_images)]
         fpaths = [tmp_path / f"frame_{i:06d}.png" for i in range(num_images)]
         for image_array, fpath in zip(image_arrays, fpaths, strict=True):
             fpath.parent.mkdir(parents=True, exist_ok=True)
