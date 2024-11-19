@@ -136,7 +136,10 @@ def append_jsonlines(data: dict, fpath: Path) -> None:
 
 
 def load_info(local_dir: Path) -> dict:
-    return load_json(local_dir / INFO_PATH)
+    info = load_json(local_dir / INFO_PATH)
+    for ft in info["features"].values():
+        ft["shape"] = tuple(ft["shape"])
+    return info
 
 
 def load_stats(local_dir: Path) -> dict:
