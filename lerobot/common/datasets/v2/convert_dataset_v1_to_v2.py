@@ -176,6 +176,7 @@ def parse_robot_config(config_path: Path, config_overrides: list[str] | None = N
         "robot_type": robot_cfg["robot_type"],
         "names": {
             "observation.state": state_names,
+            "observation.effort": state_names,
             "action": action_names,
         },
     }
@@ -436,11 +437,8 @@ def convert_dataset(
     tasks_path: Path | None = None,
     tasks_col: Path | None = None,
     robot_config: dict | None = None,
-    license: str | None = None,
-    url: str | None = None,
-    arxiv: str | None = None,
-    citation: str | None = None,
     test_branch: str | None = None,
+    **card_kwargs,
 ):
     v1 = get_hub_safe_version(repo_id, V16)
     v1x_dir = local_dir / V16 / repo_id
@@ -566,9 +564,7 @@ def convert_dataset(
     }
     write_json(metadata_v2_0, v20_dir / INFO_PATH)
     convert_stats_to_json(v1x_dir, v20_dir)
-    card = create_lerobot_dataset_card(
-        tags=repo_tags, info=metadata_v2_0, license=license, url=url, citation=citation, arxiv=arxiv
-    )
+    card = create_lerobot_dataset_card(tags=repo_tags, dataset_info=metadata_v2_0, **card_kwargs)
 
     with contextlib.suppress(EntryNotFoundError):
         hub_api.delete_folder(repo_id=repo_id, path_in_repo="data", repo_type="dataset", revision=branch)

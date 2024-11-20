@@ -467,10 +467,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def push_to_hub(
         self,
         tags: list | None = None,
-        text: str | None = None,
         license: str | None = "apache-2.0",
         push_videos: bool = True,
         private: bool = False,
+        **card_kwargs,
     ) -> None:
         if not self.consolidated:
             raise RuntimeError(
@@ -495,7 +495,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             repo_type="dataset",
             ignore_patterns=ignore_patterns,
         )
-        card = create_lerobot_dataset_card(tags=tags, text=text, info=self.meta.info, license=license)
+        card = create_lerobot_dataset_card(
+            tags=tags, dataset_info=self.meta.info, license=license, **card_kwargs
+        )
         card.push_to_hub(repo_id=self.repo_id, repo_type="dataset")
         create_branch(repo_id=self.repo_id, branch=CODEBASE_VERSION, repo_type="dataset")
 

@@ -27,7 +27,7 @@ import numpy as np
 import pyarrow.compute as pc
 import torch
 from datasets.table import embed_table_storage
-from huggingface_hub import DatasetCard, HfApi
+from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from PIL import Image as PILImage
 from torchvision import transforms
 
@@ -49,6 +49,8 @@ DATASET_CARD_TEMPLATE = """
 # Metadata will go there
 ---
 This dataset was created using [LeRobot](https://github.com/huggingface/lerobot).
+
+## {}
 
 """
 
@@ -468,41 +470,33 @@ def create_branch(repo_id, *, branch: str, repo_type: str | None = None) -> None
 
 def create_lerobot_dataset_card(
     tags: list | None = None,
-    text: str | None = None,
-    info: dict | None = None,
-    license: str | None = None,
-    url: str | None = None,
-    citation: str | None = None,
-    arxiv: str | None = None,
+    dataset_info: dict | None = None,
+    **kwargs,
 ) -> DatasetCard:
     """
-    If specified, license must be one of https://huggingface.co/docs/hub/repositories-licenses.
+    Keyword arguments will be used to replace values in ./lerobot/common/datasets/card_template.md.
+    Note: If specified, license must be one of https://huggingface.co/docs/hub/repositories-licenses.
     """
-    card = DatasetCard(DATASET_CARD_TEMPLATE)
-    card.data.configs = [
-        {
-            "config_name": "default",
-            "data_files": "data/*/*.parquet",
-        }
-    ]
-    card.data.task_categories = ["robotics"]
-    card.data.license = license
-    card.data.tags = ["LeRobot"]
-    if license:
-        card.data.license = license
+    card_tags = ["LeRobot"]
     if tags:
-        card.data.tags += tags
-    if url:
-        card.text += f"## Homepage:\n{url}\n"
-    if text:
-        card.text += f"{text}\n"
-    if info:
-        card.text += "## Info\n"
-        card.text += "[meta/info.json](meta/info.json)\n"
-        card.text += f"```json\n{json.dumps(info, indent=4)}\n```"
-    if citation:
-        card.text += "## Citation\n"
-        card.text += f"```\n{citation}\n```\n"
-    if arxiv:
-        card.data.arxiv = arxiv
-    return card
+        card_tags += tags
+    if dataset_info:
+        dataset_structure = "[meta/info.json](meta/info.json):\n"
+        dataset_structure += f"```json\n{json.dumps(dataset_info, indent=4)}\n```\n"
+        kwargs = {**kwargs, "dataset_structure": dataset_structure}
+    card_data = DatasetCardData(
+        license=kwargs.get("license"),
+        tags=card_tags,
+        task_categories=["robotics"],
+        configs=[
+            {
+                "config_name": "default",
+                "data_files": "data/*/*.parquet",
+            }
+        ],
+    )
+    return DatasetCard.from_template(
+        card_data=card_data,
+        template_path="./lerobot/common/datasets/card_template.md",
+        **kwargs,
+    )

@@ -120,11 +120,11 @@ def push_dataset_card_to_hub(
     repo_id: str,
     revision: str | None,
     tags: list | None = None,
-    text: str | None = None,
     license: str = "apache-2.0",
+    **card_kwargs,
 ):
     """Creates and pushes a LeRobotDataset Card with appropriate tags to easily find it on the hub."""
-    card = create_lerobot_dataset_card(tags=tags, text=text, license=license)
+    card = create_lerobot_dataset_card(tags=tags, license=license, **card_kwargs)
     card.push_to_hub(repo_id=repo_id, repo_type="dataset", revision=revision)
 
 
