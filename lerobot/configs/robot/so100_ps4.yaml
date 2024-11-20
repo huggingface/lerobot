@@ -1,7 +1,12 @@
 # [SO-100 robot arm with ps4 controller]
 
-# requires installing pygame
-# With pip: `pip install pygame`
+# hid is used to read inputs from the PS4 controller.
+# pip install hid
+# Requires installing hidapi library: https://github.com/libusb/hidapi
+# The PS4 controller should be connected via USB
+# Bluetooth connection can partially work but may require some changes
+# So far only tested on Mac and Ubuntu
+# When running on ubuntu make sure that the user has access to the USB device (joystick)
 
 _target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
 robot_type: so100
@@ -23,7 +28,7 @@ controller:
     - wrist_flex
     - wrist_roll
     - gripper
-  initial_position: [90, 180, 180, 0, 0, 10]  # Configurable initial positions
+  initial_position: [90, 170, 170, 0, 0, 10]  # Configurable initial positions
   l1: 117.0  # Length of first lever in mm
   l2: 136.0  # Length of second lever in mm
 
@@ -54,4 +59,3 @@ cameras:
     fps: 30
     width: 640
     height: 480
-

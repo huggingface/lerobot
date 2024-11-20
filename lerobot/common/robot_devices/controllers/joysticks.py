@@ -1,7 +1,10 @@
-# pyhidapi is used to read inputs from the PS4 controller.
-# pip install pyhidapi
+# hid is used to read inputs from the PS4 controller.
+# pip install hid
+# Requires installing hidapi library: https://github.com/libusb/hidapi
 # The PS4 controller should be connected via USB
-# So far only tested on Mac
+# Bluetooth connection can partially work but may require some changes
+# So far only tested on Mac and Ubuntu
+# When running on ubuntu make sure that the user has access to the USB device (joystick)
 
 import logging
 import math
@@ -139,7 +142,7 @@ class PS4JoystickController:
     def connect(self):
         try:
             self.device = hid.Device(self.VENDOR_ID, self.PRODUCT_ID)
-            logging.info(f"Connected to {self.device.get_product_string()}")
+            logging.info(f"Connected to PS4 controller: {self.device.manufacturer} {self.device.product}")
             self.running = True
         except OSError as e:
             logging.error(f"Unable to open device: {e}")
@@ -343,8 +346,6 @@ class PS4JoystickController:
                 correct_inverse_kinematics = True
             except ValueError as e:
                 logging.error(f"Error computing inverse kinematics: {e}")
-                self.indicate_error()
-
         # Perform eligibility check
         if self._is_position_valid(temp_positions, temp_x, temp_y) and correct_inverse_kinematics:
             # Atomic update: all positions are valid, apply the changes
