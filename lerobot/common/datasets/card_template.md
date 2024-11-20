@@ -11,14 +11,14 @@ This dataset was created using [LeRobot](https://github.com/huggingface/lerobot)
 {{ dataset_description | default("", true) }}
 
 - **Homepage:** {{ url | default("[More Information Needed]", true)}}
-- **Paper [optional]:** {{ paper | default("[More Information Needed]", true)}}
+- **Paper:** {{ paper | default("[More Information Needed]", true)}}
 - **License:** {{ license | default("[More Information Needed]", true)}}
 
 ## Dataset Structure
 
 {{ dataset_structure | default("[More Information Needed]", true)}}
 
-## Citation [optional]
+## Citation
 
 **BibTeX:**
 
