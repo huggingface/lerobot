@@ -138,8 +138,7 @@ class PS4JoystickController:
 
     def connect(self):
         try:
-            self.device = hid.device()
-            self.device.open(self.VENDOR_ID, self.PRODUCT_ID)
+            self.device = hid.Device(self.VENDOR_ID, self.PRODUCT_ID)
             logging.info(f"Connected to {self.device.get_product_string()}")
             self.running = True
         except OSError as e:
@@ -156,7 +155,7 @@ class PS4JoystickController:
     def read_loop(self):
         while self.running:
             try:
-                data = self.device.read(64, timeout_ms=100)
+                data = self.device.read(64, timeout=100)
                 if data:
                     self._process_gamepad_input(data)
             except Exception as e:
