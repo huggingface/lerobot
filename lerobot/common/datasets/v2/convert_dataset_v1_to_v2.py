@@ -116,7 +116,7 @@ import pyarrow.parquet as pq
 import torch
 from datasets import Dataset
 from huggingface_hub import HfApi
-from huggingface_hub.errors import EntryNotFoundError
+from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError
 from safetensors.torch import load_file
 
 from lerobot.common.datasets.utils import (
@@ -566,13 +566,13 @@ def convert_dataset(
     convert_stats_to_json(v1x_dir, v20_dir)
     card = create_lerobot_dataset_card(tags=repo_tags, dataset_info=metadata_v2_0, **card_kwargs)
 
-    with contextlib.suppress(EntryNotFoundError):
+    with contextlib.suppress(EntryNotFoundError, HfHubHTTPError):
         hub_api.delete_folder(repo_id=repo_id, path_in_repo="data", repo_type="dataset", revision=branch)
 
-    with contextlib.suppress(EntryNotFoundError):
+    with contextlib.suppress(EntryNotFoundError, HfHubHTTPError):
         hub_api.delete_folder(repo_id=repo_id, path_in_repo="meta_data", repo_type="dataset", revision=branch)
 
-    with contextlib.suppress(EntryNotFoundError):
+    with contextlib.suppress(EntryNotFoundError, HfHubHTTPError):
         hub_api.delete_folder(repo_id=repo_id, path_in_repo="meta", repo_type="dataset", revision=branch)
 
     hub_api.upload_folder(
