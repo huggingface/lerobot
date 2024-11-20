@@ -140,9 +140,7 @@ class PS4JoystickController:
         try:
             self.device = hid.device()
             self.device.open(self.VENDOR_ID, self.PRODUCT_ID)
-            logging.info(
-                f"Connected to {self.device.get_manufacturer_string()} {self.device.get_product_string()}"
-            )
+            logging.info(f"Connected to {self.device.get_product_string()}")
             self.running = True
         except OSError as e:
             logging.error(f"Unable to open device: {e}")
@@ -346,6 +344,7 @@ class PS4JoystickController:
                 correct_inverse_kinematics = True
             except ValueError as e:
                 logging.error(f"Error computing inverse kinematics: {e}")
+                self.indicate_error()
 
         # Perform eligibility check
         if self._is_position_valid(temp_positions, temp_x, temp_y) and correct_inverse_kinematics:
@@ -480,8 +479,6 @@ class PS4JoystickController:
 
         # Compute angle for motor3 (theta2)
         cos_theta2 = (l1**2 + l2**2 - distance**2) / (2 * l1 * l2)
-        # Clamp the value to avoid numerical issues
-        cos_theta2 = max(min(cos_theta2, 1.0), -1.0)
         theta2_rad = math.acos(cos_theta2)
         theta2_deg = math.degrees(theta2_rad)
         # Adjust motor3 angle
@@ -492,8 +489,6 @@ class PS4JoystickController:
 
         # Compute angle for motor2 (theta1)
         cos_theta1 = (l1**2 + distance**2 - l2**2) / (2 * l1 * distance)
-        # Clamp the value to avoid numerical issues
-        cos_theta1 = max(min(cos_theta1, 1.0), -1.0)
         theta1_rad = math.acos(cos_theta1)
         theta1_deg = math.degrees(theta1_rad)
         alpha_rad = math.atan2(y, x)
