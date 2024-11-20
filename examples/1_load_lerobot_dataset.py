@@ -12,7 +12,6 @@ Features included in this script:
 The script ends with examples of how to batch process data using PyTorch's DataLoader.
 """
 
-# TODO(aliberts, rcadene): Update this script with the new v2 api
 from pprint import pprint
 
 import torch

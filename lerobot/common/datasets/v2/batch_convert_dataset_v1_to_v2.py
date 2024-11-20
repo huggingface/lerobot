@@ -86,9 +86,6 @@ UNITREEH_INFO = {
     "license": "apache-2.0",
 }
 
-# TODO(aliberts): Open X datasets
-
-
 DATASETS = {
     "aloha_mobile_cabinet": {
         "single_task": "Open the top cabinet, store the pot inside it then close the cabinet.",
