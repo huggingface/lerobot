@@ -68,7 +68,7 @@ class NormedLinear(nn.Linear):
 			f"act={self.act.__class__.__name__})"
 
 
-def soft_ce(pred, target, cfg):
+def soft_cross_entropy(pred, target, cfg):
 	"""Computes the cross entropy loss between predictions and soft targets."""
 	pred = F.log_softmax(pred, dim=-1)
 	target = two_hot(target, cfg)
