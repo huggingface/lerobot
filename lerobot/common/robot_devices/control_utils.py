@@ -120,7 +120,7 @@ def predict_action(observation, policy, device, use_amp):
     return action
 
 
-def init_keyboard_listener():
+def init_keyboard_listener(assign_rewards=False):
     # Allow to exit early while recording an episode or resetting the environment,
     # by tapping the right arrow key '->'. This might require a sudo permission
     # to allow your terminal to monitor keyboard events.
@@ -128,6 +128,8 @@ def init_keyboard_listener():
     events["exit_early"] = False
     events["rerecord_episode"] = False
     events["stop_recording"] = False
+    if assign_rewards:
+        events["reward"] = False
 
     if is_headless():
         logging.warning(
@@ -152,6 +154,10 @@ def init_keyboard_listener():
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
                 events["exit_early"] = True
+            elif assign_rewards and key == keyboard.Key.space:
+                print("Space key pressed. Assigning new rewards to the frames. New reward:", not events["reward"])
+                events["reward"] = not events["reward"]
+                
         except Exception as e:
             print(f"Error handling key press: {e}")
 
@@ -271,7 +277,8 @@ def control_loop(
                 action = {"action": action}
 
         if dataset is not None:
-            frame = {**observation, **action}
+            reward = {"reward": events.get("reward", None)}
+            frame = {**observation, **action, **reward}
             dataset.add_frame(frame)
 
         if display_cameras and not is_headless():

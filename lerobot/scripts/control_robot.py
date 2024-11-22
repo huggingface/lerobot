@@ -196,6 +196,7 @@ def record(
     single_task: str,
     pretrained_policy_name_or_path: str | None = None,
     policy_overrides: List[str] | None = None,
+    assign_rewards: bool = False,
     fps: int | None = None,
     warmup_time_s: int | float = 2,
     episode_time_s: int | float = 10,
@@ -263,7 +264,7 @@ def record(
     if not robot.is_connected:
         robot.connect()
 
-    listener, events = init_keyboard_listener()
+    listener, events = init_keyboard_listener(assign_rewards)
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
@@ -514,6 +515,11 @@ if __name__ == "__main__":
         type=str,
         nargs="*",
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
+    )
+    parser_record.add_argument(
+        "--assign-rewards",
+        type=bool,
+        help="Assign rewards to the dataset. The rewards are assigned to the dataset using the inputs from the user.",
     )
 
     parser_replay = subparsers.add_parser("replay", parents=[base_parser])
