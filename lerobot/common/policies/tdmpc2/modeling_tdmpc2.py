@@ -108,7 +108,7 @@ class TDMPC2Policy(
         if "observation.environment_state" in config.input_shapes:
             self._use_env_state = True
 
-        self.scale = RunningScale(self.config.tau)
+        self.scale = RunningScale(self.config.target_model_momentum)
         self.discount = self.config.discount #TODO (michel-aractingi) downscale discount according to episode length
 
         self.reset()
@@ -249,19 +249,14 @@ class TDMPC2Policy(
             score = torch.exp(self.config.elite_weighting_temperature * (elite_value - max_value))
             score /= score.sum(axis=0, keepdim=True)
             # (horizon, batch, action_dim)
-            _mean = torch.sum(einops.rearrange(score, "n b -> n b 1") * elite_actions, dim=1)
-            _std = torch.sqrt(
+            mean = torch.sum(einops.rearrange(score, "n b -> n b 1") * elite_actions, dim=1) / (score.sum(0) + 1e-9)
+            std = torch.sqrt(
                 torch.sum(
                     einops.rearrange(score, "n b -> n b 1")
-                    * (elite_actions - einops.rearrange(_mean, "h b d -> h 1 b d")) ** 2,
+                    * (elite_actions - einops.rearrange(mean, "h b d -> h 1 b d")) ** 2,
                     dim=1,
-                )
-            )
-            # Update mean with an exponential moving average, and std with a direct replacement.
-            mean = (
-                self.config.gaussian_mean_momentum * mean + (1 - self.config.gaussian_mean_momentum) * _mean
-            )
-            std = _std.clamp_(self.config.min_std, self.config.max_std)
+                ) / (score.sum(0) + 1e-9)
+                ).clamp_(self.config.min_std, self.config.max_std)
 
         # Keep track of the mean for warm-starting subsequent steps.
         self._prev_mean = mean
@@ -687,20 +682,20 @@ class TDMPC2ObservationEncoder(nn.Module):
     
             elif "observation.state" in config.input_shapes:
                 encoder_module = nn.ModuleList()
-                encoder_module.append(NormedLinear(config.input_shapes[obs_key][0], config.enc_dim))
+                encoder_module.append(NormedLinear(config.input_shapes[obs_key][0], config.state_encoder_hidden_dim))
                 assert config.num_enc_layers > 0
                 for _ in range(config.num_enc_layers - 1):
-                    encoder_module.append(NormedLinear(config.enc_dim, config.enc_dim))
-                encoder_module.append(NormedLinear(config.enc_dim, config.latent_dim, act=SimNorm(config.simnorm_dim)))
+                    encoder_module.append(NormedLinear(config.state_encoder_hidden_dim, config.state_encoder_hidden_dim))
+                encoder_module.append(NormedLinear(config.state_encoder_hidden_dim, config.latent_dim, act=SimNorm(config.simnorm_dim)))
                 encoder_module = nn.Sequential(*encoder_module)
                 
             elif "observation.environment_state" in config.input_shapes:
                 encoder_module = nn.ModuleList()
-                encoder_module.append(NormedLinear(config.input_shapes[obs_key][0], config.enc_dim))
+                encoder_module.append(NormedLinear(config.input_shapes[obs_key][0], config.state_encoder_hidden_dim))
                 assert config.num_enc_layers > 0
                 for _ in range(config.num_enc_layers - 1):
-                    encoder_module.append(NormedLinear(config.enc_dim, config.enc_dim))
-                encoder_module.append(NormedLinear(config.enc_dim, config.latent_dim, act=SimNorm(config.simnorm_dim)))
+                    encoder_module.append(NormedLinear(config.state_encoder_hidden_dim, config.state_encoder_hidden_dim))
+                encoder_module.append(NormedLinear(config.state_encoder_hidden_dim, config.latent_dim, act=SimNorm(config.simnorm_dim)))
                 encoder_module = nn.Sequential(*encoder_module)
 
             else:
