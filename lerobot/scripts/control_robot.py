@@ -517,9 +517,9 @@ if __name__ == "__main__":
     )
     parser_record.add_argument(
         "--assign-rewards",
-        type=bool,
-        default=False,
-        help="Assign rewards to the dataset. The rewards are assigned to the dataset using the inputs from the user.",
+        type=int,
+        default=0,
+        help="Enables the assignation of rewards to frames (by default no assignation). When enabled, assign a 0 reward to frames until the space bar is pressed which assign a 1 reward. Press the space bar a second time to assign a 0 reward. The reward assigned is reset to 0 when the episode ends.",
     )
 
     parser_replay = subparsers.add_parser("replay", parents=[base_parser])
