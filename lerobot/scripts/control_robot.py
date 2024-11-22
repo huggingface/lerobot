@@ -263,8 +263,7 @@ def record(
 
     if not robot.is_connected:
         robot.connect()
-
-    listener, events = init_keyboard_listener(assign_rewards)
+    listener, events = init_keyboard_listener(assign_rewards=assign_rewards)
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
@@ -519,6 +518,7 @@ if __name__ == "__main__":
     parser_record.add_argument(
         "--assign-rewards",
         type=bool,
+        default=False,
         help="Assign rewards to the dataset. The rewards are assigned to the dataset using the inputs from the user.",
     )
 
