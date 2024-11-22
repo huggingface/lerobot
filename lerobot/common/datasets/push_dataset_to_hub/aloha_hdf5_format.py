@@ -156,8 +156,6 @@ def load_from_raw(
             ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
             ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
             ep_dict["next.done"] = done
-            if "next.reward" in ep:
-                ep_dict["next.reward"] = torch.from_numpy(ep["next.reward"])
             # TODO(rcadene): add reward and success by computing them in sim
 
             assert isinstance(ep_idx, int)
@@ -200,8 +198,6 @@ def to_hf_dataset(data_dict, video) -> Dataset:
     features["frame_index"] = Value(dtype="int64", id=None)
     features["timestamp"] = Value(dtype="float32", id=None)
     features["next.done"] = Value(dtype="bool", id=None)
-    if "next.reward" in data_dict:
-        features["next.reward"] = Value(dtype="int64", id=None)
     features["index"] = Value(dtype="int64", id=None)
 
     hf_dataset = Dataset.from_dict(data_dict, features=Features(features))
