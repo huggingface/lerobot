@@ -155,11 +155,11 @@ def init_keyboard_listener(assign_rewards=False):
                 events["stop_recording"] = True
                 events["exit_early"] = True
             elif assign_rewards and key == keyboard.Key.space:
-                print(
-                    "Space key pressed. Assigning new rewards to the frames. New reward:",
-                    not events["reward"],
-                )
                 events["reward"] = 1 if events["reward"] == 0 else 0
+                print(
+                    "Space key pressed. Assigning new reward to the subsequent frames. New reward:",
+                    events["reward"],
+                )
 
         except Exception as e:
             print(f"Error handling key press: {e}")
