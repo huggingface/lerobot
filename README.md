@@ -133,7 +133,7 @@ If you want to install an environment with `--extras`, you can add a build argum
 docker compose build --build-arg POETRY_EXTRAS="aloha"
 ```
 
-Then enter the container with:
+Then enter the container with the following, and run lerobot scripts as you would locally:
 ```
 docker compose run --interactive lerobot
 ```
