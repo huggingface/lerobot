@@ -291,8 +291,7 @@ class LeRobotDatasetMetadata:
         obj.root.mkdir(parents=True, exist_ok=False)
 
         if robot is not None:
-            if features is None:
-                features = {}
+            features = {} if features is None else features
             features.update(get_features_from_robot(robot, use_videos))
             robot_type = robot.robot_type
             if not all(cam.fps == fps for cam in robot.cameras.values()):
