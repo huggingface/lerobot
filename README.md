@@ -77,12 +77,15 @@
 
 ## Installation
 
-Download our source code:
+You can install lerobot either locally, or in a docker container.
+
+Start by downloading our source code:
 ```bash
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 ```
 
+### Local Installation
 Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 ```bash
 conda create -y -n lerobot python=3.10
@@ -114,6 +117,26 @@ wandb login
 ```
 
 (note: you will also need to enable WandB in the configuration. See below.)
+
+### Docker Installation
+
+If using docker, the only dependency you need is [Docker](https://docs.docker.com/get-docker/). For GPU support, you can also install the [Nvidia Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+
+Build your environment with:
+```
+docker compose build
+```
+
+If you want to install an environment with `--extras`, you can add a build argument like so:
+
+```
+docker compose build --build-arg POETRY_EXTRAS="aloha"
+```
+
+Then enter the container with:
+```
+docker compose run --interactive lerobot
+```
 
 ## Walkthrough
 
