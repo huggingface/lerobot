@@ -312,6 +312,8 @@ def reset_environment(robot, events, reset_time_s):
 
     timestamp = 0
     start_vencod_t = time.perf_counter()
+    if events.get("reward", None) is not None:
+        events["reward"] = 0
 
     # Wait if necessary
     with tqdm.tqdm(total=reset_time_s, desc="Waiting") as pbar:
