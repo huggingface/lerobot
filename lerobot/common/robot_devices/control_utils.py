@@ -339,7 +339,7 @@ def sanity_check_dataset_name(repo_id, policy):
     _, dataset_name = repo_id.split("/")
     # either repo_id doesnt start with "eval_" and there is no policy
     # or repo_id starts with "eval_" and there is a policy
-    if not dataset_name.startswith("eval_") and policy is not None:
+    if dataset_name.startswith("eval_") == (policy is None):
         raise ValueError(
             f"Your dataset name begins by 'eval_' ({dataset_name}) but no policy is provided ({policy})."
         )
