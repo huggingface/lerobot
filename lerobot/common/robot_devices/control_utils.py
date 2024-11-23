@@ -129,7 +129,7 @@ def init_keyboard_listener(assign_rewards=False):
     events["rerecord_episode"] = False
     events["stop_recording"] = False
     if assign_rewards:
-        events["reward"] = False
+        events["reward"] = 0
 
     if is_headless():
         logging.warning(
@@ -159,7 +159,7 @@ def init_keyboard_listener(assign_rewards=False):
                     "Space key pressed. Assigning new rewards to the frames. New reward:",
                     not events["reward"],
                 )
-                events["reward"] = not events["reward"]
+                events["reward"] = 1 if events["reward"] == 0 else 0
 
         except Exception as e:
             print(f"Error handling key press: {e}")

@@ -219,6 +219,7 @@ def record(
     policy = None
     device = None
     use_amp = None
+    features = {"reward": {"dtype": "int64", "shape": (1,), "names": None}} if assign_rewards else None
 
     if single_task:
         task = single_task
@@ -259,6 +260,7 @@ def record(
             use_videos=video,
             image_writer_processes=num_image_writer_processes,
             image_writer_threads=num_image_writer_threads_per_camera * len(robot.cameras),
+            features=features,
         )
 
     if not robot.is_connected:
@@ -331,7 +333,7 @@ def record(
     dataset.consolidate(run_compute_stats)
 
     if push_to_hub:
-        dataset.push_to_hub()
+        dataset.push_to_hub(private=True)
 
     log_say("Exiting", play_sounds)
     return dataset
@@ -467,12 +469,12 @@ if __name__ == "__main__":
         default=1,
         help="Upload dataset to Hugging Face hub.",
     )
-    parser_record.add_argument(
-        "--tags",
-        type=str,
-        nargs="*",
-        help="Add tags to your dataset on the hub.",
-    )
+    # parser_record.add_argument(
+    #     "--tags",
+    #     type=str,
+    #     nargs="*",
+    #     help="Add tags to your dataset on the hub.",
+    # )
     parser_record.add_argument(
         "--num-image-writer-processes",
         type=int,
@@ -494,12 +496,12 @@ if __name__ == "__main__":
             "Not enough threads might cause low camera fps."
         ),
     )
-    parser_record.add_argument(
-        "--force-override",
-        type=int,
-        default=0,
-        help="By default, data recording is resumed. When set to 1, delete the local directory and start data recording from scratch.",
-    )
+    # parser_record.add_argument(
+    #     "--force-override",
+    #     type=int,
+    #     default=0,
+    #     help="By default, data recording is resumed. When set to 1, delete the local directory and start data recording from scratch.",
+    # )
     parser_record.add_argument(
         "-p",
         "--pretrained-policy-name-or-path",
@@ -517,8 +519,7 @@ if __name__ == "__main__":
     )
     parser_record.add_argument(
         "--assign-rewards",
-        type=int,
-        default=0,
+        action="store_true",
         help="Enables the assignation of rewards to frames (by default no assignation). When enabled, assign a 0 reward to frames until the space bar is pressed which assign a 1 reward. Press the space bar a second time to assign a 0 reward. The reward assigned is reset to 0 when the episode ends.",
     )
 
