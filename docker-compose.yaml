@@ -6,6 +6,7 @@ services:
     build:
       context: .
       dockerfile: docker/lerobot-compose/Dockerfile
+    tty: true
     volumes:
       # Necessary for display passthrough
       - "/tmp/.X11-unix:/tmp/.X11-unix:rw"
