@@ -3,7 +3,6 @@ FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
 # Configure image
 ARG PYTHON_VERSION=3.10
 ARG DEBIAN_FRONTEND=noninteractive
-ARG POETRY_EXTRAS=""
 ENV PIP_CACHE=/root/.cache/pip
 
 # Install apt dependencies
