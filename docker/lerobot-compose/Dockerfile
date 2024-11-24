@@ -16,7 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 libgl1-mesa-glx libegl1-mesa \
     speech-dispatcher \
     # python*-dev is required for building certain python dependencies
-    python${PYTHON_VERSION} python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-dev\
+    python${PYTHON_VERSION} python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-dev \
+    # Required for cv2.imshow(...) and other highgui operations
+    libsm6 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install ffmpeg build dependencies. See:
