@@ -47,16 +47,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsvtav1-dev libsvtav1enc-dev libsvtav1dec-dev \
     libdav1d-dev
 
-# Install gh cli tool
-RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
-    && mkdir -p -m 755 /etc/apt/keyrings \
-    && wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
-    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-    && apt update \
-    && apt install gh -y \
-    && apt clean && rm -rf /var/lib/apt/lists/*
-
 # Setup `python`
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
@@ -70,8 +60,8 @@ RUN poetry config virtualenvs.in-project true
 # Copy in pyproject
 WORKDIR /lerobot
 COPY pyproject.toml poetry.lock ./
-RUN apt-get update && apt-get install -y python3-dev
 # Install dependencies, while using docker builkit cache to speed up future builds
+ARG POETRY_EXTRAS="none"
 RUN --mount=type=cache,target="${PIP_CACHE}" \
     poetry install --extras ${POETRY_EXTRAS}
 

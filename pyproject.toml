@@ -86,6 +86,7 @@ dynamixel = ["dynamixel-sdk", "pynput"]
 feetech = ["feetech-servo-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
 stretch = ["hello-robot-stretch-body", "pyrender", "pyrealsense2", "pynput"]
+none = []  # Exists to be used as a default for docker-compose
 
 [tool.ruff]
 line-length = 110
