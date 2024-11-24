@@ -129,7 +129,7 @@ def init_keyboard_listener(assign_rewards=False):
     events["rerecord_episode"] = False
     events["stop_recording"] = False
     if assign_rewards:
-        events["reward"] = 0
+        events["next.reward"] = 0
 
     if is_headless():
         logging.warning(
@@ -155,10 +155,10 @@ def init_keyboard_listener(assign_rewards=False):
                 events["stop_recording"] = True
                 events["exit_early"] = True
             elif assign_rewards and key == keyboard.Key.space:
-                events["reward"] = 1 if events["reward"] == 0 else 0
+                events["next.reward"] = 1 if events["next.reward"] == 0 else 0
                 print(
                     "Space key pressed. Assigning new reward to the subsequent frames. New reward:",
-                    events["reward"],
+                    events["next.reward"],
                 )
 
         except Exception as e:
@@ -281,8 +281,8 @@ def control_loop(
 
         if dataset is not None:
             frame = {**observation, **action}
-            if events.get("reward", None) is not None:
-                frame.update({"reward": events.get("reward")})
+            if events.get("next.reward", None) is not None:
+                frame.update({"next.reward": events.get("next.reward")})
             dataset.add_frame(frame)
 
         if display_cameras and not is_headless():
@@ -312,8 +312,8 @@ def reset_environment(robot, events, reset_time_s):
 
     timestamp = 0
     start_vencod_t = time.perf_counter()
-    if events.get("reward", None) is not None:
-        events["reward"] = 0
+    if events.get("next.reward", None) is not None:
+        events["next.reward"] = 0
 
     # Wait if necessary
     with tqdm.tqdm(total=reset_time_s, desc="Waiting") as pbar:

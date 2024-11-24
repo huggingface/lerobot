@@ -219,7 +219,7 @@ def record(
     policy = None
     device = None
     use_amp = None
-    features = {"reward": {"dtype": "int64", "shape": (1,), "names": None}} if assign_rewards else None
+    features = {"next.reward": {"dtype": "int64", "shape": (1,), "names": None}} if assign_rewards else None
 
     if single_task:
         task = single_task
