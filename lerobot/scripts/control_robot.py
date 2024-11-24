@@ -333,7 +333,7 @@ def record(
     dataset.consolidate(run_compute_stats)
 
     if push_to_hub:
-        dataset.push_to_hub(private=True)
+        dataset.push_to_hub()
 
     log_say("Exiting", play_sounds)
     return dataset
