@@ -3,6 +3,8 @@ from pathlib import Path
 
 import click
 import gymnasium as gym
+import gym_pusht
+import gym_pushany
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -182,13 +184,6 @@ def main(output, num_rollouts):
     policy = policy.to(device)
 
     root_path = Path(output)
-    root_path.mkdir(parents=True, exist_ok=True)
-
-    episode_path = root_path / 'episodes'
-    episode_path.mkdir(parents=True, exist_ok=True)
-
-    frame_path = root_path / 'episode_frames'
-    frame_path.mkdir(parents=True, exist_ok=True)
 
     episode_video_store = EpisodeVideoStore.create_from_path(root_path)
     print(episode_video_store.num_episodes)
