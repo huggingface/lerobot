@@ -44,7 +44,7 @@ from lerobot.common.datasets.utils import (
     unflatten_dict,
 )
 from lerobot.common.utils.utils import init_hydra_config, seeded_context
-from tests.fixtures.defaults import DUMMY_REPO_ID
+from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, make_robot
 
 

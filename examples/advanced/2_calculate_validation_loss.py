@@ -8,7 +8,6 @@ especially in the context of imitation learning. The most reliable approach is t
 on the target environment, whether that be in simulation or the real world.
 """
 
-# TODO(aliberts, rcadene): Update this script with the new v2 api
 import math
 from pathlib import Path
 

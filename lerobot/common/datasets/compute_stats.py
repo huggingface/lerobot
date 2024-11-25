@@ -170,25 +170,28 @@ def aggregate_stats(ls_datasets) -> dict[str, torch.Tensor]:
     """
     data_keys = set()
     for dataset in ls_datasets:
-        data_keys.update(dataset.stats.keys())
+        data_keys.update(dataset.meta.stats.keys())
     stats = {k: {} for k in data_keys}
     for data_key in data_keys:
         for stat_key in ["min", "max"]:
             # compute `max(dataset_0["max"], dataset_1["max"], ...)`
             stats[data_key][stat_key] = einops.reduce(
-                torch.stack([d.stats[data_key][stat_key] for d in ls_datasets if data_key in d.stats], dim=0),
+                torch.stack(
+                    [ds.meta.stats[data_key][stat_key] for ds in ls_datasets if data_key in ds.meta.stats],
+                    dim=0,
+                ),
                 "n ... -> ...",
                 stat_key,
             )
-        total_samples = sum(d.num_frames for d in ls_datasets if data_key in d.stats)
+        total_samples = sum(d.num_frames for d in ls_datasets if data_key in d.meta.stats)
         # Compute the "sum" statistic by multiplying each mean by the number of samples in the respective
         # dataset, then divide by total_samples to get the overall "mean".
         # NOTE: the brackets around (d.num_frames / total_samples) are needed tor minimize the risk of
         # numerical overflow!
         stats[data_key]["mean"] = sum(
-            d.stats[data_key]["mean"] * (d.num_frames / total_samples)
+            d.meta.stats[data_key]["mean"] * (d.num_frames / total_samples)
             for d in ls_datasets
-            if data_key in d.stats
+            if data_key in d.meta.stats
         )
         # The derivation for standard deviation is a little more involved but is much in the same spirit as
         # the computation of the mean.
@@ -199,102 +202,13 @@ def aggregate_stats(ls_datasets) -> dict[str, torch.Tensor]:
         # numerical overflow!
         stats[data_key]["std"] = torch.sqrt(
             sum(
-                (d.stats[data_key]["std"] ** 2 + (d.stats[data_key]["mean"] - stats[data_key]["mean"]) ** 2)
+                (
+                    d.meta.stats[data_key]["std"] ** 2
+                    + (d.meta.stats[data_key]["mean"] - stats[data_key]["mean"]) ** 2
+                )
                 * (d.num_frames / total_samples)
                 for d in ls_datasets
-                if data_key in d.stats
+                if data_key in d.meta.stats
             )
         )
     return stats
-
-
-# TODO(aliberts): refactor stats in save_episodes
-# import numpy as np
-# from lerobot.common.datasets.utils import load_image_as_numpy
-# def aggregate_stats_v2(stats_list: list) -> dict:
-#     """Aggregate stats from multiple compute_stats outputs into a single set of stats.
-
-#     The final stats will have the union of all data keys from each of the stats dicts.
-
-#     For instance:
-#     - new_min = min(min_dataset_0, min_dataset_1, ...)
-#     - new_max = max(max_dataset_0, max_dataset_1, ...)
-#     - new_mean = (mean of all data, weighted by counts)
-#     - new_std = (std of all data)
-#     """
-#     data_keys = set(key for stats in stats_list for key in stats.keys())
-#     aggregated_stats = {key: {} for key in data_keys}
-
-#     for key in data_keys:
-#         # Collect stats for the current key from all datasets where it exists
-#         stats_with_key = [stats[key] for stats in stats_list if key in stats]
-
-#         # Aggregate 'min' and 'max' using np.minimum and np.maximum
-#         aggregated_stats[key]['min'] = np.minimum.reduce([s['min'] for s in stats_with_key])
-#         aggregated_stats[key]['max'] = np.maximum.reduce([s['max'] for s in stats_with_key])
-
-#         # Extract means, variances (std^2), and counts
-#         means = np.array([s['mean'] for s in stats_with_key])
-#         variances = np.array([s['std']**2 for s in stats_with_key])
-#         counts = np.array([s['count'] for s in stats_with_key])
-
-#         # Ensure counts can broadcast with means/variances if they have additional dimensions
-#         counts = counts.reshape(-1, *[1]*(means.ndim - 1))
-
-#         # Compute total counts
-#         total_count = counts.sum(axis=0)
-
-#         # Compute the weighted mean
-#         weighted_means = means * counts
-#         total_mean = weighted_means.sum(axis=0) / total_count
-
-#         # Compute the variance using the parallel algorithm
-#         delta_means = means - total_mean
-#         weighted_variances = (variances + delta_means**2) * counts
-#         total_variance = weighted_variances.sum(axis=0) / total_count
-
-#         # Store the aggregated stats
-#         aggregated_stats[key]['mean'] = total_mean
-#         aggregated_stats[key]['std'] = np.sqrt(total_variance)
-#         aggregated_stats[key]['count'] = total_count
-
-#     return aggregated_stats
-
-
-# def compute_episode_stats(episode_buffer: dict, features: dict, episode_length: int, image_sampling: int = 10) -> dict:
-#     stats = {}
-#     for key, data in episode_buffer.items():
-#         if features[key]["dtype"] in ["image", "video"]:
-#             stats[key] = compute_image_stats(data, sampling=image_sampling)
-#         else:
-#             axes_to_reduce = 0  # Compute stats over the first axis
-#             stats[key] = {
-#                 "min": np.min(data, axis=axes_to_reduce),
-#                 "max": np.max(data, axis=axes_to_reduce),
-#                 "mean": np.mean(data, axis=axes_to_reduce),
-#                 "std": np.std(data, axis=axes_to_reduce),
-#                 "count": episode_length,
-#             }
-#     return stats
-
-
-# def compute_image_stats(image_paths: list[str], sampling: int = 10) -> dict:
-#     images = []
-#     samples = range(0, len(image_paths), sampling)
-#     for idx in samples:
-#         path = image_paths[idx]
-#         img = load_image_as_numpy(path, channel_first=True)
-#         images.append(img)
-
-#     images = np.stack(images)
-#     axes_to_reduce = (0, 2, 3)  # keep channel dim
-#     image_stats = {
-#         "min": np.min(images, axis=axes_to_reduce, keepdims=True),
-#         "max": np.max(images, axis=axes_to_reduce, keepdims=True),
-#         "mean": np.mean(images, axis=axes_to_reduce, keepdims=True),
-#         "std": np.std(images, axis=axes_to_reduce, keepdims=True)
-#     }
-#     for key in image_stats:  # squeeze batch dim
-#         image_stats[key] = np.squeeze(image_stats[key], axis=0)
-
-#     return image_stats

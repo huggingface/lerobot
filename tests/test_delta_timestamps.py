@@ -9,7 +9,7 @@ from lerobot.common.datasets.utils import (
     get_delta_indices,
     hf_transform_to_torch,
 )
-from tests.fixtures.defaults import DUMMY_MOTOR_FEATURES
+from tests.fixtures.constants import DUMMY_MOTOR_FEATURES
 
 
 @pytest.fixture(scope="module")

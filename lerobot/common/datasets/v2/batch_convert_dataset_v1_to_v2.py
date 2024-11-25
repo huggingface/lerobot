@@ -15,6 +15,8 @@
 # limitations under the License.
 
 """
+This script is for internal use to convert all datasets under the 'lerobot' hub user account to v2.
+
 Note: Since the original Aloha datasets don't use shadow motors, you need to comment those out in
 lerobot/configs/robot/aloha.yaml before running this script.
 """

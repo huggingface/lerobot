@@ -17,7 +17,7 @@ from lerobot.common.datasets.utils import (
     get_hf_features_from_features,
     hf_transform_to_torch,
 )
-from tests.fixtures.defaults import (
+from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,
     DUMMY_MOTOR_FEATURES,
