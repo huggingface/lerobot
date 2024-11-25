@@ -281,8 +281,8 @@ def control_loop(
 
         if dataset is not None:
             frame = {**observation, **action}
-            if events.get("next.reward", None) is not None:
-                frame.update({"next.reward": events.get("next.reward")})
+            if "next.reward" in events:
+                frame["next.reward"] = events["next.reward"]
             dataset.add_frame(frame)
 
         if display_cameras and not is_headless():
