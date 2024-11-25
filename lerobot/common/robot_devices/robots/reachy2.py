@@ -15,20 +15,21 @@
 # limitations under the License.
 
 import time
+from copy import copy
 from dataclasses import dataclass, field, replace
 
 import numpy as np
 import torch
-from lerobot.common.robot_devices.cameras.utils import Camera
 from reachy2_sdk import ReachySDK
-from copy import copy
+
+from lerobot.common.robot_devices.cameras.utils import Camera
 
 
 @dataclass
 class ReachyRobotConfig:
     robot_type: str | None = "Reachy2"
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
-    ip_address: str | None = "localhost"
+    ip_address: str | None = "172.17.135.207"
 
 
 class ReachyRobot:
