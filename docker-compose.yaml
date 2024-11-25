@@ -10,6 +10,7 @@ services:
     volumes:
       # Necessary for display passthrough
       - "/tmp/.X11-unix:/tmp/.X11-unix:rw"
+      - ~/.Xauthority:/root/.Xauthority
       # Mount the current directory so users are not confused about data saving locations
       - ".:/lerobot"
       # Pass through USB devices
@@ -17,6 +18,7 @@ services:
     environment:
       # Necessary for display passthrough
       DISPLAY: $DISPLAY
+      XAUTHORITY: $XAUTHORITY
     # Give the container as much access as possible to the host machine.
     # Folks using this library might be less familiar with how docker isolates devices
     # such as USB or networks, so removing that layer is helpful for the purposes of
