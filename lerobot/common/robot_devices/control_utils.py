@@ -312,7 +312,7 @@ def reset_environment(robot, events, reset_time_s):
 
     timestamp = 0
     start_vencod_t = time.perf_counter()
-    if events.get("next.reward", None) is not None:
+    if "next.reward" in events:
         events["next.reward"] = 0
 
     # Wait if necessary
