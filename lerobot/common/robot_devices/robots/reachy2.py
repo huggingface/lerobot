@@ -29,7 +29,8 @@ from lerobot.common.robot_devices.cameras.utils import Camera
 class ReachyRobotConfig:
     robot_type: str | None = "Reachy2"
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
-    ip_address: str | None = "172.17.135.207"
+    # ip_address: str | None = "172.17.135.207"
+    ip_address: str | None = "localhost"
 
 
 class ReachyRobot:
@@ -44,10 +45,13 @@ class ReachyRobot:
 
         self.robot_type = self.config.robot_type
         self.cameras = self.config.cameras
+        self.has_camera = True
+        self.num_cameras = len(self.cameras)
         self.is_connected = False
         self.teleop = None
         self.logs = {}
         self.reachy: ReachySDK = ReachySDK(host=config.ip_address)
+        self.reachy.turn_on()
         self.is_connected = True  # at init Reachy2 is in fact connected...
         self.mobile_base_available = self.reachy.mobile_base is not None
 
@@ -62,7 +66,6 @@ class ReachyRobot:
                 f"Cannot connect to Reachy at address {self.config.ip_address}. Maybe a connection already exists."
             )
             raise ConnectionError()
-
         self.reachy.turn_on()
         print(self.cameras)
         if self.cameras is not None:
@@ -115,6 +118,8 @@ class ReachyRobot:
             action["mobile_base_x.vel"] = last_cmd_vel["x"]
             action["mobile_base_y.vel"] = last_cmd_vel["y"]
             action["mobile_base_theta.vel"] = last_cmd_vel["theta"]
+        
+        action = torch.as_tensor(list(action.values()))
 
         obs_dict = self.capture_observation()
         action_dict = {}
@@ -133,57 +138,25 @@ class ReachyRobot:
             else:
                 odometry = {"x": 0, "y": 0, "theta": 0, "vx": 0, "vy": 0, "vtheta": 0}
             return {
-                "neck_yaw.pos": np.radians(self.reachy.head.neck.yaw.present_position),
-                "neck_pitch.pos": np.radians(
-                    self.reachy.head.neck.pitch.present_position
-                ),
-                "neck_roll.pos": np.radians(
-                    self.reachy.head.neck.roll.present_position
-                ),
-                "r_shoulder_pitch.pos": np.radians(
-                    self.reachy.r_arm.shoulder.pitch.present_position
-                ),
-                "r_shoulder_roll.pos": np.radians(
-                    self.reachy.r_arm.shoulder.roll.present_position
-                ),
-                "r_elbow_yaw.pos": np.radians(
-                    self.reachy.r_arm.elbow.yaw.present_position
-                ),
-                "r_elbow_pitch.pos": np.radians(
-                    self.reachy.r_arm.elbow.pitch.present_position
-                ),
-                "r_wrist_roll.pos": np.radians(
-                    self.reachy.r_arm.wrist.roll.present_position
-                ),
-                "r_wrist_pitch.pos": np.radians(
-                    self.reachy.r_arm.wrist.pitch.present_position
-                ),
-                "r_wrist_yaw.pos": np.radians(
-                    self.reachy.r_arm.wrist.yaw.present_position
-                ),
-                "r_gripper.pos": np.radians(self.reachy.r_arm.gripper.present_position),
-                "l_shoulder_pitch.pos": np.radians(
-                    self.reachy.l_arm.shoulder.pitch.present_position
-                ),
-                "l_shoulder_roll.pos": np.radians(
-                    self.reachy.l_arm.shoulder.roll.present_position
-                ),
-                "l_elbow_yaw.pos": np.radians(
-                    self.reachy.l_arm.elbow.yaw.present_position
-                ),
-                "l_elbow_pitch.pos": np.radians(
-                    self.reachy.l_arm.elbow.pitch.present_position
-                ),
-                "l_wrist_roll.pos": np.radians(
-                    self.reachy.l_arm.wrist.roll.present_position
-                ),
-                "l_wrist_pitch.pos": np.radians(
-                    self.reachy.l_arm.wrist.pitch.present_position
-                ),
-                "l_wrist_yaw.pos": np.radians(
-                    self.reachy.l_arm.wrist.yaw.present_position
-                ),
-                "l_gripper.pos": np.radians(self.reachy.l_arm.gripper.present_position),
+                "neck_yaw.pos": self.reachy.head.neck.yaw.present_position,
+                "neck_pitch.pos": self.reachy.head.neck.pitch.present_position,
+                "neck_roll.pos": self.reachy.head.neck.roll.present_position,
+                "r_shoulder_pitch.pos": self.reachy.r_arm.shoulder.pitch.present_position,
+                "r_shoulder_roll.pos": self.reachy.r_arm.shoulder.roll.present_position,
+                "r_elbow_yaw.pos": self.reachy.r_arm.elbow.yaw.present_position,
+                "r_elbow_pitch.pos": self.reachy.r_arm.elbow.pitch.present_position,
+                "r_wrist_roll.pos": self.reachy.r_arm.wrist.roll.present_position,
+                "r_wrist_pitch.pos": self.reachy.r_arm.wrist.pitch.present_position,
+                "r_wrist_yaw.pos": self.reachy.r_arm.wrist.yaw.present_position,
+                "r_gripper.pos": self.reachy.r_arm.gripper.present_position,
+                "l_shoulder_pitch.pos": self.reachy.l_arm.shoulder.pitch.present_position,
+                "l_shoulder_roll.pos": self.reachy.l_arm.shoulder.roll.present_position,
+                "l_elbow_yaw.pos": self.reachy.l_arm.elbow.yaw.present_position,
+                "l_elbow_pitch.pos": self.reachy.l_arm.elbow.pitch.present_position,
+                "l_wrist_roll.pos": self.reachy.l_arm.wrist.roll.present_position,
+                "l_wrist_pitch.pos": self.reachy.l_arm.wrist.pitch.present_position,
+                "l_wrist_yaw.pos": self.reachy.l_arm.wrist.yaw.present_position,
+                "l_gripper.pos": self.reachy.l_arm.gripper.present_position,
                 "mobile_base.vx": odometry["vx"],
                 "mobile_base.vy": odometry["vy"],
                 "mobile_base.vtheta": odometry["vtheta"],
@@ -232,29 +205,31 @@ class ReachyRobot:
         if not self.is_connected:
             raise ConnectionError()
 
-        self.reachy.head.neck.yaw.goal_position = action[0]
-        self.reachy.head.neck.pitch.goal_position = action[1]
-        self.reachy.head.neck.roll.goal_position = action[2]
+        self.reachy.head.neck.yaw.goal_position = float(action[0])
+        self.reachy.head.neck.pitch.goal_position = float(action[1])
+        self.reachy.head.neck.roll.goal_position = float(action[2])
 
-        self.reachy.r_arm.shoulder.pitch.goal_position = action[3]
-        self.reachy.r_arm.shoulder.roll.goal_position = action[4]
-        self.reachy.r_arm.elbow.yaw.goal_position = action[5]
-        self.reachy.r_arm.elbow.pitch.goal_position = action[6]
-        self.reachy.r_arm.wrist.roll.goal_position = action[7]
-        self.reachy.r_arm.pitch.roll.goal_position = action[8]
-        self.reachy.r_arm.wrist.yaw.goal_position = action[9]
-        self.reachy.r_arm.gripper.set_opening(action[10])
+        self.reachy.r_arm.shoulder.pitch.goal_position = float(action[3])
+        self.reachy.r_arm.shoulder.roll.goal_position = float(action[4])
+        self.reachy.r_arm.elbow.yaw.goal_position = float(action[5])
+        self.reachy.r_arm.elbow.pitch.goal_position = float(action[6])
+        self.reachy.r_arm.wrist.roll.goal_position = float(action[7])
+        self.reachy.r_arm.wrist.roll.goal_position = float(action[8])
+        self.reachy.r_arm.wrist.yaw.goal_position = float(action[9])
+        self.reachy.r_arm.gripper.set_opening(float(action[10]))
 
-        self.reachy.l_arm.shoulder.pitch.goal_position = action[11]
-        self.reachy.l_arm.shoulder.roll.goal_position = action[12]
-        self.reachy.l_arm.elbow.yaw.goal_position = action[13]
-        self.reachy.l_arm.elbow.pitch.goal_position = action[14]
-        self.reachy.l_arm.wrist.roll.goal_position = action[15]
-        self.reachy.l_arm.pitch.roll.goal_position = action[16]
-        self.reachy.l_arm.wrist.yaw.goal_position = action[17]
-        self.reachy.l_arm.gripper.set_opening(action[18])
+        self.reachy.l_arm.shoulder.pitch.goal_position = float(action[11])
+        self.reachy.l_arm.shoulder.roll.goal_position = float(action[12])
+        self.reachy.l_arm.elbow.yaw.goal_position = float(action[13])
+        self.reachy.l_arm.elbow.pitch.goal_position = float(action[14])
+        self.reachy.l_arm.wrist.roll.goal_position = float(action[15])
+        self.reachy.l_arm.wrist.roll.goal_position = float(action[16])
+        self.reachy.l_arm.wrist.yaw.goal_position = float(action[17])
+        self.reachy.l_arm.gripper.set_opening(float(action[18]))
 
-        self.reachy.send_goal_positions()
+        s = time.time()
+        self.reachy.send_goal_positions(check_positions=False)
+        print("send_goal_positions", time.time() - s)
 
         if self.mobile_base_available:
             self.reachy.mobile_base.set_goal_speed(action[19], action[20], action[21])

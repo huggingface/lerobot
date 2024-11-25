@@ -13,24 +13,26 @@ cameras:
   head_left:
     _target_: lerobot.common.robot_devices.cameras.reachy2.ReachyCamera
     name: teleop
-    host: 172.17.135.207
+    # host: 172.17.135.207
+    host: localhost
     port: 50065
     image_type: left
-  head_right:
-    _target_: lerobot.common.robot_devices.cameras.reachy2.ReachyCamera
-    name: teleop
-    host: 172.17.135.207
-    port: 50065
-    image_type: right
+  # head_right:
+  #   _target_: lerobot.common.robot_devices.cameras.reachy2.ReachyCamera
+  #   name: teleop
+  #   host: 172.17.135.207
+  #   port: 50065
+  #   image_type: right
   torso_rgb:
     _target_: lerobot.common.robot_devices.cameras.reachy2.ReachyCamera
     name: depth
-    host: 172.17.135.207
+    # host: 172.17.135.207
+    host: localhost
     port: 50065
     image_type: rgb
-  torso_depth:
-    _target_: lerobot.common.robot_devices.cameras.reachy2.ReachyCamera
-    name: depth
-    host: 172.17.135.207
-    port: 50065
-    image_type: depth
+  # torso_depth:
+  #   _target_: lerobot.common.robot_devices.cameras.reachy2.ReachyCamera
+  #   name: depth
+  #   host: 172.17.135.207
+  #   port: 50065
+  #   image_type: depth
