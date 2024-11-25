@@ -1,3 +1,5 @@
+import os
+import re
 from pathlib import Path
 
 import numcodecs
@@ -11,6 +13,7 @@ from lerobot.common.datasets.utils import calculate_episode_data_index
 
 import h5py
 
+
 def _append_episode_to_hdf5(ep_dict, hdf5_file_path):
     with h5py.File(hdf5_file_path, 'a') as hdf5_file:
         for key, value in ep_dict.items():
@@ -21,7 +24,7 @@ def _append_episode_to_hdf5(ep_dict, hdf5_file_path):
             if key not in hdf5_file:
                 data_shape = (0, *np.array(value).shape[1:])
                 maxshape = (None, *data_shape[1:])
-                
+
                 # Create a dataset with gzip compression
                 hdf5_file.create_dataset(
                     key,
@@ -37,90 +40,76 @@ def _append_episode_to_hdf5(ep_dict, hdf5_file_path):
             current_shape = hdf5_file[key].shape
             new_shape = (current_shape[0] + len(value), *current_shape[1:])
             hdf5_file[key].resize(new_shape)
-            
+
             # Append new data
             hdf5_file[key][-len(value):] = value
 
 
-def _append_episode_to_zarr(ep_dict, zarr_group):
-    for key, value in ep_dict.items():
-        if key not in zarr_group:
-            data_shape = (0, *np.array(value).shape[1:])
-
-            object_codec = numcodecs.JSON() if isinstance(value[0], dict) or isinstance(value[0], str) else None
-            compressor = zarr.Blosc(cname='zstd', clevel=5) 
-
-            zarr_group.create_dataset(
-                key,
-                shape=data_shape,
-                chunks=(1, *data_shape[1:]),
-                dtype=np.array(value).dtype,
-                maxshape=(None, *data_shape[1:]),
-                object_codec=object_codec,
-                compressor=compressor
-            )
-
-        zarr_group[key].append(value)
+def get_max_episode_id(episode_path):
+    pattern = re.compile(r"episode_(\d+)\.pth")
+    max_idx = -1
+    for filename in os.listdir(episode_path):
+        match = pattern.match(filename)
+        if match:
+            idx = int(match.group(1))
+            max_idx = max(max_idx, idx)
+    return max_idx
 
 
 class EpisodeVideoStore(object):
-    def __init__(self, root_group: zarr.Group, info: dict = None):
+    def __init__(self, root_path: Path):
         super().__init__()
-        self.root_group = root_group
-        if 'info' in self.root_group.attrs and 'data' in self.root_group:
-            print("Connected to the exising zarr")
-            self.data_group = self.root_group['data']
-        else:
-            print("Create a new zarr")
-            self.data_group = self.root_group.create_group('data')
+        self.root_path = root_path
+        self.root_path.mkdir(parents=True, exist_ok=True)
 
-        if info is not None:
-            self.root_group.attrs['info'] = info
-        if 'num_episodes' not in self.root_group.attrs:
-            self.root_group.attrs['num_episodes'] = 0
+        self.episode_path = root_path / 'episodes'
+        self.episode_path.mkdir(parents=True, exist_ok=True)
+
+        self.frame_path = root_path / 'episode_frames'
+        self.frame_path.mkdir(parents=True, exist_ok=True)
+
+        self._num_episodes = get_max_episode_id(self.episode_path) + 1
 
     def add_episode(self, episode_dict):
+        """
+        output format:
+        https://github.com/holidaySM/dynamo_ssl?tab=readme-ov-file#data-format
+        """
         assert 'episode_index' not in episode_dict
         assert 'frame_index' in episode_dict
 
         episode_dict['episode_index'] = torch.tensor([self.num_episodes] * len(episode_dict['frame_index']),
                                                      dtype=torch.int64)
+        frames_tensor = episode_dict['observation.image']
+        torch.save(frames_tensor, self.frame_path / f'episode_{self.num_episodes}.pth')
+
+        episode_dict['observation.image'] = np.array([{
+            'episode_index': self.num_episodes,
+            'frame_index': frame_idx.item(),
+            'timestamp': timestamp.item()
+        } for frame_idx, timestamp in zip(episode_dict['frame_index'], episode_dict['timestamp'])])
         episode_dict = self._cleansing_episode_dict(episode_dict)
-        _append_episode_to_zarr(episode_dict, self.data_group)
-        self.root_group.attrs['num_episodes'] += 1
-        print(f"Successfully added episode: {self.root_group.attrs['num_episodes']}")
 
-    def convert_to_lerobot_dataset(self, repo_id, **kwargs):
-        zarr_dict = read_data_from_zarr(self.data_group)
-        hf_dataset = to_hf_dataset(zarr_dict)
-        episode_data_index = calculate_episode_data_index(hf_dataset)
+        torch.save(episode_dict, self.episode_path / f'episode_{self.num_episodes}.pth')
 
-        info = self.info
-        return LeRobotDataset.from_preloaded(
-            repo_id=repo_id,
-            hf_dataset=hf_dataset,
-            episode_data_index=episode_data_index,
-            info=info,
-            videos_dir=Path(info['videos_dir']),
-            **kwargs
-        )
+        self._num_episodes += 1
+        print(f"Successfully added episode: {self._num_episodes}")
 
     @classmethod
-    def create_from_path(cls, root_path, info: dict = None, mode='r'):
-        assert mode == 'r' or 'videos_dir' in info
-        root_group = zarr.open(root_path, mode=mode)
-        return EpisodeVideoStore(root_group, info)
+    def create_from_path(cls, root_path: str | Path):
+        return EpisodeVideoStore(Path(root_path) if isinstance(root_path, str) else root_path)
 
     @property
     def info(self):
-        return self.root_group.attrs.get('info')
+        return {}
 
     @property
     def num_episodes(self):
-        return self.root_group.attrs['num_episodes']
+        return self._num_episodes
 
     def _cleansing_episode_dict(self, episode_dict):
         return {k: v.cpu().numpy() if isinstance(v, torch.Tensor) else v for k, v in episode_dict.items()}
+
 
 class EpisodeVideoStoreAsHDF5(object):
     def __init__(self, hdf5_file_path: str, info: dict = None):
@@ -181,7 +170,7 @@ class EpisodeVideoStoreAsHDF5(object):
     def num_episodes(self):
         with h5py.File(self.hdf5_file_path, 'r') as hdf5_file:
             return hdf5_file.attrs['num_episodes']
-        
+
     @classmethod
     def load_and_split_data(cls, hdf5_file_path):
         """
@@ -210,14 +199,13 @@ class EpisodeVideoStoreAsHDF5(object):
     def _cleansing_episode_dict(self, episode_dict):
         return {k: v.cpu().numpy() if isinstance(v, torch.Tensor) else v for k, v in episode_dict.items()}
 
-
     def read_hdf5_file(hdf5_file_path):
         with h5py.File(hdf5_file_path, 'r') as hdf5_file:
             # 데이터셋 이름을 출력
             print("Datasets in the file:")
             for name in hdf5_file:
                 print(name)
-            
+
             # 특정 데이터셋 읽기
             if 'action' in hdf5_file:
                 data_group = hdf5_file['data']
@@ -225,4 +213,3 @@ class EpisodeVideoStoreAsHDF5(object):
                     dataset = data_group[dataset_name]
                     print(f"Dataset {dataset_name}:")
                     print(dataset[:])  # 데이터셋의 모든 데이터를 출력
-
