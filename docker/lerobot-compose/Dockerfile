@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     htop atop nvtop \
     sed gawk grep curl wget zip unzip \
     tcpdump sysstat screen tmux \
-    libglib2.0-0 libgl1-mesa-glx libegl1-mesa \
+    libglib2.0-0 libgl1 libglx-mesa0 \
     speech-dispatcher \
     # python*-dev is required for building certain python dependencies
     python${PYTHON_VERSION} python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-dev \
@@ -55,8 +55,6 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 RUN curl -sSL https://install.python-poetry.org | python -
 ENV PATH="/root/.local/bin:$PATH"
 RUN echo 'if [ "$HOME" != "/root" ]; then ln -sf /root/.local/bin/poetry $HOME/.local/bin/poetry; fi' >> /root/.bashrc
-RUN poetry config virtualenvs.create false
-RUN poetry config virtualenvs.in-project true
 
 # Copy in pyproject
 WORKDIR /lerobot
@@ -65,6 +63,12 @@ COPY pyproject.toml poetry.lock ./
 ARG POETRY_EXTRAS="none"
 RUN --mount=type=cache,target="${PIP_CACHE}" \
     poetry install --extras ${POETRY_EXTRAS}
+
+ENV PYTHONPATH="/lerobot:${PYTHONPATH}"
+
+# Set the entrypoint such that users enter the container with the poetry environment
+ENTRYPOINT ["poetry", "run"]
+CMD ["bash"]
 
 # Set EGL as the rendering backend for MuJoCo
 ENV MUJOCO_GL="egl"
