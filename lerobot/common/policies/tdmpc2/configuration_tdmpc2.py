@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class TDMPC2Config:
-    """Configuration class for TDMPCPolicy.
+    """Configuration class for TDMPC2Policy.
 
     Defaults are configured for training with xarm_lift_medium_replay providing proprioceptive and single
     camera observations.
@@ -77,18 +77,9 @@ class TDMPC2Config:
             image(s) (in units of pixels) for training-time augmentation. If set to 0, no such augmentation
             is applied. Note that the input images are assumed to be square for this augmentation.
         reward_coeff: Loss weighting coefficient for the reward regression loss.
-        expectile_weight: Weighting (τ) used in expectile regression for the state value function (V).
-            v_pred < v_target is weighted by τ and v_pred >= v_target is weighted by (1-τ). τ is expected to
-            be in [0, 1]. Setting τ closer to 1 results in a more "optimistic" V. This is sensible to do
-            because v_target is obtained by evaluating the learned state-action value functions (Q) with
-            in-sample actions that may not be always optimal.
         value_coeff: Loss weighting coefficient for both the state-action value (Q) TD loss, and the state
             value (V) expectile regression loss.
         consistency_coeff: Loss weighting coefficient for the consistency loss.
-        advantage_scaling: A factor by which the advantages are scaled prior to exponentiation for advantage
-            weighted regression of the policy (π) estimator parameters. Note that the exponentiated advantages
-            are clamped at 100.0.
-        pi_coeff: Loss weighting coefficient for the action regression loss.
         temporal_decay_coeff: Exponential decay coefficient for decaying the loss coefficient for future time-
             steps. Hint: each loss computation involves `horizon` steps worth of actions starting from the
             current time step.
@@ -126,9 +117,12 @@ class TDMPC2Config:
     state_encoder_hidden_dim: int = 256
     latent_dim: int = 512
     q_ensemble_size: int = 5
+    num_enc_layers: int = 2
     mlp_dim: int = 512
     # Reinforcement learning.
     discount: float = 0.9
+    simnorm_dim: int = 8
+    dropout: float = 0.01
 
     # actor
     log_std_min: float = -10
@@ -157,10 +151,10 @@ class TDMPC2Config:
     consistency_coeff: float = 20.0
     entropy_coef: float = 1e-4
     temporal_decay_coeff: float = 0.5
-    # Target model. NOTE (michel_aractingi) this is equivelant to 
-    # 1 - target_model_momentum of our TD-MPC1 implementation because 
+    # Target model. NOTE (michel_aractingi) this is equivelant to
+    # 1 - target_model_momentum of our TD-MPC1 implementation because
     # of the use of `torch.lerp`
-    target_model_momentum: float = 0.01 
+    target_model_momentum: float = 0.01
 
     def __post_init__(self):
         """Input validation (not exhaustive)."""
