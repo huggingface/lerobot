@@ -30,10 +30,10 @@ from lerobot.common.utils.utils import (
 )
 
 
-def create_balanced_sampler(dataset):
+def create_balanced_sampler(dataset, cfg):
     labels = []
     for item in dataset:
-        labels.append(item["next.reward"])
+        labels.append(item[cfg.training.label_key])
     labels = torch.tensor(labels)
 
     _, counts = torch.unique(labels, return_counts=True)
@@ -43,7 +43,7 @@ def create_balanced_sampler(dataset):
     return WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
 
 
-def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, logger, step, use_amp=False):
+def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, logger, step, cfg):
     model.train()
     correct = 0
     total = 0
@@ -51,15 +51,15 @@ def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, 
     pbar = tqdm(train_loader, desc="Training")
     for batch_idx, batch in enumerate(pbar):
         start_time = time.perf_counter()
-        images = batch["observation.images.phone"].to(device)
-        labels = batch["next.reward"].float().to(device)
+        images = batch[cfg.training.image_key].to(device)
+        labels = batch[cfg.training.label_key].float().to(device)
 
-        with torch.autocast(device_type=device.type) if use_amp else nullcontext():
+        with torch.autocast(device_type=device.type) if cfg.training.use_amp else nullcontext():
             outputs = model(images)
             loss = criterion(outputs.logits, labels)
 
         optimizer.zero_grad()
-        if use_amp:
+        if cfg.training.use_amp:
             grad_scaler.scale(loss).backward()
             grad_scaler.step(optimizer)
             grad_scaler.update()
@@ -83,7 +83,7 @@ def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, 
         pbar.set_postfix({"loss": f"{loss.item():.4f}", "acc": f"{current_acc:.2f}%"})
 
 
-def validate(model, val_loader, criterion, device, logger, use_amp=False, num_samples_to_log=8):
+def validate(model, val_loader, criterion, device, logger, cfg, use_amp=False, num_samples_to_log=8):
     model.eval()
     correct = 0
     total = 0
@@ -91,10 +91,10 @@ def validate(model, val_loader, criterion, device, logger, use_amp=False, num_sa
     samples = []
     running_loss = 0
 
-    with torch.no_grad(), torch.autocast(device_type=device.type) if use_amp else nullcontext():
+    with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.training.use_amp else nullcontext():
         for batch in tqdm(val_loader, desc="Validation"):
-            images = batch["observation.images.phone"].to(device)
-            labels = batch["next.reward"].float().to(device)
+            images = batch[cfg.training.image_key].to(device)
+            labels = batch[cfg.training.label_key].float().to(device)
 
             outputs = model(images)
             loss = criterion(outputs.logits, labels)
@@ -156,7 +156,7 @@ def train(cfg: DictConfig) -> None:
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
     # Create data loaders
-    sampler = create_balanced_sampler(train_dataset)
+    sampler = create_balanced_sampler(train_dataset, cfg)
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.training.batch_size,
@@ -234,9 +234,7 @@ def train(cfg: DictConfig) -> None:
     for epoch in range(cfg.training.num_epochs):
         logging.info(f"\nEpoch {epoch+1}/{cfg.training.num_epochs}")
 
-        train_epoch(
-            model, train_loader, criterion, optimizer, grad_scaler, device, logger, step, cfg.training.use_amp
-        )
+        train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, logger, step, cfg)
 
         if cfg.training.eval_freq > 0 and (epoch + 1) % cfg.training.eval_freq == 0:
             val_acc, eval_info = validate(
@@ -245,8 +243,7 @@ def train(cfg: DictConfig) -> None:
                 criterion,
                 device,
                 logger,
-                cfg.training.use_amp,
-                cfg.eval.num_samples_to_log,
+                cfg,
             )
             logger.log_dict(eval_info, step + len(train_loader), mode="eval")
 
