@@ -3,78 +3,120 @@ This script demonstrates the use of `LeRobotDataset` class for handling and proc
 It illustrates how to load datasets, manipulate them, and apply transformations suitable for machine learning tasks in PyTorch.
 
 Features included in this script:
-- Loading a dataset and accessing its properties.
-- Filtering data by episode number.
-- Converting tensor data for visualization.
-- Saving video files from dataset frames.
+- Viewing a dataset's metadata and exploring its properties.
+- Loading an existing dataset from the hub or a subset of it.
+- Accessing frames by episode number.
 - Using advanced dataset features like timestamp-based frame selection.
 - Demonstrating compatibility with PyTorch DataLoader for batch processing.
 
 The script ends with examples of how to batch process data using PyTorch's DataLoader.
 """
 
-from pathlib import Path
 from pprint import pprint
 
-import imageio
 import torch
+from huggingface_hub import HfApi
 
 import lerobot
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
+# We ported a number of existing datasets ourselves, use this to see the list:
 print("List of available datasets:")
 pprint(lerobot.available_datasets)
 
-# Let's take one for this example
-repo_id = "lerobot/pusht"
+# You can also browse through the datasets created/ported by the community on the hub using the hub api:
+hub_api = HfApi()
+repo_ids = [info.id for info in hub_api.list_datasets(task_categories="robotics", tags=["LeRobot"])]
+pprint(repo_ids)
 
-# You can easily load a dataset from a Hugging Face repository
+# Or simply explore them in your web browser directly at:
+# https://huggingface.co/datasets?other=LeRobot
+
+# Let's take this one for this example
+repo_id = "lerobot/aloha_mobile_cabinet"
+# We can have a look and fetch its metadata to know more about it:
+ds_meta = LeRobotDatasetMetadata(repo_id)
+
+# By instantiating just this class, you can quickly access useful information about the content and the
+# structure of the dataset without downloading the actual data yet (only metadata files — which are
+# lightweight).
+print(f"Total number of episodes: {ds_meta.total_episodes}")
+print(f"Average number of frames per episode: {ds_meta.total_frames / ds_meta.total_episodes:.3f}")
+print(f"Frames per second used during data collection: {ds_meta.fps}")
+print(f"Robot type: {ds_meta.robot_type}")
+print(f"keys to access images from cameras: {ds_meta.camera_keys=}\n")
+
+print("Tasks:")
+print(ds_meta.tasks)
+print("Features:")
+pprint(ds_meta.features)
+
+# You can also get a short summary by simply printing the object:
+print(ds_meta)
+
+# You can then load the actual dataset from the hub.
+# Either load any subset of episodes:
+dataset = LeRobotDataset(repo_id, episodes=[0, 10, 11, 23])
+
+# And see how many frames you have:
+print(f"Selected episodes: {dataset.episodes}")
+print(f"Number of episodes selected: {dataset.num_episodes}")
+print(f"Number of frames selected: {dataset.num_frames}")
+
+# Or simply load the entire dataset:
 dataset = LeRobotDataset(repo_id)
+print(f"Number of episodes selected: {dataset.num_episodes}")
+print(f"Number of frames selected: {dataset.num_frames}")
 
-# LeRobotDataset is actually a thin wrapper around an underlying Hugging Face dataset
-# (see https://huggingface.co/docs/datasets/index for more information).
-print(dataset)
+# The previous metadata class is contained in the 'meta' attribute of the dataset:
+print(dataset.meta)
+
+# LeRobotDataset actually wraps an underlying Hugging Face dataset
+# (see https://huggingface.co/docs/datasets for more information).
 print(dataset.hf_dataset)
 
-# And provides additional utilities for robotics and compatibility with Pytorch
-print(f"\naverage number of frames per episode: {dataset.num_samples / dataset.num_episodes:.3f}")
-print(f"frames per second used during data collection: {dataset.fps=}")
-print(f"keys to access images from cameras: {dataset.camera_keys=}\n")
-
-# Access frame indexes associated to first episode
+# LeRobot datasets also subclasses PyTorch datasets so you can do everything you know and love from working
+# with the latter, like iterating through the dataset.
+# The __getitem__ iterates over the frames of the dataset. Since our datasets are also structured by
+# episodes, you can access the frame indices of any episode using the episode_data_index. Here, we access
+# frame indices associated to the first episode:
 episode_index = 0
 from_idx = dataset.episode_data_index["from"][episode_index].item()
 to_idx = dataset.episode_data_index["to"][episode_index].item()
 
-# LeRobot datasets actually subclass PyTorch datasets so you can do everything you know and love from working
-# with the latter, like iterating through the dataset. Here we grab all the image frames.
-frames = [dataset[idx]["observation.image"] for idx in range(from_idx, to_idx)]
+# Then we grab all the image frames from the first camera:
+camera_key = dataset.meta.camera_keys[0]
+frames = [dataset[idx][camera_key] for idx in range(from_idx, to_idx)]
 
-# Video frames are now float32 in range [0,1] channel first (c,h,w) to follow pytorch convention. To visualize
-# them, we convert to uint8 in range [0,255]
-frames = [(frame * 255).type(torch.uint8) for frame in frames]
-# and to channel last (h,w,c).
-frames = [frame.permute((1, 2, 0)).numpy() for frame in frames]
+# The objects returned by the dataset are all torch.Tensors
+print(type(frames[0]))
+print(frames[0].shape)
 
-# Finally, we save the frames to a mp4 video for visualization.
-Path("outputs/examples/1_load_lerobot_dataset").mkdir(parents=True, exist_ok=True)
-imageio.mimsave("outputs/examples/1_load_lerobot_dataset/episode_0.mp4", frames, fps=dataset.fps)
+# Since we're using pytorch, the shape is in pytorch, channel-first convention (c, h, w).
+# We can compare this shape with the information available for that feature
+pprint(dataset.features[camera_key])
+# In particular:
+print(dataset.features[camera_key]["shape"])
+# The shape is in (h, w, c) which is a more universal format.
 
 # For many machine learning applications we need to load the history of past observations or trajectories of
 # future actions. Our datasets can load previous and future frames for each key/modality, using timestamps
 # differences with the current loaded frame. For instance:
 delta_timestamps = {
     # loads 4 images: 1 second before current frame, 500 ms before, 200 ms before, and current frame
-    "observation.image": [-1, -0.5, -0.20, 0],
-    # loads 8 state vectors: 1.5 seconds before, 1 second before, ... 20 ms, 10 ms, and current frame
-    "observation.state": [-1.5, -1, -0.5, -0.20, -0.10, -0.02, -0.01, 0],
+    camera_key: [-1, -0.5, -0.20, 0],
+    # loads 8 state vectors: 1.5 seconds before, 1 second before, ... 200 ms, 100 ms, and current frame
+    "observation.state": [-1.5, -1, -0.5, -0.20, -0.10, 0],
     # loads 64 action vectors: current frame, 1 frame in the future, 2 frames, ... 63 frames in the future
     "action": [t / dataset.fps for t in range(64)],
 }
+# Note that in any case, these delta_timestamps values need to be multiples of (1/fps) so that added to any
+# timestamp, you still get a valid timestamp.
+
 dataset = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps)
-print(f"\n{dataset[0]['observation.image'].shape=}")  # (4,c,h,w)
-print(f"{dataset[0]['observation.state'].shape=}")  # (8,c)
-print(f"{dataset[0]['action'].shape=}\n")  # (64,c)
+print(f"\n{dataset[0][camera_key].shape=}")  # (4, c, h, w)
+print(f"{dataset[0]['observation.state'].shape=}")  # (6, c)
+print(f"{dataset[0]['action'].shape=}\n")  # (64, c)
 
 # Finally, our datasets are fully compatible with PyTorch dataloaders and samplers because they are just
 # PyTorch datasets.
@@ -84,8 +126,9 @@ dataloader = torch.utils.data.DataLoader(
     batch_size=32,
     shuffle=True,
 )
+
 for batch in dataloader:
-    print(f"{batch['observation.image'].shape=}")  # (32,4,c,h,w)
-    print(f"{batch['observation.state'].shape=}")  # (32,8,c)
-    print(f"{batch['action'].shape=}")  # (32,64,c)
+    print(f"{batch[camera_key].shape=}")  # (32, 4, c, h, w)
+    print(f"{batch['observation.state'].shape=}")  # (32, 5, c)
+    print(f"{batch['action'].shape=}")  # (32, 64, c)
     break

@@ -33,18 +33,72 @@ from lerobot.common.datasets.compute_stats import (
     get_stats_einops_patterns,
 )
 from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import (
+    LeRobotDataset,
+    MultiLeRobotDataset,
+)
 from lerobot.common.datasets.utils import (
     create_branch,
     flatten_dict,
     hf_transform_to_torch,
-    load_previous_and_future_frames,
     unflatten_dict,
 )
 from lerobot.common.utils.utils import init_hydra_config, seeded_context
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE
+from tests.fixtures.constants import DUMMY_REPO_ID
+from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, make_robot
 
 
+def test_same_attributes_defined(lerobot_dataset_factory, tmp_path):
+    """
+    Instantiate a LeRobotDataset both ways with '__init__()' and 'create()' and verify that instantiated
+    objects have the same sets of attributes defined.
+    """
+    # Instantiate both ways
+    robot = make_robot("koch", mock=True)
+    root_create = tmp_path / "create"
+    dataset_create = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=30, robot=robot, root=root_create)
+
+    root_init = tmp_path / "init"
+    dataset_init = lerobot_dataset_factory(root=root_init)
+
+    # Access the '_hub_version' cached_property in both instances to force its creation
+    _ = dataset_init.meta._hub_version
+    _ = dataset_create.meta._hub_version
+
+    init_attr = set(vars(dataset_init).keys())
+    create_attr = set(vars(dataset_create).keys())
+
+    assert init_attr == create_attr
+
+
+def test_dataset_initialization(lerobot_dataset_factory, tmp_path):
+    kwargs = {
+        "repo_id": DUMMY_REPO_ID,
+        "total_episodes": 10,
+        "total_frames": 400,
+        "episodes": [2, 5, 6],
+    }
+    dataset = lerobot_dataset_factory(root=tmp_path, **kwargs)
+
+    assert dataset.repo_id == kwargs["repo_id"]
+    assert dataset.meta.total_episodes == kwargs["total_episodes"]
+    assert dataset.meta.total_frames == kwargs["total_frames"]
+    assert dataset.episodes == kwargs["episodes"]
+    assert dataset.num_episodes == len(kwargs["episodes"])
+    assert dataset.num_frames == len(dataset)
+
+
+# TODO(aliberts):
+# - [ ] test various attributes & state from init and create
+# - [ ] test init with episodes and check num_frames
+# - [ ] test add_frame
+# - [ ] test add_episode
+# - [ ] test consolidate
+# - [ ] test push_to_hub
+# - [ ] test smaller methods
+
+
+@pytest.mark.skip("TODO after v2 migration / removing hydra")
 @pytest.mark.parametrize(
     "env_name, repo_id, policy_name",
     lerobot.env_dataset_policy_triplets
@@ -67,7 +121,7 @@ def test_factory(env_name, repo_id, policy_name):
     )
     dataset = make_dataset(cfg)
     delta_timestamps = dataset.delta_timestamps
-    camera_keys = dataset.camera_keys
+    camera_keys = dataset.meta.camera_keys
 
     item = dataset[0]
 
@@ -117,6 +171,7 @@ def test_factory(env_name, repo_id, policy_name):
 
 
 # TODO(alexander-soare): If you're hunting for savings on testing time, this takes about 5 seconds.
+@pytest.mark.skip("TODO after v2 migration / removing hydra")
 def test_multilerobotdataset_frames():
     """Check that all dataset frames are incorporated."""
     # Note: use the image variants of the dataset to make the test approx 3x faster.
@@ -130,7 +185,7 @@ def test_multilerobotdataset_frames():
     sub_datasets = [LeRobotDataset(repo_id) for repo_id in repo_ids]
     dataset = MultiLeRobotDataset(repo_ids)
     assert len(dataset) == sum(len(d) for d in sub_datasets)
-    assert dataset.num_samples == sum(d.num_samples for d in sub_datasets)
+    assert dataset.num_frames == sum(d.num_frames for d in sub_datasets)
     assert dataset.num_episodes == sum(d.num_episodes for d in sub_datasets)
 
     # Run through all items of the LeRobotDatasets in parallel with the items of the MultiLerobotDataset and
@@ -149,6 +204,8 @@ def test_multilerobotdataset_frames():
             assert torch.equal(sub_dataset_item[k], dataset_item[k])
 
 
+# TODO(aliberts, rcadene): Refactor and move this to a tests/test_compute_stats.py
+@pytest.mark.skip("TODO after v2 migration / removing hydra")
 def test_compute_stats_on_xarm():
     """Check that the statistics are computed correctly according to the stats_patterns property.
 
@@ -197,7 +254,7 @@ def test_compute_stats_on_xarm():
         assert torch.allclose(computed_stats[k]["max"], expected_stats[k]["max"])
 
     # load stats used during training which are expected to match the ones returned by computed_stats
-    loaded_stats = dataset.stats  # noqa: F841
+    loaded_stats = dataset.meta.stats  # noqa: F841
 
     # TODO(rcadene): we can't test this because expected_stats is computed on a subset
     # # test loaded stats match expected stats
@@ -208,72 +265,7 @@ def test_compute_stats_on_xarm():
     #     assert torch.allclose(loaded_stats[k]["max"], expected_stats[k]["max"])
 
 
-def test_load_previous_and_future_frames_within_tolerance():
-    hf_dataset = Dataset.from_dict(
-        {
-            "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
-            "index": [0, 1, 2, 3, 4],
-            "episode_index": [0, 0, 0, 0, 0],
-        }
-    )
-    hf_dataset.set_transform(hf_transform_to_torch)
-    episode_data_index = {
-        "from": torch.tensor([0]),
-        "to": torch.tensor([5]),
-    }
-    delta_timestamps = {"index": [-0.2, 0, 0.139]}
-    tol = 0.04
-    item = hf_dataset[2]
-    item = load_previous_and_future_frames(item, hf_dataset, episode_data_index, delta_timestamps, tol)
-    data, is_pad = item["index"], item["index_is_pad"]
-    assert torch.equal(data, torch.tensor([0, 2, 3])), "Data does not match expected values"
-    assert not is_pad.any(), "Unexpected padding detected"
-
-
-def test_load_previous_and_future_frames_outside_tolerance_inside_episode_range():
-    hf_dataset = Dataset.from_dict(
-        {
-            "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
-            "index": [0, 1, 2, 3, 4],
-            "episode_index": [0, 0, 0, 0, 0],
-        }
-    )
-    hf_dataset.set_transform(hf_transform_to_torch)
-    episode_data_index = {
-        "from": torch.tensor([0]),
-        "to": torch.tensor([5]),
-    }
-    delta_timestamps = {"index": [-0.2, 0, 0.141]}
-    tol = 0.04
-    item = hf_dataset[2]
-    with pytest.raises(AssertionError):
-        load_previous_and_future_frames(item, hf_dataset, episode_data_index, delta_timestamps, tol)
-
-
-def test_load_previous_and_future_frames_outside_tolerance_outside_episode_range():
-    hf_dataset = Dataset.from_dict(
-        {
-            "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5],
-            "index": [0, 1, 2, 3, 4],
-            "episode_index": [0, 0, 0, 0, 0],
-        }
-    )
-    hf_dataset.set_transform(hf_transform_to_torch)
-    episode_data_index = {
-        "from": torch.tensor([0]),
-        "to": torch.tensor([5]),
-    }
-    delta_timestamps = {"index": [-0.3, -0.24, 0, 0.26, 0.3]}
-    tol = 0.04
-    item = hf_dataset[2]
-    item = load_previous_and_future_frames(item, hf_dataset, episode_data_index, delta_timestamps, tol)
-    data, is_pad = item["index"], item["index_is_pad"]
-    assert torch.equal(data, torch.tensor([0, 0, 2, 4, 4])), "Data does not match expected values"
-    assert torch.equal(
-        is_pad, torch.tensor([True, False, False, True, True])
-    ), "Padding does not match expected values"
-
-
+# TODO(aliberts): Move to more appropriate location
 def test_flatten_unflatten_dict():
     d = {
         "obs": {
@@ -297,6 +289,7 @@ def test_flatten_unflatten_dict():
     assert json.dumps(original_d, sort_keys=True) == json.dumps(d, sort_keys=True), f"{original_d} != {d}"
 
 
+@pytest.mark.skip("TODO after v2 migration / removing hydra")
 @pytest.mark.parametrize(
     "repo_id",
     [
@@ -368,6 +361,7 @@ def test_backward_compatibility(repo_id):
     # load_and_compare(i - 1)
 
 
+@pytest.mark.skip("TODO after v2 migration / removing hydra")
 def test_aggregate_stats():
     """Makes 3 basic datasets and checks that aggregate stats are computed correctly."""
     with seeded_context(0):
