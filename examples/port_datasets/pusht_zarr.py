@@ -174,8 +174,6 @@ def main(raw_dir: Path, repo_id: str, mode: str = "video", push_to_hub: bool = T
         num_frames = to_idx - from_idx
 
         for frame_idx in range(num_frames):
-            # frame = extract_frame_from_zarr(zarr_data, frame_idx)
-
             i = from_idx + frame_idx
             frame = {
                 "action": torch.from_numpy(action[i]),
