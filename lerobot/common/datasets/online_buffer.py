@@ -283,8 +283,6 @@ class OnlineBuffer(torch.utils.data.Dataset):
                 f"One or several timestamps unexpectedly violate the tolerance ({min_} > {self.tolerance_s=}"
                 ") inside the episode range."
             )
-
-            # Load frames for this data key.
             item[data_key] = self._data[data_key][episode_data_indices[argmin_]]
 
             item[f"{data_key}{OnlineBuffer.IS_PAD_POSTFIX}"] = is_pad

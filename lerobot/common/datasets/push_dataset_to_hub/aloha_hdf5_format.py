@@ -172,8 +172,7 @@ def load_from_raw(
 
 def to_hf_dataset(data_dict, video) -> Dataset:
     features = {}
-
-    keys = [key for key in data_dict if "observation.images." in key]
+    keys = [key for key in data_dict.keys() if "observation.images." in key]
     for key in keys:
         if video:
             features[key] = VideoFrame()

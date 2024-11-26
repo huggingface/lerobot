@@ -133,6 +133,7 @@ def start_image_writer(num_processes, num_threads):
     image_writer = {}
 
     if num_processes == 0:
+        print(f"Starting image writer with {num_threads} threads.")
         futures = []
         threads_pool = concurrent.futures.ThreadPoolExecutor(max_workers=num_threads)
         image_writer["threads_pool"], image_writer["futures"] = threads_pool, futures
@@ -262,7 +263,6 @@ def add_frame(dataset, observation, action):
 
     img_keys = [key for key in observation if "image" in key]
     non_img_keys = [key for key in observation if "image" not in key]
-
     # Save all observed modalities except images
     for key in non_img_keys:
         ep_dict[key].append(observation[key])

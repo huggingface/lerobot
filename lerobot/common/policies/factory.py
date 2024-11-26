@@ -33,7 +33,6 @@ def _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg):
     # issues with mutable defaults. This filter changes all lists to tuples.
     def list_to_tuple(item):
         return tuple(item) if isinstance(item, list) else item
-
     policy_cfg = policy_cfg_class(
         **{
             k: list_to_tuple(v)
@@ -89,10 +88,10 @@ def make_policy(
         raise ValueError(
             "Exactly one of `pretrained_policy_name_or_path` and `dataset_stats` must be provided."
         )
-
     policy_cls, policy_cfg_class = get_policy_and_config_classes(hydra_cfg.policy.name)
 
     policy_cfg = _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg)
+    
     if pretrained_policy_name_or_path is None:
         # Make a fresh policy.
         policy = policy_cls(policy_cfg, dataset_stats)
@@ -105,7 +104,6 @@ def make_policy(
         # https://github.com/huggingface/huggingface_hub/pull/2274.
         policy = policy_cls(policy_cfg)
         policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
-
     policy.to(get_safe_torch_device(hydra_cfg.device))
 
     return policy

@@ -78,7 +78,6 @@ class TDMPCPolicy(
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
         super().__init__()
-
         if config is None:
             config = TDMPCConfig()
         self.config = config
@@ -110,7 +109,6 @@ class TDMPCPolicy(
             self.input_image_key = image_keys[0]
         if "observation.environment_state" in config.input_shapes:
             self._use_env_state = True
-
         self.reset()
 
     def reset(self):
@@ -136,8 +134,14 @@ class TDMPCPolicy(
         batch = self.normalize_inputs(batch)
         if self._use_image:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            # if self.input_image_key not in batch:
+            #     self.input_image_key = "observation.images.front"
             batch["observation.image"] = batch[self.input_image_key]
-
+            # TODO : fix this following because quickfix
+            batch_keys = list(batch.keys())
+            for key in batch_keys:
+                if key not in self._queues:
+                    del batch[key]
         self._queues = populate_queues(self._queues, batch)
 
         # When the action queue is depleted, populate it again by querying the policy.
@@ -612,8 +616,7 @@ class TDMPCTOLD(nn.Module):
                 nn.init.orthogonal_(m.weight.data, gain)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
-
-        self.apply(_apply_fn)
+        # self.apply(_apply_fn)
         for m in [self._reward, *self._Qs]:
             assert isinstance(
                 m[-1], nn.Linear

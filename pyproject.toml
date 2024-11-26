@@ -51,6 +51,7 @@ gym-dora = { git = "https://github.com/dora-rs/dora-lerobot.git", subdirectory =
 gym-pusht = { version = ">=0.1.5", optional = true}
 gym-xarm = { version = ">=0.1.1", optional = true}
 gym-aloha = { version = ">=0.1.1", optional = true}
+gym-lowcostrobot = {git="https://github.com/alexcbb/gym-lowcostrobot.git", optional= true}
 pre-commit = {version = ">=3.7.0", optional = true}
 debugpy = {version = ">=1.8.1", optional = true}
 pytest = {version = ">=8.1.0", optional = true}
@@ -61,6 +62,7 @@ pyav = ">=12.0.5"
 rerun-sdk = ">=0.15.1"
 deepdiff = ">=7.0.1"
 flask = ">=3.0.3"
+rl_zoo3 = ">=2.3.0"
 pandas = {version = ">=2.2.2", optional = true}
 scikit-image = {version = ">=0.23.2", optional = true}
 dynamixel-sdk = {version = ">=3.7.31", optional = true}
@@ -77,6 +79,7 @@ dora = ["gym-dora"]
 pusht = ["gym-pusht"]
 xarm = ["gym-xarm"]
 aloha = ["gym-aloha"]
+koch = ["gym-lowcostrobot"]
 dev = ["pre-commit", "debugpy"]
 test = ["pytest", "pytest-cov", "pyserial"]
 umi = ["imagecodecs"]

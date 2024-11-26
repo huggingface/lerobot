@@ -498,7 +498,6 @@ def main(
             videos_dir=Path(out_dir) / "videos",
             start_seed=hydra_cfg.seed,
         )
-    print(info["aggregated"])
 
     # Save info
     with open(Path(out_dir) / "eval_info.json", "w") as f:

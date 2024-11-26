@@ -423,7 +423,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         start_time = time.perf_counter()
         batch = next(dl_iter)
         dataloading_s = time.perf_counter() - start_time
-
         for key in batch:
             batch[key] = batch[key].to(device, non_blocking=True)
 

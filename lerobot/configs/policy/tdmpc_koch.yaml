@@ -1,11 +1,11 @@
 # @package _global_
 
 seed: 1
-dataset_repo_id: lerobot/xarm_lift_medium
+dataset_repo_id: alexcbb/lowcostrobot
+dataset_root: data
 
 training:
-  offline_steps: 50000
-
+  offline_steps: 0
   num_workers: 4
 
   batch_size: 256
@@ -47,8 +47,8 @@ policy:
 
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
-    pixel: [3, 240, 320]
-    agent_pos: ["${env.state_dim}"]
+    observation.image: [3, 128, 128]
+    observation.state: ["${env.state_dim}"]
   output_shapes:
     action: ["${env.action_dim}"]
 

@@ -40,7 +40,8 @@ def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv
         )
         raise e
 
-    gym_handle = f"{package_name}/{cfg.env.task}"
+    # TODO : improve import for the following env
+    gym_handle = f"{package_name}/{cfg.env.task}" if package_name != "gym_lowcostrobot" else cfg.env.task
     gym_kwgs = dict(cfg.env.get("gym", {}))
 
     if cfg.env.get("episode_length"):
