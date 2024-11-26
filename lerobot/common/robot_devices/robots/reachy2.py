@@ -18,17 +18,40 @@ import time
 from copy import copy
 from dataclasses import dataclass, field, replace
 
-import numpy as np
 import torch
 from reachy2_sdk import ReachySDK
 
 from lerobot.common.robot_devices.cameras.utils import Camera
 
+REACHY_MOTORS = [
+    "neck_yaw.pos",
+    "neck_pitch.pos",
+    "neck_roll.pos",
+    "r_shoulder_pitch.pos",
+    "r_shoulder_roll.pos",
+    "r_elbow_yaw.pos",
+    "r_elbow_pitch.pos",
+    "r_wrist_roll.pos",
+    "r_wrist_pitch.pos",
+    "r_wrist_yaw.pos",
+    "r_gripper.pos",
+    "l_shoulder_pitch.pos",
+    "l_shoulder_roll.pos",
+    "l_elbow_yaw.pos",
+    "l_elbow_pitch.pos",
+    "l_wrist_roll.pos",
+    "l_wrist_pitch.pos",
+    "l_wrist_yaw.pos",
+    "l_gripper.pos",
+    "mobile_base.vx",
+    "mobile_base.vy",
+    "mobile_base.vtheta",
+]
 
 
 @dataclass
 class ReachyRobotConfig:
-    robot_type: str | None = "Reachy2"
+    robot_type: str | None = "reachy2"
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
     ip_address: str | None = "172.17.135.207"
     # ip_address: str | None = "localhost"
@@ -59,6 +82,37 @@ class ReachyRobot:
         self.state_keys = None
         self.action_keys = None
 
+    @property
+    def camera_features(self) -> dict:
+        cam_ft = {}
+        for cam_key, cam in self.cameras.items():
+            key = f"observation.images.{cam_key}"
+            cam_ft[key] = {
+                "shape": (cam.height, cam.width, cam.channels),
+                "names": ["height", "width", "channels"],
+                "info": None,
+            }
+        return cam_ft
+
+    @property
+    def motor_features(self) -> dict:
+        return {
+            "action": {
+                "dtype": "float32",
+                "shape": (len(REACHY_MOTORS),),
+                "names": REACHY_MOTORS,
+            },
+            "observation.state": {
+                "dtype": "float32",
+                "shape": (len(REACHY_MOTORS),),
+                "names": REACHY_MOTORS,
+            },
+        }
+
+    @property
+    def features(self):
+        return {**self.motor_features, **self.camera_features}
+
     def connect(self) -> None:
         print("Connecting to Reachy")
         self.reachy.is_connected = self.reachy.connect()
@@ -73,14 +127,10 @@ class ReachyRobot:
             for name in self.cameras:
                 print(f"Connecting camera: {name}")
                 self.cameras[name].connect()
-                self.is_connected = (
-                    self.is_connected and self.cameras[name].is_connected
-                )
+                self.is_connected = self.is_connected and self.cameras[name].is_connected
 
         if not self.is_connected:
-            print(
-                "Could not connect to the cameras, check that all cameras are plugged-in."
-            )
+            print("Could not connect to the cameras, check that all cameras are plugged-in.")
             raise ConnectionError()
 
     def run_calibration(self):
@@ -119,7 +169,7 @@ class ReachyRobot:
             action["mobile_base_x.vel"] = last_cmd_vel["x"]
             action["mobile_base_y.vel"] = last_cmd_vel["y"]
             action["mobile_base_theta.vel"] = last_cmd_vel["theta"]
-        
+
         action = torch.as_tensor(list(action.values()))
 
         obs_dict = self.capture_observation()
@@ -179,18 +229,12 @@ class ReachyRobot:
             # Capture images from cameras
             images = {}
             for name in self.cameras:
-                before_camread_t = time.perf_counter()
-                images[name] = self.cameras[
-                    name
-                ].read()  # Reachy cameras read() is not blocking?
+                # before_camread_t = time.perf_counter()
+                images[name] = self.cameras[name].read()  # Reachy cameras read() is not blocking?
                 # print(f'name: {name} img: {images[name]}')
                 if images[name] is not None:
-                    images[name] = torch.from_numpy(
-                        copy(images[name][0])
-                    )  # seems like I need to copy?
-                    self.logs[f"read_camera_{name}_dt_s"] = images[name][
-                        1
-                    ]  # full timestamp, TODO dt
+                    images[name] = torch.from_numpy(copy(images[name][0]))  # seems like I need to copy?
+                    self.logs[f"read_camera_{name}_dt_s"] = images[name][1]  # full timestamp, TODO dt
 
             # Populate output dictionnaries
             obs_dict = {}

@@ -2,34 +2,15 @@
 Wrapper for Reachy2 camera from sdk
 """
 
-import argparse
-import concurrent.futures
-import math
-import platform
-import shutil
-import threading
-import time
-from dataclasses import dataclass, replace
-from pathlib import Path
-from threading import Thread
+from dataclasses import dataclass
 
 import numpy as np
-from PIL import Image
-
-from lerobot.common.robot_devices.utils import (
-    RobotDeviceAlreadyConnectedError,
-    RobotDeviceNotConnectedError,
-    busy_wait,
-)
-from lerobot.common.utils.utils import capture_timestamp_utc
-
 from reachy2_sdk.media.camera import CameraView
 from reachy2_sdk.media.camera_manager import CameraManager
 
 
 @dataclass
 class ReachyCameraConfig:
-
     fps: int | None = None
     width: int | None = None
     height: int | None = None
@@ -46,7 +27,7 @@ class ReachyCamera:
         name: str,
         image_type: str,
         config: ReachyCameraConfig | None = None,
-        **kwargs
+        **kwargs,
     ):
         self.host = host
         self.port = port
@@ -64,7 +45,6 @@ class ReachyCamera:
             self.is_connected = True
 
     def read(self) -> np.ndarray:
-
         if not self.is_connected:
             self.connect()
 
@@ -78,7 +58,6 @@ class ReachyCamera:
             else:
                 return None
         elif self.name == "depth" and hasattr(self.cam_manager, "depth"):
-
             if self.image_type == "depth":
                 return self.cam_manager.depth.get_depth_frame()
             elif self.image_type == "rgb":

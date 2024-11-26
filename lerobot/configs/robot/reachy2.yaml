@@ -6,8 +6,7 @@
 
 
 _target_: lerobot.common.robot_devices.robots.reachy2.ReachyRobot
-
-robot_type: Reachy2
+robot_type: reachy2
 
 cameras:
   head_left:
