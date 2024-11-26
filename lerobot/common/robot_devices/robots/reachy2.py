@@ -25,12 +25,13 @@ from reachy2_sdk import ReachySDK
 from lerobot.common.robot_devices.cameras.utils import Camera
 
 
+
 @dataclass
 class ReachyRobotConfig:
     robot_type: str | None = "Reachy2"
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
-    # ip_address: str | None = "172.17.135.207"
-    ip_address: str | None = "localhost"
+    ip_address: str | None = "172.17.135.207"
+    # ip_address: str | None = "localhost"
 
 
 class ReachyRobot:

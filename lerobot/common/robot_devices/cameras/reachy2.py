@@ -70,9 +70,11 @@ class ReachyCamera:
 
         if self.name == "teleop" and hasattr(self.cam_manager, "teleop"):
             if self.image_type == "left":
-                return self.cam_manager.teleop.get_compressed_frame(CameraView.LEFT)
+                return self.cam_manager.teleop.get_frame(CameraView.LEFT)
+                # return self.cam_manager.teleop.get_compressed_frame(CameraView.LEFT)
             elif self.image_type == "right":
-                return self.cam_manager.teleop.get_compressed_frame(CameraView.RIGHT)
+                return self.cam_manager.teleop.get_frame(CameraView.RIGHT)
+                # return self.cam_manager.teleop.get_compressed_frame(CameraView.RIGHT)
             else:
                 return None
         elif self.name == "depth" and hasattr(self.cam_manager, "depth"):
@@ -80,7 +82,8 @@ class ReachyCamera:
             if self.image_type == "depth":
                 return self.cam_manager.depth.get_depth_frame()
             elif self.image_type == "rgb":
-                return self.cam_manager.depth.get_compressed_frame()
+                return self.cam_manager.depth.get_frame()
+                # return self.cam_manager.depth.get_compressed_frame()
             else:
                 return None
         return None
