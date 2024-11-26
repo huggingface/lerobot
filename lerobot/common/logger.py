@@ -31,6 +31,7 @@ from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
+import wandb
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
 
@@ -107,8 +108,6 @@ class Logger:
             self._wandb = None
         else:
             os.environ["WANDB_SILENT"] = "true"
-            import wandb
-
             wandb_run_id = None
             if cfg.resume:
                 wandb_run_id = get_wandb_run_id_from_filesystem(self.checkpoints_dir)
@@ -228,8 +227,6 @@ class Logger:
         return training_state["step"]
 
     def log_dict(self, d, step, mode="train"):
-        import wandb
-
         assert mode in {"train", "eval"}
         # TODO(alexander-soare): Add local text log.
         if self._wandb is not None:
