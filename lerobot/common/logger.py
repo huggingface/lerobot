@@ -228,11 +228,13 @@ class Logger:
         return training_state["step"]
 
     def log_dict(self, d, step, mode="train"):
+        import wandb
+
         assert mode in {"train", "eval"}
         # TODO(alexander-soare): Add local text log.
         if self._wandb is not None:
             for k, v in d.items():
-                if not isinstance(v, (int, float, str)):
+                if not isinstance(v, (int, float, str, wandb.Table)):
                     logging.warning(
                         f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
                     )
