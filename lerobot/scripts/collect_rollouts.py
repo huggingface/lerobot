@@ -192,7 +192,7 @@ def main(output, num_rollouts):
     env = gym.make(
         "gym_pusht/PushT-v0",
         obs_type="pixels_agent_pos",
-        max_episode_steps=300,
+        max_episode_steps=200,
     )
 
     rollout_for_ep_dicts(policy, env, device, episode_video_store, num_rollouts)
