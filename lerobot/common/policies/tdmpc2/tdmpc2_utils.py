@@ -75,9 +75,6 @@ def soft_cross_entropy(pred, target, cfg):
     """Computes the cross entropy loss between predictions and soft targets."""
     pred = F.log_softmax(pred, dim=-1)
     target = two_hot(target, cfg)
-    import pudb
-
-    pudb.set_trace()
     return -(target * pred).sum(-1, keepdim=True)
 
 
@@ -137,16 +134,20 @@ def symexp(x):
 
 def two_hot(x, cfg):
     """Converts a batch of scalars to soft two-hot encoded targets for discrete regression."""
+
+    # x shape [horizon, num_features]
     if cfg.num_bins == 0:
         return x
     elif cfg.num_bins == 1:
         return symlog(x)
     x = torch.clamp(symlog(x), cfg.vmin, cfg.vmax)
-    bin_idx = torch.floor((x - cfg.vmin) / cfg.bin_size).long()
-    bin_offset = (x - cfg.vmin) / cfg.bin_size - bin_idx.float()
-    soft_two_hot = torch.zeros(x.size(0), cfg.num_bins, device=x.device)
-    soft_two_hot.scatter_(1, bin_idx, 1 - bin_offset)
-    soft_two_hot.scatter_(1, (bin_idx + 1) % cfg.num_bins, bin_offset)
+    bin_idx = torch.floor((x - cfg.vmin) / cfg.bin_size).long()  # shape [num_features]
+    bin_offset = ((x - cfg.vmin) / cfg.bin_size - bin_idx.float()).unsqueeze(-1)  # shape [num_features , 1]
+    soft_two_hot = torch.zeros(
+        *x.shape, cfg.num_bins, device=x.device
+    )  # shape [horizon, num_features, num_bins]
+    soft_two_hot.scatter_(2, bin_idx.unsqueeze(-1), 1 - bin_offset)
+    soft_two_hot.scatter_(2, (bin_idx.unsqueeze(-1) + 1) % cfg.num_bins, bin_offset)
     return soft_two_hot
 
 

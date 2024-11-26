@@ -389,7 +389,7 @@ class TDMPC2Policy(
         reward_loss = (
             (
                 temporal_loss_coeffs
-                * soft_cross_entropy(reward_preds, reward, self.config)
+                * soft_cross_entropy(reward_preds, reward, self.config).mean(1)
                 * ~batch["next.reward_is_pad"]
                 * ~batch["observation.state_is_pad"][0]
                 * ~batch["action_is_pad"]
@@ -397,10 +397,11 @@ class TDMPC2Policy(
             .sum(0)
             .mean()
         )
+
         # Compute state-action value loss (TD loss) for all of the Q functions in the ensemble.
         ce_value_loss = 0.0
         for i in range(self.config.q_ensemble_size):
-            ce_value_loss += soft_cross_entropy(q_preds_ensemble[i], td_targets, self.config)
+            ce_value_loss += soft_cross_entropy(q_preds_ensemble[i], td_targets, self.config).mean(1)
 
         q_value_loss = (
             (
@@ -420,7 +421,6 @@ class TDMPC2Policy(
         # Calculate the advantage weighted regression loss for π as detailed in FOWM 3.1.
         # We won't need these gradients again so detach.
         z_preds = z_preds.detach()
-        self.model.change_q_grad(mode=False)
         action_preds, _, log_pis, _ = self.model.pi(z_preds[:-1])
 
         with torch.no_grad():
@@ -430,14 +430,9 @@ class TDMPC2Policy(
             self.scale.update(qs[0])
             qs = self.scale(qs)
 
-        rho = torch.pow(self.config.temporal_decay_coeff, torch.arange(len(qs), device=qs.device)).unsqueeze(
-            -1
-        )
-
         pi_loss = (
-            (self.config.entropy_coef * log_pis - qs).mean(dim=(1, 2))
-            * rho
-            # * temporal_loss_coeffs
+            (self.config.entropy_coef * log_pis - qs).mean(dim=2)
+            * temporal_loss_coeffs
             # `action_preds` depends on the first observation and the actions.
             * ~batch["observation.state_is_pad"][0]
             * ~batch["action_is_pad"]
@@ -447,7 +442,7 @@ class TDMPC2Policy(
             self.config.consistency_coeff * consistency_loss
             + self.config.reward_coeff * reward_loss
             + self.config.value_coeff * q_value_loss
-            + self.config.pi_coeff * pi_loss
+            + pi_loss
         )
 
         info.update(

@@ -51,6 +51,13 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
         from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
 
         return TDMPCPolicy, TDMPCConfig
+
+    elif name == "tdmpc2":
+        from lerobot.common.policies.tdmpc2.configuration_tdmpc2 import TDMPC2Config
+        from lerobot.common.policies.tdmpc2.modeling_tdmpc2 import TDMPC2Policy
+
+        return TDMPC2Policy, TDMPC2Config
+
     elif name == "diffusion":
         from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
         from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
