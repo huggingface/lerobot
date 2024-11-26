@@ -5,6 +5,7 @@ defaults:
 
 seed: 13
 dataset_repo_id: "dataset_repo_id"
+train_split_proportion: 0.8
 
 # Required by logger
 env:
@@ -39,7 +40,7 @@ policy:
 wandb:
   enable: true
   project: "classifier-training"
-  entity: "your_entity"
+  entity: "wandb_entity"
   job_name: "classifier_training_0"
   disable_artifact: false
 

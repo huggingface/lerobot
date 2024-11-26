@@ -151,7 +151,7 @@ def train(cfg: DictConfig) -> None:
     logging.info(f"Dataset size: {len(dataset)}")
 
     # Split dataset
-    train_size = int(0.8 * len(dataset))
+    train_size = int(cfg.train_split_proportion * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
