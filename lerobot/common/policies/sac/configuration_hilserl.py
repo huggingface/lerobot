@@ -19,5 +19,5 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class HILSerlConfig:
+class SACConfig:
     pass
