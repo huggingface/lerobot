@@ -18,10 +18,11 @@ import time
 from copy import copy
 from dataclasses import dataclass, field, replace
 
+import numpy as np
 import torch
 from reachy2_sdk import ReachySDK
 
-from lerobot.common.robot_devices.cameras.utils import Camera
+from lerobot.common.robot_devices.cameras.reachy2 import ReachyCamera
 
 REACHY_MOTORS = [
     "neck_yaw.pos",
@@ -52,8 +53,9 @@ REACHY_MOTORS = [
 @dataclass
 class ReachyRobotConfig:
     robot_type: str | None = "reachy2"
-    cameras: dict[str, Camera] = field(default_factory=lambda: {})
+    cameras: dict[str, ReachyCamera] = field(default_factory=lambda: {})
     ip_address: str | None = "172.17.135.207"
+    # ip_address: str | None = "192.168.0.197"
     # ip_address: str | None = "localhost"
 
 
@@ -74,10 +76,8 @@ class ReachyRobot:
         self.is_connected = False
         self.teleop = None
         self.logs = {}
-        self.reachy: ReachySDK = ReachySDK(host=config.ip_address)
-        self.reachy.turn_on()
-        self.is_connected = True  # at init Reachy2 is in fact connected...
-        self.mobile_base_available = self.reachy.mobile_base is not None
+        self.reachy = None
+        self.mobile_base_available = False
 
         self.state_keys = None
         self.action_keys = None
@@ -96,16 +96,19 @@ class ReachyRobot:
 
     @property
     def motor_features(self) -> dict:
+        motors = REACHY_MOTORS
+        # if self.mobile_base_available:
+        #     motors += REACHY_MOBILE_BASE
         return {
             "action": {
                 "dtype": "float32",
-                "shape": (len(REACHY_MOTORS),),
-                "names": REACHY_MOTORS,
+                "shape": (len(motors),),
+                "names": motors,
             },
             "observation.state": {
                 "dtype": "float32",
-                "shape": (len(REACHY_MOTORS),),
-                "names": REACHY_MOTORS,
+                "shape": (len(motors),),
+                "names": motors,
             },
         }
 
@@ -114,14 +117,16 @@ class ReachyRobot:
         return {**self.motor_features, **self.camera_features}
 
     def connect(self) -> None:
+        self.reachy = ReachySDK(host=self.config.ip_address)
         print("Connecting to Reachy")
-        self.reachy.is_connected = self.reachy.connect()
+        self.reachy.connect()
+        self.is_connected = self.reachy.is_connected
         if not self.is_connected:
             print(
                 f"Cannot connect to Reachy at address {self.config.ip_address}. Maybe a connection already exists."
             )
             raise ConnectionError()
-        self.reachy.turn_on()
+        # self.reachy.turn_on()
         print(self.cameras)
         if self.cameras is not None:
             for name in self.cameras:
@@ -132,6 +137,8 @@ class ReachyRobot:
         if not self.is_connected:
             print("Could not connect to the cameras, check that all cameras are plugged-in.")
             raise ConnectionError()
+
+        self.mobile_base_available = self.reachy.mobile_base is not None
 
     def run_calibration(self):
         pass
@@ -169,8 +176,14 @@ class ReachyRobot:
             action["mobile_base_x.vel"] = last_cmd_vel["x"]
             action["mobile_base_y.vel"] = last_cmd_vel["y"]
             action["mobile_base_theta.vel"] = last_cmd_vel["theta"]
+        else:
+            action["mobile_base_x.vel"] = 0
+            action["mobile_base_y.vel"] = 0
+            action["mobile_base_theta.vel"] = 0
 
-        action = torch.as_tensor(list(action.values()))
+        dtype = self.motor_features["action"]["dtype"]
+        action = np.array(list(action.values()), dtype=dtype)
+        # action = torch.as_tensor(list(action.values()))
 
         obs_dict = self.capture_observation()
         action_dict = {}
@@ -224,7 +237,9 @@ class ReachyRobot:
             if self.state_keys is None:
                 self.state_keys = list(state)
 
-            state = torch.as_tensor(list(state.values()))
+            dtype = self.motor_features["observation.state"]["dtype"]
+            state = np.array(list(state.values()), dtype=dtype)
+            # state = torch.as_tensor(list(state.values()))
 
             # Capture images from cameras
             images = {}
@@ -233,6 +248,7 @@ class ReachyRobot:
                 images[name] = self.cameras[name].read()  # Reachy cameras read() is not blocking?
                 # print(f'name: {name} img: {images[name]}')
                 if images[name] is not None:
+                    # images[name] = copy(images[name][0])  # seems like I need to copy?
                     images[name] = torch.from_numpy(copy(images[name][0]))  # seems like I need to copy?
                     self.logs[f"read_camera_{name}_dt_s"] = images[name][1]  # full timestamp, TODO dt
 
@@ -295,7 +311,7 @@ class ReachyRobot:
         print("Disconnecting")
         self.is_connected = False
         print("Turn off")
-        self.reachy.turn_off_smoothly()
+        # self.reachy.turn_off_smoothly()
         # self.reachy.turn_off()
         print("\t turn off done")
         self.reachy.disconnect()

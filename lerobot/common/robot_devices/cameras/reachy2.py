@@ -2,8 +2,9 @@
 Wrapper for Reachy2 camera from sdk
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+import cv2
 import numpy as np
 from reachy2_sdk.media.camera import CameraView
 from reachy2_sdk.media.camera_manager import CameraManager
@@ -18,6 +19,14 @@ class ReachyCameraConfig:
     rotation: int | None = None
     mock: bool = False
 
+    def __post_init__(self):
+        if self.color_mode not in ["rgb", "bgr"]:
+            raise ValueError(
+                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
+            )
+
+        self.channels = 3
+
 
 class ReachyCamera:
     def __init__(
@@ -29,8 +38,18 @@ class ReachyCamera:
         config: ReachyCameraConfig | None = None,
         **kwargs,
     ):
+        if config is None:
+            config = ReachyCameraConfig()
+
+        # Overwrite config arguments using kwargs
+        config = replace(config, **kwargs)
+
         self.host = host
         self.port = port
+        self.width = config.width
+        self.height = config.height
+        self.channels = config.channels
+        self.fps = config.fps
         self.image_type = image_type
         self.name = name
         self.config = config
@@ -48,21 +67,24 @@ class ReachyCamera:
         if not self.is_connected:
             self.connect()
 
+        frame = None
+
         if self.name == "teleop" and hasattr(self.cam_manager, "teleop"):
             if self.image_type == "left":
-                return self.cam_manager.teleop.get_frame(CameraView.LEFT)
-                # return self.cam_manager.teleop.get_compressed_frame(CameraView.LEFT)
+                frame = self.cam_manager.teleop.get_frame(CameraView.LEFT)
             elif self.image_type == "right":
-                return self.cam_manager.teleop.get_frame(CameraView.RIGHT)
-                # return self.cam_manager.teleop.get_compressed_frame(CameraView.RIGHT)
-            else:
-                return None
+                frame = self.cam_manager.teleop.get_frame(CameraView.RIGHT)
         elif self.name == "depth" and hasattr(self.cam_manager, "depth"):
             if self.image_type == "depth":
-                return self.cam_manager.depth.get_depth_frame()
+                frame = self.cam_manager.depth.get_depth_frame()
             elif self.image_type == "rgb":
-                return self.cam_manager.depth.get_frame()
-                # return self.cam_manager.depth.get_compressed_frame()
-            else:
-                return None
-        return None
+                frame = self.cam_manager.depth.get_frame()
+
+        if frame is None:
+            return None
+
+        if frame is not None and self.config.color_mode == "rgb":
+            img, timestamp = frame
+            frame = (cv2.cvtColor(img, cv2.COLOR_BGR2RGB), timestamp)
+
+        return frame
