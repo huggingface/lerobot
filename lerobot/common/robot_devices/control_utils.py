@@ -120,7 +120,7 @@ def predict_action(observation, policy, device, use_amp):
     return action
 
 
-def init_keyboard_listener():
+def init_keyboard_listener(assign_rewards=False):
     # Allow to exit early while recording an episode or resetting the environment,
     # by tapping the right arrow key '->'. This might require a sudo permission
     # to allow your terminal to monitor keyboard events.
@@ -128,6 +128,8 @@ def init_keyboard_listener():
     events["exit_early"] = False
     events["rerecord_episode"] = False
     events["stop_recording"] = False
+    if assign_rewards:
+        events["next.reward"] = 0
 
     if is_headless():
         logging.warning(
@@ -152,6 +154,13 @@ def init_keyboard_listener():
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
                 events["exit_early"] = True
+            elif assign_rewards and key == keyboard.Key.space:
+                events["next.reward"] = 1 if events["next.reward"] == 0 else 0
+                print(
+                    "Space key pressed. Assigning new reward to the subsequent frames. New reward:",
+                    events["next.reward"],
+                )
+
         except Exception as e:
             print(f"Error handling key press: {e}")
 
@@ -272,6 +281,8 @@ def control_loop(
 
         if dataset is not None:
             frame = {**observation, **action}
+            if "next.reward" in events:
+                frame["next.reward"] = events["next.reward"]
             dataset.add_frame(frame)
 
         if display_cameras and not is_headless():
@@ -301,6 +312,8 @@ def reset_environment(robot, events, reset_time_s):
 
     timestamp = 0
     start_vencod_t = time.perf_counter()
+    if "next.reward" in events:
+        events["next.reward"] = 0
 
     # Wait if necessary
     with tqdm.tqdm(total=reset_time_s, desc="Waiting") as pbar:
