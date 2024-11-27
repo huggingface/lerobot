@@ -392,11 +392,6 @@ def from_dataset_to_lerobot_dataset(dataset, play_sounds):
         ep_dict = torch.load(ep_path)
         ep_dicts.append(ep_dict)
     data_dict = concatenate_episodes(ep_dicts)
-    for key in data_dict.keys():
-        if isinstance(data_dict[key], torch.Tensor) or isinstance(data_dict[key], np.ndarray):
-            print(f"Key {key} has shape {data_dict[key].shape}")
-        else:
-            print(f"Key {key} has type {type(data_dict[key])} with length {len(data_dict[key])}")
 
     if video:
         image_keys = [key for key in data_dict if "image" in key]

@@ -49,6 +49,7 @@ policy:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
     observation.image: [3, 128, 128]
     observation.state: ["${env.state_dim}"]
+    observation.velocity: ["${env.state_dim}"]
   output_shapes:
     action: ["${env.action_dim}"]
 
