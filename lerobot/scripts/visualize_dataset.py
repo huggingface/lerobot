@@ -268,10 +268,11 @@ def main():
     args = parser.parse_args()
     kwargs = vars(args)
     repo_id = kwargs.pop("repo_id")
-    root = kwargs.pop("root")
+    # root = kwargs.pop("root")
 
     logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id, root=root, local_files_only=True)
+
+    dataset = LeRobotDataset(repo_id)
 
     visualize_dataset(dataset, **vars(args))
 

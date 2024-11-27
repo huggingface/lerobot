@@ -140,25 +140,25 @@ class ACTPolicy(
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
-        l1_loss = (
-            F.l1_loss(batch["action"], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
-        ).mean()
+        bsize = actions_hat.shape[0]
+        l1_loss = F.l1_loss(batch["action"], actions_hat, reduction="none")
+        l1_loss = l1_loss * ~batch["action_is_pad"].unsqueeze(-1)
+        l1_loss = l1_loss.view(bsize, -1).mean(dim=1)
 
-        loss_dict = {"l1_loss": l1_loss.item()}
+        out_dict = {}
+        out_dict["l1_loss"] = l1_loss
         if self.config.use_vae:
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total
             # KL-divergence per batch element, then take the mean over the batch.
             # (See App. B of https://arxiv.org/abs/1312.6114 for more details).
-            mean_kld = (
-                (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
-            )
-            loss_dict["kld_loss"] = mean_kld.item()
-            loss_dict["loss"] = l1_loss + mean_kld * self.config.kl_weight
+            kld_loss = (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1)
+            out_dict["loss"] = l1_loss + kld_loss * self.config.kl_weight
         else:
-            loss_dict["loss"] = l1_loss
+            out_dict["loss"] = l1_loss
 
-        return loss_dict
+        out_dict["action"] = self.unnormalize_outputs({"action": actions_hat})["action"]
+        return out_dict
 
 
 class ACTTemporalEnsembler:
