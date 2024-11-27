@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.fixtures.defaults import DUMMY_REPO_ID
+from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.utils import require_package
 
 

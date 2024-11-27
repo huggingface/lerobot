@@ -1,7 +1,7 @@
 """
 This script demonstrates how to use torchvision's image transformation with LeRobotDataset for data
 augmentation purposes. The transformations are passed to the dataset as an argument upon creation, and
-transforms are applied to the observation images before they are returned in the dataset's __get_item__.
+transforms are applied to the observation images before they are returned in the dataset's __getitem__.
 """
 
 from pathlib import Path

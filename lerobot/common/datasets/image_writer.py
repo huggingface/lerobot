@@ -63,7 +63,7 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path):
         print(f"Error writing image {fpath}: {e}")
 
 
-def worker_thread_process(queue: queue.Queue):
+def worker_thread_loop(queue: queue.Queue):
     while True:
         item = queue.get()
         if item is None:
@@ -77,7 +77,7 @@ def worker_thread_process(queue: queue.Queue):
 def worker_process(queue: queue.Queue, num_threads: int):
     threads = []
     for _ in range(num_threads):
-        t = threading.Thread(target=worker_thread_process, args=(queue,))
+        t = threading.Thread(target=worker_thread_loop, args=(queue,))
         t.daemon = True
         t.start()
         threads.append(t)
@@ -115,7 +115,7 @@ class AsyncImageWriter:
             # Use threading
             self.queue = queue.Queue()
             for _ in range(self.num_threads):
-                t = threading.Thread(target=worker_thread_process, args=(self.queue,))
+                t = threading.Thread(target=worker_thread_loop, args=(self.queue,))
                 t.daemon = True
                 t.start()
                 self.threads.append(t)

@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
+import logging
 import textwrap
-import warnings
 from itertools import accumulate
 from pathlib import Path
 from pprint import pformat
@@ -212,8 +212,8 @@ class BackwardCompatibilityError(Exception):
             "Open the top cabinet, store the pot inside it then close the cabinet.", "Push the T-shaped block onto the T-shaped target.",
             "Grab the spray paint on the shelf and place it in the bin on top of the robot dog.", "Fold the sweatshirt.", ...
 
-            If you encounter a problem, contact LeRobot maintainers on Discord ('https://discord.com/invite/s3KuuzsPFb')
-            or open an issue on GitHub.
+            If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+            or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
         """)
         super().__init__(message)
 
@@ -226,12 +226,11 @@ def check_version_compatibility(
     if major_to_check < current_major and enforce_breaking_major:
         raise BackwardCompatibilityError(repo_id, version_to_check)
     elif float(version_to_check.strip("v")) < float(current_version.strip("v")):
-        warnings.warn(
+        logging.warning(
             f"""The dataset you requested ({repo_id}) was created with a previous version ({version_to_check}) of the
             codebase. The current codebase version is {current_version}. You should be fine since
             backward compatibility is maintained. If you encounter a problem, contact LeRobot maintainers on
             Discord ('https://discord.com/invite/s3KuuzsPFb') or open an issue on github.""",
-            stacklevel=1,
         )
 
 
@@ -245,13 +244,12 @@ def get_hub_safe_version(repo_id: str, version: str) -> str:
         if num_version >= 2.0 and all(v < 2.0 for v in hub_num_versions):
             raise BackwardCompatibilityError(repo_id, version)
 
-        warnings.warn(
+        logging.warning(
             f"""You are trying to load a dataset from {repo_id} created with a previous version of the
             codebase. The following versions are available: {branches}.
             The requested version ('{version}') is not found. You should be fine since
             backward compatibility is maintained. If you encounter a problem, contact LeRobot maintainers on
             Discord ('https://discord.com/invite/s3KuuzsPFb') or open an issue on github.""",
-            stacklevel=1,
         )
         if "main" not in branches:
             raise ValueError(f"Version 'main' not found on {repo_id}")

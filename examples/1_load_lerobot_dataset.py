@@ -77,7 +77,7 @@ print(dataset.hf_dataset)
 
 # LeRobot datasets also subclasses PyTorch datasets so you can do everything you know and love from working
 # with the latter, like iterating through the dataset.
-# The __get_item__ iterates over the frames of the dataset. Since our datasets are also structured by
+# The __getitem__ iterates over the frames of the dataset. Since our datasets are also structured by
 # episodes, you can access the frame indices of any episode using the episode_data_index. Here, we access
 # frame indices associated to the first episode:
 episode_index = 0

@@ -5,7 +5,7 @@ import pytest
 from huggingface_hub.utils import filter_repo_objects
 
 from lerobot.common.datasets.utils import EPISODES_PATH, INFO_PATH, STATS_PATH, TASKS_PATH
-from tests.fixtures.defaults import LEROBOT_TEST_DIR
+from tests.fixtures.constants import LEROBOT_TEST_DIR
 
 
 @pytest.fixture(scope="session")

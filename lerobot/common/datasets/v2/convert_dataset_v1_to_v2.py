@@ -103,11 +103,11 @@ import argparse
 import contextlib
 import filecmp
 import json
+import logging
 import math
 import shutil
 import subprocess
 import tempfile
-import warnings
 from pathlib import Path
 
 import datasets
@@ -461,9 +461,8 @@ def convert_dataset(
     video_keys = [key for key, ft in features.items() if ft["dtype"] == "video"]
 
     if single_task and "language_instruction" in dataset.column_names:
-        warnings.warn(
+        logging.warning(
             "'single_task' provided but 'language_instruction' tasks_col found. Using 'language_instruction'.",
-            stacklevel=1,
         )
         single_task = None
         tasks_col = "language_instruction"
@@ -642,7 +641,7 @@ def main():
     parser.add_argument(
         "--license",
         type=str,
-        default="mit",
+        default="apache-2.0",
         help="Repo license. Must be one of https://huggingface.co/docs/hub/repositories-licenses. Defaults to mit.",
     )
     parser.add_argument(

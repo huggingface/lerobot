@@ -428,12 +428,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.repo_id = repo_id
-        self.root = Path(root) if root is not None else LEROBOT_HOME / repo_id
+        self.root = Path(root) if root else LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
         self.tolerance_s = tolerance_s
-        self.video_backend = video_backend if video_backend is not None else "pyav"
+        self.video_backend = video_backend if video_backend else "pyav"
         self.delta_indices = None
         self.local_files_only = local_files_only
 
@@ -474,10 +474,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         **card_kwargs,
     ) -> None:
         if not self.consolidated:
-            raise RuntimeError(
-                "You are trying to upload to the hub a LeRobotDataset that has not been consolidated yet."
-                "Please call the dataset 'consolidate()' method first."
+            logging.warning(
+                "You are trying to upload to the hub a LeRobotDataset that has not been consolidated yet. "
+                "Consolidating first."
             )
+            self.consolidate()
 
         ignore_patterns = ["images/"]
         if not push_videos:
@@ -678,7 +679,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             "})',\n"
         )
 
-    def _create_episode_buffer(self, episode_index: int | None = None) -> dict:
+    def create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self.meta.total_episodes if episode_index is None else episode_index
         return {
             "size": 0,
@@ -709,7 +710,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # check the dtype and shape matches, etc.
 
         if self.episode_buffer is None:
-            self.episode_buffer = self._create_episode_buffer()
+            self.episode_buffer = self.create_episode_buffer()
 
         frame_index = self.episode_buffer["size"]
         timestamp = frame.pop("timestamp") if "timestamp" in frame else frame_index / self.fps
@@ -751,7 +752,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_index = episode_buffer["episode_index"]
         if episode_index != self.meta.total_episodes:
             # TODO(aliberts): Add option to use existing episode_index
-            raise NotImplementedError()
+            raise NotImplementedError(
+                "You might have manually provided the episode_buffer with an episode_index that doesn't "
+                "match the total number of episodes in the dataset. This is not supported for now."
+            )
 
         if episode_length == 0:
             raise ValueError(
@@ -792,7 +796,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 episode_buffer[key] = video_paths[key]
 
         if not episode_data:  # Reset the buffer
-            self.episode_buffer = self._create_episode_buffer()
+            self.episode_buffer = self.create_episode_buffer()
 
         self.consolidated = False
 
@@ -814,12 +818,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     shutil.rmtree(img_dir)
 
         # Reset the buffer
-        self.episode_buffer = self._create_episode_buffer()
+        self.episode_buffer = self.create_episode_buffer()
 
     def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
         if isinstance(self.image_writer, AsyncImageWriter):
             logging.warning(
-                "You are starting a new AsyncImageWriter that is replacing an already exising one in the dataset."
+                "You are starting a new AsyncImageWriter that is replacing an already existing one in the dataset."
             )
 
         self.image_writer = AsyncImageWriter(
@@ -938,7 +942,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             obj.start_image_writer(image_writer_processes, image_writer_threads)
 
         # TODO(aliberts, rcadene, alexander-soare): Merge this with OnlineBuffer/DataBuffer
-        obj.episode_buffer = obj._create_episode_buffer()
+        obj.episode_buffer = obj.create_episode_buffer()
 
         # This bool indicates that the current LeRobotDataset instance is in sync with the files on disk. It
         # is used to know when certain operations are need (for instance, computing dataset statistics). In
@@ -966,56 +970,56 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         repo_ids: list[str],
-        root: Path | None = None,
+        root: str | Path | None = None,
         episodes: dict | None = None,
         image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
+        tolerances_s: dict | None = None,
+        download_videos: bool = True,
+        local_files_only: bool = False,
         video_backend: str | None = None,
     ):
         super().__init__()
         self.repo_ids = repo_ids
+        self.root = Path(root) if root else LEROBOT_HOME
+        self.tolerances_s = tolerances_s if tolerances_s else {repo_id: 1e-4 for repo_id in repo_ids}
         # Construct the underlying datasets passing everything but `transform` and `delta_timestamps` which
         # are handled by this class.
         self._datasets = [
             LeRobotDataset(
                 repo_id,
-                root=root / repo_id if root is not None else None,
-                episodes=episodes[repo_id] if episodes is not None else None,
-                delta_timestamps=delta_timestamps,
+                root=self.root / repo_id,
+                episodes=episodes[repo_id] if episodes else None,
                 image_transforms=image_transforms,
+                delta_timestamps=delta_timestamps,
+                tolerance_s=self.tolerances_s[repo_id],
+                download_videos=download_videos,
+                local_files_only=local_files_only,
                 video_backend=video_backend,
             )
             for repo_id in repo_ids
         ]
-        # Check that some properties are consistent across datasets. Note: We may relax some of these
-        # consistency requirements in future iterations of this class.
-        for repo_id, dataset in zip(self.repo_ids, self._datasets, strict=True):
-            if dataset.meta.info != self._datasets[0].meta.info:
-                raise ValueError(
-                    f"Detected a mismatch in dataset info between {self.repo_ids[0]} and {repo_id}. This is "
-                    "not yet supported."
-                )
+
         # Disable any data keys that are not common across all of the datasets. Note: we may relax this
         # restriction in future iterations of this class. For now, this is necessary at least for being able
         # to use PyTorch's default DataLoader collate function.
-        self.disabled_data_keys = set()
-        intersection_data_keys = set(self._datasets[0].hf_dataset.features)
-        for dataset in self._datasets:
-            intersection_data_keys.intersection_update(dataset.hf_dataset.features)
-        if len(intersection_data_keys) == 0:
+        self.disabled_features = set()
+        intersection_features = set(self._datasets[0].features)
+        for ds in self._datasets:
+            intersection_features.intersection_update(ds.features)
+        if len(intersection_features) == 0:
             raise RuntimeError(
-                "Multiple datasets were provided but they had no keys common to all of them. The "
-                "multi-dataset functionality currently only keeps common keys."
+                "Multiple datasets were provided but they had no keys common to all of them. "
+                "The multi-dataset functionality currently only keeps common keys."
             )
-        for repo_id, dataset in zip(self.repo_ids, self._datasets, strict=True):
-            extra_keys = set(dataset.hf_dataset.features).difference(intersection_data_keys)
+        for repo_id, ds in zip(self.repo_ids, self._datasets, strict=True):
+            extra_keys = set(ds.features).difference(intersection_features)
             logging.warning(
                 f"keys {extra_keys} of {repo_id} were disabled as they are not contained in all the "
                 "other datasets."
             )
-            self.disabled_data_keys.update(extra_keys)
+            self.disabled_features.update(extra_keys)
 
-        self.root = root
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.stats = aggregate_stats(self._datasets)
@@ -1055,9 +1059,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     def features(self) -> datasets.Features:
         features = {}
         for dataset in self._datasets:
-            features.update(
-                {k: v for k, v in dataset.hf_features.items() if k not in self.disabled_data_keys}
-            )
+            features.update({k: v for k, v in dataset.hf_features.items() if k not in self.disabled_features})
         return features
 
     @property
@@ -1121,7 +1123,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
         item = self._datasets[dataset_idx][idx - start_idx]
         item["dataset_index"] = torch.tensor(dataset_idx)
-        for data_key in self.disabled_data_keys:
+        for data_key in self.disabled_features:
             if data_key in item:
                 del item[data_key]
 
