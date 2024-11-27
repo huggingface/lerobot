@@ -85,7 +85,10 @@ def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, 
             optimizer.step()
 
         # Track metrics
-        predictions = (torch.sigmoid(outputs.logits) > 0.5).float()
+        if model.config.num_classes == 2:
+            predictions = (torch.sigmoid(outputs.logits) > 0.5).float()
+        else:
+            predictions = torch.argmax(outputs.logits, dim=1)
         correct += (predictions == labels).sum().item()
         total += labels.size(0)
 
@@ -131,7 +134,7 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
                             "image": wandb.Image(images[i].cpu()),
                             "true_label": labels[i].item(),
                             "predicted": predictions[i].item(),
-                            "confidence": torch.sigmoid(outputs.logits[i]).item(),
+                            "confidence": outputs.probabilities[i].item(),
                         }
                     )
 
@@ -236,7 +239,8 @@ def train(cfg: DictConfig) -> None:
     ).to(device)
 
     optimizer = optim.AdamW(model.parameters(), lr=cfg.training.learning_rate)
-    criterion = nn.BCEWithLogitsLoss()
+    # Use BCEWithLogitsLoss for binary classification and CrossEntropyLoss for multi-class
+    criterion = nn.BCEWithLogitsLoss() if model.config.num_classes == 2 else nn.CrossEntropyLoss()
     grad_scaler = GradScaler(enabled=cfg.training.use_amp)
 
     # Log model parameters
