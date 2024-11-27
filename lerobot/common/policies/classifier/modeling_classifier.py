@@ -127,8 +127,8 @@ class Classifier(
 
         if self.config.num_classes == 2:
             logits = logits.squeeze(-1)
-            probs = torch.sigmoid(logits)
+            probabilities = torch.sigmoid(logits)
         else:
-            probs = torch.softmax(logits, dim=-1)
+            probabilities = torch.softmax(logits, dim=-1)
 
-        return ClassifierOutput(logits=logits, probabilities=probs, hidden_states=encoder_output)
+        return ClassifierOutput(logits=logits, probabilities=probabilities, hidden_states=encoder_output)
