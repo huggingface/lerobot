@@ -100,7 +100,7 @@ def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, 
         pbar.set_postfix({"loss": f"{loss.item():.4f}", "acc": f"{current_acc:.2f}%"})
 
 
-def validate(model, val_loader, criterion, device, logger, cfg, use_amp=False, num_samples_to_log=8):
+def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_log=8):
     # Validation loop with metric tracking and sample logging
     model.eval()
     correct = 0
