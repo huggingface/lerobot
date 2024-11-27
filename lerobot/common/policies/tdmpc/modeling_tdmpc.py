@@ -134,8 +134,8 @@ class TDMPCPolicy(
         batch = self.normalize_inputs(batch)
         if self._use_image:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            # if self.input_image_key not in batch:
-            #     self.input_image_key = "observation.images.front"
+            if self.input_image_key not in batch:
+                self.input_image_key = "observation.images.front"
             batch["observation.image"] = batch[self.input_image_key]
             # TODO : fix this following because quickfix
             batch_keys = list(batch.keys())

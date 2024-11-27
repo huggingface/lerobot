@@ -245,6 +245,8 @@ def add_frame(dataset, observation, action):
         ep_dict["frame_index"] = []
         ep_dict["timestamp"] = []
         ep_dict["next.done"] = []
+        ep_dict["next.reward"] = []
+        ep_dict["next.success"] = []
 
         dataset["current_episode"] = ep_dict
         dataset["current_frame_index"] = 0
@@ -260,6 +262,8 @@ def add_frame(dataset, observation, action):
     ep_dict["frame_index"].append(frame_index)
     ep_dict["timestamp"].append(frame_index / fps)
     ep_dict["next.done"].append(False)
+    ep_dict["next.reward"].append(-10.0)
+    ep_dict["next.success"].append(False)
 
     img_keys = [key for key in observation if "image" in key]
     non_img_keys = [key for key in observation if "image" not in key]
@@ -313,6 +317,7 @@ def delete_current_episode(dataset):
 def save_current_episode(dataset):
     episode_index = dataset["num_episodes"]
     ep_dict = dataset["current_episode"]
+    print(f"Keys({episode_index}): {ep_dict.keys()}")
     episodes_dir = dataset["episodes_dir"]
     rec_info_path = dataset["rec_info_path"]
 
@@ -327,6 +332,8 @@ def save_current_episode(dataset):
     ep_dict["frame_index"] = torch.tensor(ep_dict["frame_index"])
     ep_dict["timestamp"] = torch.tensor(ep_dict["timestamp"])
     ep_dict["next.done"] = torch.tensor(ep_dict["next.done"])
+    ep_dict["next.reward"] = torch.tensor(ep_dict["next.reward"])
+    ep_dict["next.success"] = torch.tensor(ep_dict["next.success"])
 
     ep_path = episodes_dir / f"episode_{episode_index}.pth"
     torch.save(ep_dict, ep_path)

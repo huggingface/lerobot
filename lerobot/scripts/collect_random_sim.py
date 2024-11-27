@@ -40,22 +40,11 @@ def record_episode(
         fig, ax = plt.subplots()
         img = ax.imshow(observation[image_keys[0]][0])
     while frame_id < max_frames:
-        action = env.action_space.sample() * 10 # TODO : we had a weight to have bigger actions
+        action = env.action_space.sample() # TODO : we had a weight to have bigger actions
         action_dict = {"action": torch.from_numpy(action)[0]}
 
         for key in non_image_keys:
             observation[key] = torch.from_numpy(observation[key])[0]
-
-        if dataset is not None:
-            video_dir =  dataset["videos_dir"]
-            current_ep = dataset["num_episodes"]
-            for key in image_keys:
-                img_dir = os.path.join(video_dir, f"{key}_episode_{current_ep:06d}")
-                img = Image.fromarray(observation[f"{key}"][0])
-                path = Path(img_dir) / f"frame_{frame_id:06d}.png"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                img.save(str(path), quality=100)
-            add_frame(dataset, {"observation.image": observation["observation.images.front"]}, action_dict)
 
         if display_cameras:
             img.set_data(observation[image_keys[0]][0])
@@ -63,7 +52,19 @@ def record_episode(
             plt.pause(0.0001)
         
         observation, reward, done, truncated, info = env.step(action)
-        if done or  truncated:
+        if dataset is not None:
+            video_dir =  dataset["videos_dir"]
+            current_ep = dataset["num_episodes"]
+            img_dir = os.path.join(video_dir, f"observation.image_episode_{current_ep:06d}")
+            img = Image.fromarray(observation["observation.images.front"][0])
+            path = Path(img_dir) / f"frame_{frame_id:06d}.png"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            img.save(str(path), quality=100)
+            observation["observation.image"] = observation.pop("observation.images.front")
+            observation.pop("observation.images.top")
+            add_frame(dataset, observation, action_dict)
+
+        if done or truncated:
             observation, info = env.reset()
             break
         frame_id += 1

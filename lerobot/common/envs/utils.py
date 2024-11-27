@@ -28,6 +28,9 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     """
     # map to expected inputs for the policy
     return_observations = {}
+    if "observation.images.front" in observations:
+        observations["observation.image"] = observations.pop("observation.images.front")
+        observations.pop("observation.images.top")
     imgs = {key: img for key, img in observations.items() if "image" in key}
 
     for imgkey, img in imgs.items():

@@ -318,6 +318,7 @@ def eval_policy(
                 start_data_index=(0 if episode_data is None else (episode_data["index"][-1].item() + 1)),
                 fps=env.unwrapped.metadata["render_fps"],
             )
+            print(f"this_episode_data keys: {this_episode_data.keys()}")
             if episode_data is None:
                 episode_data = this_episode_data
             else:
@@ -423,7 +424,7 @@ def _compile_episode_data(
             "next.success": rollout_data["success"][ep_ix, : num_frames - 1],
             "next.reward": rollout_data["reward"][ep_ix, : num_frames - 1].type(torch.float32),
         }
-
+        print(f"ep_dict keys: {ep_dict.keys()}")
         # For the last observation frame, all other keys will just be copy padded.
         for k in ep_dict:
             ep_dict[k] = torch.cat([ep_dict[k], ep_dict[k][-1:]])

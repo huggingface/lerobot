@@ -102,7 +102,7 @@ For simulations, 🤗 LeRobot comes with gymnasium environments that can be inst
 - [aloha](https://github.com/huggingface/gym-aloha)
 - [xarm](https://github.com/huggingface/gym-xarm)
 - [pusht](https://github.com/huggingface/gym-pusht)
-- [koch](https://github.com/perezjln/gym-lowcostrobot)
+- [koch](https://github.com/alexcbb/gym-lowcostrobot)
 
 For instance, to install 🤗 LeRobot with aloha and pusht, use:
 ```bash
