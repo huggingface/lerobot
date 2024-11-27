@@ -137,7 +137,7 @@ if __name__ == "__main__":
     base_parser.add_argument(
         "--num_episodes",
         type=int,
-        default=5,
+        default=30,
         help="Number of episodes to record.",
     )
     base_parser.add_argument(

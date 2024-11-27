@@ -236,6 +236,15 @@ python lerobot/scripts/eval.py -p {OUTPUT_DIR}/checkpoints/last/pretrained_model
 
 See `python lerobot/scripts/eval.py --help` for more instructions.
 
+### Train TDMPC RL (without initiatization)
+First extract random data using the following script : `python lerobot/scripts/collect_random_sim.py`. It will extract data under the following folder :
+`data/alexcbb/lowcostrobot` (can be set in the config file `configs/envs/lowcostrobot.yaml`)
+
+Then, train the robot online using the following command :
+
+`python lerobot/scripts/train.py env=lowcostrobot policy=tdmpc_koch`
+You can set the config files accordingly.
+
 ### Train your own policy
 
 Check out [example 3](./examples/3_train_policy.py) that illustrates how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
