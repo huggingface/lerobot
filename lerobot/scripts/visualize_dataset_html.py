@@ -88,6 +88,7 @@ def run_server(
     port: str,
     static_folder: Path,
     template_folder: Path,
+    has_policy = False,
 ):
     app = Flask(__name__, static_folder=static_folder.resolve(), template_folder=template_folder.resolve())
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # specifying not to cache
@@ -130,7 +131,7 @@ def run_server(
             dataset_info=dataset_info,
             videos_info=videos_info,
             ep_csv_url=ep_csv_url,
-            has_policy=False,
+            has_policy = has_policy,
         )
 
     app.run(host=host, port=port)
@@ -344,7 +345,7 @@ def visualize_dataset_html(
         write_episode_data_csv(static_dir, ep_csv_fname, episode_index, dataset, policy=policy)
 
     if serve:
-        run_server(dataset, episodes, host, port, static_dir, template_dir)
+        run_server(dataset, episodes, host, port, static_dir, template_dir, has_policy=policy is not None)
 
 
 def main():

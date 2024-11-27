@@ -229,7 +229,8 @@
                 dygraph: null,
                 currentFrameData: null,
                 columnNames: ["state", "action", "pred action"],
-                nColumns: 2,
+                hasPolicy: {% if has_policy %}true{% else %}false{% endif %},
+                nColumns: {% if has_policy %}3{% else %}2{% endif %},
                 nStates: 0,
                 nActions: 0,
                 checked: [],
@@ -278,6 +279,9 @@
                                 const seriesNames = this.dygraph.getLabels().slice(1);
                                 this.nStates = seriesNames.findIndex(item => item.startsWith('action_'));
                                 this.nActions = seriesNames.length - this.nStates;
+                                if(this.hasPolicy){
+                                    this.nActions = Math.floor(this.nActions / 2);
+                                }
                                 const colors = [];
                                 const LIGHTNESS = [30, 65, 85]; // state_lightness, action_lightness, pred_action_lightness
                                 // colors for "state" lines
@@ -289,6 +293,13 @@
                                 for (let hue = 0; hue < 360; hue += parseInt(360/this.nActions)) {
                                     const color = `hsl(${hue}, 100%, ${LIGHTNESS[1]}%)`;
                                     colors.push(color);
+                                }
+                                if(this.hasPolicy){
+                                    // colors for "action" lines
+                                    for (let hue = 0; hue < 360; hue += parseInt(360/this.nActions)) {
+                                        const color = `hsl(${hue}, 100%, ${LIGHTNESS[2]}%)`;
+                                        colors.push(color);
+                                    }
                                 }
                                 this.dygraph.updateOptions({ colors });
                                 this.colors = colors;
@@ -327,6 +338,10 @@
                         // row consists of [state value, action value]
                         row.push(rowIndex < this.nStates ? this.currentFrameData[stateValueIdx] : nullCell); // push "state value" to row
                         row.push(rowIndex < this.nActions ? this.currentFrameData[actionValueIdx] : nullCell); // push "action value" to row
+                        if(this.hasPolicy){
+                            const predActionValueIdx = stateValueIdx + this.nStates + this.nActions; // because this.currentFrameData = [state0, state1, ..., stateN, action0, action1, ..., actionN, pred_action1, ..., pred_actionN]
+                            row.push(rowIndex < this.nActions ? this.currentFrameData[predActionValueIdx] : nullCell); // push "action value" to row
+                        }
                         rowIndex += 1;
                         rows.push(row);
                     }
