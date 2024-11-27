@@ -1,0 +1,65 @@
+# [Reachy2 from Pollen Robotics](https://www.pollen-robotics.com)
+
+# Requires installing extras packages
+# With pip: `pip install -e ".[reachy2]"`
+# With poetry: `poetry install --sync --extras "reachy2"`
+
+
+_target_: lerobot.common.robot_devices.robots.reachy2.ReachyRobotManipulatorconfig
+robot_type: reachy2
+
+
+leader_arm:
+  main:
+    _target_: lerobot.common.robot_devices.motors.feetech.FeetechMotorsBus
+    port: /dev/tty.usbmodem585A0077581
+    calibration_dir: .cache/calibration/so100
+    motors:
+      # name: (index, model)
+      shoulder_pan: [1, "sts3215"]
+      shoulder_lift: [2, "sts3215"]
+      elbow_flex: [3, "sts3215"]
+      wrist_flex: [4, "sts3215"]
+      wrist_roll: [5, "sts3215"]
+      gripper: [6, "sts3215"]
+
+cameras:
+  head_left:
+    _target_: lerobot.common.robot_devices.cameras.reachy2.ReachyCamera
+    name: teleop
+    host: 172.17.134.85
+    # host: 192.168.0.197
+    # host: localhost
+    port: 50065
+    fps: 30
+    width: 960
+    height: 720
+    image_type: left
+  # head_right:
+  #   _target_: lerobot.common.robot_devices.cameras.reachy2.ReachyCamera
+  #   name: teleop
+  #   host: 172.17.135.207
+  #   port: 50065
+  #   image_type: right
+  #   fps: 30
+  #   width: 960
+  #   height: 720
+  # torso_rgb:
+  #   _target_: lerobot.common.robot_devices.cameras.reachy2.ReachyCamera
+  #   name: depth
+  #   host: 172.17.135.207
+  #   # host: localhost
+  #   port: 50065
+  #   image_type: rgb
+  #   fps: 30
+  #   width: 1280
+  #   height: 720
+  # torso_depth:
+  #   _target_: lerobot.common.robot_devices.cameras.reachy2.ReachyCamera
+  #   name: depth
+  #   host: 172.17.135.207
+  #   port: 50065
+  #   image_type: depth
+  #   fps: 30
+  #   width: 1280
+  #   height: 720
