@@ -11,6 +11,7 @@ from pathlib import Path
 import torch
 import tqdm
 from PIL import Image
+import numpy as np 
 
 from lerobot.common.datasets.compute_stats import compute_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
@@ -282,6 +283,8 @@ def add_frame(dataset, observation, action):
     # Save images
     image_writer = dataset["image_writer"]
     for key in img_keys:
+        if not isinstance(observation[key], torch.Tensor):
+            observation[key] = torch.tensor(observation[key])  
         imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
         async_save_image(
             image_writer,
@@ -317,7 +320,6 @@ def delete_current_episode(dataset):
 def save_current_episode(dataset):
     episode_index = dataset["num_episodes"]
     ep_dict = dataset["current_episode"]
-    print(f"Keys({episode_index}): {ep_dict.keys()}")
     episodes_dir = dataset["episodes_dir"]
     rec_info_path = dataset["rec_info_path"]
 
@@ -390,6 +392,11 @@ def from_dataset_to_lerobot_dataset(dataset, play_sounds):
         ep_dict = torch.load(ep_path)
         ep_dicts.append(ep_dict)
     data_dict = concatenate_episodes(ep_dicts)
+    for key in data_dict.keys():
+        if isinstance(data_dict[key], torch.Tensor) or isinstance(data_dict[key], np.ndarray):
+            print(f"Key {key} has shape {data_dict[key].shape}")
+        else:
+            print(f"Key {key} has type {type(data_dict[key])} with length {len(data_dict[key])}")
 
     if video:
         image_keys = [key for key in data_dict if "image" in key]

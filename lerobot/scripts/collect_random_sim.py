@@ -40,18 +40,17 @@ def record_episode(
         fig, ax = plt.subplots()
         img = ax.imshow(observation[image_keys[0]][0])
     while frame_id < max_frames:
-        action = env.action_space.sample() # TODO : we had a weight to have bigger actions
+        action = env.action_space.sample()*10 # TODO : we had a weight to have bigger actions
         action_dict = {"action": torch.from_numpy(action)[0]}
-
-        for key in non_image_keys:
-            observation[key] = torch.from_numpy(observation[key])[0]
-
+            
         if display_cameras:
             img.set_data(observation[image_keys[0]][0])
             plt.draw()
             plt.pause(0.0001)
         
         observation, reward, done, truncated, info = env.step(action)
+        for key in non_image_keys:
+            observation[key] = torch.tensor(observation[key][0])
         if dataset is not None:
             video_dir =  dataset["videos_dir"]
             current_ep = dataset["num_episodes"]

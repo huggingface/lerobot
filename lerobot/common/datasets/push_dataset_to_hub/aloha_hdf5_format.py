@@ -197,8 +197,10 @@ def to_hf_dataset(data_dict, video) -> Dataset:
     features["frame_index"] = Value(dtype="int64", id=None)
     features["timestamp"] = Value(dtype="float32", id=None)
     features["next.done"] = Value(dtype="bool", id=None)
+    features["next.reward"] = Value(dtype="float32", id=None)
+    features["next.success"] = Value(dtype="bool", id=None)
     features["index"] = Value(dtype="int64", id=None)
-
+    
     hf_dataset = Dataset.from_dict(data_dict, features=Features(features))
     hf_dataset.set_transform(hf_transform_to_torch)
     return hf_dataset
