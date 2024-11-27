@@ -37,7 +37,7 @@ HALF_TURN_DEGREE = 180
 # See this link for STS3215 Memory Table:
 # https://docs.google.com/spreadsheets/d/1GVs7W1VS1PqdhA1nW-abeyAHhTUxKUdR/edit?usp=sharing&ouid=116566590112741600240&rtpof=true&sd=true
 # data_name: (address, size_byte)
-SCS_SERIES_CONTROL_TABLE = {
+STS_SERIES_CONTROL_TABLE = {
     "Model": (3, 2),
     "ID": (5, 1),
     "Baud_Rate": (6, 1),
@@ -87,6 +87,70 @@ SCS_SERIES_CONTROL_TABLE = {
     "Maximum_Acceleration": (85, 2),
 }
 
+SCS_SERIES_CONTROL_TABLE = {
+    "Model": (3, 2),
+    "ID": (5, 1),
+    "Baud_Rate": (6, 1),
+    "Return_Delay": (7, 1),
+    "Response_Status_Level": (8, 1),
+    "Min_Angle_Limit": (9, 2),
+    "Max_Angle_Limit": (11, 2),
+    "Max_Temperature_Limit": (13, 1),
+    "Max_Voltage_Limit": (14, 1),
+    "Min_Voltage_Limit": (15, 1),
+    "Max_Torque_Limit": (16, 2),
+    "Phase": (18, 1),
+    "Unloading_Condition": (19, 1),
+    "LED_Alarm_Condition": (20, 1),
+    "P_Coefficient": (21, 1),
+    "D_Coefficient": (22, 1),
+    "I_Coefficient": (23, 1),
+    "Minimum_Startup_Force": (24, 2),
+    "CW_Dead_Zone": (26, 1),
+    "CCW_Dead_Zone": (27, 1),
+    # "Protection_Current": (28, 2),
+    # "Angular_Resolution": (30, 1),
+    # "Offset": (31, 2),
+    # "Mode": (33, 1),
+    "Protective_Torque": (37, 1),
+    "Protection_Time": (38, 1),
+    "Torque_Enable": (40, 1),
+    "Acceleration": (41, 1),
+    "Goal_Position": (42, 2),
+    "Running_Time": (44, 2),
+    "Goal_Speed": (46, 2),
+    "Lock": (48, 1),
+    "Present_Position": (56, 2),
+    "Present_Speed": (58, 2),
+    "Present_Load": (60, 2),
+    "Present_Voltage": (62, 1),
+    "Present_Temperature": (63, 1),
+    "Sync_Write_Flag": (64, 1),
+    "Status": (65, 1),
+    "Moving": (66, 1),
+    # "Overload_Torque": (36, 1),
+    # "Speed_closed_loop_P_proportional_coefficient": (37, 1),
+    # "Over_Current_Protection_Time": (38, 1),
+    # "Velocity_closed_loop_I_integral_coefficient": (39, 1),
+    # "Acceleration": (41, 1),
+    # "Goal_Time": (44, 2),
+    # "Torque_Limit": (48, 2),
+    # "Present_Current": (69, 2),
+    # # Not in the Memory Table
+    # "Maximum_Acceleration": (85, 2),
+}
+
+STS_SERIES_BAUDRATE_TABLE = {
+    0: 1_000_000,
+    1: 500_000,
+    2: 250_000,
+    3: 128_000,
+    4: 115_200,
+    5: 57_600,
+    6: 38_400,
+    7: 19_200,
+}
+
 SCS_SERIES_BAUDRATE_TABLE = {
     0: 1_000_000,
     1: 500_000,
@@ -103,22 +167,31 @@ CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
 
 
 MODEL_CONTROL_TABLE = {
+    "sts_series": STS_SERIES_CONTROL_TABLE,
     "scs_series": SCS_SERIES_CONTROL_TABLE,
-    "sts3215": SCS_SERIES_CONTROL_TABLE,
+    "sts3215": STS_SERIES_CONTROL_TABLE,
+    "sts3250": STS_SERIES_CONTROL_TABLE,
+    "scs0009": SCS_SERIES_CONTROL_TABLE,
 }
 
 MODEL_RESOLUTION = {
-    "scs_series": 4096,
+    "sts_series": 4096,
+    "scs_series": 1024,
     "sts3215": 4096,
+    "sts3250": 4096,
+    "scs0009": 1024,
 }
 
 MODEL_BAUDRATE_TABLE = {
+    "sts_series": STS_SERIES_BAUDRATE_TABLE,
     "scs_series": SCS_SERIES_BAUDRATE_TABLE,
-    "sts3215": SCS_SERIES_BAUDRATE_TABLE,
+    "sts3215": STS_SERIES_BAUDRATE_TABLE,
+    "sts3250": STS_SERIES_BAUDRATE_TABLE,
+    "scs0009": SCS_SERIES_BAUDRATE_TABLE,
 }
 
 # High number of retries is needed for feetech compared to dynamixel motors.
-NUM_READ_RETRY = 20
+NUM_READ_RETRY = 50
 NUM_WRITE_RETRY = 20
 
 
@@ -273,12 +346,18 @@ class FeetechMotorsBus:
         self,
         port: str,
         motors: dict[str, tuple[int, str]],
+        group_sync_read: bool = True,
+        group_sync_write: bool = True,
+        protocol_version: int = 0,
         extra_model_control_table: dict[str, list[tuple]] | None = None,
         extra_model_resolution: dict[str, int] | None = None,
         mock=False,
     ):
         self.port = port
         self.motors = motors
+        self.group_sync_read = group_sync_read
+        self.group_sync_write = group_sync_write
+        self.protocol_version = protocol_version
         self.mock = mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
@@ -311,7 +390,7 @@ class FeetechMotorsBus:
             import scservo_sdk as scs
 
         self.port_handler = scs.PortHandler(self.port)
-        self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
+        self.packet_handler = scs.PacketHandler(self.protocol_version)
 
         try:
             if not self.port_handler.openPort():
@@ -335,7 +414,7 @@ class FeetechMotorsBus:
             import scservo_sdk as scs
 
         self.port_handler = scs.PortHandler(self.port)
-        self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
+        self.packet_handler = scs.PacketHandler(self.protocol_version)
 
         if not self.port_handler.openPort():
             raise OSError(f"Failed to open port '{self.port}'.")
@@ -661,6 +740,8 @@ class FeetechMotorsBus:
         else:
             import scservo_sdk as scs
 
+        scs.SCS_SETEND(self.protocol_version)
+
         return_list = True
         if not isinstance(motor_ids, list):
             return_list = False
@@ -699,6 +780,8 @@ class FeetechMotorsBus:
         else:
             import scservo_sdk as scs
 
+        scs.SCS_SETEND(self.protocol_version)
+
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 f"FeetechMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
@@ -721,31 +804,51 @@ class FeetechMotorsBus:
 
         assert_same_address(self.model_ctrl_table, models, data_name)
         addr, bytes = self.model_ctrl_table[model][data_name]
-        group_key = get_group_sync_key(data_name, motor_names)
 
-        if data_name not in self.group_readers:
-            # create new group reader
-            self.group_readers[group_key] = scs.GroupSyncRead(
-                self.port_handler, self.packet_handler, addr, bytes
-            )
+        if self.group_sync_read:
+            group_key = get_group_sync_key(data_name, motor_names)
+
+            if data_name not in self.group_readers:
+                # create new group reader
+                self.group_readers[group_key] = scs.GroupSyncRead(
+                    self.port_handler, self.packet_handler, addr, bytes
+                )
+                for idx in motor_ids:
+                    self.group_readers[group_key].addParam(idx)
+
+            for _ in range(NUM_READ_RETRY):
+                comm = self.group_readers[group_key].txRxPacket()
+                if comm == scs.COMM_SUCCESS:
+                    break
+
+            if comm != scs.COMM_SUCCESS:
+                raise ConnectionError(
+                    f"Read failed due to communication error on port {self.port} for group_key {group_key}: "
+                    f"{self.packet_handler.getTxRxResult(comm)}"
+                )
+
+            values = []
             for idx in motor_ids:
-                self.group_readers[group_key].addParam(idx)
+                value = self.group_readers[group_key].getData(idx, addr, bytes)
+                values.append(value)
+        else:
+            values = []
+            for idx in motor_ids:
+                if bytes == 1:
+                    value, comm, error = self.packet_handler.read1ByteTxRx(self.port_handler, idx, addr)
+                elif bytes == 2:
+                    value, comm, error = self.packet_handler.read2ByteTxRx(self.port_handler, idx, addr)
+                elif bytes == 4:
+                    value, comm, error = self.packet_handler.read4ByteTxRx(self.port_handler, idx, addr)
+                else:
+                    raise ValueError(bytes)
 
-        for _ in range(NUM_READ_RETRY):
-            comm = self.group_readers[group_key].txRxPacket()
-            if comm == scs.COMM_SUCCESS:
-                break
+                if comm != scs.COMM_SUCCESS:
+                    raise ConnectionError(self.packet_handler.getTxRxResult(comm))
+                elif error != 0:
+                    raise ConnectionError(self.packet_handler.getRxPacketError(error))
 
-        if comm != scs.COMM_SUCCESS:
-            raise ConnectionError(
-                f"Read failed due to communication error on port {self.port} for group_key {group_key}: "
-                f"{self.packet_handler.getTxRxResult(comm)}"
-            )
-
-        values = []
-        for idx in motor_ids:
-            value = self.group_readers[group_key].getData(idx, addr, bytes)
-            values.append(value)
+                values.append(value)
 
         values = np.array(values)
 
@@ -774,6 +877,8 @@ class FeetechMotorsBus:
             import tests.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
+
+        scs.SCS_SETEND(self.protocol_version)
 
         if not isinstance(motor_ids, list):
             motor_ids = [motor_ids]
@@ -811,6 +916,8 @@ class FeetechMotorsBus:
         else:
             import scservo_sdk as scs
 
+        scs.SCS_SETEND(self.protocol_version)
+
         if motor_names is None:
             motor_names = self.motor_names
 
@@ -836,27 +943,31 @@ class FeetechMotorsBus:
 
         assert_same_address(self.model_ctrl_table, models, data_name)
         addr, bytes = self.model_ctrl_table[model][data_name]
-        group_key = get_group_sync_key(data_name, motor_names)
 
-        init_group = data_name not in self.group_readers
-        if init_group:
-            self.group_writers[group_key] = scs.GroupSyncWrite(
-                self.port_handler, self.packet_handler, addr, bytes
-            )
+        if self.group_sync_write:
+            group_key = get_group_sync_key(data_name, motor_names)
 
-        for idx, value in zip(motor_ids, values, strict=True):
-            data = convert_to_bytes(value, bytes, self.mock)
+            init_group = data_name not in self.group_readers
             if init_group:
-                self.group_writers[group_key].addParam(idx, data)
-            else:
-                self.group_writers[group_key].changeParam(idx, data)
+                self.group_writers[group_key] = scs.GroupSyncWrite(
+                    self.port_handler, self.packet_handler, addr, bytes
+                )
 
-        comm = self.group_writers[group_key].txPacket()
-        if comm != scs.COMM_SUCCESS:
-            raise ConnectionError(
-                f"Write failed due to communication error on port {self.port} for group_key {group_key}: "
-                f"{self.packet_handler.getTxRxResult(comm)}"
-            )
+            for idx, value in zip(motor_ids, values, strict=True):
+                data = convert_to_bytes(value, bytes, self.mock)
+                if init_group:
+                    self.group_writers[group_key].addParam(idx, data)
+                else:
+                    self.group_writers[group_key].changeParam(idx, data)
+
+            comm = self.group_writers[group_key].txPacket()
+            if comm != scs.COMM_SUCCESS:
+                raise ConnectionError(
+                    f"Write failed due to communication error on port {self.port} for group_key {group_key}: "
+                    f"{self.packet_handler.getTxRxResult(comm)}"
+                )
+        else:
+            raise NotImplementedError()
 
         # log the number of seconds it took to write the data to the motors
         delta_ts_name = get_log_name("delta_timestamp_s", "write", data_name, motor_names)

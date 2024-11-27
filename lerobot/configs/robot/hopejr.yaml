@@ -1,0 +1,73 @@
+# [SO-100 robot arm](https://github.com/TheRobotStudio/SO-ARM100)
+
+# Requires installing extras packages
+# With pip: `pip install -e ".[feetech]"`
+# With poetry: `poetry install --sync --extras "feetech"`
+
+# See [tutorial](https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md)
+
+_target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
+robot_type: hopejr
+calibration_dir: .cache/calibration/hopejr
+
+# `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+# Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+# the number of motors in your follower arms.
+max_relative_target: null
+
+# leader_arms:
+#   main:
+#     _target_: lerobot.common.robot_devices.motors.feetech.FeetechMotorsBus
+#     port: /dev/tty.usbmodem585A0077581
+#     motors:
+#       # name: (index, model)
+#       shoulder_pan: [1, "sts3215"]
+#       shoulder_lift: [2, "sts3215"]
+#       elbow_flex: [3, "sts3215"]
+#       wrist_flex: [4, "sts3215"]
+#       wrist_roll: [5, "sts3215"]
+#       gripper: [6, "sts3215"]
+
+follower_arms:
+  main:
+    _target_: lerobot.common.robot_devices.motors.feetech.FeetechMotorsBus
+    port: /dev/tty.usbserial-2130
+    motors:
+      # name: (index, model)
+      shoulder_pitch: [1, "sts3250"]
+      shoulder_yaw: [2, "sts3215"] # TODO: sts3250
+      shoulder_roll: [3, "sts3215"] # TODO: sts3250
+      elbow_flex: [4, "sts3250"]
+      wrist_roll: [5, "sts3215"]
+      wrist_yaw: [6, "sts3215"]
+      wrist_pitch: [7, "sts3215"]
+      thumb_basel_rotation: [30, "scs0009"]
+      thumb_flexion: [27, "scs0009"]
+      thumb_pinky_side: [26, "scs0009"]
+      thumb_thumb_side: [28, "scs0009"]
+      index_flexor: [25, "scs0009"]
+      index_pinky_side: [31, "scs0009"]
+      index_thumb_side: [32, "scs0009"]
+      middle_flexor: [24, "scs0009"]
+      middle_pinky_side: [33, "scs0009"]
+      middle_thumb_side: [34, "scs0009"]
+      ring_flexor: [21, "scs0009"]
+      ring_pinky_side: [36, "scs0009"]
+      ring_thumb_side: [35, "scs0009"]
+      pinky_flexor: [23, "scs0009"]
+      pinky_pinky_side: [38, "scs0009"]
+      pinky_thumb_side: [37, "scs0009"]
+
+cameras:
+  laptop:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 0
+    fps: 30
+    width: 640
+    height: 480
+  phone:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 1
+    fps: 30
+    width: 640
+    height: 480

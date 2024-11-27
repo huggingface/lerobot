@@ -18,6 +18,10 @@ def convert_to_bytes(value, bytes):
     return value
 
 
+def SCS_SETEND(protocol_version):
+    del protocol_version
+
+
 def get_default_motor_values(motor_index):
     return {
         # Key (int) are from SCS_SERIES_CONTROL_TABLE
