@@ -45,11 +45,8 @@ from lerobot.common.utils.utils import (
 
 def create_balanced_sampler(dataset, cfg):
     # Creates a weighted sampler to handle class imbalance
-    labels = []
-    for item in dataset:
-        labels.append(item[cfg.training.label_key])
-    labels = torch.tensor(labels)
 
+    labels = torch.tensor([item[cfg.training.label_key] for item in dataset])
     _, counts = torch.unique(labels, return_counts=True)
     class_weights = 1.0 / counts.float()
     sample_weights = class_weights[labels]
