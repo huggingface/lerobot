@@ -19,6 +19,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python${PYTHON_VERSION} python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-dev \
     # Required for cv2.imshow(...) and other highgui operations
     libsm6 \
+    # Required for building PyAv \
+    pkg-config \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavfilter-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libswresample-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install ffmpeg build dependencies. See:

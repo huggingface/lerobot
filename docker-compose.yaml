@@ -9,8 +9,8 @@ services:
     tty: true
     volumes:
       # Necessary for display passthrough
-      - "/tmp/.X11-unix:/tmp/.X11-unix:rw"
-      - ~/.Xauthority:/root/.Xauthority
+      - "/tmp/.X11-unix:/tmp/.X11-unix"
+      - "~/.Xauthority:/root/.Xauthority"
       # Mount the current directory so users are not confused about data saving locations
       - ".:/lerobot"
       # Pass through USB devices
