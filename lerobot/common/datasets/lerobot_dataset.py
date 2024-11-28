@@ -298,7 +298,7 @@ class LeRobotDatasetMetadata:
                     f"Some cameras in your {robot.robot_type} robot don't have an fps matching the fps of your dataset."
                     "In this case, frames from lower fps cameras will be repeated to fill in the blanks."
                 )
-        elif robot_type is None or features is None:
+        elif features is None:
             raise ValueError(
                 "Dataset features must either come from a Robot or explicitly passed upon creation."
             )

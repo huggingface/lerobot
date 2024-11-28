@@ -84,7 +84,6 @@ python lerobot/scripts/control_robot.py record \
     --robot-path lerobot/configs/robot/aloha.yaml \
     --robot-overrides max_relative_target=null \
     --fps 30 \
-    --root data \
     --repo-id ${HF_USER}/aloha_test \
     --tags aloha tutorial \
     --warmup-time-s 5 \
@@ -104,7 +103,6 @@ echo ${HF_USER}/aloha_test
 If you didn't upload with `--push-to-hub 0`, you can also visualize it locally with:
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
-  --root data \
   --repo-id ${HF_USER}/aloha_test
 ```
 
@@ -119,7 +117,6 @@ python lerobot/scripts/control_robot.py replay \
     --robot-path lerobot/configs/robot/aloha.yaml \
     --robot-overrides max_relative_target=null \
     --fps 30 \
-    --root data \
     --repo-id ${HF_USER}/aloha_test \
     --episode 0
 ```
@@ -156,7 +153,6 @@ python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/aloha.yaml \
   --robot-overrides max_relative_target=null \
   --fps 30 \
-  --root data \
   --repo-id ${HF_USER}/eval_act_aloha_test \
   --tags aloha tutorial eval \
   --warmup-time-s 5 \

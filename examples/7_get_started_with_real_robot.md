@@ -778,7 +778,6 @@ Now run this to record 2 episodes:
 python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/koch.yaml \
   --fps 30 \
-  --root data \
   --repo-id ${HF_USER}/koch_test \
   --tags tutorial \
   --warmup-time-s 5 \
@@ -787,7 +786,7 @@ python lerobot/scripts/control_robot.py record \
   --num-episodes 2
 ```
 
-This will write your dataset locally to `{root}/{repo-id}` (e.g. `data/cadene/koch_test`) and push it on the hub at `https://huggingface.co/datasets/{HF_USER}/{repo-id}`. Your dataset will be automatically tagged with `LeRobot` for the community to find it easily, and you can also add custom tags (in this case `tutorial` for example).
+This will write your dataset locally to `~/.cache/huggingface/lerobot/{repo-id}` (e.g. `data/cadene/koch_test`) and push it on the hub at `https://huggingface.co/datasets/{HF_USER}/{repo-id}`. Your dataset will be automatically tagged with `LeRobot` for the community to find it easily, and you can also add custom tags (in this case `tutorial` for example).
 
 You can look for other LeRobot datasets on the hub by searching for `LeRobot` tags: https://huggingface.co/datasets?other=LeRobot
 
@@ -840,7 +839,6 @@ In the coming months, we plan to release a foundational model for robotics. We a
 You can visualize your dataset by running:
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
-  --root data \
   --repo-id ${HF_USER}/koch_test
 ```
 
@@ -858,7 +856,6 @@ To replay the first episode of the dataset you just recorded, run the following 
 python lerobot/scripts/control_robot.py replay \
   --robot-path lerobot/configs/robot/koch.yaml \
   --fps 30 \
-  --root data \
   --repo-id ${HF_USER}/koch_test \
   --episode 0
 ```
@@ -991,7 +988,6 @@ To this end, you can use the `record` function from [`lerobot/scripts/control_ro
 python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/koch.yaml \
   --fps 30 \
-  --root data \
   --repo-id ${HF_USER}/eval_koch_test \
   --tags tutorial eval \
   --warmup-time-s 5 \
@@ -1010,7 +1006,6 @@ As you can see, it's almost the same command as previously used to record your t
 You can then visualize your evaluation dataset by running the same command as before but with the new inference dataset as argument:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
-  --root data \
   --repo-id ${HF_USER}/eval_koch_test
 ```
 

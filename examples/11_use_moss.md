@@ -192,7 +192,6 @@ Record 2 episodes and upload your dataset to the hub:
 python lerobot/scripts/control_robot.py record \
     --robot-path lerobot/configs/robot/moss.yaml \
     --fps 30 \
-    --root data \
     --repo-id ${HF_USER}/moss_test \
     --tags moss tutorial \
     --warmup-time-s 5 \
@@ -212,7 +211,6 @@ echo ${HF_USER}/moss_test
 If you didn't upload with `--push-to-hub 0`, you can also visualize it locally with:
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
-  --root data \
   --repo-id ${HF_USER}/moss_test
 ```
 
@@ -223,7 +221,6 @@ Now try to replay the first episode on your robot:
 DATA_DIR=data python lerobot/scripts/control_robot.py replay \
     --robot-path lerobot/configs/robot/moss.yaml \
     --fps 30 \
-    --root data \
     --repo-id ${HF_USER}/moss_test \
     --episode 0
 ```
@@ -259,7 +256,6 @@ You can use the `record` function from [`lerobot/scripts/control_robot.py`](../l
 python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/moss.yaml \
   --fps 30 \
-  --root data \
   --repo-id ${HF_USER}/eval_act_moss_test \
   --tags moss tutorial eval \
   --warmup-time-s 5 \
