@@ -14,7 +14,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sed gawk grep curl wget zip unzip \
     tcpdump sysstat screen tmux \
     libglib2.0-0 libgl1 libglx-mesa0 \
-    speech-dispatcher \
     # python*-dev is required for building certain python dependencies
     python${PYTHON_VERSION} python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-dev \
     # Required for cv2.imshow(...) and other highgui operations
