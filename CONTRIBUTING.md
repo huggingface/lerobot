@@ -267,7 +267,7 @@ We use `pytest` in order to run the tests. From the root of the
 repository, here's how to run tests with `pytest` for the library:
 
 ```bash
-DATA_DIR="tests/data" python -m pytest -sv ./tests
+python -m pytest -sv ./tests
 ```
 
 
