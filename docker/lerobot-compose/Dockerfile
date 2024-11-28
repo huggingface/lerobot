@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsm6 \
     # Required for building PyAv \
     pkg-config \
+    python3-pip \
     libavcodec-dev \
     libavdevice-dev \
     libavfilter-dev \
