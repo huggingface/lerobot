@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libavutil-dev \
     libswscale-dev \
     libswresample-dev \
+    ffmpeg \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install ffmpeg build dependencies. See:
@@ -44,7 +45,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libvorbis-dev \
     meson \
     ninja-build \
-    pkg-config \
     texinfo \
     yasm \
     zlib1g-dev \
@@ -68,10 +68,17 @@ RUN echo 'if [ "$HOME" != "/root" ]; then ln -sf /root/.local/bin/poetry $HOME/.
 # Copy in pyproject
 WORKDIR /lerobot
 COPY pyproject.toml poetry.lock ./
+
 # Install dependencies, while using docker builkit cache to speed up future builds
 ARG POETRY_EXTRAS="none"
 RUN --mount=type=cache,target="${PIP_CACHE}" \
     poetry install --extras ${POETRY_EXTRAS}
+
+# Forcefully reinstall pyav using `--no-binary`, so it has to build itself using the
+# systems ffmpeg. This resolves a lockup bug that can happen when trying to open windows
+# with OpenCV, with `av` is imported and targets a different version of ffmpeg.
+# Tracking issue: https://github.com/opencv/opencv/issues/21952
+RUN pip3 install --no-binary pyav --force-reinstall pyav==12.3.0
 
 ENV PYTHONPATH="/lerobot:${PYTHONPATH}"
 
