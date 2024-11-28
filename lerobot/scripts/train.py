@@ -51,6 +51,40 @@ from lerobot.common.utils.utils import (
 from lerobot.scripts.eval import eval_policy
 
 
+class MultiEpochsDataLoader(torch.utils.data.DataLoader):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._DataLoader__initialized = False
+        if self.batch_sampler is None:
+            self.sampler = _RepeatSampler(self.sampler)
+        else:
+            self.batch_sampler = _RepeatSampler(self.batch_sampler)
+        self._DataLoader__initialized = True
+        self.iterator = super().__iter__()
+
+    def __len__(self):
+        return len(self.sampler) if self.batch_sampler is None else len(self.batch_sampler.sampler)
+
+    def __iter__(self):
+        for _ in range(len(self)):
+            yield next(self.iterator)
+
+
+class _RepeatSampler:
+    """Sampler that repeats forever.
+
+    Args:
+        sampler (Sampler)
+    """
+
+    def __init__(self, sampler):
+        self.sampler = sampler
+
+    def __iter__(self):
+        while True:
+            yield from iter(self.sampler)
+
+
 def make_optimizer_and_scheduler(cfg, policy):
     if cfg.policy.name == "act":
         optimizer_params_dicts = [
@@ -403,7 +437,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     else:
         shuffle = True
         sampler = None
-    dataloader = torch.utils.data.DataLoader(
+    dataloader = MultiEpochsDataLoader(
         offline_dataset,
         num_workers=cfg.training.num_workers,
         batch_size=cfg.training.batch_size,
