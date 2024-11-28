@@ -29,7 +29,6 @@ jobs:
     name: Pytest
     runs-on: ubuntu-latest
     env:
-      DATA_DIR: tests/data
       MUJOCO_GL: egl
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +69,6 @@ jobs:
     name: Pytest (minimal install)
     runs-on: ubuntu-latest
     env:
-      DATA_DIR: tests/data
       MUJOCO_GL: egl
     steps:
       - uses: actions/checkout@v4
@@ -108,7 +106,6 @@ jobs:
     name: End-to-end
     runs-on: ubuntu-latest
     env:
-      DATA_DIR: tests/data
       MUJOCO_GL: egl
     steps:
       - uses: actions/checkout@v4

@@ -208,10 +208,16 @@ def main():
         help="Episode to visualize.",
     )
     parser.add_argument(
+        "--local-files-only",
+        type=int,
+        default=0,
+        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
+    )
+    parser.add_argument(
         "--root",
         type=Path,
         default=None,
-        help="Root directory for a dataset stored locally (e.g. `--root data`). By default, the dataset will be loaded from hugging face cache folder, or downloaded from the hub if available.",
+        help="Root directory for the dataset stored locally (e.g. `--root data`). By default, the dataset will be loaded from hugging face cache folder, or downloaded from the hub if available.",
     )
     parser.add_argument(
         "--output-dir",
@@ -269,9 +275,10 @@ def main():
     kwargs = vars(args)
     repo_id = kwargs.pop("repo_id")
     root = kwargs.pop("root")
+    local_files_only = kwargs.pop("local_files_only")
 
     logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id, root=root, local_files_only=True)
+    dataset = LeRobotDataset(repo_id, root=root, local_files_only=local_files_only)
 
     visualize_dataset(dataset, **vars(args))
 

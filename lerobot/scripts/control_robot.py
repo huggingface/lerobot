@@ -73,7 +73,7 @@ To avoid resuming by deleting the dataset, use `--force-override 1`.
 
 - Train on this dataset with the ACT policy:
 ```bash
-DATA_DIR=data python lerobot/scripts/train.py \
+python lerobot/scripts/train.py \
     policy=act_koch_real \
     env=koch_real \
     dataset_repo_id=$USER/koch_pick_place_lego \
