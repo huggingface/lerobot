@@ -118,7 +118,10 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
             loss = criterion(outputs.logits, labels)
 
             # Track metrics
-            predictions = (torch.sigmoid(outputs.logits) > 0.5).float()
+            if model.config.num_classes == 2:
+                predictions = (torch.sigmoid(outputs.logits) > 0.5).float()
+            else:
+                predictions = torch.argmax(outputs.logits, dim=1)
             correct += (predictions == labels).sum().item()
             total += labels.size(0)
             running_loss += loss.item()
@@ -126,12 +129,16 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
             # Log sample predictions for visualization
             if len(samples) < num_samples_to_log:
                 for i in range(min(num_samples_to_log - len(samples), len(images))):
+                    if model.config.num_classes == 2:
+                        confidence = round(outputs.probabilities[i].item(), 3)
+                    else:
+                        confidence = [round(prob, 3) for prob in outputs.probabilities[i].tolist()]
                     samples.append(
                         {
                             "image": wandb.Image(images[i].cpu()),
                             "true_label": labels[i].item(),
                             "predicted": predictions[i].item(),
-                            "confidence": outputs.probabilities[i].item(),
+                            "confidence": confidence,
                         }
                     )
 
@@ -143,7 +150,7 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
         "accuracy": accuracy,
         "eval_s": time.perf_counter() - batch_start_time,
         "eval/prediction_samples": wandb.Table(
-            data=[[s["image"], s["true_label"], s["predicted"], f"{s['confidence']:.3f}"] for s in samples],
+            data=[[s["image"], s["true_label"], s["predicted"], f"{s['confidence']}"] for s in samples],
             columns=["Image", "True Label", "Predicted", "Confidence"],
         )
         if logger._cfg.wandb.enable
