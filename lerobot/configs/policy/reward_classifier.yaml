@@ -12,7 +12,6 @@ env:
   name: "classifier"
   task: "binary_classification"
 
-fps: 30  # Required by logger for video logging
 
 training:
   num_epochs: 5
