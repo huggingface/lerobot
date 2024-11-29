@@ -63,7 +63,7 @@ def build_features(mode: str) -> dict:
     return features
 
 
-def load_raw_dataset(zarr_path: Path, load_images: bool = True):
+def load_raw_dataset(zarr_path: Path):
     try:
         from lerobot.common.datasets.push_dataset_to_hub._diffusion_policy_replay_buffer import (
             ReplayBuffer as DiffusionPolicyReplayBuffer,
