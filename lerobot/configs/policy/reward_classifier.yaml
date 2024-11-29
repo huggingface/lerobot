@@ -38,7 +38,7 @@ policy:
   model_type: "cnn"
 
 wandb:
-  enable: true
+  enable: false
   project: "classifier-training"
   entity: "wandb_entity"
   job_name: "classifier_training_0"
