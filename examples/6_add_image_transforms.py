@@ -1,7 +1,7 @@
 """
 This script demonstrates how to use torchvision's image transformation with LeRobotDataset for data
 augmentation purposes. The transformations are passed to the dataset as an argument upon creation, and
-transforms are applied to the observation images before they are returned in the dataset's __get_item__.
+transforms are applied to the observation images before they are returned in the dataset's __getitem__.
 """
 
 from pathlib import Path
@@ -20,7 +20,7 @@ dataset = LeRobotDataset(dataset_repo_id)
 first_idx = dataset.episode_data_index["from"][0].item()
 
 # Get the frame corresponding to the first camera
-frame = dataset[first_idx][dataset.camera_keys[0]]
+frame = dataset[first_idx][dataset.meta.camera_keys[0]]
 
 
 # Define the transformations
@@ -36,7 +36,7 @@ transforms = v2.Compose(
 transformed_dataset = LeRobotDataset(dataset_repo_id, image_transforms=transforms)
 
 # Get a frame from the transformed dataset
-transformed_frame = transformed_dataset[first_idx][transformed_dataset.camera_keys[0]]
+transformed_frame = transformed_dataset[first_idx][transformed_dataset.meta.camera_keys[0]]
 
 # Create a directory to store output images
 output_dir = Path("outputs/image_transforms")
