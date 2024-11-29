@@ -36,7 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /ffmpeg
 RUN wget https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
 RUN tar -xvf ffmpeg*.tar.xz
-RUN mv ffmpeg-master-latest-linux64-gpl/bin/* /usr/local/bin/
+RUN mv ffmpeg*/bin/* /usr/local/bin/
 # Verify this ffmpeg build has support for libsvtav1, the default lerobot video decoder
 RUN ffmpeg -encoders | grep libsvtav1
 
