@@ -219,7 +219,9 @@ def record(
     policy = None
     device = None
     use_amp = None
-    extra_features = {"next.reward": {"dtype": "int64", "shape": (1,), "names": None}} if assign_rewards else None
+    extra_features = (
+        {"next.reward": {"dtype": "int64", "shape": (1,), "names": None}} if assign_rewards else None
+    )
 
     if single_task:
         task = single_task
@@ -260,7 +262,7 @@ def record(
             use_videos=video,
             image_writer_processes=num_image_writer_processes,
             image_writer_threads=num_image_writer_threads_per_camera * len(robot.cameras),
-            features=features,
+            features=extra_features,
         )
 
     if not robot.is_connected:
