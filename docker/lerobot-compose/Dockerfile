@@ -28,37 +28,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libavutil-dev \
     libswscale-dev \
     libswresample-dev \
-    ffmpeg \
+    # Symbolic link to python3 \
+    python-is-python3 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install ffmpeg build dependencies. See:
-# https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu
-# TODO(aliberts): create image to build dependencies from source instead
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    autoconf automake yasm \
-    libass-dev \
-    libfreetype6-dev \
-    libgnutls28-dev \
-    libunistring-dev \
-    libmp3lame-dev \
-    libtool \
-    libvorbis-dev \
-    meson \
-    ninja-build \
-    texinfo \
-    yasm \
-    zlib1g-dev \
-    nasm \
-    libx264-dev \
-    libx265-dev libnuma-dev \
-    libvpx-dev \
-    libfdk-aac-dev \
-    libopus-dev \
-    libsvtav1-dev libsvtav1enc-dev libsvtav1dec-dev \
-    libdav1d-dev
-
-# Setup `python`
-RUN ln -s /usr/bin/python3 /usr/bin/python
+# Install pre-built ffmpeg binaries with support for libsvtav1
+WORKDIR /ffmpeg
+RUN wget https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+RUN tar -xvf ffmpeg*.tar.xz
+RUN mv ffmpeg-master-latest-linux64-gpl/bin/* /usr/local/bin/
+# Verify this ffmpeg build has support for libsvtav1, the default lerobot video decoder
+RUN ffmpeg -encoders | grep libsvtav1
 
 # Install poetry
 RUN curl -sSL https://install.python-poetry.org | python -
@@ -70,23 +50,12 @@ RUN poetry config virtualenvs.in-project true
 # Copy in pyproject
 WORKDIR /lerobot
 COPY pyproject.toml poetry.lock ./
-
 # Install dependencies, while using docker builkit cache to speed up future builds
 ARG POETRY_EXTRAS="none"
 RUN --mount=type=cache,target="${PIP_CACHE}" \
     poetry install --extras ${POETRY_EXTRAS}
-
-# Forcefully reinstall pyav using `--no-binary`, so it has to build itself using the
-# systems ffmpeg. This resolves a lockup bug that can happen when trying to open windows
-# with OpenCV, with `av` is imported and targets a different version of ffmpeg.
-# Tracking issue: https://github.com/opencv/opencv/issues/21952
-RUN pip3 install --no-binary pyav --force-reinstall pyav==12.3.0
-
 ENV PYTHONPATH="/lerobot:${PYTHONPATH}"
 
 # Set the entrypoint such that users enter the container with the poetry environment
 ENTRYPOINT ["poetry", "run"]
 CMD ["bash"]
-
-# Set EGL as the rendering backend for MuJoCo
-ENV MUJOCO_GL="egl"
