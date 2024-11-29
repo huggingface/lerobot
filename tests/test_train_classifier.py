@@ -1,4 +1,3 @@
-# test_train_classifier.py
 import os
 import tempfile
 from pathlib import Path
