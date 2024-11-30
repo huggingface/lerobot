@@ -29,7 +29,6 @@ from unittest.mock import patch
 
 import pytest
 
-from lerobot.common.datasets.populate_dataset import add_frame, init_dataset
 from lerobot.common.logger import Logger
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.utils.utils import init_hydra_config
@@ -93,8 +92,9 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
         mock_calibration_dir(calibration_dir)
         overrides.append(f"calibration_dir={calibration_dir}")
 
-    root = Path(tmpdir) / "data"
     repo_id = "lerobot/debug"
+    root = Path(tmpdir) / "data" / repo_id
+    single_task = "Do something."
 
     robot = make_robot(robot_type, overrides=overrides, mock=mock)
     record(
@@ -102,6 +102,7 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
         fps=30,
         root=root,
         repo_id=repo_id,
+        single_task=single_task,
         warmup_time_s=1,
         episode_time_s=1,
         num_episodes=2,
@@ -132,17 +133,18 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     env_name = "koch_real"
     policy_name = "act_koch_real"
 
-    root = tmpdir / "data"
     repo_id = "lerobot/debug"
-    eval_repo_id = "lerobot/eval_debug"
+    root = tmpdir / "data" / repo_id
+    single_task = "Do something."
 
     robot = make_robot(robot_type, overrides=overrides, mock=mock)
     dataset = record(
         robot,
         root,
         repo_id,
+        single_task,
         fps=1,
-        warmup_time_s=1,
+        warmup_time_s=0.5,
         episode_time_s=1,
         reset_time_s=1,
         num_episodes=2,
@@ -153,7 +155,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         display_cameras=False,
         play_sounds=False,
     )
-    assert dataset.num_episodes == 2
+    assert dataset.meta.total_episodes == 2
     assert len(dataset) == 2
 
     replay(robot, episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False)
@@ -191,7 +193,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         overrides=overrides,
     )
 
-    policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.stats)
+    policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.meta.stats)
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
     out_dir = tmpdir / "logger"
     logger = Logger(cfg, out_dir, wandb_job_name="debug")
@@ -225,10 +227,14 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     else:
         num_image_writer_processes = 0
 
-    record(
+    eval_repo_id = "lerobot/eval_debug"
+    eval_root = tmpdir / "data" / eval_repo_id
+
+    dataset = record(
         robot,
-        root,
+        eval_root,
         eval_repo_id,
+        single_task,
         pretrained_policy_name_or_path,
         warmup_time_s=1,
         episode_time_s=1,
@@ -265,51 +271,36 @@ def test_resume_record(tmpdir, request, robot_type, mock):
 
     robot = make_robot(robot_type, overrides=overrides, mock=mock)
 
-    root = Path(tmpdir) / "data"
     repo_id = "lerobot/debug"
+    root = Path(tmpdir) / "data" / repo_id
+    single_task = "Do something."
 
-    dataset = record(
-        robot,
-        root,
-        repo_id,
-        fps=1,
-        warmup_time_s=0,
-        episode_time_s=1,
-        num_episodes=1,
-        push_to_hub=False,
-        video=False,
-        display_cameras=False,
-        play_sounds=False,
-        run_compute_stats=False,
-    )
-    assert len(dataset) == 1, "`dataset` should contain only 1 frame"
+    record_kwargs = {
+        "robot": robot,
+        "root": root,
+        "repo_id": repo_id,
+        "single_task": single_task,
+        "fps": 1,
+        "warmup_time_s": 0,
+        "episode_time_s": 1,
+        "push_to_hub": False,
+        "video": False,
+        "display_cameras": False,
+        "play_sounds": False,
+        "run_compute_stats": False,
+        "local_files_only": True,
+        "num_episodes": 1,
+    }
 
-    init_dataset_return_value = {}
+    dataset = record(**record_kwargs)
+    assert len(dataset) == 1, f"`dataset` should contain 1 frame, not {len(dataset)}"
 
-    def wrapped_init_dataset(*args, **kwargs):
-        nonlocal init_dataset_return_value
-        init_dataset_return_value = init_dataset(*args, **kwargs)
-        return init_dataset_return_value
+    with pytest.raises(FileExistsError):
+        # Dataset already exists, but resume=False by default
+        record(**record_kwargs)
 
-    with patch("lerobot.scripts.control_robot.init_dataset", wraps=wrapped_init_dataset):
-        dataset = record(
-            robot,
-            root,
-            repo_id,
-            fps=1,
-            warmup_time_s=0,
-            episode_time_s=1,
-            num_episodes=2,
-            push_to_hub=False,
-            video=False,
-            display_cameras=False,
-            play_sounds=False,
-            run_compute_stats=False,
-        )
-        assert len(dataset) == 2, "`dataset` should contain only 1 frame"
-        assert (
-            init_dataset_return_value["num_episodes"] == 2
-        ), "`init_dataset` should load the previous episode"
+    dataset = record(**record_kwargs, resume=True)
+    assert len(dataset) == 2, f"`dataset` should contain 2 frames, not {len(dataset)}"
 
 
 @pytest.mark.parametrize("robot_type, mock", [("koch", True)])
@@ -328,23 +319,22 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
         overrides = []
 
     robot = make_robot(robot_type, overrides=overrides, mock=mock)
-    with (
-        patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener,
-        patch("lerobot.common.robot_devices.control_utils.add_frame", wraps=add_frame) as mock_add_frame,
-    ):
+    with patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener:
         mock_events = {}
         mock_events["exit_early"] = True
         mock_events["rerecord_episode"] = True
         mock_events["stop_recording"] = False
         mock_listener.return_value = (None, mock_events)
 
-        root = Path(tmpdir) / "data"
         repo_id = "lerobot/debug"
+        root = Path(tmpdir) / "data" / repo_id
+        single_task = "Do something."
 
         dataset = record(
             robot,
             root,
             repo_id,
+            single_task,
             fps=1,
             warmup_time_s=0,
             episode_time_s=1,
@@ -358,7 +348,6 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
 
         assert not mock_events["rerecord_episode"], "`rerecord_episode` wasn't properly reset to False"
         assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
-        assert mock_add_frame.call_count == 2, "`add_frame` should have been called 2 times"
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"
 
 
@@ -378,23 +367,22 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
         overrides = []
 
     robot = make_robot(robot_type, overrides=overrides, mock=mock)
-    with (
-        patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener,
-        patch("lerobot.common.robot_devices.control_utils.add_frame", wraps=add_frame) as mock_add_frame,
-    ):
+    with patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener:
         mock_events = {}
         mock_events["exit_early"] = True
         mock_events["rerecord_episode"] = False
         mock_events["stop_recording"] = False
         mock_listener.return_value = (None, mock_events)
 
-        root = Path(tmpdir) / "data"
         repo_id = "lerobot/debug"
+        root = Path(tmpdir) / "data" / repo_id
+        single_task = "Do something."
 
         dataset = record(
             robot,
             fps=2,
             root=root,
+            single_task=single_task,
             repo_id=repo_id,
             warmup_time_s=0,
             episode_time_s=1,
@@ -407,7 +395,6 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
         )
 
         assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
-        assert mock_add_frame.call_count == 1, "`add_frame` should have been called 1 time"
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"
 
 
@@ -429,23 +416,22 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
         overrides = []
 
     robot = make_robot(robot_type, overrides=overrides, mock=mock)
-    with (
-        patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener,
-        patch("lerobot.common.robot_devices.control_utils.add_frame", wraps=add_frame) as mock_add_frame,
-    ):
+    with patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener:
         mock_events = {}
         mock_events["exit_early"] = True
         mock_events["rerecord_episode"] = False
         mock_events["stop_recording"] = True
         mock_listener.return_value = (None, mock_events)
 
-        root = Path(tmpdir) / "data"
         repo_id = "lerobot/debug"
+        root = Path(tmpdir) / "data" / repo_id
+        single_task = "Do something."
 
         dataset = record(
             robot,
             root,
             repo_id,
+            single_task=single_task,
             fps=1,
             warmup_time_s=0,
             episode_time_s=1,
@@ -459,5 +445,4 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
         )
 
         assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
-        assert mock_add_frame.call_count == 1, "`add_frame` should have been called 1 time"
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"

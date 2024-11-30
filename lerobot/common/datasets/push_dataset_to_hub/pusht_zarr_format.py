@@ -27,12 +27,12 @@ from PIL import Image as PILImage
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
 from lerobot.common.datasets.push_dataset_to_hub.utils import (
+    calculate_episode_data_index,
     concatenate_episodes,
     get_default_encoding,
     save_images_concurrently,
 )
 from lerobot.common.datasets.utils import (
-    calculate_episode_data_index,
     hf_transform_to_torch,
 )
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
