@@ -209,7 +209,7 @@ test-act-ete-train-accelerate-amp:
 		policy.chunk_size=20 \
 		training.batch_size=2 \
 		hydra.run.dir=tests/outputs/act_amp/ \
-		training.image_transforms.enable=true 
+		training.image_transforms.enable=true
 
 test-act-ete-eval-accelerate-amp:
 	python -m accelerate.commands.launch --cpu --mixed-precision=fp16 lerobot/scripts/eval.py \
@@ -217,4 +217,4 @@ test-act-ete-eval-accelerate-amp:
 		eval.n_episodes=1 \
 		eval.batch_size=1 \
 		env.episode_length=8 \
-		device=$(DEVICE) 
+		device=$(DEVICE)

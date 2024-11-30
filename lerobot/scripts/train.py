@@ -15,13 +15,13 @@
 # limitations under the License.
 import logging
 import time
-from typing import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
 from pprint import pformat
 from threading import Lock
+from typing import Callable
 
 import hydra
 import numpy as np
@@ -47,8 +47,8 @@ from lerobot.common.utils.utils import (
     get_safe_torch_device,
     init_hydra_config,
     init_logging,
-    set_global_seed,
     is_launched_with_accelerate,
+    set_global_seed,
 )
 from lerobot.scripts.eval import eval_policy
 
@@ -249,7 +249,9 @@ def log_eval_info(logger, info, step, cfg, dataset, is_online, accelerator: Call
     logger.log_dict(info, step, mode="eval")
 
 
-def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None, accelerator: Callable = None):
+def train(
+    cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None, accelerator: Callable = None
+):
     if out_dir is None:
         raise NotImplementedError()
     if job_name is None:
@@ -349,7 +351,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     eval_env = None
     if cfg.training.eval_freq > 0:
         logging.info("make_env")
-        eval_env = make_env(cfg)
+        eval_env = make_env(cfg, out_dir=out_dir)
 
     logging.info("make_policy")
     policy = make_policy(
@@ -388,26 +390,40 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
         if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
-            with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp and not accelerator else nullcontext():
+            logging.info(f"max_episodes_rendered {cfg.eval.max_episodes_rendered}")
+            with (
+                torch.no_grad(),
+                torch.autocast(device_type=device.type) if cfg.use_amp and not accelerator else nullcontext(),
+            ):
                 assert eval_env is not None
                 if accelerator:
                     accelerator.wait_for_everyone()
+                logging.info("eval_policy")
                 eval_info = eval_policy(
                     eval_env,
                     policy if not accelerator else accelerator.unwrap_model(policy, keep_fp32_wrapper=True),
                     cfg.eval.n_episodes,
                     videos_dir=Path(out_dir) / "eval" / f"videos_step_{step_identifier}",
-                    max_episodes_rendered=4,
+                    max_episodes_rendered=cfg.eval.max_episodes_rendered,
                     start_seed=cfg.seed,
                 )
-            log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_online=is_online, accelerator=accelerator)
+            log_eval_info(
+                logger,
+                eval_info["aggregated"],
+                step,
+                cfg,
+                offline_dataset,
+                is_online=is_online,
+                accelerator=accelerator,
+            )
             if cfg.wandb.enable:
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
 
         if cfg.training.save_checkpoint and (
             step % cfg.training.save_freq == 0
-            or step == cfg.training.offline_steps + cfg.training.online_steps and (not accelerator or accelerator.is_main_process)
+            or step == cfg.training.offline_steps + cfg.training.online_steps
+            and (not accelerator or accelerator.is_main_process)
         ):
             logging.info(f"Checkpoint policy after step {step}")
             # Note: Save with step as the identifier, and format it to have at least 6 digits but more if
@@ -688,12 +704,13 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 def train_cli(cfg: dict):
     if is_launched_with_accelerate():
         import accelerate
+
         accelerator = accelerate.Accelerator()
         train(
             cfg,
             out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
             job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
-            accelerator=accelerator
+            accelerator=accelerator,
         )
     else:
         train(

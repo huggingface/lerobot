@@ -21,7 +21,7 @@ import random
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Generator, Callable
+from typing import Any, Callable, Generator
 
 import hydra
 import numpy as np
@@ -138,6 +138,7 @@ def init_logging(accelerator: Callable = None):
         logging.info(f"Setting logging level on non-main process {accelerator.process_index} to WARNING.")
         logging.getLogger().setLevel(logging.WARNING)
 
+
 def format_big_number(num, precision=0):
     suffixes = ["", "K", "M", "B", "T", "Q"]
     divisor = 1000.0
@@ -224,4 +225,4 @@ def log_say(text, play_sounds, blocking=False):
 
 
 def is_launched_with_accelerate():
-    return any([k in os.environ for k in ["ACCELERATE_PROCESS_INDEX", "ACCELERATE_MIXED_PRECISION", "ACCELERATE_USE_GPU"]])
+    return "ACCELERATE_MIXED_PRECISION" in os.environ

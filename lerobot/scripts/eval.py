@@ -44,7 +44,6 @@ https://huggingface.co/lerobot/diffusion_pusht/tree/main.
 import argparse
 import json
 import logging
-import os
 import threading
 import time
 from contextlib import nullcontext
@@ -76,8 +75,8 @@ from lerobot.common.utils.utils import (
     init_hydra_config,
     init_logging,
     inside_slurm,
-    set_global_seed,
     is_launched_with_accelerate,
+    set_global_seed,
 )
 
 
@@ -495,12 +494,17 @@ def main(
     if accelerator:
         policy = accelerator.prepare_model(policy).to(device)
 
-    with torch.no_grad(), torch.autocast(device_type=device.type) if hydra_cfg.use_amp and accelerator is None else nullcontext():
+    with (
+        torch.no_grad(),
+        torch.autocast(device_type=device.type)
+        if hydra_cfg.use_amp and accelerator is None
+        else nullcontext(),
+    ):
         info = eval_policy(
             env,
             policy if accelerator is None else accelerator.unwrap_model(policy, keep_fp32_wrapper=True),
             hydra_cfg.eval.n_episodes,
-            max_episodes_rendered=10,
+            max_episodes_rendered=hydra_cfg.eval.max_episodes_rendered,
             videos_dir=Path(out_dir) / "videos",
             start_seed=hydra_cfg.seed,
         )
@@ -584,6 +588,7 @@ if __name__ == "__main__":
         )
         if is_launched_with_accelerate():
             import accelerate
+
             accelerator = accelerate.Accelerator()
             main(
                 pretrained_policy_path=pretrained_policy_path,

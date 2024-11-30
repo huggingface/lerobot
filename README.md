@@ -293,7 +293,7 @@ Note: For efficiency, during training every checkpoint is evaluated on a low num
 
 ### Distributed training end evaluation on multiple GPUs/Nodes:
 
-We use the [accelerate](https://huggingface.co/docs/accelerate/basic_tutorials/launch#using-accelerate-launch) library to handle training/evaluating on multiple GPUs/nodes. 
+We use the [accelerate](https://huggingface.co/docs/accelerate/basic_tutorials/launch#using-accelerate-launch) library to handle training/evaluating on multiple GPUs/nodes.
 
 To perform distributed training you should use the `python -m accelerate.commands.launch` command. Here’s an example of launching a training script across 2 GPUs :
 
