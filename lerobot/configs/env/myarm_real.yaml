@@ -1,6 +1,6 @@
 # @package _global_
 
-fps: 30
+fps: 20
 
 env:
   name: myarm
