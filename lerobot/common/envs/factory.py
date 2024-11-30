@@ -45,12 +45,6 @@ def make_env(cfg: DictConfig, n_envs: int | None = None, out_dir: str = "") -> g
 
     if cfg.env.get("episode_length"):
         gym_kwgs["max_episode_steps"] = cfg.env.episode_length
-
-    # e.g. in case the evaluation on a remote server
-    disable_rendering = cfg.env.get("disable_rendering", False)
-    # if disable_rendering:
-    #     print(f"Disabeling video rendering.")
-    #     disable_view_window()
         
     # batched version of the env that returns an observation of shape (b, c)
     env_cls = gym.vector.AsyncVectorEnv if cfg.eval.use_async_envs else gym.vector.SyncVectorEnv
@@ -62,20 +56,3 @@ def make_env(cfg: DictConfig, n_envs: int | None = None, out_dir: str = "") -> g
     )
 
     return env
-
-# get_gym_env_func(gym_handle, disable_env_checker=True, gym_kwgs=gym_kwgs, disable_rendering=disable_rendering, gym_video_path=f"{out_dir}/videos")
-
-# def disable_view_window():
-#     org_constructor = gym.envs.classic_control.rendering.Viewer.__init__
-
-#     def constructor(self, *args, **kwargs):
-#         org_constructor(self, *args, **kwargs)
-#         self.window.set_visible(visible=False)
-
-#     gym.envs.classic_control.rendering.Viewer.__init__ = constructor
-
-# def get_gym_env_func(gym_handle: str, disable_env_checker: bool, gym_kwgs: Dict[str, Any], disable_rendering: bool = False, gym_video_path: str = ""):
-#     if disable_rendering:
-#         return lambda: gym.wrappers.RecordVideo(gym.make(gym_handle, disable_env_checker=disable_env_checker, **gym_kwgs), gym_video_path, episode_trigger=lambda t: False)
-#     else:
-#     return lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs)
