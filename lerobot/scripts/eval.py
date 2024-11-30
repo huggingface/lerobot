@@ -77,6 +77,7 @@ from lerobot.common.utils.utils import (
     init_logging,
     inside_slurm,
     set_global_seed,
+    is_launched_with_accelerate,
 )
 
 
@@ -491,10 +492,13 @@ def main(
     assert isinstance(policy, nn.Module)
     policy.eval()
 
-    with torch.no_grad(), torch.autocast(device_type=device.type) if hydra_cfg.use_amp else nullcontext():
+    if accelerator:
+        policy = accelerator.prepare_model(policy).to(device)
+
+    with torch.no_grad(), torch.autocast(device_type=device.type) if hydra_cfg.use_amp and accelerator is None else nullcontext():
         info = eval_policy(
             env,
-            policy,
+            policy if accelerator is None else accelerator.unwrap_model(policy, keep_fp32_wrapper=True),
             hydra_cfg.eval.n_episodes,
             max_episodes_rendered=10,
             videos_dir=Path(out_dir) / "videos",
@@ -578,9 +582,18 @@ if __name__ == "__main__":
         pretrained_policy_path = get_pretrained_policy_path(
             args.pretrained_policy_name_or_path, revision=args.revision
         )
-
-        main(
-            pretrained_policy_path=pretrained_policy_path,
-            out_dir=args.out_dir,
-            config_overrides=args.overrides,
-        )
+        if is_launched_with_accelerate():
+            import accelerate
+            accelerator = accelerate.Accelerator()
+            main(
+                pretrained_policy_path=pretrained_policy_path,
+                out_dir=args.out_dir,
+                config_overrides=args.overrides,
+                accelerator=accelerator,
+            )
+        else:
+            main(
+                pretrained_policy_path=pretrained_policy_path,
+                out_dir=args.out_dir,
+                config_overrides=args.overrides,
+            )

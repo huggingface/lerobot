@@ -221,3 +221,7 @@ def log_say(text, play_sounds, blocking=False):
 
     if play_sounds:
         say(text, blocking)
+
+
+def is_launched_with_accelerate():
+    return any([k in os.environ for k in ["ACCELERATE_PROCESS_INDEX", "ACCELERATE_MIXED_PRECISION", "ACCELERATE_USE_GPU"]])
