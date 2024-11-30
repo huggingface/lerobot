@@ -44,6 +44,7 @@ https://huggingface.co/lerobot/diffusion_pusht/tree/main.
 import argparse
 import json
 import logging
+import os
 import threading
 import time
 from contextlib import nullcontext
@@ -447,6 +448,7 @@ def main(
     hydra_cfg_path: str | None = None,
     out_dir: str | None = None,
     config_overrides: list[str] | None = None,
+    accelerator: Callable = None,
 ):
     assert (pretrained_policy_path is None) ^ (hydra_cfg_path is None)
     if pretrained_policy_path is not None:
@@ -468,7 +470,7 @@ def main(
         out_dir = f"outputs/eval/{dt.now().strftime('%Y-%m-%d/%H-%M-%S')}_{hydra_cfg.env.name}_{hydra_cfg.policy.name}"
 
     # Check device is available
-    device = get_safe_torch_device(hydra_cfg.device, log=True)
+    device = get_safe_torch_device(hydra_cfg.device, log=True, accelerator=accelerator)
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True

@@ -66,6 +66,11 @@
   </tr>
 </table>
 
+### News
+
+* **1-11-2024**: we support the `accelerate` library for distributed training and evaluation on multiple GPUs.
+
+
 ### Acknowledgment
 
 - Thanks to Tony Zaho, Zipeng Fu and colleagues for open sourcing ACT policy, ALOHA environments and datasets. Ours are adapted from [ALOHA](https://tonyzhaozh.github.io/aloha) and [Mobile ALOHA](https://mobile-aloha.github.io).
@@ -285,6 +290,29 @@ A link to the wandb logs for the run will also show up in yellow in your termina
 ![](media/wandb.png)
 
 Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. You may use `eval.n_episodes=500` to evaluate on more episodes than the default. Or, after training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
+
+### Distributed training end evaluation on multiple GPUs/Nodes:
+
+We use the [accelerate](https://huggingface.co/docs/accelerate/basic_tutorials/launch#using-accelerate-launch) library to handle training/evaluating on multiple GPUs/nodes. 
+
+To perform distributed training you should use the `python -m accelerate.commands.launch` command. Here’s an example of launching a training script across 2 GPUs :
+
+```bash
+accelerate launch --num_processes=2 lerobot/scripts/train.py \
+    policy=act \
+    env=aloha \
+    env.task=AlohaTransferCube-v0 \
+    dataset_repo_id=lerobot/aloha_sim_transfer_cube_human \
+```
+Check out [example 7](./examples/12_train_policy_accelerate.py)
+
+(Note: Make sure you accelerate is installed otherwise do: `pip install accelerate`)
+
+And to evaluate a policy you can use the following:
+```
+accelerate launch --num_processes=1 --mixed_precision=fp16 lerobot/scripts/eval.py -p lerobot/diffusion_pusht
+```
+
 
 #### Reproduce state-of-the-art (SOTA)
 

@@ -30,6 +30,8 @@ test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-default-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-act-pusht-tutorial
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-accelerate-amp
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval-accelerate-amp
 
 test-act-ete-train:
 	python lerobot/scripts/train.py \
@@ -188,3 +190,31 @@ test-act-pusht-tutorial:
 		training.image_transforms.enable=true \
 		hydra.run.dir=tests/outputs/act_pusht/
 	rm lerobot/configs/policy/created_by_Makefile.yaml
+
+
+test-act-ete-train-accelerate-amp:
+	python -m accelerate.commands.launch --cpu --mixed-precision=fp16 lerobot/scripts/train.py \
+		policy=act \
+		policy.dim_model=64 \
+		env=aloha \
+		wandb.enable=False \
+		training.offline_steps=2 \
+		training.online_steps=0 \
+		eval.n_episodes=1 \
+		eval.batch_size=1 \
+		device=$(DEVICE) \
+		training.save_checkpoint=true \
+		training.save_freq=2 \
+		policy.n_action_steps=20 \
+		policy.chunk_size=20 \
+		training.batch_size=2 \
+		hydra.run.dir=tests/outputs/act_amp/ \
+		training.image_transforms.enable=true 
+
+test-act-ete-eval-accelerate-amp:
+	python -m accelerate.commands.launch --cpu --mixed-precision=fp16 lerobot/scripts/eval.py \
+		-p tests/outputs/act_amp/checkpoints/000002/pretrained_model \
+		eval.n_episodes=1 \
+		eval.batch_size=1 \
+		env.episode_length=8 \
+		device=$(DEVICE) 
