@@ -84,7 +84,6 @@ python lerobot/scripts/control_robot.py record \
     --robot-path lerobot/configs/robot/aloha.yaml \
     --robot-overrides max_relative_target=null \
     --fps 30 \
-    --root data \
     --repo-id ${HF_USER}/aloha_test \
     --tags aloha tutorial \
     --warmup-time-s 5 \
@@ -104,7 +103,6 @@ echo ${HF_USER}/aloha_test
 If you didn't upload with `--push-to-hub 0`, you can also visualize it locally with:
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
-  --root data \
   --repo-id ${HF_USER}/aloha_test
 ```
 
@@ -119,7 +117,6 @@ python lerobot/scripts/control_robot.py replay \
     --robot-path lerobot/configs/robot/aloha.yaml \
     --robot-overrides max_relative_target=null \
     --fps 30 \
-    --root data \
     --repo-id ${HF_USER}/aloha_test \
     --episode 0
 ```
@@ -128,7 +125,7 @@ python lerobot/scripts/control_robot.py replay \
 
 To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
-DATA_DIR=data python lerobot/scripts/train.py \
+python lerobot/scripts/train.py \
   dataset_repo_id=${HF_USER}/aloha_test \
   policy=act_aloha_real \
   env=aloha_real \
@@ -144,7 +141,6 @@ Let's explain it:
 3. We provided an environment as argument with `env=aloha_real`. This loads configurations from [`lerobot/configs/env/aloha_real.yaml`](../lerobot/configs/env/aloha_real.yaml). Note: this yaml defines 18 dimensions for the `state_dim` and `action_dim`, corresponding to 18 motors, not 14 motors as used in previous Aloha work. This is because, we include the `shoulder_shadow` and `elbow_shadow` motors for simplicity.
 4. We provided `device=cuda` since we are training on a Nvidia GPU.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
-6. We added `DATA_DIR=data` to access your dataset stored in your local `data` directory. If you dont provide `DATA_DIR`, your dataset will be downloaded from Hugging Face hub to your cache folder `$HOME/.cache/hugginface`. In future versions of `lerobot`, both directories will be in sync.
 
 Training should take several hours. You will find checkpoints in `outputs/train/act_aloha_test/checkpoints`.
 
@@ -156,7 +152,6 @@ python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/aloha.yaml \
   --robot-overrides max_relative_target=null \
   --fps 30 \
-  --root data \
   --repo-id ${HF_USER}/eval_act_aloha_test \
   --tags aloha tutorial eval \
   --warmup-time-s 5 \

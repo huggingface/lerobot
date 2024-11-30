@@ -29,7 +29,6 @@ python lerobot/scripts/control_robot.py teleoperate \
 ```bash
 python lerobot/scripts/control_robot.py record \
     --fps 30 \
-    --root tmp/data \
     --repo-id $USER/koch_test \
     --num-episodes 1 \
     --run-compute-stats 0
@@ -38,7 +37,6 @@ python lerobot/scripts/control_robot.py record \
 - Visualize dataset:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
-    --root tmp/data \
     --repo-id $USER/koch_test \
     --episode-index 0
 ```
@@ -47,7 +45,6 @@ python lerobot/scripts/visualize_dataset.py \
 ```bash
 python lerobot/scripts/control_robot.py replay \
     --fps 30 \
-    --root tmp/data \
     --repo-id $USER/koch_test \
     --episode 0
 ```
@@ -57,7 +54,6 @@ python lerobot/scripts/control_robot.py replay \
 ```bash
 python lerobot/scripts/control_robot.py record \
     --fps 30 \
-    --root data \
     --repo-id $USER/koch_pick_place_lego \
     --num-episodes 50 \
     --warmup-time-s 2 \
@@ -77,7 +73,7 @@ To avoid resuming by deleting the dataset, use `--force-override 1`.
 
 - Train on this dataset with the ACT policy:
 ```bash
-DATA_DIR=data python lerobot/scripts/train.py \
+python lerobot/scripts/train.py \
     policy=act_koch_real \
     env=koch_real \
     dataset_repo_id=$USER/koch_pick_place_lego \
@@ -88,7 +84,6 @@ DATA_DIR=data python lerobot/scripts/train.py \
 ```bash
 python lerobot/scripts/control_robot.py record \
     --fps 30 \
-    --root data \
     --repo-id $USER/eval_act_koch_real \
     --num-episodes 10 \
     --warmup-time-s 2 \
@@ -500,6 +495,12 @@ if __name__ == "__main__":
             "Too many threads might cause unstable teleoperation fps due to main thread being blocked. "
             "Not enough threads might cause low camera fps."
         ),
+    )
+    parser_record.add_argument(
+        "--resume",
+        type=int,
+        default=0,
+        help="Resume recording on an existing dataset.",
     )
     parser_record.add_argument(
         "-p",

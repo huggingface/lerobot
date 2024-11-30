@@ -383,7 +383,7 @@ def test_backward_compatibility(env_name, policy_name, extra_overrides, file_nam
            include a report on what changed and how that affected the outputs.
         2. Go to the `if __name__ == "__main__"` block of `tests/scripts/save_policy_to_safetensors.py` and
            add the policies you want to update the test artifacts for.
-        3. Run `DATA_DIR=tests/data python tests/scripts/save_policy_to_safetensors.py`. The test artifact
+        3. Run `python tests/scripts/save_policy_to_safetensors.py`. The test artifact
            should be updated.
         4. Check that this test now passes.
         5. Remember to restore `tests/scripts/save_policy_to_safetensors.py` to its original state.

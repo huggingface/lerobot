@@ -5,7 +5,7 @@ we skip them for now in our CI.
 
 Example to run backward compatiblity tests locally:
 ```
-DATA_DIR=tests/data python -m pytest --run-skipped tests/test_push_dataset_to_hub.py::test_push_dataset_to_hub_pusht_backward_compatibility
+python -m pytest --run-skipped tests/test_push_dataset_to_hub.py::test_push_dataset_to_hub_pusht_backward_compatibility
 ```
 """
 
@@ -330,7 +330,7 @@ def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_
     ],
 )
 @pytest.mark.skip(
-    "Not compatible with our CI since it downloads raw datasets. Run with `DATA_DIR=tests/data python -m pytest --run-skipped tests/test_push_dataset_to_hub.py::test_push_dataset_to_hub_pusht_backward_compatibility`"
+    "Not compatible with our CI since it downloads raw datasets. Run with `python -m pytest --run-skipped tests/test_push_dataset_to_hub.py::test_push_dataset_to_hub_pusht_backward_compatibility`"
 )
 def test_push_dataset_to_hub_pusht_backward_compatibility(tmpdir, raw_format, repo_id):
     _, dataset_id = repo_id.split("/")
