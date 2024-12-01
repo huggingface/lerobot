@@ -66,7 +66,7 @@ def get_from_raw_to_lerobot_format_fn(raw_format: str):
         from lerobot.common.datasets.push_dataset_to_hub.umi_zarr_format import from_raw_to_lerobot_format
     elif raw_format == "aloha_hdf5":
         from lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format import from_raw_to_lerobot_format
-    elif "openx_rlds" in raw_format:
+    elif raw_format in ['rlds', 'openx']:
         from lerobot.common.datasets.push_dataset_to_hub.openx_rlds_format import from_raw_to_lerobot_format
     elif raw_format == "dora_parquet":
         from lerobot.common.datasets.push_dataset_to_hub.dora_parquet_format import from_raw_to_lerobot_format
@@ -280,7 +280,7 @@ def main():
         "--raw-format",
         type=str,
         required=True,
-        help="Dataset type (e.g. `pusht_zarr`, `umi_zarr`, `aloha_hdf5`, `xarm_pkl`, `dora_parquet`, `openx_rlds`).",
+        help="Dataset type (e.g. `pusht_zarr`, `umi_zarr`, `aloha_hdf5`, `xarm_pkl`, `dora_parquet`, `rlds`, `openx`).",
     )
     parser.add_argument(
         "--repo-id",
