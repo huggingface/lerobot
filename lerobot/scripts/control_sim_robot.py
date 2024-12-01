@@ -70,8 +70,6 @@ python lerobot/scripts/control_sim_robot.py record \
 This might require a sudo permission to allow your terminal to monitor keyboard events.
 
 **NOTE**: You can resume/continue data recording by running the same data recording command twice.
-To avoid resuming by deleting the dataset, use `--force-override 1`.
-
 """
 
 import argparse
@@ -87,26 +85,46 @@ import cv2
 import gymnasium as gym
 import numpy as np
 import torch
-import tqdm
-from datasets import Dataset, Features, Sequence, Value
-from PIL import Image
 
-from lerobot.common.datasets.compute_stats import compute_stats
-from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
-from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, get_default_encoding
-from lerobot.common.datasets.utils import calculate_episode_data_index, hf_transform_to_torch
-from lerobot.common.datasets.video_utils import VideoFrame
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.robot_devices.control_utils import (
     init_keyboard_listener,
     init_policy,
     log_control_info,
     predict_action,
     stop_recording,
+    sanity_check_dataset_name,
+    sanity_check_dataset_robot_compatibility
 )
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import init_hydra_config, init_logging, log_say
+
+DEFAULT_FEATURES = {
+    "action": {
+        "dtype": "float32",
+        "shape": (2,),
+        "names": {
+            "axes": ["x", "y"],
+        },
+    },
+    "next.reward": {
+        "dtype": "float32",
+        "shape": (1,),
+        "names": None,
+    },
+    "next.success": {
+        "dtype": "bool",
+        "shape": (1,),
+        "names": None,
+    },
+    "seed": {
+        "dtype": "int",
+        "shape": (1,),
+        "names": None,
+    },
+}
 
 
 ########################################################################################
@@ -152,37 +170,6 @@ def real_positions_to_sim(real_positions, axis_directions, start_pos, offsets):
     return axis_directions * (real_positions - start_pos) * 2.0 * np.pi / 4096 + offsets
 
 
-def standardize_observation_key_names(observation, image_keys=None, state_keys_dict=None):
-    """Change key names for images and states to the standard keys in LeRobot dataset"""
-    if image_keys is None:
-        image_keys = []
-
-    for key in image_keys:
-        if not key.startswith("observation.image"):
-            observation["observation.images." + key] = observation.pop(key)
-
-    if state_keys_dict is None:
-        state_keys_dict = {}
-    for key, obs_key in state_keys_dict.items():
-        observation[key] = torch.from_numpy(observation.pop(obs_key))
-
-
-def add_frame_with_reward(dataset, observation, action, reward, success, seed):
-    add_frame(dataset, observation, action)
-    ep_dict = dataset["current_episode"]
-
-    if "next.reward" not in ep_dict:
-        ep_dict["next.reward"] = []
-    if "next.success" not in ep_dict:
-        ep_dict["next.success"] = []
-    if "seed" not in ep_dict:
-        ep_dict["seed"] = []
-
-    ep_dict["next.reward"].append(reward)
-    ep_dict["next.success"].append(success)
-    ep_dict["seed"].append(seed)
-
-
 def save_current_episode(dataset):
     episode_index = dataset["num_episodes"]
     ep_dict = dataset["current_episode"]
@@ -219,44 +206,6 @@ def save_current_episode(dataset):
     dataset["num_episodes"] += 1
 
 
-def to_hf_dataset(data_dict, video):
-    features = {}
-
-    keys = [key for key in data_dict if "observation.images." in key]
-    for key in keys:
-        if video:
-            features[key] = VideoFrame()
-        else:
-            features[key] = Image()
-
-    features["observation.state"] = Sequence(
-        length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
-    )
-    if "observation.velocity" in data_dict:
-        features["observation.velocity"] = Sequence(
-            length=data_dict["observation.velocity"].shape[1], feature=Value(dtype="float32", id=None)
-        )
-    if "observation.effort" in data_dict:
-        features["observation.effort"] = Sequence(
-            length=data_dict["observation.effort"].shape[1], feature=Value(dtype="float32", id=None)
-        )
-    features["action"] = Sequence(
-        length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)
-    )
-    features["next.reward"] = Value(dtype="float32", id=None)
-    features["next.success"] = Value(dtype="bool", id=None)
-
-    features["seed"] = Value(dtype="int64", id=None)
-    features["episode_index"] = Value(dtype="int64", id=None)
-    features["frame_index"] = Value(dtype="int64", id=None)
-    features["timestamp"] = Value(dtype="float32", id=None)
-    features["next.done"] = Value(dtype="bool", id=None)
-    features["index"] = Value(dtype="int64", id=None)
-    hf_dataset = Dataset.from_dict(data_dict, features=Features(features))
-    hf_dataset.set_transform(hf_transform_to_torch)
-    return hf_dataset
-
-
 ########################################################################################
 # Control modes
 ########################################################################################
@@ -278,25 +227,27 @@ def teleoperate(env, robot: Robot, process_action_fn, teleop_time_s=None):
 def record(
     env,
     robot: Robot,
-    process_action_from_leader=None,
+    root: Path,
+    repo_id: str,
+    task: str,
+    process_action_from_leader: function | None = None,
     fps: int | None = None,
-    root="data",
-    repo_id="lerobot/debug",
-    pretrained_policy_name_or_path=None,
-    policy_overrides=None,
-    episode_time_s=30,
-    num_episodes=50,
-    video=True,
-    run_compute_stats=True,
-    push_to_hub=True,
-    tags=None,
-    num_image_writer_processes=0,
-    num_image_writers_per_camera=4,
-    force_override=False,
-    display_cameras=False,
-    play_sounds=True,
-):
-    # Load pretrained policy
+    tags: list[str] | None = None,
+    pretrained_policy_name_or_path: str = None,
+    policy_overrides: bool | None = None,
+    episode_time_s: int = 30,
+    num_episodes: int = 50,
+    video: bool = True,
+    push_to_hub: bool = True,
+    num_image_writer_processes: int = 0,
+    num_image_writer_threads_per_camera: int = 4,
+    display_cameras: bool = False,
+    play_sounds: bool = True,
+    resume: bool = False,
+    local_files_only: bool = False
+) -> LeRobotDataset:
+    
+    # Load pretrained policy 
     policy = None
     if pretrained_policy_name_or_path is not None:
         policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
@@ -316,22 +267,49 @@ def record(
 
     # Create empty dataset or load existing saved episodes
     num_cameras = sum([1 if "image" in key else 0 for key in env.observation_space])
-    num_image_writers = num_image_writers_per_camera * num_cameras
+    features = DEFAULT_FEATURES
 
+    # get image keys
     image_keys = [key for key in env.observation_space if "image" in key]
-    state_keys_dict = env_cfg.state_keys
-    write_images = len(image_keys) > 0
+    state_keys_dict = env_cfg.get("state_keys", {})
 
-    dataset = init_dataset(
-        repo_id,
-        root,
-        force_override,
-        fps,
-        video,
-        write_images=write_images,
-        num_image_writer_processes=num_image_writer_processes,
-        num_image_writer_threads=num_image_writers * num_cameras,
-    )
+    if resume:
+        dataset = LeRobotDataset(
+            repo_id,
+            root=root,
+            local_files_only=local_files_only,
+        )
+        dataset.start_image_writer(
+            num_processes=num_image_writer_processes,
+            num_threads=num_image_writer_threads_per_camera * len(num_cameras),
+        )
+        sanity_check_dataset_robot_compatibility(dataset, robot, fps, video)
+    else:
+        # Create empty dataset or load existing saved episodes
+        sanity_check_dataset_name(repo_id, policy)
+        dataset = LeRobotDataset.create(
+            repo_id,
+            fps,
+            root=root,
+            robot=robot,
+            use_videos=video,
+            image_writer_processes=num_image_writer_processes,
+            image_writer_threads=num_image_writer_threads_per_camera * len(num_cameras),
+        )
+
+    # add image keys to features
+    for key in image_keys:
+        shape = env.observation_space[key].shape
+        if not key.startswith("observation.image"):
+            key = "observation.image" + key
+        features[key] = {"dtype": "video", "names": ["channel", "height", "width"], "shape": shape}
+
+    for key in state_keys_dict:
+        features[key] = {
+            "dtype": "float32",
+            "names": None,
+            "shape": env.observation_space[state_keys_dict[key]],
+        }
 
     while True:
         if dataset["num_episodes"] >= num_episodes:
@@ -367,8 +345,19 @@ def record(
             success = info.get("is_success", False)
 
             if dataset is not None:
-                standardize_observation_key_names(observation, image_keys, state_keys_dict)
-                add_frame_with_reward(dataset, observation, action, reward, success, seed)
+                frame = {
+                    "action": torch.from_numpy(action),
+                    "next.reward": reward,
+                    "next.success": success,
+                    "seed": seed,
+                }
+
+                for key in image_keys:
+                    if not key.startswith("observation.image"):
+                        frame["observation.images." + key] = observation[key]
+                for key, obs_key in state_keys_dict.items():
+                    frame[key] = torch.from_numpy(observation[obs_key])
+                dataset.add_frame(frame)
 
             if display_cameras and not is_headless():
                 for key in image_keys:
@@ -391,11 +380,10 @@ def record(
             log_say("Re-record episode", play_sounds)
             events["rerecord_episode"] = False
             events["exit_early"] = False
-            delete_current_episode(dataset)
+            dataset.clear_episode_buffer()
             continue
 
-        # Increment by one dataset["current_episode_index"]
-        save_current_episode(dataset)
+        dataset.save_episode(task=task)
 
         if events["stop_recording"]:
             break
@@ -406,61 +394,14 @@ def record(
     log_say("Stop recording", play_sounds, blocking=True)
     stop_recording(robot, listener, display_cameras)
 
-    if "image_writer" in dataset:
-        logging.info("Waiting for image writer to terminate...")
-        image_writer = dataset["image_writer"]
-        stop_image_writer(image_writer, timeout=20)
-
-    log_say("Consolidate episodes", play_sounds)
-
-    num_episodes = dataset["num_episodes"]
-    episodes_dir = dataset["episodes_dir"]
-    videos_dir = dataset["videos_dir"]
-
-    ep_dicts = []
-    for episode_index in tqdm.tqdm(range(num_episodes)):
-        ep_path = episodes_dir / f"episode_{episode_index}.pth"
-        ep_dict = torch.load(ep_path)
-        ep_dicts.append(ep_dict)
-    data_dict = concatenate_episodes(ep_dicts)
-
-    if video:
-        image_keys = [key for key in data_dict if "image" in key]
-        encode_videos(dataset, image_keys, play_sounds)
-
-    hf_dataset = to_hf_dataset(data_dict, video)
-    episode_data_index = calculate_episode_data_index(hf_dataset)
-
-    info = {
-        "codebase_version": CODEBASE_VERSION,
-        "fps": fps,
-        "video": video,
-    }
-    if video:
-        info["encoding"] = get_default_encoding()
-
-    lerobot_dataset = LeRobotDataset.from_preloaded(
-        repo_id=repo_id,
-        hf_dataset=hf_dataset,
-        episode_data_index=episode_data_index,
-        info=info,
-        videos_dir=videos_dir,
-    )
-
-    if run_compute_stats:
-        log_say("Computing dataset statistics", play_sounds)
-        lerobot_dataset.stats = compute_stats(lerobot_dataset)
-    else:
-        logging.info("Skipping computation of the dataset statistics")
-        lerobot_dataset.stats = {}
-
-    save_lerobot_dataset_on_disk(lerobot_dataset)
+    logging.info("Computing dataset statistics")
+    dataset.consolidate(run_compute_stats=True)
 
     if push_to_hub:
-        push_lerobot_dataset_to_hub(lerobot_dataset, tags)
+        dataset.push_to_hub(tags=tags)
 
     log_say("Exiting", play_sounds)
-    return lerobot_dataset
+    return dataset
 
 
 def replay(env, episodes: list, fps: int | None = None, root="data", repo_id="lerobot/debug"):
@@ -556,6 +497,11 @@ if __name__ == "__main__":
         help="Add tags to your dataset on the hub.",
     )
     parser_record.add_argument(
+        "--task",
+        type=str,
+        help="A description of the task preformed during recording that can be used as a language instruction.",
+    )
+    parser_record.add_argument(
         "--num-image-writer-processes",
         type=int,
         default=0,
@@ -575,12 +521,6 @@ if __name__ == "__main__":
             "Too much threads might cause unstable teleoperation fps due to main thread being blocked. "
             "Not enough threads might cause low camera fps."
         ),
-    )
-    parser_record.add_argument(
-        "--force-override",
-        type=int,
-        default=0,
-        help="By default, data recording is resumed. When set to 1, delete the local directory and start data recording from scratch.",
     )
     parser_record.add_argument(
         "--display-cameras",

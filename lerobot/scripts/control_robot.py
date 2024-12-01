@@ -69,7 +69,6 @@ python lerobot/scripts/control_robot.py record \
 This might require a sudo permission to allow your terminal to monitor keyboard events.
 
 **NOTE**: You can resume/continue data recording by running the same data recording command twice.
-To avoid resuming by deleting the dataset, use `--force-override 1`.
 
 - Train on this dataset with the ACT policy:
 ```bash
