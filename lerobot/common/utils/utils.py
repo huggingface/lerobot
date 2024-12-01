@@ -26,8 +26,7 @@ from typing import Any, Callable, Generator
 import hydra
 import numpy as np
 import torch
-from omegaconf import DictConfig
-
+from omegaconf import DictConfig, OmegaConf
 
 def none_or_int(value):
     if value == "None":
@@ -227,14 +226,21 @@ def log_say(text, play_sounds, blocking=False):
 def is_launched_with_accelerate() -> bool:
     return "ACCELERATE_MIXED_PRECISION" in os.environ
 
+
 def get_accelerate_config(accelerator: Callable = None) -> dict[str, Any]:
     config = {}
     if not accelerator:
         return config
-    config["num_processes"] = accelerator.num_processes 
-    config["device"] = accelerator.device 
-    config["distributed_type"] = accelerator.distributed_type 
-    config["mixed_precision"] = accelerator.mixed_precision 
-    config["gradient_accumulation_steps"] = accelerator.gradient_accumulation_steps 
+    config["num_processes"] = accelerator.num_processes
+    config["device"] = str(accelerator.device)
+    config["distributed_type"] = str(accelerator.distributed_type)
+    config["mixed_precision"] = accelerator.mixed_precision
+    config["gradient_accumulation_steps"] = accelerator.gradient_accumulation_steps
 
     return config
+
+def update_omegaconf(cfg: DictConfig, config_name: str, config: dict[str, Any]):
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    cfg_dict[config_name] = config
+    cfg = OmegaConf.create(cfg_dict)
+    return cfg

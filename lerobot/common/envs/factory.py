@@ -13,11 +13,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any, Dict
 import importlib
 
 import gymnasium as gym
 from omegaconf import DictConfig
+
 
 def make_env(cfg: DictConfig, n_envs: int | None = None, out_dir: str = "") -> gym.vector.VectorEnv | None:
     """Makes a gym vector environment according to the evaluation config.
@@ -45,7 +45,7 @@ def make_env(cfg: DictConfig, n_envs: int | None = None, out_dir: str = "") -> g
 
     if cfg.env.get("episode_length"):
         gym_kwgs["max_episode_steps"] = cfg.env.episode_length
-        
+
     # batched version of the env that returns an observation of shape (b, c)
     env_cls = gym.vector.AsyncVectorEnv if cfg.eval.use_async_envs else gym.vector.SyncVectorEnv
     env = env_cls(

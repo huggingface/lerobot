@@ -44,12 +44,13 @@ from lerobot.common.policies.policy_protocol import PolicyWithUpdate
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.utils import (
     format_big_number,
+    get_accelerate_config,
     get_safe_torch_device,
     init_hydra_config,
     init_logging,
     is_launched_with_accelerate,
     set_global_seed,
-    get_accelerate_config,
+    update_omegaconf,
 )
 from lerobot.scripts.eval import eval_policy
 
@@ -261,7 +262,8 @@ def train(
     init_logging(accelerator)
     if accelerator:
         assert cfg.training.online_steps == 0, "Online training with accelerate is not implemented."
-        accelerator_config = get_accelerate_config(accelerator)
+        accelerator_config = get_accelerate_config(accelerator) 
+        update_omegaconf(cfg, config_name="accelerator_config", config=accelerator_config)
         logging.info(
             f"Acccelerate is enabled, training will be launched with the following configuration:\n{pformat(accelerator_config)}"
         )
