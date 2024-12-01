@@ -208,6 +208,8 @@ class Logger:
             checkpoint_dir / self.pretrained_model_dir_name, policy, wandb_artifact_name=wandb_artifact_name
         )
         self.save_training_state(checkpoint_dir, train_step, optimizer, scheduler)
+        if self.last_checkpoint_dir.exists() or self.last_checkpoint_dir.is_symlink():
+            self.last_checkpoint_dir.unlink()  # Remove the existing symlink or file
         os.symlink(checkpoint_dir.absolute(), self.last_checkpoint_dir)
 
     def load_last_training_state(self, optimizer: Optimizer, scheduler: LRScheduler | None) -> int:

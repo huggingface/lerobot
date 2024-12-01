@@ -49,6 +49,7 @@ from lerobot.common.utils.utils import (
     init_logging,
     is_launched_with_accelerate,
     set_global_seed,
+    get_accelerate_config,
 )
 from lerobot.scripts.eval import eval_policy
 
@@ -259,12 +260,10 @@ def train(
 
     init_logging(accelerator)
     if accelerator:
-        if cfg.training.online_steps > 0:
-            raise NotImplementedError("Online training with Accelerate is not implemented.")
-        num_processes = accelerator.num_processes
-        use_amp = accelerator.mixed_precision
+        assert cfg.training.online_steps == 0, "Online training with accelerate is not implemented."
+        accelerator_config = get_accelerate_config(accelerator)
         logging.info(
-            f"Acccelerate is enabled, training will be launched with the following configuration :\nNumber of processes: {num_processes} \nPrecision: {use_amp}"
+            f"Acccelerate is enabled, training will be launched with the following configuration:\n{pformat(accelerator_config)}"
         )
     logging.info(pformat(OmegaConf.to_container(cfg)))
 
