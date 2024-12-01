@@ -39,6 +39,7 @@ from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
+from lerobot.common.policies.lr_schedulers import get_scheduler
 from lerobot.common.policies.policy_protocol import PolicyWithUpdate
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.utils import (
@@ -82,7 +83,6 @@ def make_optimizer_and_scheduler(cfg, policy):
             cfg.training.adam_eps,
             cfg.training.adam_weight_decay,
         )
-        from diffusers.optimization import get_scheduler
 
         lr_scheduler = get_scheduler(
             cfg.training.lr_scheduler,
