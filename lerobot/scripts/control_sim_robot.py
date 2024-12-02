@@ -42,7 +42,7 @@ python lerobot/scripts/control_sim_robot.py replay \
     --sim-config lerobot/configs/env/your_sim_config.yaml \
     --fps 30 \
     --repo-id $USER/robot_sim_test \
-    --episodes 0 1 2 3
+    --episode 0
 ```
 Note: The seed is saved, therefore, during replay we can load the same environment state as the one during collection.
 
@@ -72,8 +72,6 @@ import argparse
 import importlib
 import logging
 import time
-import traceback
-from functools import cache
 from pathlib import Path
 
 import cv2
@@ -90,6 +88,7 @@ from lerobot.common.robot_devices.control_utils import (
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
     stop_recording,
+    is_headless,
 )
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
@@ -127,25 +126,6 @@ def none_or_int(value):
     if value == "None":
         return None
     return int(value)
-
-
-@cache
-def is_headless():
-    """Detects if python is running without a monitor."""
-    try:
-        import pynput  # noqa
-
-        return False
-    except Exception:
-        print(
-            "Error trying to import pynput. Switching to headless mode. "
-            "As a result, the video stream from the cameras won't be shown, "
-            "and you won't be able to change the control flow with keyboards. "
-            "For more info, see traceback below.\n"
-        )
-        traceback.print_exc()
-        print()
-        return True
 
 
 def init_sim_calibration(robot, cfg):
@@ -368,12 +348,12 @@ def record(
 
 
 def replay(
-        env,
-        root: Path,
-        repo_id: str,
-        episode: int,
-        fps: int | None = None,
-        local_files_only: bool = True
+    env, 
+    root: Path, 
+    repo_id: str, 
+    episode: int, 
+    fps: int | None = None, 
+    local_files_only: bool = True
 ):
     env = env()
 
