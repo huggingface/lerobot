@@ -41,7 +41,6 @@ python lerobot/scripts/control_sim_robot.py replay \
     --robot-path lerobot/configs/robot/your_robot_config.yaml \
     --sim-config lerobot/configs/env/your_sim_config.yaml \
     --fps 30 \
-    --root tmp/data \
     --repo-id $USER/robot_sim_test \
     --episodes 0 1 2 3
 ```
