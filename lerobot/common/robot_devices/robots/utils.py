@@ -11,6 +11,7 @@ def get_arm_id(name, arm_type):
 class Robot(Protocol):
     # TODO(rcadene, aliberts): Add unit test checking the protocol is implemented in the corresponding classes
     robot_type: str
+    features: dict
 
     def connect(self): ...
     def run_calibration(self): ...

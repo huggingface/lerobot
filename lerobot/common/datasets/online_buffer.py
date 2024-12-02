@@ -187,7 +187,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
         assert data[OnlineBuffer.INDEX_KEY][0].item() == 0
 
         # Shift the incoming indices if necessary.
-        if self.num_samples > 0:
+        if self.num_frames > 0:
             last_episode_index = self._data[OnlineBuffer.EPISODE_INDEX_KEY][next_index - 1]
             last_data_index = self._data[OnlineBuffer.INDEX_KEY][next_index - 1]
             data[OnlineBuffer.EPISODE_INDEX_KEY] += last_episode_index + 1
@@ -227,11 +227,11 @@ class OnlineBuffer(torch.utils.data.Dataset):
         )
 
     @property
-    def num_samples(self) -> int:
+    def num_frames(self) -> int:
         return np.count_nonzero(self._data[OnlineBuffer.OCCUPANCY_MASK_KEY])
 
     def __len__(self):
-        return self.num_samples
+        return self.num_frames
 
     def _item_to_tensors(self, item: dict) -> dict:
         item_ = {}

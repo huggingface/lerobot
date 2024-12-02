@@ -29,7 +29,6 @@ jobs:
     name: Pytest
     runs-on: ubuntu-latest
     env:
-      DATA_DIR: tests/data
       MUJOCO_GL: egl
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +69,6 @@ jobs:
     name: Pytest (minimal install)
     runs-on: ubuntu-latest
     env:
-      DATA_DIR: tests/data
       MUJOCO_GL: egl
     steps:
       - uses: actions/checkout@v4
@@ -103,12 +101,11 @@ jobs:
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
             && rm -rf tests/outputs outputs
 
-
+  # TODO(aliberts, rcadene): redesign after v2 migration / removing hydra
   end-to-end:
     name: End-to-end
     runs-on: ubuntu-latest
     env:
-      DATA_DIR: tests/data
       MUJOCO_GL: egl
     steps:
       - uses: actions/checkout@v4

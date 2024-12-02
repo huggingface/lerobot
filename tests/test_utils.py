@@ -7,10 +7,9 @@ import pytest
 import torch
 from datasets import Dataset
 
+from lerobot.common.datasets.push_dataset_to_hub.utils import calculate_episode_data_index
 from lerobot.common.datasets.utils import (
-    calculate_episode_data_index,
     hf_transform_to_torch,
-    reset_episode_index,
 )
 from lerobot.common.utils.utils import (
     get_global_random_state,
@@ -71,20 +70,6 @@ def test_calculate_episode_data_index():
     episode_data_index = calculate_episode_data_index(dataset)
     assert torch.equal(episode_data_index["from"], torch.tensor([0, 2, 3]))
     assert torch.equal(episode_data_index["to"], torch.tensor([2, 3, 6]))
-
-
-def test_reset_episode_index():
-    dataset = Dataset.from_dict(
-        {
-            "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
-            "index": [0, 1, 2, 3, 4, 5],
-            "episode_index": [10, 10, 11, 12, 12, 12],
-        },
-    )
-    dataset.set_transform(hf_transform_to_torch)
-    correct_episode_index = [0, 0, 1, 2, 2, 2]
-    dataset = reset_episode_index(dataset)
-    assert dataset["episode_index"] == correct_episode_index
 
 
 def test_init_hydra_config_empty():
