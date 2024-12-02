@@ -307,7 +307,7 @@ def record(
             env_timestamp = info.get("timestamp", dataset.episode_buffer["size"] / fps)
 
             frame = {
-                "action": torch.from_numpy(action) * 180 / np.pi,
+                "action": torch.from_numpy(action),
                 "next.reward": reward,
                 "next.success": success,
                 "seed": seed,
