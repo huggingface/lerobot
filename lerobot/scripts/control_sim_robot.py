@@ -227,7 +227,6 @@ def record(
 
     # get image keys
     image_keys = [key for key in env.observation_space if "image" in key]
-    # non_image_keys = [key for key in env.observation_space if "image" not in key]
     state_keys_dict = env_cfg.state_keys
 
     if resume:
