@@ -506,8 +506,8 @@ if __name__ == "__main__":
     parser_replay.add_argument(
         "--root",
         type=Path,
-        default="data",
-        help="Root directory where the dataset will be stored locally at '{root}/{repo_id}' (e.g. 'data/hf_username/dataset_name').",
+        default=None,
+        help="Root directory where the dataset will be stored locally (e.g. 'data/hf_username/dataset_name'). By default, stored in cache folder.",
     )
     parser_replay.add_argument(
         "--repo-id",
