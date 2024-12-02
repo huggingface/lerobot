@@ -464,6 +464,12 @@ if __name__ == "__main__":
         help="Upload dataset to Hugging Face hub.",
     )
     parser_record.add_argument(
+        "--local-files-only",
+        type=int,
+        default=0,
+        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
+    )
+    parser_record.add_argument(
         "--tags",
         type=str,
         nargs="*",
