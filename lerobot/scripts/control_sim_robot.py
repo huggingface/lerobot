@@ -53,7 +53,6 @@ python lerobot/scripts/control_sim_robot.py record \
     --robot-path lerobot/configs/robot/your_robot_config.yaml \
     --sim-config lerobot/configs/env/your_sim_config.yaml \
     --fps 30 \
-    --root data \
     --repo-id $USER/robot_sim_test \
     --num-episodes 50 \
     --episode-time-s 30 \
