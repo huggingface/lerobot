@@ -202,7 +202,7 @@ def load_from_raw(
 
         # If lang_key is present, convert the entire tensor at once
         if lang_key is not None:
-            ep_dict["language_instruction"] = [str(x) for x in episode[lang_key]]
+            ep_dict["language_instruction"] = [x.numpy().decode("utf-8") for x in episode[lang_key]]
 
         ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
         ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames)
