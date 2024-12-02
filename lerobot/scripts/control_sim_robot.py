@@ -367,35 +367,35 @@ def record(
     return dataset
 
 
-def replay(env, episodes: list, fps: int | None = None, root="data", repo_id="lerobot/debug"):
+def replay(
+        env,
+        root: Path,
+        repo_id: str,
+        episode: int,
+        fps: int | None = None,
+        local_files_only: bool = True
+):
     env = env()
 
     local_dir = Path(root) / repo_id
     if not local_dir.exists():
         raise ValueError(local_dir)
 
-    dataset = LeRobotDataset(repo_id, root=root)
+    dataset = LeRobotDataset(repo_id, root=root, local_files_only=local_files_only)
     items = dataset.hf_dataset.select_columns("action")
     seeds = dataset.hf_dataset.select_columns("seed")["seed"]
 
-    for episode in episodes:
-        from_idx = dataset.episode_data_index["from"][episode].item()
-        to_idx = dataset.episode_data_index["to"][episode].item()
-        env.reset(seed=seeds[from_idx].item())
-        logging.info("Replaying episode")
-        log_say("Replaying episode", play_sounds=True)
-        for idx in range(from_idx, to_idx):
-            start_episode_t = time.perf_counter()
-
-            action = items[idx]["action"]
-
-            env.step(action.unsqueeze(0).numpy())
-
-            dt_s = time.perf_counter() - start_episode_t
-            busy_wait(1 / fps - dt_s)
-
-        # wait before playing next episode
-        busy_wait(5)
+    from_idx = dataset.episode_data_index["from"][episode].item()
+    to_idx = dataset.episode_data_index["to"][episode].item()
+    env.reset(seed=seeds[from_idx].item())
+    logging.info("Replaying episode")
+    log_say("Replaying episode", play_sounds=True)
+    for idx in range(from_idx, to_idx):
+        start_episode_t = time.perf_counter()
+        action = items[idx]["action"]
+        env.step(action.unsqueeze(0).numpy())
+        dt_s = time.perf_counter() - start_episode_t
+        busy_wait(1 / fps - dt_s)
 
 
 if __name__ == "__main__":
