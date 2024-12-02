@@ -138,6 +138,14 @@ Then enter the container with the following, and run lerobot scripts as you woul
 docker compose run lerobot
 ```
 
+#### Credentials
+**Wandb**: Using wandb like normal. Log in using your host machine, and credentials will be passed through to the container.
+
+**Hugging Face**: You will need to log in one time, within the container. Use
+`docker compose run lerobot huggingface-cli login` and follow the instructions.
+All files saved by huggingface will be stored in a special directory at the root of the
+repository called `.huggingface_cache`.
+
 ## Walkthrough
 
 ```
