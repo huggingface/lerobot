@@ -31,7 +31,6 @@ Enable the --push-to-hub 1 to push the recorded dataset to the huggingface hub.
 - Visualize dataset:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
-    --root tmp/data \
     --repo-id $USER/robot_sim_test \
     --episode-index 0
 ```
