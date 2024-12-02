@@ -79,7 +79,7 @@ class LeRobotDatasetMetadata:
         local_files_only: bool = False,
     ):
         self.repo_id = repo_id
-        self.root = Path(root) if root is not None else LEROBOT_HOME / repo_id
+        self.root = Path(root) / repo_id if root is not None else LEROBOT_HOME / repo_id
         self.local_files_only = local_files_only
 
         # Load metadata
@@ -286,9 +286,9 @@ class LeRobotDatasetMetadata:
         """Creates metadata for a LeRobotDataset."""
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
-        obj.root = Path(root) if root is not None else LEROBOT_HOME / repo_id
+        obj.root = Path(root) / repo_id if root is not None else LEROBOT_HOME / repo_id
 
-        obj.root.mkdir(parents=True, exist_ok=False)
+        obj.root.mkdir(parents=True, exist_ok=True)
 
         if robot is not None:
             features = get_features_from_robot(robot, use_videos)
@@ -427,7 +427,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.repo_id = repo_id
-        self.root = Path(root) if root else LEROBOT_HOME / repo_id
+        self.root = Path(root) / repo_id if root else LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
@@ -443,7 +443,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
-        self.meta = LeRobotDatasetMetadata(self.repo_id, self.root, self.local_files_only)
+        self.meta = LeRobotDatasetMetadata(self.repo_id, root, self.local_files_only)
 
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
