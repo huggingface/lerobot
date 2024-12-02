@@ -426,7 +426,7 @@ if __name__ == "__main__":
     parser_record.add_argument(
         "--root",
         type=Path,
-        default="data",
+        default=None,
         help="Root directory where the dataset will be stored locally at '{root}/{repo_id}' (e.g. 'data/hf_username/dataset_name').",
     )
     parser_record.add_argument(
