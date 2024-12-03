@@ -347,12 +347,7 @@ def record(
 
 
 def replay(
-    env, 
-    root: Path, 
-    repo_id: str, 
-    episode: int, 
-    fps: int | None = None, 
-    local_files_only: bool = True
+    env, root: Path, repo_id: str, episode: int, fps: int | None = None, local_files_only: bool = True
 ):
     env = env()
 
@@ -493,9 +488,7 @@ if __name__ == "__main__":
         default="lerobot/test",
         help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
     )
-    parser_replay.add_argument(
-        "--episode", type=int, default=0, help="Index of the episodes to replay."
-    )
+    parser_replay.add_argument("--episode", type=int, default=0, help="Index of the episodes to replay.")
 
     args = parser.parse_args()
 
