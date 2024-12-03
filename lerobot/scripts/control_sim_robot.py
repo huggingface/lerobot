@@ -246,7 +246,6 @@ def record(
             root=root,
             features=features,
             use_videos=video,
-            tolerance_s=1e-1,
             image_writer_processes=num_image_writer_processes,
             image_writer_threads=num_image_writer_threads_per_camera * num_cameras,
         )
@@ -495,7 +494,7 @@ if __name__ == "__main__":
         help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
     )
     parser_replay.add_argument(
-        "--episodes", nargs="+", type=int, default=[0], help="Indices of the episodes to replay."
+        "--episode", type=int, default=0, help="Index of the episodes to replay."
     )
 
     args = parser.parse_args()
