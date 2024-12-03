@@ -65,8 +65,8 @@ import requests
 import json
 
 import numpy as np
+import pandas as pd
 from flask import Flask, redirect, render_template, url_for, request
-from datasets import load_dataset, DownloadMode
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.utils.utils import init_logging
@@ -223,7 +223,7 @@ def run_server(
             episode_data_csv_str=episode_data_csv_str,
         )
 
-    app.run(host=host, port=port, debug=True)
+    app.run(host=host, port=port, debug=False)
 
 
 def get_ep_csv_fname(episode_id: int):
@@ -277,18 +277,12 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
             columns.append("observation.state")
         if "action" in dataset["features"]:
             columns.append("action")
-        episode_parquet = load_dataset(
-            "parquet",
-            data_files=f"https://huggingface.co/datasets/{repo_id}/resolve/main/"
-            + dataset["data_path"].format(
-                episode_chunk=int(episode_index) // dataset["chunks_size"], episode_index=episode_index
-            ),
-            split="train",
-            download_mode=DownloadMode.FORCE_REDOWNLOAD,
-            ignore_verifications=True,
+
+        url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/" + dataset["data_path"].format(
+            episode_chunk=int(episode_index) // dataset["chunks_size"], episode_index=episode_index
         )
-        d = episode_parquet.select_columns(columns).with_format("numpy")
-        data = d.to_pandas()
+        df = pd.read_parquet(url)
+        data = df[columns]  # Select specific columns
         rows = np.hstack(
             (np.expand_dims(data["timestamp"], axis=1), *[np.vstack(data[col]) for col in columns[1:]])
         ).tolist()
