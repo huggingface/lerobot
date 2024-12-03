@@ -64,7 +64,7 @@ import os
 
 import numpy as np
 from flask import Flask, redirect, render_template, url_for, request
-from datasets import load_dataset
+from datasets import load_dataset, DownloadMode
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.utils.utils import init_logging
@@ -195,6 +195,8 @@ def run_server(
                 "json",
                 data_files=f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl",
                 split="train",
+                download_mode=DownloadMode.FORCE_REDOWNLOAD,
+                ignore_verifications=True,
             )
             filtered_tasks_jsonl = tasks_jsonl.filter(lambda x: x["episode_index"] == episode_id)
             tasks = filtered_tasks_jsonl["tasks"][0]
@@ -218,7 +220,7 @@ def run_server(
             episode_data_csv_str=episode_data_csv_str,
         )
 
-    app.run(host=host, port=port, debug=True)
+    app.run(host=host, port=port, debug=False)
 
 
 def get_ep_csv_fname(episode_id: int):
@@ -279,6 +281,8 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
                 episode_chunk=int(episode_index) // dataset["chunks_size"], episode_index=episode_index
             ),
             split="train",
+            download_mode=DownloadMode.FORCE_REDOWNLOAD,
+            ignore_verifications=True,
         )
         d = episode_parquet.select_columns(columns).with_format("numpy")
         data = d.to_pandas()
@@ -326,6 +330,8 @@ def get_dataset_info(repo_id: str) -> dict:
         "json",
         data_files=f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json",
         split="train",
+        download_mode=DownloadMode.FORCE_REDOWNLOAD,
+        ignore_verifications=True,
     )[0]
     dataset_info["repo_id"] = repo_id
     return dataset_info
