@@ -98,10 +98,10 @@
         </div>
 
         <!-- Videos -->
-        <div class="flex flex-wrap gap-1">
+        <div class="flex flex-wrap gap-x-2 gap-y-6">
             {% for video_info in videos_info %}
-            <div x-show="!videoCodecError" class="max-w-96">
-                <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
+            <div x-show="!videoCodecError" class="max-w-96 relative">
+                <p class="absolute inset-x-0 -top-4 text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
                 <video muted loop type="video/mp4" class="object-contain w-full h-full" @canplaythrough="videoCanPlay" @timeupdate="() => {
                     if (video.duration) {
                       const time = video.currentTime;
