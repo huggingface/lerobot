@@ -91,12 +91,12 @@ def from_raw_to_lerobot_format(
         raise NotImplementedError
 
     # sanity check
-    check_format(raw_dir)
+    check_format(videos_dir)
 
     if fps is None:
         fps = 30
 
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes)
+    data_dict = load_from_raw(videos_dir, fps, video, episodes)
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
