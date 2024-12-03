@@ -158,7 +158,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     assert dataset.meta.total_episodes == 2
     assert len(dataset) == 2
 
-    replay(robot, episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False)
+    replay(robot, episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False, local_files_only=True)
 
     # TODO(rcadene, aliberts): rethink this design
     if robot_type == "aloha":
