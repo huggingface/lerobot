@@ -341,7 +341,7 @@ def replay(
     episode: int,
     fps: int | None = None,
     play_sounds: bool = True,
-    local_files_only: bool = True,
+    local_files_only: bool = False,
 ):
     # TODO(rcadene, aliberts): refactor with control_loop, once `dataset` is an instance of LeRobotDataset
     # TODO(rcadene): Add option to record logs
@@ -424,13 +424,19 @@ if __name__ == "__main__":
         "--root",
         type=Path,
         default=None,
-        help="Root directory where the dataset will be stored locally at '{root}/{repo_id}' (e.g. 'data/hf_username/dataset_name').",
+        help="Root directory where the dataset will be stored (e.g. 'dataset/path').",
     )
     parser_record.add_argument(
         "--repo-id",
         type=str,
         default="lerobot/test",
         help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
+    )
+    parser_record.add_argument(
+        "--local-files-only",
+        type=int,
+        default=0,
+        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
     )
     parser_record.add_argument(
         "--warmup-time-s",
@@ -520,13 +526,19 @@ if __name__ == "__main__":
         "--root",
         type=Path,
         default=None,
-        help="Root directory where the dataset will be stored locally at '{root}/{repo_id}' (e.g. 'data/hf_username/dataset_name').",
+        help="Root directory where the dataset will be stored (e.g. 'dataset/path').",
     )
     parser_replay.add_argument(
         "--repo-id",
         type=str,
         default="lerobot/test",
         help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
+    )
+    parser_replay.add_argument(
+        "--local-files-only",
+        type=int,
+        default=0,
+        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
     )
     parser_replay.add_argument("--episode", type=int, default=0, help="Index of the episode to replay.")
 
