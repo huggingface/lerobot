@@ -61,6 +61,8 @@ from pathlib import Path
 import re
 import tempfile
 import os
+import requests
+import json
 
 import numpy as np
 from flask import Flask, redirect, render_template, url_for, request
@@ -191,15 +193,16 @@ def run_server(
                 }
                 for video_key in video_keys
             ]
-            tasks_jsonl = load_dataset(
-                "json",
-                data_files=f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl",
-                split="train",
-                download_mode=DownloadMode.FORCE_REDOWNLOAD,
-                ignore_verifications=True,
+
+            response = requests.get(
+                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl"
             )
-            filtered_tasks_jsonl = tasks_jsonl.filter(lambda x: x["episode_index"] == episode_id)
-            tasks = filtered_tasks_jsonl["tasks"][0]
+            response.raise_for_status()
+            # Split into lines and parse each line as JSON
+            tasks_jsonl = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+            filtered_tasks_jsonl = [row for row in tasks_jsonl if row["episode_index"] == episode_id]
+            tasks = filtered_tasks_jsonl[0]["tasks"]
 
         videos_info[0]["language_instruction"] = tasks
 
@@ -326,13 +329,9 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
 
 
 def get_dataset_info(repo_id: str) -> dict:
-    dataset_info = load_dataset(
-        "json",
-        data_files=f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json",
-        split="train",
-        download_mode=DownloadMode.FORCE_REDOWNLOAD,
-        ignore_verifications=True,
-    )[0]
+    response = requests.get(f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json")
+    response.raise_for_status()  # Raises an HTTPError for bad responses
+    dataset_info = response.json()
     dataset_info["repo_id"] = repo_id
     return dataset_info
 
