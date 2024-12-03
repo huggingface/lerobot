@@ -57,7 +57,7 @@ if __name__ == "__main__":
     parser_conso.add_argument(
         "--batch-size",
         type=int,
-        default=32,
+        default=8,
         help="Batch size loaded by DataLoader for computing the dataset statistics.",
     )
     parser_conso.add_argument(
@@ -85,7 +85,7 @@ if __name__ == "__main__":
         "--private",
         type=int,
         default=0,
-        help="Create a private dataset repository on the Hugging Face Hub.",
+        help="Create a private dataset repository on the Hugging Face Hub. Push publicly by default.",
     )
 
     args = parser.parse_args()
