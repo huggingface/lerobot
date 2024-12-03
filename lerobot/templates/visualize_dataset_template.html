@@ -31,8 +31,12 @@
 }">
     <!-- Sidebar -->
     <div x-ref="sidebar" class="bg-slate-900 p-5 break-words overflow-y-auto shrink-0 md:shrink md:w-60 md:max-h-screen">
-        <h1 class="mb-4 text-xl font-semibold">{{ dataset_info.repo_id }}</h1>
-
+        <a href="https://github.com/huggingface/lerobot" target="_blank" class="hidden md:block">
+            <img src="https://github.com/huggingface/lerobot/raw/main/media/lerobot-logo-thumbnail.png">
+        </a>
+        <a href="https://huggingface.co/datasets/{{ dataset_info.repo_id }}" target="_blank">
+            <h1 class="mb-4 text-xl font-semibold">{{ dataset_info.repo_id }}</h1>
+        </a>
         <ul>
             <li>
                 Number of samples/frames: {{ dataset_info.num_frames }}
@@ -221,6 +225,14 @@
             </div>
         </div>
     </div>
+
+    <script>
+        const parentOrigin = "https://huggingface.co";
+        const searchParams = new URLSearchParams();
+        searchParams.set("dataset", "{{ dataset_info.repo_id }}");
+        searchParams.set("episode", "{{ episode_id }}");
+		window.parent.postMessage({ queryString: searchParams.toString() }, parentOrigin);
+    </script>
 
     <script>
         function createAlpineData() {
