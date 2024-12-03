@@ -147,15 +147,15 @@ def run_server(
             if dataset is None:
                 dataset = get_dataset_info(repo_id)
         except FileNotFoundError:
-            return "Make sure your convert your LeRobotDataset to v2 & above."
-        # dataset_version = (
-        #     dataset._version if isinstance(dataset, LeRobotDataset) else dataset["codebase_version"]
-        # )
-        # match = re.search(r"v(\d+)\.", dataset_version)
-        # if match:
-        #     major_version = int(match.group(1))
-        #     if major_version < 2:
-        #         return "Make sure your convert your LeRobotDataset to v2 & above."
+            return "Make sure to convert your LeRobotDataset to v2 & above."
+        dataset_version = (
+            dataset.meta._version if isinstance(dataset, LeRobotDataset) else dataset["codebase_version"]
+        )
+        match = re.search(r"v(\d+)\.", dataset_version)
+        if match:
+            major_version = int(match.group(1))
+            if major_version < 2:
+                return "Make sure to convert your LeRobotDataset to v2 & above."
 
         episode_data_csv_str = get_episode_data_csv_str(dataset, episode_id)
         dataset_info = {
