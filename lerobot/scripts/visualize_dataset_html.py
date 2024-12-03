@@ -169,7 +169,9 @@ def run_server(
             "fps": dataset.fps if isinstance(dataset, LeRobotDataset) else dataset["fps"],
         }
         if isinstance(dataset, LeRobotDataset):
-            video_paths = [dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys]
+            video_paths = [
+                dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys
+            ]
             videos_info = [
                 {"url": url_for("static", filename=video_path), "filename": video_path.name}
                 for video_path in video_paths
@@ -237,10 +239,18 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
     # init header of csv with state and action names
     header = ["timestamp"]
     if has_state:
-        dim_state = dataset.meta.shapes["observation.state"][0] if isinstance(dataset, LeRobotDataset) else dataset["features"]["observation.state"]["shape"][0]
+        dim_state = (
+            dataset.meta.shapes["observation.state"][0]
+            if isinstance(dataset, LeRobotDataset)
+            else dataset["features"]["observation.state"]["shape"][0]
+        )
         header += [f"state_{i}" for i in range(dim_state)]
     if has_action:
-        dim_action = dataset.meta.shapes["action"][0] if isinstance(dataset, LeRobotDataset) else dataset["features"]["action"]["shape"][0]
+        dim_action = (
+            dataset.meta.shapes["action"][0]
+            if isinstance(dataset, LeRobotDataset)
+            else dataset["features"]["action"]["shape"][0]
+        )
         header += [f"action_{i}" for i in range(dim_action)]
 
     if isinstance(dataset, LeRobotDataset):
@@ -292,7 +302,8 @@ def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]
     # get first frame of episode (hack to get video_path of the episode)
     first_frame_idx = dataset.episode_data_index["from"][ep_index].item()
     return [
-        dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"] for key in dataset.meta.video_keys
+        dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"]
+        for key in dataset.meta.video_keys
     ]
 
 
