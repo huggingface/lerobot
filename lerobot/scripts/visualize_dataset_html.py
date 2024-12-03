@@ -176,17 +176,18 @@ def run_server(
             ]
             tasks = dataset.meta.episodes[episode_id]["tasks"]
         else:
+            video_keys = [key for key, ft in dataset["features"].items() if ft["dtype"] == "video"]
             videos_info = [
                 {
                     "url": f"https://huggingface.co/datasets/{repo_id}/resolve/main/"
-                    + dataset["videos"]["videos_path"].format(
+                    + dataset["video_path"].format(
                         episode_chunk=int(episode_id) // dataset["chunks_size"],
                         video_key=video_key,
                         episode_index=episode_id,
                     ),
                     "filename": video_key,
                 }
-                for video_key in dataset["video_keys"]
+                for video_key in video_keys
             ]
             tasks_jsonl = load_dataset(
                 "json",
@@ -236,12 +237,10 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
     # init header of csv with state and action names
     header = ["timestamp"]
     if has_state:
-        dim_state = (dataset.meta.shapes if isinstance(dataset, LeRobotDataset) else dataset["shapes"])[
-            "observation.state"
-        ][0]
+        dim_state = dataset.meta.shapes["observation.state"][0] if isinstance(dataset, LeRobotDataset) else dataset["features"]["observation.state"]["shape"][0]
         header += [f"state_{i}" for i in range(dim_state)]
     if has_action:
-        dim_action = (dataset.meta.shapes if isinstance(dataset, LeRobotDataset) else dataset["shapes"])["action"][0]
+        dim_action = dataset.meta.shapes["action"][0] if isinstance(dataset, LeRobotDataset) else dataset["features"]["action"]["shape"][0]
         header += [f"action_{i}" for i in range(dim_action)]
 
     if isinstance(dataset, LeRobotDataset):
