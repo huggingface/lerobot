@@ -83,12 +83,12 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.robot_devices.control_utils import (
     init_keyboard_listener,
     init_policy,
+    is_headless,
     log_control_info,
     predict_action,
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
     stop_recording,
-    is_headless,
 )
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
