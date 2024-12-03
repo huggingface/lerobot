@@ -227,10 +227,10 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
     """Get a csv str containing timeseries data of an episode (e.g. state and action).
     This file will be loaded by Dygraph javascript to plot data in real time."""
     has_state = "observation.state" in (
-        dataset.features if isinstance(dataset, LeRobotDataset) else dataset["keys"]
+        dataset.features if isinstance(dataset, LeRobotDataset) else dataset["features"]
     )
     has_action = "action" in (
-        dataset.features if isinstance(dataset, LeRobotDataset) else dataset["keys"]
+        dataset.features if isinstance(dataset, LeRobotDataset) else dataset["features"]
     )
 
     # init header of csv with state and action names
@@ -257,9 +257,9 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
     else:
         repo_id = dataset["repo_id"]
         columns = ["timestamp"]
-        if "observation.state" in dataset["keys"]:
+        if "observation.state" in dataset["features"]:
             columns.append("observation.state")
-        if "action" in dataset["keys"]:
+        if "action" in dataset["features"]:
             columns.append("action")
         episode_parquet = load_dataset(
             "parquet",
