@@ -29,7 +29,6 @@ jobs:
     name: Pytest
     runs-on: ubuntu-latest
     env:
-      DATA_DIR: tests/data
       MUJOCO_GL: egl
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +69,6 @@ jobs:
     name: Pytest (minimal install)
     runs-on: ubuntu-latest
     env:
-      DATA_DIR: tests/data
       MUJOCO_GL: egl
     steps:
       - uses: actions/checkout@v4
@@ -103,40 +101,39 @@ jobs:
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
             && rm -rf tests/outputs outputs
 
+  # TODO(aliberts, rcadene): redesign after v2 migration / removing hydra
+  # end-to-end:
+  #   name: End-to-end
+  #   runs-on: ubuntu-latest
+  #   env:
+  #     MUJOCO_GL: egl
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         lfs: true  # Ensure LFS files are pulled
 
-  end-to-end:
-    name: End-to-end
-    runs-on: ubuntu-latest
-    env:
-      DATA_DIR: tests/data
-      MUJOCO_GL: egl
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true  # Ensure LFS files are pulled
+  #     - name: Install apt dependencies
+  #     # portaudio19-dev is needed to install pyaudio
+  #       run: |
+  #         sudo apt-get update && \
+  #         sudo apt-get install -y libegl1-mesa-dev portaudio19-dev
 
-      - name: Install apt dependencies
-      # portaudio19-dev is needed to install pyaudio
-        run: |
-          sudo apt-get update && \
-          sudo apt-get install -y libegl1-mesa-dev portaudio19-dev
+  #     - name: Install poetry
+  #       run: |
+  #         pipx install poetry && poetry config virtualenvs.in-project true
+  #         echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
 
-      - name: Install poetry
-        run: |
-          pipx install poetry && poetry config virtualenvs.in-project true
-          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+  #     - name: Set up Python 3.10
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.10"
+  #         cache: "poetry"
 
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-          cache: "poetry"
+  #     - name: Install poetry dependencies
+  #       run: |
+  #         poetry install --all-extras
 
-      - name: Install poetry dependencies
-        run: |
-          poetry install --all-extras
-
-      - name: Test end-to-end
-        run: |
-          make test-end-to-end \
-            && rm -rf outputs
+  #     - name: Test end-to-end
+  #       run: |
+  #         make test-end-to-end \
+  #           && rm -rf outputs

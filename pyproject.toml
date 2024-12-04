@@ -43,9 +43,8 @@ opencv-python = ">=4.9.0"
 diffusers = ">=0.27.2"
 torchvision = ">=0.17.1"
 h5py = ">=3.10.0"
-huggingface-hub = {extras = ["hf-transfer", "cli"], version = ">=0.25.0"}
-# TODO(rcadene, aliberts): Make gym 1.0.0 work
-gymnasium = "==0.29.1"
+huggingface-hub = {extras = ["hf-transfer", "cli"], version = ">=0.25.2"}
+gymnasium = "==0.29.1" # TODO(rcadene, aliberts): Make gym 1.0.0 work
 cmake = ">=3.29.0.1"
 gym-dora = { git = "https://github.com/dora-rs/dora-lerobot.git", subdirectory = "gym_dora", optional = true }
 gym-pusht = { version = ">=0.1.5", optional = true}
@@ -71,6 +70,7 @@ pyrealsense2 = {version = ">=2.55.1.6486", markers = "sys_platform != 'darwin'",
 pyrender = {git = "https://github.com/mmatl/pyrender.git", markers = "sys_platform == 'linux'", optional = true}
 hello-robot-stretch-body = {version = ">=0.7.27", markers = "sys_platform == 'linux'", optional = true}
 pyserial = {version = ">=3.5", optional = true}
+jsonlines = ">=4.0.0"
 
 
 [tool.poetry.extras]

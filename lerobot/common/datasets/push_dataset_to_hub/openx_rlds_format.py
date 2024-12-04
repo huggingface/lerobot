@@ -14,13 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
+For all datasets in the RLDS format.
 For https://github.com/google-deepmind/open_x_embodiment (OPENX) datasets.
+
+NOTE: You need to install tensorflow and tensorflow_datsets before running this script.
 
 Example:
     python lerobot/scripts/push_dataset_to_hub.py \
-        --raw-dir /hdd/tensorflow_datasets/bridge_dataset/1.0.0/ \
-        --repo-id youliangtan/sampled_bridge_data_v2 \
-        --raw-format openx_rlds.bridge_orig \
+        --raw-dir /path/to/data/bridge_dataset/1.0.0/ \
+        --repo-id your_hub/sampled_bridge_data_v2 \
+        --raw-format rlds \
         --episodes 3 4 5 8 9
 
 Exact dataset fps defined in openx/config.py, obtained from:
@@ -35,27 +38,20 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import torch
 import tqdm
-import yaml
 from datasets import Dataset, Features, Image, Sequence, Value
 from PIL import Image as PILImage
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
-from lerobot.common.datasets.push_dataset_to_hub.openx.transforms import OPENX_STANDARDIZATION_TRANSFORMS
 from lerobot.common.datasets.push_dataset_to_hub.utils import (
+    calculate_episode_data_index,
     concatenate_episodes,
     get_default_encoding,
     save_images_concurrently,
 )
 from lerobot.common.datasets.utils import (
-    calculate_episode_data_index,
     hf_transform_to_torch,
 )
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
-
-with open("lerobot/common/datasets/push_dataset_to_hub/openx/configs.yaml") as f:
-    _openx_list = yaml.safe_load(f)
-
-OPENX_DATASET_CONFIGS = _openx_list["OPENX_DATASET_CONFIGS"]
 
 np.set_printoptions(precision=2)
 
@@ -108,7 +104,6 @@ def load_from_raw(
     video: bool,
     episodes: list[int] | None = None,
     encoding: dict | None = None,
-    openx_dataset_name: str | None = None,
 ):
     """
     Args:
@@ -136,16 +131,17 @@ def load_from_raw(
     # we will apply the standardization transform if the dataset_name is provided
     # if the dataset name is not provided and the goal is to convert any rlds formatted dataset
     # search for 'image' keys in the observations
-    if openx_dataset_name is not None:
-        print(" - applying standardization transform for dataset: ", openx_dataset_name)
-        assert openx_dataset_name in OPENX_STANDARDIZATION_TRANSFORMS
-        transform_fn = OPENX_STANDARDIZATION_TRANSFORMS[openx_dataset_name]
-        dataset = dataset.map(transform_fn)
-
-        image_keys = OPENX_DATASET_CONFIGS[openx_dataset_name]["image_obs_keys"]
-    else:
-        obs_keys = dataset_info.features["steps"]["observation"].keys()
-        image_keys = [key for key in obs_keys if "image" in key]
+    image_keys = []
+    state_keys = []
+    observation_info = dataset_info.features["steps"]["observation"]
+    for key in observation_info:
+        # check whether the key is for an image or a vector observation
+        if len(observation_info[key].shape) == 3:
+            # only adding uint8 images discards depth images
+            if observation_info[key].dtype == tf.uint8:
+                image_keys.append(key)
+        else:
+            state_keys.append(key)
 
     lang_key = "language_instruction" if "language_instruction" in dataset.element_spec else None
 
@@ -193,49 +189,30 @@ def load_from_raw(
 
         num_frames = episode["action"].shape[0]
 
-        ###########################################################
-        # Handle the episodic data
-
-        # last step of demonstration is considered done
-        done = torch.zeros(num_frames, dtype=torch.bool)
-        done[-1] = True
         ep_dict = {}
-        langs = []  # TODO: might be located in "observation"
+        for key in state_keys:
+            ep_dict[f"observation.{key}"] = tf_to_torch(episode["observation"][key])
 
-        image_array_dict = {key: [] for key in image_keys}
-
-        # We will create the state observation tensor by stacking the state
-        # obs keys defined in the openx/configs.py
-        if openx_dataset_name is not None:
-            state_obs_keys = OPENX_DATASET_CONFIGS[openx_dataset_name]["state_obs_keys"]
-            # stack the state observations, if is None, pad with zeros
-            states = []
-            for key in state_obs_keys:
-                if key in episode["observation"]:
-                    states.append(tf_to_torch(episode["observation"][key]))
-                else:
-                    states.append(torch.zeros(num_frames, 1))  # pad with zeros
-            states = torch.cat(states, dim=1)
-            # assert states.shape == (num_frames, 8), f"states shape: {states.shape}"
-        else:
-            states = tf_to_torch(episode["observation"]["state"])
-
-        actions = tf_to_torch(episode["action"])
-        rewards = tf_to_torch(episode["reward"]).float()
+        ep_dict["action"] = tf_to_torch(episode["action"])
+        ep_dict["next.reward"] = tf_to_torch(episode["reward"]).float()
+        ep_dict["next.done"] = tf_to_torch(episode["is_last"])
+        ep_dict["is_terminal"] = tf_to_torch(episode["is_terminal"])
+        ep_dict["is_first"] = tf_to_torch(episode["is_first"])
+        ep_dict["discount"] = tf_to_torch(episode["discount"])
 
         # If lang_key is present, convert the entire tensor at once
         if lang_key is not None:
-            langs = [str(x) for x in episode[lang_key]]
+            ep_dict["language_instruction"] = [x.numpy().decode("utf-8") for x in episode[lang_key]]
+
+        ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
+        ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames)
+        ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
+
+        image_array_dict = {key: [] for key in image_keys}
 
         for im_key in image_keys:
             imgs = episode["observation"][im_key]
             image_array_dict[im_key] = [tf_img_convert(img) for img in imgs]
-
-        # simple assertions
-        for item in [states, actions, rewards, done]:
-            assert len(item) == num_frames
-
-        ###########################################################
 
         # loop through all cameras
         for im_key in image_keys:
@@ -262,17 +239,6 @@ def load_from_raw(
             else:
                 ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
 
-        if lang_key is not None:
-            ep_dict["language_instruction"] = langs
-
-        ep_dict["observation.state"] = states
-        ep_dict["action"] = actions
-        ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
-        ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames)
-        ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
-        ep_dict["next.reward"] = rewards
-        ep_dict["next.done"] = done
-
         path_ep_dict = tmp_ep_dicts_dir.joinpath(
             "ep_dict_" + "0" * (10 - len(str(ep_idx))) + str(ep_idx) + ".pt"
         )
@@ -290,30 +256,28 @@ def load_from_raw(
 def to_hf_dataset(data_dict, video) -> Dataset:
     features = {}
 
-    keys = [key for key in data_dict if "observation.images." in key]
-    for key in keys:
-        if video:
-            features[key] = VideoFrame()
-        else:
-            features[key] = Image()
+    for key in data_dict:
+        # check if vector state obs
+        if key.startswith("observation.") and "observation.images." not in key:
+            features[key] = Sequence(length=data_dict[key].shape[1], feature=Value(dtype="float32", id=None))
+        # check if image obs
+        elif "observation.images." in key:
+            if video:
+                features[key] = VideoFrame()
+            else:
+                features[key] = Image()
 
-    features["observation.state"] = Sequence(
-        length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
-    )
-    if "observation.velocity" in data_dict:
-        features["observation.velocity"] = Sequence(
-            length=data_dict["observation.velocity"].shape[1], feature=Value(dtype="float32", id=None)
-        )
-    if "observation.effort" in data_dict:
-        features["observation.effort"] = Sequence(
-            length=data_dict["observation.effort"].shape[1], feature=Value(dtype="float32", id=None)
-        )
     if "language_instruction" in data_dict:
         features["language_instruction"] = Value(dtype="string", id=None)
 
     features["action"] = Sequence(
         length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)
     )
+
+    features["is_terminal"] = Value(dtype="bool", id=None)
+    features["is_first"] = Value(dtype="bool", id=None)
+    features["discount"] = Value(dtype="float32", id=None)
+
     features["episode_index"] = Value(dtype="int64", id=None)
     features["frame_index"] = Value(dtype="int64", id=None)
     features["timestamp"] = Value(dtype="float32", id=None)
@@ -333,19 +297,8 @@ def from_raw_to_lerobot_format(
     video: bool = True,
     episodes: list[int] | None = None,
     encoding: dict | None = None,
-    openx_dataset_name: str | None = None,
 ):
-    """This is a test impl for rlds conversion"""
-    if openx_dataset_name is None:
-        # set a default rlds frame rate if the dataset is not from openx
-        fps = 30
-    elif "fps" not in OPENX_DATASET_CONFIGS[openx_dataset_name]:
-        raise ValueError(
-            "fps for this dataset is not specified in openx/configs.py yet," "means it is not yet tested"
-        )
-    fps = OPENX_DATASET_CONFIGS[openx_dataset_name]["fps"]
-
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding, openx_dataset_name)
+    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, encoding)
     hf_dataset = to_hf_dataset(data_dict, video)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {
