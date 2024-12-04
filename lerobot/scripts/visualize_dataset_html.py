@@ -157,7 +157,7 @@ def run_server(
             if major_version < 2:
                 return "Make sure to convert your LeRobotDataset to v2 & above."
 
-        episode_data_csv_str = get_episode_data_csv_str(dataset, episode_id)
+        episode_data_csv_str, columns_names = get_episode_data(dataset, episode_id)
         dataset_info = {
             "repo_id": f"{dataset_namespace}/{dataset_name}",
             "num_samples": dataset.num_frames
@@ -215,8 +215,8 @@ def run_server(
             episodes=episodes,
             dataset_info=dataset_info,
             videos_info=videos_info,
-            has_policy=False,
             episode_data_csv_str=episode_data_csv_str,
+            columns_names=columns_names,
         )
 
     app.run(host=host, port=port, debug=True)
@@ -227,9 +227,10 @@ def get_ep_csv_fname(episode_id: int):
     return ep_csv_fname
 
 
-def get_episode_data_csv_str(dataset: LeRobotDataset | IterableNamespace, episode_index):
+def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index):
     """Get a csv str containing timeseries data of an episode (e.g. state and action).
     This file will be loaded by Dygraph javascript to plot data in real time."""
+    columns_names = {}
     has_state = "observation.state" in dataset.features
     has_action = "action" in dataset.features
 
@@ -242,6 +243,9 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | IterableNamespace, episod
             else dataset.features["observation.state"].shape[0]
         )
         header += [f"state_{i}" for i in range(dim_state)]
+        columns_names["state"] = dataset.features["observation.state"]["names"]
+        if isinstance(dataset, IterableNamespace):
+            columns_names["state"] = columns_names["state"].motors
     if has_action:
         dim_action = (
             dataset.meta.shapes["action"][0]
@@ -249,6 +253,9 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | IterableNamespace, episod
             else dataset.features.action.shape[0]
         )
         header += [f"action_{i}" for i in range(dim_action)]
+        columns_names["action"] = dataset.features["action"]["names"]
+        if isinstance(dataset, IterableNamespace):
+            columns_names["action"] = columns_names["action"].motors
 
     if isinstance(dataset, LeRobotDataset):
         from_idx = dataset.episode_data_index["from"][episode_index]
@@ -288,7 +295,7 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | IterableNamespace, episod
     csv_writer.writerows(rows)
     csv_string = csv_buffer.getvalue()
 
-    return csv_string
+    return csv_string, columns_names
 
 
 def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]:
