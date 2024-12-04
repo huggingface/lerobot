@@ -19,7 +19,8 @@ import textwrap
 from itertools import accumulate
 from pathlib import Path
 from pprint import pformat
-from typing import Any
+from typing import Any, Dict, Iterator
+from types import SimpleNamespace
 
 import datasets
 import jsonlines
@@ -498,3 +499,29 @@ def create_lerobot_dataset_card(
         template_path="./lerobot/common/datasets/card_template.md",
         **kwargs,
     )
+
+
+class IterableNamespace(SimpleNamespace):
+    def __init__(self, dictionary: Dict[str, Any] = None, **kwargs):
+        super().__init__(**kwargs)
+        if dictionary is not None:
+            for key, value in dictionary.items():
+                if isinstance(value, dict):
+                    setattr(self, key, IterableNamespace(value))
+                else:
+                    setattr(self, key, value)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(vars(self))
+
+    def __getitem__(self, key: str) -> Any:
+        return vars(self)[key]
+
+    def items(self):
+        return vars(self).items()
+
+    def values(self):
+        return vars(self).values()
+
+    def keys(self):
+        return vars(self).keys()

@@ -60,7 +60,6 @@ from io import StringIO
 from pathlib import Path
 import re
 import tempfile
-import os
 import requests
 import json
 
@@ -70,11 +69,12 @@ from flask import Flask, redirect, render_template, url_for, request
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.utils.utils import init_logging
+from lerobot.common.datasets.utils import IterableNamespace
 from lerobot import available_datasets
 
 
 def run_server(
-    dataset: LeRobotDataset | dict | None,
+    dataset: LeRobotDataset | IterableNamespace | None,
     episodes: list[int] | None,
     host: str,
     port: str,
@@ -88,7 +88,7 @@ def run_server(
     def hommepage(dataset=dataset):
         if dataset:
             dataset_namespace, dataset_name = (
-                dataset.repo_id if isinstance(dataset, LeRobotDataset) else dataset["repo_id"]
+                dataset.repo_id if isinstance(dataset, LeRobotDataset) else dataset.repo_id
             ).split("/")
             return redirect(
                 url_for(
@@ -151,7 +151,7 @@ def run_server(
         except FileNotFoundError:
             return "Make sure to convert your LeRobotDataset to v2 & above."
         dataset_version = (
-            dataset.meta._version if isinstance(dataset, LeRobotDataset) else dataset["codebase_version"]
+            dataset.meta._version if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
         )
         match = re.search(r"v(\d+)\.", dataset_version)
         if match:
@@ -164,11 +164,11 @@ def run_server(
             "repo_id": f"{dataset_namespace}/{dataset_name}",
             "num_samples": dataset.num_frames
             if isinstance(dataset, LeRobotDataset)
-            else dataset["total_frames"],
+            else dataset.total_frames,
             "num_episodes": dataset.num_episodes
             if isinstance(dataset, LeRobotDataset)
-            else dataset["total_episodes"],
-            "fps": dataset.fps if isinstance(dataset, LeRobotDataset) else dataset["fps"],
+            else dataset.total_episodes,
+            "fps": dataset.fps if isinstance(dataset, LeRobotDataset) else dataset.fps,
         }
         if isinstance(dataset, LeRobotDataset):
             video_paths = [
@@ -180,12 +180,12 @@ def run_server(
             ]
             tasks = dataset.meta.episodes[episode_id]["tasks"]
         else:
-            video_keys = [key for key, ft in dataset["features"].items() if ft["dtype"] == "video"]
+            video_keys = [key for key, ft in dataset.features.items() if ft["dtype"] == "video"]
             videos_info = [
                 {
                     "url": f"https://huggingface.co/datasets/{repo_id}/resolve/main/"
-                    + dataset["video_path"].format(
-                        episode_chunk=int(episode_id) // dataset["chunks_size"],
+                    + dataset.video_path.format(
+                        episode_chunk=int(episode_id) // dataset.chunks_size,
                         video_key=video_key,
                         episode_index=episode_id,
                     ),
@@ -208,9 +208,7 @@ def run_server(
 
         if episodes is None:
             episodes = list(
-                range(
-                    dataset.num_episodes if isinstance(dataset, LeRobotDataset) else dataset["total_episodes"]
-                )
+                range(dataset.num_episodes if isinstance(dataset, LeRobotDataset) else dataset.total_episodes)
             )
 
         return render_template(
@@ -223,7 +221,7 @@ def run_server(
             episode_data_csv_str=episode_data_csv_str,
         )
 
-    app.run(host=host, port=port, debug=False)
+    app.run(host=host, port=port, debug=True)
 
 
 def get_ep_csv_fname(episode_id: int):
@@ -231,15 +229,13 @@ def get_ep_csv_fname(episode_id: int):
     return ep_csv_fname
 
 
-def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
+def get_episode_data_csv_str(dataset: LeRobotDataset | IterableNamespace, episode_index):
     """Get a csv str containing timeseries data of an episode (e.g. state and action).
     This file will be loaded by Dygraph javascript to plot data in real time."""
     has_state = "observation.state" in (
-        dataset.features if isinstance(dataset, LeRobotDataset) else dataset["features"]
+        dataset.features if isinstance(dataset, LeRobotDataset) else dataset.features
     )
-    has_action = "action" in (
-        dataset.features if isinstance(dataset, LeRobotDataset) else dataset["features"]
-    )
+    has_action = "action" in (dataset.features if isinstance(dataset, LeRobotDataset) else dataset.features)
 
     # init header of csv with state and action names
     header = ["timestamp"]
@@ -247,14 +243,14 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
         dim_state = (
             dataset.meta.shapes["observation.state"][0]
             if isinstance(dataset, LeRobotDataset)
-            else dataset["features"]["observation.state"]["shape"][0]
+            else dataset.features["observation.state"]["shape"][0]
         )
         header += [f"state_{i}" for i in range(dim_state)]
     if has_action:
         dim_action = (
             dataset.meta.shapes["action"][0]
             if isinstance(dataset, LeRobotDataset)
-            else dataset["features"]["action"]["shape"][0]
+            else dataset.features["action"]["shape"][0]
         )
         header += [f"action_{i}" for i in range(dim_action)]
 
@@ -271,15 +267,15 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | dict, episode_index):
             (np.expand_dims(data["timestamp"], axis=1), *[data[col] for col in columns[1:]])
         ).tolist()
     else:
-        repo_id = dataset["repo_id"]
+        repo_id = dataset.repo_id
         columns = ["timestamp"]
-        if "observation.state" in dataset["features"]:
+        if "observation.state" in dataset.features:
             columns.append("observation.state")
-        if "action" in dataset["features"]:
+        if "action" in dataset.features:
             columns.append("action")
 
-        url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/" + dataset["data_path"].format(
-            episode_chunk=int(episode_index) // dataset["chunks_size"], episode_index=episode_index
+        url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/" + dataset.data_path.format(
+            episode_chunk=int(episode_index) // dataset.chunks_size, episode_index=episode_index
         )
         df = pd.read_parquet(url)
         data = df[columns]  # Select specific columns
@@ -322,12 +318,12 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
     return language_instruction.removeprefix("tf.Tensor(b'").removesuffix("', shape=(), dtype=string)")
 
 
-def get_dataset_info(repo_id: str) -> dict:
+def get_dataset_info(repo_id: str) -> IterableNamespace:
     response = requests.get(f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json")
     response.raise_for_status()  # Raises an HTTPError for bad responses
     dataset_info = response.json()
     dataset_info["repo_id"] = repo_id
-    return dataset_info
+    return IterableNamespace(dataset_info)
 
 
 def visualize_dataset_html(
@@ -370,7 +366,7 @@ def visualize_dataset_html(
                 template_folder=template_dir,
             )
     else:
-        image_keys = dataset.meta.image_keys if isinstance(dataset, LeRobotDataset) else dataset["image_keys"]
+        image_keys = dataset.meta.image_keys if isinstance(dataset, LeRobotDataset) else dataset.image_keys
         if len(image_keys) > 0:
             raise NotImplementedError(f"Image keys ({image_keys=}) are currently not supported.")
 
