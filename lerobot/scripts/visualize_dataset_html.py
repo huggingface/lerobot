@@ -331,9 +331,7 @@ def get_dataset_info(repo_id: str) -> dict:
 
 
 def visualize_dataset_html(
-    repo_id: str | None = None,
-    root: Path | None = None,
-    load_from_hf_hub: bool = False,
+    dataset: LeRobotDataset | None,
     episodes: list[int] | None = None,
     output_dir: Path | None = None,
     serve: bool = True,
@@ -347,8 +345,7 @@ def visualize_dataset_html(
 
     if output_dir is None:
         # Create a temporary directory that will be automatically cleaned up
-        temp_base = tempfile.mkdtemp(prefix="lerobot_visualize_dataset_")
-        output_dir = temp_base if not repo_id else os.path.join(temp_base, repo_id)
+        output_dir = tempfile.mkdtemp(prefix="lerobot_visualize_dataset_")
 
     output_dir = Path(output_dir)
     if output_dir.exists():
@@ -362,7 +359,7 @@ def visualize_dataset_html(
     static_dir = output_dir / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
 
-    if not repo_id:
+    if dataset is None:
         if serve:
             run_server(
                 dataset=None,
@@ -373,8 +370,6 @@ def visualize_dataset_html(
                 template_folder=template_dir,
             )
     else:
-        dataset = LeRobotDataset(repo_id, root=root) if not load_from_hf_hub else get_dataset_info(repo_id)
-
         image_keys = dataset.meta.image_keys if isinstance(dataset, LeRobotDataset) else dataset["image_keys"]
         if len(image_keys) > 0:
             raise NotImplementedError(f"Image keys ({image_keys=}) are currently not supported.")
@@ -398,6 +393,12 @@ def main():
         type=str,
         default=None,
         help="Name of hugging face repositery containing a LeRobotDataset dataset (e.g. `lerobot/pusht` for https://huggingface.co/datasets/lerobot/pusht).",
+    )
+    parser.add_argument(
+        "--local-files-only",
+        type=int,
+        default=0,
+        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
     )
     parser.add_argument(
         "--root",
@@ -450,7 +451,21 @@ def main():
     )
 
     args = parser.parse_args()
-    visualize_dataset_html(**vars(args))
+    kwargs = vars(args)
+    repo_id = kwargs.pop("repo_id")
+    load_from_hf_hub = kwargs.pop("load_from_hf_hub")
+    root = kwargs.pop("root")
+    local_files_only = kwargs.pop("local_files_only")
+
+    dataset = None
+    if repo_id:
+        dataset = (
+            LeRobotDataset(repo_id, root=root, local_files_only=local_files_only)
+            if not load_from_hf_hub
+            else get_dataset_info(repo_id)
+        )
+
+    visualize_dataset_html(dataset, **vars(args))
 
 
 if __name__ == "__main__":
