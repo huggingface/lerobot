@@ -87,9 +87,7 @@ def run_server(
     @app.route("/")
     def hommepage(dataset=dataset):
         if dataset:
-            dataset_namespace, dataset_name = (
-                dataset.repo_id if isinstance(dataset, LeRobotDataset) else dataset.repo_id
-            ).split("/")
+            dataset_namespace, dataset_name = dataset.repo_id.split("/")
             return redirect(
                 url_for(
                     "show_episode",
@@ -168,7 +166,7 @@ def run_server(
             "num_episodes": dataset.num_episodes
             if isinstance(dataset, LeRobotDataset)
             else dataset.total_episodes,
-            "fps": dataset.fps if isinstance(dataset, LeRobotDataset) else dataset.fps,
+            "fps": dataset.fps,
         }
         if isinstance(dataset, LeRobotDataset):
             video_paths = [
@@ -232,10 +230,8 @@ def get_ep_csv_fname(episode_id: int):
 def get_episode_data_csv_str(dataset: LeRobotDataset | IterableNamespace, episode_index):
     """Get a csv str containing timeseries data of an episode (e.g. state and action).
     This file will be loaded by Dygraph javascript to plot data in real time."""
-    has_state = "observation.state" in (
-        dataset.features if isinstance(dataset, LeRobotDataset) else dataset.features
-    )
-    has_action = "action" in (dataset.features if isinstance(dataset, LeRobotDataset) else dataset.features)
+    has_state = "observation.state" in dataset.features
+    has_action = "action" in dataset.features
 
     # init header of csv with state and action names
     header = ["timestamp"]
