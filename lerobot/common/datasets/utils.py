@@ -502,6 +502,35 @@ def create_lerobot_dataset_card(
 
 
 class IterableNamespace(SimpleNamespace):
+    """
+    A namespace object that supports both dictionary-like iteration and dot notation access.
+    Automatically converts nested dictionaries into IterableNamespaces.
+
+    This class extends SimpleNamespace to provide:
+    - Dictionary-style iteration over keys
+    - Access to items via both dot notation (obj.key) and brackets (obj["key"])
+    - Dictionary-like methods: items(), keys(), values()
+    - Recursive conversion of nested dictionaries
+
+    Args:
+        dictionary: Optional dictionary to initialize the namespace
+        **kwargs: Additional keyword arguments passed to SimpleNamespace
+
+    Examples:
+        >>> data = {"name": "Alice", "details": {"age": 25}}
+        >>> ns = IterableNamespace(data)
+        >>> ns.name
+        'Alice'
+        >>> ns.details.age
+        25
+        >>> list(ns.keys())
+        ['name', 'details']
+        >>> for key, value in ns.items():
+        ...     print(f"{key}: {value}")
+        name: Alice
+        details: IterableNamespace(age=25)
+    """
+
     def __init__(self, dictionary: Dict[str, Any] = None, **kwargs):
         super().__init__(**kwargs)
         if dictionary is not None:
