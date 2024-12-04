@@ -239,14 +239,14 @@ def get_episode_data_csv_str(dataset: LeRobotDataset | IterableNamespace, episod
         dim_state = (
             dataset.meta.shapes["observation.state"][0]
             if isinstance(dataset, LeRobotDataset)
-            else dataset.features["observation.state"]["shape"][0]
+            else dataset.features["observation.state"].shape[0]
         )
         header += [f"state_{i}" for i in range(dim_state)]
     if has_action:
         dim_action = (
             dataset.meta.shapes["action"][0]
             if isinstance(dataset, LeRobotDataset)
-            else dataset.features["action"]["shape"][0]
+            else dataset.features.action.shape[0]
         )
         header += [f"action_{i}" for i in range(dim_action)]
 
