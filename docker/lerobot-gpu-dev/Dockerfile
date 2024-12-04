@@ -64,5 +64,15 @@ RUN echo 'if [ "$HOME" != "/root" ]; then ln -sf /root/.local/bin/poetry $HOME/.
 RUN poetry config virtualenvs.create false
 RUN poetry config virtualenvs.in-project true
 
+# Setup X11
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	libx11-dev \
+	libxcursor-dev \
+	libxcb1-dev \
+	libxi-dev \
+	libxkbcommon-dev \
+	libxkbcommon-x11-dev && \
+	apt clean && rm -rf /var/lib/apt/lists/*
+
 # Set EGL as the rendering backend for MuJoCo
 ENV MUJOCO_GL="egl"

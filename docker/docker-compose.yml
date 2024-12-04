@@ -1,0 +1,29 @@
+version: "3.9"
+
+################################################################################
+
+services:
+  latest:
+    runtime: nvidia
+    build:
+      context: .
+      dockerfile: ${TAG_NAME}/Dockerfile
+    image: ${USER}/lerobot:${TAG_NAME}
+    container_name: ${USER}_lerobot
+    network_mode: host
+    privileged: true
+    shm_size: '50gb'
+    volumes:
+      - ${PWD}/../:/root/lerobot
+      - ${DATASETS_PATH}:/root/datasets
+      - /tmp/.x11-unix:/tmp/.x11-unix
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - WANDB_API_KEY=${WANDB_API_KEY}
+      # Hack with HDF5 file locking
+      - HDF5_USE_FILE_LOCKING=FALSE
+      # For debugging with Hydra
+      - HYDRA_FULL_ERROR=1
+    command: /root/lerobot/docker/initialize-docker-container.sh
+
