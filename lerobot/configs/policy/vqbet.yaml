@@ -3,30 +3,46 @@
 # Defaults for training for the PushT dataset.
 
 seed: 100000
-dataset_repo_id: lerobot/pusht
+dataset_repo_id: absolutebogus
 
+hdf5_data_dir: /home/hemanth/imitation_learning/hdf5/small_test_nov_11_to_19_cam123/sim
+
+# hdf5_data_dir: /home/hemanth/imitation_learning/hdf5/small_dataset_oct_10_14/sim
+hydra:
+  job:
+    name: nov_11_to_19_cam123_vqbet
+    # name: small_vqbet_test
 override_dataset_stats:
-  # TODO(rcadene, alexander-soare): should we remove image stats as well? do we use a pretrained vision model?
-  observation.image:
-    mean: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
-    std: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
+  observation.images.cam1:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.cam2:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  observation.images.cam3:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
   # TODO(rcadene, alexander-soare): we override state and action stats to use the same as the pretrained model
   # from the original codebase, but we should remove these and train our own pretrained model
   observation.state:
-    min: [13.456424, 32.938293]
-    max: [496.14618, 510.9579]
+    min: [-360, 0]
+    max: [360, 120]
   action:
-    min: [12.0, 25.0]
-    max: [511.0, 511.0]
+    min: [126.6000, -752.2200, 124.2200, -180, 0.0000]
+    max: [599.7500, 468.9600, 1299.1801, 180, 1.0000]
 
 training:
   offline_steps: 250000
   online_steps: 0
-  eval_freq: 25000
+  eval_freq: -1
   save_freq: 25000
   save_checkpoint: true
+  num_workers: 8
 
-  batch_size: 64
+  batch_size: 16
   grad_clip_norm: 10
   lr: 1.0e-4
   lr_scheduler: cosine
@@ -44,7 +60,9 @@ training:
   bet_betas: [0.9, 0.999]
 
   delta_timestamps:
-    observation.image: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.images.cam1: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.images.cam2: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.images.cam3: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
     observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
     action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, ${policy.n_action_pred_token} + ${policy.action_chunk_size} - 1)]"
 
@@ -62,14 +80,19 @@ policy:
 
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
-    observation.image: [3, 96, 96]
+    observation.images.cam1: [3, 480, 640]
+    observation.images.cam2: [3, 480, 640]
+    observation.images.cam3: [3, 480, 640]
     observation.state: ["${env.state_dim}"]
   output_shapes:
     action: ["${env.action_dim}"]
 
   # Normalization / Unnormalization
   input_normalization_modes:
-    observation.image: mean_std
+    observation.images.cam1: mean_std
+    observation.images.cam2: mean_std
+    observation.images.cam3: mean_std
+
     observation.state: min_max
   output_normalization_modes:
     action: min_max
@@ -77,7 +100,8 @@ policy:
   # Architecture / modeling.
   # Vision backbone.
   vision_backbone: resnet18
-  crop_shape: [84, 84]
+  crop_shape: null
+  # crop_shape: [84, 84]
   crop_is_random: True
   pretrained_backbone_weights: null
   use_group_norm: True

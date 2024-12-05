@@ -289,7 +289,9 @@ class VQBeTModel(nn.Module):
 
         # To input state and observation features into GPT layers, we first project the features to fit the shape of input size of GPT.
         self.state_projector = MLP(
-            config.output_shapes["action"][0], hidden_channels=[self.config.gpt_input_dim]
+            # config.output_shapes["action"][0], hidden_channels=[self.config.gpt_input_dim]
+            # self.config.env.state_dim, hidden_channels=[self.config.gpt_input_dim]
+            2, hidden_channels=[self.config.gpt_input_dim]
         )
         self.rgb_feature_projector = MLP(
             self.rgb_encoder.feature_dim, hidden_channels=[self.config.gpt_input_dim]
@@ -736,6 +738,7 @@ class VQBeTRgbEncoder(nn.Module):
         # use the height and width from `config.crop_shape` if it is provided, otherwise it should use the
         # height and width from `config.input_shapes`.
         image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+        print(image_keys)
         assert len(image_keys) == 1
         image_key = image_keys[0]
         dummy_input_h_w = (
