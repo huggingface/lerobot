@@ -32,7 +32,7 @@ eval:
   num_samples_to_log: 30  # Number of validation samples to log in the table
 
 policy:
-  name: "classifier"
+  name: "hilserl/classifier"
   model_name: "facebook/convnext-base-224"
   model_type: "cnn"
 

@@ -66,9 +66,9 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
         from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
         return VQBeTPolicy, VQBeTConfig
-    elif name == "classifier":
-        from lerobot.common.policies.classifier.configuration_classifier import ClassifierConfig
-        from lerobot.common.policies.classifier.modeling_classifier import Classifier
+    elif name == "hilserl/classifier":
+        from lerobot.common.policies.hilserl.classifier.configuration_classifier import ClassifierConfig
+        from lerobot.common.policies.hilserl.classifier.modeling_classifier import Classifier
 
         return Classifier, ClassifierConfig
     else:
