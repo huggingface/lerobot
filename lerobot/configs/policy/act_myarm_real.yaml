@@ -56,7 +56,8 @@ policy:
   n_action_steps: 100
 
   input_shapes:
-    observation.images.wrist: [3, 240, 320]
+    observation.images.wrist: [3, 480, 640]
+    observation.images.top: [3, 480, 640]
     observation.state: ["${env.state_dim}"]
   output_shapes:
     action: ["${env.action_dim}"]
@@ -64,6 +65,7 @@ policy:
   # Normalization / Unnormalization
   input_normalization_modes:
     observation.images.wrist: mean_std
+    observation.images.top: mean_std
     observation.state: mean_std
   output_normalization_modes:
     action: mean_std
