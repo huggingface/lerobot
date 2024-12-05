@@ -16,9 +16,12 @@
 # limitations under the License.
 from dataclasses import dataclass, field
 
+from lerobot.configs.policies import PretrainedConfig
 
+
+@PretrainedConfig.register_subclass("tdmpc")
 @dataclass
-class TDMPCConfig:
+class TDMPCConfig(PretrainedConfig):
     """Configuration class for TDMPCPolicy.
 
     Defaults are configured for training with xarm_lift_medium_replay providing proprioceptive and single
@@ -102,6 +105,7 @@ class TDMPCConfig:
     """
 
     # Input / output structure.
+    n_obs_steps: int = 1
     n_action_repeats: int = 2
     horizon: int = 5
     n_action_steps: int = 1
@@ -185,6 +189,10 @@ class TDMPCConfig:
                 f"advised that you stick with the default. See {self.__class__.__name__} docstring for more "
                 "information."
             )
+        if self.n_obs_steps != 1:
+            raise ValueError(
+                f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
+            )
         if self.n_action_steps > 1:
             if self.n_action_repeats != 1:
                 raise ValueError(
@@ -194,3 +202,15 @@ class TDMPCConfig:
                 raise ValueError("If `n_action_steps > 1`, `use_mpc` must be set to `True`.")
             if self.n_action_steps > self.horizon:
                 raise ValueError("`n_action_steps` must be less than or equal to `horizon`.")
+
+    @property
+    def observation_delta_indices(self) -> list:
+        return list(range(self.horizon + 1))
+
+    @property
+    def action_delta_indices(self) -> list:
+        return list(range(self.horizon))
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return list(range(self.horizon))

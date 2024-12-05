@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import collections
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Sequence
 
 import torch
@@ -137,6 +138,7 @@ class SharpnessJitter(Transform):
         return self._call_kernel(F.adjust_sharpness, inpt, sharpness_factor=sharpness_factor)
 
 
+# TODO(aliberts): Remove
 def get_image_transforms(
     brightness_weight: float = 1.0,
     brightness_min_max: tuple[float, float] | None = None,
@@ -195,3 +197,116 @@ def get_image_transforms(
     else:
         # TODO(rcadene, aliberts): add v2.ToDtype float16?
         return RandomSubsetApply(transforms, p=weights, n_subset=n_subset, random_order=random_order)
+
+
+@dataclass
+class ImageTransformConfig:
+    """
+    For each transform, the following parameters are available:
+      weight: This represents the multinomial probability (with no replacement)
+            used for sampling the transform. If the sum of the weights is not 1,
+            they will be normalized.
+      type: The name of the class used. This is either a class available under torchvision.transforms.v2 or a
+            custom transform defined here.
+      kwargs: Lower & upper bound respectively used for sampling the transform's parameter
+            (following uniform distribution) when it's applied.
+    """
+
+    weight: int = 1.0
+    type: str = "Identity"
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ImageTransformsConfig:
+    """
+    These transforms are all using standard torchvision.transforms.v2
+    You can find out how these transformations affect images here:
+    https://pytorch.org/vision/0.18/auto_examples/transforms/plot_transforms_illustrations.html
+    We use a custom RandomSubsetApply container to sample them.
+    """
+
+    # Set this flag to `true` to enable transforms during training
+    enable: bool = False
+    # This is the maximum number of transforms (sampled from these below) that will be applied to each frame.
+    # It's an integer in the interval [1, number_of_available_transforms].
+    max_num_transforms: int = 3
+    # By default, transforms are applied in Torchvision's suggested order (shown below).
+    # Set this to True to apply them in a random order.
+    random_order: bool = False
+    tfs: list[ImageTransformConfig] = field(
+        default_factory=lambda: [
+            ImageTransformConfig(
+                weight=1.0,
+                type="ColorJitter",
+                kwargs={"brightness": (0.8, 1.2)},
+            ),
+            ImageTransformConfig(
+                weight=1.0,
+                type="ColorJitter",
+                kwargs={"contrast": (0.8, 1.2)},
+            ),
+            ImageTransformConfig(
+                weight=1.0,
+                type="ColorJitter",
+                kwargs={"saturation": (0.5, 1.5)},
+            ),
+            ImageTransformConfig(
+                weight=1.0,
+                type="ColorJitter",
+                kwargs={"hue": (-0.05, 0.05)},
+            ),
+            ImageTransformConfig(
+                weight=1.0,
+                type="SharpnessJitter",
+                kwargs={"sharpness": (0.5, 1.5)},
+            ),
+        ]
+    )
+
+
+class ImageTransforms(Transform):
+    """A class to compose image transforms based on configuration."""
+
+    _registry = {
+        "Identity": v2.Identity,
+        "ColorJitter": v2.ColorJitter,
+        "SharpnessJitter": SharpnessJitter,
+    }
+
+    def __init__(self, cfg: ImageTransformsConfig) -> None:
+        super().__init__()
+        self._cfg = cfg
+
+        weights = []
+        transforms = []
+        for tf_cfg in cfg.tfs:
+            if tf_cfg.weight <= 0.0:
+                continue
+
+            transform_cls = self._registry.get(tf_cfg.type)
+            if transform_cls is None:
+                available_transforms = ", ".join(self._registry.keys())
+                raise ValueError(
+                    f"Transform '{tf_cfg.type}' not found in the registry. "
+                    f"Available transforms are: {available_transforms}"
+                )
+
+            # Instantiate the transform
+            transform_instance = transform_cls(**tf_cfg.kwargs)
+            transforms.append(transform_instance)
+            weights.append(tf_cfg.weight)
+
+        n_subset = min(len(transforms), cfg.max_num_transforms)
+        if n_subset == 0 or not cfg.enable:
+            self.transform = v2.Identity()
+        else:
+            self.transform = RandomSubsetApply(
+                transforms=transforms,
+                p=weights,
+                n_subset=n_subset,
+                random_order=cfg.random_order,
+            )
+
+    def forward(self, *inputs: Any) -> Any:
+        return self.transform(*inputs)

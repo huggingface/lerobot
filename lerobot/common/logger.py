@@ -33,6 +33,7 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
+from lerobot.configs.default import MainConfig
 
 
 def log_output_dir(out_dir):
@@ -42,9 +43,9 @@ def log_output_dir(out_dir):
 def cfg_to_group(cfg: DictConfig, return_list: bool = False) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
     lst = [
-        f"policy:{cfg.policy.name}",
-        f"dataset:{cfg.dataset_repo_id}",
-        f"env:{cfg.env.name}",
+        f"policy:{cfg.policy.type}",
+        f"dataset:{cfg.dataset.repo_id}",
+        f"env:{cfg.env.type}",
         f"seed:{cfg.seed}",
     ]
     return lst if return_list else "-".join(lst)
@@ -83,25 +84,18 @@ class Logger:
     pretrained_model_dir_name = "pretrained_model"
     training_state_file_name = "training_state.pth"
 
-    def __init__(self, cfg: DictConfig, log_dir: str, wandb_job_name: str | None = None):
-        """
-        Args:
-            log_dir: The directory to save all logs and training outputs to.
-            job_name: The WandB job name.
-        """
+    def __init__(self, cfg: MainConfig):
         self._cfg = cfg
-        self.log_dir = Path(log_dir)
+        self.log_dir = cfg.dir
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.checkpoints_dir = self.get_checkpoints_dir(log_dir)
-        self.last_checkpoint_dir = self.get_last_checkpoint_dir(log_dir)
-        self.last_pretrained_model_dir = self.get_last_pretrained_model_dir(log_dir)
+        self.job_name = cfg.job_name
+        self.checkpoints_dir = self.get_checkpoints_dir(self.log_dir)
+        self.last_checkpoint_dir = self.get_last_checkpoint_dir(self.log_dir)
+        self.last_pretrained_model_dir = self.get_last_pretrained_model_dir(self.log_dir)
 
         # Set up WandB.
         self._group = cfg_to_group(cfg)
-        project = cfg.get("wandb", {}).get("project")
-        entity = cfg.get("wandb", {}).get("entity")
-        enable_wandb = cfg.get("wandb", {}).get("enable", False)
-        run_offline = not enable_wandb or not project
+        run_offline = not cfg.wandb.enable or not cfg.wandb.project
         if run_offline:
             logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
             self._wandb = None
@@ -115,12 +109,12 @@ class Logger:
 
             wandb.init(
                 id=wandb_run_id,
-                project=project,
-                entity=entity,
-                name=wandb_job_name,
-                notes=cfg.get("wandb", {}).get("notes"),
+                project=cfg.wandb.project,
+                entity=cfg.wandb.entity,
+                name=self.job_name,
+                notes=cfg.wandb.notes,
                 tags=cfg_to_group(cfg, return_list=True),
-                dir=log_dir,
+                dir=self.log_dir,
                 config=OmegaConf.to_container(cfg, resolve=True),
                 # TODO(rcadene): try set to True
                 save_code=False,
