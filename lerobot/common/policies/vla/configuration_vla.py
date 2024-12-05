@@ -115,23 +115,19 @@ class VLAConfig:
         }
     )
 
-    prompt: str = "Please insert the tube into the socket."
+    prompt: str = "Please transfer the cube."
+    #"Please insert the tube into the socket."
 
     # Architecture.
 
     # Language + Main transformer
-    vocab_size: int = 152064
-    hidden_size: int = 3584
-    intermediate_size: int = 29568
-    num_hidden_layers: int = 80
+    vocab_size: int = 150528
+    hidden_size: int = 896
     num_decoder_layers: int = 1
-    attn_implementation: str = "eager"
-    num_attention_heads: int = 64
-    num_key_value_heads: int = 8
-    dim_feedforward: int = 3200
+    num_attention_heads: int = 8
+    intermediate_size: int = 3200
     hidden_act: str = "silu"
     pad_token_id: int = 0
-    max_position_embeddings: int = 32768
     initializer_range: float = 0.02
     rms_norm_eps: float = 1e-05
     use_cache: bool = True

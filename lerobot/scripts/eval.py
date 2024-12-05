@@ -77,6 +77,7 @@ from lerobot.common.utils.utils import (
     inside_slurm,
     set_global_seed,
 )
+from torch.profiler import profile, record_function, ProfilerActivity
 
 
 def rollout(
@@ -137,53 +138,71 @@ def rollout(
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
     max_steps = env.call("_max_episode_steps")[0]
-    progbar = trange(
-        max_steps,
-        desc=f"Running rollout with at most {max_steps} steps",
-        disable=inside_slurm(),  # we dont want progress bar when we use slurm, since it clutters the logs
-        leave=False,
-    )
-    while not np.all(done):
-        # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-        observation = preprocess_observation(observation)
-        if return_observations:
-            all_observations.append(deepcopy(observation))
+    
+    def trace_handler(prof):
+        prof.export_chrome_trace(f"outputs/trace_schedule_{prof.step_num}.json")
 
-        observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
-
-        with torch.inference_mode():
-            action = policy.select_action(observation)
-
-        # Convert to CPU / numpy.
-        action = action.to("cpu").numpy()
-        assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
-
-        # Apply the next action.
-        observation, reward, terminated, truncated, info = env.step(action)
-        if render_callback is not None:
-            render_callback(env)
-
-        # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
-        # available of none of the envs finished.
-        if "final_info" in info:
-            successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
-        else:
-            successes = [False] * env.num_envs
-
-        # Keep track of which environments are done so far.
-        done = terminated | truncated | done
-
-        all_actions.append(torch.from_numpy(action))
-        all_rewards.append(torch.from_numpy(reward))
-        all_dones.append(torch.from_numpy(done))
-        all_successes.append(torch.tensor(successes))
-
-        step += 1
-        running_success_rate = (
-            einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        schedule=torch.profiler.schedule(
+            wait=1,
+            warmup=1,
+            active=3,
+        ),
+        on_trace_ready=trace_handler
+    ) as prof:
+        progbar = trange(
+            max_steps,
+            desc=f"Running rollout with at most {max_steps} steps",
+            disable=inside_slurm(),  # we dont want progress bar when we use slurm, since it clutters the logs
+            leave=False,
         )
-        progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
-        progbar.update()
+        while not np.all(done):
+            # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
+            observation = preprocess_observation(observation)
+            if return_observations:
+                all_observations.append(deepcopy(observation))
+
+            observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
+
+            with torch.inference_mode():
+                with record_function("select_action"):
+                    action = policy.select_action(observation)
+
+            # Convert to CPU / numpy.
+            action = action.to("cpu").numpy()
+            assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
+
+            # Apply the next action.
+            observation, reward, terminated, truncated, info = env.step(action)
+            if render_callback is not None:
+                render_callback(env)
+
+            # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
+            # available of none of the envs finished.
+            if "final_info" in info:
+                successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
+            else:
+                successes = [False] * env.num_envs
+
+            # Keep track of which environments are done so far.
+            done = terminated | truncated | done
+
+            all_actions.append(torch.from_numpy(action))
+            all_rewards.append(torch.from_numpy(reward))
+            all_dones.append(torch.from_numpy(done))
+            all_successes.append(torch.tensor(successes))
+
+            step += 1
+            running_success_rate = (
+                einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
+            )
+            progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
+            progbar.update()
+
+            prof.step()
+            if step==5:
+                break
 
     # Track the final observation.
     if return_observations:
@@ -267,6 +286,8 @@ def eval_policy(
         episode_data: dict | None = None
 
     # we dont want progress bar when we use slurm, since it clutters the logs
+
+
     progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm())
     for batch_ix in progbar:
         # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
@@ -280,6 +301,7 @@ def eval_policy(
             seeds = range(
                 start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
             )
+        
         rollout_data = rollout(
             env,
             policy,

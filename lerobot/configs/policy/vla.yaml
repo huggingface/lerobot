@@ -1,24 +1,25 @@
 # @package _global_
 
 seed: 1000
-dataset_repo_id: lerobot/aloha_sim_insertion_human
+dataset_repo_id: lerobot/aloha_sim_transfer_cube_human
 
-override_dataset_stats:
-  observation.images.top:
+#override_dataset_stats:
+  #observation.images.top:
     # Stats from imagenet, since we use a pretrained vision model
-    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
-    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+    #mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    #std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
 
 training:
   offline_steps: 100000
   online_steps: 0
   eval_freq: 20000
-  save_freq: 20000
+  save_freq: 2000
+  log_freq: 30
   save_checkpoint: true
 
   batch_size: 8
-  lr: 1e-5
-  lr_backbone: 1e-5
+  lr: 3e-5
+  lr_backbone: 3e-5
   weight_decay: 1e-4
   grad_clip_norm: 10
   online_steps_between_rollouts: 1
@@ -41,14 +42,14 @@ policy:
   
   input_shapes:
     observation.images.top: [3, 480, 640]  # Video inputs (from video frames)
-    observation.state: [128]               # State input dimension
+    observation.state: [14]               # State input dimension
     text.input: [256]                      # Text input processed by Qwen-VL
   output_shapes:
     action: [14]  # Action output dimension (Example: 4D actions)
 
   # Normalization / Unnormalization
   input_normalization_modes:
-    observation.images.top: mean_std
+    #observation.images.top: mean_std
     observation.state: mean_std
     # text.input: none  # No normalization needed for text input
   output_normalization_modes:
@@ -59,7 +60,7 @@ policy:
   state_encoder:
     hidden_dim: 256
     latent_dim: 64
-  prompt: "Please insert the tube into the socket."
+  prompt: "Please transfer the cube" #"Please insert the tube into the socket."
 
   # Vision-Language Model (Qwen-VL)
   vlm_backbone: qwen_vl

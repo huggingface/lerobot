@@ -98,6 +98,21 @@ def make_optimizer_and_scheduler(cfg, policy):
 
         optimizer = VQBeTOptimizer(policy, cfg)
         lr_scheduler = VQBeTScheduler(optimizer, cfg)
+    elif cfg.policy.name == "vla":
+        # Optimizer for VLAPolicy with LoRA
+        optimizer_params = [
+
+            {
+                "params": [
+                    p for n, p in policy.model.named_parameters() if p.requires_grad
+                ],
+                "lr": cfg.training.lr,  # Different LR for action decoder (if required)
+            }
+        ]
+        optimizer = torch.optim.AdamW(
+            optimizer_params, lr=cfg.training.lr, weight_decay=cfg.training.weight_decay
+        )
+        lr_scheduler = None
     else:
         raise NotImplementedError()
 
@@ -132,6 +147,7 @@ def update_policy(
         grad_clip_norm,
         error_if_nonfinite=False,
     )
+
 
     # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
     # although it still skips optimizer.step() if the gradients contain infs or NaNs.
@@ -654,7 +670,6 @@ def train_cli(cfg: dict):
         out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
         job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
     )
-
 
 def train_notebook(out_dir=None, job_name=None, config_name="default", config_path="../configs"):
     from hydra import compose, initialize
