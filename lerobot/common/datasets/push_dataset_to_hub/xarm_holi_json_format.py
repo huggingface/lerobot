@@ -94,9 +94,10 @@ def load_data(raw_dir: Path, videos_dir: Path, fps: int, video: bool, data_forma
         # Process state
         state_data = data['observation']['state']
         ep_dict["observation.state"] = torch.tensor(
-            [list(map(float, state['absolute_position'])) for state in state_data],
+            [list(map(float, state['absolute_position'] + [state['gripper_position']])) for state in state_data],
             dtype=torch.float32
         )
+
         # Process other fields
         ep_dict["action"] = torch.tensor(data['action'], dtype=torch.float32)
         ep_dict["timestamp"] =  torch.arange(0, num_frames, 1) / fps

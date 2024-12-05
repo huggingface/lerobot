@@ -76,6 +76,8 @@ def get_from_raw_to_lerobot_format_fn(raw_format: str):
         from lerobot.common.datasets.push_dataset_to_hub.xarm_pkl_format import from_raw_to_lerobot_format
     elif raw_format == "cam_png":
         from lerobot.common.datasets.push_dataset_to_hub.cam_png_format import from_raw_to_lerobot_format
+    elif raw_format == "xarm_holi_json":
+        from lerobot.common.datasets.push_dataset_to_hub.xarm_holi_json_format import from_raw_to_lerobot_format
     else:
         raise ValueError(
             f"The selected {raw_format} can't be found. Did you add it to `lerobot/scripts/push_dataset_to_hub.py::get_from_raw_to_lerobot_format_fn`?"
@@ -197,6 +199,8 @@ def push_dataset_to_hub(
         # Temporary directory used to store images, videos, meta_data
         meta_data_dir = Path(cache_dir) / "meta_data"
         videos_dir = Path(cache_dir) / "videos"
+    
+    videos_dir.mkdir(parents=True, exist_ok=True)
 
     if raw_format is None:
         # TODO(rcadene, adilzouitine): implement auto_find_raw_format
