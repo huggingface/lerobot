@@ -31,8 +31,9 @@ from lerobot.common.utils.utils import capture_timestamp_utc
 MAX_OPENCV_INDEX = 60
 
 
-def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, mock=False) -> list[dict]:
+def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, mock=False, url = None) -> list[dict]:
     cameras = []
+    # Check for local cameras 
     if platform.system() == "Linux":
         print("Linux detected. Finding available camera indices through scanning '/dev/video*' ports")
         possible_ports = [str(port) for port in Path("/dev").glob("video*")]
@@ -59,11 +60,21 @@ def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX
                 }
             )
 
+    # Check for network camera if URL provided
+    if url:
+        network_indices = _find_cameras([0], mock=mock, url=url)
+        if network_indices:
+            cameras.append({
+                "port": None,
+                "index": len(cameras),  
+                "url": url
+            })
+
     return cameras
 
 
 def _find_cameras(
-    possible_camera_ids: list[int | str], raise_when_empty=False, mock=False
+    possible_camera_ids: list[int | str], raise_when_empty=False, mock=False, url = None
 ) -> list[int | str]:
     if mock:
         import tests.mock_cv2 as cv2
@@ -72,7 +83,11 @@ def _find_cameras(
 
     camera_ids = []
     for camera_idx in possible_camera_ids:
-        camera = cv2.VideoCapture(camera_idx)
+        if url:
+            camera = cv2.VideoCapture("http://"+url+"/video")
+            url = None
+        else:
+            camera = cv2.VideoCapture(camera_idx)
         is_open = camera.isOpened()
         camera.release()
 
@@ -85,7 +100,7 @@ def _find_cameras(
             "Not a single camera was detected. Try re-plugging, or re-installing `opencv2`, "
             "or your camera driver, or make sure your camera is compatible with opencv2."
         )
-
+    
     return camera_ids
 
 
@@ -114,19 +129,66 @@ def save_images_from_cameras(
     height=None,
     record_time_s=2,
     mock=False,
+    LAN = False,
+    ip = None,
+    port = None,
 ):
     """
-    Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
-    associated to a given camera index.
+    Initializes cameras and saves images from them. Handles both local and network cameras. 
+    Useful to visually identify the camera associated to a given camera index.
+
+    For network cameras, ip and port can be either single values or lists of equal length.
+    Example usage:
+        Single network camera:
+            --LAN -ip '192.168.1.228' -port 8080
+        Multiple network cameras:
+            --LAN -ip '192.168.1.218,192.168.1.219' -port '8080,8081'
     """
-    if camera_ids is None or len(camera_ids) == 0:
-        camera_infos = find_cameras(mock=mock)
-        camera_ids = [cam["index"] for cam in camera_infos]
+
+    # Process network camera information if LAN is enabled
+    network_urls = []
+    if LAN:
+        if not ip or not port:
+            raise ValueError("Must provide ip and port for LAN video feed")
+
+        ip_list = [addr.strip() for addr in ip.split(',')]
+        port_list = [p.strip() for p in str(port).split(',')]
+
+        if len(ip_list) != len(port_list):
+            raise ValueError(f"Number of IPs ({len(ip_list)}) must match number of ports ({len(port_list)})")
+        
+        network_urls = [f'{ip}:{port}' for ip, port in zip(ip_list, port_list)]
+   
+
+    # First find local cameras
+    camera_infos = find_cameras(mock=mock)
+    
+    # Then add network cameras if any
+    for url in network_urls:
+        network_indices = _find_cameras([0], mock=mock, url=url)
+        if network_indices:
+            camera_infos.append({
+                "port": None,
+                "index": len(camera_infos),  # Use next available index
+                "url": url
+            })
+    print(f"All available cameras: {camera_infos}")
+    
+    # Filter cameras based on camera_ids if provided
+    if camera_ids is not None:
+        camera_infos = [cam_info for cam_info in camera_infos if cam_info['index'] in camera_ids]
+        print(f"Selected cameras: {camera_infos}")
+        
+        if not camera_infos:
+            raise ValueError(f"None of the requested camera indices {camera_ids} were found among available cameras")
 
     print("Connecting cameras")
     cameras = []
-    for cam_idx in camera_ids:
-        camera = OpenCVCamera(cam_idx, fps=fps, width=width, height=height, mock=mock)
+    for cam_info in camera_infos:
+        cam_idx = cam_info['index']
+        cam_url = cam_info.get("url", None)
+
+        camera = OpenCVCamera(cam_idx, fps=fps, width=width, height=height, mock=mock, url=cam_url)
         camera.connect()
         print(
             f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, "
@@ -195,6 +257,7 @@ class OpenCVCameraConfig:
     channels: int | None = None
     rotation: int | None = None
     mock: bool = False
+    url:str = None
 
     def __post_init__(self):
         if self.color_mode not in ["rgb", "bgr"]:
@@ -274,6 +337,7 @@ class OpenCVCamera:
         self.channels = config.channels
         self.color_mode = config.color_mode
         self.mock = config.mock
+        self.url = config.url
 
         self.camera = None
         self.is_connected = False
@@ -312,7 +376,12 @@ class OpenCVCamera:
         camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
         # First create a temporary camera trying to access `camera_index`,
         # and verify it is a valid camera by calling `isOpened`.
-        tmp_camera = cv2.VideoCapture(camera_idx)
+        # check if the camera object is local or by LAN and preform apprpriate call
+        # TODO: is this neesery? this validation is preformed at _find_cameras
+        if self.url:
+            tmp_camera = cv2.VideoCapture("http://"+self.url+"/video")
+        else:
+            tmp_camera = cv2.VideoCapture(camera_idx)
         is_camera_open = tmp_camera.isOpened()
         # Release camera to make it accessible for `find_camera_indices`
         tmp_camera.release()
@@ -322,7 +391,7 @@ class OpenCVCamera:
         # valid cameras.
         if not is_camera_open:
             # Verify that the provided `camera_index` is valid before printing the traceback
-            cameras_info = find_cameras()
+            cameras_info = find_cameras(self.url)
             available_cam_ids = [cam["index"] for cam in cameras_info]
             if self.camera_index not in available_cam_ids:
                 raise ValueError(
@@ -335,7 +404,10 @@ class OpenCVCamera:
         # Secondly, create the camera that will be used downstream.
         # Note: For some unknown reason, calling `isOpened` blocks the camera which then
         # needs to be re-created.
-        self.camera = cv2.VideoCapture(camera_idx)
+        if self.url:
+            self.camera = cv2.VideoCapture("http://"+self.url+"/video")
+        else:
+            self.camera = cv2.VideoCapture(camera_idx)
 
         if self.fps is not None:
             self.camera.set(cv2.CAP_PROP_FPS, self.fps)
@@ -515,6 +587,23 @@ if __name__ == "__main__":
         type=float,
         default=4.0,
         help="Set the number of seconds used to record the frames. By default, 2 seconds.",
+    )
+    parser.add_argument(
+        "--LAN",
+        action="store_true",
+        help="Enable network camera support",
+    )
+    parser.add_argument(
+        "-ip",
+        type=str,
+        default=None,
+        help="IP addresses of network cameras (comma-separated for multiple cameras)",
+    )
+    parser.add_argument(
+        "-port",
+        type=str,
+        default=None,
+        help="Ports for network cameras (comma-separated for multiple cameras)",
     )
     args = parser.parse_args()
     save_images_from_cameras(**vars(args))
