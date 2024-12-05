@@ -15,9 +15,12 @@
 # limitations under the License.
 from dataclasses import dataclass, field
 
+from lerobot.configs.policies import PretrainedConfig
 
+
+@PretrainedConfig.register_subclass("act")
 @dataclass
-class ACTConfig:
+class ACTConfig(PretrainedConfig):
     """Configuration class for the Action Chunking Transformers policy.
 
     Defaults are configured for training on bimanual Aloha tasks like "insertion" or "transfer".
@@ -169,3 +172,15 @@ class ACTConfig:
             and "observation.environment_state" not in self.input_shapes
         ):
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
+
+    @property
+    def observation_delta_indices(self) -> None:
+        return None
+
+    @property
+    def action_delta_indices(self) -> list:
+        return list(range(self.chunk_size))
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return None
