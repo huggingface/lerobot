@@ -9,6 +9,8 @@ from hydra import compose, initialize_config_dir
 from torch import nn
 from torch.utils.data import Dataset
 
+from lerobot.common.policies.hilserl.classifier.configuration_classifier import ClassifierConfig
+from lerobot.common.policies.hilserl.classifier.modeling_classifier import Classifier
 from lerobot.scripts.train_classifier import (
     create_balanced_sampler,
     train,
@@ -28,6 +30,12 @@ class MockDataset(Dataset):
 
     def __len__(self):
         return len(self.data)
+
+
+def make_dummy_model():
+    model_config = ClassifierConfig(num_classes=2, model_name="hf-tiny-model-private/tiny-random-ResNetModel")
+    model = Classifier(config=model_config)
+    return model
 
 
 def test_create_balanced_sampler():
@@ -61,38 +69,20 @@ def test_create_balanced_sampler():
     assert torch.allclose(weights, expected_weights)
 
 
-def mock_tqdm(iterable, **kwargs):
-    class MockPbar:
-        def __init__(self, iterable):
-            self.iterable = iterable
-
-        def __iter__(self):
-            return iter(self.iterable)
-
-        def set_postfix(self, *args, **kwargs):
-            pass  # Do nothing
-
-    return MockPbar(iterable)
-
-
-@patch("lerobot.scripts.train_classifier.tqdm", mock_tqdm)
 def test_train_epoch():
+    model = make_dummy_model()
     # Mock components
-    model = MagicMock()
     model.train = MagicMock()
-    model.return_value = MagicMock()
-    model.return_value.logits = torch.tensor([[0.0], [0.0]], requires_grad=True)
+
     train_loader = [
         {
-            "image": torch.randn(2, 3, 224, 224),
-            "label": torch.tensor([[0.0], [1.0]]),
+            "image": torch.rand(2, 3, 224, 224),
+            "label": torch.tensor([0.0, 1.0]),
         }
     ]
 
     criterion = nn.BCEWithLogitsLoss()
     optimizer = MagicMock()
-    optimizer.zero_grad = MagicMock()
-    optimizer.step = MagicMock()
     grad_scaler = MagicMock()
     device = torch.device("cpu")
     logger = MagicMock()
@@ -125,17 +115,15 @@ def test_train_epoch():
     logger.log_dict.assert_called()
 
 
-@patch("lerobot.scripts.train_classifier.tqdm", mock_tqdm)
 def test_validate():
+    model = make_dummy_model()
+
     # Mock components
-    model = MagicMock()
     model.eval = MagicMock()
-    model.return_value = MagicMock()
-    model.return_value.logits = torch.tensor([[0.0], [0.0]])
     val_loader = [
         {
-            "image": torch.randn(2, 3, 224, 224),
-            "label": torch.tensor([[0.0], [1.0]]),
+            "image": torch.rand(2, 3, 224, 224),
+            "label": torch.tensor([0.0, 1.0]),
         }
     ]
     criterion = nn.BCEWithLogitsLoss()
@@ -189,16 +177,12 @@ def test_resume_function(
                 f"resume={resume}",
                 "dataset_repo_id=dataset_repo_id",
                 "train_split_proportion=0.8",
-                "training.batch_size=2",
                 "training.num_workers=0",
+                "training.batch_size=2",
                 "training.image_key=image",
                 "training.label_key=label",
                 "training.use_amp=False",
                 "training.num_epochs=1",
-                "training.eval_freq=1",
-                "training.save_checkpoint=False",
-                "training.save_freq=1",
-                "training.learning_rate=0.001",
                 "eval.batch_size=2",
             ],
         )
@@ -207,7 +191,7 @@ def test_resume_function(
     mock_init_hydra_config.return_value = cfg
 
     # Mock dataset
-    dataset = MockDataset([{"image": torch.randn(3, 224, 224), "label": i % 2} for i in range(10)])
+    dataset = MockDataset([{"image": torch.rand(3, 224, 224), "label": i % 2} for i in range(10)])
     mock_dataset.return_value = dataset
 
     # Mock checkpoint handling
@@ -225,20 +209,8 @@ def test_resume_function(
         logger.load_last_training_state.return_value = 0
     mock_logger.return_value = logger
 
-    # Dummy model
-    class DummyModel(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.fc = nn.Linear(3 * 224 * 224, 1)
-
-        def forward(self, x):
-            x = x.view(x.size(0), -1)
-            logits = self.fc(x)
-            logits = logits.squeeze(-1)  # Squeeze to get shape [batch_size]
-            return type("Output", (object,), {"logits": logits})()
-
     # Instantiate the model and set make_policy to return it
-    model = DummyModel()
+    model = make_dummy_model()
     mock_make_policy.return_value = model
 
     # Call train
@@ -272,7 +244,7 @@ def test_resume_function(
     # Calculate expected_steps
     train_size = int(cfg.train_split_proportion * len(dataset))
     batch_size = cfg.training.batch_size
-    num_batches = (train_size + batch_size - 1) // batch_size  # Ceiling division
+    num_batches = (train_size + batch_size - 1) // batch_size
 
     expected_steps = [expected_start_step + i for i in range(num_batches)]
 
