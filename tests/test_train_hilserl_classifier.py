@@ -11,7 +11,7 @@ from torch.utils.data import Dataset
 
 from lerobot.common.policies.hilserl.classifier.configuration_classifier import ClassifierConfig
 from lerobot.common.policies.hilserl.classifier.modeling_classifier import Classifier
-from lerobot.scripts.train_classifier import (
+from lerobot.scripts.train_hilserl_classifier import (
     create_balanced_sampler,
     train,
     train_epoch,
@@ -146,12 +146,12 @@ def test_validate():
 
 
 @pytest.mark.parametrize("resume", [True, False])
-@patch("lerobot.scripts.train_classifier.init_hydra_config")
-@patch("lerobot.scripts.train_classifier.Logger.get_last_checkpoint_dir")
-@patch("lerobot.scripts.train_classifier.Logger.get_last_pretrained_model_dir")
-@patch("lerobot.scripts.train_classifier.Logger")
-@patch("lerobot.scripts.train_classifier.LeRobotDataset")
-@patch("lerobot.scripts.train_classifier.make_policy")
+@patch("lerobot.scripts.train_hilserl_classifier.init_hydra_config")
+@patch("lerobot.scripts.train_hilserl_classifier.Logger.get_last_checkpoint_dir")
+@patch("lerobot.scripts.train_hilserl_classifier.Logger.get_last_pretrained_model_dir")
+@patch("lerobot.scripts.train_hilserl_classifier.Logger")
+@patch("lerobot.scripts.train_hilserl_classifier.LeRobotDataset")
+@patch("lerobot.scripts.train_hilserl_classifier.make_policy")
 def test_resume_function(
     mock_make_policy,
     mock_dataset,

@@ -1,4 +1,4 @@
-# Training a Reward Classifier with LeRobot
+# Training a HIL-SERL Reward Classifier with LeRobot
 
 This tutorial provides step-by-step instructions for training a reward classifier using LeRobot.
 
@@ -6,7 +6,7 @@ This tutorial provides step-by-step instructions for training a reward classifie
 
 ## Training Script Overview
 
-LeRobot includes a ready-to-use training script located at [`lerobot/scripts/train_classifier.py`](../../lerobot/scripts/train_classifier.py). Here's an outline of its workflow:
+LeRobot includes a ready-to-use training script located at [`lerobot/scripts/train_hilserl_classifier.py`](../../lerobot/scripts/train_hilserl_classifier.py). Here's an outline of its workflow:
 
 1. **Configuration Loading**
    The script uses Hydra to load a configuration file for subsequent steps. (Details on Hydra follow below.)
@@ -33,7 +33,7 @@ For detailed information about Hydra usage, refer to [`examples/4_train_policy_w
 
 ### Config File Setup
 
-The default `default.yaml` cannot launch the reward classifier training directly. Instead, you need a configuration file like [`lerobot/configs/policy/reward_classifier.yaml`](../../lerobot/configs/policy/reward_classifier.yaml), with the following adjustment:
+The default `default.yaml` cannot launch the reward classifier training directly. Instead, you need a configuration file like [`lerobot/configs/policy/hilserl_classifier.yaml`](../../lerobot/configs/policy/hilserl_classifier.yaml), with the following adjustment:
 
 Replace the `dataset_repo_id` field with the identifier for your dataset, which contains images and sparse rewards:
 
