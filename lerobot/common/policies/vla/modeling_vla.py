@@ -12,6 +12,8 @@ from lerobot.common.policies.vla.configuration_vla import VLAConfig
 from transformers import AutoProcessor, LlavaOnevisionForConditionalGeneration
 from peft import get_peft_model, LoraConfig, TaskType
 
+from torch.profiler import profile, record_function, ProfilerActivity
+
 class VLAPolicy(
     nn.Module,
     PyTorchModelHubMixin,
@@ -66,7 +68,6 @@ class VLAPolicy(
         #self.language_model = get_peft_model(self.language_model, lora_config)
         #self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = VLA(config)
-        self.processor = AutoProcessor.from_pretrained("llava-hf/llava-onevision-qwen2-0.5b-ov-hf")# Updated Qwen2VL without loss and lm_head
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
 
         self.reset()
@@ -79,8 +80,6 @@ class VLAPolicy(
     def select_action(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         self.eval()
     
-        from torch.profiler import profile, record_function, ProfilerActivity
-
         with record_function("normalize_inputs"):
             batch = self.normalize_inputs(batch)
         
@@ -92,23 +91,10 @@ class VLAPolicy(
             #torch.cat([batch[k] for k in self.expected_image_keys], dim=0).to(self.device)
 
         batch["prompt"] = self.config.prompt
-        batch_size = len(batch["observation.images"])
-        #batch = self.normalize_targets(batch)
-        with record_function("processor"):
-            processed_inputs = self.processor(
-                text=[batch["prompt"]]*batch_size, images=list(batch["observation.images"]),
-                return_tensors="pt", padding=True, do_rescale=False,
-                #image_mean = [0.485, 0.456, 0.406],
-                #image_std = [0.229, 0.224, 0.225] 
-            )
-
-        with record_function("processed_inputs to cuda"):
-            for k,v in processed_inputs.items():
-                processed_inputs[k] = processed_inputs[k].to(device=batch["observation.state"].device)
 
         # Forward pass through VLA
         with record_function("model"):
-            predicted_actions = self.model(processed_inputs, batch_size)
+            predicted_actions = self.model(batch)
    
         with record_function("unnormalize_outputs"):
             if len(self._action_queue) == 0:
@@ -129,17 +115,7 @@ class VLAPolicy(
             #torch.cat([batch[k] for k in self.expected_image_keys], dim=0).to(self.device)
 
         batch["prompt"] = self.config.prompt
-        batch_size = len(batch["observation.images"])
-        batch = self.normalize_targets(batch)
-        processed_inputs = self.processor(
-            text=[batch["prompt"]]*batch_size, images=list(batch["observation.images"]),
-            return_tensors="pt", padding=True, do_rescale=False,
-            #mage_mean = [0.485, 0.456, 0.406],
-            #image_std = [0.229, 0.224, 0.225] 
-        )
 
-        for k,v in processed_inputs.items():
-            processed_inputs[k] = processed_inputs[k].to(device=batch["observation.state"].device)
         '''
         # Pass inputs through Llava and VLA
         llava_output = self.language_model(
@@ -163,7 +139,7 @@ class VLAPolicy(
         breakpoint()
         # Forward pass through VLA
         '''
-        predicted_actions = self.model(processed_inputs, batch_size)
+        predicted_actions = self.model(batch)
     
         loss_dict = {}
         if "action" in batch:
@@ -293,6 +269,7 @@ class VLA(nn.Module):
         self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained("llava-hf/llava-onevision-qwen2-0.5b-ov-hf",
                                                                                             #torch_dtype=torch.float16, 
                                                                                             device_map = 'cuda')
+        self.processor = AutoProcessor.from_pretrained("llava-hf/llava-onevision-qwen2-0.5b-ov-hf")# Updated Qwen2VL without loss and lm_head
         lora_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,  # Based on the task type (e.g., language modeling, etc.)
         r=4,  # The rank of the low-rank adaptation
@@ -319,7 +296,21 @@ class VLA(nn.Module):
         #self.device = self.vision_language_model.device
         #self.half()
 
-    def forward(self, processed_inputs, batch_size):
+    def apply_prompt_template(self, text: str, add_generation_prompt: bool = True) -> str:
+        conversation = [
+            {
+
+            "role": "user",
+            "content": [
+                {"type": "text", "text": text},
+                {"type": "image"},
+                ],
+            },
+        ]
+        prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=add_generation_prompt)
+        return prompt
+
+    def forward(self, batch):
         """
         # Forward pass to compute action logits using hidden states from Qwen2VL (Llava).
         
@@ -329,6 +320,23 @@ class VLA(nn.Module):
         Returns:
         action_logits: Tensor of predicted actions.
         """
+        prompt = self.apply_prompt_template(batch["prompt"], add_generation_prompt=True)
+
+        batch_size = len(batch["observation.images"])
+        #batch = self.normalize_targets(batch)
+        with record_function("processor"):
+            processed_inputs = self.processor(
+                text=[prompt]*batch_size, images=list(batch["observation.images"]),
+                return_tensors="pt", padding=True, do_rescale=False,
+                #image_mean = [0.485, 0.456, 0.406],
+                #image_std = [0.229, 0.224, 0.225] 
+            )
+
+        with record_function("processed_inputs to cuda"):
+            for k,v in processed_inputs.items():
+                processed_inputs[k] = processed_inputs[k].to(device=batch["observation.state"].device)
+
+
         llava_output = self.vision_language_model(
             **processed_inputs,
             return_dict=True,
