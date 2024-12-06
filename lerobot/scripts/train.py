@@ -87,13 +87,15 @@ def make_optimizer_and_scheduler(cfg, policy):
             cfg.training.adam_weight_decay,
         )
         from diffusers.optimization import get_scheduler
-
-        lr_scheduler = get_scheduler(
-            cfg.training.lr_scheduler,
-            optimizer=optimizer,
-            num_warmup_steps=cfg.training.lr_warmup_steps,
-            num_training_steps=cfg.training.offline_steps,
-        )
+        if cfg.training.lr_scheduler:
+            lr_scheduler = get_scheduler(
+                cfg.training.lr_scheduler,
+                optimizer=optimizer,
+                num_warmup_steps=cfg.training.lr_warmup_steps,
+                num_training_steps=cfg.training.offline_steps,
+            )
+        else:
+            lr_scheduler = None
     elif policy.name == "tdmpc":
         optimizer = torch.optim.Adam(policy.parameters(), cfg.training.lr)
         lr_scheduler = None
@@ -330,7 +332,7 @@ def train(
         cfg.wandb.enable = False
     logger = Logger(cfg, out_dir, wandb_job_name=job_name)
 
-    set_global_seed(cfg.seed)
+    set_global_seed(cfg.seed, accelerator=accelerator)
 
     # Check device is available
     device = get_safe_torch_device(cfg.device, log=True, accelerator=accelerator)
@@ -457,7 +459,7 @@ def train(
         sampler=sampler,
         pin_memory=device.type != "cpu",
         drop_last=False,
-    )
+    ) 
     if accelerator:
         policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
             policy, optimizer, dataloader, lr_scheduler
@@ -705,8 +707,9 @@ def train(
 def train_cli(cfg: dict):
     if is_launched_with_accelerate():
         import accelerate
-
-        accelerator = accelerate.Accelerator()
+        # We set step_scheduler_with_optimizer False to prevent accelerate from 
+        # adjusting the lr_scheduler steps based on the num_processes
+        accelerator = accelerate.Accelerator(step_scheduler_with_optimizer=False)
         train(
             cfg,
             out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,

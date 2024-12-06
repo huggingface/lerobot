@@ -123,7 +123,6 @@ def rollout(
 
     # Reset the policy and environments.
     policy.reset()
-
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
@@ -474,7 +473,7 @@ def main(
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    set_global_seed(hydra_cfg.seed)
+    set_global_seed(hydra_cfg.seed, accelerator=accelerator)
 
     log_output_dir(out_dir)
 

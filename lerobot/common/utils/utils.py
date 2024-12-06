@@ -86,13 +86,16 @@ def set_global_random_state(random_state_dict: dict[str, Any]):
         torch.cuda.random.set_rng_state(random_state_dict["torch_cuda_random_state"])
 
 
-def set_global_seed(seed):
+def set_global_seed(seed, accelerator: Callable = None):
     """Set seed for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    if accelerator:
+        from accelerate.utils import set_seed
+        set_seed(seed)
 
 
 @contextmanager
@@ -239,7 +242,7 @@ def get_accelerate_config(accelerator: Callable = None) -> dict[str, Any]:
 
     return config
 
-def update_omegaconf(cfg: DictConfig, config_name: str, config: dict[str, Any]):
+def update_omegaconf(cfg: DictConfig, config_name: str, config: dict[str, Any]) -> DictConfig:
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
     cfg_dict[config_name] = config
     cfg = OmegaConf.create(cfg_dict)

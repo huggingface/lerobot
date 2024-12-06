@@ -37,7 +37,7 @@ training:
   num_workers: 4
 
   batch_size: ???
-
+  lr_scheduler:
   eval_freq: ???
   log_freq: 200
   save_checkpoint: true
