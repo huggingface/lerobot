@@ -99,7 +99,15 @@ def load_data(raw_dir: Path, videos_dir: Path, fps: int, video: bool, data_forma
         )
 
         # Process other fields
-        ep_dict["action"] = torch.tensor(data['action'], dtype=torch.float32)
+        # ep_dict["action"] = torch.tensor(data['action'], dtype=torch.float32)
+        
+        # Set the action to the next state, and the last action to the current state
+        ep_dict["action"] = torch.tensor(
+            [list(map(float, state_data[min(i + 1, len(state_data) - 1)]['absolute_position'] + 
+                      [state_data[min(i + 1, len(state_data) - 1)]['gripper_position']])) 
+             for i in range(len(state_data))],
+            dtype=torch.float32
+        )
         ep_dict["timestamp"] =  torch.arange(0, num_frames, 1) / fps
         ep_dict["exec_time"] = torch.tensor(data['exec_time'], dtype=torch.float32)
         ep_dict["episode_index"] = torch.tensor(data['episode_index'], dtype=torch.int32)

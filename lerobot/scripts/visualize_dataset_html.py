@@ -205,7 +205,7 @@ def visualize_dataset_html(
     # so that the http server can get access to the mp4 files.
     static_dir = output_dir / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
-    ln_videos_dir = static_dir / "videos"
+    ln_videos_dir = static_dir / "data/xarm_holi_demos_lerobot" / "videos"
     if not ln_videos_dir.exists():
         ln_videos_dir.symlink_to((dataset.root / "videos").resolve())
 
