@@ -121,9 +121,15 @@ def predict_action(observation, policy, device, use_amp):
 
 
 def init_keyboard_listener(assign_rewards=False):
-    # Allow to exit early while recording an episode or resetting the environment,
-    # by tapping the right arrow key '->'. This might require a sudo permission
-    # to allow your terminal to monitor keyboard events.
+    """
+    Initializes a keyboard listener to enable early termination of an episode 
+    or environment reset by pressing the right arrow key ('->'). This may require 
+    sudo permissions to allow the terminal to monitor keyboard events.
+
+    Args:
+        assign_rewards (bool): If True, allows annotating the collected trajectory 
+        with a binary reward at the end of the episode to indicate success.
+    """
     events = {}
     events["exit_early"] = False
     events["rerecord_episode"] = False
