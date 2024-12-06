@@ -16,34 +16,38 @@
 
 seed: 1000
 dataset_repo_id: absolutebogus
-hdf5_data_dir: null
+hdf5_data_dir: /home/hemanth/imitation_learning/hdf5/training_job1/sim
+# hdf5_data_dir: /home/hemanth/imitation_learning/hdf5/oct_10_and_oct_14_camera_1/sim
+hydra:
+  job:
+    name: oct_10_14_act_cam1
 
 override_dataset_stats:
   observation.images.cam1:
     # stats from imagenet, since we use a pretrained vision model
     mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
     std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
-  observation.images.cam2:
-    # stats from imagenet, since we use a pretrained vision model
-    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
-    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
-  observation.images.cam3:
-    # stats from imagenet, since we use a pretrained vision model
-    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
-    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  # observation.images.cam2:
+  #   # stats from imagenet, since we use a pretrained vision model
+  #   mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+  #   std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  # observation.images.cam3:
+  #   # stats from imagenet, since we use a pretrained vision model
+  #   mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+  #   std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
   # observation.images.cam_low:
   #   # stats from imagenet, since we use a pretrained vision model
   #   mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
   #   std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
 
 training:
-  offline_steps: 100000
+  offline_steps: 500000
   online_steps: 0
   eval_freq: -1
   save_freq: 20000
   save_checkpoint: true
 
-  batch_size: 8
+  batch_size: 24
   lr: 1e-5
   lr_backbone: 1e-5
   weight_decay: 1e-4
@@ -52,6 +56,8 @@ training:
 
   delta_timestamps:
     action: "[i / ${fps} for i in range(${policy.chunk_size})]"
+    # observations:
+    #   state: "[-i / ${fps} for i in range(10, -1, -1)]"
 
 eval:
   n_episodes: 50
@@ -69,8 +75,8 @@ policy:
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
     observation.images.cam1: [3, 480, 640]
-    observation.images.cam2: [3, 480, 640]
-    observation.images.cam3: [3, 480, 640]
+    # observation.images.cam2: [3, 480, 640]
+    # observation.images.cam3: [3, 480, 640]
     observation.state: ["${env.state_dim}"]
   output_shapes:
     action: ["${env.action_dim}"]
@@ -78,8 +84,8 @@ policy:
   # Normalization / Unnormalization
   input_normalization_modes:
     observation.images.cam1: mean_std
-    observation.images.cam2: mean_std
-    observation.images.cam3: mean_std
+    # observation.images.cam2: mean_std
+    # observation.images.cam3: mean_std
     observation.state: mean_std
   output_normalization_modes:
     action: mean_std

@@ -5,8 +5,8 @@ fps: 5
 env:
   name: my_custom_aloha
   task: place_baby
-  state_dim: 5
-  action_dim: 3
+  state_dim: 2
+  action_dim: 5
   fps: ${fps}
   episode_length: 400
   # gym:
