@@ -348,7 +348,6 @@ class VLA(nn.Module):
         num_img_feats = 598 
         seq_len = llava_output.image_hidden_states.shape[0] // batch_size 
 
-       
         image_features = llava_output.image_hidden_states.view(batch_size, seq_len, -1)
         image_hidden_states =  image_features[:,:num_img_feats, :]#.to(dtype=torch.float16).to(self.device)
         hidden_states = torch.cat((image_hidden_states, last_hidden_state), dim=1)#.to(dtype=torch.float16).to(self.device) 
