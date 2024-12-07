@@ -108,33 +108,18 @@ class VLAPolicy(
         return loss_dict
 
 
-class ActionDecoder(nn.Module):
-    def __init__(self, config: VLAConfig, action_decoder: str = "act"):
-        """Runs multiple decoder layers followed by normalization."""
-        super().__init__()
-        self.action_decoder = action_decoder
-        if action_decoder == 'act':
-            self.action_head = ACTDecoder(config)
-        else:
-            raise NotImplementedError(f"{action_decoder} not supported.")
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        **kwargs: Any,
-    ) -> torch.Tensor:
-        x = self.action_head(x, **kwargs)
-        return x
-    
-
 class VLA(nn.Module):
     def __init__(self, config: VLAConfig, device: torch.device = 'cpu'):
         super().__init__()
 
-        # Initialize the Qwen2VLForConditionalGeneration and ActionDecoder
         self.chunk_size = config.chunk_size
         self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.hidden_size)
-        self.action_decoder = ActionDecoder(config)  # Use the updated ActionDecoder
+
+        if config.action_decoder.name == 'act':
+            self.action_decoder = ACTDecoder(config)  
+        else:
+            raise NotImplementedError(f"{config.action_decoder.name} not supported.")
+        
         self.action_head = nn.Linear(config.hidden_size, config.output_shapes["action"][0])
         self.vlm_backbone = config.vlm_backbone
         if "llava-onevision" in self.vlm_backbone:
@@ -184,6 +169,30 @@ class VLA(nn.Module):
         prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=add_generation_prompt)
         return prompt
 
+    def get_vlm_features(self, processed_inputs) -> torch.Tensor:
+
+        vlm_output = self.vision_language_model(
+            **processed_inputs,
+            return_dict=True,
+            output_hidden_states=True
+        )
+        
+        if "llava-onevision" in self.vlm_backbone:
+            batch_size = processed_inputs["input_ids"].shape[0]
+            last_hidden_state = vlm_output.hidden_states[-1]
+            seq_len = vlm_output.image_hidden_states.shape[0] // batch_size 
+
+            num_img_feats = 598 
+
+            image_features = vlm_output.image_hidden_states.view(batch_size, seq_len, -1)
+            image_hidden_states =  image_features[:,:num_img_feats, :]
+            hidden_states = torch.cat((image_hidden_states, last_hidden_state), dim=1)
+            hidden_states = hidden_states.transpose(0,1)
+        else:
+            raise NotImplementedError(f"{self.vlm_backbone} not implemented.")
+
+        return hidden_states
+    
     def forward(self, batch):
         """
         # Forward pass to compute action logits using hidden states from Qwen2VL (Llava).
@@ -197,49 +206,20 @@ class VLA(nn.Module):
         prompt = self.apply_prompt_template(batch["prompt"], add_generation_prompt=True)
 
         batch_size = len(batch["observation.images"])
-        #batch = self.normalize_targets(batch)
         with record_function("processor"):
             processed_inputs = self.processor(
                 text=[prompt]*batch_size, images=list(batch["observation.images"]),
                 return_tensors="pt", padding=True, do_rescale=False,
-                #image_mean = [0.485, 0.456, 0.406],
-                #image_std = [0.229, 0.224, 0.225] 
             )
 
         with record_function("processed_inputs to cuda"):
             for k,v in processed_inputs.items():
                 processed_inputs[k] = processed_inputs[k].to(device=batch["observation.state"].device)
 
+        hidden_states = self.get_vlm_features(processed_inputs)
 
-        llava_output = self.vision_language_model(
-            **processed_inputs,
-            return_dict=True,
-            output_hidden_states=True
-        )
+        batch_size, _, hidden_size = hidden_states.shape 
         
-    
-        last_hidden_state = llava_output.hidden_states[-1]#.to(dtype=torch.float16).to(self.device)
-        num_img_feats = 598 
-        seq_len = llava_output.image_hidden_states.shape[0] // batch_size 
-
-        image_features = llava_output.image_hidden_states.view(batch_size, seq_len, -1)
-        image_hidden_states =  image_features[:,:num_img_feats, :]#.to(dtype=torch.float16).to(self.device)
-        hidden_states = torch.cat((image_hidden_states, last_hidden_state), dim=1)#.to(dtype=torch.float16).to(self.device) 
-      
-        batch_size = hidden_states.size(0)  # Ensure batch size is extracted
-        seq_len = hidden_states.size(1)  # Sequence length of hidden states
-        hidden_size = hidden_states.size(2)  # Hidden size
-
-        # Ensure encoder_out has the correct shape [chunk_size, batch_size, seq_len, hidden_size]
-        # Repeat the encoder output for chunk size across the batch dimension
-        #encoder_out = hidden_states.unsqueeze(0).repeat(self.chunk_size, 1, 1, 1)  # [chunk_size, batch_size, seq_len, hidden_size]
-        #encoder_out = encoder_out.view(self.chunk_size * seq_len, batch_size, hidden_size)
-        #
-        # Repeat the decoder input (hidden states) as well, maintaining batch and hidden size
-        #repeated_hidden_states = hidden_states.unsqueeze(0).repeat(self.chunk_size//seq_len, 1, 1, 1)  # [chunk_size, batch_size, seq_len, hidden_size]
-        
-        #repeated_hidden_states = repeated_hidden_states.view(self.chunk_size, batch_size, hidden_size)
-        hidden_states = hidden_states.transpose(0,1)
         # Generate positional embeddings for the decoder
         decoder_pos_embeddings = self.decoder_pos_embed.weight.unsqueeze(1).repeat(1, batch_size, 1)
      

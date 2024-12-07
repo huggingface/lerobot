@@ -71,6 +71,7 @@ policy:
 
   # Action decoder
   action_decoder:
+    name: act
     vlm_hidden_dim: 128  # Input dim for action decoder (combined dimension)
     action_dim: 4  # Output dimension (action space)
 
