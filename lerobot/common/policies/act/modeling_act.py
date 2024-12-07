@@ -22,7 +22,7 @@ The majority of changes here involve removing unused code, unifying naming, and 
 import math
 from collections import deque
 from itertools import chain
-from typing import Callable
+from typing import Callable, Any
 
 import einops
 import numpy as np
@@ -584,6 +584,7 @@ class ACTDecoder(nn.Module):
         encoder_out: Tensor,
         decoder_pos_embed: Tensor | None = None,
         encoder_pos_embed: Tensor | None = None,
+        **kwargs: Any,
     ) -> Tensor:
         for layer in self.layers:
             x = layer(

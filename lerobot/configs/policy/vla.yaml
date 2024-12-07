@@ -63,8 +63,7 @@ policy:
   prompt: "Please transfer the cube" #"Please insert the tube into the socket."
 
   # Vision-Language Model (Qwen-VL)
-  vlm_backbone: qwen_vl
-  pretrained_backbone_weights: Qwen/Qwen-VL-2  # Pretrained weights for Qwen-VL
+  vlm_backbone: llava-hf/llava-onevision-qwen2-0.5b-ov-hf
   replace_final_stride_with_dilation: false
   
   # Combining state, video, and text
@@ -89,3 +88,12 @@ policy:
 
   # Training and loss computation
   dropout: 0.1
+
+  # Lora config
+  peft_method: lora
+  peft_config:
+    r: 4
+    lora_alpha: 16
+    lora_dropout: 0.1
+    target_modules: ["q_proj", "v_proj"]
+
