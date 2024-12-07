@@ -65,7 +65,7 @@ policy:
   # Vision-Language Model (Qwen-VL)
   vlm_backbone: 
     name: llava-hf/llava-onevision-qwen2-0.5b-ov-hf
-    feature_selection: first_image
+    feature_selection: all_generated
   replace_final_stride_with_dilation: false
   
   # Combining state, video, and text

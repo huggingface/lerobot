@@ -108,7 +108,7 @@ class Logger:
         else:
             os.environ["WANDB_SILENT"] = "true"
             import wandb
-
+            print(os.environ["WANDB_MODE"])
             wandb_run_id = None
             if cfg.resume:
                 wandb_run_id = get_wandb_run_id_from_filesystem(self.checkpoints_dir)
