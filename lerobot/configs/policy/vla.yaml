@@ -63,7 +63,9 @@ policy:
   prompt: "Please transfer the cube" #"Please insert the tube into the socket."
 
   # Vision-Language Model (Qwen-VL)
-  vlm_backbone: llava-hf/llava-onevision-qwen2-0.5b-ov-hf
+  vlm_backbone: 
+    name: llava-hf/llava-onevision-qwen2-0.5b-ov-hf
+    feature_selection: first_image
   replace_final_stride_with_dilation: false
   
   # Combining state, video, and text

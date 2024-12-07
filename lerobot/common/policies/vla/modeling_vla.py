@@ -113,20 +113,21 @@ class VLA(nn.Module):
         super().__init__()
 
         self.chunk_size = config.chunk_size
-        self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.hidden_size)
-
-        if config.action_decoder.name == 'act':
+        self.action_decoder_name = config.action_decoder.name
+        if self.action_decoder_name == 'act':
             self.action_decoder = ACTDecoder(config)  
+            self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.hidden_size)
         else:
-            raise NotImplementedError(f"{config.action_decoder.name} not supported.")
+            raise NotImplementedError(f"{self.action_decoder_name} not supported.")
         
         self.action_head = nn.Linear(config.hidden_size, config.output_shapes["action"][0])
-        self.vlm_backbone = config.vlm_backbone
-        if "llava-onevision" in self.vlm_backbone:
-            self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained(self.vlm_backbone, device_map=device)
-            self.processor = AutoProcessor.from_pretrained(self.vlm_backbone)
+        self.vlm_backbone_name = config.vlm_backbone.name
+        self.vlm_backbone_feature_selection = config.vlm_backbone.get("feature_selection", "last_token")
+        if "llava-onevision" in self.vlm_backbone_name:
+            self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained(self.vlm_backbone_name, device_map=device)
+            self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
         else:
-            raise NotImplementedError(f"{self.vlm_backbone} not supported.")
+            raise NotImplementedError(f"{self.vlm_backbone_name} not supported.")
         
         self.peft_method = config.get("peft_method", "")
         if 'lora' in self.peft_method:
@@ -177,22 +178,52 @@ class VLA(nn.Module):
             output_hidden_states=True
         )
         
-        if "llava-onevision" in self.vlm_backbone:
+        if "llava-onevision" in self.vlm_backbone_name:
             batch_size = processed_inputs["input_ids"].shape[0]
             last_hidden_state = vlm_output.hidden_states[-1]
             seq_len = vlm_output.image_hidden_states.shape[0] // batch_size 
-
-            num_img_feats = 598 
-
             image_features = vlm_output.image_hidden_states.view(batch_size, seq_len, -1)
-            image_hidden_states =  image_features[:,:num_img_feats, :]
-            hidden_states = torch.cat((image_hidden_states, last_hidden_state), dim=1)
-            hidden_states = hidden_states.transpose(0,1)
+
+            if self.vlm_backbone_feature_selection == 'first_image':
+                num_img_feats = 598 
+                image_hidden_states =  image_features[:,:num_img_feats, :]
+                hidden_states = torch.cat((image_hidden_states, last_hidden_state), dim=1)
+            elif self.vlm_backbone_feature_selection == 'last_token':
+                hidden_states = last_hidden_state[:, -1:, :]
+            elif self.vlm_backbone_feature_selection == 'all_generated':
+                hidden_states = last_hidden_state
+            elif self.vlm_backbone_feature_selection == 'all':
+                hidden_states = torch.cat((image_features, last_hidden_state), dim=1)
+            else:
+                raise NotImplementedError(f" not supportedd")
+
+            hidden_states = hidden_states.transpose(0, 1)
         else:
-            raise NotImplementedError(f"{self.vlm_backbone} not implemented.")
+            raise NotImplementedError(f"{self.vlm_backbone_name} not implemented.")
 
         return hidden_states
     
+    def get_action_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
+
+        batch_size, _, hidden_size = hidden_states.shape 
+
+        if self.action_decoder_name == 'act':
+            # Generate positional embeddings for the decoder
+            decoder_pos_embeddings = self.decoder_pos_embed.weight.unsqueeze(1).repeat(1, batch_size, 1)
+            # Decode the action with positional embeddings and encoder output
+            x = torch.zeros((self.chunk_size, batch_size, hidden_size), dtype = hidden_states.dtype, device=hidden_states.device)
+            action_logits = self.action_decoder(x=x, 
+                encoder_out=hidden_states,
+                decoder_pos_embed = decoder_pos_embeddings
+            )
+            # Final action logits through the action head
+            action_logits = self.action_head(action_logits)
+            action_logits = action_logits.transpose(0, 1)
+        else:
+            raise NotImplementedError(f"{self.action_decoder_name} not supported.")
+
+        return action_logits
+
     def forward(self, batch):
         """
         # Forward pass to compute action logits using hidden states from Qwen2VL (Llava).
@@ -218,20 +249,6 @@ class VLA(nn.Module):
 
         hidden_states = self.get_vlm_features(processed_inputs)
 
-        batch_size, _, hidden_size = hidden_states.shape 
-        
-        # Generate positional embeddings for the decoder
-        decoder_pos_embeddings = self.decoder_pos_embed.weight.unsqueeze(1).repeat(1, batch_size, 1)
-     
-        # Decode the action with positional embeddings and encoder output
-        x = torch.zeros((self.chunk_size, batch_size, hidden_size), dtype = hidden_states.dtype, device=hidden_states.device)
-        action_logits = self.action_decoder(x=x, 
-            encoder_out=hidden_states,
-            decoder_pos_embed = decoder_pos_embeddings
-        )
-        
-        # Final action logits through the action head
-        action_logits = self.action_head(action_logits)
+        action_logits = self.get_action_logits(hidden_states)
 
-        action_logits = action_logits.transpose(0, 1)
         return action_logits
