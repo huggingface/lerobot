@@ -120,12 +120,32 @@ class VLAConfig:
 
     # Architecture.
 
+    # Action decoder
+
+    action_decoder: dict = field(
+        default_factory=lambda: {
+            "name": "act",
+            "vlm_hidden_dim": 128,
+            "action_dim": 4,
+            "n_decoder_layers": 1,
+            "n_encoder_layers": 4,
+            "dim_model": 896,
+            "n_heads": 8,
+            "dim_feedforward": 3200,
+            "feedforward_activation": "relu",
+            "pre_norm": False,
+            "dropout": 0.1,
+            "temporal_ensemble_coeff": None,
+        }
+    )
+
+
     # Language + Main transformer
     vocab_size: int = 150528
     hidden_size: int = 896
-    num_decoder_layers: int = 1
-    num_attention_heads: int = 8
-    intermediate_size: int = 3200
+    # n_decoder_layers: int = 1
+    # n_heads: int = 8
+    # dim_feedforward: int = 3200
     hidden_act: str = "silu"
     pad_token_id: int = 0
     initializer_range: float = 0.02
@@ -136,7 +156,7 @@ class VLAConfig:
     use_sliding_window: bool = False
     sliding_window = 4096
     max_window_layers = 80
-    attention_dropout = 0.0
+    # dropout = 0.0
     rope_scaling: dict = field(
         default_factory=lambda: {
             "type": "mrope",
@@ -145,18 +165,6 @@ class VLAConfig:
     )
     pruned_heads = None
 
-    # Vision encoder
-    # depth: int = 32
-    # embed_dim: int = 1280
-    # hidden_size: int = 3584
-    # hidden_act: str = "quick_gelu"
-    # mlp_ratio: int = 4
-    # num_heads: int = 16
-    # in_channels: int = 3
-    # patch_size: int = 14
-    # spatial_merge_size: int = 2
-    # temporal_patch_size: int = 2
-    # attn_implementation: str = "eager"
     vision_config: dict = field(
         default_factory=lambda: {
             "depth": 32,
@@ -170,6 +178,26 @@ class VLAConfig:
             "spatial_merge_size": 2,
             "temporal_patch_size": 2,
             "attn_implementation": "eager",
+        }
+    )
+
+    # Vision-Language Model (Qwen-VL)
+    vlm_backbone: dict = field(
+        default_factory=lambda: {
+            "name": "llava-hf/llava-onevision-qwen2-0.5b-ov-hf",
+            "feature_selection": "first_image",
+        }
+    )
+
+
+
+    peft_method: str = "lora"
+    peft_config: dict = field(
+        default_factory=lambda: {
+            "r": 4,
+            "lora_alpha": 16,
+            "lora_dropout": 0.1,
+            "target_modules": ["q_proj", "v_proj"],
         }
     )
 

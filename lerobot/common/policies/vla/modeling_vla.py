@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.vla.configuration_vla import VLAConfig
@@ -111,17 +112,17 @@ class VLAPolicy(
 class VLA(nn.Module):
     def __init__(self, config: VLAConfig, device: torch.device = 'cpu'):
         super().__init__()
-
         self.chunk_size = config.chunk_size
-        self.action_decoder_name = config.action_decoder.name
+        self.action_decoder_name = config.action_decoder.get("name", "act")
         if self.action_decoder_name == 'act':
-            self.action_decoder = ACTDecoder(config)  
+            action_decoder_config = OmegaConf.create(config.action_decoder)
+            self.action_decoder = ACTDecoder(action_decoder_config)  
             self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.hidden_size)
         else:
             raise NotImplementedError(f"{self.action_decoder_name} not supported.")
         
         self.action_head = nn.Linear(config.hidden_size, config.output_shapes["action"][0])
-        self.vlm_backbone_name = config.vlm_backbone.name
+        self.vlm_backbone_name = config.vlm_backbone["name"]
         self.vlm_backbone_feature_selection = config.vlm_backbone.get("feature_selection", "last_token")
         if "llava-onevision" in self.vlm_backbone_name:
             self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained(self.vlm_backbone_name, device_map=device)
@@ -129,15 +130,15 @@ class VLA(nn.Module):
         else:
             raise NotImplementedError(f"{self.vlm_backbone_name} not supported.")
         
-        self.peft_method = config.get("peft_method", "")
+        self.peft_method = config.peft_method
         if 'lora' in self.peft_method:
             peft_config = config.peft_config
             lora_config = LoraConfig(
                 task_type=TaskType.CAUSAL_LM,  # Based on the task type (e.g., language modeling, etc.)
-                r=peft_config.r,  # The rank of the low-rank adaptation
-                lora_alpha=peft_config.lora_alpha,  # Scaling factor
-                lora_dropout=peft_config.lora_dropout,  # Dropout applied to LoRA layers
-                target_modules=peft_config.target_modules  # The components where LoRA is applied
+                r=peft_config["r"],  # The rank of the low-rank adaptation
+                lora_alpha=peft_config["lora_alpha"],  # Scaling factor
+                lora_dropout=peft_config["lora_dropout"],  # Dropout applied to LoRA layers
+                target_modules=peft_config["target_modules"]  # The components where LoRA is applied
             )
             self.lora_config = lora_config
             for param in self.vision_language_model.parameters():

@@ -76,21 +76,17 @@ policy:
     name: act
     vlm_hidden_dim: 128  # Input dim for action decoder (combined dimension)
     action_dim: 4  # Output dimension (action space)
+    n_decoder_layers: 1
+    n_encoder_layers: 4
+    dim_model: 896
+    n_heads: 8
+    dim_feedforward: 3200
+    feedforward_activation: relu
+    pre_norm: false
+    # Training and loss computation
+    dropout: 0.1
+    temporal_ensemble_coeff: null
 
-  # Transformer layers for action decoding
-  dim_model: 512
-  n_heads: 8
-  dim_feedforward: 3200
-  feedforward_activation: relu
-  n_encoder_layers: 4
-  n_decoder_layers: 1
-  latent_dim: 32
-
-  # Inference
-  temporal_ensemble_coeff: null
-
-  # Training and loss computation
-  dropout: 0.1
 
   # Lora config
   peft_method: lora
