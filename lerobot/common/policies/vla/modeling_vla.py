@@ -66,8 +66,8 @@ class VLAPolicy(
         #self.lora_config = lora_config
        
         #self.language_model = get_peft_model(self.language_model, lora_config)
-        #self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = VLA(config)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = VLA(config, device=self.device)
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
 
         self.reset()
@@ -106,7 +106,6 @@ class VLAPolicy(
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
        
         batch = self.normalize_inputs(batch)
-        
         if len(self.expected_image_keys) > 0:
             batch = dict(batch)  
             #batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4).to(self.device
@@ -257,7 +256,7 @@ class ActionDecoder(nn.Module):
         return x
 
 class VLA(nn.Module):
-    def __init__(self, config: VLAConfig):
+    def __init__(self, config: VLAConfig, device: torch.device = 'cpu'):
         super().__init__()
 
         # Initialize the Qwen2VLForConditionalGeneration and ActionDecoder
@@ -268,7 +267,7 @@ class VLA(nn.Module):
         self.action_head = nn.Linear(config.hidden_size, config.output_shapes["action"][0])
         self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained("llava-hf/llava-onevision-qwen2-0.5b-ov-hf",
                                                                                             #torch_dtype=torch.float16, 
-                                                                                            device_map = 'cuda')
+                                                                                            device_map = device)
         self.processor = AutoProcessor.from_pretrained("llava-hf/llava-onevision-qwen2-0.5b-ov-hf")# Updated Qwen2VL without loss and lm_head
         lora_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,  # Based on the task type (e.g., language modeling, etc.)
