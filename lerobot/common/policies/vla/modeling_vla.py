@@ -125,7 +125,11 @@ class VLA(nn.Module):
         self.vlm_backbone_name = config.vlm_backbone["name"]
         self.vlm_backbone_feature_selection = config.vlm_backbone.get("feature_selection", "last_token")
         if "llava-onevision" in self.vlm_backbone_name:
-            self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained(self.vlm_backbone_name, device_map=device)
+            self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained(self.vlm_backbone_name, 
+                                                                                                device_map=device, 
+                                                                                                torch_dtype=torch.float16,
+                                                                                                # attn_implementation="flash_attention_2"
+                                                                                                )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
         else:
             raise NotImplementedError(f"{self.vlm_backbone_name} not supported.")

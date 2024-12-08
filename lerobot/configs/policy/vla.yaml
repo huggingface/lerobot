@@ -14,7 +14,7 @@ training:
   online_steps: 0
   eval_freq: 20000
   save_freq: 2000
-  log_freq: 30
+  log_freq: 100
   save_checkpoint: true
 
   batch_size: 8
