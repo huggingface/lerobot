@@ -175,19 +175,22 @@ class VLA(nn.Module):
                 print(f"VLM trainable parameter: {name}")
 
     def apply_prompt_template(self, text: str, add_generation_prompt: bool = True) -> str:
-        if "llava-onevision" in self.vlm_backbone_name and self.use_prompt_template:
-            conversation = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": text},
-                        {"type": "image"},
-                    ],
-                },
-            ]
-            prompt = self.processor.apply_chat_template(
-                conversation, add_generation_prompt=add_generation_prompt
-            )
+        if "llava-onevision" in self.vlm_backbone_name:
+            if  self.use_prompt_template:
+                conversation = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": text},
+                            {"type": "image"},
+                        ],
+                    },
+                ]
+                prompt = self.processor.apply_chat_template(
+                    conversation, add_generation_prompt=add_generation_prompt
+                )
+            else:
+                prompt = f"<image>{text}"
         elif "paligemma" in self.vlm_backbone_name:
             prompt = f"<image>{text}"
         else:
