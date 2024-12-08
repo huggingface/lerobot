@@ -126,11 +126,19 @@ class VLA(nn.Module):
         self.vlm_backbone_feature_selection = config.vlm_backbone.get("feature_selection", "last_token")
         if "llava-onevision" in self.vlm_backbone_name:
             self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained(self.vlm_backbone_name, 
-                                                                                                device_map=device, 
+                                                                                                device_map="auto", 
                                                                                                 torch_dtype=torch.float16,
                                                                                                 # attn_implementation="flash_attention_2"
                                                                                                 )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
+        elif "paligemma" in self.vlm_backbone_name:
+            from transformers import PaliGemmaProcessor, PaliGemmaForConditionalGeneration
+            self.vision_language_model = PaliGemmaForConditionalGeneration.from_pretrained(self.vlm_backbone_name, 
+                                                                                                device_map="auto", 
+                                                                                                torch_dtype=torch.float16,
+                                                                                                # attn_implementation="flash_attention_2"
+                                                                                                )
+            self.processor = PaliGemmaProcessor.from_pretrained(self.vlm_backbone_name)
         else:
             raise NotImplementedError(f"{self.vlm_backbone_name} not supported.")
         
@@ -162,17 +170,24 @@ class VLA(nn.Module):
                 print(f"Trainable parameter: {name}")
 
     def apply_prompt_template(self, text: str, add_generation_prompt: bool = True) -> str:
-        conversation = [
-            {
+        
+        if "llava-onevision" in self.vlm_backbone_name:
+            conversation = [
+                {
 
-            "role": "user",
-            "content": [
-                {"type": "text", "text": text},
-                {"type": "image"},
-                ],
-            },
-        ]
-        prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=add_generation_prompt)
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text},
+                    {"type": "image"},
+                    ],
+                },
+            ]
+            prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=add_generation_prompt)
+        elif "paligemma" in self.vlm_backbone_name:
+            prompt = f"<image>{text}"
+        else:
+            prompt = text
+
         return prompt
 
     def get_vlm_features(self, processed_inputs) -> torch.Tensor:
@@ -183,13 +198,14 @@ class VLA(nn.Module):
             output_hidden_states=True
         )
         
-        if "llava-onevision" in self.vlm_backbone_name:
+        if  any([k in self.vlm_backbone_name for k in ["llava-onevision", "paligemma"]]):
             batch_size = processed_inputs["input_ids"].shape[0]
             last_hidden_state = vlm_output.hidden_states[-1]
             seq_len = vlm_output.image_hidden_states.shape[0] // batch_size 
             image_features = vlm_output.image_hidden_states.view(batch_size, seq_len, -1)
+
             if self.vlm_backbone_feature_selection == 'first_image':
-                num_img_feats = 598 
+                num_img_feats = 598 # this is specific to llava-onevision
                 hidden_states = image_features[:,:num_img_feats, :]
             elif self.vlm_backbone_feature_selection == 'last_token':
                 hidden_states = last_hidden_state[:, -1:, :]
@@ -227,10 +243,10 @@ class VLA(nn.Module):
 
     def forward(self, batch):
         """
-        # Forward pass to compute action logits using hidden states from Qwen2VL (Llava).
+        Forward pass to compute action logits.
         
         Args:
-        hidden_states: Tensor of shape [batch_size, seq_len, hidden_size] from Llava model.
+        batch: model input.
         
         Returns:
         action_logits: Tensor of predicted actions.
