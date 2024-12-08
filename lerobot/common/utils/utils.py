@@ -28,6 +28,7 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+
 def none_or_int(value):
     if value == "None":
         return None
@@ -95,6 +96,7 @@ def set_global_seed(seed, accelerator: Callable = None):
         torch.cuda.manual_seed_all(seed)
     if accelerator:
         from accelerate.utils import set_seed
+
         set_seed(seed)
 
 
@@ -241,6 +243,7 @@ def get_accelerate_config(accelerator: Callable = None) -> dict[str, Any]:
     config["gradient_accumulation_steps"] = accelerator.gradient_accumulation_steps
 
     return config
+
 
 def update_omegaconf(cfg: DictConfig, config_name: str, config: dict[str, Any]) -> DictConfig:
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)

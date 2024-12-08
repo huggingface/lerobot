@@ -87,6 +87,7 @@ def make_optimizer_and_scheduler(cfg, policy):
             cfg.training.adam_weight_decay,
         )
         from diffusers.optimization import get_scheduler
+
         if cfg.training.lr_scheduler:
             lr_scheduler = get_scheduler(
                 cfg.training.lr_scheduler,
@@ -264,7 +265,7 @@ def train(
     init_logging(accelerator)
     if accelerator:
         assert cfg.training.online_steps == 0, "Online training with accelerate is not implemented."
-        accelerator_config = get_accelerate_config(accelerator) 
+        accelerator_config = get_accelerate_config(accelerator)
         update_omegaconf(cfg, config_name="accelerator_config", config=accelerator_config)
         logging.info(
             f"Acccelerate is enabled, training will be launched with the following configuration:\n{pformat(accelerator_config)}"
@@ -459,7 +460,7 @@ def train(
         sampler=sampler,
         pin_memory=device.type != "cpu",
         drop_last=False,
-    ) 
+    )
     if accelerator:
         policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
             policy, optimizer, dataloader, lr_scheduler
@@ -707,7 +708,8 @@ def train(
 def train_cli(cfg: dict):
     if is_launched_with_accelerate():
         import accelerate
-        # We set step_scheduler_with_optimizer False to prevent accelerate from 
+
+        # We set step_scheduler_with_optimizer False to prevent accelerate from
         # adjusting the lr_scheduler steps based on the num_processes
         accelerator = accelerate.Accelerator(step_scheduler_with_optimizer=False)
         train(

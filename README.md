@@ -313,7 +313,7 @@ And to evaluate a policy you can use the following:
 accelerate launch --num_processes=1 --mixed_precision=fp16 lerobot/scripts/eval.py -p lerobot/diffusion_pusht
 ```
 
-Note that to reproduce the same results across different GPUs configurations, you should take into account several hyperparameters (explained more [here](https://huggingface.co/docs/accelerate/v1.1.0/en/concept_guides/performance)). In particular, the batch size is multiplied by the number of GPUs, so you should either divide the batch size or the number of training steps by the number of GPUs (be carefull if you are using an lr scheduler). 
+Note that to reproduce the same results across different GPUs configurations, you should take into account several hyperparameters (explained more [here](https://huggingface.co/docs/accelerate/v1.1.0/en/concept_guides/performance)). In particular, the batch size is multiplied by the number of GPUs, so you should either divide the batch size or the number of training steps by the number of GPUs (be carefull if you are using an lr scheduler).
 
 #### Reproduce state-of-the-art (SOTA)
 
