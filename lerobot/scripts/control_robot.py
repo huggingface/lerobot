@@ -196,6 +196,7 @@ def record(
     single_task: str,
     pretrained_policy_name_or_path: str | None = None,
     policy_overrides: List[str] | None = None,
+    assign_rewards: bool = False,
     fps: int | None = None,
     warmup_time_s: int | float = 2,
     episode_time_s: int | float = 10,
@@ -218,6 +219,9 @@ def record(
     policy = None
     device = None
     use_amp = None
+    extra_features = (
+        {"next.reward": {"dtype": "int64", "shape": (1,), "names": None}} if assign_rewards else None
+    )
 
     if single_task:
         task = single_task
@@ -258,12 +262,12 @@ def record(
             use_videos=video,
             image_writer_processes=num_image_writer_processes,
             image_writer_threads=num_image_writer_threads_per_camera * len(robot.cameras),
+            features=extra_features,
         )
 
     if not robot.is_connected:
         robot.connect()
-
-    listener, events = init_keyboard_listener()
+    listener, events = init_keyboard_listener(assign_rewards=assign_rewards)
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
@@ -467,12 +471,12 @@ if __name__ == "__main__":
         default=1,
         help="Upload dataset to Hugging Face hub.",
     )
-    parser_record.add_argument(
-        "--tags",
-        type=str,
-        nargs="*",
-        help="Add tags to your dataset on the hub.",
-    )
+    # parser_record.add_argument(
+    #     "--tags",
+    #     type=str,
+    #     nargs="*",
+    #     help="Add tags to your dataset on the hub.",
+    # )
     parser_record.add_argument(
         "--num-image-writer-processes",
         type=int,
@@ -494,12 +498,12 @@ if __name__ == "__main__":
             "Not enough threads might cause low camera fps."
         ),
     )
-    parser_record.add_argument(
-        "--force-override",
-        type=int,
-        default=0,
-        help="By default, data recording is resumed. When set to 1, delete the local directory and start data recording from scratch.",
-    )
+    # parser_record.add_argument(
+    #     "--force-override",
+    #     type=int,
+    #     default=0,
+    #     help="By default, data recording is resumed. When set to 1, delete the local directory and start data recording from scratch.",
+    # )
     parser_record.add_argument(
         "-p",
         "--pretrained-policy-name-or-path",
@@ -514,6 +518,12 @@ if __name__ == "__main__":
         type=str,
         nargs="*",
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
+    )
+    parser_record.add_argument(
+        "--assign-rewards",
+        type=int,
+        default=0,
+        help="Enables the assignation of rewards to frames (by default no assignation). When enabled, assign a 0 reward to frames until the space bar is pressed which assign a 1 reward. Press the space bar a second time to assign a 0 reward. The reward assigned is reset to 0 when the episode ends.",
     )
 
     parser_replay = subparsers.add_parser("replay", parents=[base_parser])
