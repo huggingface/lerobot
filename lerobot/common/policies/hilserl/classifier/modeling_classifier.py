@@ -36,7 +36,7 @@ class Classifier(
     # Add name attribute for factory
     name = "classifier"
 
-    def __init__(self, config: ClassifierConfig, dataset_stats: dict[str, dict[str, Tensor]] | None = None):
+    def __init__(self, config: ClassifierConfig):
         super().__init__()
         self.config = config
         self.processor = AutoImageProcessor.from_pretrained(self.config.model_name, trust_remote_code=True)
