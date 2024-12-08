@@ -39,7 +39,7 @@ policy:
   n_obs_steps: 1
   chunk_size: 100
   n_action_steps: 100
-  
+
   input_shapes:
     observation.images.top: [3, 480, 640]  # Video inputs (from video frames)
     observation.state: [14]               # State input dimension
@@ -63,11 +63,11 @@ policy:
   prompt: "Please transfer the cube" #"Please insert the tube into the socket."
 
   # Vision-Language Model (Qwen-VL)
-  vlm_backbone: 
+  vlm_backbone:
     name: llava-hf/llava-onevision-qwen2-0.5b-ov-hf
     feature_selection: all_generated
   replace_final_stride_with_dilation: false
-  
+
   # Combining state, video, and text
   combined_dim: 128  # Dimension after combining state and VLM outputs
 
@@ -95,4 +95,3 @@ policy:
     lora_alpha: 16
     lora_dropout: 0.1
     target_modules: ["q_proj", "v_proj"]
-

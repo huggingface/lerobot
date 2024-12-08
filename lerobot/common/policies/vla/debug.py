@@ -1,7 +1,8 @@
 import torch
-from configuration_vla import Qwen2VLConfig, Qwen2VLVisionConfig
-from modeling_vla import Qwen2VLModel, VLA, VLAPolicy
+from configuration_vla import Qwen2VLConfig
 from modeling_vision import Qwen2VisionTransformerPretrainedModel
+from modeling_vla import VLAPolicy
+
 
 def test_vla_policy():
     # Define the model configuration
@@ -22,7 +23,9 @@ def test_vla_policy():
 
     # Create a batch of random input data for testing
     batch = {
-        "input_ids": torch.randint(0, config.vocab_size, (1, 10)),  # Random tokenized input (batch_size=1, seq_len=10)
+        "input_ids": torch.randint(
+            0, config.vocab_size, (1, 10)
+        ),  # Random tokenized input (batch_size=1, seq_len=10)
         "attention_mask": torch.ones((1, 12), dtype=torch.long),  # Attention mask
         "observation.state": torch.randn(1, 128),  # Random observation state (batch_size=1, state_dim=128)
         "action": torch.randn(1, 64),  # Random ground-truth action (batch_size=1, action_dim=64)
@@ -37,15 +40,15 @@ def test_vla_policy():
         predicted_action = vla_policy.select_action(batch)
         print("Predicted Action:", predicted_action)
 
-    
-    visual = Qwen2VisionTransformerPretrainedModel._from_config(
+    _ = Qwen2VisionTransformerPretrainedModel._from_config(
         config.vision_config, attn_implementation=config._attn_implementation
     )
+
 
 # Run the test function
 if __name__ == "__main__":
     test_vla_policy()
-'''
+"""
 def test_model_forward_pass():
     # Define the model configuration
     config = Qwen2VLConfig(
@@ -87,8 +90,8 @@ def test_model_forward_pass():
 if __name__ == "__main__":
     test_model_forward_pass()
 
-'''
-'''
+"""
+"""
     # Initialize the model
     model = Qwen2VLModel(config)
 
@@ -119,6 +122,4 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     test_model_forward_pass()
-'''
-
-
+"""

@@ -22,7 +22,7 @@ The majority of changes here involve removing unused code, unifying naming, and 
 import math
 from collections import deque
 from itertools import chain
-from typing import Callable, Any
+from typing import Any, Callable
 
 import einops
 import numpy as np

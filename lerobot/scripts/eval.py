@@ -60,6 +60,7 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.errors import RepositoryNotFoundError
 from huggingface_hub.utils._validators import HFValidationError
 from torch import Tensor, nn
+from torch.profiler import ProfilerActivity, profile, record_function
 from tqdm import trange
 
 from lerobot.common.datasets.factory import make_dataset
@@ -77,7 +78,6 @@ from lerobot.common.utils.utils import (
     inside_slurm,
     set_global_seed,
 )
-from torch.profiler import profile, record_function, ProfilerActivity
 
 
 def rollout(
@@ -138,7 +138,7 @@ def rollout(
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
     max_steps = env.call("_max_episode_steps")[0]
-    
+
     def trace_handler(prof):
         prof.export_chrome_trace(f"outputs/trace_schedule_{prof.step_num}.json")
 
@@ -149,7 +149,7 @@ def rollout(
             warmup=1,
             active=3,
         ),
-        on_trace_ready=trace_handler
+        on_trace_ready=trace_handler,
     ) as prof:
         progbar = trange(
             max_steps,
@@ -200,7 +200,7 @@ def rollout(
             progbar.update()
 
             prof.step()
-            if step==5:
+            if step == 5:
                 break
 
     # Track the final observation.
@@ -286,7 +286,6 @@ def eval_policy(
 
     # we dont want progress bar when we use slurm, since it clutters the logs
 
-
     progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm())
     for batch_ix in progbar:
         # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
@@ -300,7 +299,7 @@ def eval_policy(
             seeds = range(
                 start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
             )
-        
+
         rollout_data = rollout(
             env,
             policy,

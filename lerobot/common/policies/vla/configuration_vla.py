@@ -116,7 +116,7 @@ class VLAConfig:
     )
 
     prompt: str = "Please transfer the cube."
-    #"Please insert the tube into the socket."
+    # "Please insert the tube into the socket."
 
     # Architecture.
 
@@ -138,7 +138,6 @@ class VLAConfig:
             "temporal_ensemble_coeff": None,
         }
     )
-
 
     # Language + Main transformer
     vocab_size: int = 150528
@@ -188,8 +187,6 @@ class VLAConfig:
             "feature_selection": "first_image",
         }
     )
-
-
 
     peft_method: str = "lora"
     peft_config: dict = field(
