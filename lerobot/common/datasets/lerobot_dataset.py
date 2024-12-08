@@ -143,7 +143,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self.delta_timestamps,
                 self.tolerance_s,
             )
-
         if self.video:
             item = load_from_videos(
                 item,
