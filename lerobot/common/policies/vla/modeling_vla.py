@@ -144,7 +144,7 @@ class VLA(nn.Module):
         else:
             raise NotImplementedError(f"{self.vlm_backbone_name} not supported.")
         self.use_prompt_template = config.use_prompt_template
-        self.num_img_tokens = config.num_img_tokens   #  e.g. 598 to match the number of hidden states in ACT
+        self.num_img_tokens = config.num_img_tokens  #  e.g. 598 to match the number of hidden states in ACT
 
         self.peft_method = config.peft_method
         if "lora" in self.peft_method:
@@ -160,11 +160,12 @@ class VLA(nn.Module):
             # Apply LoRA and ensure only LoRA parameters are trainable
             self.vision_language_model = get_peft_model(self.vision_language_model, lora_config)
             for name, param in self.vision_language_model.named_parameters():
-                if "lm_head" in name or "lora" in name: # lm_head is not a parameter in most LLMs becasue it's tied to the embedding layer 
+                if (
+                    "lm_head" in name or "lora" in name
+                ):  # lm_head is not a parameter in most LLMs becasue it's tied to the embedding layer
                     param.requires_grad = True
                 else:
                     param.requires_grad = False
-
 
         # Verify trainable parameters
         trainable_params = []
@@ -206,7 +207,7 @@ class VLA(nn.Module):
             image_features = vlm_output.image_hidden_states.view(batch_size, seq_len, -1)
 
             if self.vlm_backbone_feature_selection == "first_image":
-                hidden_states = image_features[:, :self.num_img_tokens, :]
+                hidden_states = image_features[:, : self.num_img_tokens, :]
             elif self.vlm_backbone_feature_selection == "last_token":
                 hidden_states = last_hidden_state[:, -1:, :]
             elif self.vlm_backbone_feature_selection == "all_generated":
@@ -214,7 +215,9 @@ class VLA(nn.Module):
             elif self.vlm_backbone_feature_selection == "all":
                 hidden_states = torch.cat((image_features, last_hidden_state), dim=1)
             elif self.vlm_backbone_feature_selection == "first_image_all":
-                hidden_states = torch.cat((image_features[:, :self.num_img_tokens, :], last_hidden_state), dim=1)
+                hidden_states = torch.cat(
+                    (image_features[:, : self.num_img_tokens, :], last_hidden_state), dim=1
+                )
             else:
                 raise NotImplementedError(" not supportedd")
         else:
