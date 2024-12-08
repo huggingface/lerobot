@@ -1,0 +1,59 @@
+# [MyArm Robot Arm Tooling](https://github.com/apockill/acton_ai)
+
+# Requires installing extras packages
+# With pip: `pip install -e ".[feetech]"`
+# With poetry: `poetry install --sync --extras "feetech"`
+
+# TODO: Make tutorial
+# See [tutorial](https://github.com/huggingface/lerobot/blob/main/examples/12_use_myarm.md)
+
+_target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
+robot_type: myarm
+calibration_dir: .cache/calibration/myarm
+
+# `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+# Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+# the number of motors in your follower arms.
+max_relative_target: null
+
+leader_arms:
+  main:
+    _target_: lerobot.common.robot_devices.motors.myarm.MyArmLeader
+    port: null  # If null, MyArmM serial port is automatically discovered
+    motors:
+      # name: (index, model)
+      joint1: [1, "myarm"]
+      joint2: [2, "myarm"]
+      joint3: [3, "myarm"]
+      joint4: [4, "myarm"]
+      joint5: [5, "myarm"]
+      joint6: [6, "myarm"]
+      gripper: [7, "myarm"]
+
+follower_arms:
+  main:
+    _target_: lerobot.common.robot_devices.motors.myarm.MyArmFollower
+    port: null  # If null, MyArmC serial port is automatically discovered
+    motors:
+      # name: (index, model)
+      joint1: [1, "myarm"]
+      joint2: [2, "myarm"]
+      joint3: [3, "myarm"]
+      joint4: [4, "myarm"]
+      joint5: [5, "myarm"]
+      joint6: [6, "myarm"]
+      gripper: [7, "myarm"]
+
+cameras:
+  wrist:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 6
+    fps: 30.0
+    width: 320
+    height: 240
+  top:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 4
+    fps: 30.0
+    width: 320
+    height: 240

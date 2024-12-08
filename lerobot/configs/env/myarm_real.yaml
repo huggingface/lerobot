@@ -1,0 +1,10 @@
+# @package _global_
+
+fps: 30
+
+env:
+  name: myarm
+  task: null
+  state_dim: 7
+  action_dim: 7
+  fps: ${fps}
