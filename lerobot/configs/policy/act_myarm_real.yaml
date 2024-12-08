@@ -16,7 +16,7 @@
 # ```
 
 seed: 1000
-dataset_repo_id: apockill/myarm_grab
+dataset_repo_id: ???
 
 override_dataset_stats:
   observation.images.wrist:
@@ -96,7 +96,7 @@ policy:
   n_vae_encoder_layers: 4
 
   # Inference.
-  temporal_ensemble_momentum: null
+  temporal_ensemble_coeff: null
 
   # Training and loss computation.
   dropout: 0.1

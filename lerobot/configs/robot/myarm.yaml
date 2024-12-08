@@ -48,12 +48,12 @@ cameras:
   wrist:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
     camera_index: 6
-    fps: 20
-    width: 640
-    height: 480
+    fps: 30.0
+    width: 320
+    height: 240
   top:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
     camera_index: 4
-    fps: 20
-    width: 640
-    height: 480
+    fps: 30.0
+    width: 320
+    height: 240
