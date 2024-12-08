@@ -132,7 +132,7 @@ class VLA(nn.Module):
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
         elif "paligemma" in self.vlm_backbone_name:
-            from transformers import PaliGemmaForConditionalGeneration, PaliGemmaProcessor
+            from transformers import PaliGemmaForConditionalGeneration
 
             self.vision_language_model = PaliGemmaForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
@@ -140,9 +140,11 @@ class VLA(nn.Module):
                 torch_dtype=torch.float16,
                 # attn_implementation="flash_attention_2"
             )
-            self.processor = PaliGemmaProcessor.from_pretrained(self.vlm_backbone_name)
+            self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
         else:
             raise NotImplementedError(f"{self.vlm_backbone_name} not supported.")
+        self.use_prompt_template = config.use_prompt_template
+        self.num_img_tokens = config.num_img_tokens   #  e.g. 598 to match the number of hidden states in ACT
 
         self.peft_method = config.peft_method
         if "lora" in self.peft_method:
@@ -155,24 +157,24 @@ class VLA(nn.Module):
                 target_modules=peft_config["target_modules"],  # The components where LoRA is applied
             )
             self.lora_config = lora_config
-            for param in self.vision_language_model.parameters():
-                param.requires_grad = False
-
             # Apply LoRA and ensure only LoRA parameters are trainable
             self.vision_language_model = get_peft_model(self.vision_language_model, lora_config)
             for name, param in self.vision_language_model.named_parameters():
-                if "lm_head" in name:
+                if "lm_head" in name or "lora" in name: # lm_head is not a parameter in most LLMs becasue it's tied to the embedding layer 
                     param.requires_grad = True
+                else:
+                    param.requires_grad = False
+
 
         # Verify trainable parameters
         trainable_params = []
         for name, param in self.vision_language_model.named_parameters():
             if param.requires_grad:
                 trainable_params.append(name)
-                print(f"Trainable parameter: {name}")
+                print(f"VLM trainable parameter: {name}")
 
     def apply_prompt_template(self, text: str, add_generation_prompt: bool = True) -> str:
-        if "llava-onevision" in self.vlm_backbone_name:
+        if "llava-onevision" in self.vlm_backbone_name and self.use_prompt_template:
             conversation = [
                 {
                     "role": "user",
@@ -204,14 +206,15 @@ class VLA(nn.Module):
             image_features = vlm_output.image_hidden_states.view(batch_size, seq_len, -1)
 
             if self.vlm_backbone_feature_selection == "first_image":
-                num_img_feats = 598  # this is specific to llava-onevision
-                hidden_states = image_features[:, :num_img_feats, :]
+                hidden_states = image_features[:, :self.num_img_tokens, :]
             elif self.vlm_backbone_feature_selection == "last_token":
                 hidden_states = last_hidden_state[:, -1:, :]
             elif self.vlm_backbone_feature_selection == "all_generated":
                 hidden_states = last_hidden_state
             elif self.vlm_backbone_feature_selection == "all":
                 hidden_states = torch.cat((image_features, last_hidden_state), dim=1)
+            elif self.vlm_backbone_feature_selection == "first_image_all":
+                hidden_states = torch.cat((image_features[:, :self.num_img_tokens, :], last_hidden_state), dim=1)
             else:
                 raise NotImplementedError(" not supportedd")
         else:

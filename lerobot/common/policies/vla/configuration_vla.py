@@ -187,6 +187,8 @@ class VLAConfig:
             "feature_selection": "first_image",
         }
     )
+    use_prompt_template: bool = True
+    num_img_tokens: int = 598
 
     peft_method: str = "lora"
     peft_config: dict = field(

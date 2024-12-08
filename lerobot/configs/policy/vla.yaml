@@ -66,6 +66,8 @@ policy:
   vlm_backbone:
     name: llava-hf/llava-onevision-qwen2-0.5b-ov-hf
     feature_selection: all_generated
+  use_prompt_template: true
+  num_img_tokens: 598
   replace_final_stride_with_dilation: false
 
   # Combining state, video, and text
