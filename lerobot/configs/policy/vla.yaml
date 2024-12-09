@@ -14,7 +14,7 @@ training:
   online_steps: 0
   eval_freq: 20000
   save_freq: 2000
-  log_freq: 30
+  log_freq: 100
   save_checkpoint: true
 
   batch_size: 8
@@ -39,7 +39,7 @@ policy:
   n_obs_steps: 1
   chunk_size: 100
   n_action_steps: 100
-  
+
   input_shapes:
     observation.images.top: [3, 480, 640]  # Video inputs (from video frames)
     observation.state: [14]               # State input dimension
@@ -61,26 +61,39 @@ policy:
     hidden_dim: 256
     latent_dim: 64
   prompt: "Please transfer the cube" #"Please insert the tube into the socket."
-  
+
+  # Vision-Language Model (Qwen-VL)
+  vlm_backbone:
+    name: llava-hf/llava-onevision-qwen2-0.5b-ov-hf
+    feature_selection: all_generated
+  use_prompt_template: true
+  num_img_tokens: 598
+  replace_final_stride_with_dilation: false
+
   # Combining state, video, and text
   combined_dim: 128  # Dimension after combining state and VLM outputs
 
   # Action decoder
   action_decoder:
+    name: act
     vlm_hidden_dim: 128  # Input dim for action decoder (combined dimension)
     action_dim: 4  # Output dimension (action space)
+    n_decoder_layers: 1
+    n_encoder_layers: 4
+    dim_model: 896
+    n_heads: 8
+    dim_feedforward: 3200
+    feedforward_activation: relu
+    pre_norm: false
+    # Training and loss computation
+    dropout: 0.1
+    temporal_ensemble_coeff: null
 
-  # Transformer layers for action decoding
-  dim_model: 512
-  n_heads: 8
-  dim_feedforward: 3200
-  feedforward_activation: relu
-  n_encoder_layers: 4
-  n_decoder_layers: 1
-  latent_dim: 32
 
-  # Inference
-  temporal_ensemble_coeff: null
-
-  # Training and loss computation
-  dropout: 0.1
+  # Lora config
+  peft_method: lora
+  peft_config:
+    r: 4
+    lora_alpha: 16
+    lora_dropout: 0.1
+    target_modules: ["q_proj", "v_proj"]
