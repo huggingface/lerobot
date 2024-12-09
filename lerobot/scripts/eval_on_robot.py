@@ -13,75 +13,44 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Evaluate a policy on an environment by running rollouts and computing metrics.
+"""Evaluate a policy by running rollouts on the real robot and computing metrics.
 
-Usage examples:
-
-You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/diffusion_pusht)
-for 10 episodes.
+Usage examples: evaluate a checkpoint from the LeRobot training script for 10 episodes.
 
 ```
-python lerobot/scripts/eval.py -p lerobot/diffusion_pusht eval.n_episodes=10
-```
-
-OR, you want to evaluate a model checkpoint from the LeRobot training script for 10 episodes.
-
-```
-python lerobot/scripts/eval.py \
-    -p outputs/train/diffusion_pusht/checkpoints/005000/pretrained_model \
+python lerobot/scripts/eval_on_robot.py \
+    -p outputs/train/model/checkpoints/005000/pretrained_model \
     eval.n_episodes=10
 ```
 
-Note that in both examples, the repo/folder should contain at least `config.json`, `config.yaml` and
-`model.safetensors`.
-
-Note the formatting for providing the number of episodes. Generally, you may provide any number of arguments
-with `qualified.parameter.name=value`. In this case, the parameter eval.n_episodes appears as `n_episodes`
-nested under `eval` in the `config.yaml` found at
-https://huggingface.co/lerobot/diffusion_pusht/tree/main.
+**NOTE** (michel-aractingi): This script is incomplete and it is being prepared
+for running training on the real robot. 
 """
 
 import argparse
 import logging
-import threading
 import time
 from copy import deepcopy
-from pathlib import Path
 
-import einops
 import numpy as np
 import torch
-from torch import Tensor, nn
 from tqdm import trange
 
-from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import Policy
+from lerobot.common.robot_devices.control_utils import busy_wait, is_headless
+from lerobot.common.robot_devices.robots.factory import Robot, make_robot
 from lerobot.common.utils.utils import (
     init_hydra_config,
     init_logging,
+    log_say,
 )
 
-from lerobot.common.robot_devices.robots.factory import make_robot, Robot
-from lerobot.scripts.eval import get_pretrained_policy_path
-from lerobot.common.utils.utils import log_say
-from lerobot.common.robot_devices.control_utils import is_headless, predict_action, busy_wait
 
-
-def rollout(
-    robot: Robot,
-    policy: Policy,
-    fps: int,
-    control_time_s: float = 20,
-    use_amp: bool = True
-
-) -> dict:
-    """Run a batched policy rollout once through a batch of environments.
-
-    Note that all environments in the batch are run until the last environment is done. This means some
-    data will probably need to be discarded (for environments that aren't the first one to be done).
+def rollout(robot: Robot, policy: Policy, fps: int, control_time_s: float = 20, use_amp: bool = True) -> dict:
+    """Run a batched policy rollout on the real robot. 
 
     The return dictionary contains:
-        (optional) "observation": A a dictionary of (batch, sequence + 1, *) tensors mapped to observation
+        "robot": A a dictionary of (batch, sequence + 1, *) tensors mapped to observation
             keys. NOTE the that this has an extra sequence element relative to the other keys in the
             dictionary. This is because an extra observation is included for after the environment is
             terminated or truncated.
@@ -95,56 +64,56 @@ def rollout(
             extraneous elements from the sequences above.
 
     Args:
-        robot: 
+        robot: The robot class that defines the interface with the real robot. 
         policy: The policy. Must be a PyTorch nn module.
-        
+
     Returns:
         The dictionary described above.
     """
-    #assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
-    #device = get_device_from_parameters(policy)
+    # assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
+    # device = get_device_from_parameters(policy)
 
     # define keyboard listener
     listener, events = init_keyboard_listener()
 
-    # Reset the policy.
-    #policy.reset()
-    
+    # Reset the policy. TODO (michel-aractingi) add real policy evaluation once the code is ready.
+    # policy.reset() 
+
     # Get observation from real robot
     observation = robot.capture_observation()
-    
-    # Calculate reward
+
+    # Calculate reward. TODO (michel-aractingi)
     # in HIL-SERL it will be with a reward classifier
     reward = calculate_reward(observation)
     all_observations = []
     all_actions = []
     all_rewards = []
     all_successes = []
-    
+
     start_episode_t = time.perf_counter()
     timestamp = 0.0
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
-    
+
         all_observations.append(deepcopy(observation))
-        #observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
+        # observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
 
         # Apply the next action.
         while events["pause_policy"] and not events["human_intervention_step"]:
             busy_wait(0.5)
-            
+
         if events["human_intervention_step"]:
-            # take over the robot's actions 
+            # take over the robot's actions
             observation, action = robot.teleop_step(record_data=True)
-            action = action['action'] # teleop step returns torch tensors but in a dict
-        else: 
+            action = action["action"]  # teleop step returns torch tensors but in a dict
+        else:
             # explore with policy
             with torch.inference_mode():
                 action = robot.follower_arms["main"].read("Present_Position")
                 action = torch.from_numpy(action)
                 robot.send_action(action)
-                #action = predict_action(observation, policy, device, use_amp)
-        
+                # action = predict_action(observation, policy, device, use_amp)
+
         observation = robot.capture_observation()
         # Calculate reward
         # in HIL-SERL it will be with a reward classifier
@@ -189,7 +158,7 @@ def eval_policy(
     fps: float,
     n_episodes: int,
     control_time_s: int = 20,
-    use_amp: bool = True
+    use_amp: bool = True,
 ) -> dict:
     """
     Args:
@@ -200,31 +169,24 @@ def eval_policy(
         Dictionary with metrics and data regarding the rollouts.
     """
     # TODO (michel-aractingi) comment this out for testing with a fixed policy
-    #assert isinstance(policy, Policy)
-    #policy.eval()
+    # assert isinstance(policy, Policy)
+    # policy.eval()
 
     sum_rewards = []
     max_rewards = []
     successes = []
-    rollouts  = []
-    
+    rollouts = []
+
     start_eval = time.perf_counter()
     progbar = trange(n_episodes, desc="Evaluating policy on real robot")
-    for batch_idx in progbar:
+    for _batch_idx in progbar:
+        rollout_data = rollout(robot, policy, fps, control_time_s, use_amp)
 
-        rollout_data = rollout(
-            robot,
-            policy,
-            fps,
-            control_time_s,
-            use_amp
-        )
-        
         rollouts.append(rollout_data)
-        sum_rewards.append(sum(rollout_data['next.reward']))
-        max_rewards.append(max(rollout_data['next.reward']))
+        sum_rewards.append(sum(rollout_data["next.reward"]))
+        max_rewards.append(max(rollout_data["next.reward"]))
         successes.append(rollout_data["next.success"][-1])
-        
+
     info = {
         "per_episode": [
             {
@@ -237,6 +199,7 @@ def eval_policy(
                 zip(
                     sum_rewards[:n_episodes],
                     max_rewards[:n_episodes],
+                    strict=False,
                 )
             )
         ],
@@ -254,13 +217,15 @@ def eval_policy(
 
     return info
 
+
 def calculate_reward(observation):
     """
     Method to calculate reward function in some way.
     In HIL-SERL this is done through defining a reward classifier
     """
-    #reward = reward_classifier(observation)
-    return np.array([0.])
+    # reward = reward_classifier(observation)
+    return np.array([0.0])
+
 
 def init_keyboard_listener():
     # Allow to exit early while recording an episode or resetting the environment,
@@ -293,16 +258,18 @@ def init_keyboard_listener():
                 events["exit_early"] = True
             elif key == keyboard.Key.space:
                 # check if first space press then pause the policy for the user to get ready
-                # if second space press then the user is ready to start intervention  
+                # if second space press then the user is ready to start intervention
                 if not events["pause_policy"]:
-                    print("Space key pressed. Human intervention required.\n" \
-                          "Place the leader in similar pose to the follower and press space again.")
+                    print(
+                        "Space key pressed. Human intervention required.\n"
+                        "Place the leader in similar pose to the follower and press space again."
+                    )
                     events["pause_policy"] = True
                     log_say("Human intervention stage. Get ready to take over.", play_sounds=True)
                 else:
                     events["human_intervention_step"] = True
                     print("Space key pressed. Human intervention starting.")
-                    log_say("Starting human intervention.", play_sounds=True)                    
+                    log_say("Starting human intervention.", play_sounds=True)
 
         except Exception as e:
             print(f"Error handling key press: {e}")
@@ -358,11 +325,11 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
- 
+
     robot_cfg = init_hydra_config(args.robot_path, args.robot_overrides)
     robot = make_robot(robot_cfg)
     if not robot.is_connected:
         robot.connect()
 
-    #rollout(robot, None, fps=40, control_time_s=100)
+    # rollout(robot, None, fps=40, control_time_s=100)
     eval_policy(robot, None, fps=40, n_episodes=20, control_time_s=100)
