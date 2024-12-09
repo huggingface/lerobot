@@ -237,7 +237,6 @@ def eval_policy(
                 zip(
                     sum_rewards[:n_episodes],
                     max_rewards[:n_episodes],
-                    successes[:n_episodes]
                 )
             )
         ],
