@@ -242,9 +242,9 @@ def eval_policy(
             )
         ],
         "aggregated": {
-            "avg_sum_reward": float(np.nanmean(sum_rewards[:n_episodes])),
-            "avg_max_reward": float(np.nanmean(max_rewards[:n_episodes])),
-            "pc_success": float(np.mean(successes) * 100),
+            "avg_sum_reward": float(np.nanmean(torch.cat(sum_rewards[:n_episodes]))),
+            "avg_max_reward": float(np.nanmean(torch.cat(max_rewards[:n_episodes]))),
+            "pc_success": float(np.nanmean(torch.cat(successes[:n_episodes])) * 100),
             "eval_s": time.time() - start_eval,
             "eval_ep_s": (time.time() - start_eval) / n_episodes,
         },
