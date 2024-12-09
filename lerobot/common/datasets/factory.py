@@ -16,27 +16,46 @@
 import logging
 
 import torch
-from omegaconf import ListConfig, OmegaConf
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
-from lerobot.common.datasets.transforms import get_image_transforms
+from lerobot.common.datasets.lerobot_dataset import (
+    LeRobotDataset,
+    LeRobotDatasetMetadata,
+    MultiLeRobotDataset,
+)
+from lerobot.common.datasets.transforms import ImageTransforms
+from lerobot.configs.default import MainConfig
+from lerobot.configs.policies import PretrainedConfig
+
+IMAGENET_STATS = {
+    "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
+    "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
+}
 
 
-def resolve_delta_timestamps(cfg):
+def resolve_delta_timestamps(
+    cfg: PretrainedConfig, ds_meta: LeRobotDatasetMetadata
+) -> dict[str, list] | None:
     """Resolves delta_timestamps config key (in-place) by using `eval`.
 
     Doesn't do anything if delta_timestamps is not specified or has already been resolve (as evidenced by
     the data type of its values).
     """
-    delta_timestamps = cfg.training.get("delta_timestamps")
-    if delta_timestamps is not None:
-        for key in delta_timestamps:
-            if isinstance(delta_timestamps[key], str):
-                # TODO(rcadene, alexander-soare): remove `eval` to avoid exploit
-                cfg.training.delta_timestamps[key] = eval(delta_timestamps[key])
+    delta_timestamps = {}
+    for key in ds_meta.features:
+        if key == "next.reward" and cfg.reward_delta_indices is not None:
+            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.reward_delta_indices]
+        if key == "action" and cfg.action_delta_indices is not None:
+            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
+        if key.startswith("observation.") and cfg.observation_delta_indices is not None:
+            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.observation_delta_indices]
+
+    if len(delta_timestamps) == 0:
+        delta_timestamps = None
+
+    return delta_timestamps
 
 
-def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotDataset:
+def make_dataset(cfg: MainConfig, split: str = "train") -> LeRobotDataset | MultiLeRobotDataset:
     """
     Args:
         cfg: A Hydra config as per the LeRobot config scheme.
@@ -50,67 +69,58 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
     Returns:
         The LeRobotDataset.
     """
-    if not isinstance(cfg.dataset_repo_id, (str, ListConfig)):
-        raise ValueError(
-            "Expected cfg.dataset_repo_id to be either a single string to load one dataset or a list of "
-            "strings to load multiple datasets."
-        )
-
     # A soft check to warn if the environment matches the dataset. Don't check if we are using a real world env (dora).
-    if cfg.env.name != "dora":
-        if isinstance(cfg.dataset_repo_id, str):
-            dataset_repo_ids = [cfg.dataset_repo_id]  # single dataset
+    if cfg.env.type != "dora":
+        if isinstance(cfg.dataset.repo_id, str):
+            dataset_repo_ids = [cfg.dataset.repo_id]  # single dataset
+        elif isinstance(cfg.dataset.repo_id, list):
+            dataset_repo_ids = cfg.dataset.repo_id  # multiple datasets
         else:
-            dataset_repo_ids = cfg.dataset_repo_id  # multiple datasets
+            raise ValueError(
+                "Expected cfg.dataset.repo_id to be either a single string to load one dataset or a list of "
+                "strings to load multiple datasets."
+            )
 
         for dataset_repo_id in dataset_repo_ids:
-            if cfg.env.name not in dataset_repo_id:
+            if cfg.env.type not in dataset_repo_id:
                 logging.warning(
                     f"There might be a mismatch between your training dataset ({dataset_repo_id=}) and your "
-                    f"environment ({cfg.env.name=})."
+                    f"environment ({cfg.env.type=})."
                 )
 
-    resolve_delta_timestamps(cfg)
+    image_transforms = (
+        ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
+    )
 
-    image_transforms = None
-    if cfg.training.image_transforms.enable:
-        cfg_tf = cfg.training.image_transforms
-        image_transforms = get_image_transforms(
-            brightness_weight=cfg_tf.brightness.weight,
-            brightness_min_max=cfg_tf.brightness.min_max,
-            contrast_weight=cfg_tf.contrast.weight,
-            contrast_min_max=cfg_tf.contrast.min_max,
-            saturation_weight=cfg_tf.saturation.weight,
-            saturation_min_max=cfg_tf.saturation.min_max,
-            hue_weight=cfg_tf.hue.weight,
-            hue_min_max=cfg_tf.hue.min_max,
-            sharpness_weight=cfg_tf.sharpness.weight,
-            sharpness_min_max=cfg_tf.sharpness.min_max,
-            max_num_transforms=cfg_tf.max_num_transforms,
-            random_order=cfg_tf.random_order,
-        )
-
-    if isinstance(cfg.dataset_repo_id, str):
+    if isinstance(cfg.dataset.repo_id, str):
         # TODO (aliberts): add 'episodes' arg from config after removing hydra
+        ds_meta = LeRobotDatasetMetadata(cfg.dataset.repo_id, local_files_only=cfg.dataset.local_files_only)
+        delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
         dataset = LeRobotDataset(
-            cfg.dataset_repo_id,
-            delta_timestamps=cfg.training.get("delta_timestamps"),
+            cfg.dataset.repo_id,
+            episodes=cfg.dataset.episodes,
+            delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.video_backend,
+            local_files_only=cfg.dataset.local_files_only,
         )
     else:
         dataset = MultiLeRobotDataset(
-            cfg.dataset_repo_id,
-            delta_timestamps=cfg.training.get("delta_timestamps"),
+            cfg.dataset.repo_id,
+            # TODO(aliberts): add proper support for multi dataset
+            # delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.video_backend,
         )
 
-    if cfg.get("override_dataset_stats"):
-        for key, stats_dict in cfg.override_dataset_stats.items():
-            for stats_type, listconfig in stats_dict.items():
-                # example of stats_type: min, max, mean, std
-                stats = OmegaConf.to_container(listconfig, resolve=True)
+    if cfg.dataset.use_imagenet_stats:
+        for key in dataset.meta.camera_keys:
+            for stats_type, stats in IMAGENET_STATS.items():
                 dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+        # for key, stats_dict in cfg.override_dataset_stats.items():
+        #     for stats_type, listconfig in stats_dict.items():
+        #         # example of stats_type: min, max, mean, std
+        #         stats = OmegaConf.to_container(listconfig, resolve=True)
+        #         dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 
     return dataset

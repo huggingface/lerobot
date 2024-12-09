@@ -18,9 +18,12 @@
 
 from dataclasses import dataclass, field
 
+from lerobot.configs.policies import PretrainedConfig
 
+
+@PretrainedConfig.register_subclass("vqbet")
 @dataclass
-class VQBeTConfig:
+class VQBeTConfig(PretrainedConfig):
     """Configuration class for VQ-BeT.
 
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.
@@ -165,3 +168,15 @@ class VQBeTConfig:
                     f"`input_shapes[{image_key}]` does not match `input_shapes[{first_image_key}]`, but we "
                     "expect all image shapes to match."
                 )
+
+    @property
+    def observation_delta_indices(self) -> list:
+        return list(range(1 - self.n_obs_steps, 1))
+
+    @property
+    def action_delta_indices(self) -> list:
+        return list(range(1 - self.n_obs_steps, self.n_action_pred_token + self.action_chunk_size - 1))
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return None
