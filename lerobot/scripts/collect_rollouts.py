@@ -14,6 +14,7 @@ from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
 from lerobot.common.datasets.push_dataset_to_hub.utils import get_default_encoding
 from lerobot.common.datasets.rollout_datasets.episode_stores import EpisodeVideoStore, EpisodeVideoStoreAsHDF5
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
+from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
 # After update gym-pushany, alter the object name list to gym_pushany.
 OBJECT_NAME_LIST = [
@@ -84,7 +85,6 @@ def build_ep_dict(observation_states: list[torch.Tensor],
 
 def rollout_for_ep_dicts(policy, env, device, episode_video_store, num_episodes):
     for _ in range(num_episodes):
-        policy.diffusion.num_inference_steps = np.random.randint(1, 20)
         policy.reset()
 
         numpy_observation, info = env.reset()
@@ -164,13 +164,23 @@ def rollout_for_ep_dicts(policy, env, device, episode_video_store, num_episodes)
     return episode_video_store
 
 
+def parse_pretrained_policy_path(pretrained_policy_path):
+    if pretrained_policy_path in ["lerobot/diffusion_pusht"]:
+        policy = DiffusionPolicy.from_pretrained(Path(snapshot_download(pretrained_policy_path)))
+        policy.diffusion.num_inference_steps = 10
+        return policy
+    if pretrained_policy_path in ["lerobot/vqbet_pusht"]:
+        return VQBeTPolicy.from_pretrained(Path(snapshot_download(pretrained_policy_path)))
+    raise ValueError(f"Unknown pretrained policy path: {pretrained_policy_path}")
+
+
 @click.command()
+@click.option('-p', '--pretrained_policy_path', required=True)
 @click.option('-o', '--output', required=True)
 @click.option('-n', '--num_rollouts', required=True)
-def main(output, num_rollouts):
+def main(pretrained_policy_path, output, num_rollouts):
     num_rollouts = int(num_rollouts)
-    pretrained_policy_path = Path(snapshot_download("lerobot/diffusion_pusht"))
-    policy = DiffusionPolicy.from_pretrained(pretrained_policy_path)
+    policy = parse_pretrained_policy_path(pretrained_policy_path)
     policy.eval()
     if torch.cuda.is_available():
         device = torch.device("cuda")
