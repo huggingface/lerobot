@@ -231,7 +231,7 @@ def eval_policy(
                 "episode_ix": i,
                 "sum_reward": sum_reward,
                 "max_reward": max_reward,
-                "pc_success": float(np.nanmean(successes[:n_episodes]) * 100),
+                "pc_success": float(np.nanmean(torch.cat(successes[:n_episodes])) * 100),
             }
             for i, (sum_reward, max_reward) in enumerate(
                 zip(
