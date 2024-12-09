@@ -274,10 +274,12 @@ def record(
     # Load pretrained policy
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
+    # Load pretrained policy
+    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+
     if not robot.is_connected:
         robot.connect()
-
-    listener, events = init_keyboard_listener()
+    listener, events = init_keyboard_listener(assign_rewards=assign_rewards)
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
