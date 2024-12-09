@@ -61,11 +61,6 @@ policy:
     hidden_dim: 256
     latent_dim: 64
   prompt: "Please transfer the cube" #"Please insert the tube into the socket."
-
-  # Vision-Language Model (Qwen-VL)
-  vlm_backbone: qwen_vl
-  pretrained_backbone_weights: Qwen/Qwen-VL-2  # Pretrained weights for Qwen-VL
-  replace_final_stride_with_dilation: false
   
   # Combining state, video, and text
   combined_dim: 128  # Dimension after combining state and VLM outputs
