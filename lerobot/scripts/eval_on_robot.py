@@ -193,12 +193,13 @@ def eval_policy(
                 "episode_ix": i,
                 "sum_reward": sum_reward,
                 "max_reward": max_reward,
-                "pc_success": float(np.nanmean(torch.cat(successes[:n_episodes])) * 100),
+                "pc_success": success * 100,
             }
-            for i, (sum_reward, max_reward) in enumerate(
+            for i, (sum_reward, max_reward, success) in enumerate(
                 zip(
                     sum_rewards[:n_episodes],
                     max_rewards[:n_episodes],
+                    successes[:n_episodes],
                     strict=False,
                 )
             )
@@ -331,5 +332,4 @@ if __name__ == "__main__":
     if not robot.is_connected:
         robot.connect()
 
-    # rollout(robot, None, fps=40, control_time_s=100)
-    eval_policy(robot, None, fps=40, n_episodes=20, control_time_s=100)
+    eval_policy(robot, None, fps=40, n_episodes=2, control_time_s=100)
