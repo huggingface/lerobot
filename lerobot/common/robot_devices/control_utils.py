@@ -128,14 +128,22 @@ def predict_action(observation, policy, device, use_amp):
     return action
 
 
-def init_keyboard_listener():
-    # Allow to exit early while recording an episode or resetting the environment,
-    # by tapping the right arrow key '->'. This might require a sudo permission
-    # to allow your terminal to monitor keyboard events.
+def init_keyboard_listener(assign_rewards=False):
+    """
+    Initializes a keyboard listener to enable early termination of an episode 
+    or environment reset by pressing the right arrow key ('->'). This may require 
+    sudo permissions to allow the terminal to monitor keyboard events.
+
+    Args:
+        assign_rewards (bool): If True, allows annotating the collected trajectory 
+        with a binary reward at the end of the episode to indicate success.
+    """
     events = {}
     events["exit_early"] = False
     events["rerecord_episode"] = False
     events["stop_recording"] = False
+    if assign_rewards:
+        events["next.reward"] = 0
 
     if is_headless():
         logging.warning(
@@ -160,6 +168,13 @@ def init_keyboard_listener():
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
                 events["exit_early"] = True
+            elif assign_rewards and key == keyboard.Key.space:
+                events["next.reward"] = 1 if events["next.reward"] == 0 else 0
+                print(
+                    "Space key pressed. Assigning new reward to the subsequent frames. New reward:",
+                    events["next.reward"],
+                )
+
         except Exception as e:
             print(f"Error handling key press: {e}")
 
