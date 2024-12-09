@@ -535,13 +535,13 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--width",
-        type=str,
+        type=int,
         default=640,
         help="Set the width for all cameras. If not provided, use the default width of each camera.",
     )
     parser.add_argument(
         "--height",
-        type=str,
+        type=int,
         default=480,
         help="Set the height for all cameras. If not provided, use the default height of each camera.",
     )
