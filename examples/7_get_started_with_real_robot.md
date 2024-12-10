@@ -29,7 +29,7 @@ For a visual walkthrough of the assembly process, you can refer to [this video t
 
 ## 2. Configure motors, calibrate arms, teleoperate your Koch v1.1
 
-First, install the additional dependencies required for robots built with dynamixel motors like Koch v1.1 by running one of the following commands.
+First, install the additional dependencies required for robots built with dynamixel motors like Koch v1.1 by running one of the following commands (make sure gcc is installed).
 
 Using `pip`:
 ```bash

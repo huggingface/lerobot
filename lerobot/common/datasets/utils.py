@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import importlib.resources
 import json
 import logging
 import textwrap
@@ -476,6 +477,8 @@ def create_lerobot_dataset_card(
     Note: If specified, license must be one of https://huggingface.co/docs/hub/repositories-licenses.
     """
     card_tags = ["LeRobot"]
+    card_template_path = importlib.resources.path("lerobot.common.datasets", "card_template.md")
+
     if tags:
         card_tags += tags
     if dataset_info:
@@ -493,8 +496,9 @@ def create_lerobot_dataset_card(
             }
         ],
     )
+
     return DatasetCard.from_template(
         card_data=card_data,
-        template_path="./lerobot/common/datasets/card_template.md",
+        template_path=str(card_template_path),
         **kwargs,
     )
