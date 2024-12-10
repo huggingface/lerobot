@@ -170,7 +170,7 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
     return accuracy, eval_info
 
 
-@hydra.main(version_base="1.2", config_path="../configs", config_name="classifier")
+@hydra.main(version_base="1.2", config_path="../configs", config_name="hilserl_classifier")
 def train(cfg: DictConfig) -> None:
     # Main training pipeline with support for resuming training
     logging.info(OmegaConf.to_yaml(cfg))
