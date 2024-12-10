@@ -141,6 +141,16 @@ class VLA(nn.Module):
                 # attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
+        elif "SmolVLM" in self.vlm_backbone_name:
+            from transformers import Idefics3ForConditionalGeneration
+            self.vision_language_model = Idefics3ForConditionalGeneration.from_pretrained(
+                self.vlm_backbone_name,
+                device_map="cuda",
+                #torch_dtype=torch.float16,
+                #attn_implementation="flash_attention_2"
+            )
+            self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
+            self.processor.image_processor.do_image_splitting = False
         else:
             raise NotImplementedError(f"{self.vlm_backbone_name} not supported.")
         self.use_prompt_template = config.use_prompt_template
@@ -193,6 +203,19 @@ class VLA(nn.Module):
                 prompt = f"<image>{text}"
         elif "paligemma" in self.vlm_backbone_name:
             prompt = f"<image>{text}"
+        elif "SmolVLM" in self.vlm_backbone_name:
+            conversation = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text},
+                    {"type": "image"}
+                ]
+            },
+            ]
+            prompt = self.processor.apply_chat_template(
+                conversation, add_generation_prompt=add_generation_prompt
+            )
         else:
             prompt = text
 
@@ -204,7 +227,7 @@ class VLA(nn.Module):
             **processed_inputs, return_dict=True, output_hidden_states=True
         )
 
-        if any(k in self.vlm_backbone_name for k in ["llava-onevision", "paligemma"]):
+        if any(k in self.vlm_backbone_name for k in ["llava-onevision", "paligemma", "SmolVLM"]):
             batch_size = processed_inputs["input_ids"].shape[0]
             last_hidden_state = vlm_output.hidden_states[-1]
             seq_len = vlm_output.image_hidden_states.shape[0] // batch_size
