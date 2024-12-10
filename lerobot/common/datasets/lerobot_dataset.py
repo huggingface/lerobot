@@ -291,14 +291,14 @@ class LeRobotDatasetMetadata:
         obj.root.mkdir(parents=True, exist_ok=False)
 
         if robot is not None:
-            features = get_features_from_robot(robot, use_videos)
+            features = {**(features or {}), **get_features_from_robot(robot)}
             robot_type = robot.robot_type
             if not all(cam.fps == fps for cam in robot.cameras.values()):
                 logging.warning(
                     f"Some cameras in your {robot.robot_type} robot don't have an fps matching the fps of your dataset."
                     "In this case, frames from lower fps cameras will be repeated to fill in the blanks."
                 )
-        elif features is None:
+        elif robot_type is None or features is None:
             raise ValueError(
                 "Dataset features must either come from a Robot or explicitly passed upon creation."
             )
