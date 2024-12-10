@@ -141,7 +141,7 @@ class VLAConfig:
 
     # Language + Main transformer
     vocab_size: int = 150528
-    hidden_size: int = 896
+    # hidden_size: int = 896
     # n_decoder_layers: int = 1
     # n_heads: int = 8
     # dim_feedforward: int = 3200

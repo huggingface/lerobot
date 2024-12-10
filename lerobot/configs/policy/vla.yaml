@@ -57,9 +57,9 @@ policy:
 
   # Architecture.
   # State encoder
-  state_encoder:
-    hidden_dim: 256
-    latent_dim: 64
+  # state_encoder:
+  #   hidden_dim: 256
+  #   latent_dim: 64
   prompt: "Please transfer the cube" #"Please insert the tube into the socket."
 
   # Vision-Language Model (Qwen-VL)
@@ -77,7 +77,7 @@ policy:
   action_decoder:
     name: act
     vlm_hidden_dim: 128  # Input dim for action decoder (combined dimension)
-    action_dim: 4  # Output dimension (action space)
+    # action_dim: 4  # Output dimension (action space)
     n_decoder_layers: 1
     n_encoder_layers: 4
     dim_model: 896 # 2048 smolvlm
