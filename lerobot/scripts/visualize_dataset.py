@@ -275,16 +275,10 @@ def main():
     kwargs = vars(args)
     repo_id = kwargs.pop("repo_id")
     root = kwargs.pop("root")
-<<<<<<< HEAD
-
-    logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id, root=root, local_files_only=True)
-=======
     local_files_only = kwargs.pop("local_files_only")
 
     logging.info("Loading dataset")
     dataset = LeRobotDataset(repo_id, root=root, local_files_only=local_files_only)
->>>>>>> main
 
     visualize_dataset(dataset, **vars(args))
 

@@ -200,10 +200,7 @@ def record(
     video: bool = True,
     run_compute_stats: bool = True,
     push_to_hub: bool = True,
-<<<<<<< HEAD
-=======
     tags: list[str] | None = None,
->>>>>>> main
     num_image_writer_processes: int = 0,
     num_image_writer_threads_per_camera: int = 4,
     display_cameras: bool = True,
@@ -266,10 +263,6 @@ def record(
             use_videos=video,
             image_writer_processes=num_image_writer_processes,
             image_writer_threads=num_image_writer_threads_per_camera * len(robot.cameras),
-<<<<<<< HEAD
-            features=extra_features,
-=======
->>>>>>> main
         )
 
     if not robot.is_connected:
@@ -342,11 +335,7 @@ def record(
     dataset.consolidate(run_compute_stats)
 
     if push_to_hub:
-<<<<<<< HEAD
-        dataset.push_to_hub()
-=======
         dataset.push_to_hub(tags=tags)
->>>>>>> main
 
     log_say("Exiting", play_sounds)
     return dataset
@@ -360,11 +349,7 @@ def replay(
     episode: int,
     fps: int | None = None,
     play_sounds: bool = True,
-<<<<<<< HEAD
-    local_files_only: bool = True,
-=======
     local_files_only: bool = False,
->>>>>>> main
 ):
     # TODO(rcadene, aliberts): refactor with control_loop, once `dataset` is an instance of LeRobotDataset
     # TODO(rcadene): Add option to record logs
@@ -519,21 +504,12 @@ if __name__ == "__main__":
             "Not enough threads might cause low camera fps."
         ),
     )
-<<<<<<< HEAD
-    # parser_record.add_argument(
-    #     "--force-override",
-    #     type=int,
-    #     default=0,
-    #     help="By default, data recording is resumed. When set to 1, delete the local directory and start data recording from scratch.",
-    # )
-=======
     parser_record.add_argument(
         "--resume",
         type=int,
         default=0,
         help="Resume recording on an existing dataset.",
     )
->>>>>>> main
     parser_record.add_argument(
         "-p",
         "--pretrained-policy-name-or-path",
