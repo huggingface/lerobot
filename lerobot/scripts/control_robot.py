@@ -224,12 +224,7 @@ def record(
     else:
         raise NotImplementedError("Only single-task recording is supported for now")
 
-    if single_task:
-        task = single_task
-    else:
-        raise NotImplementedError("Only single-task recording is supported for now")
-
-    # Load pretrained policy
+        # Load pretrained policy
     if pretrained_policy_name_or_path is not None:
         policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
 
@@ -263,6 +258,7 @@ def record(
             use_videos=video,
             image_writer_processes=num_image_writer_processes,
             image_writer_threads=num_image_writer_threads_per_camera * len(robot.cameras),
+            features=extra_features,
         )
 
     if not robot.is_connected:

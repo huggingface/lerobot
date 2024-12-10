@@ -15,10 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 import torch.nn as nn
-import torch.nn.functional as F  # noqa: N812
 from huggingface_hub import PyTorchModelHubMixin
+
 
 class HILSerlPolicy(
     nn.Module,
