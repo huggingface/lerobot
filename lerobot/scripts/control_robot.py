@@ -29,7 +29,6 @@ python lerobot/scripts/control_robot.py teleoperate \
 ```bash
 python lerobot/scripts/control_robot.py record \
     --fps 30 \
-    --root tmp/data \
     --repo-id $USER/koch_test \
     --num-episodes 1 \
     --run-compute-stats 0
@@ -38,7 +37,6 @@ python lerobot/scripts/control_robot.py record \
 - Visualize dataset:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
-    --root tmp/data \
     --repo-id $USER/koch_test \
     --episode-index 0
 ```
@@ -47,7 +45,6 @@ python lerobot/scripts/visualize_dataset.py \
 ```bash
 python lerobot/scripts/control_robot.py replay \
     --fps 30 \
-    --root tmp/data \
     --repo-id $USER/koch_test \
     --episode 0
 ```
@@ -57,7 +54,6 @@ python lerobot/scripts/control_robot.py replay \
 ```bash
 python lerobot/scripts/control_robot.py record \
     --fps 30 \
-    --root data \
     --repo-id $USER/koch_pick_place_lego \
     --num-episodes 50 \
     --warmup-time-s 2 \
@@ -72,12 +68,12 @@ python lerobot/scripts/control_robot.py record \
 - Tap escape key 'esc' to stop the data recording.
 This might require a sudo permission to allow your terminal to monitor keyboard events.
 
-**NOTE**: You can resume/continue data recording by running the same data recording command twice.
-To avoid resuming by deleting the dataset, use `--force-override 1`.
+**NOTE**: You can resume/continue data recording by running the same data recording command and adding `--resume 1`.
+If the dataset you want to extend is not on the hub, you also need to add `--local-files-only 1`.
 
 - Train on this dataset with the ACT policy:
 ```bash
-DATA_DIR=data python lerobot/scripts/train.py \
+python lerobot/scripts/train.py \
     policy=act_koch_real \
     env=koch_real \
     dataset_repo_id=$USER/koch_pick_place_lego \
@@ -88,7 +84,6 @@ DATA_DIR=data python lerobot/scripts/train.py \
 ```bash
 python lerobot/scripts/control_robot.py record \
     --fps 30 \
-    --root data \
     --repo-id $USER/eval_act_koch_real \
     --num-episodes 10 \
     --warmup-time-s 2 \
@@ -191,7 +186,7 @@ def teleoperate(
 @safe_disconnect
 def record(
     robot: Robot,
-    root: str,
+    root: Path,
     repo_id: str,
     single_task: str,
     pretrained_policy_name_or_path: str | None = None,
@@ -205,6 +200,10 @@ def record(
     video: bool = True,
     run_compute_stats: bool = True,
     push_to_hub: bool = True,
+<<<<<<< HEAD
+=======
+    tags: list[str] | None = None,
+>>>>>>> main
     num_image_writer_processes: int = 0,
     num_image_writer_threads_per_camera: int = 4,
     display_cameras: bool = True,
@@ -222,6 +221,11 @@ def record(
     extra_features = (
         {"next.reward": {"dtype": "int64", "shape": (1,), "names": None}} if assign_rewards else None
     )
+
+    if single_task:
+        task = single_task
+    else:
+        raise NotImplementedError("Only single-task recording is supported for now")
 
     if single_task:
         task = single_task
@@ -262,7 +266,10 @@ def record(
             use_videos=video,
             image_writer_processes=num_image_writer_processes,
             image_writer_threads=num_image_writer_threads_per_camera * len(robot.cameras),
+<<<<<<< HEAD
             features=extra_features,
+=======
+>>>>>>> main
         )
 
     if not robot.is_connected:
@@ -335,7 +342,11 @@ def record(
     dataset.consolidate(run_compute_stats)
 
     if push_to_hub:
+<<<<<<< HEAD
         dataset.push_to_hub()
+=======
+        dataset.push_to_hub(tags=tags)
+>>>>>>> main
 
     log_say("Exiting", play_sounds)
     return dataset
@@ -349,7 +360,11 @@ def replay(
     episode: int,
     fps: int | None = None,
     play_sounds: bool = True,
+<<<<<<< HEAD
     local_files_only: bool = True,
+=======
+    local_files_only: bool = False,
+>>>>>>> main
 ):
     # TODO(rcadene, aliberts): refactor with control_loop, once `dataset` is an instance of LeRobotDataset
     # TODO(rcadene): Add option to record logs
@@ -431,14 +446,20 @@ if __name__ == "__main__":
     parser_record.add_argument(
         "--root",
         type=Path,
-        default="data",
-        help="Root directory where the dataset will be stored locally at '{root}/{repo_id}' (e.g. 'data/hf_username/dataset_name').",
+        default=None,
+        help="Root directory where the dataset will be stored (e.g. 'dataset/path').",
     )
     parser_record.add_argument(
         "--repo-id",
         type=str,
         default="lerobot/test",
         help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
+    )
+    parser_record.add_argument(
+        "--local-files-only",
+        type=int,
+        default=0,
+        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
     )
     parser_record.add_argument(
         "--warmup-time-s",
@@ -498,12 +519,21 @@ if __name__ == "__main__":
             "Not enough threads might cause low camera fps."
         ),
     )
+<<<<<<< HEAD
     # parser_record.add_argument(
     #     "--force-override",
     #     type=int,
     #     default=0,
     #     help="By default, data recording is resumed. When set to 1, delete the local directory and start data recording from scratch.",
     # )
+=======
+    parser_record.add_argument(
+        "--resume",
+        type=int,
+        default=0,
+        help="Resume recording on an existing dataset.",
+    )
+>>>>>>> main
     parser_record.add_argument(
         "-p",
         "--pretrained-policy-name-or-path",
@@ -533,14 +563,20 @@ if __name__ == "__main__":
     parser_replay.add_argument(
         "--root",
         type=Path,
-        default="data",
-        help="Root directory where the dataset will be stored locally at '{root}/{repo_id}' (e.g. 'data/hf_username/dataset_name').",
+        default=None,
+        help="Root directory where the dataset will be stored (e.g. 'dataset/path').",
     )
     parser_replay.add_argument(
         "--repo-id",
         type=str,
         default="lerobot/test",
         help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
+    )
+    parser_replay.add_argument(
+        "--local-files-only",
+        type=int,
+        default=0,
+        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
     )
     parser_replay.add_argument("--episode", type=int, default=0, help="Index of the episode to replay.")
 

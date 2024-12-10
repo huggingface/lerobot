@@ -235,6 +235,12 @@ def main():
         help="Name of hugging face repositery containing a LeRobotDataset dataset (e.g. `lerobot/pusht` for https://huggingface.co/datasets/lerobot/pusht).",
     )
     parser.add_argument(
+        "--local-files-only",
+        type=int,
+        default=0,
+        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
+    )
+    parser.add_argument(
         "--root",
         type=Path,
         default=None,
@@ -282,7 +288,13 @@ def main():
     kwargs = vars(args)
     repo_id = kwargs.pop("repo_id")
     root = kwargs.pop("root")
+<<<<<<< HEAD
     dataset = LeRobotDataset(repo_id, root=root, local_files_only=True)
+=======
+    local_files_only = kwargs.pop("local_files_only")
+
+    dataset = LeRobotDataset(repo_id, root=root, local_files_only=local_files_only)
+>>>>>>> main
     visualize_dataset_html(dataset, **kwargs)
 
 

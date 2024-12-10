@@ -287,8 +287,11 @@ def control_loop(
 
         if dataset is not None:
             frame = {**observation, **action}
+<<<<<<< HEAD
             if "next.reward" in events:
                 frame["next.reward"] = events["next.reward"]
+=======
+>>>>>>> main
             dataset.add_frame(frame)
 
         if display_cameras and not is_headless():
@@ -372,7 +375,11 @@ def sanity_check_dataset_robot_compatibility(
 
     mismatches = []
     for field, dataset_value, present_value in fields:
+<<<<<<< HEAD
         diff = DeepDiff(dataset_value, present_value)
+=======
+        diff = DeepDiff(dataset_value, present_value, exclude_regex_paths=[r".*\['info'\]$"])
+>>>>>>> main
         if diff:
             mismatches.append(f"{field}: expected {present_value}, got {dataset_value}")
 

@@ -158,7 +158,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     assert dataset.meta.total_episodes == 2
     assert len(dataset) == 2
 
-    replay(robot, episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False)
+    replay(robot, episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False, local_files_only=True)
 
     # TODO(rcadene, aliberts): rethink this design
     if robot_type == "aloha":
@@ -295,24 +295,12 @@ def test_resume_record(tmpdir, request, robot_type, mock):
     dataset = record(**record_kwargs)
     assert len(dataset) == 1, f"`dataset` should contain 1 frame, not {len(dataset)}"
 
-    # init_dataset_return_value = {}
-
-    # def wrapped_init_dataset(*args, **kwargs):
-    #     nonlocal init_dataset_return_value
-    #     init_dataset_return_value = init_dataset(*args, **kwargs)
-    #     return init_dataset_return_value
-
-    # with patch("lerobot.scripts.control_robot.init_dataset", wraps=wrapped_init_dataset):
-
     with pytest.raises(FileExistsError):
         # Dataset already exists, but resume=False by default
         record(**record_kwargs)
 
     dataset = record(**record_kwargs, resume=True)
     assert len(dataset) == 2, f"`dataset` should contain 2 frames, not {len(dataset)}"
-    # assert (
-    #     init_dataset_return_value["num_episodes"] == 2
-    # ), "`init_dataset` should load the previous episode"
 
 
 @pytest.mark.parametrize("robot_type, mock", [("koch", True)])

@@ -128,7 +128,6 @@ Record one episode:
 python lerobot/scripts/control_robot.py record \
     --robot-path lerobot/configs/robot/stretch.yaml \
     --fps 20 \
-    --root data \
     --repo-id ${HF_USER}/stretch_test \
     --tags stretch tutorial \
     --warmup-time-s 3 \
@@ -146,7 +145,6 @@ Now try to replay this episode (make sure the robot's initial position is the sa
 python lerobot/scripts/control_robot.py replay \
     --robot-path lerobot/configs/robot/stretch.yaml \
     --fps 20 \
-    --root data \
     --repo-id ${HF_USER}/stretch_test \
     --episode 0
 ```
