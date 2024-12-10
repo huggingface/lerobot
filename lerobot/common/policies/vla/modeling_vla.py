@@ -53,8 +53,8 @@ class VLAPolicy(
         self.unnormalize_outputs = Unnormalize(
             config.output_shapes, config.output_normalization_modes, dataset_stats
         )
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = VLA(config, device=self.device)
+        #self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = VLA(config)
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
 
         self.reset()
@@ -109,7 +109,7 @@ class VLAPolicy(
 
 
 class VLA(nn.Module):
-    def __init__(self, config: VLAConfig, device: torch.device = "cpu"):
+    def __init__(self, config: VLAConfig):
         super().__init__()
         self.chunk_size = config.chunk_size
         self.action_decoder_name = config.action_decoder.get("name", "act")
@@ -126,9 +126,9 @@ class VLA(nn.Module):
         if "llava-onevision" in self.vlm_backbone_name:
             self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
-                device_map="auto",
-                torch_dtype=torch.float16,
-                # attn_implementation="flash_attention_2"
+                device_map="cuda",
+                #torch_dtype=torch.float16,
+                #attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
         elif "paligemma" in self.vlm_backbone_name:
@@ -199,6 +199,7 @@ class VLA(nn.Module):
         return prompt
 
     def get_vlm_features(self, processed_inputs) -> torch.Tensor:
+        
         vlm_output = self.vision_language_model(
             **processed_inputs, return_dict=True, output_hidden_states=True
         )
@@ -222,7 +223,7 @@ class VLA(nn.Module):
                     (image_features[:, : self.num_img_tokens, :], last_hidden_state), dim=1
                 )
             else:
-                raise NotImplementedError(" not supportedd")
+                raise NotImplementedError(" not supported")
         else:
             raise NotImplementedError(f"{self.vlm_backbone_name} not implemented.")
 
