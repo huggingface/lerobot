@@ -200,8 +200,8 @@ def rollout(
             progbar.update()
 
             prof.step()
-            if step == 5:
-                break
+            #if step == 5:
+                #break
 
     # Track the final observation.
     if return_observations:

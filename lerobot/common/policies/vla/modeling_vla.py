@@ -53,8 +53,8 @@ class VLAPolicy(
         self.unnormalize_outputs = Unnormalize(
             config.output_shapes, config.output_normalization_modes, dataset_stats
         )
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = VLA(config, device=self.device)
+        #self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = VLA(config)
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
 
         self.reset()
@@ -126,9 +126,9 @@ class VLA(nn.Module):
         if "llava-onevision" in self.vlm_backbone_name:
             self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
-                device_map="auto",
-                torch_dtype=torch.float16,
-                # attn_implementation="flash_attention_2"
+                device_map="cuda",
+                #torch_dtype=torch.float16,
+                #attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
         elif "paligemma" in self.vlm_backbone_name:
@@ -141,6 +141,16 @@ class VLA(nn.Module):
                 # attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
+        elif "SmolVLM" in self.vlm_backbone_name:
+            from transformers import Idefics3ForConditionalGeneration
+            self.vision_language_model = Idefics3ForConditionalGeneration.from_pretrained(
+                self.vlm_backbone_name,
+                device_map="cuda",
+                #torch_dtype=torch.float16,
+                #attn_implementation="flash_attention_2"
+            )
+            self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
+            self.processor.image_processor.do_image_splitting = False
         else:
             raise NotImplementedError(f"{self.vlm_backbone_name} not supported.")
         self.use_prompt_template = config.use_prompt_template
@@ -193,17 +203,31 @@ class VLA(nn.Module):
                 prompt = f"<image>{text}"
         elif "paligemma" in self.vlm_backbone_name:
             prompt = f"<image>{text}"
+        elif "SmolVLM" in self.vlm_backbone_name:
+            conversation = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text},
+                    {"type": "image"}
+                ]
+            },
+            ]
+            prompt = self.processor.apply_chat_template(
+                conversation, add_generation_prompt=add_generation_prompt
+            )
         else:
             prompt = text
 
         return prompt
 
     def get_vlm_features(self, processed_inputs) -> torch.Tensor:
+
         vlm_output = self.vision_language_model(
             **processed_inputs, return_dict=True, output_hidden_states=True
         )
 
-        if any(k in self.vlm_backbone_name for k in ["llava-onevision", "paligemma"]):
+        if any(k in self.vlm_backbone_name for k in ["llava-onevision", "paligemma", "SmolVLM"]):
             batch_size = processed_inputs["input_ids"].shape[0]
             last_hidden_state = vlm_output.hidden_states[-1]
             seq_len = vlm_output.image_hidden_states.shape[0] // batch_size
@@ -222,7 +246,7 @@ class VLA(nn.Module):
                     (image_features[:, : self.num_img_tokens, :], last_hidden_state), dim=1
                 )
             else:
-                raise NotImplementedError(" not supportedd")
+                raise NotImplementedError(" not supported")
         else:
             raise NotImplementedError(f"{self.vlm_backbone_name} not implemented.")
 
