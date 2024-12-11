@@ -165,8 +165,10 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_online):
     loss = info["loss"]
     grad_norm = info["grad_norm"]
     lr = info["lr"]
-    update_s = info["update_s"]
-    dataloading_s = info["dataloading_s"]
+    avg_data_loading_s = info["avg_data_loading_s"]
+    max_data_loading_s = info["max_data_loading_s"]
+    avg_policy_updating_s = info["avg_policy_updating_s"]
+    max_policy_updating_s = info["max_policy_updating_s"]
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
@@ -175,19 +177,22 @@ def log_train_info(logger: Logger, info, step, cfg, dataset, is_online):
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_frames
     log_items = [
-        f"step:{format_big_number(step)}",
         # number of samples seen during training
         f"smpl:{format_big_number(num_samples)}",
         # number of episodes seen during training
         f"ep:{format_big_number(num_episodes)}",
-        # number of time all unique samples are seen
+        # number of passes through all of the training samples since the start of training
         f"epch:{num_epochs:.2f}",
+        # loss in the past step
         f"loss:{loss:.3f}",
+        # gradient norm in the past step
         f"grdn:{grad_norm:.3f}",
+        # learning rate at the end of the past step
         f"lr:{lr:0.1e}",
-        # in seconds
-        f"updt_s:{update_s:.3f}",
-        f"data_s:{dataloading_s:.3f}",  # if not ~0, you are bottlenecked by cpu or io
+        # time taken for a policy update (forward + backward + optimizer step) in milliseconds. Includes the maximum and average over all training steps since the last log.
+        f"updt_max|avg:{round(max_policy_updating_s * 1000)}|{round(avg_policy_updating_s * 1000)}",
+        # data loading time in milliseconds. Includes the maximum and average over all training steps since the last log.
+        f"data_max|avg:{round(max_data_loading_s *1000)}|{round(avg_data_loading_s*1000)}",  # if not ~0, you are bottlenecked by cpu or io
     ]
     logging.info(" ".join(log_items))
 
@@ -416,6 +421,9 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     policy.train()
     offline_step = 0
+    data_loading_times = []
+    policy_updating_times = []
+
     for _ in range(step, cfg.training.offline_steps):
         if offline_step == 0:
             logging.info("Start offline training on a fixed dataset")
@@ -423,6 +431,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         start_time = time.perf_counter()
         batch = next(dl_iter)
         dataloading_s = time.perf_counter() - start_time
+        data_loading_times.append(dataloading_s)
 
         for key in batch:
             batch[key] = batch[key].to(device, non_blocking=True)
@@ -437,10 +446,19 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             use_amp=cfg.use_amp,
         )
 
-        train_info["dataloading_s"] = dataloading_s
+        policy_updating_times.append(train_info["update_s"])
 
         if step % cfg.training.log_freq == 0:
+            train_info["avg_data_loading_s"] = np.mean(data_loading_times)
+            train_info["max_data_loading_s"] = np.max(data_loading_times)
+
+            train_info["avg_policy_updating_s"] = np.mean(policy_updating_times)
+            train_info["max_policy_updating_s"] = np.max(policy_updating_times)
+
             log_train_info(logger, train_info, step, cfg, offline_dataset, is_online=False)
+
+            data_loading_times = []
+            policy_updating_times = []
 
         # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
         # so we pass in step + 1.
@@ -595,6 +613,9 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             continue
 
         policy.train()
+        data_loading_times = []
+        policy_updating_times = []
+
         for _ in range(cfg.training.online_steps_between_rollouts):
             with lock:
                 start_time = time.perf_counter()
@@ -615,7 +636,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 lock=lock,
             )
 
-            train_info["dataloading_s"] = dataloading_s
+            data_loading_times.append(dataloading_s)
+            policy_updating_times.append(train_info["update_s"])
             train_info["online_rollout_s"] = online_rollout_s
             train_info["update_online_buffer_s"] = update_online_buffer_s
             train_info["await_update_online_buffer_s"] = await_update_online_buffer_s
@@ -623,7 +645,16 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                 train_info["online_buffer_size"] = len(online_dataset)
 
             if step % cfg.training.log_freq == 0:
+                train_info["avg_data_loading_s"] = np.mean(data_loading_times)
+                train_info["max_data_loading_s"] = np.max(data_loading_times)
+
+                train_info["avg_policy_updating_s"] = np.mean(policy_updating_times)
+                train_info["max_policy_updating_s"] = np.max(policy_updating_times)
+
                 log_train_info(logger, train_info, step, cfg, online_dataset, is_online=True)
+
+                data_loading_times = []
+                policy_updating_times = []
 
             # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
             # so we pass in step + 1.
