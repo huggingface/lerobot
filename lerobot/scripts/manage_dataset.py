@@ -53,6 +53,9 @@ if __name__ == "__main__":
         help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
     )
 
+
+    ############################################################################
+    # consolidate
     parser_conso = subparsers.add_parser("consolidate", parents=[base_parser])
     parser_conso.add_argument(
         "--batch-size",
@@ -67,6 +70,8 @@ if __name__ == "__main__":
         help="Number of processes of Dataloader for computing the dataset statistics.",
     )
 
+    ############################################################################
+    # push_to_hub
     parser_push = subparsers.add_parser("push_to_hub", parents=[base_parser])
     parser_push.add_argument(
         "--tags",
@@ -108,3 +113,16 @@ if __name__ == "__main__":
     elif mode == "push_to_hub":
         private = kwargs.pop("private") == 1
         dataset.push_to_hub(private=private, **kwargs)
+
+    elif mode == "remove_episode":
+        remove_episode(**kwargs)
+
+    elif mode == "delete_dataset":
+        delete_dataset()
+    
+    elif mode == "_episode":
+
+
+
+
+    
