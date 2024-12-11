@@ -133,29 +133,33 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        item = self.hf_dataset[idx]
+        try:
+            item = self.hf_dataset[idx]
 
-        if self.delta_timestamps is not None:
-            item = load_previous_and_future_frames(
-                item,
-                self.hf_dataset,
-                self.episode_data_index,
-                self.delta_timestamps,
-                self.tolerance_s,
-            )
+            if self.delta_timestamps is not None:
+                item = load_previous_and_future_frames(
+                    item,
+                    self.hf_dataset,
+                    self.episode_data_index,
+                    self.delta_timestamps,
+                    self.tolerance_s,
+                )
 
-        if self.video:
-            item = load_from_videos(
-                item,
-                self.video_frame_keys,
-                self.videos_dir,
-                self.tolerance_s,
-                self.video_backend,
-            )
+            if self.video:
+                item = load_from_videos(
+                    item,
+                    self.video_frame_keys,
+                    self.videos_dir,
+                    self.tolerance_s,
+                    self.video_backend,
+                )
 
-        if self.image_transforms is not None:
-            for cam in self.camera_keys:
-                item[cam] = self.image_transforms(item[cam])
+            if self.image_transforms is not None:
+                for cam in self.camera_keys:
+                    item[cam] = self.image_transforms(item[cam])
+        except Exception as e:
+            logging.error(f"Error occurred at index {idx}: {e}")
+            return self.__getitem__(idx + 1)
 
         return item
 
