@@ -19,6 +19,8 @@ services:
       - "~/.netrc:/root/.netrc:ro"
       # Mount Hugging Face credentials into the container, in read-only mode.
       - ".huggingface_cache/:/root/.cache/huggingface/"
+      # Mount torch model cache so models don't re-download each time
+      - ".torch_cache/:/root/.cache/torch/hub/"
     environment:
       # Necessary for display passthrough
       DISPLAY: $DISPLAY
