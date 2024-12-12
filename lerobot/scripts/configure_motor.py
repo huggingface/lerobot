@@ -16,7 +16,14 @@ import argparse
 import time
 
 
-def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
+def configure_motor(
+    port: str,
+    brand: str,
+    model: str,
+    motor_idx_des: int,
+    baudrate_des: int,
+    keep_id: bool,
+):
     if brand == "feetech":
         from lerobot.common.robot_devices.motors.feetech import MODEL_BAUDRATE_TABLE
         from lerobot.common.robot_devices.motors.feetech import (
@@ -65,6 +72,10 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
         for baudrate in all_baudrates:
             motor_bus.set_bus_baudrate(baudrate)
             present_ids = motor_bus.find_motor_indices(list(range(1, 10)))
+            if keep_id and motor_idx_des in present_ids:
+                motor_index = motor_idx_des
+                break
+
             if len(present_ids) > 1:
                 raise ValueError(
                     "Error: More than one motor ID detected. This script is designed to only handle one motor at a time. Please disconnect all but one motor."
@@ -140,6 +151,18 @@ if __name__ == "__main__":
     parser.add_argument(
         "--baudrate", type=int, default=1000000, help="Desired baudrate for the motor (default: 1000000)"
     )
+    parser.add_argument(
+        "--keep-id",
+        action="store_true",
+        help="Flag to indicate if the robot is already assembled (preserves the id and is more careful about spinning servos)",
+    )
     args = parser.parse_args()
 
-    configure_motor(args.port, args.brand, args.model, args.ID, args.baudrate)
+    configure_motor(
+        args.port,
+        args.brand,
+        args.model,
+        args.ID,
+        args.baudrate,
+        args.keep_id,
+    )
