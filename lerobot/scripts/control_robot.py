@@ -68,8 +68,8 @@ python lerobot/scripts/control_robot.py record \
 - Tap escape key 'esc' to stop the data recording.
 This might require a sudo permission to allow your terminal to monitor keyboard events.
 
-**NOTE**: You can resume/continue data recording by running the same data recording command twice.
-To avoid resuming by deleting the dataset, use `--force-override 1`.
+**NOTE**: You can resume/continue data recording by running the same data recording command and adding `--resume 1`.
+If the dataset you want to extend is not on the hub, you also need to add `--local-files-only 1`.
 
 - Train on this dataset with the ACT policy:
 ```bash

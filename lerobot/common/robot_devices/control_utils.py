@@ -184,7 +184,7 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides):
 def warmup_record(
     robot,
     events,
-    enable_teloperation,
+    enable_teleoperation,
     warmup_time_s,
     display_cameras,
     fps,
@@ -195,7 +195,7 @@ def warmup_record(
         display_cameras=display_cameras,
         events=events,
         fps=fps,
-        teleoperate=enable_teloperation,
+        teleoperate=enable_teleoperation,
     )
 
 
