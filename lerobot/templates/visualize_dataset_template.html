@@ -205,7 +205,7 @@
                                 <div class="flex gap-x-2 w-24 font-semibold px-1">
                                     <input type="checkbox" :checked="isRowChecked(rowIndex)"
                                         @change="toggleRow(rowIndex)">
-                                    <p x-text="`Motor ${rowIndex}`"></p>
+                                    <p x-text="`${rowLabels[rowIndex]}`"></p>
                                 </div>
                             </td>
                             <template x-for="(cell, colIndex) in row">
@@ -250,7 +250,8 @@
                 nVideos: {{ videos_info | length }},
                 nVideoReadyToPlay: 0,
                 videoCodecError: false,
-                columns: {{ columns | tojson }}, 
+                columns: {{ columns | tojson }},
+                rowLabels: {{ columns | tojson }}.reduce((colA, colB) => colA.value.length > colB.value.length ? colA : colB).value,
 
                 // alpine initialization
                 init() {
