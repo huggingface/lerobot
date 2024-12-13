@@ -202,7 +202,7 @@
                     <template x-for="(row, rowIndex) in rows">
                         <tr class="odd:bg-gray-800 even:bg-gray-900">
                             <td class="border border-slate-700">
-                                <div class="flex gap-x-2 w-24 font-semibold px-1">
+                                <div class="flex gap-x-2 max-w-64 font-semibold px-1 break-all">
                                     <input type="checkbox" :checked="isRowChecked(rowIndex)"
                                         @change="toggleRow(rowIndex)">
                                     <p x-text="`${rowLabels[rowIndex]}`"></p>
