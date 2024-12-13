@@ -1,0 +1,10 @@
+# @package _global_
+
+fps: 30
+
+env:
+  name: real_world
+  task: null
+  state_dim: 9
+  action_dim: 9
+  fps: ${fps}
