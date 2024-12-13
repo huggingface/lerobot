@@ -136,8 +136,8 @@ class VLA(nn.Module):
 
             self.vision_language_model = PaliGemmaForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
-                device_map="auto",
-                torch_dtype=torch.float16,
+                device_map="cuda",
+                # torch_dtype=torch.float16,
                 # attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
@@ -296,7 +296,7 @@ class VLA(nn.Module):
                 padding=True,
                 do_rescale=False,
             )
-
+        # maybe pass the device to the processor before?
         with record_function("processed_inputs to cuda"):
             for k in processed_inputs.keys():
                 processed_inputs[k] = processed_inputs[k].to(device=batch["observation.state"].device)
