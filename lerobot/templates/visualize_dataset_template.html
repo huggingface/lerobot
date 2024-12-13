@@ -187,12 +187,12 @@
                 <thead>
                     <tr>
                         <th></th>
-                        <template x-for="(_, colIndex) in Array.from({length: Object.keys(columnsNames).length}, (_, index) => index)">
+                        <template x-for="(_, colIndex) in Array.from({length: columns.length}, (_, index) => index)">
                             <th class="border border-slate-700">
                                 <div class="flex gap-x-2 justify-between px-2">
                                     <input type="checkbox" :checked="isColumnChecked(colIndex)"
                                         @change="toggleColumn(colIndex)">
-                                    <p x-text="`${Object.keys(columnsNames)[colIndex]}`"></p>
+                                    <p x-text="`${columns[colIndex].key}`"></p>
                                 </div>
                             </th>
                         </template>
@@ -250,7 +250,7 @@
                 nVideos: {{ videos_info | length }},
                 nVideoReadyToPlay: 0,
                 videoCodecError: false,
-                columnsNames: {{ columns_names | tojson }}, 
+                columns: {{ columns | tojson }}, 
 
                 // alpine initialization
                 init() {
@@ -294,9 +294,8 @@
 
                                 const colors = [];
                                 let lightness = 30; // const LIGHTNESS = [30, 65, 85]; // state_lightness, action_lightness, pred_action_lightness
-                                const columns = Object.keys(this.columnsNames);
-                                for(const column of columns){
-                                    const nValues = this.columnsNames[column].length;
+                                for(const column of this.columns){
+                                    const nValues = column.value.length;
                                     for (let hue = 0; hue < 360; hue += parseInt(360/nValues)) {
                                         const color = `hsl(${hue}, 100%, ${lightness}%)`;
                                         colors.push(color);
@@ -330,8 +329,7 @@
                         return [];
                     }
                     const rows = [];
-                    const columns = Object.keys(this.columnsNames);
-                    const nRows = Math.max(...Object.values(this.columnsNames).map(arr => arr.length));
+                    const nRows = Math.max(...this.columns.map(column => column.value.length));
                     let rowIndex = 0;
                     while(rowIndex < nRows){
                         const row = [];
@@ -339,9 +337,8 @@
                         const nullCell = { isNull: true };
                         // row consists of [state value, action value]
                         let idx = rowIndex;
-                        const columns = Object.keys(this.columnsNames);
-                        for(const column of columns){
-                            const nColumn = this.columnsNames[column].length;
+                        for(const column of this.columns){
+                            const nColumn = column.value.length;
                             row.push(rowIndex < nColumn ? this.currentFrameData[idx] : nullCell);
                             idx += nColumn; // because this.currentFrameData = [state0, state1, ..., stateN, action0, action1, ..., actionN]
                         }

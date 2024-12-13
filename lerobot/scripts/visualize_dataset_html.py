@@ -62,6 +62,7 @@ import re
 import tempfile
 import requests
 import json
+from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
@@ -157,7 +158,7 @@ def run_server(
             if major_version < 2:
                 return "Make sure to convert your LeRobotDataset to v2 & above."
 
-        episode_data_csv_str, columns_names = get_episode_data(dataset, episode_id)
+        episode_data_csv_str, columns = get_episode_data(dataset, episode_id)
         dataset_info = {
             "repo_id": f"{dataset_namespace}/{dataset_name}",
             "num_samples": dataset.num_frames
@@ -216,7 +217,7 @@ def run_server(
             dataset_info=dataset_info,
             videos_info=videos_info,
             episode_data_csv_str=episode_data_csv_str,
-            columns_names=columns_names,
+            columns=columns,
         )
 
     app.run(host=host, port=port, debug=True)
@@ -230,7 +231,7 @@ def get_ep_csv_fname(episode_id: int):
 def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index):
     """Get a csv str containing timeseries data of an episode (e.g. state and action).
     This file will be loaded by Dygraph javascript to plot data in real time."""
-    columns_names = {}
+    columns = []
     has_state = "observation.state" in dataset.features
     has_action = "action" in dataset.features
 
@@ -243,9 +244,10 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
             else dataset.features["observation.state"].shape[0]
         )
         header += [f"state_{i}" for i in range(dim_state)]
-        columns_names["state"] = dataset.features["observation.state"]["names"]
-        while not isinstance(columns_names["state"], list):
-            columns_names["state"] = list(columns_names["state"].values())[0]
+        column_names = dataset.features["observation.state"]["names"]
+        while not isinstance(column_names, list):
+            column_names = list(column_names.values())[0]
+        columns.append({"key": "state", "value": column_names})
     if has_action:
         dim_action = (
             dataset.meta.shapes["action"][0]
@@ -253,37 +255,45 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
             else dataset.features.action.shape[0]
         )
         header += [f"action_{i}" for i in range(dim_action)]
-        columns_names["action"] = dataset.features["action"]["names"]
-        while not isinstance(columns_names["action"], list):
-            columns_names["action"] = list(columns_names["action"].values())[0]
-    
+        column_names = dataset.features["action"]["names"]
+        while not isinstance(column_names, list):
+            column_names = list(column_names.values())[0]
+        columns.append({"key": "action", "value": column_names})
+
     if isinstance(dataset, LeRobotDataset):
         from_idx = dataset.episode_data_index["from"][episode_index]
         to_idx = dataset.episode_data_index["to"][episode_index]
-        columns = ["timestamp"]
+        selected_columns = ["timestamp"]
         if has_state:
-            columns += ["observation.state"]
+            selected_columns += ["observation.state"]
         if has_action:
-            columns += ["action"]
-        data = dataset.hf_dataset.select(range(from_idx, to_idx)).select_columns(columns).with_format("numpy")
+            selected_columns += ["action"]
+        data = (
+            dataset.hf_dataset.select(range(from_idx, to_idx))
+            .select_columns(selected_columns)
+            .with_format("numpy")
+        )
         rows = np.hstack(
-            (np.expand_dims(data["timestamp"], axis=1), *[data[col] for col in columns[1:]])
+            (np.expand_dims(data["timestamp"], axis=1), *[data[col] for col in selected_columns[1:]])
         ).tolist()
     else:
         repo_id = dataset.repo_id
-        columns = ["timestamp"]
+        selected_columns = ["timestamp"]
         if "observation.state" in dataset.features:
-            columns.append("observation.state")
+            selected_columns.append("observation.state")
         if "action" in dataset.features:
-            columns.append("action")
+            selected_columns.append("action")
 
         url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/" + dataset.data_path.format(
             episode_chunk=int(episode_index) // dataset.chunks_size, episode_index=episode_index
         )
         df = pd.read_parquet(url)
-        data = df[columns]  # Select specific columns
+        data = df[selected_columns]  # Select specific columns
         rows = np.hstack(
-            (np.expand_dims(data["timestamp"], axis=1), *[np.vstack(data[col]) for col in columns[1:]])
+            (
+                np.expand_dims(data["timestamp"], axis=1),
+                *[np.vstack(data[col]) for col in selected_columns[1:]],
+            )
         ).tolist()
 
     # Convert data to CSV string
@@ -295,7 +305,7 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
     csv_writer.writerows(rows)
     csv_string = csv_buffer.getvalue()
 
-    return csv_string, columns_names
+    return csv_string, columns
 
 
 def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]:
