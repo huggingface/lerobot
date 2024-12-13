@@ -54,24 +54,23 @@ python lerobot/scripts/visualize_dataset_html.py \
 
 import argparse
 import csv
+import json
 import logging
+import re
 import shutil
+import tempfile
 from io import StringIO
 from pathlib import Path
-import re
-import tempfile
-import requests
-import json
-from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
-from flask import Flask, redirect, render_template, url_for, request
+import requests
+from flask import Flask, redirect, render_template, request, url_for
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.utils.utils import init_logging
-from lerobot.common.datasets.utils import IterableNamespace
 from lerobot import available_datasets
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.utils import IterableNamespace
+from lerobot.common.utils.utils import init_logging
 
 
 def run_server(

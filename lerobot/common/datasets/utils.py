@@ -20,8 +20,8 @@ import textwrap
 from itertools import accumulate
 from pathlib import Path
 from pprint import pformat
-from typing import Any, Dict, Iterator
 from types import SimpleNamespace
+from typing import Any, Dict, Iterator
 
 import datasets
 import jsonlines
