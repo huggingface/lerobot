@@ -208,6 +208,6 @@ So far we've seen how to train Diffusion Policy for PushT and ACT for ALOHA. Now
 python lerobot/scripts/train.py policy=act env=pusht dataset_repo_id=lerobot/pusht
 ```
 
-Please, head on over to our [advanced tutorial on adapting policy configuration to various environments](./advanced/train_act_pusht/train_act_pusht.md) to learn more.
+Please, head on over to our [advanced tutorial on adapting policy configuration to various environments](./advanced/1_train_act_pusht/train_act_pusht.md) to learn more.
 
 Or in the meantime, happy coding! 🤗
