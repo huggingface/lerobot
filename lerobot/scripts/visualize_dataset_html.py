@@ -244,8 +244,8 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
         )
         header += [f"state_{i}" for i in range(dim_state)]
         columns_names["state"] = dataset.features["observation.state"]["names"]
-        if isinstance(dataset, IterableNamespace):
-            columns_names["state"] = columns_names["state"].motors
+        while not isinstance(columns_names["state"], list):
+            columns_names["state"] = list(columns_names["state"].values())[0]
     if has_action:
         dim_action = (
             dataset.meta.shapes["action"][0]
@@ -254,9 +254,9 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
         )
         header += [f"action_{i}" for i in range(dim_action)]
         columns_names["action"] = dataset.features["action"]["names"]
-        if isinstance(dataset, IterableNamespace):
-            columns_names["action"] = columns_names["action"].motors
-
+        while not isinstance(columns_names["action"], list):
+            columns_names["action"] = list(columns_names["action"].values())[0]
+    
     if isinstance(dataset, LeRobotDataset):
         from_idx = dataset.episode_data_index["from"][episode_index]
         to_idx = dataset.episode_data_index["to"][episode_index]
