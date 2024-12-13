@@ -98,14 +98,12 @@ def run_server(
                 )
             )
 
-        dataset_param, episode_param, time_param = None, None, None
+        dataset_param, episode_param = None, None
         all_params = request.args
         if "dataset" in all_params:
             dataset_param = all_params["dataset"]
         if "episode" in all_params:
             episode_param = int(all_params["episode"])
-        if "t" in all_params:
-            time_param = all_params["t"]
 
         if dataset_param:
             dataset_namespace, dataset_name = dataset_param.split("/")
