@@ -121,7 +121,6 @@ class VLAConfig:
     # Architecture.
 
     # Action decoder
-
     action_decoder: dict = field(
         default_factory=lambda: {
             "name": "act",
@@ -138,6 +137,8 @@ class VLAConfig:
             "temporal_ensemble_coeff": None,
         }
     )
+    # VLM-Action head connector
+    use_action_connector: bool = False
 
     # Language + Main transformer
     # vocab_size: int = 150528
@@ -185,6 +186,7 @@ class VLAConfig:
         default_factory=lambda: {
             "name": "llava-hf/llava-onevision-qwen2-0.5b-ov-hf",
             "feature_selection": "first_image",
+            "hidden_size": 896,
         }
     )
     use_prompt_template: bool = True

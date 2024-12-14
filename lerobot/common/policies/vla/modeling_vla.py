@@ -111,6 +111,7 @@ class VLA(nn.Module):
         super().__init__()
         self.chunk_size = config.chunk_size
         self.action_decoder_name = config.action_decoder.get("name", "act")
+        self.use_robot_state = "observation.state" in config.input_shapes
         if self.action_decoder_name == "act":
             action_decoder_config = OmegaConf.create(config.action_decoder)
             self.action_decoder = ACTDecoder(action_decoder_config)
@@ -119,8 +120,10 @@ class VLA(nn.Module):
             raise NotImplementedError(f"{self.action_decoder_name} not supported.")
 
         self.action_head = nn.Linear(config.action_decoder["dim_model"], config.output_shapes["action"][0])
+
         self.vlm_backbone_name = config.vlm_backbone["name"]
         self.vlm_backbone_feature_selection = config.vlm_backbone.get("feature_selection", "last_token")
+        self.vlm_hidden_size = config.vlm_backbone.get("hidden_size", config.action_decoder["dim_model"])
         if "llava-onevision" in self.vlm_backbone_name:
             self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
@@ -153,6 +156,15 @@ class VLA(nn.Module):
             raise NotImplementedError(f"{self.vlm_backbone_name} not supported.")
         self.use_prompt_template = config.use_prompt_template
         self.num_img_tokens = config.num_img_tokens  #  e.g. 598 to match the number of hidden states in ACT
+
+        if self.use_robot_state:
+            self.encoder_robot_state_input_proj = nn.Linear(
+                config.input_shapes["observation.state"][0], self.vlm_hidden_size
+            )
+
+        self.use_action_connector = config.use_action_connector
+        if self.use_action_connector:
+            self.action_connector = nn.Linear(self.vlm_hidden_size, config.action_decoder["dim_model"])
 
         self.peft_method = config.peft_method
         if "lora" in self.peft_method:
@@ -305,6 +317,13 @@ class VLA(nn.Module):
                 processed_inputs[k] = processed_inputs[k].to(device=batch["observation.state"].device)
 
         hidden_states = self.get_vlm_features(processed_inputs)
+
+        if self.use_robot_state:
+            robot_state = self.encoder_robot_state_input_proj(batch["observation.state"])
+            hidden_states = torch.stack([hidden_states, robot_state], axis=0)
+        
+        if self.use_action_connector:
+            hidden_states = self.action_connector(hidden_states)
 
         action_logits = self.get_action_logits(hidden_states)
         return action_logits

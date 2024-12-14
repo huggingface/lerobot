@@ -66,6 +66,8 @@ policy:
   vlm_backbone:
     name: llava-hf/llava-onevision-qwen2-0.5b-ov-hf # HuggingFaceTB/SmolVLM_converted_4
     feature_selection: all_generated
+    hidden_size: 896
+  use_action_connector: False # in case vlm_backbone.hidden_size is different than action_decoder.dim_model
   use_prompt_template: true
   num_img_tokens: 598
   replace_final_stride_with_dilation: false
@@ -89,7 +91,7 @@ policy:
     dropout: 0.1
     temporal_ensemble_coeff: null
 
-
+  
   # Lora config
   peft_method: lora
   peft_config:
