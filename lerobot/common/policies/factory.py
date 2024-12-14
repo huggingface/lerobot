@@ -110,8 +110,8 @@ def make_policy(
         # huggingface_hub should make it possible to avoid the hack:
         # https://github.com/huggingface/huggingface_hub/pull/2274.
         policy = policy_cls(policy_cfg)
-        policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
-
+        msg = policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
+        print(msg)
     policy.to(get_safe_torch_device(hydra_cfg.device))
 
     return policy

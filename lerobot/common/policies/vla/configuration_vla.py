@@ -140,45 +140,45 @@ class VLAConfig:
     )
 
     # Language + Main transformer
-    vocab_size: int = 150528
+    # vocab_size: int = 150528
     # hidden_size: int = 896
     # n_decoder_layers: int = 1
     # n_heads: int = 8
     # dim_feedforward: int = 3200
-    hidden_act: str = "silu"
-    pad_token_id: int = 0
-    initializer_range: float = 0.02
-    rms_norm_eps: float = 1e-05
-    use_cache: bool = True
-    tie_word_embeddings: bool = False
-    rope_theta: float = 1000000.0
-    use_sliding_window: bool = False
-    sliding_window = 4096
-    max_window_layers = 80
+    # hidden_act: str = "silu"
+    # pad_token_id: int = 0
+    # initializer_range: float = 0.02
+    # rms_norm_eps: float = 1e-05
+    # use_cache: bool = True
+    # tie_word_embeddings: bool = False
+    # rope_theta: float = 1000000.0
+    # use_sliding_window: bool = False
+    # sliding_window = 4096
+    # max_window_layers = 80
     # dropout = 0.0
-    rope_scaling: dict = field(
-        default_factory=lambda: {
-            "type": "mrope",
-            "mrope_section": [2, 2, 2],
-        }
-    )
-    pruned_heads = None
+    # rope_scaling: dict = field(
+    #     default_factory=lambda: {
+    #         "type": "mrope",
+    #         "mrope_section": [2, 2, 2],
+    #     }
+    # )
+    # pruned_heads = None
 
-    vision_config: dict = field(
-        default_factory=lambda: {
-            "depth": 32,
-            "embed_dim": 1280,
-            "hidden_size": 3584,
-            "hidden_act": "quick_gelu",
-            "mlp_ratio": 4,
-            "num_heads": 16,
-            "in_channels": 3,
-            "patch_size": 14,
-            "spatial_merge_size": 2,
-            "temporal_patch_size": 2,
-            "attn_implementation": "eager",
-        }
-    )
+    # vision_config: dict = field(
+    #     default_factory=lambda: {
+    #         "depth": 32,
+    #         "embed_dim": 1280,
+    #         "hidden_size": 3584,
+    #         "hidden_act": "quick_gelu",
+    #         "mlp_ratio": 4,
+    #         "num_heads": 16,
+    #         "in_channels": 3,
+    #         "patch_size": 14,
+    #         "spatial_merge_size": 2,
+    #         "temporal_patch_size": 2,
+    #         "attn_implementation": "eager",
+    #     }
+    # )
 
     # Vision-Language Model (Qwen-VL)
     vlm_backbone: dict = field(

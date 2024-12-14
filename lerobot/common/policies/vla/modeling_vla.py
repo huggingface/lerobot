@@ -74,11 +74,9 @@ class VLAPolicy(
             batch = dict(batch)
             batch["observation.images"] = [img for k in self.expected_image_keys for img in batch[k]]
         batch["prompt"] = self.config.prompt
-
         # Forward pass through VLA
         with record_function("model"):
             predicted_actions = self.model(batch)
-
         with record_function("unnormalize_outputs"):
             if len(self._action_queue) == 0:
                 actions = self.unnormalize_outputs({"action": predicted_actions})["action"]
@@ -176,6 +174,10 @@ class VLA(nn.Module):
                     param.requires_grad = True
                 else:
                     param.requires_grad = False
+        elif "freeze" in self.peft_method:
+            for name, param in self.vision_language_model.named_parameters():
+                param.requires_grad = False
+
 
         # Verify trainable parameters
         trainable_params = []
@@ -218,7 +220,6 @@ class VLA(nn.Module):
             )
         else:
             prompt = text
-
         return prompt
 
     def get_vlm_features(self, processed_inputs) -> torch.Tensor:
@@ -228,11 +229,14 @@ class VLA(nn.Module):
         )
 
         if any(k in self.vlm_backbone_name for k in ["llava-onevision", "paligemma", "SmolVLM"]):
-            batch_size = processed_inputs["input_ids"].shape[0]
-            last_hidden_state = vlm_output.hidden_states[-1]
-            seq_len = vlm_output.image_hidden_states.shape[0] // batch_size
-            image_features = vlm_output.image_hidden_states.view(batch_size, seq_len, -1)
+            if "llava-onevision" in self.vlm_backbone_name:
+                batch_size = processed_inputs["input_ids"].shape[0]
+                seq_len = vlm_output.image_hidden_states.shape[0] // batch_size
+                image_features = vlm_output.image_hidden_states.view(batch_size, seq_len, -1)
+            else:
+                image_features = vlm_output.image_hidden_states
 
+            last_hidden_state = vlm_output.hidden_states[-1]
             if self.vlm_backbone_feature_selection == "first_image":
                 hidden_states = image_features[:, : self.num_img_tokens, :]
             elif self.vlm_backbone_feature_selection == "last_token":
@@ -249,7 +253,6 @@ class VLA(nn.Module):
                 raise NotImplementedError(" not supported")
         else:
             raise NotImplementedError(f"{self.vlm_backbone_name} not implemented.")
-
         return hidden_states
 
     def get_action_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -286,7 +289,7 @@ class VLA(nn.Module):
         action_logits: Tensor of predicted actions.
         """
         prompt = self.apply_prompt_template(batch["prompt"], add_generation_prompt=True)
-
+        
         batch_size = len(batch["observation.images"])
         with record_function("processor"):
             processed_inputs = self.processor(
@@ -304,5 +307,4 @@ class VLA(nn.Module):
         hidden_states = self.get_vlm_features(processed_inputs)
 
         action_logits = self.get_action_logits(hidden_states)
-
         return action_logits
