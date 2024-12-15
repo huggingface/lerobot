@@ -113,8 +113,8 @@ from lerobot.common.robot_devices.control_utils import (
     sanity_check_dataset_robot_compatibility,
     stop_recording,
     warmup_record,
-    ControlContext
-    ControlContextConfig
+    ControlContext,
+    ControlContextConfig,
 )
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
@@ -176,10 +176,7 @@ def calibrate(robot: Robot, arms: list[str] | None):
 def teleoperate(
     robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
 ):
-    control_context_config = ControlContextConfig(
-        display_cameras=display_cameras
-    )
-    control_context = ControlContext(control_context_config)
+    control_context = ControlContext(config=ControlContextConfig(display_cameras=display_cameras))
     control_loop(
         robot,
         control_time_s=teleop_time_s,
@@ -188,9 +185,6 @@ def teleoperate(
         display_cameras=display_cameras,
         control_context=control_context,
     )
-
-    events = control_context.get_events()
-    print(f"Events(teleoperate): {events}")
 
 
 @safe_disconnect
@@ -219,6 +213,10 @@ def record(
     # TODO(rcadene, aliberts): remove local_files_only when refactor with dataset as argument
     local_files_only: bool = False,
 ) -> LeRobotDataset:
+    control_context = ControlContext(
+        config=ControlContextConfig(display_cameras=display_cameras, play_sounds=play_sounds)
+    )
+
     # TODO(rcadene): Add option to record logs
     listener = None
     events = None

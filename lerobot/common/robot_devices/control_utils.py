@@ -28,10 +28,13 @@ from lerobot.scripts.eval import get_pretrained_policy_path
 import pygame
 import numpy as np
 from typing import Dict, Optional
+from dataclasses import dataclass
 
+@dataclass
 class ControlContextConfig:
     display_cameras: bool = False
     play_sounds: bool = False
+    assign_rewards: bool = False
     debug_mode: bool = False
 
 class ControlContext:
@@ -47,6 +50,10 @@ class ControlContext:
             "stop_recording": False,
             "next_reward": 0
         }
+
+        if config.assign_rewards:
+            self.events["next.reward"] = 0
+
         self.pressed_keys = []
         self.font = pygame.font.Font(None, 36)
 
@@ -97,7 +104,7 @@ class ControlContext:
                     print("Escape key pressed. Stopping data recording...")
                     self.events["stop_recording"] = True
                     self.events["exit_early"] = True
-                elif event.key == pygame.K_SPACE:
+                elif self.config.assign_rewards and event.key == pygame.K_SPACE:
                     self.events["next_reward"] = 1 if self.events["next_reward"] == 0 else 0
                     print(f"Space key pressed. New reward: {self.events['next_reward']}")
             
@@ -439,13 +446,6 @@ def control_loop(
                 frame = {**observation, **action}
                 dataset.add_frame(frame)
 
-            # if display_cameras and not is_headless():
-            #     image_keys = [key for key in observation if "image" in key]
-            #     for key in image_keys:
-            #         cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-            #     cv2.waitKey(1)
-
-            # if display_cameras and not is_headless():
             control_context.update(observation)
 
             if fps is not None:
@@ -453,7 +453,7 @@ def control_loop(
                 busy_wait(1 / fps - dt_s)
 
             dt_s = time.perf_counter() - start_loop_t
-            log_control_info(robot, dt_s, fps=fps)
+            # log_control_info(robot, dt_s, fps=fps)
 
             timestamp = time.perf_counter() - start_episode_t
             if events["exit_early"]:
