@@ -87,7 +87,7 @@ class ControlContext:
     def handle_events(self):
         """Handle pygame events and update internal state"""
         for event in pygame.event.get():
-            if self.debug_mode:
+            if self.config.debug_mode:
                 print(event)
             if event.type == pygame.QUIT:
                 self.events["stop_recording"] = True
@@ -467,8 +467,8 @@ def control_loop(
             if events["exit_early"]:
                 events["exit_early"] = False
                 break
-
-                
+    except Exception as e:
+        print(f"Error in control loop: {e}")
     finally:
         # Clean up display window
         if control_context is not None:

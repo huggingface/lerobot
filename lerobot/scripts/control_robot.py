@@ -212,10 +212,7 @@ def record(
     # TODO(rcadene, aliberts): remove local_files_only when refactor with dataset as argument
     local_files_only: bool = False,
 ) -> LeRobotDataset:
-    control_context = ControlContext(
-        config=ControlContextConfig(display_cameras=True, play_sounds=play_sounds)
-    )
-
+    
     # TODO(rcadene): Add option to record logs
     policy = None
     device = None
@@ -268,14 +265,16 @@ def record(
 
     if not robot.is_connected:
         robot.connect()
-    events = control_context.get_events()
-
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", play_sounds)
+
+    control_context = ControlContext(
+        config=ControlContextConfig(display_cameras=True, play_sounds=play_sounds)
+    )
     warmup_record(
         robot=robot,
         enable_teleoperation=enable_teleoperation,
@@ -286,6 +285,12 @@ def record(
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
+
+    # We need to reinitialize the control context because control loop tears it down
+    # @TODO - maybe handle control context setup and teardown better
+    control_context = ControlContext(
+        config=ControlContextConfig(display_cameras=True, play_sounds=play_sounds)
+    )
 
     recorded_episodes = 0
     while True:
@@ -308,6 +313,9 @@ def record(
             use_amp=use_amp,
             fps=fps,
         )
+
+        # Events will be updated by control loop
+        events = control_context.get_events()
 
         # Execute a few seconds without recording to give time to manually reset the environment
         # Current code logic doesn't allow to teleoperate during this time.
