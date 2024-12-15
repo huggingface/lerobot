@@ -30,12 +30,20 @@ import numpy as np
 from typing import Dict, Optional
 from dataclasses import dataclass
 
+# Create an enum for ControlPhase
+class ControlPhase:
+    TELEOPERATE = "Teleoperate"
+    WARMUP = "Warmup"
+    RECORD = "Record"
+    RESET = "reset"
+
 @dataclass
 class ControlContextConfig:
     display_cameras: bool = False
     play_sounds: bool = False
     assign_rewards: bool = False
     debug_mode: bool = False
+    control_phase: ControlPhase = ControlPhase.TELEOPERATE
 
 class ControlContext:
     def __init__(self, config: Optional[ControlContextConfig] = None):
@@ -121,22 +129,20 @@ class ControlContext:
         
     def render_camera_frames(self, observation: Dict[str, np.ndarray]):
         """Update display with new images from observation dict"""
-        
         image_keys = [key for key in observation if "image" in key]
         images = {k: observation[k].numpy() for k in image_keys}
-        
         if not images:
             return
-            
+
         # Initialize or resize window if needed
         window_width, window_height, grid_cols = self.calculate_window_size(images)
         if self.screen is None or self.screen.get_size() != (window_width, window_height):
             self.screen = pygame.display.set_mode((window_width, window_height))
             pygame.display.set_caption("Robot Camera Feed")
-            
+
         # Clear screen
         self.screen.fill((240, 240, 240))  # Light gray background
-        
+
         # Update image positions and draw images
         for idx, (key, image) in enumerate(images.items()):
             # Calculate grid position
@@ -155,13 +161,6 @@ class ControlContext:
             # Convert numpy array to pygame surface
             image_surface = pygame.surfarray.make_surface(np.transpose(image, (1, 0, 2)))
             self.screen.blit(image_surface, (x, y + self.title_height))
-        
-        # Display pressed keys at the bottom
-        if self.pressed_keys:
-            keys_text = f"Pressed keys: {', '.join(self.pressed_keys)}"
-            text = self.font.render(keys_text, True, (0, 0, 0))
-            text_rect = text.get_rect(center=(window_width//2, window_height - self.title_height//2))
-            self.screen.blit(text, text_rect)
 
         # Is assign_reward is true then display a red banner across the top of the screen
         if self.config.assign_rewards:
@@ -173,7 +172,24 @@ class ControlContext:
             text_rect = text.get_rect(center=(window_width//2, self.title_height//2))
             pygame.draw.rect(self.screen, color, (0, 0, window_width, self.title_height))
             self.screen.blit(text, text_rect)
-            
+
+        # Display control phase and pressed keys at the bottom side by side
+        bottom_y = window_height - self.title_height//2
+        
+        # Control phase on the left side
+        control_text = self.font.render(f"Control Phase: {self.config.control_phase}", True, (0, 0, 0))
+        control_rect = control_text.get_rect(center=(window_width//4, bottom_y))
+        self.screen.blit(control_text, control_rect)
+        
+        # Pressed keys on the right side
+        if self.pressed_keys:
+            keys_text = f"Pressed keys: {', '.join(self.pressed_keys)}"
+        else:
+            keys_text = "Pressed keys: None"
+        keys_surface = self.font.render(keys_text, True, (0, 0, 0))
+        keys_rect = keys_surface.get_rect(center=(3 * window_width//4, bottom_y))
+        self.screen.blit(keys_surface, keys_rect)
+
         pygame.display.flip()
         
     def update(self, observation: Dict[str, np.ndarray]):

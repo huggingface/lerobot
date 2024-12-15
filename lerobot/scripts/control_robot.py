@@ -115,6 +115,7 @@ from lerobot.common.robot_devices.control_utils import (
     warmup_record,
     ControlContext,
     ControlContextConfig,
+    ControlPhase,
 )
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
@@ -176,9 +177,7 @@ def calibrate(robot: Robot, arms: list[str] | None):
 def teleoperate(
     robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
 ):
-    control_context = ControlContext(
-        config=ControlContextConfig(display_cameras=display_cameras, assign_rewards=True)
-    )
+    control_context = ControlContext(config=ControlContextConfig(display_cameras=display_cameras))
     control_loop(
         robot,
         control_time_s=teleop_time_s,
@@ -275,7 +274,10 @@ def record(
 
     control_context = ControlContext(
         config=ControlContextConfig(
-            display_cameras=display_cameras, play_sounds=play_sounds, assign_rewards=assign_rewards
+            control_phase=ControlPhase.WARMUP,
+            display_cameras=display_cameras,
+            play_sounds=play_sounds,
+            assign_rewards=assign_rewards,
         )
     )
     warmup_record(
@@ -290,10 +292,12 @@ def record(
         robot.teleop_safety_stop()
 
     # We need to reinitialize the control context because control loop tears it down
-    # @TODO - maybe handle control context setup and teardown better
     control_context = ControlContext(
         config=ControlContextConfig(
-            display_cameras=display_cameras, play_sounds=play_sounds, assign_rewards=assign_rewards
+            control_phase=ControlPhase.RECORD,
+            display_cameras=display_cameras,
+            play_sounds=play_sounds,
+            assign_rewards=assign_rewards,
         )
     )
 
