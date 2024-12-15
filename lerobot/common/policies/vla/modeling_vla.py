@@ -68,8 +68,7 @@ class VLAPolicy(
     def select_action(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         self.eval()
 
-        with record_function("normalize_inputs"):
-            batch = self.normalize_inputs(batch)
+        batch = self.normalize_inputs(batch)
 
         if len(self.expected_image_keys) > 0:
             batch = dict(batch)
@@ -90,6 +89,7 @@ class VLAPolicy(
         if len(self.expected_image_keys) > 0:
             batch = dict(batch)
             batch["observation.images"] = [img for k in self.expected_image_keys for img in batch[k]]
+        batch = self.normalize_targets(batch)
         batch["prompt"] = self.config.prompt
 
         predicted_actions = self.model(batch)
