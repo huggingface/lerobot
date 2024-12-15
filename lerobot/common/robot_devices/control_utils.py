@@ -41,8 +41,8 @@ class ControlContext:
     def __init__(self, config: Optional[ControlContextConfig] = None):
         self.config = config or ControlContextConfig()
         pygame.init()
-        pygame.display.init()
-        pygame.display.set_mode((800, 600))
+        # pygame.display.init()
+        # pygame.display.set_mode((800, 600))
         # if self.config.display_cameras:
         #     # Initialize video system if we need to display cameras
         #     pygame.display.init()
@@ -170,9 +170,9 @@ class ControlContext:
         # Is assign_reward is true then display a red banner across the top of the screen
         if self.config.assign_rewards:
             next_reward = self.events["next_reward"]
-            # if next_reward is not 0 display a green banner with Assigning Reward {next_reward}
+            # if next_reward is not 0 display a dark green banner with Assigning Reward {next_reward}
             # otherwise show blue banner with Assigning Reward 0
-            color = (0, 255, 0) if next_reward != 0 else (0, 0, 255)
+            color = (0, 128, 0) if next_reward != 0 else (0, 0, 128)
             text = self.font.render(f"Reward: {next_reward}", True, (255, 255, 255))
             text_rect = text.get_rect(center=(window_width//2, self.title_height//2))
             pygame.draw.rect(self.screen, color, (0, 0, window_width, self.title_height))
