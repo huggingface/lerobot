@@ -44,6 +44,7 @@ class ControlContextConfig:
     assign_rewards: bool = False
     debug_mode: bool = False
     control_phase: ControlPhase = ControlPhase.TELEOPERATE
+    num_episodes: int = 0
 
 class ControlContext:
     def __init__(self, config: Optional[ControlContextConfig] = None):
@@ -70,6 +71,7 @@ class ControlContext:
 
         self.pressed_keys = []
         self.font = pygame.font.Font(None, 36)
+        self.current_episode_index = 0
 
         
     def calculate_window_size(self, images: Dict[str, np.ndarray]):
@@ -162,16 +164,19 @@ class ControlContext:
             image_surface = pygame.surfarray.make_surface(np.transpose(image, (1, 0, 2)))
             self.screen.blit(image_surface, (x, y + self.title_height))
 
-        # Is assign_reward is true then display a red banner across the top of the screen
+        color = (255, 0, 0)
+        top_text = f"Episode: {self.current_episode_index}/${self.config.num_episodes}"
+
         if self.config.assign_rewards:
             next_reward = self.events["next_reward"]
-            # if next_reward is not 0 display a dark green banner with Assigning Reward {next_reward}
-            # otherwise show blue banner with Assigning Reward 0
+            rewards_text = f"Reward: {next_reward}"
+            top_text += f" | {rewards_text}"
             color = (0, 128, 0) if next_reward != 0 else (0, 0, 128)
-            text = self.font.render(f"Reward: {next_reward}", True, (255, 255, 255))
-            text_rect = text.get_rect(center=(window_width//2, self.title_height//2))
-            pygame.draw.rect(self.screen, color, (0, 0, window_width, self.title_height))
-            self.screen.blit(text, text_rect)
+
+        top_text = self.font.render(f"Reward: {next_reward}", True, (255, 255, 255))            
+        text_rect = text.get_rect(center=(window_width//2, self.title_height//2))
+        pygame.draw.rect(self.screen, color, (0, 0, window_width, self.title_height))
+        self.screen.blit(text, text_rect)
 
         # Display control phase and pressed keys at the bottom side by side
         bottom_y = window_height - self.title_height//2
@@ -198,6 +203,10 @@ class ControlContext:
             self.render_camera_frames(observation)
 
         self.handle_events()
+        return self
+    
+    def update_current_episode(self, episode_index):
+        self.current_episode_index = episode_index
         return self
         
     def close(self):
