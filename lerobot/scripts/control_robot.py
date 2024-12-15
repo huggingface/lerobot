@@ -113,6 +113,8 @@ from lerobot.common.robot_devices.control_utils import (
     sanity_check_dataset_robot_compatibility,
     stop_recording,
     warmup_record,
+    ControlContext
+    ControlContextConfig
 )
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
@@ -174,13 +176,21 @@ def calibrate(robot: Robot, arms: list[str] | None):
 def teleoperate(
     robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
 ):
+    control_context_config = ControlContextConfig(
+        display_cameras=display_cameras
+    )
+    control_context = ControlContext(control_context_config)
     control_loop(
         robot,
         control_time_s=teleop_time_s,
         fps=fps,
         teleoperate=True,
         display_cameras=display_cameras,
+        control_context=control_context,
     )
+
+    events = control_context.get_events()
+    print(f"Events(teleoperate): {events}")
 
 
 @safe_disconnect

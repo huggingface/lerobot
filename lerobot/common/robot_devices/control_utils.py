@@ -29,13 +29,31 @@ import pygame
 import numpy as np
 from typing import Dict, Optional
 
-class ImageDisplayWindow:
-    def __init__(self):
+class ControlContextConfig:
+    display_cameras: bool = False
+    play_sounds: bool = False
+    debug_mode: bool = False
+
+class ControlContext:
+    def __init__(self, config: Optional[ControlContextConfig] = None):
         pygame.init()
         self.screen = None
         self.image_positions = {}
         self.padding = 20
         self.title_height = 30
+        self.events = {
+            "exit_early": False,
+            "rerecord_episode": False,
+            "stop_recording": False,
+            "next_reward": 0
+        }
+        self.pressed_keys = []
+        self.font = pygame.font.Font(None, 36)
+
+        self.config = config or ControlContextConfig()
+
+    def get_events(self):
+        return self.events
         
     def calculate_window_size(self, images: Dict[str, np.ndarray]):
         """Calculate required window size based on images"""
@@ -51,13 +69,48 @@ class ImageDisplayWindow:
             max_width = max(max_width, image.shape[1])
             max_height = max(max_height, image.shape[0])
             
+        # Add extra height for key press display
         total_width = (max_width + self.padding) * grid_cols
-        total_height = (max_height + self.title_height + self.padding) * grid_rows
+        total_height = (max_height + self.title_height + self.padding) * grid_rows + self.title_height
         
         return total_width, total_height, grid_cols
+
+    def handle_events(self):
+        """Handle pygame events and update internal state"""
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.events["stop_recording"] = True
+                self.events["exit_early"] = True
+            elif event.type == pygame.KEYDOWN:
+                key_name = pygame.key.name(event.key)
+                self.pressed_keys.append(key_name)
+                
+                # Handle specific key events
+                if event.key == pygame.K_RIGHT:
+                    print("Right arrow key pressed. Exiting loop...")
+                    self.events["exit_early"] = True
+                elif event.key == pygame.K_LEFT:
+                    print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+                    self.events["rerecord_episode"] = True
+                    self.events["exit_early"] = True
+                elif event.key == pygame.K_ESCAPE:
+                    print("Escape key pressed. Stopping data recording...")
+                    self.events["stop_recording"] = True
+                    self.events["exit_early"] = True
+                elif event.key == pygame.K_SPACE:
+                    self.events["next_reward"] = 1 if self.events["next_reward"] == 0 else 0
+                    print(f"Space key pressed. New reward: {self.events['next_reward']}")
+            
+            elif event.type == pygame.KEYUP:
+                key_name = pygame.key.name(event.key)
+                if key_name in self.pressed_keys:
+                    self.pressed_keys.remove(key_name)
         
-    def update_images(self, observation: Dict[str, np.ndarray]):
+        return self.events
+        
+    def render_camera_frames(self, observation: Dict[str, np.ndarray]):
         """Update display with new images from observation dict"""
+        
         image_keys = [key for key in observation if "image" in key]
         images = {k: observation[k].numpy() for k in image_keys}
         
@@ -84,28 +137,37 @@ class ImageDisplayWindow:
             y = row * (image.shape[0] + self.title_height + self.padding)
             
             # Draw title
-            font = pygame.font.Font(None, 36)
-            text = font.render(key, True, (0, 0, 0))
+            text = self.font.render(key, True, (0, 0, 0))
             text_rect = text.get_rect(center=(x + image.shape[1]//2, y + self.title_height//2))
             self.screen.blit(text, text_rect)
             
             # Convert numpy array to pygame surface
             image_surface = pygame.surfarray.make_surface(np.transpose(image, (1, 0, 2)))
             self.screen.blit(image_surface, (x, y + self.title_height))
+        
+        # Display pressed keys at the bottom
+        if self.pressed_keys:
+            keys_text = f"Pressed keys: {', '.join(self.pressed_keys)}"
+            text = self.font.render(keys_text, True, (0, 0, 0))
+            text_rect = text.get_rect(center=(window_width//2, window_height - self.title_height//2))
+            self.screen.blit(text, text_rect)
             
         pygame.display.flip()
+        
+    def update(self, observation: Dict[str, np.ndarray]):
+        self.handle_events()
+
+        if self.config.display_cameras:
+            self.render_camera_frames(observation)
+        return self
         
     def close(self):
         """Clean up pygame resources"""
         pygame.quit()
 
-def display_observation_images(observation: Dict[str, np.ndarray], window: Optional[ImageDisplayWindow] = None) -> ImageDisplayWindow:
-    """Display images from observation dict using Pygame"""
-    if window is None:
-        window = ImageDisplayWindow()
-    window.update_images(observation)
-    return window
-
+    def get_events(self):
+        """Return current events state"""
+        return self.events.copy()
 
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
@@ -285,10 +347,13 @@ def warmup_record(
     display_cameras,
     fps,
 ):
+    # control_context = ControlContext() if display_cameras and not is_headless() else None
+    control_context = ControlContext()
     control_loop(
         robot=robot,
         control_time_s=warmup_time_s,
         display_cameras=display_cameras,
+        control_context=control_context,
         events=events,
         fps=fps,
         teleoperate=enable_teloperation,
@@ -306,10 +371,12 @@ def record_episode(
     use_amp,
     fps,
 ):
+    control_context = ControlContext()
     control_loop(
         robot=robot,
         control_time_s=episode_time_s,
         display_cameras=display_cameras,
+        control_context=control_context,
         dataset=dataset,
         events=events,
         policy=policy,
@@ -326,6 +393,7 @@ def control_loop(
     control_time_s=None,
     teleoperate=False,
     display_cameras=False,
+    control_context: ControlContext = None,
     dataset: LeRobotDataset | None = None,
     events=None,
     policy=None,
@@ -348,9 +416,6 @@ def control_loop(
 
     if dataset is not None and fps is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
-
-    # Initialize display window if needed
-    display_window = None if not display_cameras or is_headless() else None
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -380,8 +445,8 @@ def control_loop(
             #         cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
             #     cv2.waitKey(1)
 
-            if display_cameras and not is_headless():
-                display_window = display_observation_images(observation, display_window)
+            # if display_cameras and not is_headless():
+            control_context.update(observation)
 
             if fps is not None:
                 dt_s = time.perf_counter() - start_loop_t
@@ -398,8 +463,8 @@ def control_loop(
                 
     finally:
         # Clean up display window
-        if display_window is not None:
-            display_window.close()
+        if control_context is not None:
+            control_context.close()
         
 
 
