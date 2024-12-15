@@ -218,8 +218,6 @@ def record(
     )
 
     # TODO(rcadene): Add option to record logs
-    listener = None
-    events = None
     policy = None
     device = None
     use_amp = None
@@ -271,7 +269,7 @@ def record(
 
     if not robot.is_connected:
         robot.connect()
-    listener, events = init_keyboard_listener(assign_rewards=assign_rewards)
+    events = control_context.get_events()
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
@@ -279,7 +277,7 @@ def record(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", play_sounds)
-    warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
+    warmup_record(robot, enable_teleoperation, warmup_time_s, display_cameras, control_context, fps)
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
@@ -298,9 +296,9 @@ def record(
         record_episode(
             dataset=dataset,
             robot=robot,
-            events=events,
             episode_time_s=episode_time_s,
             display_cameras=display_cameras,
+            control_context=control_context,
             policy=policy,
             device=device,
             use_amp=use_amp,
@@ -331,7 +329,7 @@ def record(
             break
 
     log_say("Stop recording", play_sounds, blocking=True)
-    stop_recording(robot, listener, display_cameras)
+    stop_recording(robot, listener=None, display_cameras=display_cameras)
 
     if run_compute_stats:
         logging.info("Computing dataset statistics")

@@ -348,20 +348,17 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides):
 
 def warmup_record(
     robot,
-    events,
     enable_teloperation,
     warmup_time_s,
     display_cameras,
     fps,
+    control_context: ControlContext = None,
 ):
-    # control_context = ControlContext() if display_cameras and not is_headless() else None
-    control_context = ControlContext()
     control_loop(
         robot=robot,
         control_time_s=warmup_time_s,
         display_cameras=display_cameras,
         control_context=control_context,
-        events=events,
         fps=fps,
         teleoperate=enable_teloperation,
     )
@@ -370,22 +367,20 @@ def warmup_record(
 def record_episode(
     robot,
     dataset,
-    events,
     episode_time_s,
     display_cameras,
+    control_context,
     policy,
     device,
     use_amp,
     fps,
 ):
-    control_context = ControlContext()
     control_loop(
         robot=robot,
         control_time_s=episode_time_s,
         display_cameras=display_cameras,
         control_context=control_context,
         dataset=dataset,
-        events=events,
         policy=policy,
         device=device,
         use_amp=use_amp,
@@ -402,12 +397,13 @@ def control_loop(
     display_cameras=False,
     control_context: ControlContext = None,
     dataset: LeRobotDataset | None = None,
-    events=None,
     policy=None,
     device=None,
     use_amp=None,
     fps=None,
 ):
+    events = control_context.get_events() if control_context is not None else None
+
     # TODO(rcadene): Add option to record logs
     if not robot.is_connected:
         robot.connect()
