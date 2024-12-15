@@ -177,7 +177,14 @@ def calibrate(robot: Robot, arms: list[str] | None):
 def teleoperate(
     robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
 ):
-    control_context = ControlContext(config=ControlContextConfig(display_cameras=display_cameras))
+    control_context = ControlContext(
+        config=ControlContextConfig(
+            display_cameras=display_cameras,
+            assign_rewards=True,
+            num_episodes=10,
+            control_phase=ControlPhase.RECORD,
+        )
+    )
     control_loop(
         robot,
         control_time_s=teleop_time_s,

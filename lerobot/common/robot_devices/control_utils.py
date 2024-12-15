@@ -73,6 +73,10 @@ class ControlContext:
         self.small_font = pygame.font.Font(None, 24)  # Smaller font for controls list
         self.current_episode_index = 0
         
+        # Color theme
+        self.text_bg_color = (0, 0, 0)  # Black
+        self.text_color = (0, 255, 0)  # Green
+        
         # Define the control instructions
         self.controls = [
             ("Right Arrow", "Exit current loop"),
@@ -95,9 +99,9 @@ class ControlContext:
             max_width = max(max_width, image.shape[1])
             max_height = max(max_height, image.shape[0])
             
-        # Add extra height for key press display and width for controls
-        total_width = (max_width + self.padding) * grid_cols + self.controls_width
-        total_height = (max_height + self.title_height + self.padding) * grid_rows + self.title_height
+        # Adjust total width and height calculations to remove extra padding
+        total_width = max_width * grid_cols + self.controls_width
+        total_height = max_height * grid_rows + self.title_height
         
         return total_width, total_height, grid_cols
 
@@ -110,13 +114,13 @@ class ControlContext:
             self.controls_width, 
             window_height - self.title_height
         )
-        pygame.draw.rect(self.screen, (220, 220, 220), controls_rect)
-        pygame.draw.line(self.screen, (180, 180, 180), 
+        pygame.draw.rect(self.screen, self.text_bg_color, controls_rect)
+        pygame.draw.line(self.screen, self.text_color, 
                         (controls_rect.left, self.title_height),
                         (controls_rect.left, window_height), 2)
 
         # Draw "Controls" header
-        header = self.font.render("Controls", True, (0, 0, 0))
+        header = self.font.render("Controls", True, self.text_color)
         header_rect = header.get_rect(
             centerx=window_width - self.controls_width/2,
             top=self.title_height + 10
@@ -127,7 +131,7 @@ class ControlContext:
         y_pos = header_rect.bottom + 20
         for key, action in self.controls:
             # Draw key
-            key_surface = self.small_font.render(key, True, (0, 0, 128))
+            key_surface = self.small_font.render(key, True, self.text_color)
             key_rect = key_surface.get_rect(
                 left=window_width - self.controls_width + 20,
                 top=y_pos
@@ -135,7 +139,7 @@ class ControlContext:
             self.screen.blit(key_surface, key_rect)
 
             # Draw action
-            action_surface = self.small_font.render(action, True, (0, 0, 0))
+            action_surface = self.small_font.render(action, True, self.text_color)
             action_rect = action_surface.get_rect(
                 left=key_rect.right + 10,
                 top=y_pos
@@ -143,6 +147,28 @@ class ControlContext:
             self.screen.blit(action_surface, action_rect)
 
             y_pos += 30
+
+        # Add status information below controls
+        y_pos += 20  # Add some spacing
+        
+        # Control phase
+        phase_text = f"Control Phase: {self.config.control_phase}"
+        phase_surface = self.small_font.render(phase_text, True, self.text_color)
+        phase_rect = phase_surface.get_rect(
+            left=window_width - self.controls_width + 20,
+            top=y_pos
+        )
+        self.screen.blit(phase_surface, phase_rect)
+        
+        # Pressed keys
+        y_pos += 30
+        keys_text = f"Pressed: {', '.join(self.pressed_keys)}" if self.pressed_keys else "Pressed: None"
+        keys_surface = self.small_font.render(keys_text, True, self.text_color)
+        keys_rect = keys_surface.get_rect(
+            left=window_width - self.controls_width + 20,
+            top=y_pos
+        )
+        self.screen.blit(keys_surface, keys_rect)
 
     def handle_events(self):
         """Handle pygame events and update internal state"""
@@ -191,8 +217,7 @@ class ControlContext:
             self.screen = pygame.display.set_mode((window_width, window_height))
             pygame.display.set_caption("Robot Camera Feed")
 
-        # Clear screen
-        self.screen.fill((240, 240, 240))  # Light gray background
+        self.screen.fill(self.text_bg_color)
 
         # Update image positions and draw images
         for idx, (key, image) in enumerate(images.items()):
@@ -208,44 +233,22 @@ class ControlContext:
             image_surface = pygame.surfarray.make_surface(np.transpose(image, (1, 0, 2)))
             self.screen.blit(image_surface, (x, y + self.title_height))
 
-        # Draw top bar
+        pygame.draw.rect(self.screen, self.text_bg_color, (0, 0, window_width, self.title_height))
+        
+        # Prepare top bar text
+        top_text_str = ""
         if self.config.control_phase == ControlPhase.RECORD:
-            color = (0, 0, 128)
             top_text_str = f"Episode: {self.current_episode_index}/{self.config.num_episodes}"
-
             if self.config.assign_rewards:
                 next_reward = self.events["next_reward"]
                 top_text_str += f" | Reward: {next_reward}"
-                color = (0, 128, 0) if next_reward != 0 else (0, 0, 128)
 
-        # Draw top status bar
-        pygame.draw.rect(self.screen, color, (0, 0, window_width, self.title_height))
-        top_text = self.font.render(top_text_str, True, (255, 255, 255))            
+        top_text = self.font.render(top_text_str, True, self.text_color)            
         text_rect = top_text.get_rect(center=(window_width//2, self.title_height//2))
         self.screen.blit(top_text, text_rect)
 
         # Draw controls panel
         self.render_controls_panel(window_width, window_height)
-
-        # Display control phase and pressed keys at the bottom
-        bottom_y = window_height - self.title_height//2
-        
-        # Control phase on the left side
-        control_text = self.font.render(f"Control Phase: {self.config.control_phase}", True, (0, 0, 0))
-        control_rect = control_text.get_rect(left=20, centery=bottom_y)
-        self.screen.blit(control_text, control_rect)
-        
-        # Pressed keys in the middle
-        if self.pressed_keys:
-            keys_text = f"Pressed keys: {', '.join(self.pressed_keys)}"
-        else:
-            keys_text = "Pressed keys: None"
-        keys_surface = self.font.render(keys_text, True, (0, 0, 0))
-        keys_rect = keys_surface.get_rect(
-            left=control_rect.right + 20,
-            centery=bottom_y
-        )
-        self.screen.blit(keys_surface, keys_rect)
 
         pygame.display.flip()
         
