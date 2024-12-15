@@ -173,7 +173,7 @@ class ControlContext:
             # if next_reward is not 0 display a green banner with Assigning Reward {next_reward}
             # otherwise show blue banner with Assigning Reward 0
             color = (0, 255, 0) if next_reward != 0 else (0, 0, 255)
-            text = self.font.render(f"Assigning Reward {next_reward}", True, color)
+            text = self.font.render(f"Reward: {next_reward}", True, (255, 255, 255))
             text_rect = text.get_rect(center=(window_width//2, self.title_height//2))
             pygame.draw.rect(self.screen, color, (0, 0, window_width, self.title_height))
             self.screen.blit(text, text_rect)
