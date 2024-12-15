@@ -215,7 +215,9 @@ class ControlContext:
         window_width, window_height, grid_cols = self.calculate_window_size(images)
         if self.screen is None or self.screen.get_size() != (window_width, window_height):
             self.screen = pygame.display.set_mode((window_width, window_height))
-            pygame.display.set_caption("Robot Camera Feed")
+
+            # @TODO - label this window with the camera name
+            pygame.display.set_caption("Camera 0")
 
         self.screen.fill(self.text_bg_color)
 
