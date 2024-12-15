@@ -25,6 +25,87 @@ from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 
+import pygame
+import numpy as np
+from typing import Dict, Optional
+
+class ImageDisplayWindow:
+    def __init__(self):
+        pygame.init()
+        self.screen = None
+        self.image_positions = {}
+        self.padding = 20
+        self.title_height = 30
+        
+    def calculate_window_size(self, images: Dict[str, np.ndarray]):
+        """Calculate required window size based on images"""
+        max_width = 0
+        max_height = 0
+        n_images = len(images)
+        
+        # Calculate grid dimensions
+        grid_cols = min(2, n_images)
+        grid_rows = (n_images + 1) // 2
+        
+        for image in images.values():
+            max_width = max(max_width, image.shape[1])
+            max_height = max(max_height, image.shape[0])
+            
+        total_width = (max_width + self.padding) * grid_cols
+        total_height = (max_height + self.title_height + self.padding) * grid_rows
+        
+        return total_width, total_height, grid_cols
+        
+    def update_images(self, observation: Dict[str, np.ndarray]):
+        """Update display with new images from observation dict"""
+        image_keys = [key for key in observation if "image" in key]
+        images = {k: observation[k].numpy() for k in image_keys}
+        
+        if not images:
+            return
+            
+        # Initialize or resize window if needed
+        window_width, window_height, grid_cols = self.calculate_window_size(images)
+        if self.screen is None or self.screen.get_size() != (window_width, window_height):
+            self.screen = pygame.display.set_mode((window_width, window_height))
+            pygame.display.set_caption("Robot Camera Feed")
+            
+        # Clear screen
+        self.screen.fill((240, 240, 240))  # Light gray background
+        
+        # Update image positions and draw images
+        for idx, (key, image) in enumerate(images.items()):
+            # Calculate grid position
+            col = idx % grid_cols
+            row = idx // grid_cols
+            
+            # Calculate pixel position
+            x = col * (image.shape[1] + self.padding)
+            y = row * (image.shape[0] + self.title_height + self.padding)
+            
+            # Draw title
+            font = pygame.font.Font(None, 36)
+            text = font.render(key, True, (0, 0, 0))
+            text_rect = text.get_rect(center=(x + image.shape[1]//2, y + self.title_height//2))
+            self.screen.blit(text, text_rect)
+            
+            # Convert numpy array to pygame surface
+            image_surface = pygame.surfarray.make_surface(np.transpose(image, (1, 0, 2)))
+            self.screen.blit(image_surface, (x, y + self.title_height))
+            
+        pygame.display.flip()
+        
+    def close(self):
+        """Clean up pygame resources"""
+        pygame.quit()
+
+def display_observation_images(observation: Dict[str, np.ndarray], window: Optional[ImageDisplayWindow] = None) -> ImageDisplayWindow:
+    """Display images from observation dict using Pygame"""
+    if window is None:
+        window = ImageDisplayWindow()
+    window.update_images(observation)
+    return window
+
 
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
@@ -268,44 +349,58 @@ def control_loop(
     if dataset is not None and fps is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
 
+    # Initialize display window if needed
+    display_window = None if not display_cameras or is_headless() else None
+
     timestamp = 0
     start_episode_t = time.perf_counter()
-    while timestamp < control_time_s:
-        start_loop_t = time.perf_counter()
+    try:
+        while timestamp < control_time_s:
+            start_loop_t = time.perf_counter()
 
-        if teleoperate:
-            observation, action = robot.teleop_step(record_data=True)
-        else:
-            observation = robot.capture_observation()
+            if teleoperate:
+                observation, action = robot.teleop_step(record_data=True)
+            else:
+                observation = robot.capture_observation()
 
-            if policy is not None:
-                pred_action = predict_action(observation, policy, device, use_amp)
-                # Action can eventually be clipped using `max_relative_target`,
-                # so action actually sent is saved in the dataset.
-                action = robot.send_action(pred_action)
-                action = {"action": action}
+                if policy is not None:
+                    pred_action = predict_action(observation, policy, device, use_amp)
+                    # Action can eventually be clipped using `max_relative_target`,
+                    # so action actually sent is saved in the dataset.
+                    action = robot.send_action(pred_action)
+                    action = {"action": action}
 
-        if dataset is not None:
-            frame = {**observation, **action}
-            dataset.add_frame(frame)
+            if dataset is not None:
+                frame = {**observation, **action}
+                dataset.add_frame(frame)
 
-        if display_cameras and not is_headless():
-            image_keys = [key for key in observation if "image" in key]
-            for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+            # if display_cameras and not is_headless():
+            #     image_keys = [key for key in observation if "image" in key]
+            #     for key in image_keys:
+            #         cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+            #     cv2.waitKey(1)
 
-        if fps is not None:
+            if display_cameras and not is_headless():
+                display_window = display_observation_images(observation, display_window)
+
+            if fps is not None:
+                dt_s = time.perf_counter() - start_loop_t
+                busy_wait(1 / fps - dt_s)
+
             dt_s = time.perf_counter() - start_loop_t
-            busy_wait(1 / fps - dt_s)
+            log_control_info(robot, dt_s, fps=fps)
 
-        dt_s = time.perf_counter() - start_loop_t
-        log_control_info(robot, dt_s, fps=fps)
+            timestamp = time.perf_counter() - start_episode_t
+            if events["exit_early"]:
+                events["exit_early"] = False
+                break
 
-        timestamp = time.perf_counter() - start_episode_t
-        if events["exit_early"]:
-            events["exit_early"] = False
-            break
+                
+    finally:
+        # Clean up display window
+        if display_window is not None:
+            display_window.close()
+        
 
 
 def reset_environment(robot, events, reset_time_s):
