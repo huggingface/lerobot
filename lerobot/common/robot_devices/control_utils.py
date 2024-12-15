@@ -39,7 +39,19 @@ class ControlContextConfig:
 
 class ControlContext:
     def __init__(self, config: Optional[ControlContextConfig] = None):
+        self.config = config or ControlContextConfig()
         pygame.init()
+        pygame.display.init()
+        pygame.display.set_mode((800, 600))
+        # if self.config.display_cameras:
+        #     # Initialize video system if we need to display cameras
+        #     pygame.display.init()
+        #     self.screen = None
+        # else:
+        #     # Just initialize a minimal display if we only need event handling
+        #     pygame.display.set_mode((1, 1), pygame.HIDDEN)
+        #     self.screen = None
+
         self.screen = None
         self.image_positions = {}
         self.padding = 20
@@ -57,7 +69,6 @@ class ControlContext:
         self.pressed_keys = []
         self.font = pygame.font.Font(None, 36)
 
-        self.config = config or ControlContextConfig()
         
     def calculate_window_size(self, images: Dict[str, np.ndarray]):
         """Calculate required window size based on images"""
@@ -158,18 +169,23 @@ class ControlContext:
 
         # Is assign_reward is true then display a red banner across the top of the screen
         if self.config.assign_rewards:
-            pygame.draw.rect(self.screen, (255, 0, 0), (0, 0, window_width, self.title_height))
-            text = self.font.render("Reward assigned", True, (255, 255, 255))
+            next_reward = self.events["next_reward"]
+            # if next_reward is not 0 display a green banner with Assigning Reward {next_reward}
+            # otherwise show blue banner with Assigning Reward 0
+            color = (0, 255, 0) if next_reward != 0 else (0, 0, 255)
+            text = self.font.render(f"Assigning Reward {next_reward}", True, color)
             text_rect = text.get_rect(center=(window_width//2, self.title_height//2))
+            pygame.draw.rect(self.screen, color, (0, 0, window_width, self.title_height))
             self.screen.blit(text, text_rect)
             
         pygame.display.flip()
         
     def update(self, observation: Dict[str, np.ndarray]):
-        self.handle_events()
 
         if self.config.display_cameras:
             self.render_camera_frames(observation)
+
+        self.handle_events()
         return self
         
     def close(self):
@@ -352,20 +368,18 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides):
 
 
 def warmup_record(
-    robot,
-    enable_teloperation,
-    warmup_time_s,
-    display_cameras,
-    fps,
+    robot=None,
+    enable_teleoperation=False,
+    warmup_time_s=10,
+    fps=30,
     control_context: ControlContext = None,
 ):
     control_loop(
         robot=robot,
         control_time_s=warmup_time_s,
-        display_cameras=display_cameras,
         control_context=control_context,
         fps=fps,
-        teleoperate=enable_teloperation,
+        teleoperate=enable_teleoperation,
     )
 
 
@@ -373,7 +387,6 @@ def record_episode(
     robot,
     dataset,
     episode_time_s,
-    display_cameras,
     control_context,
     policy,
     device,
@@ -383,7 +396,6 @@ def record_episode(
     control_loop(
         robot=robot,
         control_time_s=episode_time_s,
-        display_cameras=display_cameras,
         control_context=control_context,
         dataset=dataset,
         policy=policy,
@@ -399,7 +411,6 @@ def control_loop(
     robot,
     control_time_s=None,
     teleoperate=False,
-    display_cameras=False,
     control_context: ControlContext = None,
     dataset: LeRobotDataset | None = None,
     policy=None,

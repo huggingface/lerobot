@@ -176,13 +176,12 @@ def calibrate(robot: Robot, arms: list[str] | None):
 def teleoperate(
     robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
 ):
-    control_context = ControlContext(config=ControlContextConfig(display_cameras=display_cameras))
+    control_context = ControlContext(config=ControlContextConfig(display_cameras=display_cameras, assign_rewards=True))
     control_loop(
         robot,
         control_time_s=teleop_time_s,
         fps=fps,
         teleoperate=True,
-        display_cameras=display_cameras,
         control_context=control_context,
     )
 
@@ -214,7 +213,7 @@ def record(
     local_files_only: bool = False,
 ) -> LeRobotDataset:
     control_context = ControlContext(
-        config=ControlContextConfig(display_cameras=display_cameras, play_sounds=play_sounds)
+        config=ControlContextConfig(display_cameras=True, play_sounds=play_sounds)
     )
 
     # TODO(rcadene): Add option to record logs
@@ -277,7 +276,13 @@ def record(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", play_sounds)
-    warmup_record(robot, enable_teleoperation, warmup_time_s, display_cameras, control_context, fps)
+    warmup_record(
+        robot=robot,
+        enable_teleoperation=enable_teleoperation,
+        warmup_time_s=warmup_time_s,
+        control_context=control_context,
+        fps=fps,
+    )
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
@@ -297,7 +302,6 @@ def record(
             dataset=dataset,
             robot=robot,
             episode_time_s=episode_time_s,
-            display_cameras=display_cameras,
             control_context=control_context,
             policy=policy,
             device=device,
