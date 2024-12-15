@@ -512,6 +512,39 @@ class ACT(nn.Module):
 
         return actions, (mu, log_sigma_x2)
 
+class ACTEncoderDecoder(nn.Module):
+    """ACT encoder decoder."""
+
+    def __init__(self, config: ACTConfig, is_vae_encoder: bool = False):
+        super().__init__()
+        self.is_vae_encoder = is_vae_encoder
+        self.config = config
+        self.encoder = ACTEncoder(config)
+        self.decoder = ACTDecoder(config)
+        self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.dim_model)
+
+    def forward(
+        self, x: Tensor, encoder_in_tokens: Tensor | None = None, encoder_in_pos_embed: Tensor | None = None
+    ) -> Tensor:
+        batch_size = encoder_in_tokens.shape[1]
+        # Forward pass through the transformer modules.
+        encoder_out = self.encoder(encoder_in_tokens, pos_embed=encoder_in_pos_embed)
+        # TODO(rcadene, alexander-soare): remove call to `device` ; precompute and use buffer
+        decoder_in = torch.zeros(
+            (self.config.chunk_size, batch_size, self.config.dim_model),
+            dtype=encoder_in_pos_embed.dtype,
+            device=encoder_in_pos_embed.device,
+        )
+        decoder_out = self.decoder(
+            decoder_in,
+            encoder_out,
+            encoder_pos_embed=encoder_in_pos_embed,
+            decoder_pos_embed=self.decoder_pos_embed.weight.unsqueeze(1),
+        )
+        # Move back to (B, S, C).
+        decoder_out = decoder_out.transpose(0, 1)
+
+        return x
 
 class ACTEncoder(nn.Module):
     """Convenience module for running multiple encoder layers, maybe followed by normalization."""

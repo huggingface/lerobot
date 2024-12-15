@@ -8,6 +8,7 @@ from peft import LoraConfig, TaskType, get_peft_model
 from torch import Tensor, nn
 from torch.profiler import record_function
 from transformers import AutoProcessor, LlavaOnevisionForConditionalGeneration
+import einops
 
 from lerobot.common.policies.act.modeling_act import ACTDecoder
 from lerobot.common.policies.normalize import Normalize, Unnormalize
@@ -152,6 +153,22 @@ class VLA(nn.Module):
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
             self.processor.image_processor.do_image_splitting = False
+        elif "resnet" in self.vlm_backbone_name:
+            import torchvision
+            from torchvision.models._utils import IntermediateLayerGetter
+            from torchvision.ops.misc import FrozenBatchNorm2d
+            vision_backbone = "resnet18"
+            pretrained_backbone_weights = "ResNet18_Weights.IMAGENET1K_V1"
+            replace_final_stride_with_dilation = False
+            backbone_model = getattr(torchvision.models, vision_backbone)(
+                replace_stride_with_dilation=[False, False, replace_final_stride_with_dilation],
+                weights=pretrained_backbone_weights,
+                norm_layer=FrozenBatchNorm2d,
+            )
+            # Note: The assumption here is that we are using a ResNet model (and hence layer4 is the final
+            # feature map).
+            # Note: The forward method of this returns a dict: {"feature_map": output}.
+            self.vision_language_model = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
         else:
             raise NotImplementedError(f"{self.vlm_backbone_name} not supported.")
         self.use_prompt_template = config.use_prompt_template
@@ -189,7 +206,6 @@ class VLA(nn.Module):
         elif "freeze" in self.peft_method:
             for name, param in self.vision_language_model.named_parameters():
                 param.requires_grad = False
-
 
         # Verify trainable parameters
         trainable_params = []
@@ -283,8 +299,8 @@ class VLA(nn.Module):
                 x=x, encoder_out=hidden_states, decoder_pos_embed=decoder_pos_embeddings
             )
             # Final action logits through the action head
-            action_logits = self.action_head(action_logits)
             action_logits = action_logits.transpose(0, 1)
+            action_logits = self.action_head(action_logits)
         else:
             raise NotImplementedError(f"{self.action_decoder_name} not supported.")
 
@@ -300,27 +316,32 @@ class VLA(nn.Module):
         Returns:
         action_logits: Tensor of predicted actions.
         """
-        prompt = self.apply_prompt_template(batch["prompt"], add_generation_prompt=True)
-        
-        batch_size = len(batch["observation.images"])
-        with record_function("processor"):
-            processed_inputs = self.processor(
-                text=[prompt] * batch_size,
-                images=list(batch["observation.images"]),
-                return_tensors="pt",
-                padding=True,
-                do_rescale=False,
-            )
-        # maybe pass the device to the processor before?
-        with record_function("processed_inputs to cuda"):
-            for k in processed_inputs.keys():
-                processed_inputs[k] = processed_inputs[k].to(device=batch["observation.state"].device)
 
-        hidden_states = self.get_vlm_features(processed_inputs)
+        if "resnet" in self.vlm_backbone_name:
+            images = torch.stack(batch["observation.images"], dim=0)
+            hidden_states = self.vision_language_model(images)["feature_map"]
+            hidden_states = einops.rearrange(hidden_states, "b c h w -> b (h w) c")
+        else:
+            prompt = self.apply_prompt_template(batch["prompt"], add_generation_prompt=True)
+            
+            batch_size = len(batch["observation.images"])
+            with record_function("processor"):
+                processed_inputs = self.processor(
+                    text=[prompt] * batch_size,
+                    images=list(batch["observation.images"]),
+                    return_tensors="pt",
+                    padding=True,
+                    do_rescale=False,
+                )
+            # maybe pass the device to the processor before?
+            with record_function("processed_inputs to cuda"):
+                for k in processed_inputs.keys():
+                    processed_inputs[k] = processed_inputs[k].to(device=batch["observation.state"].device)
 
+            hidden_states = self.get_vlm_features(processed_inputs)
         if self.use_robot_state:
-            robot_state = self.encoder_robot_state_input_proj(batch["observation.state"])
-            hidden_states = torch.stack([hidden_states, robot_state], axis=0)
+            robot_state = self.encoder_robot_state_input_proj(batch["observation.state"]).unsqueeze(1)
+            hidden_states = torch.cat([hidden_states, robot_state], axis=1)
         
         if self.use_action_connector:
             hidden_states = self.action_connector(hidden_states)
