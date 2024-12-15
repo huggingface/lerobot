@@ -176,7 +176,9 @@ def calibrate(robot: Robot, arms: list[str] | None):
 def teleoperate(
     robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
 ):
-    control_context = ControlContext(config=ControlContextConfig(display_cameras=display_cameras, assign_rewards=True))
+    control_context = ControlContext(
+        config=ControlContextConfig(display_cameras=display_cameras, assign_rewards=True)
+    )
     control_loop(
         robot,
         control_time_s=teleop_time_s,
@@ -212,7 +214,6 @@ def record(
     # TODO(rcadene, aliberts): remove local_files_only when refactor with dataset as argument
     local_files_only: bool = False,
 ) -> LeRobotDataset:
-    
     # TODO(rcadene): Add option to record logs
     policy = None
     device = None
@@ -273,7 +274,9 @@ def record(
     log_say("Warmup record", play_sounds)
 
     control_context = ControlContext(
-        config=ControlContextConfig(display_cameras=True, play_sounds=play_sounds)
+        config=ControlContextConfig(
+            display_cameras=display_cameras, play_sounds=play_sounds, assign_rewards=assign_rewards
+        )
     )
     warmup_record(
         robot=robot,
@@ -289,7 +292,9 @@ def record(
     # We need to reinitialize the control context because control loop tears it down
     # @TODO - maybe handle control context setup and teardown better
     control_context = ControlContext(
-        config=ControlContextConfig(display_cameras=True, play_sounds=play_sounds)
+        config=ControlContextConfig(
+            display_cameras=display_cameras, play_sounds=play_sounds, assign_rewards=assign_rewards
+        )
     )
 
     recorded_episodes = 0
