@@ -135,6 +135,7 @@ class VLAConfig:
             "pre_norm": False,
             "dropout": 0.1,
             "temporal_ensemble_coeff": None,
+            "chunk_size": 100,
         }
     )
     # VLM-Action head connector

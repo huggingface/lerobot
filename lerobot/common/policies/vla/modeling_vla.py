@@ -306,7 +306,7 @@ class VLA(nn.Module):
             action_logits = self.action_head(action_logits)
         elif self.action_decoder_name == "act":
             action_logits = self.action_decoder(
-                x=x, encoder_in_tokens=hidden_states, encoder_in_pos_embed=None
+                encoder_in_tokens=hidden_states, encoder_in_pos_embed=None
             )
             # Final action logits through the action head
             action_logits = self.action_head(action_logits)

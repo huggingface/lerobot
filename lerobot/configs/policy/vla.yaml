@@ -37,8 +37,8 @@ policy:
 
   # Input / output structure.
   n_obs_steps: 1
-  chunk_size: 100
   n_action_steps: 100
+  chunk_size: 100
 
   input_shapes:
     observation.images.top: [3, 480, 640]  # Video inputs (from video frames)
@@ -90,6 +90,7 @@ policy:
     # Training and loss computation
     dropout: 0.1
     temporal_ensemble_coeff: null
+    chunk_size: 100
 
   
   # Lora config
