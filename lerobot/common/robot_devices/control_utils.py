@@ -41,16 +41,10 @@ class ControlContext:
     def __init__(self, config: Optional[ControlContextConfig] = None):
         self.config = config or ControlContextConfig()
         pygame.init()
-        # pygame.display.init()
-        # pygame.display.set_mode((800, 600))
-        # if self.config.display_cameras:
-        #     # Initialize video system if we need to display cameras
-        #     pygame.display.init()
-        #     self.screen = None
-        # else:
-        #     # Just initialize a minimal display if we only need event handling
-        #     pygame.display.set_mode((1, 1), pygame.HIDDEN)
-        #     self.screen = None
+        if not self.config.display_cameras:
+            # Initialize video system if we need to display cameras
+            # Just initialize a minimal display if we only need event handling
+            pygame.display.set_mode((1, 1), pygame.HIDDEN)
 
         self.screen = None
         self.image_positions = {}
@@ -93,6 +87,8 @@ class ControlContext:
     def handle_events(self):
         """Handle pygame events and update internal state"""
         for event in pygame.event.get():
+            if self.debug_mode:
+                print(event)
             if event.type == pygame.QUIT:
                 self.events["stop_recording"] = True
                 self.events["exit_early"] = True
