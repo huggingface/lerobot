@@ -58,9 +58,6 @@ class ControlContext:
         self.font = pygame.font.Font(None, 36)
 
         self.config = config or ControlContextConfig()
-
-    def get_events(self):
-        return self.events
         
     def calculate_window_size(self, images: Dict[str, np.ndarray]):
         """Calculate required window size based on images"""
@@ -158,6 +155,13 @@ class ControlContext:
             text = self.font.render(keys_text, True, (0, 0, 0))
             text_rect = text.get_rect(center=(window_width//2, window_height - self.title_height//2))
             self.screen.blit(text, text_rect)
+
+        # Is assign_reward is true then display a red banner across the top of the screen
+        if self.config.assign_rewards:
+            pygame.draw.rect(self.screen, (255, 0, 0), (0, 0, window_width, self.title_height))
+            text = self.font.render("Reward assigned", True, (255, 255, 255))
+            text_rect = text.get_rect(center=(window_width//2, self.title_height//2))
+            self.screen.blit(text, text_rect)
             
         pygame.display.flip()
         
@@ -176,6 +180,7 @@ class ControlContext:
         """Return current events state"""
         return self.events.copy()
 
+# @TODO(jackvial): Move this to the control context and make configurable
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
     if episode_index is not None:
