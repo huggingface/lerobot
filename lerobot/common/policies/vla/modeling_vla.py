@@ -10,7 +10,7 @@ from torch.profiler import record_function
 from transformers import AutoProcessor, LlavaOnevisionForConditionalGeneration
 import einops
 
-from lerobot.common.policies.act.modeling_act import ACTDecoder
+from lerobot.common.policies.act.modeling_act import ACTDecoder, ACTEncoderDecoder
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.vla.configuration_vla import VLAConfig
 
@@ -113,10 +113,13 @@ class VLA(nn.Module):
         self.chunk_size = config.chunk_size
         self.action_decoder_name = config.action_decoder.get("name", "act")
         self.use_robot_state = "observation.state" in config.input_shapes
-        if self.action_decoder_name == "act":
+        if self.action_decoder_name == "act_decoder":
             action_decoder_config = OmegaConf.create(config.action_decoder)
             self.action_decoder = ACTDecoder(action_decoder_config)
             self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.action_decoder["dim_model"])
+        elif self.action_decoder_name == "act":
+            action_decoder_config = OmegaConf.create(config.action_decoder)
+            self.action_decoder = ACTEncoderDecoder(action_decoder_config)
         else:
             raise NotImplementedError(f"{self.action_decoder_name} not supported.")
 
@@ -286,7 +289,7 @@ class VLA(nn.Module):
     def get_action_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         batch_size, _, hidden_size = hidden_states.shape
         hidden_states = hidden_states.transpose(0, 1)
-        if self.action_decoder_name == "act":
+        if self.action_decoder_name == "act_decoder":
             # Generate positional embeddings for the decoder
             decoder_pos_embeddings = self.decoder_pos_embed.weight.unsqueeze(1).repeat(1, batch_size, 1)
             # Decode the action with positional embeddings and encoder output
@@ -300,6 +303,12 @@ class VLA(nn.Module):
             )
             # Final action logits through the action head
             action_logits = action_logits.transpose(0, 1)
+            action_logits = self.action_head(action_logits)
+        elif self.action_decoder_name == "act":
+            action_logits = self.action_decoder(
+                x=x, encoder_in_tokens=hidden_states, encoder_in_pos_embed=None
+            )
+            # Final action logits through the action head
             action_logits = self.action_head(action_logits)
         else:
             raise NotImplementedError(f"{self.action_decoder_name} not supported.")
