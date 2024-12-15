@@ -51,14 +51,13 @@ class ControlContext:
         self.config = config or ControlContextConfig()
         pygame.init()
         if not self.config.display_cameras:
-            # Initialize video system if we need to display cameras
-            # Just initialize a minimal display if we only need event handling
             pygame.display.set_mode((1, 1), pygame.HIDDEN)
 
         self.screen = None
         self.image_positions = {}
         self.padding = 20
         self.title_height = 30
+        self.controls_width = 300  # Width of the controls panel
         self.events = {
             "exit_early": False,
             "rerecord_episode": False,
@@ -67,13 +66,21 @@ class ControlContext:
         }
 
         if config.assign_rewards:
-            self.events["next.reward"] = 0
+            self.events["next_reward"] = 0
 
         self.pressed_keys = []
         self.font = pygame.font.Font(None, 36)
+        self.small_font = pygame.font.Font(None, 24)  # Smaller font for controls list
         self.current_episode_index = 0
-
         
+        # Define the control instructions
+        self.controls = [
+            ("Right Arrow", "Exit current loop"),
+            ("Left Arrow", "Rerecord last episode"),
+            ("Escape", "Stop recording"),
+            ("Space", "Toggle reward (if enabled)"),
+        ]
+
     def calculate_window_size(self, images: Dict[str, np.ndarray]):
         """Calculate required window size based on images"""
         max_width = 0
@@ -88,11 +95,54 @@ class ControlContext:
             max_width = max(max_width, image.shape[1])
             max_height = max(max_height, image.shape[0])
             
-        # Add extra height for key press display
-        total_width = (max_width + self.padding) * grid_cols
+        # Add extra height for key press display and width for controls
+        total_width = (max_width + self.padding) * grid_cols + self.controls_width
         total_height = (max_height + self.title_height + self.padding) * grid_rows + self.title_height
         
         return total_width, total_height, grid_cols
+
+    def render_controls_panel(self, window_width: int, window_height: int):
+        """Render the controls panel on the right side"""
+        # Draw controls background
+        controls_rect = pygame.Rect(
+            window_width - self.controls_width, 
+            self.title_height,
+            self.controls_width, 
+            window_height - self.title_height
+        )
+        pygame.draw.rect(self.screen, (220, 220, 220), controls_rect)
+        pygame.draw.line(self.screen, (180, 180, 180), 
+                        (controls_rect.left, self.title_height),
+                        (controls_rect.left, window_height), 2)
+
+        # Draw "Controls" header
+        header = self.font.render("Controls", True, (0, 0, 0))
+        header_rect = header.get_rect(
+            centerx=window_width - self.controls_width/2,
+            top=self.title_height + 10
+        )
+        self.screen.blit(header, header_rect)
+
+        # Draw control instructions
+        y_pos = header_rect.bottom + 20
+        for key, action in self.controls:
+            # Draw key
+            key_surface = self.small_font.render(key, True, (0, 0, 128))
+            key_rect = key_surface.get_rect(
+                left=window_width - self.controls_width + 20,
+                top=y_pos
+            )
+            self.screen.blit(key_surface, key_rect)
+
+            # Draw action
+            action_surface = self.small_font.render(action, True, (0, 0, 0))
+            action_rect = action_surface.get_rect(
+                left=key_rect.right + 10,
+                top=y_pos
+            )
+            self.screen.blit(action_surface, action_rect)
+
+            y_pos += 30
 
     def handle_events(self):
         """Handle pygame events and update internal state"""
@@ -106,7 +156,6 @@ class ControlContext:
                 key_name = pygame.key.name(event.key)
                 self.pressed_keys.append(key_name)
                 
-                # Handle specific key events
                 if event.key == pygame.K_RIGHT:
                     print("Right arrow key pressed. Exiting loop...")
                     self.events["exit_early"] = True
@@ -151,57 +200,58 @@ class ControlContext:
             col = idx % grid_cols
             row = idx // grid_cols
             
-            # Calculate pixel position
+            # Calculate pixel position - adjust for controls panel
             x = col * (image.shape[1] + self.padding)
             y = row * (image.shape[0] + self.title_height + self.padding)
-            
-            # Draw title
-            text = self.font.render(key, True, (0, 0, 0))
-            text_rect = text.get_rect(center=(x + image.shape[1]//2, y + self.title_height//2))
-            self.screen.blit(text, text_rect)
             
             # Convert numpy array to pygame surface
             image_surface = pygame.surfarray.make_surface(np.transpose(image, (1, 0, 2)))
             self.screen.blit(image_surface, (x, y + self.title_height))
 
-        color = (255, 0, 0)
-        top_text = f"Episode: {self.current_episode_index}/${self.config.num_episodes}"
+        # Draw top bar
+        if self.config.control_phase == ControlPhase.RECORD:
+            color = (0, 0, 128)
+            top_text_str = f"Episode: {self.current_episode_index}/{self.config.num_episodes}"
 
-        if self.config.assign_rewards:
-            next_reward = self.events["next_reward"]
-            rewards_text = f"Reward: {next_reward}"
-            top_text += f" | {rewards_text}"
-            color = (0, 128, 0) if next_reward != 0 else (0, 0, 128)
+            if self.config.assign_rewards:
+                next_reward = self.events["next_reward"]
+                top_text_str += f" | Reward: {next_reward}"
+                color = (0, 128, 0) if next_reward != 0 else (0, 0, 128)
 
-        top_text = self.font.render(f"Reward: {next_reward}", True, (255, 255, 255))            
-        text_rect = text.get_rect(center=(window_width//2, self.title_height//2))
+        # Draw top status bar
         pygame.draw.rect(self.screen, color, (0, 0, window_width, self.title_height))
-        self.screen.blit(text, text_rect)
+        top_text = self.font.render(top_text_str, True, (255, 255, 255))            
+        text_rect = top_text.get_rect(center=(window_width//2, self.title_height//2))
+        self.screen.blit(top_text, text_rect)
 
-        # Display control phase and pressed keys at the bottom side by side
+        # Draw controls panel
+        self.render_controls_panel(window_width, window_height)
+
+        # Display control phase and pressed keys at the bottom
         bottom_y = window_height - self.title_height//2
         
         # Control phase on the left side
         control_text = self.font.render(f"Control Phase: {self.config.control_phase}", True, (0, 0, 0))
-        control_rect = control_text.get_rect(center=(window_width//4, bottom_y))
+        control_rect = control_text.get_rect(left=20, centery=bottom_y)
         self.screen.blit(control_text, control_rect)
         
-        # Pressed keys on the right side
+        # Pressed keys in the middle
         if self.pressed_keys:
             keys_text = f"Pressed keys: {', '.join(self.pressed_keys)}"
         else:
             keys_text = "Pressed keys: None"
         keys_surface = self.font.render(keys_text, True, (0, 0, 0))
-        keys_rect = keys_surface.get_rect(center=(3 * window_width//4, bottom_y))
+        keys_rect = keys_surface.get_rect(
+            left=control_rect.right + 20,
+            centery=bottom_y
+        )
         self.screen.blit(keys_surface, keys_rect)
 
         pygame.display.flip()
         
     def update(self, observation: Dict[str, np.ndarray]):
-
         if self.config.display_cameras:
             self.render_camera_frames(observation)
-
         self.handle_events()
         return self
     

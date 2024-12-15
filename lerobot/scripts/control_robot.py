@@ -298,6 +298,7 @@ def record(
             display_cameras=display_cameras,
             play_sounds=play_sounds,
             assign_rewards=assign_rewards,
+            num_episodes=num_episodes,
         )
     )
 
@@ -345,6 +346,7 @@ def record(
 
         dataset.save_episode(task)
         recorded_episodes += 1
+        control_context.update_current_episode(recorded_episodes)
 
         if events["stop_recording"]:
             break
