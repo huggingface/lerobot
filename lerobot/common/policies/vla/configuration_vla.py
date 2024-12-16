@@ -228,3 +228,20 @@ class VLAConfig:
             and "observation.environment_state" not in self.input_shapes
         ):
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
+        
+    def __iter__(self):
+        """
+        Make the class iterable over its attributes.
+        """
+        for key in self.__dict__:
+            # Skip special/private attributes
+            if not key.startswith('_'):
+                yield key
+    def items(self):
+        """
+        Implement items() method to return key-value pairs.
+        
+        Returns:
+            A view of the config's key-value pairs.
+        """
+        return {key: getattr(self, key) for key in self}.items()

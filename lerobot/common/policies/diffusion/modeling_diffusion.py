@@ -22,8 +22,7 @@ TODO(alexander-soare):
 
 import math
 from collections import deque
-from typing import Callable
-
+from typing import Callable, Any
 import einops
 import numpy as np
 import torch
@@ -61,6 +60,8 @@ class DiffusionPolicy(
         self,
         config: DiffusionConfig | None = None,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+        precision: torch.dtype = torch.float32,
+        **kwargs: Any
     ):
         """
         Args:

@@ -56,6 +56,8 @@ class ACTPolicy(
         self,
         config: ACTConfig | None = None,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+        precision: torch.dtype = torch.float32,
+        **kwargs: Any
     ):
         """
         Args:

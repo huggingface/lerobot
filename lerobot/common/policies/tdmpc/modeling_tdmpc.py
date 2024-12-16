@@ -26,7 +26,7 @@ The comments in this code may sometimes refer to these references:
 from collections import deque
 from copy import deepcopy
 from functools import partial
-from typing import Callable
+from typing import Callable, Any
 
 import einops
 import numpy as np
@@ -68,7 +68,9 @@ class TDMPCPolicy(
     name = "tdmpc"
 
     def __init__(
-        self, config: TDMPCConfig | None = None, dataset_stats: dict[str, dict[str, Tensor]] | None = None
+        self, config: TDMPCConfig | None = None, dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+        precision: torch.dtype = torch.float32,
+        **kwargs: Any
     ):
         """
         Args:

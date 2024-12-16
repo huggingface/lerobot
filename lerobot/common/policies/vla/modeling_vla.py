@@ -1,5 +1,5 @@
 from collections import deque
-
+from typing import Any
 import torch
 import torch.nn.functional as F
 from huggingface_hub import PyTorchModelHubMixin
@@ -33,6 +33,8 @@ class VLAPolicy(
         self,
         config: VLAConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+        precision: torch.dtype = torch.float32,
+        **kwargs:  Any,
     ):
         """
         Initialize the VLAPolicy class with model configuration.
@@ -55,7 +57,7 @@ class VLAPolicy(
             config.output_shapes, config.output_normalization_modes, dataset_stats
         )
         #self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = VLA(config)
+        self.model = VLA(config, precision=precision)
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
 
         self.reset()
@@ -108,7 +110,7 @@ class VLAPolicy(
 
 
 class VLA(nn.Module):
-    def __init__(self, config: VLAConfig, device: torch.device = "cpu"):
+    def __init__(self, config: VLAConfig, precision: torch.dtype = torch.float32):
         super().__init__()
         self.chunk_size = config.chunk_size
         self.action_decoder_name = config.action_decoder.get("name", "act")
@@ -132,7 +134,7 @@ class VLA(nn.Module):
             self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
                 device_map="cuda",
-                #torch_dtype=torch.float16,
+                torch_dtype=precision,
                 #attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
@@ -142,7 +144,7 @@ class VLA(nn.Module):
             self.vision_language_model = PaliGemmaForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
                 device_map="cuda",
-                torch_dtype=torch.bfloat16,
+                torch_dtype=precision,
                 # attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
@@ -151,7 +153,7 @@ class VLA(nn.Module):
             self.vision_language_model = Idefics3ForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
                 device_map="cuda",
-                #torch_dtype=torch.float16,
+                torch_dtype=precision,
                 #attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
