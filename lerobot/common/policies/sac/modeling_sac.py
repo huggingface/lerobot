@@ -15,7 +15,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# TODO: (1) better device management
+
 from collections import deque
+from copy import deepcopy
 from functools import partial
 
 import einops
@@ -30,6 +33,12 @@ from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.sac.configuration_sac import SACConfig
 import numpy as np
 from typing import Callable, Optional, Tuple, Sequence
+from lerobot.common.policies.utils import (
+    get_device_from_parameters,
+    get_dtype_from_parameters,
+    populate_queues,
+)
+
 
 class SACPolicy(
     nn.Module,
@@ -62,11 +71,26 @@ class SACPolicy(
             config.output_shapes, config.output_normalization_modes, dataset_stats
         )
         encoder = SACObservationEncoder(config)
-        self.critic_target = ...
-        self.critic_ensemble = ...
-        self.actor_network = ...
+        # Define networks
+        critic_nets = []
+        for _ in range(config.num_critics):
+            critic_net = Critic(
+                encoder=encoder,
+                network=MLP(**config.critic_network_kwargs)
+            )
+            critic_nets.append(critic_net)
+        
+        self.critic_ensemble = create_critic_ensemble(critic_nets, config.num_critics)
+        self.critic_target = deepcopy(self.critic_ensemble)
 
-        self.temperature = ...
+        self.actor_network = Policy(
+            encoder=encoder,
+            network=MLP(**config.actor_network_kwargs),
+            action_dim=config.output_shapes["action"][0],
+            **config.policy_kwargs
+        )
+
+        self.temperature = GeqLagrangeMultiplier(init_value=config.temperature_init)    
 
     def reset(self):
         """
@@ -180,6 +204,7 @@ class SACPolicy(
         self.critic_target.lerp_(self.critic_ensemble, self.config.critic_target_update_weight)
         #for target_param, param in zip(self.critic_target.parameters(), self.critic_ensemble.parameters()):
         #    target_param.data.copy_(target_param.data * (1.0 - self.config.critic_target_update_weight) + param.data * self.critic_target_update_weight)
+
 
 class MLP(nn.Module):
     def __init__(
