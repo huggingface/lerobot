@@ -220,7 +220,7 @@ class VLA(nn.Module):
                 else:
                     param.requires_grad = False
         elif "freeze" in self.peft_method:
-            for name, param in self.vision_language_model.named_parameters():
+            for _, param in self.vision_language_model.named_parameters():
                 param.requires_grad = False
 
         # Verify trainable parameters
@@ -351,7 +351,7 @@ class VLA(nn.Module):
                 )
             # maybe pass the device to the processor before?
             with record_function("processed_inputs to cuda"):
-                for k in processed_inputs.keys():
+                for k in processed_inputs:
                     processed_inputs[k] = processed_inputs[k].to(device=batch["observation.state"].device)
 
             hidden_states = self.get_vlm_features(processed_inputs)
