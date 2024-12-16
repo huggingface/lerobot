@@ -142,7 +142,7 @@ class VLA(nn.Module):
             self.vision_language_model = PaliGemmaForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
                 device_map="cuda",
-                # torch_dtype=torch.float16,
+                torch_dtype=torch.bfloat16,
                 # attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
