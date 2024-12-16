@@ -379,7 +379,7 @@ def visualize_dataset_html(
                 template_folder=template_dir,
             )
     else:
-        image_keys = dataset.meta.image_keys if isinstance(dataset, LeRobotDataset) else dataset.image_keys
+        image_keys = dataset.meta.image_keys if isinstance(dataset, LeRobotDataset) else []
         if len(image_keys) > 0:
             raise NotImplementedError(f"Image keys ({image_keys=}) are currently not supported.")
 
