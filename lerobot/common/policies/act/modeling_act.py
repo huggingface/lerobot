@@ -56,8 +56,7 @@ class ACTPolicy(
         self,
         config: ACTConfig | None = None,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
-        precision: torch.dtype = torch.float32,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         """
         Args:
@@ -514,6 +513,7 @@ class ACT(nn.Module):
 
         return actions, (mu, log_sigma_x2)
 
+
 class ACTEncoderDecoder(nn.Module):
     """ACT encoder decoder."""
 
@@ -528,7 +528,10 @@ class ACTEncoderDecoder(nn.Module):
         self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.dim_model)
 
     def forward(
-        self, encoder_in_tokens: Tensor | None = None, encoder_in_pos_embed: Tensor | None = None, **kwargs: Any,
+        self,
+        encoder_in_tokens: Tensor | None = None,
+        encoder_in_pos_embed: Tensor | None = None,
+        **kwargs: Any,
     ) -> Tensor:
         batch_size = encoder_in_tokens.shape[1]
         if self.use_encoder:
@@ -552,6 +555,7 @@ class ACTEncoderDecoder(nn.Module):
         decoder_out = decoder_out.transpose(0, 1)
 
         return decoder_out
+
 
 class ACTEncoder(nn.Module):
     """Convenience module for running multiple encoder layers, maybe followed by normalization."""

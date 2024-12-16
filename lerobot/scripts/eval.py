@@ -167,7 +167,7 @@ def rollout(
             with torch.inference_mode():
                 with record_function("select_action"):
                     action = policy.select_action(observation)
-            
+
             # Convert to CPU / numpy.
             action = action.to("cpu").numpy()
             assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
@@ -176,7 +176,6 @@ def rollout(
             observation, reward, terminated, truncated, info = env.step(action)
             if render_callback is not None:
                 render_callback(env)
-            # print(reward, step, action[0])
             # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
             # available of none of the envs finished.
             if "final_info" in info:
@@ -200,8 +199,6 @@ def rollout(
             progbar.update()
 
             prof.step()
-            # if step == 55:
-            #     break
 
     # Track the final observation.
     if return_observations:

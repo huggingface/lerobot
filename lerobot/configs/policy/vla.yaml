@@ -1,13 +1,5 @@
-# @package _global_
-
 seed: 1000
 dataset_repo_id: lerobot/aloha_sim_transfer_cube_human
-
-# override_dataset_stats:
-#   observation.images.top:
-#     # Stats from imagenet, since we use a pretrained vision model
-#     mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
-#     std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
 
 training:
   offline_steps: 100000
@@ -56,10 +48,6 @@ policy:
     action: mean_std
 
   # Architecture.
-  # State encoder
-  # state_encoder:
-  #   hidden_dim: 256
-  #   latent_dim: 64
   prompt: "Please transfer the cube" #"Please insert the tube into the socket."
 
   # Vision-Language Model (Qwen-VL)
@@ -92,7 +80,7 @@ policy:
     temporal_ensemble_coeff: null
     chunk_size: 100
 
-  
+
   # Lora config
   peft_method: lora
   peft_config:

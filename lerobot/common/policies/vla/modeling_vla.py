@@ -1,5 +1,7 @@
 from collections import deque
 from typing import Any
+
+import einops
 import torch
 import torch.nn.functional as F
 from huggingface_hub import PyTorchModelHubMixin
@@ -8,7 +10,6 @@ from peft import LoraConfig, TaskType, get_peft_model
 from torch import Tensor, nn
 from torch.profiler import record_function
 from transformers import AutoProcessor, LlavaOnevisionForConditionalGeneration
-import einops
 
 from lerobot.common.policies.act.modeling_act import ACTDecoder, ACTEncoderDecoder
 from lerobot.common.policies.normalize import Normalize, Unnormalize
@@ -34,7 +35,7 @@ class VLAPolicy(
         config: VLAConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
         precision: torch.dtype = torch.float32,
-        **kwargs:  Any,
+        **kwargs: Any,
     ):
         """
         Initialize the VLAPolicy class with model configuration.
@@ -56,7 +57,7 @@ class VLAPolicy(
         self.unnormalize_outputs = Unnormalize(
             config.output_shapes, config.output_normalization_modes, dataset_stats
         )
-        #self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = VLA(config, precision=precision)
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
 
@@ -121,7 +122,7 @@ class VLA(nn.Module):
                 action_decoder_config = OmegaConf.create(config.action_decoder)
                 self.action_decoder = ACTDecoder(action_decoder_config)
                 self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.action_decoder["dim_model"])
-            elif self.action_decoder_name == "act":
+            elif "act" in self.action_decoder_name:
                 use_encoder = "decoder" not in self.action_decoder_name
                 action_decoder_config = OmegaConf.create(config.action_decoder)
                 self.action_decoder = ACTEncoderDecoder(action_decoder_config, use_encoder=use_encoder)
@@ -139,7 +140,7 @@ class VLA(nn.Module):
                 device_map="cuda",
                 torch_dtype=precision,
                 low_cpu_mem_usage=True,
-                #attn_implementation="flash_attention_2"
+                # attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
         elif "paligemma" in self.vlm_backbone_name:
@@ -155,12 +156,13 @@ class VLA(nn.Module):
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
         elif "SmolVLM" in self.vlm_backbone_name:
             from transformers import Idefics3ForConditionalGeneration
+
             self.vision_language_model = Idefics3ForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
                 device_map="cuda",
                 torch_dtype=precision,
                 low_cpu_mem_usage=True,
-                #attn_implementation="flash_attention_2"
+                # attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
             self.processor.image_processor.do_image_splitting = False
@@ -168,6 +170,7 @@ class VLA(nn.Module):
             import torchvision
             from torchvision.models._utils import IntermediateLayerGetter
             from torchvision.ops.misc import FrozenBatchNorm2d
+
             vision_backbone = "resnet18"
             pretrained_backbone_weights = "ResNet18_Weights.IMAGENET1K_V1"
             replace_final_stride_with_dilation = False
@@ -179,7 +182,9 @@ class VLA(nn.Module):
             # Note: The assumption here is that we are using a ResNet model (and hence layer4 is the final
             # feature map).
             # Note: The forward method of this returns a dict: {"feature_map": output}.
-            self.vision_language_model = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
+            self.vision_language_model = IntermediateLayerGetter(
+                backbone_model, return_layers={"layer4": "feature_map"}
+            )
         else:
             raise NotImplementedError(f"{self.vlm_backbone_name} not supported.")
         self.use_prompt_template = config.use_prompt_template
@@ -227,7 +232,7 @@ class VLA(nn.Module):
 
     def apply_prompt_template(self, text: str, add_generation_prompt: bool = True) -> str:
         if "llava-onevision" in self.vlm_backbone_name:
-            if  self.use_prompt_template:
+            if self.use_prompt_template:
                 conversation = [
                     {
                         "role": "user",
@@ -246,13 +251,7 @@ class VLA(nn.Module):
             prompt = f"<image>{text}"
         elif "SmolVLM" in self.vlm_backbone_name:
             conversation = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": text},
-                    {"type": "image"}
-                ]
-            },
+                {"role": "user", "content": [{"type": "text", "text": text}, {"type": "image"}]},
             ]
             prompt = self.processor.apply_chat_template(
                 conversation, add_generation_prompt=add_generation_prompt
@@ -262,10 +261,11 @@ class VLA(nn.Module):
         return prompt
 
     def get_vlm_features(self, processed_inputs) -> torch.Tensor:
-
         vlm_output = self.vision_language_model(
-            **processed_inputs, return_dict=True, output_hidden_states=True, 
-            use_cache=False, # otherwize we have issues with fp16: https://huggingface.co/google/gemma-2-9b/discussions/24
+            **processed_inputs,
+            return_dict=True,
+            output_hidden_states=True,
+            use_cache=False,  # otherwize we have issues with fp16: https://huggingface.co/google/gemma-2-9b/discussions/24
         )
 
         if any(k in self.vlm_backbone_name for k in ["llava-onevision", "paligemma", "SmolVLM"]):
@@ -314,9 +314,7 @@ class VLA(nn.Module):
             action_logits = action_logits.transpose(0, 1)
             action_logits = self.action_head(action_logits)
         elif self.action_decoder_name == "act":
-            action_logits = self.action_decoder(
-                encoder_in_tokens=hidden_states, encoder_in_pos_embed=None
-            )
+            action_logits = self.action_decoder(encoder_in_tokens=hidden_states, encoder_in_pos_embed=None)
             # Final action logits through the action head
             action_logits = self.action_head(action_logits)
         else:
@@ -341,7 +339,7 @@ class VLA(nn.Module):
             hidden_states = einops.rearrange(hidden_states, "b c h w -> b (h w) c")
         else:
             prompt = self.apply_prompt_template(batch["prompt"], add_generation_prompt=True)
-            
+
             batch_size = len(batch["observation.images"])
             with record_function("processor"):
                 processed_inputs = self.processor(
@@ -360,7 +358,7 @@ class VLA(nn.Module):
         if self.use_robot_state:
             robot_state = self.encoder_robot_state_input_proj(batch["observation.state"]).unsqueeze(1)
             hidden_states = torch.cat([hidden_states, robot_state], axis=1)
-        
+
         if self.use_action_connector:
             hidden_states = self.action_connector(hidden_states)
 

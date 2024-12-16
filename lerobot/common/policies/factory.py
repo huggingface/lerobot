@@ -15,12 +15,12 @@
 # limitations under the License.
 import inspect
 import logging
+
 import torch
 from omegaconf import DictConfig, OmegaConf
 
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_safe_torch_device
-
 
 
 def _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg):
@@ -78,7 +78,9 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
 
 
 def make_policy(
-    hydra_cfg: DictConfig, pretrained_policy_name_or_path: str | None = None, dataset_stats=None,
+    hydra_cfg: DictConfig,
+    pretrained_policy_name_or_path: str | None = None,
+    dataset_stats=None,
 ) -> Policy:
     """Make an instance of a policy class.
 

@@ -19,7 +19,7 @@
 import math
 import warnings
 from collections import deque
-from typing import Callable, List, Any
+from typing import Any, Callable, List
 
 import einops
 import numpy as np
@@ -55,8 +55,7 @@ class VQBeTPolicy(
         self,
         config: VQBeTConfig | None = None,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
-        precision: torch.dtype = torch.float32,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         """
         Args:
