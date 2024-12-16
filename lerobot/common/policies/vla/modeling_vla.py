@@ -115,13 +115,16 @@ class VLA(nn.Module):
         self.chunk_size = config.chunk_size
         self.action_decoder_name = config.action_decoder.get("name", "act")
         self.use_robot_state = "observation.state" in config.input_shapes
-        if self.action_decoder_name == "act_decoder":
-            action_decoder_config = OmegaConf.create(config.action_decoder)
-            self.action_decoder = ACTDecoder(action_decoder_config)
-            self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.action_decoder["dim_model"])
-        elif self.action_decoder_name == "act":
-            action_decoder_config = OmegaConf.create(config.action_decoder)
-            self.action_decoder = ACTEncoderDecoder(action_decoder_config)
+        if "act" in self.action_decoder_name:
+            # This is needed now to evaluate previous checkpoints
+            if self.action_decoder_name == "act_decoder":
+                action_decoder_config = OmegaConf.create(config.action_decoder)
+                self.action_decoder = ACTDecoder(action_decoder_config)
+                self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.action_decoder["dim_model"])
+            elif self.action_decoder_name == "act":
+                use_encoder = "decoder" not in self.action_decoder_name
+                action_decoder_config = OmegaConf.create(config.action_decoder)
+                self.action_decoder = ACTEncoderDecoder(action_decoder_config, use_encoder=use_encoder)
         else:
             raise NotImplementedError(f"{self.action_decoder_name} not supported.")
 
@@ -135,6 +138,7 @@ class VLA(nn.Module):
                 self.vlm_backbone_name,
                 device_map="cuda",
                 torch_dtype=precision,
+                low_cpu_mem_usage=True,
                 #attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
@@ -145,6 +149,7 @@ class VLA(nn.Module):
                 self.vlm_backbone_name,
                 device_map="cuda",
                 torch_dtype=precision,
+                low_cpu_mem_usage=True,
                 # attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
@@ -154,6 +159,7 @@ class VLA(nn.Module):
                 self.vlm_backbone_name,
                 device_map="cuda",
                 torch_dtype=precision,
+                low_cpu_mem_usage=True,
                 #attn_implementation="flash_attention_2"
             )
             self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
@@ -258,7 +264,8 @@ class VLA(nn.Module):
     def get_vlm_features(self, processed_inputs) -> torch.Tensor:
 
         vlm_output = self.vision_language_model(
-            **processed_inputs, return_dict=True, output_hidden_states=True
+            **processed_inputs, return_dict=True, output_hidden_states=True, 
+            use_cache=False, # otherwize we have issues with fp16: https://huggingface.co/google/gemma-2-9b/discussions/24
         )
 
         if any(k in self.vlm_backbone_name for k in ["llava-onevision", "paligemma", "SmolVLM"]):

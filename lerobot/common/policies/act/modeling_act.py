@@ -517,11 +517,13 @@ class ACT(nn.Module):
 class ACTEncoderDecoder(nn.Module):
     """ACT encoder decoder."""
 
-    def __init__(self, config: ACTConfig, is_vae_encoder: bool = False):
+    def __init__(self, config: ACTConfig, use_encoder: bool = True, is_vae_encoder: bool = False):
         super().__init__()
         self.is_vae_encoder = is_vae_encoder
+        self.use_encoder = use_encoder
         self.config = config
-        self.encoder = ACTEncoder(config)
+        if self.use_encoder:
+            self.encoder = ACTEncoder(config)
         self.decoder = ACTDecoder(config)
         self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.dim_model)
 
@@ -529,8 +531,11 @@ class ACTEncoderDecoder(nn.Module):
         self, encoder_in_tokens: Tensor | None = None, encoder_in_pos_embed: Tensor | None = None, **kwargs: Any,
     ) -> Tensor:
         batch_size = encoder_in_tokens.shape[1]
-        # Forward pass through the transformer modules.
-        encoder_out = self.encoder(encoder_in_tokens, pos_embed=encoder_in_pos_embed)
+        if self.use_encoder:
+            # Forward pass through the transformer modules.
+            encoder_out = self.encoder(encoder_in_tokens, pos_embed=encoder_in_pos_embed)
+        else:
+            encoder_out = encoder_in_tokens
         # TODO(rcadene, alexander-soare): remove call to `device` ; precompute and use buffer
         decoder_in = torch.zeros(
             (self.config.chunk_size, batch_size, self.config.dim_model),
