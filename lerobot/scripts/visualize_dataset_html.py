@@ -145,7 +145,10 @@ def run_server(
             if dataset is None:
                 dataset = get_dataset_info(repo_id)
         except FileNotFoundError:
-            return "Make sure to convert your LeRobotDataset to v2 & above."
+            return (
+                "Make sure to convert your LeRobotDataset to v2 & above. See how to convert your dataset at https://github.com/huggingface/lerobot/pull/461",
+                400,
+            )
         dataset_version = (
             dataset.meta._version if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
         )
