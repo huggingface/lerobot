@@ -21,3 +21,19 @@ from dataclasses import dataclass
 @dataclass
 class SACConfig:
     discount = 0.99
+    temperature_init = 1.0
+    num_critics = 2
+    critic_lr = 3e-4
+    actor_lr = 3e-4
+    critic_network_kwargs = {
+            "hidden_dims": [256, 256],
+            "activate_final": True,
+        }
+    actor_network_kwargs = {
+            "hidden_dims": [256, 256],
+            "activate_final": True,
+        }
+    policy_kwargs = {
+            "tanh_squash_distribution": True,
+            "std_parameterization": "uniform",
+        }
