@@ -122,12 +122,12 @@ def predict_action(observation, policy, device, use_amp):
 
 def init_keyboard_listener(assign_rewards=False):
     """
-    Initializes a keyboard listener to enable early termination of an episode 
-    or environment reset by pressing the right arrow key ('->'). This may require 
+    Initializes a keyboard listener to enable early termination of an episode
+    or environment reset by pressing the right arrow key ('->'). This may require
     sudo permissions to allow the terminal to monitor keyboard events.
 
     Args:
-        assign_rewards (bool): If True, allows annotating the collected trajectory 
+        assign_rewards (bool): If True, allows annotating the collected trajectory
         with a binary reward at the end of the episode to indicate success.
     """
     events = {}
@@ -199,7 +199,7 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides):
 def warmup_record(
     robot,
     events,
-    enable_teloperation,
+    enable_teleoperation,
     warmup_time_s,
     display_cameras,
     fps,
@@ -210,7 +210,7 @@ def warmup_record(
         display_cameras=display_cameras,
         events=events,
         fps=fps,
-        teleoperate=enable_teloperation,
+        teleoperate=enable_teleoperation,
     )
 
 
@@ -287,6 +287,8 @@ def control_loop(
 
         if dataset is not None:
             frame = {**observation, **action}
+            if "next.reward" in events:
+                frame["next.reward"] = events["next.reward"]
             dataset.add_frame(frame)
 
         if display_cameras and not is_headless():
