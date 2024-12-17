@@ -128,6 +128,7 @@ class SACPolicy(
         # perform image augmentation
 
         # reward bias
+        # from HIL-SERL code base 
         # add_or_replace={"rewards": batch["rewards"] + self.config["reward_bias"]} in reward_batch
         
 
@@ -207,6 +208,7 @@ class SACPolicy(
     def update(self):
         self.critic_target.lerp_(self.critic_ensemble, self.config.critic_target_update_weight)
         # TODO: implement UTD update
+        # First update only critics for utd_ratio-1 times
         #for critic_step in range(self.config.utd_ratio - 1):
             # only update critic and critic target
         # Then update critic, critic target, actor and temperature
