@@ -272,7 +272,6 @@ class ControlContext:
         """Return current events state"""
         return self.events.copy()
 
-# @TODO(jackvial): Move this to the control context and make configurable
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
     if episode_index is not None:
