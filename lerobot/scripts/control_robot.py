@@ -180,11 +180,7 @@ def teleoperate(
     control_context = ControlContext(
         config=ControlContextConfig(
             display_cameras=display_cameras,
-
-            # @TODO - remove this. Temporary for testing
-            assign_rewards=True,
-            num_episodes=10,
-            control_phase=ControlPhase.RECORD,
+            control_phase=ControlPhase.TELEOPERATE,
         )
     )
     control_loop(
