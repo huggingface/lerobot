@@ -28,12 +28,10 @@ class SACConfig:
     critic_network_kwargs = {
             "hidden_dims": [256, 256],
             "activate_final": True,
-            "use_layer_norm": True,
         }
     actor_network_kwargs = {
             "hidden_dims": [256, 256],
             "activate_final": True,
-            "use_layer_norm": True,
         }
     policy_kwargs = {
             "tanh_squash_distribution": True,

@@ -33,11 +33,7 @@ from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.sac.configuration_sac import SACConfig
 import numpy as np
 from typing import Callable, Optional, Tuple, Sequence
-from lerobot.common.policies.utils import (
-    get_device_from_parameters,
-    get_dtype_from_parameters,
-    populate_queues,
-)
+
 
 
 class SACPolicy(
@@ -90,7 +86,7 @@ class SACPolicy(
             **config.policy_kwargs
         )
 
-        self.temperature = GeqLagrangeMultiplier(init_value=config.temperature_init)    
+        self.temperature = LagrangeMultiplier(init_value=config.temperature_init)    
 
     def reset(self):
         """
@@ -212,7 +208,6 @@ class MLP(nn.Module):
         config: SACConfig,
         activations: Callable[[torch.Tensor], torch.Tensor] | str = nn.SiLU(),
         activate_final: bool = False,
-        use_layer_norm: bool = False,
         dropout_rate: Optional[float] = None,
     ):
         super().__init__()
@@ -225,8 +220,7 @@ class MLP(nn.Module):
             if i + 1 < len(config.network_hidden_dims) or activate_final:
                 if dropout_rate is not None and dropout_rate > 0:
                     layers.append(nn.Dropout(p=dropout_rate))
-                if use_layer_norm:
-                    layers.append(nn.LayerNorm(size))
+                layers.append(nn.LayerNorm(size))
                 layers.append(activations if isinstance(activations, nn.Module) else getattr(nn, activations)())
                 
         self.net = nn.Sequential(*layers)
@@ -507,29 +501,11 @@ class LagrangeMultiplier(nn.Module):
         self,
         init_value: float = 1.0,
         constraint_shape: Sequence[int] = (),
-        constraint_type: str = "eq",  # One of ("eq", "leq", "geq")
-        parameterization: Optional[str] = None,  # One of ("softplus", "exp"), or None for equality constraints
         device: str = "cuda"
     ):
         super().__init__()
         self.device = torch.device(device)
-        self.constraint_type = constraint_type
-        self.parameterization = parameterization
-        
-        # Validate inputs
-        if constraint_type != "eq":
-            assert init_value > 0, "Inequality constraints must have non-negative initial multiplier values"
-            
-            if parameterization == "softplus":
-                init_value = torch.log(torch.exp(torch.tensor(init_value, device=self.device)) - 1)
-            elif parameterization == "exp":
-                init_value = torch.log(torch.tensor(init_value, device=self.device))
-            elif parameterization == "none":
-                pass
-            else:
-                raise ValueError(f"Invalid multiplier parameterization {parameterization}")
-        else:
-            assert parameterization is None, "Equality constraints must have no parameterization"
+        init_value = torch.log(torch.exp(torch.tensor(init_value, device=self.device)) - 1)
             
         # Initialize the Lagrange multiplier as a parameter
         self.lagrange = nn.Parameter(
@@ -543,18 +519,8 @@ class LagrangeMultiplier(nn.Module):
         lhs: Optional[torch.Tensor] = None, 
         rhs: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        # Get the multiplier value based on parameterization
-        multiplier = self.lagrange
-        
-        if self.constraint_type != "eq":
-            if self.parameterization == "softplus":
-                multiplier = torch.nn.functional.softplus(multiplier)
-            elif self.parameterization == "exp":
-                multiplier = torch.exp(multiplier)
-            elif self.parameterization == "none":
-                pass
-            else:
-                raise ValueError(f"Invalid multiplier parameterization {self.parameterization}")
+        # Get the multiplier value based on parameterization        
+        multiplier = torch.nn.functional.softplus(self.lagrange)
                 
         # Return the raw multiplier if no constraint values provided
         if lhs is None:
@@ -573,33 +539,7 @@ class LagrangeMultiplier(nn.Module):
         
         assert diff.shape == multiplier.shape, f"Shape mismatch: {diff.shape} vs {multiplier.shape}"
         
-        if self.constraint_type == "eq":
-            return multiplier * diff
-        elif self.constraint_type == "geq":
-            return multiplier * diff
-        elif self.constraint_type == "leq":
-            return -multiplier * diff
-        else:
-            raise ValueError(f"Invalid constraint type: {self.constraint_type}")
-
-# Convenience classes with preset configurations
-GeqLagrangeMultiplier = partial(
-    LagrangeMultiplier, 
-    constraint_type="geq", 
-    parameterization="softplus"
-)
-
-LeqLagrangeMultiplier = partial(
-    LagrangeMultiplier, 
-    constraint_type="leq", 
-    parameterization="softplus"
-)
-
-BetterLeqLagrangeMultiplier = partial(
-    LagrangeMultiplier, 
-    constraint_type="leq", 
-    parameterization="none"
-)
+        return multiplier * diff
 
 
 # The TanhMultivariateNormalDiag is a probability distribution that represents a transformed normal (Gaussian) distribution where:
