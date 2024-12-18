@@ -16,9 +16,12 @@
 # limitations under the License.
 from dataclasses import dataclass, field
 
+from lerobot.configs.policies import PretrainedConfig
 
+
+@PretrainedConfig.register_subclass("diffusion")
 @dataclass
-class DiffusionConfig:
+class DiffusionConfig(PretrainedConfig):
     """Configuration class for DiffusionPolicy.
 
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.
@@ -207,3 +210,15 @@ class DiffusionConfig:
                 "The horizon should be an integer multiple of the downsampling factor (which is determined "
                 f"by `len(down_dims)`). Got {self.horizon=} and {self.down_dims=}"
             )
+
+    @property
+    def observation_delta_indices(self) -> list:
+        return list(range(1 - self.n_obs_steps, 1))
+
+    @property
+    def action_delta_indices(self) -> list:
+        return list(range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.horizon))
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return None
