@@ -28,6 +28,7 @@ from lerobot.common import (
     policies,  # noqa: F401
 )
 from lerobot.common.datasets.transforms import ImageTransformsConfig
+from lerobot.common.optim import OptimizerConfig
 from lerobot.configs.policies import PretrainedConfig
 
 
@@ -39,7 +40,7 @@ class OfflineConfig:
 @dataclass
 class OnlineConfig:
     """
-    The online training look looks something like:
+    The online training loop looks something like:
 
     ```python
     for i in range(steps):
@@ -59,7 +60,7 @@ class OnlineConfig:
     # How many episodes to collect at once when we reach the online rollout part of the training loop.
     rollout_n_episodes: int = 1
     # The number of environments to use in the gym.vector.VectorEnv. This ends up also being the batch size for
-    # the policy. Ideally you should set this to by an even divisor or online_rollout_n_episodes.
+    # the policy. Ideally you should set this to by an even divisor of rollout_n_episodes.
     rollout_batch_size: int = 1
     # How many optimization steps (forward, backward, optimizer step) to do between running rollouts.
     steps_between_rollouts: int | None = None
@@ -71,13 +72,13 @@ class OnlineConfig:
     # FIFO.
     buffer_capacity: int | None = None
     # The minimum number of frames to have in the online buffer before commencing online training.
-    # If online_buffer_seed_size > online_rollout_n_episodes, the rollout will be run multiple times until the
+    # If buffer_seed_size > rollout_n_episodes, the rollout will be run multiple times until the
     # seed size condition is satisfied.
     buffer_seed_size: int = 0
     # Whether to run the online rollouts asynchronously. This means we can run the online training steps in
     # parallel with the rollouts. This might be advised if your GPU has the bandwidth to handle training
     # + eval + environment rendering simultaneously.
-    do_online_rollout_async: bool = False
+    do_rollout_async: bool = False
 
 
 @dataclass
@@ -96,11 +97,16 @@ class TrainConfig:
 
 @dataclass
 class DatasetConfig:
+    # You may provide a list of datasets here. `train.py` creates them all and concatenates them. Note: only data
+    # keys common between the datasets are kept. Each dataset gets and additional transform that inserts the
+    # "dataset_index" into the returned item. The index mapping is made according to the order in which the
+    # datsets are provided.
     repo_id: str | list[str]
     episodes: list[int] | None = None
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
     local_files_only: bool = False
     use_imagenet_stats: bool = True
+    video_backend: str = "pyav"
 
 
 @dataclass
@@ -137,7 +143,7 @@ class WandBConfig:
 class MainConfig:
     policy: PretrainedConfig
     dataset: DatasetConfig
-    env: envs.EnvConfig = envs.RealEnv
+    env: envs.EnvConfig = field(default_factory=envs.RealEnv)
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
     dir: Path | None = None
@@ -153,13 +159,10 @@ class MainConfig:
     use_amp: bool = False
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
-    seed: int | None = None
-    # You may provide a list of datasets here. `train.py` creates them all and concatenates them. Note: only data
-    # keys common between the datasets are kept. Each dataset gets and additional transform that inserts the
-    # "dataset_index" into the returned item. The index mapping is made according to the order in which the
-    # datsets are provided.
-    video_backend: str = "pyav"
+    seed: int | None = 1000
     training: TrainConfig = field(default_factory=TrainConfig)
+    use_policy_optimizer_preset: bool = True
+    optimizer: OptimizerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
 
@@ -174,6 +177,11 @@ class MainConfig:
 
         if self.training.online.steps > 0 and isinstance(self.dataset.repo_id, list):
             raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
+
+        if not self.use_policy_optimizer_preset and self.optimizer is None:
+            raise ValueError("Either the policy optimizer preset or the optimizer must be used.")
+        elif self.use_policy_optimizer_preset:
+            self.optimizer = self.policy.optimizer_preset
 
         # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
         # to check for any differences between the provided config and the checkpoint's config.
@@ -214,4 +222,6 @@ class MainConfig:
 
     @classmethod
     def from_checkpoint(cls, config_path: Path):
-        return draccus.load(cls, config_path)
+        with open(config_path) as f:
+            cfg = draccus.load(cls, f)
+        return cfg

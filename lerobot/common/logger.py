@@ -24,6 +24,7 @@ import re
 from glob import glob
 from pathlib import Path
 
+import draccus
 import torch
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from omegaconf import DictConfig, OmegaConf
@@ -34,6 +35,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
 from lerobot.configs.default import MainConfig
+from lerobot.configs.policies import FeatureType, NormalizationMode
 
 
 def log_output_dir(out_dir):
@@ -151,10 +153,13 @@ class Logger:
 
         Optionally also upload the model to WandB.
         """
+
         self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
+        # register_features_types()
         policy.save_pretrained(save_dir)
-        # Also save the full Hydra config for the env configuration.
-        OmegaConf.save(self._cfg, save_dir / "config.yaml")
+        # Also save the full config for the env configuration.
+        with open(save_dir / "config.yaml", "w") as f:
+            draccus.dump(self._cfg, f)
         if self._wandb and not self._cfg.wandb.disable_artifact:
             # note wandb artifact does not accept ":" or "/" in its name
             artifact = self._wandb.Artifact(wandb_artifact_name, type="model")
@@ -221,7 +226,7 @@ class Logger:
         set_global_random_state({k: training_state[k] for k in get_global_random_state()})
         return training_state["step"]
 
-    def log_dict(self, d, step, mode="train"):
+    def log_dict(self, d: dict, step: int, mode: str = "train"):
         assert mode in {"train", "eval"}
         # TODO(alexander-soare): Add local text log.
         if self._wandb is not None:
@@ -238,3 +243,11 @@ class Logger:
         assert self._wandb is not None
         wandb_video = self._wandb.Video(video_path, fps=self._cfg.fps, format="mp4")
         self._wandb.log({f"{mode}/video": wandb_video}, step=step)
+
+
+def register_features_types():
+    draccus.decode.register(FeatureType, lambda x: FeatureType[x])
+    draccus.encode.register(FeatureType, lambda x: x.name)
+
+    draccus.decode.register(NormalizationMode, lambda x: NormalizationMode[x])
+    draccus.encode.register(NormalizationMode, lambda x: x.name)
