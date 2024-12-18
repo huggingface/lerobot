@@ -176,7 +176,6 @@ def rollout(
             observation, reward, terminated, truncated, info = env.step(action)
             if render_callback is not None:
                 render_callback(env)
-
             # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
             # available of none of the envs finished.
             if "final_info" in info:
@@ -200,8 +199,6 @@ def rollout(
             progbar.update()
 
             prof.step()
-            #if step == 5:
-                #break
 
     # Track the final observation.
     if return_observations:
