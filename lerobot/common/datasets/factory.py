@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+from pprint import pformat
 
 import torch
 
@@ -101,7 +102,7 @@ def make_dataset(cfg: MainConfig, split: str = "train") -> LeRobotDataset | Mult
             episodes=cfg.dataset.episodes,
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
-            video_backend=cfg.video_backend,
+            video_backend=cfg.dataset.video_backend,
             local_files_only=cfg.dataset.local_files_only,
         )
     else:
@@ -110,7 +111,11 @@ def make_dataset(cfg: MainConfig, split: str = "train") -> LeRobotDataset | Mult
             # TODO(aliberts): add proper support for multi dataset
             # delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
-            video_backend=cfg.video_backend,
+            video_backend=cfg.dataset.video_backend,
+        )
+        logging.info(
+            "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
+            f"{pformat(dataset.repo_id_to_index , indent=2)}"
         )
 
     if cfg.dataset.use_imagenet_stats:

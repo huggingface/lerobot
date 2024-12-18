@@ -15,7 +15,8 @@
 # limitations under the License.
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.common.optim.optimizers import AdamWConfig
+from lerobot.configs.policies import FeatureType, NormalizationMode, PretrainedConfig
 
 
 @PretrainedConfig.register_subclass("act")
@@ -93,28 +94,11 @@ class ACTConfig(PretrainedConfig):
     chunk_size: int = 100
     n_action_steps: int = 100
 
-    input_shapes: dict[str, list[int]] = field(
+    normalization_mapping: dict[FeatureType, NormalizationMode] = field(
         default_factory=lambda: {
-            "observation.images.top": [3, 480, 640],
-            "observation.state": [14],
-        }
-    )
-    output_shapes: dict[str, list[int]] = field(
-        default_factory=lambda: {
-            "action": [14],
-        }
-    )
-
-    # Normalization / Unnormalization
-    input_normalization_modes: dict[str, str] = field(
-        default_factory=lambda: {
-            "observation.images.top": "mean_std",
-            "observation.state": "mean_std",
-        }
-    )
-    output_normalization_modes: dict[str, str] = field(
-        default_factory=lambda: {
-            "action": "mean_std",
+            FeatureType.VISUAL: NormalizationMode.MEAN_STD,
+            FeatureType.STATE: NormalizationMode.MEAN_STD,
+            FeatureType.ACTION: NormalizationMode.MEAN_STD,
         }
     )
 
@@ -147,6 +131,15 @@ class ACTConfig(PretrainedConfig):
     dropout: float = 0.1
     kl_weight: float = 10.0
 
+    # Optimizer presets
+    optimizer_preset: AdamWConfig = field(
+        default_factory=lambda: AdamWConfig(
+            lr=1e-5,
+            weight_decay=1e-4,
+        )
+    )
+    lr_backbone: float = 1e-5
+
     def __post_init__(self):
         """Input validation (not exhaustive)."""
         if not self.vision_backbone.startswith("resnet"):
@@ -167,11 +160,12 @@ class ACTConfig(PretrainedConfig):
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
             )
-        if (
-            not any(k.startswith("observation.image") for k in self.input_shapes)
-            and "observation.environment_state" not in self.input_shapes
-        ):
-            raise ValueError("You must provide at least one image or the environment state among the inputs.")
+        # TODO(aliberts): move this check into the policy init
+        # if (
+        #     not any(k.startswith("observation.image") for k in self.input_shapes)
+        #     and "observation.environment_state" not in self.input_shapes
+        # ):
+        #     raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
     @property
     def observation_delta_indices(self) -> None:

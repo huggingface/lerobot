@@ -16,34 +16,36 @@
 import importlib
 
 import gymnasium as gym
-from omegaconf import DictConfig
+
+from lerobot.configs.default import MainConfig
 
 
-def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv | None:
+def make_env(cfg: MainConfig) -> gym.vector.VectorEnv | None:
     """Makes a gym vector environment according to the evaluation config.
 
     n_envs can be used to override eval.batch_size in the configuration. Must be at least 1.
     """
+    n_envs = cfg.training.online.rollout_batch_size
     if n_envs is not None and n_envs < 1:
         raise ValueError("`n_envs must be at least 1")
 
-    if cfg.env.name == "real_world":
+    if cfg.env.type == "real_world":
         return
 
-    package_name = f"gym_{cfg.env.name}"
+    package_name = f"gym_{cfg.env.type}"
 
     try:
         importlib.import_module(package_name)
     except ModuleNotFoundError as e:
         print(
-            f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.env.name}]'`"
+            f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.env.type}]'`"
         )
         raise e
 
     gym_handle = f"{package_name}/{cfg.env.task}"
-    gym_kwgs = dict(cfg.env.get("gym", {}))
+    gym_kwgs = getattr(cfg.env, "gym", {})
 
-    if cfg.env.get("episode_length"):
+    if getattr(cfg.env, "episode_length", None):
         gym_kwgs["max_episode_steps"] = cfg.env.episode_length
 
     # batched version of the env that returns an observation of shape (b, c)

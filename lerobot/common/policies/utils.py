@@ -47,3 +47,21 @@ def get_dtype_from_parameters(module: nn.Module) -> torch.dtype:
     Note: assumes that all parameters have the same dtype.
     """
     return next(iter(module.parameters())).dtype
+
+
+def get_output_shape(module: nn.Module, input_shape: tuple) -> tuple:
+    """
+    Calculates the output shape of a PyTorch module given an input shape.
+
+    Args:
+        module (nn.Module): a PyTorch module
+        input_shape (tuple): A tuple representing the input shape, e.g., (batch_size, channels, height, width)
+
+    Returns:
+        tuple: The output shape of the module.
+    """
+    # dummy_input = torch.randn(*input_shape)
+    dummy_input = torch.zeros(size=input_shape)
+    with torch.inference_mode():
+        output = module(dummy_input)
+    return tuple(output.shape)

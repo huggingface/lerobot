@@ -212,7 +212,7 @@ class ImageTransformConfig:
             (following uniform distribution) when it's applied.
     """
 
-    weight: int = 1.0
+    weight: float = 1.0
     type: str = "Identity"
     kwargs: Dict[str, Any] = field(default_factory=dict)
 
