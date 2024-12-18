@@ -1,3 +1,4 @@
+# @package _global_
 seed: 1000
 dataset_repo_id: lerobot/aloha_sim_transfer_cube_human
 
