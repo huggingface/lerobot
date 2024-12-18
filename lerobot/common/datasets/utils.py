@@ -477,7 +477,7 @@ def create_lerobot_dataset_card(
     Note: If specified, license must be one of https://huggingface.co/docs/hub/repositories-licenses.
     """
     card_tags = ["LeRobot"]
-    card_template_path = importlib.resources.path("lerobot.common.datasets", "card_template.md")
+    card_template_path = importlib.resources.files("lerobot.common.datasets").joinpath("card_template.md")
 
     if tags:
         card_tags += tags
