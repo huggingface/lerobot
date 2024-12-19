@@ -111,7 +111,6 @@ from lerobot.common.robot_devices.control_utils import (
     reset_environment,
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
-    stop_recording,
     warmup_record,
 )
 from lerobot.common.robot_devices.control_context import (
@@ -356,7 +355,7 @@ def record(
             break
 
     log_say("Stop recording", play_sounds, blocking=True)
-    stop_recording(robot, None, display_cameras)
+    control_context.cleanup(robot)
 
     if run_compute_stats:
         logging.info("Computing dataset statistics")

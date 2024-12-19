@@ -293,10 +293,6 @@ def control_loop(
 
     except Exception as e:
         print(f"Error in control loop: {e}")
-    finally:
-        # Clean up display window
-        if control_context is not None:
-            control_context.close()
 
 
 def reset_environment(robot, events, reset_time_s):
@@ -317,18 +313,6 @@ def reset_environment(robot, events, reset_time_s):
             if events["exit_early"]:
                 events["exit_early"] = False
                 break
-
-
-def stop_recording(robot, listener, display_cameras):
-    robot.disconnect()
-
-    if not is_headless():
-        if listener is not None:
-            listener.stop()
-
-        if display_cameras:
-            cv2.destroyAllWindows()
-
 
 def sanity_check_dataset_name(repo_id, policy):
     _, dataset_name = repo_id.split("/")

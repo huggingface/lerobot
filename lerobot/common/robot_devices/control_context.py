@@ -231,10 +231,10 @@ class ControlContext:
         self.current_episode_index = episode_index
         return self
 
-    def close(self):
-        """Clean up pygame resources"""
-        pygame.quit()
-
     def get_events(self):
         """Return current events state"""
         return self.events.copy()
+    
+    def cleanup(self, robot):
+        robot.disconnect()
+        pygame.quit()
