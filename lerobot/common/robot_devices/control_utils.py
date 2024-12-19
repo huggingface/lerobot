@@ -25,7 +25,7 @@ from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 
-# @TODO(jackvial): Move this to ControlContext and make configurable
+# TODO(jackvial): Move this to ControlContext and make configurable
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
     if episode_index is not None:

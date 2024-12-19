@@ -20,7 +20,7 @@ class ControlContextConfig:
     debug_mode: bool = False
     control_phase: ControlPhase = ControlPhase.TELEOPERATE
     num_episodes: int = 0
-    # @TODO(jackvial): Add robot on this class so we can call robot.disconnect() in cleanup
+    # TODO(jackvial): Add robot on this class so we can call robot.disconnect() in cleanup
 
 
 class ControlContext:
