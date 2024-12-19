@@ -293,7 +293,8 @@ def record(
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
-    # We need to reinitialize the control context because control loop tears it down
+    # @TODO(jackvial): Maybe add an update_config method to ControlContext so we don't
+    # initialize a new class
     control_context = ControlContext(
         config=ControlContextConfig(
             control_phase=ControlPhase.RECORD,

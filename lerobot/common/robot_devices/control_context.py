@@ -20,6 +20,7 @@ class ControlContextConfig:
     debug_mode: bool = False
     control_phase: ControlPhase = ControlPhase.TELEOPERATE
     num_episodes: int = 0
+    # @TODO(jackvial): Add robot on this class so we can call robot.disconnect() in cleanup
 
 
 class ControlContext:
@@ -124,6 +125,7 @@ class ControlContext:
         # Add status information below controls
         y_pos += 20  # Add some spacing
 
+        # TODO(jackvial): Move control phase to the top bar
         # Control phase
         phase_text = f"Control Phase: {self.config.control_phase}"
         phase_surface = self.small_font.render(phase_text, True, self.text_color)
@@ -218,6 +220,8 @@ class ControlContext:
 
         # Draw controls panel
         self.render_controls_panel(window_width, window_height)
+
+        # TODO(jackvial): Would be nice to show count down timer for warmup phase and reset phase
 
         pygame.display.flip()
 

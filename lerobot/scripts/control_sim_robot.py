@@ -299,6 +299,7 @@ def record(
 
             dataset.add_frame(frame)
 
+            # @TODO(jackvial): Update to use ControlContext
             if display_cameras and not is_headless():
                 for key in image_keys:
                     cv2.imshow(key, cv2.cvtColor(observation[key], cv2.COLOR_RGB2BGR))
