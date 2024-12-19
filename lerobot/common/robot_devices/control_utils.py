@@ -183,44 +183,44 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides):
 
 def warmup_record(
     robot,
-    events,
     enable_teleoperation,
     warmup_time_s,
     display_cameras,
     fps,
+    control_context
 ):
     control_loop(
         robot=robot,
         control_time_s=warmup_time_s,
         display_cameras=display_cameras,
-        events=events,
         fps=fps,
         teleoperate=enable_teleoperation,
+        control_context=control_context,
     )
 
 
 def record_episode(
     robot,
     dataset,
-    events,
     episode_time_s,
     display_cameras,
     policy,
     device,
     use_amp,
     fps,
+    control_context
 ):
     control_loop(
         robot=robot,
         control_time_s=episode_time_s,
         display_cameras=display_cameras,
         dataset=dataset,
-        events=events,
         policy=policy,
         device=device,
         use_amp=use_amp,
         fps=fps,
         teleoperate=policy is None,
+        control_context=control_context,
     )
 
 
@@ -229,14 +229,16 @@ def control_loop(
     robot,
     control_time_s=None,
     teleoperate=False,
-    display_cameras=False,
+    display_cameras=False, # TODO - remove this
     dataset: LeRobotDataset | None = None,
-    events=None,
     policy=None,
     device=None,
     use_amp=None,
     fps=None,
+    control_context=None,
 ):
+    events = control_context.get_events() if control_context is not None else None
+
     # TODO(rcadene): Add option to record logs
     if not robot.is_connected:
         robot.connect()
@@ -255,42 +257,46 @@ def control_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
-    while timestamp < control_time_s:
-        start_loop_t = time.perf_counter()
+    try:
+        while timestamp < control_time_s:
+            start_loop_t = time.perf_counter()
 
-        if teleoperate:
-            observation, action = robot.teleop_step(record_data=True)
-        else:
-            observation = robot.capture_observation()
+            if teleoperate:
+                observation, action = robot.teleop_step(record_data=True)
+            else:
+                observation = robot.capture_observation()
 
-            if policy is not None:
-                pred_action = predict_action(observation, policy, device, use_amp)
-                # Action can eventually be clipped using `max_relative_target`,
-                # so action actually sent is saved in the dataset.
-                action = robot.send_action(pred_action)
-                action = {"action": action}
+                if policy is not None:
+                    pred_action = predict_action(observation, policy, device, use_amp)
+                    # Action can eventually be clipped using `max_relative_target`,
+                    # so action actually sent is saved in the dataset.
+                    action = robot.send_action(pred_action)
+                    action = {"action": action}
 
-        if dataset is not None:
-            frame = {**observation, **action}
-            dataset.add_frame(frame)
+            if dataset is not None:
+                frame = {**observation, **action}
+                dataset.add_frame(frame)
 
-        if display_cameras and not is_headless():
-            image_keys = [key for key in observation if "image" in key]
-            for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+            control_context.update_with_observations(observation)
 
-        if fps is not None:
+            if fps is not None:
+                dt_s = time.perf_counter() - start_loop_t
+                busy_wait(1 / fps - dt_s)
+
             dt_s = time.perf_counter() - start_loop_t
-            busy_wait(1 / fps - dt_s)
+            log_control_info(robot, dt_s, fps=fps)
 
-        dt_s = time.perf_counter() - start_loop_t
-        log_control_info(robot, dt_s, fps=fps)
+            timestamp = time.perf_counter() - start_episode_t
+            if events["exit_early"]:
+                events["exit_early"] = False
+                break
 
-        timestamp = time.perf_counter() - start_episode_t
-        if events["exit_early"]:
-            events["exit_early"] = False
-            break
+    except Exception as e:
+        print(f"Error in control loop: {e}")
+    finally:
+        # Clean up display window
+        if control_context is not None:
+            control_context.close()
 
 
 def reset_environment(robot, events, reset_time_s):

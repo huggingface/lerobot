@@ -114,10 +114,17 @@ from lerobot.common.robot_devices.control_utils import (
     stop_recording,
     warmup_record,
 )
+from lerobot.common.robot_devices.control_context import (
+    ControlContext,
+    ControlContextConfig,
+    ControlPhase,
+)
+
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import init_hydra_config, init_logging, log_say, none_or_int
+
 
 ########################################################################################
 # Control modes
@@ -174,12 +181,19 @@ def calibrate(robot: Robot, arms: list[str] | None):
 def teleoperate(
     robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
 ):
+    control_context = ControlContext(
+        config=ControlContextConfig(
+            display_cameras=display_cameras,
+            control_phase=ControlPhase.TELEOPERATE,
+        )
+    )
     control_loop(
         robot,
         control_time_s=teleop_time_s,
         fps=fps,
         teleoperate=True,
         display_cameras=display_cameras,
+        control_context=control_context,
     )
 
 
@@ -259,18 +273,37 @@ def record(
     if not robot.is_connected:
         robot.connect()
 
-    listener, events = init_keyboard_listener()
-
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", play_sounds)
-    warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
+
+    control_context = ControlContext(
+        config=ControlContextConfig(
+            control_phase=ControlPhase.WARMUP,
+            display_cameras=display_cameras,
+            play_sounds=play_sounds,
+            assign_rewards=False,
+        )
+    )
+
+    warmup_record(robot, enable_teleoperation, warmup_time_s, display_cameras, fps, control_context)
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
+
+    # We need to reinitialize the control context because control loop tears it down
+    control_context = ControlContext(
+        config=ControlContextConfig(
+            control_phase=ControlPhase.RECORD,
+            display_cameras=display_cameras,
+            play_sounds=play_sounds,
+            assign_rewards=False,
+            num_episodes=num_episodes,
+        )
+    )
 
     recorded_episodes = 0
     while True:
@@ -286,14 +319,17 @@ def record(
         record_episode(
             dataset=dataset,
             robot=robot,
-            events=events,
             episode_time_s=episode_time_s,
             display_cameras=display_cameras,
             policy=policy,
             device=device,
             use_amp=use_amp,
             fps=fps,
+            control_context=control_context,
         )
+
+        # Events will be updated by control loop
+        events = control_context.get_events()
 
         # Execute a few seconds without recording to give time to manually reset the environment
         # Current code logic doesn't allow to teleoperate during this time.
@@ -314,12 +350,13 @@ def record(
 
         dataset.save_episode(task)
         recorded_episodes += 1
+        control_context.update_current_episode(recorded_episodes)
 
         if events["stop_recording"]:
             break
 
     log_say("Stop recording", play_sounds, blocking=True)
-    stop_recording(robot, listener, display_cameras)
+    stop_recording(robot, None, display_cameras)
 
     if run_compute_stats:
         logging.info("Computing dataset statistics")
