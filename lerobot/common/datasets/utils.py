@@ -17,11 +17,12 @@ import importlib.resources
 import json
 import logging
 import textwrap
+from collections.abc import Iterator
 from itertools import accumulate
 from pathlib import Path
 from pprint import pformat
 from types import SimpleNamespace
-from typing import Any, Dict, Iterator
+from typing import Any
 
 import datasets
 import jsonlines
@@ -535,7 +536,7 @@ class IterableNamespace(SimpleNamespace):
         details: IterableNamespace(age=25)
     """
 
-    def __init__(self, dictionary: Dict[str, Any] = None, **kwargs):
+    def __init__(self, dictionary: dict[str, Any] = None, **kwargs):
         super().__init__(**kwargs)
         if dictionary is not None:
             for key, value in dictionary.items():
