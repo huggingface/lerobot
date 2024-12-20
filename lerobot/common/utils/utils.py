@@ -41,9 +41,9 @@ def inside_slurm():
     return "SLURM_JOB_ID" in os.environ
 
 
-def get_safe_torch_device(cfg_device: str, log: bool = False) -> torch.device:
+def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     """Given a string, return a torch.device with checks on whether the device is available."""
-    match cfg_device:
+    match try_device:
         case "cuda":
             assert torch.cuda.is_available()
             device = torch.device("cuda")
@@ -55,9 +55,9 @@ def get_safe_torch_device(cfg_device: str, log: bool = False) -> torch.device:
             if log:
                 logging.warning("Using CPU, this will be slow.")
         case _:
-            device = torch.device(cfg_device)
+            device = torch.device(try_device)
             if log:
-                logging.warning(f"Using custom {cfg_device} device.")
+                logging.warning(f"Using custom {try_device} device.")
 
     return device
 
