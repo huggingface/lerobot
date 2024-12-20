@@ -82,8 +82,19 @@ class ControlContext:
 
         return total_width, total_height, grid_cols
 
-    def render_controls_panel(self, window_width: int, window_height: int):
-        """Render the controls panel on the right side"""
+    def draw_top_bar(self, window_width: int):
+        top_text_str = ""
+        if self.config.control_phase == ControlPhase.RECORD:
+            top_text_str = f"Episode: {self.current_episode_index}/{self.config.num_episodes}"
+            if self.config.assign_rewards:
+                next_reward = self.events["next_reward"]
+                top_text_str += f" | Reward: {next_reward}"
+
+        top_text = self.font.render(top_text_str, True, self.text_color)
+        text_rect = top_text.get_rect(center=(window_width // 2, self.title_height // 2))
+        self.screen.blit(top_text, text_rect)
+
+    def draw_right_side_bar(self, window_width: int, window_height: int):
         # Draw controls background
         controls_rect = pygame.Rect(
             window_width - self.controls_width,
@@ -206,20 +217,8 @@ class ControlContext:
 
         pygame.draw.rect(self.screen, self.text_bg_color, (0, 0, window_width, self.title_height))
 
-        # Prepare top bar text
-        top_text_str = ""
-        if self.config.control_phase == ControlPhase.RECORD:
-            top_text_str = f"Episode: {self.current_episode_index}/{self.config.num_episodes}"
-            if self.config.assign_rewards:
-                next_reward = self.events["next_reward"]
-                top_text_str += f" | Reward: {next_reward}"
-
-        top_text = self.font.render(top_text_str, True, self.text_color)
-        text_rect = top_text.get_rect(center=(window_width // 2, self.title_height // 2))
-        self.screen.blit(top_text, text_rect)
-
-        # Draw controls panel
-        self.render_controls_panel(window_width, window_height)
+        self.draw_top_bar(window_width)
+        self.draw_right_side_bar(window_width, window_height)
 
         # TODO(jackvial): Would be nice to show count down timer for warmup phase and reset phase
 
@@ -238,7 +237,58 @@ class ControlContext:
     def get_events(self):
         """Return current events state"""
         return self.events.copy()
-    
+
     def cleanup(self, robot):
         robot.disconnect()
         pygame.quit()
+
+
+if __name__ == "__main__":
+    import torch
+    import cv2
+    import numpy as np
+
+    config = ControlContextConfig(
+        display_cameras=True,
+        assign_rewards=True,
+        debug_mode=True,
+        control_phase=ControlPhase.RECORD,
+        num_episodes=5,
+    )
+    context = ControlContext(config)
+
+    # Initialize webcam
+    cap = cv2.VideoCapture(0)
+
+    # Check if the webcam is opened correctly
+    if not cap.isOpened():
+        raise IOError("Cannot open webcam")
+
+    while True:
+        # Read frame from webcam
+        ret, frame = cap.read()
+        if not ret:
+            print("Failed to grab frame")
+            break
+
+        # Convert BGR to RGB (OpenCV uses BGR by default)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Convert to torch tensor and normalize to float
+        image = torch.tensor(frame_rgb).float()
+
+        # Create observation dictionary with state and image
+        observation = {
+            "state": torch.tensor([10.0195, 128.9355, 173.0566, -13.2715, -7.2070, 34.4531]),
+            "image": image,
+        }
+
+        context.update_with_observations(observation)
+        events = context.get_events()
+
+        if events["exit_early"]:
+            break
+
+    # Release the webcam and cleanup
+    cap.release()
+    cv2.destroyAllWindows()
