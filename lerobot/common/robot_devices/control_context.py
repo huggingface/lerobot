@@ -46,8 +46,8 @@ class ControlContext:
             self.events["next_reward"] = 0
 
         self.pressed_keys = []
-        self.font = pygame.font.Font(None, 36)
-        self.small_font = pygame.font.Font(None, 24)  # Smaller font for controls list
+        self.font = pygame.font.SysFont('courier', 24)  # Courier is a monospace font
+        self.small_font = pygame.font.SysFont('courier', 18)  # Smaller font for controls list
         self.current_episode_index = 0
 
         # Color theme
@@ -56,10 +56,10 @@ class ControlContext:
 
         # Define the control instructions
         self.controls = [
-            ("Right Arrow", "Exit current loop"),
-            ("Left Arrow", "Rerecord last episode"),
-            ("Escape", "Stop recording"),
-            ("Space", "Toggle reward (if enabled)"),
+            ("Right Arrow", "Exit Early"),
+            ("Left Arrow", "Rerecord"),
+            ("Escape", "Stop"),
+            ("Space", "Toggle Reward"),
         ]
 
     def calculate_window_size(self, images: Dict[str, np.ndarray]):
@@ -83,9 +83,9 @@ class ControlContext:
         return total_width, total_height, grid_cols
 
     def draw_top_bar(self, window_width: int):
-        top_text_str = ""
+        top_text_str = f"Mode: {self.config.control_phase}"
         if self.config.control_phase == ControlPhase.RECORD:
-            top_text_str = f"Episode: {self.current_episode_index}/{self.config.num_episodes}"
+            top_text_str += f" | Episode: {self.current_episode_index}/{self.config.num_episodes}"
             if self.config.assign_rewards:
                 next_reward = self.events["next_reward"]
                 top_text_str += f" | Reward: {next_reward}"
@@ -136,16 +136,9 @@ class ControlContext:
         # Add status information below controls
         y_pos += 20  # Add some spacing
 
-        # TODO(jackvial): Move control phase to the top bar
-        # Control phase
-        phase_text = f"Control Phase: {self.config.control_phase}"
-        phase_surface = self.small_font.render(phase_text, True, self.text_color)
-        phase_rect = phase_surface.get_rect(left=window_width - self.controls_width + 20, top=y_pos)
-        self.screen.blit(phase_surface, phase_rect)
-
         # Pressed keys
         y_pos += 30
-        keys_text = f"Pressed: {', '.join(self.pressed_keys)}" if self.pressed_keys else "Pressed: None"
+        keys_text = f"Keys Pressed: {', '.join(self.pressed_keys)}" if self.pressed_keys else "Keys Pressed: None"
         keys_surface = self.small_font.render(keys_text, True, self.text_color)
         keys_rect = keys_surface.get_rect(left=window_width - self.controls_width + 20, top=y_pos)
         self.screen.blit(keys_surface, keys_rect)
