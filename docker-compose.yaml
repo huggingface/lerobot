@@ -1,0 +1,37 @@
+name: lerobot
+
+services:
+  lerobot:
+    image: lerobot-env
+    build:
+      context: .
+      dockerfile: docker/lerobot-compose/Dockerfile
+    tty: true
+    volumes:
+      # Necessary for display passthrough
+      - "/tmp/.X11-unix:/tmp/.X11-unix"
+      - "~/.Xauthority:/root/.Xauthority"
+      # Mount the current directory so users are not confused about data saving locations
+      - ".:/lerobot"
+      # Pass through USB devices
+      - "/dev:/dev"
+      # Mount wandb credentials into the container, in read-only mode
+      - "~/.netrc:/root/.netrc:ro"
+      # Mount Hugging Face credentials into the container, in read-only mode.
+      - ".huggingface_cache/:/root/.cache/huggingface/"
+      # Mount torch model cache so models don't re-download each time
+      - ".torch_cache/:/root/.cache/torch/hub/"
+    environment:
+      # Necessary for display passthrough
+      DISPLAY: $DISPLAY
+      XAUTHORITY: $XAUTHORITY
+    # Give the container as much access as possible to the host machine.
+    # Folks using this library might be less familiar with how docker isolates devices
+    # such as USB or networks, so removing that layer is helpful for the purposes of
+    # development on this library.
+    #
+    # For production, remove the following line and add the necessary devices and networks
+    privileged: true
+    network_mode: host
+    cap_add:
+      - ALL
