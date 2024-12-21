@@ -112,7 +112,6 @@ from lerobot.common.robot_devices.control_utils import (
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
     stop_recording,
-    warmup_record,
 )
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
@@ -267,7 +266,9 @@ def record(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", play_sounds)
-    warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
+    
+    # warmup 
+    reset_environment(robot, events, warmup_time_s, use_policy = policy is not None)
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
@@ -303,7 +304,7 @@ def record(
             (dataset.num_episodes < num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", play_sounds)
-            reset_environment(robot, events, reset_time_s)
+            reset_environment(robot, events, reset_time_s, use_policy = policy is not None)
 
         if events["rerecord_episode"]:
             log_say("Re-record episode", play_sounds)

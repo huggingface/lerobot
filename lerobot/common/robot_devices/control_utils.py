@@ -181,24 +181,6 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides):
     return policy, policy_fps, device, use_amp
 
 
-def warmup_record(
-    robot,
-    events,
-    enable_teleoperation,
-    warmup_time_s,
-    display_cameras,
-    fps,
-):
-    control_loop(
-        robot=robot,
-        control_time_s=warmup_time_s,
-        display_cameras=display_cameras,
-        events=events,
-        fps=fps,
-        teleoperate=enable_teleoperation,
-    )
-
-
 def record_episode(
     robot,
     dataset,
