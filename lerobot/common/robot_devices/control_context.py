@@ -221,6 +221,7 @@ if __name__ == "__main__":
         # Convert to torch tensor and normalize to float
         image = torch.tensor(frame_rgb).float()
 
+        # TODO(jackvial): Setup to support multiple cameras
         # Create observation dictionary with state and image
         observation = {
             "state": torch.tensor([10.0195, 128.9355, 173.0566, -13.2715, -7.2070, 34.4531]),
