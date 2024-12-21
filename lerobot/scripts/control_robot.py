@@ -266,14 +266,14 @@ def record(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", play_sounds)
-    
+
     # warmup 
     reset_environment(robot, events, warmup_time_s, use_policy = policy is not None)
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
-    recorded_episodes = 0
+    recorded_episodes = dataset.num_episodes
     while True:
         if recorded_episodes >= num_episodes:
             break
