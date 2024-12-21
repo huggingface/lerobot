@@ -296,10 +296,7 @@ def record(
             fps=fps,
         )
 
-        # Execute a few seconds without recording to give time to manually reset the environment
-        # Current code logic doesn't allow to teleoperate during this time.
-        # TODO(rcadene): add an option to enable teleoperation during reset
-        # Skip reset for the last episode to be recorded
+        # Execute a few seconds without recording to give time to manually reset the environment.
         if not events["stop_recording"] and events["rerecord_episode"]:
             log_say("Reset the environment", play_sounds)
             reset_environment(robot, events, reset_time_s, use_policy = policy is not None)
