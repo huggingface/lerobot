@@ -273,7 +273,7 @@ def record(
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
-    recorded_episodes = dataset.num_episodes
+    recorded_episodes = 0
     while True:
         if recorded_episodes >= num_episodes:
             break
@@ -300,9 +300,7 @@ def record(
         # Current code logic doesn't allow to teleoperate during this time.
         # TODO(rcadene): add an option to enable teleoperation during reset
         # Skip reset for the last episode to be recorded
-        if not events["stop_recording"] and (
-            (dataset.num_episodes < num_episodes - 1) or events["rerecord_episode"]
-        ):
+        if not events["stop_recording"] and events["rerecord_episode"]:
             log_say("Reset the environment", play_sounds)
             reset_environment(robot, events, reset_time_s, use_policy = policy is not None)
 
