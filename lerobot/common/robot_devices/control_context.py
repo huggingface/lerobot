@@ -34,7 +34,6 @@ class ControlContext:
         self.image_positions = {}
         self.padding = 20
         self.title_height = 30
-        self.controls_width = 300  # Width of the controls panel
         self.events = {
             "exit_early": False,
             "rerecord_episode": False,
@@ -77,7 +76,7 @@ class ControlContext:
             max_height = max(max_height, image.shape[0])
 
         # Adjust total width and height calculations to remove extra padding
-        total_width = max_width * grid_cols + self.controls_width
+        total_width = max_width * grid_cols
         total_height = max_height * grid_rows + self.title_height
 
         return total_width, total_height, grid_cols
@@ -93,55 +92,6 @@ class ControlContext:
         top_text = self.font.render(top_text_str, True, self.text_color)
         text_rect = top_text.get_rect(center=(window_width // 2, self.title_height // 2))
         self.screen.blit(top_text, text_rect)
-
-    def draw_right_side_bar(self, window_width: int, window_height: int):
-        # Draw controls background
-        controls_rect = pygame.Rect(
-            window_width - self.controls_width,
-            self.title_height,
-            self.controls_width,
-            window_height - self.title_height,
-        )
-        pygame.draw.rect(self.screen, self.text_bg_color, controls_rect)
-        pygame.draw.line(
-            self.screen,
-            self.text_color,
-            (controls_rect.left, self.title_height),
-            (controls_rect.left, window_height),
-            2,
-        )
-
-        # Draw "Controls" header
-        header = self.font.render("Controls", True, self.text_color)
-        header_rect = header.get_rect(
-            centerx=window_width - self.controls_width / 2, top=self.title_height + 10
-        )
-        self.screen.blit(header, header_rect)
-
-        # Draw control instructions
-        y_pos = header_rect.bottom + 20
-        for key, action in self.controls:
-            # Draw key
-            key_surface = self.small_font.render(key, True, self.text_color)
-            key_rect = key_surface.get_rect(left=window_width - self.controls_width + 20, top=y_pos)
-            self.screen.blit(key_surface, key_rect)
-
-            # Draw action
-            action_surface = self.small_font.render(action, True, self.text_color)
-            action_rect = action_surface.get_rect(left=key_rect.right + 10, top=y_pos)
-            self.screen.blit(action_surface, action_rect)
-
-            y_pos += 30
-
-        # Add status information below controls
-        y_pos += 20  # Add some spacing
-
-        # Pressed keys
-        y_pos += 30
-        keys_text = f"Keys Pressed: {', '.join(self.pressed_keys)}" if self.pressed_keys else "Keys Pressed: None"
-        keys_surface = self.small_font.render(keys_text, True, self.text_color)
-        keys_rect = keys_surface.get_rect(left=window_width - self.controls_width + 20, top=y_pos)
-        self.screen.blit(keys_surface, keys_rect)
 
     def handle_events(self):
         """Handle pygame events and update internal state"""
@@ -211,7 +161,6 @@ class ControlContext:
         pygame.draw.rect(self.screen, self.text_bg_color, (0, 0, window_width, self.title_height))
 
         self.draw_top_bar(window_width)
-        self.draw_right_side_bar(window_width, window_height)
 
         # TODO(jackvial): Would be nice to show count down timer for warmup phase and reset phase
 
@@ -246,9 +195,11 @@ if __name__ == "__main__":
         assign_rewards=True,
         debug_mode=True,
         control_phase=ControlPhase.RECORD,
-        num_episodes=5,
+        num_episodes=200,
     )
     context = ControlContext(config)
+
+    context.update_current_episode(199)
 
     # Initialize webcam
     cap = cv2.VideoCapture(0)
