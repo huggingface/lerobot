@@ -188,7 +188,16 @@ class ControlContext:
 if __name__ == "__main__":
     import torch
     import cv2
+    import time
     import numpy as np
+
+    def read_image_from_camera(cap):
+        ret, frame = cap.read()
+        if not ret:
+            print("Failed to grab frame")
+            return None
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        return torch.tensor(frame_rgb).float()
 
     config = ControlContextConfig(
         display_cameras=True,
@@ -198,42 +207,49 @@ if __name__ == "__main__":
         num_episodes=200,
     )
     context = ControlContext(config)
-
     context.update_current_episode(199)
 
-    # Initialize webcam
-    cap = cv2.VideoCapture(0)
+    # Initialize cameras with proper naming convention
+    cameras = {
+        "main": cv2.VideoCapture(0),
+        "top": cv2.VideoCapture(4)
+    }
 
-    # Check if the webcam is opened correctly
-    if not cap.isOpened():
-        raise IOError("Cannot open webcam")
+    # Check if cameras are opened correctly
+    for name, cap in cameras.items():
+        if not cap.isOpened():
+            raise Exception(f"Error: Could not open {name} camera")
 
+    # Main loop
     while True:
-        # Read frame from webcam
-        ret, frame = cap.read()
-        if not ret:
-            print("Failed to grab frame")
-            break
+        # Capture images from cameras
+        images = {}
+        camera_logs = {}
+        for name, cap in cameras.items():
+            before_camread_t = time.perf_counter()
+            images[name] = read_image_from_camera(cap)
+            camera_logs[f"read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
-        # Convert BGR to RGB (OpenCV uses BGR by default)
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # Create state tensor (simulating follower positions)
+        state = torch.tensor([10.0195, 128.9355, 173.0566, -13.2715, -7.2070, 34.4531])
 
-        # Convert to torch tensor and normalize to float
-        image = torch.tensor(frame_rgb).float()
-
-        # TODO(jackvial): Setup to support multiple cameras
-        # Create observation dictionary with state and image
-        observation = {
-            "state": torch.tensor([10.0195, 128.9355, 173.0566, -13.2715, -7.2070, 34.4531]),
-            "image": image,
+        # Construct observation dictionary with proper naming
+        obs_dict = {
+            "observation.state": state
         }
+        
+        # Add camera images to observation dictionary
+        for name in cameras:
+            obs_dict[f"observation.images.{name}"] = images[name]
 
-        context.update_with_observations(observation)
+        # Update context with observations
+        context.update_with_observations(obs_dict)
         events = context.get_events()
 
         if events["exit_early"]:
             break
 
-    # Release the webcam and cleanup
-    cap.release()
+    # Cleanup
+    for cap in cameras.values():
+        cap.release()
     cv2.destroyAllWindows()
