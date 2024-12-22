@@ -362,12 +362,16 @@ def sanity_check_dataset_name(repo_id, policy):
 
 
 def sanity_check_dataset_robot_compatibility(
-    dataset: LeRobotDataset, robot: Robot, fps: int, use_videos: bool
+    dataset: LeRobotDataset, robot: Robot, fps: int, use_videos: bool, extra_features: dict = None
 ) -> None:
+    features_from_robot = get_features_from_robot(robot, use_videos)
+    if extra_features is not None:
+        features_from_robot.update(extra_features)
+
     fields = [
         ("robot_type", dataset.meta.robot_type, robot.robot_type),
         ("fps", dataset.fps, fps),
-        ("features", dataset.features, get_features_from_robot(robot, use_videos)),
+        ("features", dataset.features, features_from_robot),
     ]
 
     mismatches = []
