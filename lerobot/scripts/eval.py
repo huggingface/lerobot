@@ -197,7 +197,6 @@ def rollout(
             )
             progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
             progbar.update()
-
             prof.step()
 
     # Track the final observation.
