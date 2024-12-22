@@ -127,7 +127,7 @@ class ControlContext:
 
         return self.events
 
-    def render_camera_frames(self, observation: Dict[str, np.ndarray]):
+    def render_scene_from_observations(self, observation: Dict[str, np.ndarray]):
         """Update display with new images from observation dict"""
         image_keys = [key for key in observation if "image" in key]
         images = {k: observation[k].numpy() for k in image_keys}
@@ -138,9 +138,7 @@ class ControlContext:
         window_width, window_height, grid_cols = self.calculate_window_size(images)
         if self.screen is None or self.screen.get_size() != (window_width, window_height):
             self.screen = pygame.display.set_mode((window_width, window_height))
-
-            # @TODO - label this window with the camera name
-            pygame.display.set_caption("Camera 0")
+            pygame.display.set_caption("LeRobot")
 
         self.screen.fill(self.text_bg_color)
 
@@ -158,17 +156,19 @@ class ControlContext:
             image_surface = pygame.surfarray.make_surface(np.transpose(image, (1, 0, 2)))
             self.screen.blit(image_surface, (x, y + self.title_height))
 
+            camera_label_text = key.split(".")[-1]
+            camera_label = self.font.render(camera_label_text, True, self.text_color)
+            self.screen.blit(camera_label, (x + 5, y + self.title_height + 5))
+
+
         pygame.draw.rect(self.screen, self.text_bg_color, (0, 0, window_width, self.title_height))
 
         self.draw_top_bar(window_width)
-
-        # TODO(jackvial): Would be nice to show count down timer for warmup phase and reset phase
-
         pygame.display.flip()
 
     def update_with_observations(self, observation: Dict[str, np.ndarray]):
         if self.config.display_cameras:
-            self.render_camera_frames(observation)
+            self.render_scene_from_observations(observation)
         self.handle_events()
         return self
 
@@ -209,21 +209,17 @@ if __name__ == "__main__":
     context = ControlContext(config)
     context.update_current_episode(199)
 
-    # Initialize cameras with proper naming convention
     cameras = {
         "main": cv2.VideoCapture(0),
         "top": cv2.VideoCapture(4),
         "web": cv2.VideoCapture(8)
     }
 
-    # Check if cameras are opened correctly
     for name, cap in cameras.items():
         if not cap.isOpened():
             raise Exception(f"Error: Could not open {name} camera")
 
-    # Main loop
     while True:
-        # Capture images from cameras
         images = {}
         camera_logs = {}
         for name, cap in cameras.items():
@@ -234,12 +230,10 @@ if __name__ == "__main__":
         # Create state tensor (simulating follower positions)
         state = torch.tensor([10.0195, 128.9355, 173.0566, -13.2715, -7.2070, 34.4531])
 
-        # Construct observation dictionary with proper naming
         obs_dict = {
             "observation.state": state
         }
         
-        # Add camera images to observation dictionary
         for name in cameras:
             obs_dict[f"observation.images.{name}"] = images[name]
 
@@ -250,7 +244,6 @@ if __name__ == "__main__":
         if events["exit_early"]:
             break
 
-    # Cleanup
     for cap in cameras.values():
         cap.release()
     cv2.destroyAllWindows()
