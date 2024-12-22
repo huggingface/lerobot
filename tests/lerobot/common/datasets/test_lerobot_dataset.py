@@ -17,14 +17,6 @@
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.common.exceptions import DatasetExistException
 from tests.utils import make_robot
-from tests.fixtures.constants import (
-    DEFAULT_FPS,
-    DUMMY_CAMERA_FEATURES,
-    DUMMY_MOTOR_FEATURES,
-    DUMMY_REPO_ID,
-    DUMMY_ROBOT_TYPE,
-    DUMMY_VIDEO_INFO,
-)
 import pytest
 
 def test_create_dataset(tmp_path):
