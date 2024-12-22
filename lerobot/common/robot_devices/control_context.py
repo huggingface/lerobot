@@ -212,7 +212,8 @@ if __name__ == "__main__":
     # Initialize cameras with proper naming convention
     cameras = {
         "main": cv2.VideoCapture(0),
-        "top": cv2.VideoCapture(4)
+        "top": cv2.VideoCapture(4),
+        "web": cv2.VideoCapture(8)
     }
 
     # Check if cameras are opened correctly
