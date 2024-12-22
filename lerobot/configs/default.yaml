@@ -94,7 +94,8 @@ training:
   #   min_max: Lower & upper bound respectively used for sampling the transform's parameter
   #           (following uniform distribution) when it's applied.
     # Set this flag to `true` to enable transforms during training
-    enable: true
+    # enable: true
+    enable: false
     # This is the maximum number of transforms (sampled from these below) that will be applied to each frame.
     # It's an integer in the interval [1, number of available transforms].
     max_num_transforms: 3

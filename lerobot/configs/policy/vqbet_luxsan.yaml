@@ -3,49 +3,50 @@
 # Defaults for training for the PushT dataset.
 
 seed: 100000
-# dataset_repo_id: absolutebogus
-dataset_repo_id: luxsan_mofo_v8
+hdf5_data_dir: False
+dataset_repo_id: luxsan_mofo_v8/train
 
-# hdf5_data_dir: /home/hemanth/imitation_learning/hdf5/dec_4_dec_5/sim
-# hdf5_data_dir: /home/hemanth/imitation_learning/hdf5/dec_4/sim
 root: /home/hemanth/imitation_learning
 
-# hdf5_data_dir: /home/hemanth/imitation_learning/hdf5/small_dataset_oct_10_14/sim
 hydra:
   job:
-    # name: red_plastic_multiple_dec4_dec_5_nobs1
-    name: luxsan_mofo_v8
+    name: luxsan_mofo_v8_pretrained_resnet_batchnorm_augfix
+    # name: luxsan_mofo_v8_groupnorm_augfix
+
 override_dataset_stats:
-  observation.images.cam1:
+  observation.images.camera_d40501_color:
     # stats from imagenet, since we use a pretrained vision model
     mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
     std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
-  observation.images.cam2:
+
+  observation.images.camera_d40502_color:
     # stats from imagenet, since we use a pretrained vision model
     mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
     std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
-  observation.images.cam3:
+
+  observation.images.camera_l515_color:
     # stats from imagenet, since we use a pretrained vision model
     mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
     std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
   # TODO(rcadene, alexander-soare): we override state and action stats to use the same as the pretrained model
   # from the original codebase, but we should remove these and train our own pretrained model
-  observation.state:
-    min: [-360, 0]
-    max: [360, 120]
-  action:
-    min: [126.6000, -752.2200, 124.2200, -180, 0.0000]
-    max: [599.7500, 468.9600, 1299.1801, 180, 1.0000]
+
+  # observation.state:
+  #   min: [-360, 0]
+  #   max: [360, 120]
+  # action:
+  #   min: [126.6000, -752.2200, 124.2200, -180, 0.0000]
+  #   max: [599.7500, 468.9600, 1299.1801, 180, 1.0000]
 
 training:
-  offline_steps: 250000
+  offline_steps: 1000000
   online_steps: 0
   eval_freq: -1
   save_freq: 25000
   save_checkpoint: true
   num_workers: 16
 
-  batch_size: 8
+  batch_size: 32
   grad_clip_norm: 10
   lr: 1.0e-4
   lr_scheduler: cosine
@@ -63,9 +64,9 @@ training:
   bet_betas: [0.9, 0.999]
 
   delta_timestamps:
-    observation.images.cam1: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
-    observation.images.cam2: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
-    observation.images.cam3: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.images.camera_d40501_color: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.images.camera_d40502_color: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.images.camera_l515_color: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
     observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
     action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, ${policy.n_action_pred_token} + ${policy.action_chunk_size} - 1)]"
 
@@ -80,26 +81,25 @@ policy:
   n_obs_steps: 1
   # n_obs_steps: 5
   n_action_pred_token: 7
-  action_chunk_size: 5
+  action_chunk_size: 30
 
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
-    observation.images.cam1: [3, 480, 640]
-    observation.images.cam2: [3, 480, 640]
-    observation.images.cam3: [3, 480, 640]
+    observation.images.camera_d40501_color: [3, 480, 640]
+    observation.images.camera_d40502_color: [3, 480, 640]
+    observation.images.camera_l515_color: [3, 480, 640]
     observation.state: ["${env.state_dim}"]
   output_shapes:
     action: ["${env.action_dim}"]
 
   # Normalization / Unnormalization
   input_normalization_modes:
-    observation.images.cam1: mean_std
-    observation.images.cam2: mean_std
-    observation.images.cam3: mean_std
-
-    observation.state: min_max
+    observation.images.camera_d40501_color: mean_std
+    observation.images.camera_d40502_color: mean_std
+    observation.images.camera_l515_color: mean_std
+    observation.state: mean_std
   output_normalization_modes:
-    action: min_max
+    action: mean_std
 
   # Architecture / modeling.
   # Vision backbone.
@@ -107,9 +107,10 @@ policy:
   crop_shape: null
   # crop_shape: [84, 84]
   crop_is_random: False
-  # pretrained_backbone_weights: ResNet18_Weights.IMAGENET1K_V1 # can only use this if you use batch norm instead of group norm
-  pretrained_backbone_weights: null
-  use_group_norm: True
+  pretrained_backbone_weights: ResNet18_Weights.IMAGENET1K_V1 # can only use this if you use batch norm instead of group norm
+  # pretrained_backbone_weights: null
+  use_group_norm: false
+  # use_group_norm: true
   spatial_softmax_num_keypoints: 32
   # VQ-VAE
   n_vqvae_training_steps: ${training.n_vqvae_training_steps}

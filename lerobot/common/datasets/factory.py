@@ -90,7 +90,7 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
             random_order=cfg_tf.random_order,
         )
 
-    if cfg.hdf5_data_dir:
+    if cfg.get("hdf5_data_dir", False):
         from pathlib import Path
         from lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format import from_raw_to_lerobot_format
         from lerobot.common.datasets.compute_stats import compute_stats
@@ -118,6 +118,7 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
     elif isinstance(cfg.dataset_repo_id, str):
         dataset = LeRobotDataset(
             cfg.dataset_repo_id,
+            root=cfg.get("root", None),
             split=split,
             delta_timestamps=cfg.training.get("delta_timestamps"),
             image_transforms=image_transforms,

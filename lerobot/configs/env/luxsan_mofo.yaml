@@ -1,0 +1,11 @@
+# @package _global_
+
+fps: 30
+
+env:
+  name: real_world
+  task: null
+  state_dim: 2 # left force sensor # right force sensor
+  action_dim: 16 # left arm 6 joints + right arm 6 joints + left 1 sucker + right 1sucker + 1 left reset button  + 1 right reset button
+  fps: ${fps}
+  episode_length: 900
