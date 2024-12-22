@@ -14,10 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.common.exceptions import DatasetExistException
-from tests.utils import make_robot
 import pytest
+
+from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.common.exceptions import DatasetExistError
+from tests.utils import make_robot
+
 
 def test_create_dataset(tmp_path):
     repo_id = "test_repo"
@@ -53,7 +55,7 @@ def test_create_dataset_when_meta_cache_already_exists(tmp_path):
         use_videos=True,
     )
 
-    with pytest.raises(DatasetExistException):
+    with pytest.raises(DatasetExistError):
         LeRobotDatasetMetadata.create(
             repo_id=repo_id,
             fps=fps,

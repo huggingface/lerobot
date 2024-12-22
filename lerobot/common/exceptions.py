@@ -15,5 +15,5 @@
 # limitations under the License.
 
 # The exception is raised when user tries to create a dataset that already exists
-class DatasetExistException(FileExistsError):
+class DatasetExistError(FileExistsError):
     pass

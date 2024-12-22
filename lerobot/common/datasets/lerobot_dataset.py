@@ -64,8 +64,8 @@ from lerobot.common.datasets.video_utils import (
     encode_video_frames,
     get_video_info,
 )
+from lerobot.common.exceptions import DatasetExistError
 from lerobot.common.robot_devices.robots.utils import Robot
-from lerobot.common.exceptions import DatasetExistException
 
 # For maintainers, see lerobot/common/datasets/push_dataset_to_hub/CODEBASE_VERSION.md
 CODEBASE_VERSION = "v2.0"
@@ -292,7 +292,7 @@ class LeRobotDatasetMetadata:
         try:
             obj.root.mkdir(parents=True, exist_ok=False)
         except FileExistsError as e:
-            raise DatasetExistException(e)
+            raise DatasetExistError(e) from e
 
         if robot is not None:
             features = get_features_from_robot(robot, use_videos)

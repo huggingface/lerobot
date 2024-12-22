@@ -80,7 +80,7 @@ import numpy as np
 import torch
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.exceptions import DatasetExistException
+from lerobot.common.exceptions import DatasetExistError
 from lerobot.common.robot_devices.control_utils import (
     init_keyboard_listener,
     init_policy,
@@ -533,7 +533,7 @@ if __name__ == "__main__":
     elif control_mode == "record":
         try:
             record(env_constructor, robot, process_leader_actions_fn, **kwargs)
-        except DatasetExistException as e:
+        except DatasetExistError as e:
             logging.error(f"Dataset already exists: {e}")
             logging.error("To resume from the existing dataset, please pass the `--resume` flag.")
 
