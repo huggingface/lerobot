@@ -14,9 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 from huggingface_hub import DatasetCard
+
 from lerobot.common.datasets.utils import create_lerobot_dataset_card
+
 
 def test_default_parameters():
     card = create_lerobot_dataset_card()
@@ -29,6 +30,7 @@ def test_default_parameters():
             "data_files": "data/*/*.parquet",
         }
     ]
+
 
 def test_with_tags():
     tags = ["tag1", "tag2"]
