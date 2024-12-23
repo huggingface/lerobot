@@ -13,12 +13,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import importlib.resources
 import json
 import logging
 import textwrap
+from collections.abc import Iterator
 from itertools import accumulate
 from pathlib import Path
 from pprint import pformat
+from types import SimpleNamespace
 from typing import Any
 
 import datasets
@@ -476,6 +479,8 @@ def create_lerobot_dataset_card(
     Note: If specified, license must be one of https://huggingface.co/docs/hub/repositories-licenses.
     """
     card_tags = ["LeRobot"]
+    card_template_path = importlib.resources.path("lerobot.common.datasets", "card_template.md")
+
     if tags:
         card_tags += tags
     if dataset_info:
@@ -493,8 +498,64 @@ def create_lerobot_dataset_card(
             }
         ],
     )
+
     return DatasetCard.from_template(
         card_data=card_data,
-        template_path="./lerobot/common/datasets/card_template.md",
+        template_path=str(card_template_path),
         **kwargs,
     )
+
+
+class IterableNamespace(SimpleNamespace):
+    """
+    A namespace object that supports both dictionary-like iteration and dot notation access.
+    Automatically converts nested dictionaries into IterableNamespaces.
+
+    This class extends SimpleNamespace to provide:
+    - Dictionary-style iteration over keys
+    - Access to items via both dot notation (obj.key) and brackets (obj["key"])
+    - Dictionary-like methods: items(), keys(), values()
+    - Recursive conversion of nested dictionaries
+
+    Args:
+        dictionary: Optional dictionary to initialize the namespace
+        **kwargs: Additional keyword arguments passed to SimpleNamespace
+
+    Examples:
+        >>> data = {"name": "Alice", "details": {"age": 25}}
+        >>> ns = IterableNamespace(data)
+        >>> ns.name
+        'Alice'
+        >>> ns.details.age
+        25
+        >>> list(ns.keys())
+        ['name', 'details']
+        >>> for key, value in ns.items():
+        ...     print(f"{key}: {value}")
+        name: Alice
+        details: IterableNamespace(age=25)
+    """
+
+    def __init__(self, dictionary: dict[str, Any] = None, **kwargs):
+        super().__init__(**kwargs)
+        if dictionary is not None:
+            for key, value in dictionary.items():
+                if isinstance(value, dict):
+                    setattr(self, key, IterableNamespace(value))
+                else:
+                    setattr(self, key, value)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(vars(self))
+
+    def __getitem__(self, key: str) -> Any:
+        return vars(self)[key]
+
+    def items(self):
+        return vars(self).items()
+
+    def values(self):
+        return vars(self).values()
+
+    def keys(self):
+        return vars(self).keys()
