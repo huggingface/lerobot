@@ -184,6 +184,7 @@ def teleoperate(
             display_cameras=display_cameras,
             control_phase=ControlPhase.TELEOPERATE,
             robot=robot,
+            fps=fps,
         )
     )
     control_loop(
@@ -286,6 +287,7 @@ def record(
             display_cameras=display_cameras,
             play_sounds=play_sounds,
             assign_rewards=False,
+            fps=fps,
         )
     )
 
@@ -298,11 +300,13 @@ def record(
     # initialize a new class
     control_context = ControlContext(
         config=ControlContextConfig(
+            robot=robot,
             control_phase=ControlPhase.RECORD,
             display_cameras=display_cameras,
             play_sounds=play_sounds,
             assign_rewards=False,
             num_episodes=num_episodes,
+            fps=fps,
         )
     )
 

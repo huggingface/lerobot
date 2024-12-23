@@ -164,7 +164,6 @@
 
         // Handle incoming observation updates
         socket.on('observation_update', function(data) {
-            console.log('Received observation update:', data);
             
             // Update timestamp
             if (data.timestamp) {

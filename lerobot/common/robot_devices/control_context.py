@@ -26,10 +26,10 @@ class ControlContextConfig:
     display_cameras: bool = False
     play_sounds: bool = False
     assign_rewards: bool = False
-    debug_mode: bool = False
     control_phase: str = ControlPhase.TELEOPERATE
     num_episodes: int = 0
-    robot: Robot
+    robot: Robot = None
+    fps: Optional[int] = None
 
 
 class ControlContext:
@@ -119,8 +119,6 @@ class ControlContext:
     def handle_events(self):
         """Handle pygame events and update internal state"""
         for event in pygame.event.get():
-            if self.config.debug_mode:
-                print(event)
             if event.type == pygame.QUIT:
                 self.events["stop_recording"] = True
                 self.events["exit_early"] = True
@@ -230,7 +228,6 @@ class ControlContext:
             "display_cameras": self.config.display_cameras,
             "play_sounds": self.config.play_sounds,
             "assign_rewards": self.config.assign_rewards,
-            "debug_mode": self.config.debug_mode,
             "control_phase": self.config.control_phase,
             "num_episodes": self.config.num_episodes,
             "current_episode": self.current_episode_index
@@ -297,8 +294,9 @@ class ControlContext:
     def get_events(self):
         return self.events.copy()
     
-    def log_control_info(self, start_loop_t, fps=None):
+    def log_control_info(self, start_loop_t):
         log_items = []
+        fps = self.config.fps
         if fps is not None:
             dt_s = time.perf_counter() - start_loop_t
             busy_wait(1 / fps - dt_s)
@@ -333,9 +331,9 @@ if __name__ == "__main__":
     config = ControlContextConfig(
         display_cameras=False,
         assign_rewards=True,
-        debug_mode=True,
         control_phase=ControlPhase.RECORD,
         num_episodes=200,
+        fps=30
     )
     context = ControlContext(config)
     context.update_current_episode(199)
