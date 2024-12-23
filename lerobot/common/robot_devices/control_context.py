@@ -139,6 +139,38 @@ class ControlContext:
                     self.pressed_keys.remove(key_name)
 
         return self.events
+    
+    def handle_browser_events(self, key_pressed: str):
+        """
+        Translate a key pressed in the web UI to the same event logic used in Pygame.
+        """
+
+        try:
+            msg = self.command_sub_socket.recv_json()
+            
+            if msg.get("type") == "command" and msg.get("command") == "keydown":
+                key_pressed = msg.get("key_pressed")
+
+                if key_pressed == "ArrowRight":
+                    print("Received 'ArrowRight' from browser -> Exit Early")
+                    self.events["exit_early"] = True
+                elif key_pressed == "ArrowLeft":
+                    print("Received 'ArrowLeft' from browser -> Rerecord Episode")
+                    self.events["rerecord_episode"] = True
+                    self.events["exit_early"] = True
+                elif key_pressed == "Escape":
+                    print("Received 'Escape' from browser -> Stop")
+                    self.events["stop_recording"] = True
+                    self.events["exit_early"] = True
+                elif key_pressed == "Space":
+                    # Toggle "next_reward"
+                    self.events["next_reward"] = 1 if self.events["next_reward"] == 0 else 0
+                    print(f"Space toggled reward to {self.events['next_reward']}")
+
+        except zmq.Again:
+            pass
+        except Exception as e:
+            print(f"Error while polling for commands: {e}")
 
     def publish_observations(self, observation: Dict[str, np.ndarray]):
         """
@@ -238,46 +270,8 @@ class ControlContext:
         self.publish_observations(observation)
 
         self.handle_events()
-        self.check_for_keyboard_events_from_browser()
+        self.handle_browser_events()
         return self
-    
-    def check_for_keyboard_events_from_browser(self):
-        try:
-            # If there's data, receive it
-            msg = self.command_sub_socket.recv_json()
-            print("msg: ", msg)
-            
-            if msg.get("type") == "command" and msg.get("command") == "keydown":
-                self.handle_browser_keyboard_event(msg.get("key_pressed"))
-
-        except zmq.Again:
-            pass
-        except Exception as e:
-            print(f"Error while polling for commands: {e}")
-
-    def handle_browser_keyboard_event(self, key_pressed: str):
-        """
-        Translate a key pressed in the web UI to the same event logic used in Pygame.
-        """
-
-        print("key_pressed: ", key_pressed)
-
-        if key_pressed == "ArrowRight":
-            print("Received 'ArrowRight' from browser -> Exit Early")
-            self.events["exit_early"] = True
-        elif key_pressed == "ArrowLeft":
-            print("Received 'ArrowLeft' from browser -> Rerecord Episode")
-            self.events["rerecord_episode"] = True
-            self.events["exit_early"] = True
-        elif key_pressed == "Escape":
-            print("Received 'Escape' from browser -> Stop")
-            self.events["stop_recording"] = True
-            self.events["exit_early"] = True
-        elif key_pressed == "Space":
-            # Toggle "next_reward"
-            self.events["next_reward"] = 1 if self.events["next_reward"] == 0 else 0
-            print(f"Space toggled reward to {self.events['next_reward']}")
-
 
     def update_current_episode(self, episode_index):
         self.current_episode_index = episode_index
@@ -309,7 +303,7 @@ if __name__ == "__main__":
         return torch.tensor(frame_rgb).float()
 
     config = ControlContextConfig(
-        display_cameras=True,
+        display_cameras=False,
         assign_rewards=True,
         debug_mode=True,
         control_phase=ControlPhase.RECORD,

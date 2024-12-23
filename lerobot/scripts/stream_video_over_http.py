@@ -19,17 +19,19 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 # Global dictionary to hold the latest observation data from ZeroMQ
 latest_observation = {}
 
-# Set up ZMQ context and SUB socket
 zmq_context = zmq.Context()
+
+# For recieving observation (camera frames, state, events) from ControlContext
+# so we can send them to the browser
 subscriber_socket = zmq_context.socket(zmq.SUB)
 subscriber_socket.connect("tcp://127.0.0.1:5555")
 subscriber_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
+# For sending keydown events from the browser to ControlContext
 command_publisher = zmq_context.socket(zmq.PUB)
 command_publisher.bind("tcp://127.0.0.1:5556")
 
 def zmq_consumer():
-    """Thread function to consume ZMQ messages and emit to connected clients."""
     while True:
         try:
             message = subscriber_socket.recv_json()
@@ -58,7 +60,7 @@ def zmq_consumer():
                 # Update latest observation
                 latest_observation.update(processed_data)
                 
-                # Emit the full observation to all connected clients
+                # Emit the observation data to the browser
                 socketio.emit("observation_update", processed_data)
                 
         except Exception as e:
@@ -74,7 +76,6 @@ def handle_keydown_event(data):
     When the browser sends a keydown_event, we publish it over ZeroMQ.
     """
     key_pressed = data.get("key")
-    print(f"Received key event from browser: {key_pressed}")
 
     # Publish over ZeroMQ
     message = {

@@ -104,7 +104,6 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.robot_devices.control_utils import (
     control_loop,
     has_method,
-    init_keyboard_listener,
     init_policy,
     log_control_info,
     record_episode,
