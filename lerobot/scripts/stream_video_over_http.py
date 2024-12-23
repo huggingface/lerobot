@@ -25,6 +25,9 @@ subscriber_socket = zmq_context.socket(zmq.SUB)
 subscriber_socket.connect("tcp://127.0.0.1:5555")
 subscriber_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
+command_publisher = zmq_context.socket(zmq.PUB)
+command_publisher.bind("tcp://127.0.0.1:5556")
+
 def zmq_consumer():
     """Thread function to consume ZMQ messages and emit to connected clients."""
     while True:
@@ -63,6 +66,23 @@ def zmq_consumer():
             time.sleep(1)
             
         time.sleep(0.001)  # Small sleep to prevent busy-waiting
+
+
+@socketio.on("keydown_event")
+def handle_keydown_event(data):
+    """
+    When the browser sends a keydown_event, we publish it over ZeroMQ.
+    """
+    key_pressed = data.get("key")
+    print(f"Received key event from browser: {key_pressed}")
+
+    # Publish over ZeroMQ
+    message = {
+        "type": "command",
+        "command": "keydown",
+        "key_pressed": key_pressed
+    }
+    command_publisher.send_json(message)
 
 @app.route("/")
 def index():

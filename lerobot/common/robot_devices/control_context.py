@@ -64,14 +64,16 @@ class ControlContext:
             ("Space", "Toggle Reward"),
         ]
 
-        # -------------------------------
-        # ZeroMQ Setup (Publisher)
-        # -------------------------------
         self.zmq_context = zmq.Context()
+
         self.publisher_socket = self.zmq_context.socket(zmq.PUB)
-        # Bind to a TCP port. Adjust IP/port as needed.
         self.publisher_socket.bind("tcp://127.0.0.1:5555")
-        # -------------------------------
+
+        self.command_sub_socket = self.zmq_context.socket(zmq.SUB)
+        self.command_sub_socket.connect("tcp://127.0.0.1:5556")
+
+        # Subscribe to all messages
+        self.command_sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
     def calculate_window_size(self, images: Dict[str, np.ndarray]):
         """Calculate required window size based on images"""
@@ -236,7 +238,46 @@ class ControlContext:
         self.publish_observations(observation)
 
         self.handle_events()
+        self.check_for_keyboard_events_from_browser()
         return self
+    
+    def check_for_keyboard_events_from_browser(self):
+        try:
+            # If there's data, receive it
+            msg = self.command_sub_socket.recv_json()
+            print("msg: ", msg)
+            
+            if msg.get("type") == "command" and msg.get("command") == "keydown":
+                self.handle_browser_keyboard_event(msg.get("key_pressed"))
+
+        except zmq.Again:
+            pass
+        except Exception as e:
+            print(f"Error while polling for commands: {e}")
+
+    def handle_browser_keyboard_event(self, key_pressed: str):
+        """
+        Translate a key pressed in the web UI to the same event logic used in Pygame.
+        """
+
+        print("key_pressed: ", key_pressed)
+
+        if key_pressed == "ArrowRight":
+            print("Received 'ArrowRight' from browser -> Exit Early")
+            self.events["exit_early"] = True
+        elif key_pressed == "ArrowLeft":
+            print("Received 'ArrowLeft' from browser -> Rerecord Episode")
+            self.events["rerecord_episode"] = True
+            self.events["exit_early"] = True
+        elif key_pressed == "Escape":
+            print("Received 'Escape' from browser -> Stop")
+            self.events["stop_recording"] = True
+            self.events["exit_early"] = True
+        elif key_pressed == "Space":
+            # Toggle "next_reward"
+            self.events["next_reward"] = 1 if self.events["next_reward"] == 0 else 0
+            print(f"Space toggled reward to {self.events['next_reward']}")
+
 
     def update_current_episode(self, episode_index):
         self.current_episode_index = episode_index

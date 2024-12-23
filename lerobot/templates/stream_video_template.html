@@ -233,15 +233,19 @@
             switch(event.key) {
                 case 'ArrowRight':
                     console.log('Right arrow pressed - Exit Early');
+                    socket.emit('keydown_event', { key: 'ArrowRight' });
                     break;
                 case 'ArrowLeft':
                     console.log('Left arrow pressed - Rerecord');
+                    socket.emit('keydown_event', { key: 'ArrowLeft' });
                     break;
                 case 'Escape':
                     console.log('Escape pressed - Stop');
+                    socket.emit('keydown_event', { key: 'Escape' });
                     break;
                 case ' ':  // Space key
                     console.log('Space pressed - Toggle Reward');
+                    socket.emit('keydown_event', { key: 'Space' });
                     break;
             }
         });
