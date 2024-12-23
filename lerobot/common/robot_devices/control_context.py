@@ -140,34 +140,39 @@ class ControlContext:
 
         return self.events
     
-    def handle_browser_events(self, key_pressed: str):
+    def handle_browser_events(self):
         """
         Translate a key pressed in the web UI to the same event logic used in Pygame.
         """
-
         try:
-            msg = self.command_sub_socket.recv_json()
-            
-            if msg.get("type") == "command" and msg.get("command") == "keydown":
-                key_pressed = msg.get("key_pressed")
+            # Set a non-blocking polls
+            if self.command_sub_socket.poll(timeout=0):  # Check if there's a message
+                msg = self.command_sub_socket.recv_json()
 
-                if key_pressed == "ArrowRight":
-                    print("Received 'ArrowRight' from browser -> Exit Early")
-                    self.events["exit_early"] = True
-                elif key_pressed == "ArrowLeft":
-                    print("Received 'ArrowLeft' from browser -> Rerecord Episode")
-                    self.events["rerecord_episode"] = True
-                    self.events["exit_early"] = True
-                elif key_pressed == "Escape":
-                    print("Received 'Escape' from browser -> Stop")
-                    self.events["stop_recording"] = True
-                    self.events["exit_early"] = True
-                elif key_pressed == "Space":
-                    # Toggle "next_reward"
-                    self.events["next_reward"] = 1 if self.events["next_reward"] == 0 else 0
-                    print(f"Space toggled reward to {self.events['next_reward']}")
+                if msg.get("type") == "command" and msg.get("command") == "keydown":
+                    key_pressed = msg.get("key_pressed")
+
+                    if key_pressed == "ArrowRight":
+                        print("Received 'ArrowRight' from browser -> Exit Early")
+                        self.events["exit_early"] = True
+                    elif key_pressed == "ArrowLeft":
+                        print("Received 'ArrowLeft' from browser -> Rerecord Episode")
+                        self.events["rerecord_episode"] = True
+                        self.events["exit_early"] = True
+                    elif key_pressed == "Escape":
+                        print("Received 'Escape' from browser -> Stop")
+                        self.events["stop_recording"] = True
+                        self.events["exit_early"] = True
+                    elif key_pressed == "Space":
+                        # Toggle "next_reward"
+                        self.events["next_reward"] = 1 if self.events["next_reward"] == 0 else 0
+                        print(f"Space toggled reward to {self.events['next_reward']}")
+            else:
+                # No message available, continue
+                pass
 
         except zmq.Again:
+            # No message received within timeout
             pass
         except Exception as e:
             print(f"Error while polling for commands: {e}")
