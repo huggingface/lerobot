@@ -183,6 +183,7 @@ def teleoperate(
         config=ControlContextConfig(
             display_cameras=display_cameras,
             control_phase=ControlPhase.TELEOPERATE,
+            robot=robot,
         )
     )
     control_loop(
@@ -280,6 +281,7 @@ def record(
 
     control_context = ControlContext(
         config=ControlContextConfig(
+            robot=robot,
             control_phase=ControlPhase.WARMUP,
             display_cameras=display_cameras,
             play_sounds=play_sounds,

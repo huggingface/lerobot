@@ -7,6 +7,11 @@ import base64
 import zmq
 import torch
 import time
+from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.common.robot_devices.utils import busy_wait
+from lerobot.common.robot_devices.control_utils import (
+    log_control_info
+)
 
 
 class ControlPhase:
@@ -24,11 +29,16 @@ class ControlContextConfig:
     debug_mode: bool = False
     control_phase: str = ControlPhase.TELEOPERATE
     num_episodes: int = 0
+    robot: Robot
 
 
 class ControlContext:
-    def __init__(self, config: Optional[ControlContextConfig] = None):
-        self.config = config or ControlContextConfig()
+    def __init__(self, config: ControlContextConfig):
+        self.config = config
+
+        if not self.config.robot:
+            raise ValueError("Robot object must be provided in ControlContextConfig")
+
         pygame.init()
         if not self.config.display_cameras:
             pygame.display.set_mode((1, 1), pygame.HIDDEN)
@@ -177,7 +187,7 @@ class ControlContext:
         except Exception as e:
             print(f"Error while polling for commands: {e}")
 
-    def publish_observations(self, observation: Dict[str, np.ndarray]):
+    def publish_observations(self, observation: Dict[str, np.ndarray], log_items: list):
         """
         Encode and publish the full observation object via ZeroMQ PUB socket.
         Includes observation data, events, and config information.
@@ -231,7 +241,8 @@ class ControlContext:
             "timestamp": time.time(),
             "data": processed_data,
             "events": events_data,
-            "config": config_data
+            "config": config_data,
+            "log_items": log_items
         }
         
         # Send JSON over ZeroMQ
@@ -270,9 +281,10 @@ class ControlContext:
             self.draw_top_bar(window_width)
             pygame.display.flip()
 
-    def update_with_observations(self, observation: Dict[str, np.ndarray]):
+    def update_with_observations(self, observation: Dict[str, np.ndarray], start_loop_t: int):
+        log_items = self.log_control_info(start_loop_t)
         self.render_scene_from_observations(observation)
-        self.publish_observations(observation)
+        self.publish_observations(observation, log_items)
 
         self.handle_events()
         self.handle_browser_events()
@@ -284,11 +296,22 @@ class ControlContext:
 
     def get_events(self):
         return self.events.copy()
+    
+    def log_control_info(self, start_loop_t, fps=None):
+        log_items = []
+        if fps is not None:
+            dt_s = time.perf_counter() - start_loop_t
+            busy_wait(1 / fps - dt_s)
 
-    def cleanup(self, robot):
-        robot.disconnect()
+            dt_s = time.perf_counter() - start_loop_t
+            log_items = log_control_info(self.config.robot, dt_s, fps=fps)
+
+        return log_items
+
+    def cleanup(self):
+        self.config.robot.disconnect()
         pygame.quit()
-        # Clean up ZMQ socket
+
         self.publisher_socket.close()
         self.zmq_context.term()
 

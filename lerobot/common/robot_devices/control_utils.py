@@ -25,7 +25,6 @@ from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 
-# TODO(jackvial): Move this to ControlContext and make configurable
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
     if episode_index is not None:
@@ -68,6 +67,7 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
 
     info_str = " ".join(log_items)
     logging.info(info_str)
+    return log_items
 
 
 @cache
@@ -277,14 +277,7 @@ def control_loop(
                 frame = {**observation, **action}
                 dataset.add_frame(frame)
 
-            control_context.update_with_observations(observation)
-
-            if fps is not None:
-                dt_s = time.perf_counter() - start_loop_t
-                busy_wait(1 / fps - dt_s)
-
-            dt_s = time.perf_counter() - start_loop_t
-            # log_control_info(robot, dt_s, fps=fps)
+            control_context.update_with_observations(observation, start_loop_t)
 
             timestamp = time.perf_counter() - start_episode_t
             if events["exit_early"]:

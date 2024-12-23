@@ -75,6 +75,12 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Log Panel -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold mb-4 text-gray-700">Logs</h3>
+                <div id="log-items" class="space-y-2"></div>
+            </div>
         </div>
     </div>
 
@@ -143,6 +149,19 @@
             }
         }
 
+        // Update log display
+        function updateLogs(logItems) {
+            const logContainer = document.getElementById('log-items');
+            logContainer.innerHTML = '';
+            
+            logItems.forEach(item => {
+                const logElement = document.createElement('div');
+                logElement.className = 'font-mono text-sm';
+                logElement.textContent = item;
+                logContainer.appendChild(logElement);
+            });
+        }
+
         // Handle incoming observation updates
         socket.on('observation_update', function(data) {
             console.log('Received observation update:', data);
@@ -201,6 +220,11 @@
             // Update events
             if (data.events) {
                 updateEvents(data.events);
+            }
+
+            // Update logs
+            if (data.log_items) {
+                updateLogs(data.log_items);
             }
         });
 

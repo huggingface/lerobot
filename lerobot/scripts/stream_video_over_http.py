@@ -41,7 +41,8 @@ def zmq_consumer():
                     "images": {},
                     "state": {},
                     "events": message.get("events", {}),
-                    "config": message.get("config", {})
+                    "config": message.get("config", {}),
+                    "log_items": message.get("log_items", [])
                 }
 
                 # Process observation data
