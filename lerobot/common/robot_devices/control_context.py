@@ -2,18 +2,16 @@ import pygame
 import numpy as np
 from typing import Dict, Optional
 from dataclasses import dataclass
-import multiprocessing as mp
-from multiprocessing import shared_memory
 import json
+import cv2
+import base64
+import zmq
 
-
-# Create an enum for ControlPhase
 class ControlPhase:
     TELEOPERATE = "Teleoperate"
     WARMUP = "Warmup"
     RECORD = "Record"
     RESET = "Reset"
-
 
 @dataclass
 class ControlContextConfig:
@@ -21,9 +19,8 @@ class ControlContextConfig:
     play_sounds: bool = False
     assign_rewards: bool = False
     debug_mode: bool = False
-    control_phase: ControlPhase = ControlPhase.TELEOPERATE
+    control_phase: str = ControlPhase.TELEOPERATE
     num_episodes: int = 0
-    use_shared_memory: bool = True
 
 class ControlContext:
     def __init__(self, config: Optional[ControlContextConfig] = None):
@@ -43,22 +40,17 @@ class ControlContext:
             "next_reward": 0,
         }
 
-        if config.assign_rewards:
+        if self.config.assign_rewards:
             self.events["next_reward"] = 0
 
-        # Shared memory setup
-        self.shared_mem = {}
-        if self.config.use_shared_memory:
-            self.setup_shared_memory()
-
         self.pressed_keys = []
-        self.font = pygame.font.SysFont('courier', 24)  # Courier is a monospace font
-        self.small_font = pygame.font.SysFont('courier', 18)  # Smaller font for controls list
+        self.font = pygame.font.SysFont('courier', 24)
+        self.small_font = pygame.font.SysFont('courier', 18)
         self.current_episode_index = 0
 
         # Color theme
-        self.text_bg_color = (0, 0, 0)  # Black
-        self.text_color = (0, 255, 0)  # Green
+        self.text_bg_color = (0, 0, 0)
+        self.text_color = (0, 255, 0)
 
         # Define the control instructions
         self.controls = [
@@ -67,6 +59,15 @@ class ControlContext:
             ("Escape", "Stop"),
             ("Space", "Toggle Reward"),
         ]
+
+        # -------------------------------
+        # ZeroMQ Setup (Publisher)
+        # -------------------------------
+        self.zmq_context = zmq.Context()
+        self.publisher_socket = self.zmq_context.socket(zmq.PUB)
+        # Bind to a TCP port. Adjust IP/port as needed.
+        self.publisher_socket.bind("tcp://127.0.0.1:5555")
+        # -------------------------------
 
     def calculate_window_size(self, images: Dict[str, np.ndarray]):
         """Calculate required window size based on images"""
@@ -82,7 +83,6 @@ class ControlContext:
             max_width = max(max_width, image.shape[1])
             max_height = max(max_height, image.shape[0])
 
-        # Adjust total width and height calculations to remove extra padding
         total_width = max_width * grid_cols
         total_height = max_height * grid_rows + self.title_height
 
@@ -133,99 +133,77 @@ class ControlContext:
                     self.pressed_keys.remove(key_name)
 
         return self.events
-    
-    def setup_shared_memory(self):
-        # Create shared memory blocks for each camera
-        # We'll store the shape information in a separate shared memory block
-        self.shared_mem['metadata'] = shared_memory.SharedMemory(
-            name='camera_metadata',
-            create=True,
-            size=1024  # Enough space for JSON metadata
-        )
 
-    def cleanup_shared_memory(self):
-        if hasattr(self, 'shared_mem'):
-            for name, shm in self.shared_mem.items():
-                shm.close()
-                shm.unlink()
-
-    def update_shared_memory(self, images: Dict[str, np.ndarray]):
-        if not self.config.use_shared_memory:
-            return
-
-        metadata = {}
+    def publish_frames(self, images: Dict[str, np.ndarray]):
+        """
+        Encode each image as JPEG -> base64 -> JSON, then send via ZeroMQ PUB socket.
+        """
+        frame_data = {}
         for name, image in images.items():
-            if name not in self.shared_mem:
-                # Create new shared memory block for this camera
-                shm_name = f'camera_{name}'
-                shm = shared_memory.SharedMemory(
-                    name=shm_name,
-                    create=True,
-                    size=image.nbytes
-                )
-                self.shared_mem[name] = shm
-
-            # Copy image data to shared memory
-            np.ndarray(image.shape, dtype=image.dtype, 
-                      buffer=self.shared_mem[name].buf)[:] = image
-
-            # Update metadata
-            metadata[name] = {
-                'shape': image.shape,
-                'dtype': str(image.dtype),
-                'shm_name': f'camera_{name}'
+            # Convert from RGB to BGR for JPEG encoding if needed
+            bgr_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            success, buffer = cv2.imencode(".jpg", bgr_image)
+            if success:
+                # Convert to base64
+                b64_jpeg = base64.b64encode(buffer).decode("utf-8")
+                frame_data[name] = b64_jpeg
+        
+        if frame_data:
+            message = {
+                "type": "frame_update",
+                "frames": frame_data
             }
-
-        # Store metadata in shared memory
-        metadata_bytes = json.dumps(metadata).encode()
-        self.shared_mem['metadata'].buf[:len(metadata_bytes)] = metadata_bytes
+            # Send JSON over ZeroMQ
+            self.publisher_socket.send_json(message)
 
     def render_scene_from_observations(self, observation: Dict[str, np.ndarray]):
-        """Update display with new images from observation dict"""
+        """Render in a Pygame window AND publish frames via ZeroMQ."""
         image_keys = [key for key in observation if "image" in key]
         images = {k: observation[k].numpy() for k in image_keys}
         if not images:
             return
-        
-        # Update shared memory if enabled
-        if self.config.use_shared_memory:
-            self.update_shared_memory(images)
 
-        # Initialize or resize window if needed
-        window_width, window_height, grid_cols = self.calculate_window_size(images)
-        if self.screen is None or self.screen.get_size() != (window_width, window_height):
-            self.screen = pygame.display.set_mode((window_width, window_height))
-            pygame.display.set_caption("LeRobot")
+        # -------------------------------
+        # Publish frames via ZeroMQ
+        # -------------------------------
+        self.publish_frames(images)
 
-        self.screen.fill(self.text_bg_color)
+        if self.config.display_cameras:
+            window_width, window_height, grid_cols = self.calculate_window_size(images)
+            if self.screen is None or self.screen.get_size() != (window_width, window_height):
+                self.screen = pygame.display.set_mode((window_width, window_height))
+                pygame.display.set_caption("LeRobot")
 
-        # Update image positions and draw images
-        for idx, (key, image) in enumerate(images.items()):
-            # Calculate grid position
-            col = idx % grid_cols
-            row = idx // grid_cols
+            self.screen.fill(self.text_bg_color)
 
-            # Calculate pixel position - adjust for controls panel
-            x = col * (image.shape[1] + self.padding)
-            y = row * (image.shape[0] + self.title_height + self.padding)
+            # Update image positions and draw images
+            for idx, (key, image) in enumerate(images.items()):
+                col = idx % grid_cols
+                row = idx // grid_cols
+                x = col * (image.shape[1] + self.padding)
+                y = row * (image.shape[0] + self.title_height + self.padding)
 
-            # Convert numpy array to pygame surface
-            image_surface = pygame.surfarray.make_surface(np.transpose(image, (1, 0, 2)))
-            self.screen.blit(image_surface, (x, y + self.title_height))
+                image_surface = pygame.surfarray.make_surface(np.transpose(image, (1, 0, 2)))
+                self.screen.blit(image_surface, (x, y + self.title_height))
 
-            camera_label_text = key.split(".")[-1]
-            camera_label = self.font.render(camera_label_text, True, self.text_color)
-            self.screen.blit(camera_label, (x + 5, y + self.title_height + 5))
+                camera_label_text = key.split(".")[-1]
+                camera_label = self.font.render(camera_label_text, True, self.text_color)
+                self.screen.blit(camera_label, (x + 5, y + self.title_height + 5))
 
-
-        pygame.draw.rect(self.screen, self.text_bg_color, (0, 0, window_width, self.title_height))
-
-        self.draw_top_bar(window_width)
-        pygame.display.flip()
+            pygame.draw.rect(self.screen, self.text_bg_color, (0, 0, window_width, self.title_height))
+            self.draw_top_bar(window_width)
+            pygame.display.flip()
 
     def update_with_observations(self, observation: Dict[str, np.ndarray]):
         if self.config.display_cameras:
             self.render_scene_from_observations(observation)
+        else:
+            # Even if not displaying, still publish frames via ZeroMQ
+            image_keys = [key for key in observation if "image" in key]
+            images = {k: observation[k].numpy() for k in image_keys}
+            if images:
+                self.publish_frames(images)
+
         self.handle_events()
         return self
 
@@ -234,12 +212,14 @@ class ControlContext:
         return self
 
     def get_events(self):
-        """Return current events state"""
         return self.events.copy()
 
     def cleanup(self, robot):
         robot.disconnect()
         pygame.quit()
+        # Clean up ZMQ socket
+        self.publisher_socket.close()
+        self.zmq_context.term()
 
 
 if __name__ == "__main__":

@@ -1,13 +1,11 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 import uvicorn
-from multiprocessing import shared_memory
-import numpy as np
-import json
 import asyncio
-import cv2
 import base64
 from starlette.websockets import WebSocketDisconnect
+import zmq
+import zmq.asyncio
 
 app = FastAPI()
 
@@ -32,46 +30,45 @@ html = """
         </style>
     </head>
     <body>
-        <div class="camera-container" id="cameras">
-        </div>
+        <div class="camera-container" id="cameras"></div>
         <script>
             let ws = new WebSocket(`ws://${window.location.host}/ws`);
             let cameras = {};
 
             ws.onmessage = function(event) {
                 const data = JSON.parse(event.data);
-                
-                // Create or update camera displays
+                // data is an object: { cameraName: base64_jpeg, ... }
+
                 for (const [name, imageData] of Object.entries(data)) {
                     if (!cameras[name]) {
                         // Create new camera display
                         const container = document.createElement('div');
                         container.className = 'camera-feed';
-                        
+
                         const title = document.createElement('h3');
                         title.textContent = name;
-                        
+
                         const canvas = document.createElement('canvas');
                         canvas.id = `canvas-${name}`;
-                        
+
                         container.appendChild(title);
                         container.appendChild(canvas);
                         document.getElementById('cameras').appendChild(container);
-                        
+
                         cameras[name] = canvas;
                     }
-                    
+
                     // Update image
                     const canvas = cameras[name];
                     const ctx = canvas.getContext('2d');
                     const img = new Image();
-                    
+
                     img.onload = function() {
                         canvas.width = img.width;
                         canvas.height = img.height;
                         ctx.drawImage(img, 0, 0);
                     };
-                    
+
                     img.src = 'data:image/jpeg;base64,' + imageData;
                 }
             };
@@ -84,49 +81,55 @@ html = """
 async def get():
     return HTMLResponse(html)
 
-async def read_shared_memory():
-    try:
-        # Access metadata shared memory
-        shm_metadata = shared_memory.SharedMemory(name='camera_metadata')
-        metadata_str = shm_metadata.buf.tobytes().decode().split('\x00')[0]
-        metadata = json.loads(metadata_str)
+# Global dictionary to hold the latest frames from ZeroMQ
+latest_frames = {}
 
-        frames = {}
-        for name, info in metadata.items():
-            try:
-                # Access camera frame shared memory
-                shm = shared_memory.SharedMemory(name=info['shm_name'])
-                
-                # Reconstruct numpy array from shared memory
-                shape = tuple(info['shape'])
-                dtype = np.dtype(info['dtype'])
-                frame = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
-                
-                # Convert to JPEG
-                success, buffer = cv2.imencode('.jpg', cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-                if success:
-                    frames[name] = base64.b64encode(buffer).decode('utf-8')
-                
-                shm.close()  # Close the shared memory access
-            except FileNotFoundError:
-                print(f"Shared memory for camera {name} not found. Skipping.")
-                continue
+# Set up a ZMQ context and SUB socket in asyncio mode
+zmq_context = zmq.asyncio.Context()
+subscriber_socket = zmq_context.socket(zmq.SUB)
 
-        shm_metadata.close()  # Close metadata shared memory access
-        return frames
-    
-    except (FileNotFoundError, ValueError, json.JSONDecodeError) as e:
-        print(f"Error reading shared memory: {e}")
-        return {}
+# Connect to the producer's PUB socket
+# Make sure this matches the IP/port from control_context.py
+subscriber_socket.connect("tcp://127.0.0.1:5555")
+subscriber_socket.setsockopt_string(zmq.SUBSCRIBE, "")  # subscribe to all messages
+
+
+async def zmq_consumer():
+    """
+    Continuously receive messages from ZeroMQ and update the global `latest_frames`.
+    """
+    while True:
+        try:
+            message = await subscriber_socket.recv_json()
+            # message should look like: {"type": "frame_update", "frames": {cameraName: base64_jpeg, ...}}
+            if message.get("type") == "frame_update":
+                frames = message.get("frames", {})
+                # Update the global dictionary
+                for camera_name, b64_jpeg in frames.items():
+                    latest_frames[camera_name] = b64_jpeg
+        except Exception as e:
+            print(f"ZMQ consumer error: {e}")
+            await asyncio.sleep(1)
+        # Small pause to avoid busy-loop
+        await asyncio.sleep(0.001)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    When FastAPI starts, launch the background ZMQ consumer task.
+    """
+    asyncio.create_task(zmq_consumer())
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
-            frames = await read_shared_memory()
-            if frames:
-                await websocket.send_json(frames)
+            # Send the latest frames to the websocket client
+            if latest_frames:
+                await websocket.send_json(latest_frames)
             await asyncio.sleep(0.033)  # ~30 FPS
     except WebSocketDisconnect:
         print("WebSocket disconnected")
@@ -135,6 +138,7 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         if websocket.client_state == "CONNECTED":
             await websocket.close()
+
 
 if __name__ == "__main__":
     import argparse
