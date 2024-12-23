@@ -2,16 +2,19 @@ import pygame
 import numpy as np
 from typing import Dict, Optional
 from dataclasses import dataclass
-import json
 import cv2
 import base64
 import zmq
+import torch
+import time
+
 
 class ControlPhase:
     TELEOPERATE = "Teleoperate"
     WARMUP = "Warmup"
     RECORD = "Record"
     RESET = "Reset"
+
 
 @dataclass
 class ControlContextConfig:
@@ -21,6 +24,7 @@ class ControlContextConfig:
     debug_mode: bool = False
     control_phase: str = ControlPhase.TELEOPERATE
     num_episodes: int = 0
+
 
 class ControlContext:
     def __init__(self, config: Optional[ControlContextConfig] = None):
@@ -44,8 +48,8 @@ class ControlContext:
             self.events["next_reward"] = 0
 
         self.pressed_keys = []
-        self.font = pygame.font.SysFont('courier', 24)
-        self.small_font = pygame.font.SysFont('courier', 18)
+        self.font = pygame.font.SysFont("courier", 24)
+        self.small_font = pygame.font.SysFont("courier", 18)
         self.current_episode_index = 0
 
         # Color theme
@@ -134,27 +138,65 @@ class ControlContext:
 
         return self.events
 
-    def publish_frames(self, images: Dict[str, np.ndarray]):
+    def publish_observations(self, observation: Dict[str, np.ndarray]):
         """
-        Encode each image as JPEG -> base64 -> JSON, then send via ZeroMQ PUB socket.
-        """
-        frame_data = {}
-        for name, image in images.items():
-            # Convert from RGB to BGR for JPEG encoding if needed
-            bgr_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-            success, buffer = cv2.imencode(".jpg", bgr_image)
-            if success:
-                # Convert to base64
-                b64_jpeg = base64.b64encode(buffer).decode("utf-8")
-                frame_data[name] = b64_jpeg
+        Encode and publish the full observation object via ZeroMQ PUB socket.
+        Includes observation data, events, and config information.
         
-        if frame_data:
-            message = {
-                "type": "frame_update",
-                "frames": frame_data
-            }
-            # Send JSON over ZeroMQ
-            self.publisher_socket.send_json(message)
+        Args:
+            observation (Dict[str, np.ndarray]): Dictionary containing observation data,
+                including images and state information
+        """
+        processed_data = {}
+        
+        # Process observation data
+        for key, value in observation.items():
+            if "image" in key:
+                # Handle image data
+                image = value.numpy() if torch.is_tensor(value) else value
+                # Convert from RGB to BGR for JPEG encoding
+                bgr_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                success, buffer = cv2.imencode(".jpg", bgr_image)
+                if success:
+                    # Convert to base64
+                    b64_jpeg = base64.b64encode(buffer).decode("utf-8")
+                    processed_data[key] = {
+                        "type": "image",
+                        "encoding": "jpeg_base64",
+                        "data": b64_jpeg,
+                        "shape": image.shape
+                    }
+            else:
+                tensor_data = value.detach().cpu().numpy() if torch.is_tensor(value) else value
+                    
+                processed_data[key] = {
+                    "type": "tensor",
+                    "data": tensor_data.tolist(),
+                    "shape": tensor_data.shape
+                }
+        
+        # Add events and config information
+        events_data = self.get_events()
+        config_data = {
+            "display_cameras": self.config.display_cameras,
+            "play_sounds": self.config.play_sounds,
+            "assign_rewards": self.config.assign_rewards,
+            "debug_mode": self.config.debug_mode,
+            "control_phase": self.config.control_phase,
+            "num_episodes": self.config.num_episodes,
+            "current_episode": self.current_episode_index
+        }
+        
+        message = {
+            "type": "observation_update",
+            "timestamp": time.time(),
+            "data": processed_data,
+            "events": events_data,
+            "config": config_data
+        }
+        
+        # Send JSON over ZeroMQ
+        self.publisher_socket.send_json(message)
 
     def render_scene_from_observations(self, observation: Dict[str, np.ndarray]):
         """Render in a Pygame window AND publish frames via ZeroMQ."""
@@ -162,11 +204,6 @@ class ControlContext:
         images = {k: observation[k].numpy() for k in image_keys}
         if not images:
             return
-
-        # -------------------------------
-        # Publish frames via ZeroMQ
-        # -------------------------------
-        self.publish_frames(images)
 
         if self.config.display_cameras:
             window_width, window_height, grid_cols = self.calculate_window_size(images)
@@ -195,14 +232,8 @@ class ControlContext:
             pygame.display.flip()
 
     def update_with_observations(self, observation: Dict[str, np.ndarray]):
-        if self.config.display_cameras:
-            self.render_scene_from_observations(observation)
-        else:
-            # Even if not displaying, still publish frames via ZeroMQ
-            image_keys = [key for key in observation if "image" in key]
-            images = {k: observation[k].numpy() for k in image_keys}
-            if images:
-                self.publish_frames(images)
+        self.render_scene_from_observations(observation)
+        self.publish_observations(observation)
 
         self.handle_events()
         return self
@@ -246,11 +277,7 @@ if __name__ == "__main__":
     context = ControlContext(config)
     context.update_current_episode(199)
 
-    cameras = {
-        "main": cv2.VideoCapture(0),
-        "top": cv2.VideoCapture(4),
-        "web": cv2.VideoCapture(8)
-    }
+    cameras = {"main": cv2.VideoCapture(0), "top": cv2.VideoCapture(4), "web": cv2.VideoCapture(6)}
 
     for name, cap in cameras.items():
         if not cap.isOpened():
@@ -267,10 +294,8 @@ if __name__ == "__main__":
         # Create state tensor (simulating follower positions)
         state = torch.tensor([10.0195, 128.9355, 173.0566, -13.2715, -7.2070, 34.4531])
 
-        obs_dict = {
-            "observation.state": state
-        }
-        
+        obs_dict = {"observation.state": state}
+
         for name in cameras:
             obs_dict[f"observation.images.{name}"] = images[name]
 
