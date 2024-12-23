@@ -2,6 +2,9 @@ import pygame
 import numpy as np
 from typing import Dict, Optional
 from dataclasses import dataclass
+import multiprocessing as mp
+from multiprocessing import shared_memory
+import json
 
 
 # Create an enum for ControlPhase
@@ -20,8 +23,7 @@ class ControlContextConfig:
     debug_mode: bool = False
     control_phase: ControlPhase = ControlPhase.TELEOPERATE
     num_episodes: int = 0
-    # TODO(jackvial): Add robot on this class so we can call robot.disconnect() in cleanup
-
+    use_shared_memory: bool = True
 
 class ControlContext:
     def __init__(self, config: Optional[ControlContextConfig] = None):
@@ -43,6 +45,11 @@ class ControlContext:
 
         if config.assign_rewards:
             self.events["next_reward"] = 0
+
+        # Shared memory setup
+        self.shared_mem = {}
+        if self.config.use_shared_memory:
+            self.setup_shared_memory()
 
         self.pressed_keys = []
         self.font = pygame.font.SysFont('courier', 24)  # Courier is a monospace font
@@ -126,6 +133,52 @@ class ControlContext:
                     self.pressed_keys.remove(key_name)
 
         return self.events
+    
+    def setup_shared_memory(self):
+        # Create shared memory blocks for each camera
+        # We'll store the shape information in a separate shared memory block
+        self.shared_mem['metadata'] = shared_memory.SharedMemory(
+            name='camera_metadata',
+            create=True,
+            size=1024  # Enough space for JSON metadata
+        )
+
+    def cleanup_shared_memory(self):
+        if hasattr(self, 'shared_mem'):
+            for name, shm in self.shared_mem.items():
+                shm.close()
+                shm.unlink()
+
+    def update_shared_memory(self, images: Dict[str, np.ndarray]):
+        if not self.config.use_shared_memory:
+            return
+
+        metadata = {}
+        for name, image in images.items():
+            if name not in self.shared_mem:
+                # Create new shared memory block for this camera
+                shm_name = f'camera_{name}'
+                shm = shared_memory.SharedMemory(
+                    name=shm_name,
+                    create=True,
+                    size=image.nbytes
+                )
+                self.shared_mem[name] = shm
+
+            # Copy image data to shared memory
+            np.ndarray(image.shape, dtype=image.dtype, 
+                      buffer=self.shared_mem[name].buf)[:] = image
+
+            # Update metadata
+            metadata[name] = {
+                'shape': image.shape,
+                'dtype': str(image.dtype),
+                'shm_name': f'camera_{name}'
+            }
+
+        # Store metadata in shared memory
+        metadata_bytes = json.dumps(metadata).encode()
+        self.shared_mem['metadata'].buf[:len(metadata_bytes)] = metadata_bytes
 
     def render_scene_from_observations(self, observation: Dict[str, np.ndarray]):
         """Update display with new images from observation dict"""
@@ -133,6 +186,10 @@ class ControlContext:
         images = {k: observation[k].numpy() for k in image_keys}
         if not images:
             return
+        
+        # Update shared memory if enabled
+        if self.config.use_shared_memory:
+            self.update_shared_memory(images)
 
         # Initialize or resize window if needed
         window_width, window_height, grid_cols = self.calculate_window_size(images)

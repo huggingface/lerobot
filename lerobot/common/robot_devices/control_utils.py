@@ -284,7 +284,7 @@ def control_loop(
                 busy_wait(1 / fps - dt_s)
 
             dt_s = time.perf_counter() - start_loop_t
-            log_control_info(robot, dt_s, fps=fps)
+            # log_control_info(robot, dt_s, fps=fps)
 
             timestamp = time.perf_counter() - start_episode_t
             if events["exit_early"]:
