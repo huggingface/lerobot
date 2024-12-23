@@ -16,7 +16,9 @@
 # limitations under the License.
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.common.optim.optimizers import AdamConfig
+from lerobot.common.optim.schedulers import NoneSchedulerConfig
+from lerobot.configs.policies import NormalizationMode, PretrainedConfig
 
 
 @PretrainedConfig.register_subclass("tdmpc")
@@ -110,23 +112,15 @@ class TDMPCConfig(PretrainedConfig):
     horizon: int = 5
     n_action_steps: int = 1
 
-    input_shapes: dict[str, list[int]] = field(
+    normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "observation.image": [3, 84, 84],
-            "observation.state": [4],
+            "VISUAL": NormalizationMode.MIN_MAX,
+            "STATE": NormalizationMode.MIN_MAX,
+            "ENV": NormalizationMode.MIN_MAX,
+            "ACTION": NormalizationMode.MIN_MAX,
         }
     )
-    output_shapes: dict[str, list[int]] = field(
-        default_factory=lambda: {
-            "action": [4],
-        }
-    )
-
-    # Normalization / Unnormalization
-    input_normalization_modes: dict[str, str] | None = None
-    output_normalization_modes: dict[str, str] = field(
-        default_factory=lambda: {"action": "min_max"},
-    )
+    normalize_inputs: bool = True
 
     # Architecture / modeling.
     # Neural networks.
@@ -163,27 +157,16 @@ class TDMPCConfig(PretrainedConfig):
     # Target model.
     target_model_momentum: float = 0.995
 
+    # Training presets
+    optimizer_lr: float = 3e-4
+
     def __post_init__(self):
         """Input validation (not exhaustive)."""
-        # There should only be one image key.
-        image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
-        if len(image_keys) > 1:
-            raise ValueError(
-                f"{self.__class__.__name__} handles at most one image for now. Got image keys {image_keys}."
-            )
-        if len(image_keys) > 0:
-            image_key = next(iter(image_keys))
-            if self.input_shapes[image_key][-2] != self.input_shapes[image_key][-1]:
-                # TODO(alexander-soare): This limitation is solely because of code in the random shift
-                # augmentation. It should be able to be removed.
-                raise ValueError(
-                    f"Only square images are handled now. Got image shape {self.input_shapes[image_key]}."
-                )
         if self.n_gaussian_samples <= 0:
             raise ValueError(
                 f"The number of guassian samples for CEM should be non-zero. Got `{self.n_gaussian_samples=}`"
             )
-        if self.output_normalization_modes != {"action": "min_max"}:
+        if self.normalization_mapping["ACTION"] is not NormalizationMode.MIN_MAX:
             raise ValueError(
                 "TD-MPC assumes the action space dimensions to all be in [-1, 1]. Therefore it is strongly "
                 f"advised that you stick with the default. See {self.__class__.__name__} docstring for more "
@@ -202,6 +185,26 @@ class TDMPCConfig(PretrainedConfig):
                 raise ValueError("If `n_action_steps > 1`, `use_mpc` must be set to `True`.")
             if self.n_action_steps > self.horizon:
                 raise ValueError("`n_action_steps` must be less than or equal to `horizon`.")
+
+    def get_optimizer_preset(self) -> AdamConfig:
+        return AdamConfig(lr=self.optimizer_lr)
+
+    def get_scheduler_preset(self) -> NoneSchedulerConfig:
+        return NoneSchedulerConfig()
+
+    def validate_features(self) -> None:
+        # There should only be one image key.
+        if len(self.image_features) > 1:
+            raise ValueError(
+                f"{self.__class__.__name__} handles at most one image for now. Got image keys {self.image_features}."
+            )
+
+        if len(self.image_features) > 0:
+            image_ft = next(iter(self.image_features))
+            if image_ft.shape[-2] != image_ft.shape[-1]:
+                # TODO(alexander-soare): This limitation is solely because of code in the random shift
+                # augmentation. It should be able to be removed.
+                raise ValueError(f"Only square images are handled now. Got image shape {image_ft.shape}.")
 
     @property
     def observation_delta_indices(self) -> list:
