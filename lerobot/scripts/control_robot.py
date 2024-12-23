@@ -246,7 +246,7 @@ def record(
             num_processes=num_image_writer_processes,
             num_threads=num_image_writer_threads_per_camera * len(robot.cameras),
         )
-        sanity_check_dataset_robot_compatibility(dataset, robot, fps, video)
+        sanity_check_dataset_robot_compatibility(dataset, robot, fps, video, extra_features)
     else:
         # Create empty dataset or load existing saved episodes
         sanity_check_dataset_name(repo_id, policy)
