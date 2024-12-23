@@ -39,6 +39,7 @@ def test_create_dataset(tmp_path):
     assert dataset.info["fps"] == fps
     assert dataset.info["robot_type"] == mocked_robot.robot_type
 
+
 def test_create_dataset_when_meta_cache_already_exists(tmp_path):
     repo_id = "test_repo"
     fps = 30
