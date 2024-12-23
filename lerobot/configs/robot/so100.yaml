@@ -18,7 +18,7 @@ max_relative_target: null
 leader_arms:
   main:
     _target_: lerobot.common.robot_devices.motors.feetech.FeetechMotorsBus
-    port: /dev/tty.usbmodem585A0077581
+    port: /dev/tty.usbmodem58760433331
     motors:
       # name: (index, model)
       shoulder_pan: [1, "sts3215"]

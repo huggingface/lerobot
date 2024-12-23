@@ -25,6 +25,7 @@ from glob import glob
 from pathlib import Path
 
 import torch
+import wandb
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from omegaconf import DictConfig, OmegaConf
 from termcolor import colored
@@ -107,8 +108,6 @@ class Logger:
             self._wandb = None
         else:
             os.environ["WANDB_SILENT"] = "true"
-            import wandb
-
             wandb_run_id = None
             if cfg.resume:
                 wandb_run_id = get_wandb_run_id_from_filesystem(self.checkpoints_dir)
@@ -232,7 +231,7 @@ class Logger:
         # TODO(alexander-soare): Add local text log.
         if self._wandb is not None:
             for k, v in d.items():
-                if not isinstance(v, (int, float, str)):
+                if not isinstance(v, (int, float, str, wandb.Table)):
                     logging.warning(
                         f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
                     )
