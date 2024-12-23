@@ -29,6 +29,7 @@ from lerobot.common import (
 )
 from lerobot.common.datasets.transforms import ImageTransformsConfig
 from lerobot.common.optim import OptimizerConfig
+from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.configs.policies import PretrainedConfig
 
 
@@ -161,8 +162,9 @@ class MainConfig:
     # AND for the evaluation environments.
     seed: int | None = 1000
     training: TrainConfig = field(default_factory=TrainConfig)
-    use_policy_optimizer_preset: bool = True
+    use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
+    scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
 
@@ -178,10 +180,11 @@ class MainConfig:
         if self.training.online.steps > 0 and isinstance(self.dataset.repo_id, list):
             raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
 
-        if not self.use_policy_optimizer_preset and self.optimizer is None:
-            raise ValueError("Either the policy optimizer preset or the optimizer must be used.")
-        elif self.use_policy_optimizer_preset:
-            self.optimizer = self.policy.optimizer_preset
+        if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
+            raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
+        elif self.use_policy_training_preset:
+            self.optimizer = self.policy.get_optimizer_preset()
+            self.scheduler = self.policy.get_scheduler_preset()
 
         # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
         # to check for any differences between the provided config and the checkpoint's config.

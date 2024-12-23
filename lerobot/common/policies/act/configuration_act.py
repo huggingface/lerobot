@@ -16,7 +16,8 @@
 from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamWConfig
-from lerobot.configs.policies import FeatureType, NormalizationMode, PretrainedConfig
+from lerobot.common.optim.schedulers import NoneSchedulerConfig
+from lerobot.configs.policies import NormalizationMode, PretrainedConfig
 
 
 @PretrainedConfig.register_subclass("act")
@@ -94,11 +95,11 @@ class ACTConfig(PretrainedConfig):
     chunk_size: int = 100
     n_action_steps: int = 100
 
-    normalization_mapping: dict[FeatureType, NormalizationMode] = field(
+    normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            FeatureType.VISUAL: NormalizationMode.MEAN_STD,
-            FeatureType.STATE: NormalizationMode.MEAN_STD,
-            FeatureType.ACTION: NormalizationMode.MEAN_STD,
+            "VISUAL": NormalizationMode.MEAN_STD,
+            "STATE": NormalizationMode.MEAN_STD,
+            "ACTION": NormalizationMode.MEAN_STD,
         }
     )
 
@@ -131,14 +132,10 @@ class ACTConfig(PretrainedConfig):
     dropout: float = 0.1
     kl_weight: float = 10.0
 
-    # Optimizer presets
-    optimizer_preset: AdamWConfig = field(
-        default_factory=lambda: AdamWConfig(
-            lr=1e-5,
-            weight_decay=1e-4,
-        )
-    )
-    lr_backbone: float = 1e-5
+    # Training preset
+    optimizer_lr = 1e-5
+    optimizer_weight_decay = 1e-4
+    optimizer_lr_backbone: float = 1e-5
 
     def __post_init__(self):
         """Input validation (not exhaustive)."""
@@ -160,12 +157,19 @@ class ACTConfig(PretrainedConfig):
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
             )
-        # TODO(aliberts): move this check into the policy init
-        # if (
-        #     not any(k.startswith("observation.image") for k in self.input_shapes)
-        #     and "observation.environment_state" not in self.input_shapes
-        # ):
-        #     raise ValueError("You must provide at least one image or the environment state among the inputs.")
+
+    def get_optimizer_preset(self) -> AdamWConfig:
+        return AdamWConfig(
+            lr=self.optimizer_lr,
+            weight_decay=self.optimizer_weight_decay,
+        )
+
+    def get_scheduler_preset(self) -> NoneSchedulerConfig:
+        return NoneSchedulerConfig()
+
+    def validate_features(self) -> None:
+        if not self.image_features and not self.env_state_feature:
+            raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
     @property
     def observation_delta_indices(self) -> None:

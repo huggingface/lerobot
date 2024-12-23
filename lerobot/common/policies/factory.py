@@ -57,6 +57,18 @@ def make_policy(
             directory containing weights saved using `Policy.save_pretrained`. Note that providing this
             argument overrides everything in `hydra_cfg.policy` apart from `hydra_cfg.policy.type`.
     """
+    # Note: Currently, if you try to run vqbet with mps backend, you'll get this error.
+    # NotImplementedError: The operator 'aten::unique_dim' is not currently implemented for the MPS device. If
+    # you want this op to be added in priority during the prototype phase of this feature, please comment on
+    # https://github.com/pytorch/pytorch/issues/77764. As a temporary fix, you can set the environment
+    # variable `PYTORCH_ENABLE_MPS_FALLBACK=1` to use the CPU as a fallback for this op. WARNING: this will be
+    # slower than running natively on MPS.
+    if cfg.policy.type == "vqbet" and cfg.device == "mps":
+        raise NotImplementedError(
+            "Current implementation of VQBeT does not support `mps` backend. "
+            "Please use `cpu` or `cuda` backend."
+        )
+
     policy_cls = get_policy_class(cfg.policy.type)
     cfg.policy.parse_features_from_dataset(ds_meta)
 
