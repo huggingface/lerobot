@@ -42,3 +42,41 @@ class AlohaEnv(EnvConfig):
             "render_mode": "rgb_array",
         }
     )
+
+
+@EnvConfig.register_subclass("pusht")
+@dataclass
+class PushtEnv(EnvConfig):
+    task: str = "PushT-v0"
+    state_dim: int = 2
+    action_dim: int = 2
+    image_size: int = 96
+    fps: int = 10
+    episode_length: int = 300
+    gym: dict = field(
+        default_factory=lambda: {
+            "obs_type": "pixels_agent_pos",
+            "render_mode": "rgb_array",
+            "visualization_width": 384,
+            "visualization_height": 384,
+        }
+    )
+
+
+@EnvConfig.register_subclass("xarm")
+@dataclass
+class XarmEnv(EnvConfig):
+    task: str = "XarmLift-v0"
+    state_dim: int = 4
+    action_dim: int = 4
+    image_size: int = 84
+    fps: int = 15
+    episode_length: int = 200
+    gym: dict = field(
+        default_factory=lambda: {
+            "obs_type": "pixels_agent_pos",
+            "render_mode": "rgb_array",
+            "visualization_width": 384,
+            "visualization_height": 384,
+        }
+    )
