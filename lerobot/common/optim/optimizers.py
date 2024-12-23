@@ -7,11 +7,11 @@ import torch
 
 @dataclass
 class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
-    lr: float = 1e-5
-    betas: tuple[float, float] = (0.9, 0.999)
-    eps: float = 1e-8
-    weight_decay: float = 1e-4
-    grad_clip_norm: float = 10.0
+    lr: float
+    betas: tuple[float, float]
+    eps: float
+    weight_decay: float
+    grad_clip_norm: float
 
     @property
     def type(self) -> str:
@@ -29,6 +29,12 @@ class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
 @OptimizerConfig.register_subclass("adam")
 @dataclass
 class AdamConfig(OptimizerConfig):
+    lr: float = 1e-3
+    betas: tuple[float, float] = (0.9, 0.999)
+    eps: float = 1e-8
+    weight_decay: float = 0.0
+    grad_clip_norm: float = 10.0
+
     def build(self, params: dict) -> torch.optim.Optimizer:
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
@@ -38,6 +44,12 @@ class AdamConfig(OptimizerConfig):
 @OptimizerConfig.register_subclass("adamw")
 @dataclass
 class AdamWConfig(OptimizerConfig):
+    lr: float = 1e-3
+    betas: tuple[float, float] = (0.9, 0.999)
+    eps: float = 1e-8
+    weight_decay: float = 1e-2
+    grad_clip_norm: float = 10.0
+
     def build(self, params: dict) -> torch.optim.Optimizer:
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")

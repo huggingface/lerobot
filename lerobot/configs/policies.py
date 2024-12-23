@@ -7,6 +7,7 @@ import draccus
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.common.optim.optimizers import OptimizerConfig
+from lerobot.common.optim.schedulers import LRSchedulerConfig
 
 
 # Note: We subclass str so that serialization is straightforward
@@ -49,21 +50,7 @@ class PretrainedConfig(draccus.ChoiceRegistry, abc.ABC):
 
     n_obs_steps: int = 1
 
-    robot_state_feature: PolicyFeature | None = None
-    env_state_feature: PolicyFeature | None = None
-    action_feature: PolicyFeature | None = None
-    image_features: list[PolicyFeature] | None = None
-
-    normalization_mapping: dict[FeatureType, NormalizationMode] = field(
-        default_factory=lambda: {
-            FeatureType.STATE: NormalizationMode.MEAN_STD,
-            FeatureType.VISUAL: NormalizationMode.MEAN_STD,
-            FeatureType.ENV: NormalizationMode.MEAN_STD,
-            FeatureType.ACTION: NormalizationMode.MEAN_STD,
-        }
-    )
-
-    optimizer_preset: OptimizerConfig | None = None
+    normalization_mapping: dict[str, NormalizationMode] = field(default_factory=dict)
 
     @property
     def type(self) -> str:
@@ -79,6 +66,18 @@ class PretrainedConfig(draccus.ChoiceRegistry, abc.ABC):
 
     @abc.abstractproperty
     def reward_delta_indices(self) -> list | None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def get_optimizer_preset(self) -> OptimizerConfig:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def get_scheduler_preset(self) -> LRSchedulerConfig:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def validate_features(self) -> None:
         raise NotImplementedError
 
     @property

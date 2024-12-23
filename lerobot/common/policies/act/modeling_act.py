@@ -65,6 +65,7 @@ class ACTPolicy(
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
         super().__init__()
+        config.validate_features()
         self.config = config
 
         self.normalize_inputs = Normalize(config.input_features, dataset_stats)
@@ -95,7 +96,7 @@ class ACTPolicy(
                     for n, p in self.named_parameters()
                     if n.startswith("model.backbone") and p.requires_grad
                 ],
-                "lr": self.config.lr_backbone,
+                "lr": self.config.optimizer_lr_backbone,
             },
         ]
 
@@ -320,7 +321,6 @@ class ACT(nn.Module):
             self.vae_encoder_action_input_proj = nn.Linear(
                 self.config.action_feature.shape[0],
                 config.dim_model,
-                # config.output_shapes["action"][0], config.dim_model
             )
             # Projection layer from the VAE encoder's output to the latent distribution's parameter space.
             self.vae_encoder_latent_output_proj = nn.Linear(config.dim_model, config.latent_dim * 2)
