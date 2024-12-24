@@ -72,6 +72,8 @@ hello-robot-stretch-body = {version = ">=0.7.27", markers = "sys_platform == 'li
 pyserial = {version = ">=3.5", optional = true}
 jsonlines = ">=4.0.0"
 pygame = ">=2.6.1"
+flask-socketio = ">=5.5.0"
+pyzmq = ">=26.2.0"
 
 
 [tool.poetry.extras]
