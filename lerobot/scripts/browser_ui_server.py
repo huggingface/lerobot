@@ -16,18 +16,20 @@ template_dir = Path(__file__).resolve().parent.parent / "templates"
 app = Flask(__name__, template_folder=str(template_dir))
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Global dictionary to hold the latest observation data from ZeroMQ
-latest_observation = {}
+# Global dictionary to hold the latest data from ZeroMQ
+latest_data = {
+    "observation": {},
+    "config": {}
+}
 
 zmq_context = zmq.Context()
 
-# For recieving observation (camera frames, state, events) from ControlContext
-# so we can send them to the browser
+# For receiving updates from ControlContext
 subscriber_socket = zmq_context.socket(zmq.SUB)
 subscriber_socket.connect("tcp://127.0.0.1:5555")
 subscriber_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
-# For sending keydown events from the browser to ControlContext
+# For sending keydown events to ControlContext
 command_publisher = zmq_context.socket(zmq.PUB)
 command_publisher.bind("tcp://127.0.0.1:5556")
 
@@ -35,6 +37,7 @@ def zmq_consumer():
     while True:
         try:
             message = subscriber_socket.recv_json()
+            
             if message.get("type") == "observation_update":
                 processed_data = {
                     "timestamp": message.get("timestamp"),
@@ -58,11 +61,23 @@ def zmq_consumer():
                                 "shape": value["shape"]
                             }
 
-                # Update latest observation
-                latest_observation.update(processed_data)
+                # Update latest observation and config
+                latest_data["observation"].update(processed_data)
+                latest_data["config"].update(processed_data.get("config", {}))
                 
                 # Emit the observation data to the browser
                 socketio.emit("observation_update", processed_data)
+                
+            elif message.get("type") == "config_update":
+                # Handle dedicated config updates
+                config_data = message.get("config", {})
+                latest_data["config"].update(config_data)
+                
+                # Emit configuration update to browser
+                socketio.emit("config_update", {
+                    "timestamp": message.get("timestamp"),
+                    "config": config_data
+                })
                 
         except Exception as e:
             print(f"ZMQ consumer error: {e}")
@@ -96,8 +111,13 @@ def handle_connect():
     """Handle client connection."""
     print("Client connected")
     # Send current state if available
-    if latest_observation:
-        socketio.emit("observation_update", latest_observation)
+    if latest_data["observation"]:
+        socketio.emit("observation_update", latest_data["observation"])
+    if latest_data["config"]:
+        socketio.emit("config_update", {
+            "timestamp": time.time(),
+            "config": latest_data["config"]
+        })
 
 @socketio.on("disconnect")
 def handle_disconnect():

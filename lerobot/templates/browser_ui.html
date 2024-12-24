@@ -88,6 +88,7 @@
         // Connect to Socket.IO server
         const socket = io();
         let cameras = {};
+        let lastConfig = {};
 
         // Format timestamp
         function formatTimestamp(timestamp) {
@@ -111,11 +112,14 @@
         }
 
         // Update config display
-        function updateConfig(configData) {
+        function updateConfig(configData, updateTimestamp = true) {
+            // Merge with existing config
+            lastConfig = { ...lastConfig, ...configData };
+            
             const configContainer = document.getElementById('config-values');
             configContainer.innerHTML = '';
             
-            for (const [key, value] of Object.entries(configData)) {
+            for (const [key, value] of Object.entries(lastConfig)) {
                 const configElement = document.createElement('div');
                 configElement.className = 'font-mono text-sm';
                 configElement.textContent = `${key}: ${value}`;
@@ -123,9 +127,19 @@
             }
             
             // Update header information
-            document.getElementById('control-phase').textContent = configData.control_phase;
-            document.getElementById('episode-counter').textContent = 
-                `${configData.current_episode}/${configData.num_episodes}`;
+            if (lastConfig.control_phase) {
+                document.getElementById('control-phase').textContent = lastConfig.control_phase;
+            }
+            if (lastConfig.current_episode !== undefined && lastConfig.num_episodes !== undefined) {
+                document.getElementById('episode-counter').textContent = 
+                    `${lastConfig.current_episode}/${lastConfig.num_episodes}`;
+            }
+            
+            // Update camera display based on display_cameras setting
+            const camerasContainer = document.getElementById('cameras');
+            if (lastConfig.display_cameras !== undefined) {
+                camerasContainer.style.display = lastConfig.display_cameras ? 'grid' : 'none';
+            }
         }
 
         // Update events display
@@ -164,15 +178,14 @@
 
         // Handle incoming observation updates
         socket.on('observation_update', function(data) {
-            
             // Update timestamp
             if (data.timestamp) {
                 document.getElementById('timestamp').textContent = 
                     `Last Update: ${formatTimestamp(data.timestamp)}`;
             }
             
-            // Update images
-            if (data.images) {
+            // Update images if display_cameras is true
+            if (data.images && lastConfig.display_cameras) {
                 for (const [name, imageData] of Object.entries(data.images)) {
                     if (!cameras[name]) {
                         // Create new camera display
@@ -211,7 +224,7 @@
                 updateState(data.state);
             }
             
-            // Update config values
+            // Update config values if present in observation
             if (data.config) {
                 updateConfig(data.config);
             }
@@ -224,6 +237,17 @@
             // Update logs
             if (data.log_items) {
                 updateLogs(data.log_items);
+            }
+        });
+
+        // Handle dedicated config updates
+        socket.on('config_update', function(data) {
+            if (data.config) {
+                updateConfig(data.config);
+            }
+            if (data.timestamp) {
+                document.getElementById('timestamp').textContent = 
+                    `Config Updated: ${formatTimestamp(data.timestamp)}`;
             }
         });
 
@@ -245,6 +269,14 @@
             document.getElementById('state-values').innerHTML = '';
             document.getElementById('config-values').innerHTML = '';
             document.getElementById('events').innerHTML = '';
+            document.getElementById('log-items').innerHTML = '';
+            
+            // Reset stored config
+            lastConfig = {};
+            
+            // Clear camera displays
+            document.getElementById('cameras').innerHTML = '';
+            cameras = {};
         });
 
         socket.on('connect_error', (error) => {
@@ -269,6 +301,7 @@
                 case ' ':  // Space key
                     console.log('Space pressed - Toggle Reward');
                     socket.emit('keydown_event', { key: 'Space' });
+                    event.preventDefault(); // Prevent page scroll
                     break;
             }
         });

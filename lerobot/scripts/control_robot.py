@@ -295,18 +295,19 @@ def record(
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
-    control_context.update_config(
+    control_context = control_context.update_config(
         ControlContextConfig(
             robot=robot,
             control_phase=ControlPhase.RECORD,
             play_sounds=play_sounds,
             assign_rewards=False,
             num_episodes=num_episodes,
+            display_cameras=display_cameras,
             fps=fps,
         )
     )
 
-    recorded_episodes = 0
+    recorded_episodes = 1
     while True:
         if recorded_episodes >= num_episodes:
             break
