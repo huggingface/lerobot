@@ -295,18 +295,6 @@ def record(
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
-    control_context = control_context.update_config(
-        ControlContextConfig(
-            robot=robot,
-            control_phase=ControlPhase.RECORD,
-            play_sounds=play_sounds,
-            assign_rewards=False,
-            num_episodes=num_episodes,
-            display_cameras=display_cameras,
-            fps=fps,
-        )
-    )
-
     recorded_episodes = 1
     while True:
         if recorded_episodes >= num_episodes:
@@ -316,6 +304,18 @@ def record(
         # input() messes with them.
         # if multi_task:
         #     task = input("Enter your task description: ")
+
+        control_context = control_context.update_config(
+            ControlContextConfig(
+                robot=robot,
+                control_phase=ControlPhase.RECORD,
+                play_sounds=play_sounds,
+                assign_rewards=False,
+                num_episodes=num_episodes,
+                display_cameras=display_cameras,
+                fps=fps,
+            )
+        )
 
         log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
         record_episode(
@@ -339,6 +339,17 @@ def record(
         if not events["stop_recording"] and (
             (dataset.num_episodes < num_episodes - 1) or events["rerecord_episode"]
         ):
+            control_context = control_context.update_config(
+                ControlContextConfig(
+                    robot=robot,
+                    control_phase=ControlPhase.RESET,
+                    play_sounds=play_sounds,
+                    assign_rewards=False,
+                    num_episodes=num_episodes,
+                    display_cameras=display_cameras,
+                    fps=fps,
+                )
+            )
             log_say("Reset the environment", play_sounds)
             reset_environment(robot, events, reset_time_s)
 
@@ -349,6 +360,17 @@ def record(
             dataset.clear_episode_buffer()
             continue
 
+        control_context = control_context.update_config(
+            ControlContextConfig(
+                robot=robot,
+                control_phase=ControlPhase.SAVING,
+                play_sounds=play_sounds,
+                assign_rewards=False,
+                num_episodes=num_episodes,
+                display_cameras=display_cameras,
+                fps=fps,
+            )
+        )
         dataset.save_episode(task)
         recorded_episodes += 1
         control_context.update_current_episode(recorded_episodes)

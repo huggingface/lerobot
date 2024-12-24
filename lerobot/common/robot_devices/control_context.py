@@ -17,6 +17,7 @@ class ControlPhase:
     WARMUP = "Warmup"
     RECORD = "Record"
     RESET = "Reset"
+    SAVING = "Saving"
 
 
 @dataclass
