@@ -185,14 +185,12 @@ def warmup_record(
     robot,
     enable_teleoperation,
     warmup_time_s,
-    display_cameras,
     fps,
     control_context
 ):
     control_loop(
         robot=robot,
         control_time_s=warmup_time_s,
-        display_cameras=display_cameras,
         fps=fps,
         teleoperate=enable_teleoperation,
         control_context=control_context,
@@ -203,7 +201,6 @@ def record_episode(
     robot,
     dataset,
     episode_time_s,
-    display_cameras,
     policy,
     device,
     use_amp,
@@ -213,7 +210,6 @@ def record_episode(
     control_loop(
         robot=robot,
         control_time_s=episode_time_s,
-        display_cameras=display_cameras,
         dataset=dataset,
         policy=policy,
         device=device,
@@ -229,7 +225,6 @@ def control_loop(
     robot,
     control_time_s=None,
     teleoperate=False,
-    display_cameras=False, # TODO - remove this
     dataset: LeRobotDataset | None = None,
     policy=None,
     device=None,

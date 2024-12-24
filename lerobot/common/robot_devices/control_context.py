@@ -9,9 +9,7 @@ import torch
 import time
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
-from lerobot.common.robot_devices.control_utils import (
-    log_control_info
-)
+from lerobot.common.robot_devices.control_utils import log_control_info
 
 
 class ControlPhase:
@@ -85,6 +83,9 @@ class ControlContext:
         # Subscribe to all messages
         self.command_sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
+    def update_config(self, config: ControlContextConfig):
+        self.config = config
+
     def calculate_window_size(self, images: Dict[str, np.ndarray]):
         """Calculate required window size based on images"""
         max_width = 0
@@ -147,7 +148,7 @@ class ControlContext:
                     self.pressed_keys.remove(key_name)
 
         return self.events
-    
+
     def handle_browser_events(self):
         """
         Translate a key pressed in the web UI to the same event logic used in Pygame.
@@ -189,13 +190,13 @@ class ControlContext:
         """
         Encode and publish the full observation object via ZeroMQ PUB socket.
         Includes observation data, events, and config information.
-        
+
         Args:
             observation (Dict[str, np.ndarray]): Dictionary containing observation data,
                 including images and state information
         """
         processed_data = {}
-        
+
         # Process observation data
         for key, value in observation.items():
             if "image" in key:
@@ -211,17 +212,17 @@ class ControlContext:
                         "type": "image",
                         "encoding": "jpeg_base64",
                         "data": b64_jpeg,
-                        "shape": image.shape
+                        "shape": image.shape,
                     }
             else:
                 tensor_data = value.detach().cpu().numpy() if torch.is_tensor(value) else value
-                    
+
                 processed_data[key] = {
                     "type": "tensor",
                     "data": tensor_data.tolist(),
-                    "shape": tensor_data.shape
+                    "shape": tensor_data.shape,
                 }
-        
+
         # Add events and config information
         events_data = self.get_events()
         config_data = {
@@ -230,18 +231,18 @@ class ControlContext:
             "assign_rewards": self.config.assign_rewards,
             "control_phase": self.config.control_phase,
             "num_episodes": self.config.num_episodes,
-            "current_episode": self.current_episode_index
+            "current_episode": self.current_episode_index,
         }
-        
+
         message = {
             "type": "observation_update",
             "timestamp": time.time(),
             "data": processed_data,
             "events": events_data,
             "config": config_data,
-            "log_items": log_items
+            "log_items": log_items,
         }
-        
+
         # Send JSON over ZeroMQ
         self.publisher_socket.send_json(message)
 
@@ -293,7 +294,7 @@ class ControlContext:
 
     def get_events(self):
         return self.events.copy()
-    
+
     def log_control_info(self, start_loop_t):
         log_items = []
         fps = self.config.fps
@@ -333,7 +334,7 @@ if __name__ == "__main__":
         assign_rewards=True,
         control_phase=ControlPhase.RECORD,
         num_episodes=200,
-        fps=30
+        fps=30,
     )
     context = ControlContext(config)
     context.update_current_episode(199)

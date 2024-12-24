@@ -192,7 +192,6 @@ def teleoperate(
         control_time_s=teleop_time_s,
         fps=fps,
         teleoperate=True,
-        display_cameras=display_cameras,
         control_context=control_context,
     )
 
@@ -291,18 +290,15 @@ def record(
         )
     )
 
-    warmup_record(robot, enable_teleoperation, warmup_time_s, display_cameras, fps, control_context)
+    warmup_record(robot, enable_teleoperation, warmup_time_s, fps, control_context)
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
-    # @TODO(jackvial): Maybe add an update_config method to ControlContext so we don't
-    # initialize a new class
-    control_context = ControlContext(
-        config=ControlContextConfig(
+    control_context.update_config(
+        ControlContextConfig(
             robot=robot,
             control_phase=ControlPhase.RECORD,
-            display_cameras=display_cameras,
             play_sounds=play_sounds,
             assign_rewards=False,
             num_episodes=num_episodes,
@@ -325,7 +321,6 @@ def record(
             dataset=dataset,
             robot=robot,
             episode_time_s=episode_time_s,
-            display_cameras=display_cameras,
             policy=policy,
             device=device,
             use_amp=use_amp,

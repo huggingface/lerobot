@@ -89,7 +89,7 @@ def handle_keydown_event(data):
 @app.route("/")
 def index():
     """Render the main page."""
-    return render_template("stream_video_template.html")
+    return render_template("browser_ui.html")
 
 @socketio.on("connect")
 def handle_connect():
