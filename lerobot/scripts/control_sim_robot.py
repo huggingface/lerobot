@@ -515,6 +515,7 @@ if __name__ == "__main__":
     if control_mode in ["teleoperate", "record"]:
         # make robot
         robot_overrides = ["~cameras", "~follower_arms"]
+        # TODO(rcadene): remove
         robot_cfg = init_hydra_config(robot_path, robot_overrides)
         robot = make_robot(robot_cfg)
         robot.connect()

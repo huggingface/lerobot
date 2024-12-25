@@ -1,8 +1,6 @@
 from typing import Protocol
 
 from lerobot.common.robot_devices.motors.configs import MotorsBusConfig
-from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
-from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus
 
 
 class MotorsBus(Protocol):
@@ -14,13 +12,36 @@ class MotorsBus(Protocol):
     def write(self): ...
 
 
-def build_motors_buses(motors_bus_configs: dict[str, MotorsBusConfig]):
+def make_motors_buses_from_configs(motors_bus_configs: dict[str, MotorsBusConfig]) -> list[MotorsBus]:
     motors_buses = {}
+
     for key, cfg in motors_bus_configs.items():
         if cfg.type == "dynamixel":
+            from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
+
             motors_buses[key] = DynamixelMotorsBus(cfg)
+
         elif cfg.type == "feetech":
+            from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus
+
             motors_buses[key] = FeetechMotorsBus(cfg)
+
         else:
-            raise ValueError(f"{cfg.type} type is not found.")
+            raise ValueError(f"The motor type '{cfg.type}' is not valid.")
+
     return motors_buses
+
+
+def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
+    if motor_type == "dynamixel":
+        from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
+
+        return DynamixelMotorsBus(**kwargs)
+
+    elif motor_type == "feetech":
+        from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus
+
+        return FeetechMotorsBus(**kwargs)
+
+    else:
+        raise ValueError(f"The motor type '{motor_type}' is not valid.")

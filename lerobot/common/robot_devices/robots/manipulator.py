@@ -14,8 +14,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from lerobot.common.robot_devices.cameras.utils import build_cameras
-from lerobot.common.robot_devices.motors.utils import MotorsBus, build_motors_buses
+from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
+from lerobot.common.robot_devices.motors.utils import MotorsBus, make_motors_buses_from_configs
 from lerobot.common.robot_devices.robots.configs import ManipulatorRobotConfig
 from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
@@ -51,7 +51,12 @@ class ManipulatorRobot:
     - [Koch v1.1](https://github.com/jess-moss/koch-v1-1) developed by Jess Moss
     - [Aloha](https://www.trossenrobotics.com/aloha-kits) developed by Trossen Robotics
 
-    Example of custom instantiation of motors configuration:
+    Example of instantiation, a pre-defined robot config is required:
+    ```python
+    robot = ManipulatorRobot(KochRobotConfig())
+    ```
+
+    Example of overwritting motors during instantiation:
     ```python
     # Defines how to communicate with the motors of the leader and follower arms
     leader_arms = {
@@ -82,13 +87,8 @@ class ManipulatorRobot:
             },
         ),
     }
-    robot_config = ManipulatorRobotConfig(leader_arms=leader_arms, follower_arms=follower_arms)
+    robot_config = KochRobotConfig(leader_arms=leader_arms, follower_arms=follower_arms)
     robot = ManipulatorRobot(robot_config)
-    ```
-
-    Example of templated instantiation:
-    ```python
-    robot = ManipulatorRobot(KochRobotConfig())
     ```
 
     Example of overwritting cameras during instantiation:
@@ -143,20 +143,17 @@ class ManipulatorRobot:
 
     def __init__(
         self,
-        config: ManipulatorRobotConfig | None = None,
+        config: ManipulatorRobotConfig,
         **kwargs,
     ):
-        if config is None:
-            self.config = ManipulatorRobotConfig(**kwargs)
-        else:
-            # Overwrite config arguments using kwargs
-            self.config = replace(config, **kwargs)
+        # Overwrite config arguments using kwargs
+        self.config = replace(config, **kwargs)
 
         self.robot_type = self.config.type
         self.calibration_dir = Path(self.config.calibration_dir)
-        self.leader_arms = build_motors_buses(self.config.leader_arms)
-        self.follower_arms = build_motors_buses(self.config.follower_arms)
-        self.cameras = build_cameras(self.config.cameras)
+        self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
+        self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
+        self.cameras = make_cameras_from_configs(self.config.cameras)
         self.is_connected = False
         self.logs = {}
 

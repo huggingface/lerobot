@@ -31,6 +31,8 @@ import pytest
 
 from lerobot.common.logger import Logger
 from lerobot.common.policies.factory import make_policy
+
+# from lerobot.common.utils.utils import init_hydra_config
 from lerobot.common.utils.utils import init_hydra_config
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
 from lerobot.scripts.train import make_optimizer_and_scheduler
@@ -41,6 +43,8 @@ from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, mock_cali
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
 def test_teleoperate(tmpdir, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
 
@@ -49,12 +53,12 @@ def test_teleoperate(tmpdir, request, robot_type, mock):
         tmpdir = Path(tmpdir)
         calibration_dir = tmpdir / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
     else:
         # Use the default .cache/calibration folder when mock=False
-        overrides = None
+        pass
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    robot = make_robot(**robot_kwargs)
     teleoperate(robot, teleop_time_s=1)
     teleoperate(robot, fps=30, teleop_time_s=1)
     teleoperate(robot, fps=60, teleop_time_s=1)
@@ -64,15 +68,17 @@ def test_teleoperate(tmpdir, request, robot_type, mock):
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
 def test_calibrate(tmpdir, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
     # Create an empty calibration directory to trigger manual calibration
     tmpdir = Path(tmpdir)
     calibration_dir = tmpdir / robot_type
-    overrides_calibration_dir = [f"calibration_dir={calibration_dir}"]
+    robot_kwargs["calibration_dir"] = calibration_dir
 
-    robot = make_robot(robot_type, overrides=overrides_calibration_dir, mock=mock)
+    robot = make_robot(**robot_kwargs)
     calibrate(robot, arms=robot.available_arms)
     del robot
 
@@ -80,8 +86,10 @@ def test_calibrate(tmpdir, request, robot_type, mock):
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
 def test_record_without_cameras(tmpdir, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     # Avoid using cameras
-    overrides = ["~cameras"]
+    robot_kwargs["cameras"] = {}
 
     if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
@@ -90,13 +98,16 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = Path(tmpdir) / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides.append(f"calibration_dir={calibration_dir}")
+        robot_kwargs["calibration_dir"] = calibration_dir
+    else:
+        # Use the default .cache/calibration folder when mock=False
+        pass
 
     repo_id = "lerobot/debug"
     root = Path(tmpdir) / "data" / repo_id
     single_task = "Do something."
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    robot = make_robot(**robot_kwargs)
     record(
         robot,
         fps=30,
@@ -117,6 +128,7 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
 @require_robot
 def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     tmpdir = Path(tmpdir)
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
 
     if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
@@ -125,10 +137,10 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
     else:
-        # Use the default .cache/calibration folder when mock=False or for aloha
-        overrides = None
+        # Use the default .cache/calibration folder when mock=False
+        pass
 
     env_name = "koch_real"
     policy_name = "act_koch_real"
@@ -137,7 +149,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     root = tmpdir / "data" / repo_id
     single_task = "Do something."
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    robot = make_robot(**robot_kwargs)
     dataset = record(
         robot,
         root,
@@ -257,6 +269,8 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
 @pytest.mark.parametrize("robot_type, mock", [("koch", True)])
 @require_robot
 def test_resume_record(tmpdir, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
 
@@ -264,12 +278,12 @@ def test_resume_record(tmpdir, request, robot_type, mock):
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
     else:
-        # Use the default .cache/calibration folder when mock=False or for aloha
-        overrides = []
+        # Use the default .cache/calibration folder when mock=False
+        pass
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    robot = make_robot(**robot_kwargs)
 
     repo_id = "lerobot/debug"
     root = Path(tmpdir) / "data" / repo_id
@@ -306,6 +320,8 @@ def test_resume_record(tmpdir, request, robot_type, mock):
 @pytest.mark.parametrize("robot_type, mock", [("koch", True)])
 @require_robot
 def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
 
@@ -313,12 +329,13 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
     else:
-        # Use the default .cache/calibration folder when mock=False or for aloha
-        overrides = []
+        # Use the default .cache/calibration folder when mock=False
+        pass
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    robot = make_robot(**robot_kwargs)
+
     with patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener:
         mock_events = {}
         mock_events["exit_early"] = True
@@ -354,6 +371,8 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
 @pytest.mark.parametrize("robot_type, mock", [("koch", True)])
 @require_robot
 def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
@@ -361,12 +380,13 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
     else:
-        # Use the default .cache/calibration folder when mock=False or for aloha
-        overrides = []
+        # Use the default .cache/calibration folder when mock=False
+        pass
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    robot = make_robot(**robot_kwargs)
+
     with patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener:
         mock_events = {}
         mock_events["exit_early"] = True
@@ -403,6 +423,8 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
 )
 @require_robot
 def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num_image_writer_processes):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
@@ -410,12 +432,13 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
         # and avoid writing calibration files in user .cache/calibration folder
         calibration_dir = tmpdir / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
     else:
-        # Use the default .cache/calibration folder when mock=False or for aloha
-        overrides = []
+        # Use the default .cache/calibration folder when mock=False
+        pass
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    robot = make_robot(**robot_kwargs)
+
     with patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener:
         mock_events = {}
         mock_events["exit_early"] = True

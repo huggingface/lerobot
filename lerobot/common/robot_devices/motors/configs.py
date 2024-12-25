@@ -13,13 +13,15 @@ class MotorsBusConfig(draccus.ChoiceRegistry, abc.ABC):
 
 @MotorsBusConfig.register_subclass("dynamixel")
 @dataclass
-class DynamixelMotorsBusConfig:
+class DynamixelMotorsBusConfig(MotorsBusConfig):
     port: str
     motors: dict[str, tuple[int, str]]
+    mock: bool = False
 
 
 @MotorsBusConfig.register_subclass("feetech")
 @dataclass
-class FeetechMotorsBusConfig:
+class FeetechMotorsBusConfig(MotorsBusConfig):
     port: str
     motors: dict[str, tuple[int, str]]
+    mock: bool = False

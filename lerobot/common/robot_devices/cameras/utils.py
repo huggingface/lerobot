@@ -3,8 +3,6 @@ from typing import Protocol
 import numpy as np
 
 from lerobot.common.robot_devices.cameras.configs import CameraConfig
-from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
-from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
 
 
 # Defines a camera type
@@ -15,13 +13,35 @@ class Camera(Protocol):
     def disconnect(self): ...
 
 
-def build_cameras(camera_configs: dict[str, CameraConfig]):
+def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> list[Camera]:
     cameras = {}
+
     for key, cfg in camera_configs.items():
         if cfg.type == "opencv":
+            from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
+
             cameras[key] = OpenCVCamera(cfg)
+
         elif cfg.type == "intelrealsense":
+            from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
+
             cameras[key] = IntelRealSenseCamera(cfg)
         else:
-            raise ValueError(f"{cfg.type} type is not found.")
+            raise ValueError(f"The motor type '{cfg.type}' is not valid.")
+
     return cameras
+
+
+def make_camera(camera_type, **kwargs) -> Camera:
+    if camera_type == "opencv":
+        from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
+
+        return OpenCVCamera(**kwargs)
+
+    elif camera_type == "intelrealsense":
+        from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
+
+        return IntelRealSenseCamera(**kwargs)
+
+    else:
+        raise ValueError(f"The camera type '{camera_type}' is not valid.")

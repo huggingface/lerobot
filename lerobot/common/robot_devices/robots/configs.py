@@ -23,6 +23,7 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
         return self.get_choice_name(self.__class__)
 
 
+# TODO(rcadene, aliberts): remove ManipulatorRobotConfig abstraction
 @dataclass
 class ManipulatorRobotConfig(RobotConfig):
     leader_arms: dict[str, MotorsBusConfig] = field(default_factory=lambda: {})
@@ -40,6 +41,8 @@ class ManipulatorRobotConfig(RobotConfig):
     # gripper is not put in torque mode.
     gripper_open_degree: float | None = None
 
+    mock: bool = False
+
     def __setattr__(self, prop: str, val):
         if prop == "max_relative_target" and val is not None and isinstance(val, Sequence):
             for name in self.follower_arms:
@@ -52,6 +55,18 @@ class ManipulatorRobotConfig(RobotConfig):
                         "different numbers of motors."
                     )
         super().__setattr__(prop, val)
+
+    def __post_init__(self):
+        if self.mock:
+            for arm in self.leader_arms.values():
+                if not arm.mock:
+                    arm.mock = True
+            for arm in self.follower_arms.values():
+                if not arm.mock:
+                    arm.mock = True
+            for cam in self.cameras.values():
+                if not cam.mock:
+                    cam.mock = True
 
 
 @RobotConfig.register_subclass("aloha")
@@ -178,6 +193,8 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
         }
     )
 
+    mock: bool = False
+
 
 @RobotConfig.register_subclass("koch")
 @dataclass
@@ -243,6 +260,8 @@ class KochRobotConfig(ManipulatorRobotConfig):
     # Sets the leader arm in torque mode with the gripper motor set to this angle. This makes it possible
     # to squeeze the gripper and have it spring back to an open position on its own.
     gripper_open_degree: float = 35.156
+
+    mock: bool = False
 
 
 @RobotConfig.register_subclass("koch_bimanual")
@@ -334,10 +353,12 @@ class KochBimanualRobotConfig(ManipulatorRobotConfig):
     # to squeeze the gripper and have it spring back to an open position on its own.
     gripper_open_degree: float = 35.156
 
+    mock: bool = False
+
 
 @RobotConfig.register_subclass("moss")
 @dataclass
-class MossRobotConfig(RobotConfig):
+class MossRobotConfig(ManipulatorRobotConfig):
     calibration_dir: str = ".cache/calibration/moss"
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
@@ -363,7 +384,7 @@ class MossRobotConfig(RobotConfig):
 
     follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
-            "main": DynamixelMotorsBusConfig(
+            "main": FeetechMotorsBusConfig(
                 port="/dev/tty.usbmodem585A0076891",
                 motors={
                     # name: (index, model)
@@ -395,10 +416,12 @@ class MossRobotConfig(RobotConfig):
         }
     )
 
+    mock: bool = False
+
 
 @RobotConfig.register_subclass("so100")
 @dataclass
-class So100RobotConfig(RobotConfig):
+class So100RobotConfig(ManipulatorRobotConfig):
     calibration_dir: str = ".cache/calibration/so100"
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
@@ -456,6 +479,8 @@ class So100RobotConfig(RobotConfig):
         }
     )
 
+    mock: bool = False
+
 
 @RobotConfig.register_subclass("stretch")
 @dataclass
@@ -489,3 +514,5 @@ class StretchRobotConfig(RobotConfig):
             ),
         }
     )
+
+    mock: bool = False

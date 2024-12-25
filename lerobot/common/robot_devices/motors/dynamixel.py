@@ -298,14 +298,13 @@ class DynamixelMotorsBus:
         config: DynamixelMotorsBusConfig | None = None,
         extra_model_control_table: dict[str, list[tuple]] | None = None,
         extra_model_resolution: dict[str, int] | None = None,
-        mock=False,
         **kwargs,
     ):
         config = DynamixelMotorsBusConfig(**kwargs) if config is None else replace(config, **kwargs)
 
         self.port = config.port
         self.motors = config.motors
-        self.mock = mock
+        self.mock = config.mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
         if extra_model_control_table:
