@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Robot Observation Stream (Alpine.js Refactor)</title>
+  <title>Robot Observation Stream (Alpine.js Refactor - Dark Theme)</title>
   
   <!-- Socket.IO -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
@@ -11,7 +11,8 @@
   <!-- Alpine.js -->
   <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 </head>
-<body class="bg-gray-100 min-h-screen"
+<body
+  class="bg-gray-900 text-gray-200 min-h-screen"
   x-data="robotApp()"
   x-init="initSocket()"
   x-on:keydown.window.arrow-right="handleKey('ArrowRight')"
@@ -21,7 +22,7 @@
 >
 
   <!-- Header Bar -->
-  <div class="bg-gray-800 text-white p-4 flex justify-between items-center shadow-lg">
+  <div class="bg-gray-800 text-gray-200 p-4 flex justify-between items-center shadow-lg">
     <div class="flex space-x-6">
       <!-- Mode -->
       <div class="flex items-center space-x-2">
@@ -31,7 +32,8 @@
       <!-- Episode -->
       <div class="flex items-center space-x-2">
         <span class="text-gray-400">Episode:</span>
-        <span class="font-mono" 
+        <span
+          class="font-mono"
           x-text="(configData.current_episode !== undefined && configData.num_episodes !== undefined)
                   ? (configData.current_episode + '/' + configData.num_episodes)
                   : '-'"
@@ -42,12 +44,22 @@
       <!-- Reward -->
       <div class="flex items-center space-x-2">
         <span class="text-gray-400">Reward:</span>
-        <span class="font-mono bg-gray-700 px-2 py-1 rounded" x-text="eventsData.next_reward ?? '-'">-</span>
+        <span
+          class="font-mono bg-gray-700 px-2 py-1 rounded"
+          x-text="eventsData.next_reward ?? '-'"
+        >
+          -
+        </span>
       </div>
       <!-- Time Remaining -->
       <div class="flex items-center space-x-2">
         <span class="text-gray-400">Time Remaining:</span>
-        <span class="font-mono bg-red-700 px-2 py-1 rounded" x-text="countdownText">00:00</span>
+        <span
+          class="font-mono bg-red-700 px-2 py-1 rounded"
+          x-text="countdownText"
+        >
+          00:00
+        </span>
       </div>
       <!-- Enable Voice Button -->
       <button
@@ -66,7 +78,7 @@
   <div class="container mx-auto p-6 flex flex-col lg:flex-row gap-6">
     <!-- Left Panel -->
     <div class="lg:w-2/3 space-y-6">
-      <!-- Camera Grid (use x-show to toggle when display_cameras is true) -->
+      <!-- Camera Grid -->
       <div
         id="cameras"
         class="grid grid-cols-1 md:grid-cols-2 gap-4"
@@ -74,11 +86,11 @@
       >
         <!-- Loop over images object -->
         <template x-for="(imageData, name) in images" :key="name">
-          <div class="bg-white rounded-lg shadow-md p-4">
-            <h3 class="text-lg font-semibold mb-2 text-gray-700" x-text="name"></h3>
+          <div class="bg-gray-800 rounded-lg shadow-md p-4">
+            <h3 class="text-lg font-semibold mb-2 text-gray-300" x-text="name"></h3>
             <!-- For simplicity, using an <img> tag. If you must use <canvas>, see the note below. -->
             <img
-              class="w-full border border-gray-200 rounded"
+              class="w-full border border-gray-700 rounded"
               :src="`data:image/jpeg;base64,${imageData}`"
               alt=""
             />
@@ -87,13 +99,15 @@
       </div>
       
       <!-- Events Panel -->
-      <div class="bg-white rounded-lg shadow-md p-6">
-        <h3 class="text-lg font-semibold mb-4 text-gray-700">Events</h3>
+      <div class="bg-gray-800 rounded-lg shadow-md p-6">
+        <h3 class="text-lg font-semibold mb-4 text-gray-300">Events</h3>
         <div id="events" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           <template x-for="(value, key) in eventsData" :key="key">
             <div
               class="p-2 rounded text-center font-mono text-sm"
-              :class="value ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-600'"
+              :class="value
+                ? 'bg-green-600 text-white'
+                : 'bg-gray-600 text-gray-300'"
               x-text="key.replaceAll('_',' ')"
             ></div>
           </template>
@@ -104,16 +118,18 @@
     <!-- Right Panel -->
     <div class="lg:w-1/3 space-y-6">
       <!-- State Panel -->
-      <div class="bg-white rounded-lg shadow-md p-6">
-        <h3 class="text-lg font-semibold mb-4 text-gray-700">Robot State</h3>
+      <div class="bg-gray-800 rounded-lg shadow-md p-6">
+        <h3 class="text-lg font-semibold mb-4 text-gray-300">Robot State</h3>
         <div id="state-values" class="space-y-2">
           <template x-for="(valObj, key) in stateData" :key="key">
             <div class="font-mono text-sm">
+              <!-- Arrays -->
               <template x-if="Array.isArray(valObj.data)">
                 <span
                   x-text="`${key}: [${valObj.data.map(v => v.toFixed(4)).join(', ')}]`"
                 ></span>
               </template>
+              <!-- Single values -->
               <template x-if="!Array.isArray(valObj.data)">
                 <span x-text="`${key}: [${valObj.data.toFixed(4)}]`"></span>
               </template>
@@ -123,8 +139,8 @@
       </div>
       
       <!-- Config Panel -->
-      <div class="bg-white rounded-lg shadow-md p-6">
-        <h3 class="text-lg font-semibold mb-4 text-gray-700">Configuration</h3>
+      <div class="bg-gray-800 rounded-lg shadow-md p-6">
+        <h3 class="text-lg font-semibold mb-4 text-gray-300">Configuration</h3>
         <div id="config-values" class="space-y-2">
           <template x-for="(value, key) in configData" :key="key">
             <div class="font-mono text-sm">
@@ -135,12 +151,12 @@
       </div>
       
       <!-- Controls Panel -->
-      <div class="bg-white rounded-lg shadow-md p-6">
-        <h3 class="text-lg font-semibold mb-4 text-gray-700">Controls</h3>
+      <div class="bg-gray-800 rounded-lg shadow-md p-6">
+        <h3 class="text-lg font-semibold mb-4 text-gray-300">Controls</h3>
         <div class="space-y-4">
           <!-- Exit Early -->
           <div class="flex items-center space-x-3">
-            <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">→</span>
+            <span class="font-mono bg-gray-600 px-2 py-1 rounded text-sm">→</span>
             <span>Exit Early</span>
             <button
               class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600"
@@ -151,7 +167,7 @@
           </div>
           <!-- Rerecord -->
           <div class="flex items-center space-x-3">
-            <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">←</span>
+            <span class="font-mono bg-gray-600 px-2 py-1 rounded text-sm">←</span>
             <span>Rerecord</span>
             <button
               class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600"
@@ -162,7 +178,7 @@
           </div>
           <!-- Stop -->
           <div class="flex items-center space-x-3">
-            <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">Esc</span>
+            <span class="font-mono bg-gray-600 px-2 py-1 rounded text-sm">Esc</span>
             <span>Stop</span>
             <button
               class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600"
@@ -173,7 +189,7 @@
           </div>
           <!-- Toggle Reward -->
           <div class="flex items-center space-x-3">
-            <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">Space</span>
+            <span class="font-mono bg-gray-600 px-2 py-1 rounded text-sm">Space</span>
             <span>Toggle Reward</span>
             <button
               class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600"
@@ -186,8 +202,8 @@
       </div>
 
       <!-- Log Panel -->
-      <div class="bg-white rounded-lg shadow-md p-6">
-        <h3 class="text-lg font-semibold mb-4 text-gray-700">Logs</h3>
+      <div class="bg-gray-800 rounded-lg shadow-md p-6">
+        <h3 class="text-lg font-semibold mb-4 text-gray-300">Logs</h3>
         <div id="log-items" class="space-y-2">
           <template x-for="(log, idx) in logs" :key="idx">
             <div class="font-mono text-sm" x-text="log"></div>
@@ -230,19 +246,39 @@
           });
 
           this.socket.on('observation_update', (data) => {
-            if (data.timestamp) this.timestamp = `Last Update: ${this.formatTimestamp(data.timestamp)}`;
-            if (data.config) this.updateConfig(data.config);
-            if (data.state) this.stateData = data.state;
-            if (data.events) this.eventsData = data.events;
-            if (data.log_items) this.logs = data.log_items;
-            if (data.images && this.configData.display_cameras) this.images = data.images;
-            if (data.countdown_time !== undefined) this.countdownTime = data.countdown_time;
+            if (data.timestamp) {
+              this.timestamp = `Last Update: ${this.formatTimestamp(data.timestamp)}`;
+            }
+            if (data.config) {
+              this.updateConfig(data.config);
+            }
+            if (data.state) {
+              this.stateData = data.state;
+            }
+            if (data.events) {
+              this.eventsData = data.events;
+            }
+            if (data.log_items) {
+              this.logs = data.log_items;
+            }
+            if (data.images && this.configData.display_cameras) {
+              this.images = data.images;
+            }
+            if (data.countdown_time !== undefined) {
+              this.countdownTime = data.countdown_time;
+            }
           });
 
           this.socket.on('config_update', (data) => {
-            if (data.config) this.updateConfig(data.config);
-            if (data.timestamp) this.timestamp = `Config Updated: ${this.formatTimestamp(data.timestamp)}`;
-            if (data.countdown_time !== undefined) this.countdownTime = data.countdown_time;
+            if (data.config) {
+              this.updateConfig(data.config);
+            }
+            if (data.timestamp) {
+              this.timestamp = `Config Updated: ${this.formatTimestamp(data.timestamp)}`;
+            }
+            if (data.countdown_time !== undefined) {
+              this.countdownTime = data.countdown_time;
+            }
           });
 
           this.socket.on('log_say', (data) => {
@@ -272,14 +308,17 @@
           this.countdownTime = 0;
           this.timestamp = '';
         },
+
         formatTimestamp(tsSeconds) {
           return new Date(tsSeconds * 1000).toISOString();
         },
+
         enableVoice() {
-          this.loadVoices().then((voices) => {
+          this.loadVoices().then(() => {
             this.speakMessage('Voice is now enabled!');
           });
         },
+
         loadVoices() {
           return new Promise((resolve) => {
             let voices = speechSynthesis.getVoices();
@@ -293,6 +332,7 @@
             }
           });
         },
+
         speakMessage(message) {
           const utterance = new SpeechSynthesisUtterance(message);
           speechSynthesis.speak(utterance);
