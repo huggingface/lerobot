@@ -1,384 +1,325 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Robot Observation Stream</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+  <meta charset="UTF-8" />
+  <title>Robot Observation Stream (Alpine.js Refactor)</title>
+  
+  <!-- Socket.IO -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Alpine.js -->
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 </head>
-<body class="bg-gray-100 min-h-screen">
-    <!-- Header Bar -->
-    <div class="bg-gray-800 text-white p-4 flex justify-between items-center shadow-lg">
-        <div class="flex space-x-6">
-            <div class="flex items-center space-x-2">
-                <span class="text-gray-400">Mode:</span>
-                <span id="control-phase" class="font-mono">-</span>
-            </div>
-            <div class="flex items-center space-x-2">
-                <span class="text-gray-400">Episode:</span>
-                <span id="episode-counter" class="font-mono">-</span>
-            </div>
-            <div class="flex items-center space-x-2">
-                <span class="text-gray-400">Reward:</span>
-                <span id="reward-display" class="font-mono bg-gray-700 px-2 py-1 rounded">-</span>
-            </div>
-            <div class="flex items-center space-x-2">
-                <span class="text-gray-400">Time Remaining:</span>
-                <span id="time-remaining" class="font-mono bg-red-700 px-2 py-1 rounded">00:00</span>
-            </div>
-            <button  id="enable-voice-button" class="font-mono bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700">
-                Enable Voice
-            </button>
+<body class="bg-gray-100 min-h-screen"
+  x-data="robotApp()"
+  x-init="initSocket()"
+  x-on:keydown.window.arrow-right="handleKey('ArrowRight')"
+  x-on:keydown.window.arrow-left="handleKey('ArrowLeft')"
+  x-on:keydown.window.escape="handleKey('Escape')"
+  x-on:keydown.window.space.prevent="handleKey('Space')"
+>
+
+  <!-- Header Bar -->
+  <div class="bg-gray-800 text-white p-4 flex justify-between items-center shadow-lg">
+    <div class="flex space-x-6">
+      <!-- Mode -->
+      <div class="flex items-center space-x-2">
+        <span class="text-gray-400">Mode:</span>
+        <span class="font-mono" x-text="configData.control_phase ?? '-'">-</span>
+      </div>
+      <!-- Episode -->
+      <div class="flex items-center space-x-2">
+        <span class="text-gray-400">Episode:</span>
+        <span class="font-mono" 
+          x-text="(configData.current_episode !== undefined && configData.num_episodes !== undefined)
+                  ? (configData.current_episode + '/' + configData.num_episodes)
+                  : '-'"
+        >
+          -
+        </span>
+      </div>
+      <!-- Reward -->
+      <div class="flex items-center space-x-2">
+        <span class="text-gray-400">Reward:</span>
+        <span class="font-mono bg-gray-700 px-2 py-1 rounded" x-text="eventsData.next_reward ?? '-'">-</span>
+      </div>
+      <!-- Time Remaining -->
+      <div class="flex items-center space-x-2">
+        <span class="text-gray-400">Time Remaining:</span>
+        <span class="font-mono bg-red-700 px-2 py-1 rounded" x-text="countdownText">00:00</span>
+      </div>
+      <!-- Enable Voice Button -->
+      <button
+        id="enable-voice-button"
+        class="font-mono bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700"
+        x-on:click="enableVoice()"
+      >
+        Enable Voice
+      </button>
+    </div>
+    <!-- Last Timestamp -->
+    <div id="timestamp" class="font-mono text-gray-400" x-text="timestamp"></div>
+  </div>
+  
+  <!-- Main Container -->
+  <div class="container mx-auto p-6 flex flex-col lg:flex-row gap-6">
+    <!-- Left Panel -->
+    <div class="lg:w-2/3 space-y-6">
+      <!-- Camera Grid (use x-show to toggle when display_cameras is true) -->
+      <div
+        id="cameras"
+        class="grid grid-cols-1 md:grid-cols-2 gap-4"
+        x-show="configData.display_cameras"
+      >
+        <!-- Loop over images object -->
+        <template x-for="(imageData, name) in images" :key="name">
+          <div class="bg-white rounded-lg shadow-md p-4">
+            <h3 class="text-lg font-semibold mb-2 text-gray-700" x-text="name"></h3>
+            <!-- For simplicity, using an <img> tag. If you must use <canvas>, see the note below. -->
+            <img
+              class="w-full border border-gray-200 rounded"
+              :src="`data:image/jpeg;base64,${imageData}`"
+              alt=""
+            />
+          </div>
+        </template>
+      </div>
+      
+      <!-- Events Panel -->
+      <div class="bg-white rounded-lg shadow-md p-6">
+        <h3 class="text-lg font-semibold mb-4 text-gray-700">Events</h3>
+        <div id="events" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          <template x-for="(value, key) in eventsData" :key="key">
+            <div
+              class="p-2 rounded text-center font-mono text-sm"
+              :class="value ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-600'"
+              x-text="key.replaceAll('_',' ')"
+            ></div>
+          </template>
         </div>
-        <div id="timestamp" class="font-mono text-gray-400"></div>
+      </div>
     </div>
     
-    <!-- Main Container -->
-    <div class="container mx-auto p-6 flex flex-col lg:flex-row gap-6">
-        <!-- Left Panel -->
-        <div class="lg:w-2/3 space-y-6">
-            <!-- Camera Grid -->
-            <div id="cameras" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
-            
-            <!-- Events Panel -->
-            <div class="bg-white rounded-lg shadow-md p-6">
-                <h3 class="text-lg font-semibold mb-4 text-gray-700">Events</h3>
-                <div id="events" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"></div>
+    <!-- Right Panel -->
+    <div class="lg:w-1/3 space-y-6">
+      <!-- State Panel -->
+      <div class="bg-white rounded-lg shadow-md p-6">
+        <h3 class="text-lg font-semibold mb-4 text-gray-700">Robot State</h3>
+        <div id="state-values" class="space-y-2">
+          <template x-for="(valObj, key) in stateData" :key="key">
+            <div class="font-mono text-sm">
+              <template x-if="Array.isArray(valObj.data)">
+                <span
+                  x-text="`${key}: [${valObj.data.map(v => v.toFixed(4)).join(', ')}]`"
+                ></span>
+              </template>
+              <template x-if="!Array.isArray(valObj.data)">
+                <span x-text="`${key}: [${valObj.data.toFixed(4)}]`"></span>
+              </template>
             </div>
+          </template>
         </div>
-        
-        <!-- Right Panel -->
-        <div class="lg:w-1/3 space-y-6">
-            <!-- State Panel -->
-            <div class="bg-white rounded-lg shadow-md p-6">
-                <h3 class="text-lg font-semibold mb-4 text-gray-700">Robot State</h3>
-                <div id="state-values" class="space-y-2"></div>
+      </div>
+      
+      <!-- Config Panel -->
+      <div class="bg-white rounded-lg shadow-md p-6">
+        <h3 class="text-lg font-semibold mb-4 text-gray-700">Configuration</h3>
+        <div id="config-values" class="space-y-2">
+          <template x-for="(value, key) in configData" :key="key">
+            <div class="font-mono text-sm">
+              <span x-text="`${key}: ${value}`"></span>
             </div>
-            
-            <!-- Config Panel -->
-            <div class="bg-white rounded-lg shadow-md p-6">
-                <h3 class="text-lg font-semibold mb-4 text-gray-700">Configuration</h3>
-                <div id="config-values" class="space-y-2"></div>
-            </div>
-            
-            <!-- Controls Panel -->
-            <div class="bg-white rounded-lg shadow-md p-6">
-                <h3 class="text-lg font-semibold mb-4 text-gray-700">Controls</h3>
-                <div class="space-y-2">
-                    <div class="flex items-center space-x-3">
-                        <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">→</span>
-                        <span>Exit Early</span>
-                    </div>
-                    <div class="flex items-center space-x-3">
-                        <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">←</span>
-                        <span>Rerecord</span>
-                    </div>
-                    <div class="flex items-center space-x-3">
-                        <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">Esc</span>
-                        <span>Stop</span>
-                    </div>
-                    <div class="flex items-center space-x-3">
-                        <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">Space</span>
-                        <span>Toggle Reward</span>
-                    </div>
-                </div>
-            </div>
+          </template>
+        </div>
+      </div>
+      
+      <!-- Controls Panel -->
+      <div class="bg-white rounded-lg shadow-md p-6">
+        <h3 class="text-lg font-semibold mb-4 text-gray-700">Controls</h3>
+        <div class="space-y-2">
+          <div class="flex items-center space-x-3">
+            <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">→</span>
+            <span>Exit Early</span>
+          </div>
+          <div class="flex items-center space-x-3">
+            <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">←</span>
+            <span>Rerecord</span>
+          </div>
+          <div class="flex items-center space-x-3">
+            <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">Esc</span>
+            <span>Stop</span>
+          </div>
+          <div class="flex items-center space-x-3">
+            <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">Space</span>
+            <span>Toggle Reward</span>
+          </div>
+        </div>
+      </div>
 
-            <!-- Log Panel -->
-            <div class="bg-white rounded-lg shadow-md p-6">
-                <h3 class="text-lg font-semibold mb-4 text-gray-700">Logs</h3>
-                <div id="log-items" class="space-y-2"></div>
-            </div>
+      <!-- Log Panel -->
+      <div class="bg-white rounded-lg shadow-md p-6">
+        <h3 class="text-lg font-semibold mb-4 text-gray-700">Logs</h3>
+        <div id="log-items" class="space-y-2">
+          <template x-for="(log, idx) in logs" :key="idx">
+            <div class="font-mono text-sm" x-text="log"></div>
+          </template>
         </div>
+      </div>
     </div>
+  </div>
 
-    <script>
-        // Connect to Socket.IO server
-        const socket = io();
-        let cameras = {};
-        let lastConfig = {};
+  <!-- AlpineJS logic -->
+  <script>
+    document.addEventListener('alpine:init', () => {
+      Alpine.data('robotApp', () => ({
+        // Reactive state
+        configData: {},
+        stateData: {},
+        eventsData: {},
+        logs: [],
+        images: {},
+        countdownTime: 0,
+        timestamp: '',
+        
+        // Computed-like property for displaying the countdown
+        get countdownText() {
+          const minutes = Math.floor(this.countdownTime / 60);
+          const secs = Math.floor(this.countdownTime % 60);
+          return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        },
 
-        // Format timestamp
-        function formatTimestamp(timestamp) {
-            return new Date(timestamp * 1000).toISOString();
-        }
+        initSocket() {
+          // Connect to Socket.IO server
+          this.socket = io();
 
-        // Update state display
-        function updateState(stateData) {
-            const stateContainer = document.getElementById('state-values');
-            stateContainer.innerHTML = '';
-            
-            for (const [key, value] of Object.entries(stateData)) {
-                const stateElement = document.createElement('div');
-                stateElement.className = 'font-mono text-sm';
-                const formattedData = Array.isArray(value.data) ? 
-                    value.data.map(v => v.toFixed(4)).join(', ') : 
-                    value.data.toFixed(4);
-                stateElement.textContent = `${key}: [${formattedData}]`;
-                stateContainer.appendChild(stateElement);
-            }
-        }
+          // On connect
+          this.socket.on('connect', () => {
+            console.log('Connected to server');
+          });
 
-        // Update config display
-        function updateConfig(configData, updateTimestamp = true) {
-            // Merge with existing config
-            lastConfig = { ...lastConfig, ...configData };
-            
-            const configContainer = document.getElementById('config-values');
-            configContainer.innerHTML = '';
-            
-            for (const [key, value] of Object.entries(lastConfig)) {
-                const configElement = document.createElement('div');
-                configElement.className = 'font-mono text-sm';
-                configElement.textContent = `${key}: ${value}`;
-                configContainer.appendChild(configElement);
-            }
-            
-            // Update header information
-            if (lastConfig.control_phase) {
-                document.getElementById('control-phase').textContent = lastConfig.control_phase;
-            }
-            if (lastConfig.current_episode !== undefined && lastConfig.num_episodes !== undefined) {
-                document.getElementById('episode-counter').textContent = 
-                    `${lastConfig.current_episode}/${lastConfig.num_episodes}`;
-            }
-            
-            // Update camera display based on display_cameras setting
-            const camerasContainer = document.getElementById('cameras');
-            if (lastConfig.display_cameras !== undefined) {
-                camerasContainer.style.display = lastConfig.display_cameras ? 'grid' : 'none';
-            }
-        }
+          // On disconnect
+          this.socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            this.resetData();
+          });
 
-        // Update events display
-        function updateEvents(eventsData) {
-            const eventsContainer = document.getElementById('events');
-            eventsContainer.innerHTML = '';
-            
-            for (const [key, value] of Object.entries(eventsData)) {
-                const eventElement = document.createElement('div');
-                eventElement.className = `p-2 rounded text-center font-mono text-sm ${
-                    value ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-600'
-                }`;
-                eventElement.textContent = key.replace(/_/g, ' ');
-                eventsContainer.appendChild(eventElement);
-            }
-            
-            // Update reward display if present
-            if ('next_reward' in eventsData) {
-                document.getElementById('reward-display').textContent = 
-                    eventsData.next_reward.toString();
-            }
-        }
+          // On connect error
+          this.socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+          });
 
-        // Update log display
-        function updateLogs(logItems) {
-            const logContainer = document.getElementById('log-items');
-            logContainer.innerHTML = '';
-            
-            logItems.forEach(item => {
-                const logElement = document.createElement('div');
-                logElement.className = 'font-mono text-sm';
-                logElement.textContent = item;
-                logContainer.appendChild(logElement);
-            });
-        }
-
-        // Update timers display
-        function updateTimers(countdownTime) {
-            document.getElementById('time-remaining').textContent = formatTime(countdownTime);
-        }
-
-        // Format time in seconds to MM:SS
-        function formatTime(seconds) {
-            const minutes = Math.floor(seconds / 60);
-            const secs = Math.floor(seconds % 60); // Changed to Math.floor to remove decimals
-            return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-        }
-
-        function loadVoices() {
-            return new Promise((resolve) => {
-                const voices = speechSynthesis.getVoices();
-                if (voices.length > 0) {
-                    resolve(voices);
-                } else {
-                    speechSynthesis.onvoiceschanged = () => {
-                        resolve(speechSynthesis.getVoices());
-                    };
-                }
-            });
-        }
-
-
-        // Handle incoming observation updates
-        socket.on('observation_update', function(data) {
+          // Observation updates
+          this.socket.on('observation_update', (data) => {
             // Update timestamp
             if (data.timestamp) {
-                document.getElementById('timestamp').textContent = 
-                    `Last Update: ${formatTimestamp(data.timestamp)}`;
+              this.timestamp = `Last Update: ${this.formatTimestamp(data.timestamp)}`;
             }
-            
-            // Update images if display_cameras is true
-            if (data.images && lastConfig.display_cameras) {
-                for (const [name, imageData] of Object.entries(data.images)) {
-                    if (!cameras[name]) {
-                        // Create new camera display
-                        const container = document.createElement('div');
-                        container.className = 'bg-white rounded-lg shadow-md p-4';
-                        
-                        const title = document.createElement('h3');
-                        title.className = 'text-lg font-semibold mb-2 text-gray-700';
-                        title.textContent = name;
-                        
-                        const canvas = document.createElement('canvas');
-                        canvas.id = `canvas-${name}`;
-                        canvas.className = 'w-full border border-gray-200 rounded';
-                        
-                        container.appendChild(title);
-                        container.appendChild(canvas);
-                        document.getElementById('cameras').appendChild(container);
-                        cameras[name] = canvas;
-                    }
-                    
-                    // Update image
-                    const canvas = cameras[name];
-                    const ctx = canvas.getContext('2d');
-                    const img = new Image();
-                    img.onload = function() {
-                        canvas.width = img.width;
-                        canvas.height = img.height;
-                        ctx.drawImage(img, 0, 0);
-                    };
-                    img.src = 'data:image/jpeg;base64,' + imageData;
-                }
-            }
-            
-            // Update state values
-            if (data.state) {
-                updateState(data.state);
-            }
-            
-            // Update config values if present in observation
+            // Update config
             if (data.config) {
-                updateConfig(data.config);
+              this.updateConfig(data.config);
             }
-            
+            // Update state
+            if (data.state) {
+              this.stateData = data.state;
+            }
             // Update events
             if (data.events) {
-                updateEvents(data.events);
+              this.eventsData = data.events;
             }
-
             // Update logs
             if (data.log_items) {
-                updateLogs(data.log_items);
+              this.logs = data.log_items;
             }
-
+            // Update cameras
+            if (data.images && this.configData.display_cameras) {
+              this.images = data.images;
+            }
             // Update timers
             if (data.countdown_time !== undefined) {
-                updateTimers(data.countdown_time);
+              this.countdownTime = data.countdown_time;
             }
-        });
+          });
 
-        // Handle dedicated config updates
-        socket.on('config_update', function(data) {
+          // Dedicated config updates
+          this.socket.on('config_update', (data) => {
             if (data.config) {
-                updateConfig(data.config);
+              this.updateConfig(data.config);
             }
             if (data.timestamp) {
-                document.getElementById('timestamp').textContent = 
-                    `Config Updated: ${formatTimestamp(data.timestamp)}`;
+              this.timestamp = `Config Updated: ${this.formatTimestamp(data.timestamp)}`;
             }
-
-            // Update timers
             if (data.countdown_time !== undefined) {
-                updateTimers(data.countdown_time);
+              this.countdownTime = data.countdown_time;
             }
-        });
+          });
 
-        // Handle log_say events
-        socket.on('log_say', function(data) {
-            const message = data.message;
-            loadVoices().then(voices => {
-                const utterance = new SpeechSynthesisUtterance(message);
-                speechSynthesis.speak(utterance);
-            });
-        });
+          // Log-say events (TTS)
+          this.socket.on('log_say', (data) => {
+            this.speakMessage(data.message);
+          });
+        },
 
-        // Connection handling
-        socket.on('connect', () => {
-            console.log('Connected to server');
-        });
+        // Merge config data
+        updateConfig(newConfig) {
+          this.configData = { ...this.configData, ...newConfig };
+        },
 
-        socket.on('disconnect', () => {
-            console.log('Disconnected from server');
-            
-            // Clear the config display
-            document.getElementById('control-phase').textContent = '-';
-            document.getElementById('episode-counter').textContent = '-';
-            document.getElementById('reward-display').textContent = '-';
-            document.getElementById('timestamp').textContent = '';
-            
-            // Clear the panels
-            document.getElementById('state-values').innerHTML = '';
-            document.getElementById('config-values').innerHTML = '';
-            document.getElementById('events').innerHTML = '';
-            document.getElementById('log-items').innerHTML = '';
-            
-            // Reset stored config
-            lastConfig = {};
-            
-            // Clear camera displays
-            document.getElementById('cameras').innerHTML = '';
-            cameras = {};
-        });
+        // Handle special keys
+        handleKey(key) {
+          console.log(`${key} pressed.`);
+          // Forward the key event to the server
+          this.socket.emit('keydown_event', { key });
+        },
 
-        socket.on('connect_error', (error) => {
-            console.error('Connection error:', error);
-        });
+        // Reset the UI upon disconnect
+        resetData() {
+          this.configData = {};
+          this.stateData = {};
+          this.eventsData = {};
+          this.logs = [];
+          this.images = {};
+          this.countdownTime = 0;
+          this.timestamp = '';
+        },
 
-        // Keyboard event handling for controls
-        document.addEventListener('keydown', (event) => {
-            switch(event.key) {
-                case 'ArrowRight':
-                    console.log('Right arrow pressed - Exit Early');
-                    socket.emit('keydown_event', { key: 'ArrowRight' });
-                    break;
-                case 'ArrowLeft':
-                    console.log('Left arrow pressed - Rerecord');
-                    socket.emit('keydown_event', { key: 'ArrowLeft' });
-                    break;
-                case 'Escape':
-                    console.log('Escape pressed - Stop');
-                    socket.emit('keydown_event', { key: 'Escape' });
-                    break;
-                case ' ':  // Space key
-                    console.log('Space pressed - Toggle Reward');
-                    socket.emit('keydown_event', { key: 'Space' });
-                    event.preventDefault(); // Prevent page scroll
-                    break;
+        // Utility: Format timestamp (assuming seconds)
+        formatTimestamp(tsSeconds) {
+          return new Date(tsSeconds * 1000).toISOString();
+        },
+
+        // Enable voice (prompt user to allow TTS)
+        enableVoice() {
+          console.log('Enable Voice button clicked.');
+          this.loadVoices().then((voices) => {
+            console.log('Voices loaded:', voices.map(v => v.name));
+            // Attempt a short test phrase
+            this.speakMessage('Voice is now enabled!');
+          });
+        },
+
+        // Load voices once from the browser
+        loadVoices() {
+          return new Promise((resolve) => {
+            let voices = speechSynthesis.getVoices();
+            if (voices.length > 0) {
+              resolve(voices);
+            } else {
+              speechSynthesis.onvoiceschanged = () => {
+                voices = speechSynthesis.getVoices();
+                resolve(voices);
+              };
             }
-        });
+          });
+        },
 
-        document.getElementById('enable-voice-button').addEventListener('click', () => {
-            console.log('Enable Voice button clicked.');
-            // Force Chrome to allow voice by calling TTS upon user gesture
-            loadVoices().then((voices) => {
-                console.log('Voices loaded:', voices.map(v => v.name));
-
-                // Optionally pick a specific voice
-                let chosenVoice = voices.find(v => v.name === 'Aaron');
-                if (!chosenVoice) {
-                    console.log('Aaron voice not found, using default voice.');
-                }
-
-                const utterance = new SpeechSynthesisUtterance("Voice is now enabled!");
-                if (chosenVoice) {
-                    utterance.voice = chosenVoice;
-                }
-
-                // Speak a short test phrase
-                speechSynthesis.speak(utterance);
-            });
-        });
-    </script>
+        // Speak a message using speech synthesis
+        speakMessage(message) {
+          const utterance = new SpeechSynthesisUtterance(message);
+          speechSynthesis.speak(utterance);
+        },
+      }));
+    });
+  </script>
 </body>
 </html>
