@@ -4,7 +4,7 @@ defaults:
   - _self_
 
 seed: 13
-dataset_repo_id: "phone"
+dataset_repo_id: "dataset_repo_id"
 train_split_proportion: 0.8
 
 # Required by logger
