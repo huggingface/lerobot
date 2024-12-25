@@ -4,7 +4,7 @@ defaults:
   - _self_
 
 seed: 13
-dataset_repo_id: "helper2424/hil-serl-push-circle-classifier"
+dataset_repo_id: "phone"
 train_split_proportion: 0.8
 
 # Required by logger
