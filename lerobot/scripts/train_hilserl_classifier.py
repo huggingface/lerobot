@@ -44,6 +44,11 @@ from lerobot.common.utils.utils import (
     set_global_seed,
 )
 
+def support_AMP(device: torch.device, cfg: DictConfig) -> bool:
+    # Check if the device supports AMP
+    # Here is an example of the issue that says that MPS doesn't support AMP properply
+    return cfg.training.use_amp and device.type in ('cuda', 'cpu')
+
 
 def get_model(cfg, logger):
     classifier_config = _policy_cfg_from_hydra_cfg(ClassifierConfig, cfg)
@@ -77,7 +82,7 @@ def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, 
         labels = batch[cfg.training.label_key].float().to(device)
 
         # Forward pass with optional AMP
-        with torch.autocast(device_type=device.type) if cfg.training.use_amp else nullcontext():
+        with torch.autocast(device_type=device.type) if support_AMP(device, cfg) else nullcontext():
             outputs = model(images)
             loss = criterion(outputs.logits, labels)
 
@@ -119,7 +124,7 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
     samples = []
     running_loss = 0
 
-    with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.training.use_amp else nullcontext():
+    with torch.no_grad(), torch.autocast(device_type=device.type) if support_AMP(device, cfg) else nullcontext():
         for batch in tqdm(val_loader, desc="Validation"):
             images = batch[cfg.training.image_key].to(device)
             labels = batch[cfg.training.label_key].float().to(device)

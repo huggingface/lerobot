@@ -42,6 +42,6 @@ wandb:
   job_name: "classifier_training_0"
   disable_artifact: false
 
-device: "cuda"
+device: "mps"
 resume: false
 output_dir: "output"
