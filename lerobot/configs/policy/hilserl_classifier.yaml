@@ -37,7 +37,7 @@ policy:
   model_type: "cnn"
 
 wandb:
-  enable: false
+  enable: true
   project: "hilserl-classifier-training-with-cuda"
   job_name: "classifier_training_0"
   disable_artifact: false
