@@ -45,7 +45,8 @@ def zmq_consumer():
                     "state": {},
                     "events": message.get("events", {}),
                     "config": message.get("config", {}),
-                    "log_items": message.get("log_items", [])
+                    "log_items": message.get("log_items", []),
+                    "countdown_time": message.get("countdown_time"),
                 }
 
                 # Process observation data
@@ -71,6 +72,7 @@ def zmq_consumer():
             elif message.get("type") == "config_update":
                 # Handle dedicated config updates
                 config_data = message.get("config", {})
+                config_data["countdown_time"] = message.get("countdown_time")
                 latest_data["config"].update(config_data)
                 
                 # Emit configuration update to browser

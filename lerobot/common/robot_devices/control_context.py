@@ -222,7 +222,7 @@ class ControlContext:
         except Exception as e:
             print(f"Error while polling for commands: {e}")
 
-    def publish_observations(self, observation: Dict[str, np.ndarray], log_items: list):
+    def publish_observations(self, observation: Dict[str, np.ndarray], log_items: list, countdown_time: int):
         """Encode and publish observation data with current configuration"""
         processed_data = {}
         
@@ -265,6 +265,7 @@ class ControlContext:
             "events": self.get_events(),
             "config": config_data,
             "log_items": log_items,
+            "countdown_time": countdown_time,
         }
 
         self.publisher_socket.send_json(message)
@@ -302,10 +303,10 @@ class ControlContext:
             self.draw_top_bar(window_width)
             pygame.display.flip()
 
-    def update_with_observations(self, observation: Dict[str, np.ndarray], start_loop_t: int):
+    def update_with_observations(self, observation: Dict[str, np.ndarray], start_loop_t: int, countdown_time: int):
         log_items = self.log_control_info(start_loop_t)
         self.render_scene_from_observations(observation)
-        self.publish_observations(observation, log_items)
+        self.publish_observations(observation, log_items, countdown_time)
 
         self.handle_events()
         self.handle_browser_events()

@@ -21,6 +21,10 @@
                 <span class="text-gray-400">Reward:</span>
                 <span id="reward-display" class="font-mono bg-gray-700 px-2 py-1 rounded">-</span>
             </div>
+            <div class="flex items-center space-x-2">
+                <span class="text-gray-400">Time Remaining:</span>
+                <span id="time-remaining" class="font-mono bg-red-700 px-2 py-1 rounded">00:00</span>
+            </div>
         </div>
         <div id="timestamp" class="font-mono text-gray-400"></div>
     </div>
@@ -176,6 +180,18 @@
             });
         }
 
+        // Update timers display
+        function updateTimers(countdownTime) {
+            document.getElementById('time-remaining').textContent = formatTime(countdownTime);
+        }
+
+        // Format time in seconds to MM:SS
+        function formatTime(seconds) {
+            const minutes = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60); // Changed to Math.floor to remove decimals
+            return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+
         // Handle incoming observation updates
         socket.on('observation_update', function(data) {
             // Update timestamp
@@ -238,6 +254,11 @@
             if (data.log_items) {
                 updateLogs(data.log_items);
             }
+
+            // Update timers
+            if (data.countdown_time !== undefined) {
+                updateTimers(data.countdown_time);
+            }
         });
 
         // Handle dedicated config updates
@@ -248,6 +269,11 @@
             if (data.timestamp) {
                 document.getElementById('timestamp').textContent = 
                     `Config Updated: ${formatTimestamp(data.timestamp)}`;
+            }
+
+            // Update timers
+            if (data.countdown_time !== undefined) {
+                updateTimers(data.countdown_time);
             }
         });
 

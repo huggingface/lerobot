@@ -351,7 +351,7 @@ def record(
                 )
             )
             log_say("Reset the environment", play_sounds)
-            reset_environment(robot, events, reset_time_s)
+            reset_environment(robot, control_context=control_context, reset_time_s=reset_time_s)
 
         if events["rerecord_episode"]:
             log_say("Re-record episode", play_sounds)
@@ -381,15 +381,49 @@ def record(
     log_say("Stop recording", play_sounds, blocking=True)
     control_context.cleanup(robot)
 
+    control_context = control_context.update_config(
+        ControlContextConfig(
+            robot=robot,
+            control_phase=ControlPhase.PROCESSING_DATASET,
+            play_sounds=play_sounds,
+            assign_rewards=False,
+            num_episodes=num_episodes,
+            display_cameras=display_cameras,
+            fps=fps,
+        )
+    )
+
     if run_compute_stats:
         logging.info("Computing dataset statistics")
 
     dataset.consolidate(run_compute_stats)
 
     if push_to_hub:
+        control_context = control_context.update_config(
+            ControlContextConfig(
+                robot=robot,
+                control_phase=ControlPhase.UPLOADING_DATASET_TO_HUB,
+                play_sounds=play_sounds,
+                assign_rewards=False,
+                num_episodes=num_episodes,
+                display_cameras=display_cameras,
+                fps=fps,
+            )
+        )
         dataset.push_to_hub(tags=tags)
 
     log_say("Exiting", play_sounds)
+    control_context = control_context.update_config(
+        ControlContextConfig(
+            robot=robot,
+            control_phase=ControlPhase.RECORDING_COMPLETE,
+            play_sounds=play_sounds,
+            assign_rewards=False,
+            num_episodes=num_episodes,
+            display_cameras=display_cameras,
+            fps=fps,
+        )
+    )
     return dataset
 
 

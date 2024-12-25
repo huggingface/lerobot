@@ -252,6 +252,7 @@ def control_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+    total_time = 0
     try:
         while timestamp < control_time_s:
             start_loop_t = time.perf_counter()
@@ -272,9 +273,12 @@ def control_loop(
                 frame = {**observation, **action}
                 dataset.add_frame(frame)
 
-            control_context.update_with_observations(observation, start_loop_t)
-
             timestamp = time.perf_counter() - start_episode_t
+            total_time += timestamp
+            countdown_time = max(0, control_time_s - timestamp)
+
+            control_context.update_with_observations(observation, start_loop_t, countdown_time)
+
             if events["exit_early"]:
                 events["exit_early"] = False
                 break
@@ -283,11 +287,13 @@ def control_loop(
         print(f"Error in control loop: {e}")
 
 
-def reset_environment(robot, events, reset_time_s):
+def reset_environment(robot, control_context, reset_time_s):
     # TODO(rcadene): refactor warmup_record and reset_environment
     # TODO(alibets): allow for teleop during reset
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
+
+    events = control_context.get_events()
 
     timestamp = 0
     start_vencod_t = time.perf_counter()
@@ -297,7 +303,10 @@ def reset_environment(robot, events, reset_time_s):
         while timestamp < reset_time_s:
             time.sleep(1)
             timestamp = time.perf_counter() - start_vencod_t
+            countdown_time = max(0, reset_time_s - timestamp)
+            control_context.update_with_observations(None, 0, countdown_time)
             pbar.update(1)
+
             if events["exit_early"]:
                 events["exit_early"] = False
                 break
