@@ -295,7 +295,7 @@ def record(
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
-    recorded_episodes = 1
+    recorded_episodes = 0
     while True:
         if recorded_episodes >= num_episodes:
             break

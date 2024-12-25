@@ -116,7 +116,7 @@ class ControlContext:
             "play_sounds": self.config.play_sounds,
             "assign_rewards": self.config.assign_rewards,
             "control_phase": self.config.control_phase,
-            "num_episodes": self.config.num_episodes,
+            "num_episodes": self.config.num_episodes - 1,
             "current_episode": self.current_episode_index,
         }
         
@@ -150,7 +150,7 @@ class ControlContext:
     def draw_top_bar(self, window_width: int):
         top_text_str = f"Mode: {self.config.control_phase}"
         if self.config.control_phase == ControlPhase.RECORD:
-            top_text_str += f" | Episode: {self.current_episode_index}/{self.config.num_episodes}"
+            top_text_str += f" | Episode: {self.current_episode_index}/{self.config.num_episodes - 1}"
             if self.config.assign_rewards:
                 next_reward = self.events["next_reward"]
                 top_text_str += f" | Reward: {next_reward}"
@@ -260,7 +260,7 @@ class ControlContext:
             "play_sounds": self.config.play_sounds,
             "assign_rewards": self.config.assign_rewards,
             "control_phase": self.config.control_phase,
-            "num_episodes": self.config.num_episodes,
+            "num_episodes": self.config.num_episodes - 1,
             "current_episode": self.current_episode_index,
         }
 

@@ -169,7 +169,6 @@
     </div>
   </div>
 
-  <!-- AlpineJS logic -->
   <script>
     document.addEventListener('alpine:init', () => {
       Alpine.data('robotApp', () => ({
@@ -190,71 +189,34 @@
         },
 
         initSocket() {
-          // Connect to Socket.IO server
           this.socket = io();
-
-          // On connect
           this.socket.on('connect', () => {
             console.log('Connected to server');
           });
-
-          // On disconnect
           this.socket.on('disconnect', () => {
             console.log('Disconnected from server');
             this.resetData();
           });
-
-          // On connect error
           this.socket.on('connect_error', (error) => {
             console.error('Connection error:', error);
           });
 
-          // Observation updates
           this.socket.on('observation_update', (data) => {
-            // Update timestamp
-            if (data.timestamp) {
-              this.timestamp = `Last Update: ${this.formatTimestamp(data.timestamp)}`;
-            }
-            // Update config
-            if (data.config) {
-              this.updateConfig(data.config);
-            }
-            // Update state
-            if (data.state) {
-              this.stateData = data.state;
-            }
-            // Update events
-            if (data.events) {
-              this.eventsData = data.events;
-            }
-            // Update logs
-            if (data.log_items) {
-              this.logs = data.log_items;
-            }
-            // Update cameras
-            if (data.images && this.configData.display_cameras) {
-              this.images = data.images;
-            }
-            // Update timers
-            if (data.countdown_time !== undefined) {
-              this.countdownTime = data.countdown_time;
-            }
+            if (data.timestamp) this.timestamp = `Last Update: ${this.formatTimestamp(data.timestamp)}`;
+            if (data.config) this.updateConfig(data.config);
+            if (data.state) this.stateData = data.state;
+            if (data.events) this.eventsData = data.events;
+            if (data.log_items) this.logs = data.log_items;
+            if (data.images && this.configData.display_cameras) this.images = data.images;
+            if (data.countdown_time !== undefined) this.countdownTime = data.countdown_time;
           });
 
-          // Dedicated config updates
           this.socket.on('config_update', (data) => {
-            if (data.config) {
-              this.updateConfig(data.config);
-            }
-            if (data.timestamp) {
-              this.timestamp = `Config Updated: ${this.formatTimestamp(data.timestamp)}`;
-            }
-            if (data.countdown_time !== undefined) {
-              this.countdownTime = data.countdown_time;
-            }
+            if (data.config) this.updateConfig(data.config);
+            if (data.timestamp) this.timestamp = `Config Updated: ${this.formatTimestamp(data.timestamp)}`;
+            if (data.countdown_time !== undefined) this.countdownTime = data.countdown_time;
           });
 
-          // Log-say events (TTS)
           this.socket.on('log_say', (data) => {
             this.speakMessage(data.message);
           });
@@ -282,23 +244,14 @@
           this.countdownTime = 0;
           this.timestamp = '';
         },
-
-        // Utility: Format timestamp (assuming seconds)
         formatTimestamp(tsSeconds) {
           return new Date(tsSeconds * 1000).toISOString();
         },
-
-        // Enable voice (prompt user to allow TTS)
         enableVoice() {
-          console.log('Enable Voice button clicked.');
           this.loadVoices().then((voices) => {
-            console.log('Voices loaded:', voices.map(v => v.name));
-            // Attempt a short test phrase
             this.speakMessage('Voice is now enabled!');
           });
         },
-
-        // Load voices once from the browser
         loadVoices() {
           return new Promise((resolve) => {
             let voices = speechSynthesis.getVoices();
@@ -312,8 +265,6 @@
             }
           });
         },
-
-        // Speak a message using speech synthesis
         speakMessage(message) {
           const utterance = new SpeechSynthesisUtterance(message);
           speechSynthesis.speak(utterance);
