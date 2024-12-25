@@ -137,22 +137,50 @@
       <!-- Controls Panel -->
       <div class="bg-white rounded-lg shadow-md p-6">
         <h3 class="text-lg font-semibold mb-4 text-gray-700">Controls</h3>
-        <div class="space-y-2">
+        <div class="space-y-4">
+          <!-- Exit Early -->
           <div class="flex items-center space-x-3">
             <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">→</span>
             <span>Exit Early</span>
+            <button
+              class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600"
+              x-on:click="handleKey('ArrowRight')"
+            >
+              Exit Early
+            </button>
           </div>
+          <!-- Rerecord -->
           <div class="flex items-center space-x-3">
             <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">←</span>
             <span>Rerecord</span>
+            <button
+              class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600"
+              x-on:click="handleKey('ArrowLeft')"
+            >
+              Rerecord
+            </button>
           </div>
+          <!-- Stop -->
           <div class="flex items-center space-x-3">
             <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">Esc</span>
             <span>Stop</span>
+            <button
+              class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600"
+              x-on:click="handleKey('Escape')"
+            >
+              Stop
+            </button>
           </div>
+          <!-- Toggle Reward -->
           <div class="flex items-center space-x-3">
             <span class="font-mono bg-gray-100 px-2 py-1 rounded text-sm">Space</span>
             <span>Toggle Reward</span>
+            <button
+              class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600"
+              x-on:click="handleKey('Space')"
+            >
+              Toggle Reward
+            </button>
           </div>
         </div>
       </div>
