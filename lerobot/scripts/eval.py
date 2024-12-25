@@ -51,6 +51,7 @@ from copy import deepcopy
 from datetime import datetime as dt
 from pathlib import Path
 from typing import Callable
+import os
 
 import einops
 import gymnasium as gym
@@ -140,7 +141,8 @@ def rollout(
     max_steps = env.call("_max_episode_steps")[0]
 
     def trace_handler(prof):
-        prof.export_chrome_trace(f"outputs/trace_schedule_{prof.step_num}.json")
+        if os.path.exists("outputs"):
+            prof.export_chrome_trace(f"outputs/trace_schedule_{prof.step_num}.json")
 
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],

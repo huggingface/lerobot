@@ -23,7 +23,7 @@ import os
 import re
 from glob import glob
 from pathlib import Path
-
+from datetime import datetime
 import torch
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from omegaconf import DictConfig, OmegaConf
@@ -103,7 +103,7 @@ class Logger:
         enable_wandb = cfg.get("wandb", {}).get("enable", False)
         run_offline = not enable_wandb or not project
         if run_offline:
-            logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+            logging.info(colored(f"Logs will be saved locally at: {self.log_dir}.", "yellow", attrs=["bold"]))
             self._wandb = None
         else:
             os.environ["WANDB_SILENT"] = "true"
@@ -238,6 +238,13 @@ class Logger:
                     )
                     continue
                 self._wandb.log({f"{mode}/{k}": v}, step=step)
+        # Log to text file
+        with open(f"{self.log_dir}/output_logs.txt", 'a') as f:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            text = f"[{timestamp}] Step: {step}, Mode: {mode}, "
+            for k, v in d.items():
+                text += f"{k}: {v}, "
+            f.write(f"{text}\n")  # Empty line between entries
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         assert mode in {"train", "eval"}
