@@ -4,7 +4,7 @@ defaults:
   - _self_
 
 seed: 13
-dataset_repo_id: "dataset_repo_id"
+dataset_repo_id: "helper2424/hil-serl-push-circle-classifier"
 train_split_proportion: 0.8
 
 # Required by logger
@@ -38,11 +38,10 @@ policy:
 
 wandb:
   enable: false
-  project: "classifier-training"
-  entity: "wandb_entity"
+  project: "hilserl-classifier-training-with-cuda"
   job_name: "classifier_training_0"
   disable_artifact: false
 
-device: "mps"
+device: "cuda"
 resume: false
 output_dir: "output"
