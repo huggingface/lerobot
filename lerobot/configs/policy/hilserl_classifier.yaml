@@ -24,7 +24,7 @@ training:
   eval_freq: 1  # How often to run validation (in epochs)
   save_freq: 1  # How often to save checkpoints (in epochs)
   save_checkpoint: true
-  image_key: "observation.images. phone"
+  image_key: "observation.images.phone"
   label_key: "next.reward"
 
 eval:
