@@ -25,6 +25,9 @@
                 <span class="text-gray-400">Time Remaining:</span>
                 <span id="time-remaining" class="font-mono bg-red-700 px-2 py-1 rounded">00:00</span>
             </div>
+            <button  id="enable-voice-button" class="font-mono bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700">
+                Enable Voice
+            </button>
         </div>
         <div id="timestamp" class="font-mono text-gray-400"></div>
     </div>
@@ -192,6 +195,20 @@
             return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
         }
 
+        function loadVoices() {
+            return new Promise((resolve) => {
+                const voices = speechSynthesis.getVoices();
+                if (voices.length > 0) {
+                    resolve(voices);
+                } else {
+                    speechSynthesis.onvoiceschanged = () => {
+                        resolve(speechSynthesis.getVoices());
+                    };
+                }
+            });
+        }
+
+
         // Handle incoming observation updates
         socket.on('observation_update', function(data) {
             // Update timestamp
@@ -280,9 +297,10 @@
         // Handle log_say events
         socket.on('log_say', function(data) {
             const message = data.message;
-            console.log('Saying:', message);
-            const utterance = new SpeechSynthesisUtterance(message);
-            speechSynthesis.speak(utterance);
+            loadVoices().then(voices => {
+                const utterance = new SpeechSynthesisUtterance(message);
+                speechSynthesis.speak(utterance);
+            });
         });
 
         // Connection handling
@@ -338,6 +356,28 @@
                     event.preventDefault(); // Prevent page scroll
                     break;
             }
+        });
+
+        document.getElementById('enable-voice-button').addEventListener('click', () => {
+            console.log('Enable Voice button clicked.');
+            // Force Chrome to allow voice by calling TTS upon user gesture
+            loadVoices().then((voices) => {
+                console.log('Voices loaded:', voices.map(v => v.name));
+
+                // Optionally pick a specific voice
+                let chosenVoice = voices.find(v => v.name === 'Aaron');
+                if (!chosenVoice) {
+                    console.log('Aaron voice not found, using default voice.');
+                }
+
+                const utterance = new SpeechSynthesisUtterance("Voice is now enabled!");
+                if (chosenVoice) {
+                    utterance.voice = chosenVoice;
+                }
+
+                // Speak a short test phrase
+                speechSynthesis.speak(utterance);
+            });
         });
     </script>
 </body>
