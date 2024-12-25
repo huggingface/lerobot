@@ -181,24 +181,6 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides):
     return policy, policy_fps, device, use_amp
 
 
-def warmup_record(
-    robot,
-    events,
-    enable_teleoperation,
-    warmup_time_s,
-    display_cameras,
-    fps,
-):
-    control_loop(
-        robot=robot,
-        control_time_s=warmup_time_s,
-        display_cameras=display_cameras,
-        events=events,
-        fps=fps,
-        teleoperate=enable_teleoperation,
-    )
-
-
 def record_episode(
     robot,
     dataset,
@@ -293,10 +275,9 @@ def control_loop(
             break
 
 
-def reset_environment(robot, events, reset_time_s):
-    # TODO(rcadene): refactor warmup_record and reset_environment
-    # TODO(alibets): allow for teleop during reset
+def reset_environment(robot, events, reset_time_s , use_policy=False):
     if has_method(robot, "teleop_safety_stop"):
+        print("reset_environment: teleop_safety_stop")
         robot.teleop_safety_stop()
 
     timestamp = 0
@@ -304,10 +285,14 @@ def reset_environment(robot, events, reset_time_s):
 
     # Wait if necessary
     with tqdm.tqdm(total=reset_time_s, desc="Waiting") as pbar:
+        last_pbar_update = 0
         while timestamp < reset_time_s:
-            time.sleep(1)
             timestamp = time.perf_counter() - start_vencod_t
-            pbar.update(1)
+            if not use_policy:
+                robot.teleop_step(record_data=False)
+            if timestamp - last_pbar_update > 1:
+                pbar.update(1)
+                last_pbar_update = timestamp
             if events["exit_early"]:
                 events["exit_early"] = False
                 break
