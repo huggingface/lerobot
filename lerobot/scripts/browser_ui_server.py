@@ -37,6 +37,9 @@ def zmq_consumer():
     while True:
         try:
             message = subscriber_socket.recv_json()
+
+            message_type = message.get("type")
+            print(f"Received message: {message_type}")
             
             if message.get("type") == "observation_update":
                 processed_data = {
@@ -80,6 +83,14 @@ def zmq_consumer():
                     "timestamp": message.get("timestamp"),
                     "config": config_data
                 })
+            elif message.get("type") == "log_say":
+                data = message.get("message")
+                timestamp = message.get("timestamp")
+                socketio.emit("log_say", {
+                    "timestamp": timestamp,
+                    "message": data
+                })
+                
                 
         except Exception as e:
             print(f"ZMQ consumer error: {e}")

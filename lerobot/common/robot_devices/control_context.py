@@ -10,6 +10,7 @@ import time
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.robot_devices.control_utils import log_control_info
+from lerobot.common.utils.utils import log_say
 
 
 class ControlPhase:
@@ -18,12 +19,15 @@ class ControlPhase:
     RECORD = "Record"
     RESET = "Reset"
     SAVING = "Saving"
+    PROCESSING_DATASET = "Processing Dataset"
+    UPLOADING_DATASET_TO_HUB = "Uploading Dataset to Hub"
+    RECORDING_COMPLETE = "Recording Complete"
 
 
 @dataclass
 class ControlContextConfig:
     display_cameras: bool = False
-    play_sounds: bool = False
+    play_sounds: bool = True
     assign_rewards: bool = False
     control_phase: str = ControlPhase.TELEOPERATE
     num_episodes: int = 0
@@ -34,6 +38,8 @@ class ControlContextConfig:
 class ControlContext:
     def __init__(self, config: ControlContextConfig):
         self.config = config
+        self.modes_with_no_observation = [ControlPhase.RESET, ControlPhase.SAVING, ControlPhase.PROCESSING_DATASET, ControlPhase.UPLOADING_DATASET_TO_HUB, ControlPhase.RECORDING_COMPLETE]
+        self.last_observation = None
         self._initialize_display()
         self._initialize_communication()
         self._initialize_state()
@@ -304,6 +310,12 @@ class ControlContext:
             pygame.display.flip()
 
     def update_with_observations(self, observation: Dict[str, np.ndarray], start_loop_t: int, countdown_time: int):
+        if observation is not None:
+            self.last_observation = observation
+
+        if self.config.control_phase in self.modes_with_no_observation:
+            observation = self.last_observation
+
         log_items = self.log_control_info(start_loop_t)
         self.render_scene_from_observations(observation)
         self.publish_observations(observation, log_items, countdown_time)
@@ -330,6 +342,21 @@ class ControlContext:
             log_items = log_control_info(self.config.robot, dt_s, fps=fps)
 
         return log_items
+    
+    def publish_log_say(self, message):
+        message = {
+            "type": "log_say",
+            "timestamp": time.time(),
+            "message": message,
+        }
+
+        self.publisher_socket.send_json(message)
+    
+    def log_say(self, message, blocking=False):
+        if self.config.play_sounds:
+            self.publish_log_say(message)
+            log_say(message, blocking)
+
 
     def cleanup(self, robot=None):
         """Clean up resources and connections"""

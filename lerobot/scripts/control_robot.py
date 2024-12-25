@@ -277,7 +277,6 @@ def record(
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
-    log_say("Warmup record", play_sounds)
 
     control_context = ControlContext(
         config=ControlContextConfig(
@@ -289,6 +288,7 @@ def record(
             fps=fps,
         )
     )
+    control_context.log_say("Warmup record")
 
     warmup_record(robot, enable_teleoperation, warmup_time_s, fps, control_context)
 
@@ -317,7 +317,7 @@ def record(
             )
         )
 
-        log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
+        control_context.log_say(f"Recording episode {dataset.num_episodes}")
         record_episode(
             dataset=dataset,
             robot=robot,
@@ -350,11 +350,11 @@ def record(
                     fps=fps,
                 )
             )
-            log_say("Reset the environment", play_sounds)
+            control_context.log_say("Reset the environment")
             reset_environment(robot, control_context=control_context, reset_time_s=reset_time_s)
 
         if events["rerecord_episode"]:
-            log_say("Re-record episode", play_sounds)
+            control_context.log_say("Re-record episode")
             events["rerecord_episode"] = False
             events["exit_early"] = False
             dataset.clear_episode_buffer()
@@ -378,7 +378,7 @@ def record(
         if events["stop_recording"]:
             break
 
-    log_say("Stop recording", play_sounds, blocking=True)
+    control_context.log_say("Stop recording", blocking=True)
     control_context.cleanup(robot)
 
     control_context = control_context.update_config(
@@ -412,7 +412,7 @@ def record(
         )
         dataset.push_to_hub(tags=tags)
 
-    log_say("Exiting", play_sounds)
+    control_context.log_say("Exiting")
     control_context = control_context.update_config(
         ControlContextConfig(
             robot=robot,

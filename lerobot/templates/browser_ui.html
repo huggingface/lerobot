@@ -277,6 +277,14 @@
             }
         });
 
+        // Handle log_say events
+        socket.on('log_say', function(data) {
+            const message = data.message;
+            console.log('Saying:', message);
+            const utterance = new SpeechSynthesisUtterance(message);
+            speechSynthesis.speak(utterance);
+        });
+
         // Connection handling
         socket.on('connect', () => {
             console.log('Connected to server');
