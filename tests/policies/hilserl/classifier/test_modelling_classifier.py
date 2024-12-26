@@ -1,10 +1,11 @@
-from tests.utils import require_package
 import torch
 
 from lerobot.common.policies.hilserl.classifier.modeling_classifier import (
     ClassifierConfig,
     ClassifierOutput,
 )
+from tests.utils import require_package
+
 
 def test_classifier_output():
     output = ClassifierOutput(
