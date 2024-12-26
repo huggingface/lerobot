@@ -45,7 +45,7 @@ from lerobot.common.utils.utils import (
 )
 
 
-def get_model(cfg, logger):
+def get_model(cfg, logger):  # noqa I001
     classifier_config = _policy_cfg_from_hydra_cfg(ClassifierConfig, cfg)
     model = Classifier(classifier_config)
     if cfg.resume:
