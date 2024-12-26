@@ -45,12 +45,6 @@ from lerobot.common.utils.utils import (
 )
 
 
-def support_amp(device: torch.device, cfg: DictConfig) -> bool:
-    # Check if the device supports AMP
-    # Here is an example of the issue that says that MPS doesn't support AMP properply
-    return cfg.training.use_amp and device.type in ("cuda", "cpu")
-
-
 def get_model(cfg, logger):
     classifier_config = _policy_cfg_from_hydra_cfg(ClassifierConfig, cfg)
     model = Classifier(classifier_config)
@@ -68,6 +62,12 @@ def create_balanced_sampler(dataset, cfg):
     sample_weights = class_weights[labels]
 
     return WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
+
+
+def support_amp(device: torch.device, cfg: DictConfig) -> bool:
+    # Check if the device supports AMP
+    # Here is an example of the issue that says that MPS doesn't support AMP properply
+    return cfg.training.use_amp and device.type in ("cuda", "cpu")
 
 
 def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, logger, step, cfg):
