@@ -26,9 +26,9 @@ class SACConfig:
     num_subsample_critics = None
     critic_lr = 3e-4
     actor_lr = 3e-4
+    temperature_lr = 3e-4
     critic_target_update_weight = 0.005
     utd_ratio = 2
-
     critic_network_kwargs = {
             "hidden_dims": [256, 256],
             "activate_final": True,

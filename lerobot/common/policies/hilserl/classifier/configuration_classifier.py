@@ -13,7 +13,7 @@ class ClassifierConfig:
     hidden_dim: int = 256
     dropout_rate: float = 0.1
     model_name: str = "microsoft/resnet-50"
-    device: str = "cuda" if torch.cuda.is_available() else "mps"
+    device: str = "cpu"
     model_type: str = "cnn"  # "transformer" or "cnn"
 
     def save_pretrained(self, save_dir):

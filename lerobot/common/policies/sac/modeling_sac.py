@@ -19,21 +19,18 @@
 
 from collections import deque
 from copy import deepcopy
-from functools import partial
+from typing import Callable, Optional, Sequence, Tuple
 
 import einops
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor
 
-from huggingface_hub import PyTorchModelHubMixin
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.sac.configuration_sac import SACConfig
-import numpy as np
-from typing import Callable, Optional, Tuple, Sequence
-
 
 
 class SACPolicy(
@@ -85,7 +82,6 @@ class SACPolicy(
             action_dim=config.output_shapes["action"][0],
             **config.policy_kwargs
         )
-
         if config.target_entropy is None:
             config.target_entropy = -np.prod(config.output_shapes["action"][0]) #  (-dim(A))
         self.temperature = LagrangeMultiplier(init_value=config.temperature_init)    
@@ -145,6 +141,12 @@ class SACPolicy(
             indices = indices[:self.config.num_subsample_critics]
             q_targets = q_targets[indices]
 
+        # subsample critics to prevent overfitting if use high UTD (update to date)
+        if self.config.num_subsample_critics is not None:
+            indices = torch.randperm(self.config.num_critics)
+            indices = indices[:self.config.num_subsample_critics]
+            q_targets = q_targets[indices]
+
         # critics subsample size
         min_q = q_targets.min(dim=0)
 
@@ -190,7 +192,6 @@ class SACPolicy(
         # calculate temperature loss
         # 1- calculate entropy
         entropy = -log_probs.mean()
-
         temperature_loss = self.temp(
             lhs=entropy,
             rhs=self.config.target_entropy
@@ -210,7 +211,6 @@ class SACPolicy(
     
     def update(self):
         self.critic_target.lerp_(self.critic_ensemble, self.config.critic_target_update_weight)
-
         # TODO: implement UTD update
         # First update only critics for utd_ratio-1 times
         #for critic_step in range(self.config.utd_ratio - 1):
@@ -294,10 +294,7 @@ class Critic(nn.Module):
         observations = observations.to(self.device)
         actions = actions.to(self.device)
         
-        if self.encoder is not None:
-            obs_enc = self.encoder(observations)
-        else:
-            obs_enc = observations
+        obs_enc = observations if self.encoder is None else self.encoder(observations)
             
         inputs = torch.cat([obs_enc, actions], dim=-1)
         x = self.network(inputs)
@@ -567,6 +564,8 @@ class LagrangeMultiplier(nn.Module):
 # 3. Optionally, the values can be further transformed to fit within arbitrary bounds [low, high] using an affine transformation
 # This type of distribution is commonly used in reinforcement learning, particularly for continuous action spaces
 class TanhMultivariateNormalDiag(torch.distributions.TransformedDistribution):
+    DEFAULT_SAMPLE_SHAPE = torch.Size()
+
     def __init__(
         self,
         loc: torch.Tensor,
@@ -615,7 +614,7 @@ class TanhMultivariateNormalDiag(torch.distributions.TransformedDistribution):
         
         return mode
 
-    def rsample(self, sample_shape=torch.Size()) -> torch.Tensor:
+    def rsample(self, sample_shape=DEFAULT_SAMPLE_SHAPE) -> torch.Tensor:
         """
         Reparameterized sample from the distribution
         """
@@ -647,7 +646,7 @@ class TanhMultivariateNormalDiag(torch.distributions.TransformedDistribution):
         
         return log_prob
 
-    def sample_and_log_prob(self, sample_shape=torch.Size()) -> Tuple[torch.Tensor, torch.Tensor]:
+    def sample_and_log_prob(self, sample_shape=DEFAULT_SAMPLE_SHAPE) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Sample from the distribution and compute log probability
         """
