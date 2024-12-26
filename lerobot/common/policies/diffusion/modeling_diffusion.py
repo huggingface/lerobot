@@ -176,7 +176,8 @@ class DiffusionModel(nn.Module):
     def __init__(self, config: DiffusionConfig):
         super().__init__()
         self.config = config
-
+        self.horizon = config.horizon
+        self.action_shape = config.output_shapes["action"][0]
         # Build observation encoders (depending on which observations are provided).
         global_cond_dim = config.input_shapes["observation.state"][0]
         num_images = len([k for k in config.input_shapes if k.startswith("observation.image")])
@@ -217,7 +218,7 @@ class DiffusionModel(nn.Module):
 
         # Sample prior.
         sample = torch.randn(
-            size=(batch_size, self.config.horizon, self.config.output_shapes["action"][0]),
+            size=(batch_size, self.horizon, self.action_shape),
             dtype=dtype,
             device=device,
             generator=generator,
@@ -302,10 +303,10 @@ class DiffusionModel(nn.Module):
         """
         # Input validation.
         assert set(batch).issuperset({"observation.state", "action", "action_is_pad"})
-        assert "observation.images" in batch or "observation.environment_state" in batch
+        # assert "observation.images" in batch or "observation.environment_state" in batch # Not needed in case of decoder only 
         n_obs_steps = batch["observation.state"].shape[1]
         horizon = batch["action"].shape[1]
-        assert horizon == self.config.horizon
+        assert horizon == self.horizon
         assert n_obs_steps == self.config.n_obs_steps
 
         # Encode image features and concatenate them all together along with the state vector.
@@ -351,6 +352,95 @@ class DiffusionModel(nn.Module):
 
         return loss.mean()
 
+class DiffusionDecoder(DiffusionModel):
+    def __init__(self, config: DiffusionConfig):
+        super().__init__()
+        self.config = config
+        
+        # Build observation encoders (depending on which observations are provided).
+        # global_cond_dim = config.input_shapes["observation.state"][0]
+        # num_images = len([k for k in config.input_shapes if k.startswith("observation.image")])
+        # self._use_images = False
+        # self._use_env_state = False
+        # if num_images > 0:
+        #     self._use_images = True
+        #     self.rgb_encoder = DiffusionRgbEncoder(config)
+        #     global_cond_dim += self.rgb_encoder.feature_dim * num_images
+        # if "observation.environment_state" in config.input_shapes:
+        #     self._use_env_state = True
+        #     global_cond_dim += config.input_shapes["observation.environment_state"][0]
+        self.horizon = config.get("horizon", config["chunk_size"])
+        global_cond_dim = config.get("global_cond_dim", config["dim_model"])
+        self.action_shape = config["action_shape"]
+        self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim)
+
+        self.noise_scheduler = _make_noise_scheduler(
+            config.noise_scheduler_type,
+            num_train_timesteps=config.num_train_timesteps,
+            beta_start=config.beta_start,
+            beta_end=config.beta_end,
+            beta_schedule=config.beta_schedule,
+            clip_sample=config.clip_sample,
+            clip_sample_range=config.clip_sample_range,
+            prediction_type=config.prediction_type,
+        )
+
+        if config.num_inference_steps is None:
+            self.num_inference_steps = self.noise_scheduler.config.num_train_timesteps
+        else:
+            self.num_inference_steps = config.num_inference_steps
+
+    def _prepare_global_conditioning(self, batch: dict[str, Tensor]) -> Tensor:
+        """We assume merged feattures are given as input. For now with shape: (batch_size, sequence_length, dim)"""
+        if "global_cond_feats" in batch:
+            global_cond_feats = batch["global_cond_feats"].mean(1)
+        else:
+            raise NotImplementedError(f"global_cond_feats not found in batch, only got {batch.keys()}")
+        return global_cond_feats
+
+    # def forward(self, batch: dict[str, Tensor]) -> Tensor:
+    #     """
+    #     This function expects `batch` to have (at least):
+    #     {
+    #         "observation.state": (B, n_obs_steps, state_dim)
+
+    #         "observation.images": (B, n_obs_steps, num_cameras, C, H, W)
+    #             AND/OR
+    #         "observation.environment_state": (B, environment_dim)
+
+    #         "action": (B, horizon, action_dim)
+    #         "action_is_pad": (B, horizon)
+    #     }
+    #     """
+    #     # Input validation.
+    #     assert set(batch).issuperset({"observation.state", "action", "action_is_pad"})
+    #     # assert "observation.images" in batch or "observation.environment_state" in batch # Not needed in case of decoder only 
+    #     n_obs_steps = batch["observation.state"].shape[1]
+    #     horizon = batch["action"].shape[1]
+    #     assert horizon == self.horizon
+    #     assert n_obs_steps == self.config.n_obs_steps
+
+    #     # Encode image features and concatenate them all together along with the state vector.
+    #     global_cond = self._prepare_global_conditioning(batch)  # (B, global_cond_dim)
+
+    #     # Forward diffusion.
+    #     trajectory = batch["action"]
+    #     # Sample noise to add to the trajectory.
+    #     eps = torch.randn(trajectory.shape, device=trajectory.device)
+    #     # Sample a random noising timestep for each item in the batch.
+    #     timesteps = torch.randint(
+    #         low=0,
+    #         high=self.noise_scheduler.config.num_train_timesteps,
+    #         size=(trajectory.shape[0],),
+    #         device=trajectory.device,
+    #     ).long()
+    #     # Add noise to the clean trajectories according to the noise magnitude at each timestep.
+    #     noisy_trajectory = self.noise_scheduler.add_noise(trajectory, eps, timesteps)
+
+    #     # Run the denoising network (that might denoise the trajectory, or attempt to predict the noise).
+    #     pred = self.unet(noisy_trajectory, timesteps, global_cond=global_cond)
+
+    #     return pred
 
 class SpatialSoftmax(nn.Module):
     """

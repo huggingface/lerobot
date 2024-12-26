@@ -66,20 +66,46 @@ policy:
 
   # Action decoder
   action_decoder:
-    name: act
-    # vlm_hidden_dim: 128  # Input dim for action decoder (combined dimension)
-    # action_dim: 4  # Output dimension (action space)
-    n_decoder_layers: 1
-    n_encoder_layers: 4
+    name: diffusion
+    ## vlm_hidden_dim: 128  # Input dim for action decoder (combined dimension)
+    # n_decoder_layers: 1
+    # n_encoder_layers: 4
     dim_model: 896 # 2048 smolvlm
-    n_heads: 8
-    dim_feedforward: 3200
-    feedforward_activation: relu
-    pre_norm: false
+    global_cond_dim: 896
+    # n_heads: 8
+    # dim_feedforward: 3200
+    # feedforward_activation: relu
+    # pre_norm: false
     # Training and loss computation
     dropout: 0.1
     temporal_ensemble_coeff: null
-    chunk_size: 100
+
+    n_obs_steps: "${policy.n_obs_steps}"
+    horizon: 100
+    chunk_size: "${policy.chunk_size}"
+    n_action_steps: "${policy.n_action_steps}"
+    action_shape: "${env.action_dim}"
+    # Unet.
+    down_dims: [512, 1024, 2048]
+    kernel_size: 5
+    n_groups: 8
+    diffusion_step_embed_dim: 128
+    use_film_scale_modulation: True
+    # Noise scheduler.
+    noise_scheduler_type: DDPM
+    num_train_timesteps: 100
+    beta_schedule: squaredcos_cap_v2
+    beta_start: 0.0001
+    beta_end: 0.02
+    prediction_type: epsilon # epsilon / sample
+    clip_sample: True
+    clip_sample_range: 1.0
+
+    # Inference
+    num_inference_steps: null  # if not provided, defaults to `num_train_timesteps`
+
+    # Loss computation
+    do_mask_loss_for_padding: false
 
 
   # Lora config

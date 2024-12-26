@@ -11,7 +11,7 @@ from torch import Tensor, nn
 from torch.profiler import record_function
 from transformers import AutoProcessor, LlavaOnevisionForConditionalGeneration
 
-from lerobot.common.policies.act.modeling_act import ACTDecoder, ACTEncoderDecoder
+
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.vla.configuration_vla import VLAConfig
 
@@ -87,27 +87,38 @@ class VLAPolicy(
 
         return self._action_queue.popleft()
 
-    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         if len(self.expected_image_keys) > 0:
-            batch = dict(batch)
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.images"] = [img for k in self.expected_image_keys for img in batch[k]]
         batch = self.normalize_targets(batch)
-        batch["prompt"] = self.config.prompt
-
-        predicted_actions = self.model(batch)
-
-        loss_dict = {}
-        if "action" in batch:
-            true_actions = batch["action"]
-            l1_loss = (
-                F.l1_loss(predicted_actions, true_actions, reduction="none")
-                * ~batch["action_is_pad"].unsqueeze(-1)
-            ).mean()
-            loss_dict["l1_loss"] = l1_loss.item()
-            loss_dict["loss"] = l1_loss
-
+        loss_dict = self.model.compute_loss(batch)
         return loss_dict
+    
+
+    # def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    #     batch = self.normalize_inputs(batch)
+    #     if len(self.expected_image_keys) > 0:
+    #         batch = dict(batch)
+    #         batch["observation.images"] = [img for k in self.expected_image_keys for img in batch[k]]
+    #     batch = self.normalize_targets(batch)
+    #     batch["prompt"] = self.config.prompt
+
+    #     predicted_actions = self.model(batch)
+
+    #     loss_dict = {}
+    #     if "action" in batch:
+    #         true_actions = batch["action"]
+    #         l1_loss = (
+    #             F.l1_loss(predicted_actions, true_actions, reduction="none")
+    #             * ~batch["action_is_pad"].unsqueeze(-1)
+    #         ).mean()
+    #         loss_dict["l1_loss"] = l1_loss.item()
+    #         loss_dict["loss"] = l1_loss
+
+    #     return loss_dict
 
 
 class VLA(nn.Module):
@@ -116,20 +127,24 @@ class VLA(nn.Module):
         self.chunk_size = config.chunk_size
         self.action_decoder_name = config.action_decoder.get("name", "act")
         self.use_robot_state = "observation.state" in config.input_shapes
+        action_decoder_config = OmegaConf.create(config.action_decoder)
         if "act" in self.action_decoder_name:
+            from lerobot.common.policies.act.modeling_act import ACTDecoder, ACTEncoderDecoder
             # This is needed now to evaluate previous checkpoints
             if self.action_decoder_name == "act_decoder":
-                action_decoder_config = OmegaConf.create(config.action_decoder)
                 self.action_decoder = ACTDecoder(action_decoder_config)
                 self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.action_decoder["dim_model"])
             elif "act" in self.action_decoder_name:
                 use_encoder = "decoder" not in self.action_decoder_name
-                action_decoder_config = OmegaConf.create(config.action_decoder)
                 self.action_decoder = ACTEncoderDecoder(action_decoder_config, use_encoder=use_encoder)
+        elif "diffusion" in self.action_decoder_name:
+            from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionDecoder
+            self.action_decoder = DiffusionDecoder(action_decoder_config)
         else:
             raise NotImplementedError(f"{self.action_decoder_name} not supported.")
 
-        self.action_head = nn.Linear(config.action_decoder["dim_model"], config.output_shapes["action"][0])
+        if "act" in self.action_decoder_name:
+            self.action_head = nn.Linear(config.action_decoder["dim_model"], config.output_shapes["action"][0])
 
         self.vlm_backbone_name = config.vlm_backbone["name"]
         self.vlm_backbone_feature_selection = config.vlm_backbone.get("feature_selection", "last_token")
@@ -295,10 +310,10 @@ class VLA(nn.Module):
             raise NotImplementedError(f"{self.vlm_backbone_name} not implemented.")
         return hidden_states
 
-    def get_action_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def get_action_logits(self, hidden_states: torch.Tensor, mode: str = "eval") -> torch.Tensor:
         batch_size, _, hidden_size = hidden_states.shape
-        hidden_states = hidden_states.transpose(0, 1)
         if self.action_decoder_name == "act_decoder":
+            hidden_states = hidden_states.transpose(0, 1)
             # Generate positional embeddings for the decoder
             decoder_pos_embeddings = self.decoder_pos_embed.weight.unsqueeze(1).repeat(1, batch_size, 1)
             # Decode the action with positional embeddings and encoder output
@@ -314,15 +329,22 @@ class VLA(nn.Module):
             action_logits = action_logits.transpose(0, 1)
             action_logits = self.action_head(action_logits)
         elif self.action_decoder_name == "act":
+            hidden_states = hidden_states.transpose(0, 1)
             action_logits = self.action_decoder(encoder_in_tokens=hidden_states, encoder_in_pos_embed=None)
             # Final action logits through the action head
             action_logits = self.action_head(action_logits)
+        elif "diffusion" in self.action_decoder_name:
+            if mode == "train":
+                action_logits = action_inputs
+            else:
+                action_inputs = {"global_cond_feats": hidden_states}
+                action_logits = self.action_decoder.generate_actions(action_inputs)
         else:
             raise NotImplementedError(f"{self.action_decoder_name} not supported.")
 
         return action_logits
 
-    def forward(self, batch):
+    def forward(self, batch, mode: str = "eval"):
         """
         Forward pass to compute action logits.
 
@@ -362,5 +384,30 @@ class VLA(nn.Module):
         if self.use_action_connector:
             hidden_states = self.action_connector(hidden_states)
 
-        action_logits = self.get_action_logits(hidden_states)
+        action_logits = self.get_action_logits(hidden_states, mode=mode)
         return action_logits
+
+    def compute_loss(self, batch: dict[str, Tensor]) -> Tensor:
+        """
+        This function expects `batch` to have (at least):
+        """
+        loss_dict = {}
+        if "diffusion" in self.action_decoder_name:
+            predictions = self(batch, mode="train")
+            batch.update({"global_cond_feats": predictions})
+            loss = self.action_decoder.compute_loss(batch)
+            loss_dict["loss"] = loss
+        else:
+            predictions = self(batch)
+            loss_dict = {}
+            if "action" in batch:
+                true_actions = batch["action"]
+                l1_loss = (
+                    F.l1_loss(predictions, true_actions, reduction="none")
+                    * ~batch["action_is_pad"].unsqueeze(-1)
+                ).mean()
+                loss_dict["l1_loss"] = l1_loss.item()
+                loss_dict["loss"] = l1_loss
+
+        return loss_dict
+            
