@@ -306,6 +306,7 @@ def mock_calibration_dir(calibration_dir):
         json.dump(example_calib, f)
 
 
+# TODO(rcadene, aliberts): remove this dark pattern that overrides
 def make_camera(camera_type: str, **kwargs) -> Camera:
     if camera_type == "opencv":
         camera_index = kwargs.pop("camera_index", OPENCV_CAMERA_INDEX)
@@ -318,6 +319,7 @@ def make_camera(camera_type: str, **kwargs) -> Camera:
         raise ValueError(f"The camera type '{camera_type}' is not valid.")
 
 
+# TODO(rcadene, aliberts): remove this dark pattern that overrides
 def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
     if motor_type == "dynamixel":
         port = kwargs.pop("port", DYNAMIXEL_PORT)
