@@ -24,6 +24,7 @@ import re
 from glob import glob
 from pathlib import Path
 from datetime import datetime
+from typing import Any
 import torch
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from omegaconf import DictConfig, OmegaConf
@@ -61,6 +62,14 @@ def get_wandb_run_id_from_filesystem(checkpoint_dir: Path) -> str:
     wandb_run_id = match.groups(0)[0]
     return wandb_run_id
 
+def log_to_text_file(results: dict[str, Any], log_dir: str, file_name: str = "output_logs.txt", step: int = 0, mode: str = "train") -> None:
+    # Save logs to a text file
+    with open(f"{log_dir}/{file_name}", 'a') as f:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        text = f"[{timestamp}] Step: {step}, Mode: {mode}, "
+        for k, v in results.items():
+            text += f"{k}: {v}, "
+        f.write(f"{text}\n")  # Empty line between entries
 
 class Logger:
     """Primary logger object. Logs either locally or using wandb.
@@ -239,12 +248,8 @@ class Logger:
                     continue
                 self._wandb.log({f"{mode}/{k}": v}, step=step)
         # Log to text file
-        with open(f"{self.log_dir}/output_logs.txt", 'a') as f:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            text = f"[{timestamp}] Step: {step}, Mode: {mode}, "
-            for k, v in d.items():
-                text += f"{k}: {v}, "
-            f.write(f"{text}\n")  # Empty line between entries
+        file_name = "train_logs.txt" if mode == "train" else "eval_logs.txt"
+        log_to_text_file(results=d, log_dir=self.log_dir, file_name=file_name, step=step, mode=mode)
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         assert mode in {"train", "eval"}
