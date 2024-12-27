@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamWConfig
 from lerobot.common.optim.schedulers import NoneSchedulerConfig
-from lerobot.configs.policies import NormalizationMode, PretrainedConfig
+from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.types import NormalizationMode
 
 
 @PretrainedConfig.register_subclass("act")
@@ -138,6 +139,8 @@ class ACTConfig(PretrainedConfig):
     optimizer_lr_backbone: float = 1e-5
 
     def __post_init__(self):
+        super().__post_init__()
+
         """Input validation (not exhaustive)."""
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(

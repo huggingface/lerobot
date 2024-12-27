@@ -18,11 +18,13 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.common.policies import Policy
-from lerobot.configs.default import MainConfig
+from lerobot.configs.training import TrainPipelineConfig
 
 
-def make_optimizer_and_scheduler(cfg: MainConfig, policy: Policy) -> tuple[Optimizer, LRScheduler | None]:
+def make_optimizer_and_scheduler(
+    cfg: TrainPipelineConfig, policy: Policy
+) -> tuple[Optimizer, LRScheduler | None]:
     params = policy.get_optim_params() if cfg.use_policy_training_preset else policy.parameters()
     optimizer = cfg.optimizer.build(params)
-    lr_scheduler = cfg.scheduler.build(optimizer, cfg.training.offline.steps)
+    lr_scheduler = cfg.scheduler.build(optimizer, cfg.offline.steps)
     return optimizer, lr_scheduler

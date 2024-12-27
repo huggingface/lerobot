@@ -24,8 +24,8 @@ from lerobot.common.datasets.lerobot_dataset import (
     MultiLeRobotDataset,
 )
 from lerobot.common.datasets.transforms import ImageTransforms
-from lerobot.configs.default import MainConfig
 from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.training import TrainPipelineConfig
 
 IMAGENET_STATS = {
     "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
@@ -56,7 +56,7 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def make_dataset(cfg: MainConfig, split: str = "train") -> LeRobotDataset | MultiLeRobotDataset:
+def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
     """
     Args:
         cfg: A Hydra config as per the LeRobot config scheme.
