@@ -31,11 +31,16 @@
 }">
     <!-- Sidebar -->
     <div x-ref="sidebar" class="bg-slate-900 p-5 break-words overflow-y-auto shrink-0 md:shrink md:w-60 md:max-h-screen">
-        <h1 class="mb-4 text-xl font-semibold">{{ dataset_info.repo_id }}</h1>
+        <a href="https://github.com/huggingface/lerobot" target="_blank" class="hidden md:block">
+            <img src="https://github.com/huggingface/lerobot/raw/main/media/lerobot-logo-thumbnail.png">
+        </a>
+        <a href="https://huggingface.co/datasets/{{ dataset_info.repo_id }}" target="_blank">
+            <h1 class="mb-4 text-xl font-semibold">{{ dataset_info.repo_id }}</h1>
+        </a>
 
         <ul>
             <li>
-                Number of samples/frames: {{ dataset_info.num_frames }}
+                Number of samples/frames: {{ dataset_info.num_samples }}
             </li>
             <li>
                 Number of episodes: {{ dataset_info.num_episodes }}
@@ -93,10 +98,10 @@
         </div>
 
         <!-- Videos -->
-        <div class="flex flex-wrap gap-1">
+        <div class="flex flex-wrap gap-x-2 gap-y-6">
             {% for video_info in videos_info %}
-            <div x-show="!videoCodecError" class="max-w-96">
-                <p class="text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
+            <div x-show="!videoCodecError" class="max-w-96 relative">
+                <p class="absolute inset-x-0 -top-4 text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
                 <video muted loop type="video/mp4" class="object-contain w-full h-full" @canplaythrough="videoCanPlay" @timeupdate="() => {
                     if (video.duration) {
                       const time = video.currentTime;
@@ -182,12 +187,12 @@
                 <thead>
                     <tr>
                         <th></th>
-                        <template x-for="(_, colIndex) in Array.from({length: nColumns}, (_, index) => index)">
+                        <template x-for="(_, colIndex) in Array.from({length: columns.length}, (_, index) => index)">
                             <th class="border border-slate-700">
                                 <div class="flex gap-x-2 justify-between px-2">
                                     <input type="checkbox" :checked="isColumnChecked(colIndex)"
                                         @change="toggleColumn(colIndex)">
-                                    <p x-text="`${columnNames[colIndex]}`"></p>
+                                    <p x-text="`${columns[colIndex].key}`"></p>
                                 </div>
                             </th>
                         </template>
@@ -197,10 +202,10 @@
                     <template x-for="(row, rowIndex) in rows">
                         <tr class="odd:bg-gray-800 even:bg-gray-900">
                             <td class="border border-slate-700">
-                                <div class="flex gap-x-2 w-24 font-semibold px-1">
+                                <div class="flex gap-x-2 max-w-64 font-semibold px-1 break-all">
                                     <input type="checkbox" :checked="isRowChecked(rowIndex)"
                                         @change="toggleRow(rowIndex)">
-                                    <p x-text="`Motor ${rowIndex}`"></p>
+                                    <p x-text="`${rowLabels[rowIndex]}`"></p>
                                 </div>
                             </td>
                             <template x-for="(cell, colIndex) in row">
@@ -223,15 +228,19 @@
     </div>
 
     <script>
+        const parentOrigin = "https://huggingface.co";
+        const searchParams = new URLSearchParams();
+        searchParams.set("dataset", "{{ dataset_info.repo_id }}");
+        searchParams.set("episode", "{{ episode_id }}");
+		window.parent.postMessage({ queryString: searchParams.toString() }, parentOrigin);
+    </script>
+
+    <script>
         function createAlpineData() {
             return {
                 // state
                 dygraph: null,
                 currentFrameData: null,
-                columnNames: ["state", "action", "pred action"],
-                nColumns: 2,
-                nStates: 0,
-                nActions: 0,
                 checked: [],
                 dygraphTime: 0.0,
                 dygraphIndex: 0,
@@ -241,6 +250,8 @@
                 nVideos: {{ videos_info | length }},
                 nVideoReadyToPlay: 0,
                 videoCodecError: false,
+                columns: {{ columns | tojson }},
+                rowLabels: {{ columns | tojson }}.reduce((colA, colB) => colA.value.length > colB.value.length ? colA : colB).value,
 
                 // alpine initialization
                 init() {
@@ -252,9 +263,16 @@
                     }
 
                     // process CSV data
+                    const csvDataStr = {{ episode_data_csv_str|tojson|safe }};
+                    // Create a Blob with the CSV data
+                    const blob = new Blob([csvDataStr], { type: 'text/csv;charset=utf-8;' });
+                    // Create a URL for the Blob
+                    const csvUrl = URL.createObjectURL(blob);
+
+                    // process CSV data
                     this.videos = document.querySelectorAll('video');
                     this.video = this.videos[0];
-                    this.dygraph = new Dygraph(document.getElementById("graph"), '{{ ep_csv_url }}', {
+                    this.dygraph = new Dygraph(document.getElementById("graph"), csvUrl, {
                         pixelsPerPoint: 0.01,
                         legend: 'always',
                         labelsDiv: document.getElementById('labels'),
@@ -275,21 +293,17 @@
                                 this.colors = this.dygraph.getColors();
                                 this.checked = Array(this.colors.length).fill(true);
 
-                                const seriesNames = this.dygraph.getLabels().slice(1);
-                                this.nStates = seriesNames.findIndex(item => item.startsWith('action_'));
-                                this.nActions = seriesNames.length - this.nStates;
                                 const colors = [];
-                                const LIGHTNESS = [30, 65, 85]; // state_lightness, action_lightness, pred_action_lightness
-                                // colors for "state" lines
-                                for (let hue = 0; hue < 360; hue += parseInt(360/this.nStates)) {
-                                    const color = `hsl(${hue}, 100%, ${LIGHTNESS[0]}%)`;
-                                    colors.push(color);
+                                let lightness = 30; // const LIGHTNESS = [30, 65, 85]; // state_lightness, action_lightness, pred_action_lightness
+                                for(const column of this.columns){
+                                    const nValues = column.value.length;
+                                    for (let hue = 0; hue < 360; hue += parseInt(360/nValues)) {
+                                        const color = `hsl(${hue}, 100%, ${lightness}%)`;
+                                        colors.push(color);
+                                    }
+                                    lightness += 35;
                                 }
-                                // colors for "action" lines
-                                for (let hue = 0; hue < 360; hue += parseInt(360/this.nActions)) {
-                                    const color = `hsl(${hue}, 100%, ${LIGHTNESS[1]}%)`;
-                                    colors.push(color);
-                                }
+
                                 this.dygraph.updateOptions({ colors });
                                 this.colors = colors;
 
@@ -316,17 +330,19 @@
                         return [];
                     }
                     const rows = [];
-                    const nRows = Math.max(this.nStates, this.nActions);
+                    const nRows = Math.max(...this.columns.map(column => column.value.length));
                     let rowIndex = 0;
                     while(rowIndex < nRows){
                         const row = [];
                         // number of states may NOT match number of actions. In this case, we null-pad the 2D array to make a fully rectangular 2d array
                         const nullCell = { isNull: true };
-                        const stateValueIdx = rowIndex;
-                        const actionValueIdx = stateValueIdx + this.nStates; // because this.currentFrameData = [state0, state1, ..., stateN, action0, action1, ..., actionN]
                         // row consists of [state value, action value]
-                        row.push(rowIndex < this.nStates ? this.currentFrameData[stateValueIdx] : nullCell); // push "state value" to row
-                        row.push(rowIndex < this.nActions ? this.currentFrameData[actionValueIdx] : nullCell); // push "action value" to row
+                        let idx = rowIndex;
+                        for(const column of this.columns){
+                            const nColumn = column.value.length;
+                            row.push(rowIndex < nColumn ? this.currentFrameData[idx] : nullCell);
+                            idx += nColumn; // because this.currentFrameData = [state0, state1, ..., stateN, action0, action1, ..., actionN]
+                        }
                         rowIndex += 1;
                         rows.push(row);
                     }
