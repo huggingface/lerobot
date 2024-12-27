@@ -4,10 +4,15 @@
   <meta charset="UTF-8" />
   <title>Robot Observation Stream (Alpine.js Refactor - Dark Theme)</title>
   
-  <!-- Socket.IO -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.8.1/socket.io.js"></script>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Font Awesome -->
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+  />
+  <!-- Socket.IO -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.8.1/socket.io.js"></script>
   <!-- Alpine.js -->
   <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 </head>
@@ -18,9 +23,9 @@
   x-on:keydown.window.arrow-right="handleKey('ArrowRight')"
   x-on:keydown.window.arrow-left="handleKey('ArrowLeft')"
   x-on:keydown.window.escape="handleKey('Escape')"
-  x-on:keydown.window.space.prevent="handleKey('Space')"
+  x-on:keydown.window.space="toggleReward()"
 >
-
+  
   <!-- Header Bar -->
   <div class="bg-gray-800 text-gray-200 p-4 flex justify-between items-center shadow-lg">
     <div class="flex space-x-6">
@@ -61,14 +66,6 @@
           00:00
         </span>
       </div>
-      <!-- Enable Voice Button -->
-      <button
-        id="enable-voice-button"
-        class="font-mono bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700"
-        x-on:click="enableVoice()"
-      >
-        Enable Voice
-      </button>
     </div>
     <!-- Last Timestamp -->
     <div id="timestamp" class="font-mono text-gray-400" x-text="timestamp"></div>
@@ -95,22 +92,6 @@
             />
           </div>
         </template>
-      </div>
-      
-      <!-- Events Panel -->
-      <div class="bg-gray-800 rounded-lg shadow-md p-6">
-        <h3 class="text-lg font-semibold mb-4 text-gray-300">Events</h3>
-        <div id="events" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          <template x-for="(value, key) in eventsData" :key="key">
-            <div
-              class="p-2 rounded text-center font-mono text-sm"
-              :class="value
-                ? 'bg-green-600 text-white'
-                : 'bg-gray-600 text-gray-300'"
-              x-text="key.replaceAll('_',' ')"
-            ></div>
-          </template>
-        </div>
       </div>
     </div>
     
@@ -151,52 +132,72 @@
       
       <!-- Controls Panel -->
       <div class="bg-gray-800 rounded-lg shadow-md p-6">
-        <h3 class="text-lg font-semibold mb-4 text-gray-300">Controls</h3>
-        <div class="space-y-4">
+        <h3 class="text-lg font-semibold mb-6 text-gray-300 flex items-center">
+          <i class="fas fa-gamepad mr-2"></i>
+          Controls
+        </h3>
+        <div class="space-y-3">
+          <!-- Voice Control -->
+          <button
+            class="flex items-center justify-between w-full px-6 py-3 rounded-lg transition-all duration-200 transform hover:scale-[1.02]"
+            :class="voiceEnabled ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'"
+            @click="toggleVoice"
+          >
+            <span class="flex items-center">
+              <i class="mr-3 text-lg" :class="voiceEnabled ? 'fas fa-microphone' : 'fas fa-microphone-slash'"></i>
+              <span x-text="voiceEnabled ? 'Disable Voice' : 'Enable Voice'"></span>
+            </span>
+            <i class="fas fa-chevron-right opacity-50"></i>
+          </button>
+
           <!-- Exit Early -->
-          <div class="flex items-center space-x-3">
-            <span class="font-mono bg-gray-600 px-2 py-1 rounded text-sm">→</span>
-            <span>Exit Early</span>
-            <button
-              class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600"
-              x-on:click="handleKey('ArrowRight')"
-            >
+          <button
+            class="flex items-center justify-between w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all duration-200 transform hover:scale-[1.02]"
+            @click="handleKey('ArrowRight')"
+          >
+            <span class="flex items-center">
+              <i class="fas fa-arrow-right mr-3 text-lg"></i>
               Exit Early
-            </button>
-          </div>
+            </span>
+            <i class="fas fa-chevron-right opacity-50"></i>
+          </button>
+
           <!-- Rerecord -->
-          <div class="flex items-center space-x-3">
-            <span class="font-mono bg-gray-600 px-2 py-1 rounded text-sm">←</span>
-            <span>Rerecord</span>
-            <button
-              class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600"
-              x-on:click="handleKey('ArrowLeft')"
-            >
+          <button
+            class="flex items-center justify-between w-full px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-all duration-200 transform hover:scale-[1.02]"
+            @click="handleKey('ArrowLeft')"
+          >
+            <span class="flex items-center">
+              <i class="fas fa-undo mr-3 text-lg"></i>
               Rerecord
-            </button>
-          </div>
+            </span>
+            <i class="fas fa-chevron-right opacity-50"></i>
+          </button>
+
           <!-- Stop -->
-          <div class="flex items-center space-x-3">
-            <span class="font-mono bg-gray-600 px-2 py-1 rounded text-sm">Esc</span>
-            <span>Stop</span>
-            <button
-              class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600"
-              x-on:click="handleKey('Escape')"
-            >
+          <button
+            class="flex items-center justify-between w-full px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-all duration-200 transform hover:scale-[1.02]"
+            @click="handleKey('Escape')"
+          >
+            <span class="flex items-center">
+              <i class="fas fa-stop mr-3 text-lg"></i>
               Stop
-            </button>
-          </div>
+            </span>
+            <i class="fas fa-chevron-right opacity-50"></i>
+          </button>
+
           <!-- Toggle Reward -->
-          <div class="flex items-center space-x-3">
-            <span class="font-mono bg-gray-600 px-2 py-1 rounded text-sm">Space</span>
-            <span>Toggle Reward</span>
-            <button
-              class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600"
-              x-on:click="handleKey('Space')"
-            >
-              Toggle Reward
-            </button>
-          </div>
+          <button
+            class="flex items-center justify-between w-full px-6 py-3 rounded-lg transition-all duration-200 transform hover:scale-[1.02]"
+            :class="rewardEnabled ? 'bg-yellow-600 hover:bg-yellow-700 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'"
+            @click="toggleReward"
+          >
+            <span class="flex items-center">
+              <i class="mr-3 text-lg" :class="rewardEnabled ? 'fas fa-star' : 'fas fa-star-half-alt'"></i>
+              <span x-text="rewardEnabled ? 'Disable Reward' : 'Enable Reward'"></span>
+            </span>
+            <i class="fas fa-chevron-right opacity-50"></i>
+          </button>
         </div>
       </div>
 
@@ -223,6 +224,8 @@
         images: {},
         countdownTime: 0,
         timestamp: '',
+        voiceEnabled: false,
+        rewardEnabled: false,
         
         // Computed-like property for displaying the countdown
         get countdownText() {
@@ -232,13 +235,13 @@
         },
 
         initSocket() {
-            this.socket = io({
-                reconnection: true,
-                reconnectionAttempts: Infinity,      // Unlimited reconnection attempts
-                reconnectionDelay: 1000,             // Start with 1 second delay
-                reconnectionDelayMax: 5000,          // Max delay of 5 seconds
-                randomizationFactor: 0.5
-            });
+          this.socket = io({
+            reconnection: true,
+            reconnectionAttempts: Infinity,      // Unlimited reconnection attempts
+            reconnectionDelay: 1000,             // Start with 1 second delay
+            reconnectionDelayMax: 5000,          // Max delay of 5 seconds
+            randomizationFactor: 0.5
+          });
 
           this.socket.on('connect', () => {
             console.log('Connected to server');
@@ -319,10 +322,34 @@
           return new Date(tsSeconds * 1000).toISOString();
         },
 
+        toggleVoice() {
+          this.voiceEnabled = !this.voiceEnabled;
+          if (this.voiceEnabled) {
+            this.enableVoice();
+          } else {
+            this.disableVoice();
+          }
+        },
+
+        toggleReward() {
+          this.rewardEnabled = !this.rewardEnabled;
+          // Emit the appropriate key event or handle reward toggle logic here
+          this.handleKey(this.rewardEnabled ? 'EnableReward' : 'DisableReward');
+        },
+
         enableVoice() {
           this.loadVoices().then(() => {
             this.speakMessage('Voice is now enabled!');
           });
+        },
+
+        disableVoice() {
+          // Implement voice disabling logic if necessary
+          // For example, stop any ongoing speech
+          if (speechSynthesis.speaking) {
+            speechSynthesis.cancel();
+          }
+          this.speakMessage('Voice is now disabled!');
         },
 
         loadVoices() {
