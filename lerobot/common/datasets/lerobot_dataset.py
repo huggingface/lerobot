@@ -964,6 +964,35 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.video_backend = video_backend if video_backend is not None else "pyav"
         return obj
 
+    def clone(self, new_repo_id: str, new_root: str | Path | None = None) -> "LeRobotDataset":
+        return LeRobotDataset.create(
+            repo_id=new_repo_id,
+            fps=self.fps,
+            root=new_root,
+            robot=self.robot,
+            robot_type=self.robot_type,
+            features=self.features,
+            use_videos=self.use_videos,
+            tolerance_s=self.tolerance_s,
+            image_writer_processes=self.image_writer_processes,
+            image_writer_threads=self.image_writer_threads,
+            video_backend=self.video_backend,
+        )
+
+    def delete(self):
+        """Delete the dataset locally. If it was push to hub, you can still access it by downloading it again."""
+        shutil.rmtree(self.root)
+
+    def remove_episode(self, episode: int | list[int]):
+        if isinstance(episode, int):
+            episode = [episode]
+
+        for ep in episode:
+            self.meta.info
+
+    def drop_frame(self, episode_range: dict[int, tuple[int]]):
+        pass
+
 
 class MultiLeRobotDataset(torch.utils.data.Dataset):
     """A dataset consisting of multiple underlying `LeRobotDataset`s.
