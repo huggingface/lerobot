@@ -17,8 +17,13 @@ training:
   grad_clip_norm: 10
   online_steps_between_rollouts: 1
 
+  # delta_timestamps:
+  #   action: "[i / ${fps} for i in range(${policy.chunk_size})]"
+
   delta_timestamps:
-    action: "[i / ${fps} for i in range(${policy.chunk_size})]"
+    observation.images.top: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.chunk_size})]"
 
 eval:
   n_episodes: 50
@@ -71,7 +76,7 @@ policy:
     # n_decoder_layers: 1
     # n_encoder_layers: 4
     dim_model: 896 # 2048 smolvlm
-    global_cond_dim: 896
+    global_cond_dim: "${policy.action_decoder.dim_model}"
     # n_heads: 8
     # dim_feedforward: 3200
     # feedforward_activation: relu
@@ -81,10 +86,12 @@ policy:
     temporal_ensemble_coeff: null
 
     n_obs_steps: "${policy.n_obs_steps}"
-    horizon: 100
+    horizon: "${policy.chunk_size}"
     chunk_size: "${policy.chunk_size}"
     n_action_steps: "${policy.n_action_steps}"
     action_shape: "${env.action_dim}"
+    output_shapes:
+      action: ["${env.action_dim}"]
     # Unet.
     down_dims: [512, 1024, 2048]
     kernel_size: 5

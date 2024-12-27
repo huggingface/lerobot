@@ -354,7 +354,9 @@ class DiffusionModel(nn.Module):
 
 class DiffusionDecoder(DiffusionModel):
     def __init__(self, config: DiffusionConfig):
-        super().__init__()
+        super(DiffusionModel, self).__init__()
+        # super().__init__()
+        # nn.Module().__init__()
         self.config = config
         
         # Build observation encoders (depending on which observations are provided).
@@ -397,6 +399,27 @@ class DiffusionDecoder(DiffusionModel):
         else:
             raise NotImplementedError(f"global_cond_feats not found in batch, only got {batch.keys()}")
         return global_cond_feats
+
+    def generate_actions(self, batch: dict[str, Tensor]) -> Tensor:
+        """
+        This function expects `batch` to have:
+        """
+        batch_size = batch["global_cond_feats"].shape[0]
+        n_obs_steps = self.config.n_obs_steps
+
+        # Encode image features and concatenate them all together along with the state vector.
+        global_cond = self._prepare_global_conditioning(batch)  # (B, global_cond_dim)
+
+        # run sampling
+        actions = self.conditional_sample(batch_size, global_cond=global_cond)
+
+        # Extract `n_action_steps` steps worth of actions (from the current observation).
+        start = n_obs_steps - 1
+        end = start + self.config.n_action_steps
+        actions = actions[:, start:end]
+
+        return actions
+    
 
     # def forward(self, batch: dict[str, Tensor]) -> Tensor:
     #     """

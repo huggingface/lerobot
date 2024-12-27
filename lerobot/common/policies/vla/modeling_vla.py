@@ -93,6 +93,7 @@ class VLAPolicy(
         if len(self.expected_image_keys) > 0:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.images"] = [img for k in self.expected_image_keys for img in batch[k]]
+        batch["prompt"] = self.config.prompt
         batch = self.normalize_targets(batch)
         loss_dict = self.model.compute_loss(batch)
         return loss_dict
@@ -124,6 +125,7 @@ class VLAPolicy(
 class VLA(nn.Module):
     def __init__(self, config: VLAConfig, precision: torch.dtype = torch.float32):
         super().__init__()
+        self.config = config
         self.chunk_size = config.chunk_size
         self.action_decoder_name = config.action_decoder.get("name", "act")
         self.use_robot_state = "observation.state" in config.input_shapes
@@ -335,7 +337,7 @@ class VLA(nn.Module):
             action_logits = self.action_head(action_logits)
         elif "diffusion" in self.action_decoder_name:
             if mode == "train":
-                action_logits = action_inputs
+                action_logits = hidden_states
             else:
                 action_inputs = {"global_cond_feats": hidden_states}
                 action_logits = self.action_decoder.generate_actions(action_inputs)
@@ -354,7 +356,7 @@ class VLA(nn.Module):
         Returns:
         action_logits: Tensor of predicted actions.
         """
-
+        assert self.config.n_obs_steps == 1 # For now we support passing only 1 images 
         if "resnet" in self.vlm_backbone_name:
             images = torch.stack(batch["observation.images"], dim=0)
             hidden_states = self.vision_language_model(images)["feature_map"]
@@ -363,6 +365,7 @@ class VLA(nn.Module):
             prompt = self.apply_prompt_template(batch["prompt"], add_generation_prompt=True)
 
             batch_size = len(batch["observation.images"])
+            batch["observation.images"] = [img.squeeze() for img in batch["observation.images"]] # For now we support passing only 1 images 
             with record_function("processor"):
                 processed_inputs = self.processor(
                     text=[prompt] * batch_size,
@@ -378,7 +381,7 @@ class VLA(nn.Module):
 
             hidden_states = self.get_vlm_features(processed_inputs)
         if self.use_robot_state:
-            robot_state = self.encoder_robot_state_input_proj(batch["observation.state"]).unsqueeze(1)
+            robot_state = self.encoder_robot_state_input_proj(batch["observation.state"]).squeeze(1).unsqueeze(1) # FIXME(mshukor): support n_obs_steps > 1 
             hidden_states = torch.cat([hidden_states, robot_state], axis=1)
 
         if self.use_action_connector:
