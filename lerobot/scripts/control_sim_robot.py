@@ -295,6 +295,13 @@ def record(
                 "timestamp": env_timestamp,
             }
 
+            # Overwrite environment reward with manually assigned reward
+            if assign_rewards:
+                frame["next.reward"] = events["next.reward"]
+
+                # Should success always be false to match what we do in control_utils?
+                frame["next.success"] = False
+
             for key in image_keys:
                 if not key.startswith("observation.image"):
                     frame["observation.image." + key] = observation[key]
