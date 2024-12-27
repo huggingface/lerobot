@@ -44,7 +44,7 @@ from lerobot.common.utils.utils import (
     init_logging,
     set_global_seed,
 )
-from lerobot.configs.default import MainConfig
+from lerobot.configs.training import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
 
 
@@ -106,7 +106,7 @@ def update_policy(
 
 
 def log_train_info(
-    logger: Logger, info: dict, step: int, cfg: MainConfig, dataset: LeRobotDataset, is_online: bool
+    logger: Logger, info: dict, step: int, cfg: TrainPipelineConfig, dataset: LeRobotDataset, is_online: bool
 ):
     loss = info["loss"]
     grad_norm = info["grad_norm"]
@@ -116,7 +116,7 @@ def log_train_info(
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
-    num_samples = (step + 1) * cfg.training.batch_size
+    num_samples = (step + 1) * cfg.batch_size
     avg_samples_per_ep = dataset.num_frames / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_frames
@@ -153,7 +153,7 @@ def log_eval_info(logger, info, step, cfg, dataset, is_online):
 
     # A sample is an (observation,action) pair, where observation and action
     # can be on multiple timestamps. In a batch, we have `batch_size`` number of samples.
-    num_samples = (step + 1) * cfg.training.batch_size
+    num_samples = (step + 1) * cfg.batch_size
     avg_samples_per_ep = dataset.num_frames / dataset.num_episodes
     num_episodes = num_samples / avg_samples_per_ep
     num_epochs = num_samples / dataset.num_frames
@@ -181,7 +181,7 @@ def log_eval_info(logger, info, step, cfg, dataset, is_online):
 
 
 @draccus.wrap()
-def train(cfg: MainConfig):
+def train(cfg: TrainPipelineConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
@@ -204,13 +204,14 @@ def train(cfg: MainConfig):
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
-    if cfg.training.eval_freq > 0 and cfg.env.type != "real_world":
+    if cfg.eval_freq > 0 and cfg.env.type != "real_world":
         logging.info("Creating env")
-        eval_env = make_env(cfg)
+        eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size)
 
     logging.info("Creating policy")
     policy = make_policy(
-        cfg=cfg,
+        cfg=cfg.policy,
+        device=device,
         ds_meta=offline_dataset.meta,
         pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
     )
@@ -228,8 +229,8 @@ def train(cfg: MainConfig):
 
     log_output_dir(cfg.dir)
     logging.info(f"{cfg.env.task=}")
-    logging.info(f"{cfg.training.offline.steps=} ({format_big_number(cfg.training.offline.steps)})")
-    logging.info(f"{cfg.training.online.steps=}")
+    logging.info(f"{cfg.offline.steps=} ({format_big_number(cfg.offline.steps)})")
+    logging.info(f"{cfg.online.steps=}")
     logging.info(f"{offline_dataset.num_frames=} ({format_big_number(offline_dataset.num_frames)})")
     logging.info(f"{offline_dataset.num_episodes=}")
     logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
@@ -237,10 +238,10 @@ def train(cfg: MainConfig):
 
     # Note: this helper will be used in offline and online training loops.
     def evaluate_and_checkpoint_if_needed(step: int, is_online: bool):
-        _num_digits = max(6, len(str(cfg.training.offline.steps + cfg.training.online.steps)))
+        _num_digits = max(6, len(str(cfg.offline.steps + cfg.online.steps)))
         step_identifier = f"{step:0{_num_digits}d}"
 
-        if cfg.training.eval_freq > 0 and step % cfg.training.eval_freq == 0:
+        if cfg.eval_freq > 0 and step % cfg.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
                 assert eval_env is not None
@@ -257,9 +258,8 @@ def train(cfg: MainConfig):
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
 
-        if cfg.training.save_checkpoint and (
-            step % cfg.training.save_freq == 0
-            or step == cfg.training.offline.steps + cfg.training.online.steps
+        if cfg.save_checkpoint and (
+            step % cfg.save_freq == 0 or step == cfg.offline.steps + cfg.online.steps
         ):
             logging.info(f"Checkpoint policy after step {step}")
             # Note: Save with step as the identifier, and format it to have at least 6 digits but more if
@@ -286,8 +286,8 @@ def train(cfg: MainConfig):
         sampler = None
     dataloader = torch.utils.data.DataLoader(
         offline_dataset,
-        num_workers=cfg.training.num_workers,
-        batch_size=cfg.training.batch_size,
+        num_workers=cfg.num_workers,
+        batch_size=cfg.batch_size,
         shuffle=shuffle,
         sampler=sampler,
         pin_memory=device.type != "cpu",
@@ -297,7 +297,7 @@ def train(cfg: MainConfig):
 
     policy.train()
     offline_step = 0
-    for _ in range(step, cfg.training.offline.steps):
+    for _ in range(step, cfg.offline.steps):
         if offline_step == 0:
             logging.info("Start offline training on a fixed dataset")
 
@@ -320,7 +320,7 @@ def train(cfg: MainConfig):
 
         train_info["dataloading_s"] = dataloading_s
 
-        if step % cfg.training.log_freq == 0:
+        if step % cfg.log_freq == 0:
             log_train_info(logger, train_info, step, cfg, offline_dataset, is_online=False)
 
         # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
@@ -330,7 +330,7 @@ def train(cfg: MainConfig):
         step += 1
         offline_step += 1  # noqa: SIM113
 
-    if cfg.training.online.steps == 0:
+    if cfg.online.steps == 0:
         if eval_env:
             eval_env.close()
         logging.info("End of training")
@@ -339,7 +339,7 @@ def train(cfg: MainConfig):
     # Online training.
 
     # Create an env dedicated to online episodes collection from policy rollout.
-    online_env = make_env(cfg)
+    online_env = make_env(cfg.env, n_envs=cfg.online.rollout_batch_size)
     detla_timestamps = resolve_delta_timestamps(cfg.policy, offline_dataset.meta)
     online_buffer_path = logger.log_dir / "online_buffer"
     if cfg.resume and not online_buffer_path.exists():
@@ -366,14 +366,14 @@ def train(cfg: MainConfig):
             "next.done": {"shape": (), "dtype": np.dtype("?")},
             "next.success": {"shape": (), "dtype": np.dtype("?")},
         },
-        buffer_capacity=cfg.training.online.buffer_capacity,
+        buffer_capacity=cfg.online.buffer_capacity,
         fps=online_env.unwrapped.metadata["render_fps"],
         delta_timestamps=detla_timestamps,
     )
 
     # If we are doing online rollouts asynchronously, deepcopy the policy to use for online rollouts (this
     # makes it possible to do online rollouts in parallel with training updates).
-    online_rollout_policy = deepcopy(policy) if cfg.training.online.do_rollout_async else policy
+    online_rollout_policy = deepcopy(policy) if cfg.online.do_rollout_async else policy
 
     # Create dataloader for online training.
     concat_dataset = torch.utils.data.ConcatDataset([offline_dataset, online_dataset])
@@ -384,7 +384,7 @@ def train(cfg: MainConfig):
         # +1 because online rollouts return an extra frame for the "final observation". Note: we don't have
         # this final observation in the offline datasets, but we might add them in future.
         online_drop_n_last_frames=getattr(cfg.policy, "drop_n_last_frames", 0) + 1,
-        online_sampling_ratio=cfg.training.online.sampling_ratio,
+        online_sampling_ratio=cfg.online.sampling_ratio,
     )
     sampler = torch.utils.data.WeightedRandomSampler(
         sampler_weights,
@@ -393,8 +393,8 @@ def train(cfg: MainConfig):
     )
     dataloader = torch.utils.data.DataLoader(
         concat_dataset,
-        batch_size=cfg.training.batch_size,
-        num_workers=cfg.training.num_workers,
+        batch_size=cfg.batch_size,
+        num_workers=cfg.num_workers,
         sampler=sampler,
         pin_memory=device.type != "cpu",
         drop_last=True,
@@ -414,10 +414,10 @@ def train(cfg: MainConfig):
     # Time taken waiting for the online buffer to finish being updated. This is relevant when using the async
     # online rollout option.
     await_update_online_buffer_s = 0
-    rollout_start_seed = cfg.training.online.env_seed
+    rollout_start_seed = cfg.online.env_seed
 
     while True:
-        if online_step == cfg.training.online.steps:
+        if online_step == cfg.online.steps:
             break
 
         if online_step == 0:
@@ -433,13 +433,11 @@ def train(cfg: MainConfig):
                 eval_info = eval_policy(
                     online_env,
                     online_rollout_policy,
-                    n_episodes=cfg.training.online.rollout_n_episodes,
-                    max_episodes_rendered=min(10, cfg.training.online.rollout_n_episodes),
+                    n_episodes=cfg.online.rollout_n_episodes,
+                    max_episodes_rendered=min(10, cfg.online.rollout_n_episodes),
                     videos_dir=logger.log_dir / "online_rollout_videos",
                     return_episode_data=True,
-                    start_seed=(
-                        rollout_start_seed := (rollout_start_seed + cfg.training.batch_size) % 1000000
-                    ),
+                    start_seed=(rollout_start_seed := (rollout_start_seed + cfg.batch_size) % 1000000),
                 )
             online_rollout_s = time.perf_counter() - start_rollout_time
 
@@ -458,7 +456,7 @@ def train(cfg: MainConfig):
                     # +1 because online rollouts return an extra frame for the "final observation". Note: we don't have
                     # this final observation in the offline datasets, but we might add them in future.
                     online_drop_n_last_frames=getattr(cfg.policy, "drop_n_last_frames", 0) + 1,
-                    online_sampling_ratio=cfg.training.online.sampling_ratio,
+                    online_sampling_ratio=cfg.online.sampling_ratio,
                 )
                 sampler.num_frames = len(concat_dataset)
 
@@ -469,20 +467,15 @@ def train(cfg: MainConfig):
         future = executor.submit(sample_trajectory_and_update_buffer)
         # If we aren't doing async rollouts, or if we haven't yet gotten enough examples in our buffer, wait
         # here until the rollout and buffer update is done, before proceeding to the policy update steps.
-        if (
-            not cfg.training.online.do_rollout_async
-            or len(online_dataset) <= cfg.training.online.buffer_seed_size
-        ):
+        if not cfg.online.do_rollout_async or len(online_dataset) <= cfg.online.buffer_seed_size:
             online_rollout_s, update_online_buffer_s = future.result()
 
-        if len(online_dataset) <= cfg.training.online.buffer_seed_size:
-            logging.info(
-                f"Seeding online buffer: {len(online_dataset)}/{cfg.training.online.buffer_seed_size}"
-            )
+        if len(online_dataset) <= cfg.online.buffer_seed_size:
+            logging.info(f"Seeding online buffer: {len(online_dataset)}/{cfg.online.buffer_seed_size}")
             continue
 
         policy.train()
-        for _ in range(cfg.training.online.steps_between_rollouts):
+        for _ in range(cfg.online.steps_between_rollouts):
             with lock:
                 start_time = time.perf_counter()
                 batch = next(dl_iter)
@@ -509,7 +502,7 @@ def train(cfg: MainConfig):
             with lock:
                 train_info["online_buffer_size"] = len(online_dataset)
 
-            if step % cfg.training.log_freq == 0:
+            if step % cfg.log_freq == 0:
                 log_train_info(logger, train_info, step, cfg, online_dataset, is_online=True)
 
             # Note: evaluate_and_checkpoint_if_needed happens **after** the `step`th training update has completed,
@@ -526,7 +519,7 @@ def train(cfg: MainConfig):
             online_rollout_s, update_online_buffer_s = future.result()
             await_update_online_buffer_s = time.perf_counter() - start
 
-        if online_step >= cfg.training.online.steps:
+        if online_step >= cfg.online.steps:
             break
 
     if eval_env:

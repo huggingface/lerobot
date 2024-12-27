@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamConfig
 from lerobot.common.optim.schedulers import VQBeTSchedulerConfig
-from lerobot.configs.policies import NormalizationMode, PretrainedConfig
+from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.types import NormalizationMode
 
 
 @PretrainedConfig.register_subclass("vqbet")
@@ -137,9 +138,12 @@ class VQBeTConfig(PretrainedConfig):
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 1e-6
     optimizer_vqvae_lr: float = 1e-3
+    optimizer_vqvae_weight_decay: float = 1e-4
     scheduler_warmup_steps: int = 500
 
     def __post_init__(self):
+        super().__post_init__()
+
         """Input validation (not exhaustive)."""
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(

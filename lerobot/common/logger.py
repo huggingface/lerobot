@@ -34,8 +34,8 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
-from lerobot.configs.default import MainConfig
-from lerobot.configs.policies import FeatureType, NormalizationMode
+from lerobot.configs.training import TrainPipelineConfig
+from lerobot.configs.types import FeatureType, NormalizationMode
 
 
 def log_output_dir(out_dir):
@@ -86,7 +86,7 @@ class Logger:
     pretrained_model_dir_name = "pretrained_model"
     training_state_file_name = "training_state.pth"
 
-    def __init__(self, cfg: MainConfig):
+    def __init__(self, cfg: TrainPipelineConfig):
         self._cfg = cfg
         self.log_dir = cfg.dir
         self.log_dir.mkdir(parents=True, exist_ok=True)

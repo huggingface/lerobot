@@ -101,11 +101,10 @@ class VQBeTPolicy(
         return [
             {
                 "params": decay_params,
-                # "weight_decay": cfg.training.adam_weight_decay,
             },
             {
                 "params": vqvae_params,
-                "weight_decay": 1e-4,
+                "weight_decay": self.config.optimizer_vqvae_weight_decay,
                 "lr": self.config.optimizer_vqvae_lr,
             },
             {
@@ -656,57 +655,6 @@ class VQBeTHead(nn.Module):
             "action_mse_error": action_mse_error.detach().cpu().item(),
         }
         return loss_dict
-
-
-class VQBeTOptimizer(torch.optim.Adam):
-    def __init__(self, policy, cfg):
-        vqvae_params = (
-            list(policy.vqbet.action_head.vqvae_model.encoder.parameters())
-            + list(policy.vqbet.action_head.vqvae_model.decoder.parameters())
-            + list(policy.vqbet.action_head.vqvae_model.vq_layer.parameters())
-        )
-        decay_params, no_decay_params = policy.vqbet.policy.configure_parameters()
-        decay_params = (
-            decay_params
-            + list(policy.vqbet.rgb_encoder.parameters())
-            + list(policy.vqbet.state_projector.parameters())
-            + list(policy.vqbet.rgb_feature_projector.parameters())
-            + [policy.vqbet.action_token]
-            + list(policy.vqbet.action_head.map_to_cbet_preds_offset.parameters())
-        )
-
-        if cfg.policy.sequentially_select:
-            decay_params = (
-                decay_params
-                + list(policy.vqbet.action_head.map_to_cbet_preds_primary_bin.parameters())
-                + list(policy.vqbet.action_head.map_to_cbet_preds_secondary_bin.parameters())
-            )
-        else:
-            decay_params = decay_params + list(policy.vqbet.action_head.map_to_cbet_preds_bin.parameters())
-
-        optim_groups = [
-            {
-                "params": decay_params,
-                "weight_decay": cfg.training.adam_weight_decay,
-                "lr": cfg.training.lr,
-            },
-            {
-                "params": vqvae_params,
-                "weight_decay": 0.0001,
-                "lr": cfg.training.vqvae_lr,
-            },
-            {
-                "params": no_decay_params,
-                "weight_decay": 0.0,
-                "lr": cfg.training.lr,
-            },
-        ]
-        super().__init__(
-            optim_groups,
-            cfg.training.lr,
-            cfg.training.adam_betas,
-            cfg.training.adam_eps,
-        )
 
 
 class VQBeTRgbEncoder(nn.Module):

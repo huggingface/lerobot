@@ -1,27 +1,16 @@
 import abc
 from dataclasses import dataclass, field
-from enum import Enum
 from pprint import pformat
 
 import draccus
+import gymnasium as gym
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.common.datasets.utils import flatten_dict, get_nested_item
+from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.optim.optimizers import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
-
-
-# Note: We subclass str so that serialization is straightforward
-# https://stackoverflow.com/questions/24481852/serialising-an-enum-member-to-json
-class FeatureType(str, Enum):
-    STATE = "STATE"
-    VISUAL = "VISUAL"
-    ENV = "ENV"
-    ACTION = "ACTION"
-
-
-class NormalizationMode(str, Enum):
-    MIN_MAX = "MIN_MAX"
-    MEAN_STD = "MEAN_STD"
+from lerobot.configs.types import FeatureType, NormalizationMode
 
 
 @dataclass
@@ -48,13 +37,18 @@ class PretrainedConfig(draccus.ChoiceRegistry, abc.ABC):
             the original scale.
     """
 
+    type: str = ""
+
     n_obs_steps: int = 1
 
     normalization_mapping: dict[str, NormalizationMode] = field(default_factory=dict)
 
-    @property
-    def type(self) -> str:
-        return self.get_choice_name(self.__class__)
+    def __post_init__(self):
+        self.type = self.get_choice_name(self.__class__)
+
+    # @property
+    # def type(self) -> str:
+    #     return self.get_choice_name(self.__class__)
 
     @abc.abstractproperty
     def observation_delta_indices(self) -> list | None:
@@ -161,6 +155,63 @@ class PretrainedConfig(draccus.ChoiceRegistry, abc.ABC):
                 "Found multiple features for the action. Please select only one or concatenate them."
                 f"Action features found:\n{pformat(action_features)}"
             )
+
+        self.robot_state_feature = robot_state_features[0] if len(robot_state_features) == 1 else None
+        self.env_state_feature = env_state_features[0] if len(env_state_features) == 1 else None
+        self.action_feature = action_features[0] if len(action_features) == 1 else None
+        self.image_features = image_features
+
+    def parse_features_from_env(self, env: gym.Env, env_cfg: EnvConfig):
+        robot_state_features = []
+        env_state_features = []
+        action_features = []
+        image_features = []
+
+        flat_dict = flatten_dict(env_cfg.feature_types)
+
+        for key, _type in flat_dict.items():
+            env_ft = (
+                env.action_space
+                if _type is FeatureType.ACTION
+                else get_nested_item(env.observation_space, key)
+            )
+            shape = env_ft.shape[1:]
+            if _type is FeatureType.VISUAL:
+                h, w, c = shape
+                if not c < h and c < w:
+                    raise ValueError(
+                        f"Expect channel last images for visual feature {key} of {env_cfg.type} env, but instead got {shape=}"
+                    )
+                shape = (c, h, w)
+
+            feature = PolicyFeature(
+                key=key,
+                type=_type,
+                shape=shape,
+                normalization_mode=self.normalization_mapping[_type],
+            )
+            if _type is FeatureType.VISUAL:
+                image_features.append(feature)
+            elif _type is FeatureType.STATE:
+                robot_state_features.append(feature)
+            elif _type is FeatureType.ENV:
+                env_state_features.append(feature)
+            elif _type is FeatureType.ACTION:
+                action_features.append(feature)
+
+        # TODO(aliberts, rcadene): remove this hardcoding of keys and just use the nested keys as is
+        # (need to also refactor preprocess_observation and externalize normalization from policies)
+        for ft in image_features:
+            if len(ft.key.split("/")) > 1:
+                ft.key = f"observation.images.{ft.key.split('/')[-1]}"
+            elif len(ft.key.split("/")) == 1:
+                image_features[0].key = "observation.image"
+
+        if len(robot_state_features) == 1:
+            robot_state_features[0].key = "observation.state"
+
+        if len(env_state_features) == 1:
+            env_state_features[0].key = "observation.environment_state"
 
         self.robot_state_feature = robot_state_features[0] if len(robot_state_features) == 1 else None
         self.env_state_feature = env_state_features[0] if len(env_state_features) == 1 else None

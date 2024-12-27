@@ -14,11 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gymnasium as gym
 from torch import nn
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.policies.policy_protocol import Policy
-from lerobot.configs.default import MainConfig
+from lerobot.configs.policies import PretrainedConfig
 
 
 def get_policy_class(name: str) -> Policy:
@@ -44,7 +46,12 @@ def get_policy_class(name: str) -> Policy:
 
 
 def make_policy(
-    cfg: MainConfig, ds_meta: LeRobotDatasetMetadata, pretrained_policy_name_or_path: str | None = None
+    cfg: PretrainedConfig,
+    device: str,
+    ds_meta: LeRobotDatasetMetadata | None = None,
+    env: gym.Env | None = None,
+    env_cfg: EnvConfig | None = None,
+    pretrained_policy_name_or_path: str | None = None,
 ) -> Policy:
     """Make an instance of a policy class.
 
@@ -57,35 +64,48 @@ def make_policy(
             directory containing weights saved using `Policy.save_pretrained`. Note that providing this
             argument overrides everything in `hydra_cfg.policy` apart from `hydra_cfg.policy.type`.
     """
+    if not (ds_meta is None) ^ (env is None and env_cfg is None):
+        raise ValueError("Either one of a dataset metadata or a sim env must be provided.")
+
     # Note: Currently, if you try to run vqbet with mps backend, you'll get this error.
     # NotImplementedError: The operator 'aten::unique_dim' is not currently implemented for the MPS device. If
     # you want this op to be added in priority during the prototype phase of this feature, please comment on
     # https://github.com/pytorch/pytorch/issues/77764. As a temporary fix, you can set the environment
     # variable `PYTORCH_ENABLE_MPS_FALLBACK=1` to use the CPU as a fallback for this op. WARNING: this will be
     # slower than running natively on MPS.
-    if cfg.policy.type == "vqbet" and cfg.device == "mps":
+    if cfg.type == "vqbet" and device == "mps":
         raise NotImplementedError(
             "Current implementation of VQBeT does not support `mps` backend. "
             "Please use `cpu` or `cuda` backend."
         )
 
-    policy_cls = get_policy_class(cfg.policy.type)
-    cfg.policy.parse_features_from_dataset(ds_meta)
+    policy_cls = get_policy_class(cfg.type)
+
+    kwargs = {}
+    if ds_meta is not None:
+        cfg.parse_features_from_dataset(ds_meta)
+        kwargs["dataset_stats"] = ds_meta.stats
+    else:
+        cfg.parse_features_from_env(env, env_cfg)
+
+    kwargs["config"] = cfg
 
     if pretrained_policy_name_or_path is None:
         # Make a fresh policy.
-        policy = policy_cls(cfg.policy, ds_meta.stats)
+        policy = policy_cls(**kwargs)
     else:
+        kwargs["pretrained_model_name_or_path"] = pretrained_policy_name_or_path
+        policy = policy_cls.from_pretrained(**kwargs)
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
         # TODO(alexander-soare): This hack makes use of huggingface_hub's tooling to load the policy with,
         # pretrained weights which are then loaded into a fresh policy with the desired config. This PR in
         # huggingface_hub should make it possible to avoid the hack:
         # https://github.com/huggingface/huggingface_hub/pull/2274.
-        policy = policy_cls(cfg.policy)
-        policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
+        # policy = policy_cls(cfg)
+        # policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
 
-    policy.to(cfg.device)
+    policy.to(device)
     assert isinstance(policy, nn.Module)
 
     return policy
