@@ -41,7 +41,7 @@ def zmq_consumer():
                     "state": {},
                     "events": message.get("events", {}),
                     "config": message.get("config", {}),
-                    # "log_items": message.get("log_items", []),
+                    "log_items": message.get("log_items", []),
                     "countdown_time": message.get("countdown_time")
                 }
 
