@@ -133,7 +133,6 @@
       <!-- Controls Panel -->
       <div class="bg-gray-800 rounded-lg shadow-md p-6">
         <h3 class="text-lg font-semibold mb-6 text-gray-300 flex items-center">
-          <i class="fas fa-gamepad mr-2"></i>
           Controls
         </h3>
         <div class="space-y-3">
@@ -334,7 +333,7 @@
         toggleReward() {
           this.rewardEnabled = !this.rewardEnabled;
           // Emit the appropriate key event or handle reward toggle logic here
-          this.handleKey(this.rewardEnabled ? 'EnableReward' : 'DisableReward');
+          this.handleKey('space');
         },
 
         enableVoice() {
