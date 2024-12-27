@@ -18,7 +18,8 @@ from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamConfig
 from lerobot.common.optim.schedulers import NoneSchedulerConfig
-from lerobot.configs.policies import NormalizationMode, PretrainedConfig
+from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.types import NormalizationMode
 
 
 @PretrainedConfig.register_subclass("tdmpc")
@@ -161,6 +162,8 @@ class TDMPCConfig(PretrainedConfig):
     optimizer_lr: float = 3e-4
 
     def __post_init__(self):
+        super().__post_init__()
+
         """Input validation (not exhaustive)."""
         if self.n_gaussian_samples <= 0:
             raise ValueError(

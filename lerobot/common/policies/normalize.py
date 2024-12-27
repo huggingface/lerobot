@@ -16,7 +16,8 @@
 import torch
 from torch import Tensor, nn
 
-from lerobot.configs.policies import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.policies import PolicyFeature
+from lerobot.configs.types import FeatureType, NormalizationMode
 
 
 def create_stats_buffers(

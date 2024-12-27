@@ -215,7 +215,7 @@ class DiffusionModel(nn.Module):
 
         # Sample prior.
         sample = torch.randn(
-            size=(batch_size, self.config.horizon, self.action_feature.shape[0]),
+            size=(batch_size, self.config.horizon, self.config.action_feature.shape[0]),
             dtype=dtype,
             device=device,
             generator=generator,

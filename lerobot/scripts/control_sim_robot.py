@@ -504,7 +504,7 @@ if __name__ == "__main__":
 
     # make gym env
     env_cfg = init_hydra_config(env_config_path)
-    importlib.import_module(f"gym_{env_cfg.env.name}")
+    importlib.import_module(f"gym_{env_cfg.env.type}")
 
     def env_constructor():
         return gym.make(env_cfg.env.handle, disable_env_checker=True, **env_cfg.env.gym)

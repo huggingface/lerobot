@@ -20,6 +20,7 @@ from torch import Tensor
 
 
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
+    # TODO(aliberts, rcadene): refactor this to use features from the environment (no hardcoding)
     """Convert environment observation to LeRobot format observation.
     Args:
         observation: Dictionary of observation batches from a Gym vector environment.
