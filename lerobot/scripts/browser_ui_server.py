@@ -1,9 +1,5 @@
 from flask import Flask, render_template
 from flask_socketio import SocketIO
-import cv2
-import numpy as np
-import base64
-import json
 import threading
 import time
 import zmq
@@ -37,9 +33,6 @@ def zmq_consumer():
     while True:
         try:
             message = subscriber_socket.recv_json()
-
-            message_type = message.get("type")
-            print(f"Received message: {message_type}")
             
             if message.get("type") == "observation_update":
                 processed_data = {
@@ -48,8 +41,8 @@ def zmq_consumer():
                     "state": {},
                     "events": message.get("events", {}),
                     "config": message.get("config", {}),
-                    "log_items": message.get("log_items", []),
-                    "countdown_time": message.get("countdown_time"),
+                    # "log_items": message.get("log_items", []),
+                    "countdown_time": message.get("countdown_time")
                 }
 
                 # Process observation data
@@ -69,8 +62,9 @@ def zmq_consumer():
                 latest_data["observation"].update(processed_data)
                 latest_data["config"].update(processed_data.get("config", {}))
                 
-                # Emit the observation data to the browser
+                # # Emit the observation data to the browser
                 socketio.emit("observation_update", processed_data)
+        
                 
             elif message.get("type") == "config_update":
                 # Handle dedicated config updates
@@ -91,12 +85,9 @@ def zmq_consumer():
                     "message": data
                 })
                 
-                
         except Exception as e:
             print(f"ZMQ consumer error: {e}")
             time.sleep(1)
-            
-        time.sleep(0.001)  # Small sleep to prevent busy-waiting
 
 
 @socketio.on("keydown_event")

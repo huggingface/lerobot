@@ -56,7 +56,6 @@ class ControlContext:
         if self.config.assign_rewards:
             self.events["next_reward"] = 0
 
-        self.pressed_keys = []
         self.current_episode_index = 0
 
         # Define the control instructions
@@ -182,6 +181,11 @@ class ControlContext:
             "current_episode": self.current_episode_index,
         }
 
+        # Sanitize countdown time. if inf set to max 32-bit int
+        countdown_time = int(countdown_time) if countdown_time != float("inf") else 2 ** 31 - 1
+        if self.config.control_phase == ControlPhase.TELEOPERATE:
+            countdown_time = 0
+
         message = {
             "type": "observation_update",
             "timestamp": time.time(),
@@ -214,7 +218,8 @@ class ControlContext:
         return log_items
     
     def log_say(self, message):
-        self._publish_log_say(message)
+        # self._publish_log_say(message)
+        pass
 
     def _publish_log_say(self, message):
         message = {
@@ -250,7 +255,6 @@ if __name__ == "__main__":
         return torch.tensor(frame_rgb).float()
 
     config = ControlContextConfig(
-        display_cameras=False,
         assign_rewards=True,
         control_phase=ControlPhase.RECORD,
         num_episodes=200,
@@ -259,7 +263,7 @@ if __name__ == "__main__":
     context = ControlContext(config)
     context.update_current_episode(199)
 
-    cameras = {"main": cv2.VideoCapture(0), "top": cv2.VideoCapture(4), "web": cv2.VideoCapture(6)}
+    cameras = {"main": cv2.VideoCapture(0), "top": cv2.VideoCapture(4)}
 
     for name, cap in cameras.items():
         if not cap.isOpened():
@@ -282,7 +286,7 @@ if __name__ == "__main__":
             obs_dict[f"observation.images.{name}"] = images[name]
 
         # Update context with observations
-        context.update_with_observations(obs_dict)
+        context.update_with_observations(obs_dict, time.perf_counter(), countdown_time=10)
         events = context.get_events()
 
         if events["exit_early"]:

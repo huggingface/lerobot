@@ -5,7 +5,7 @@
   <title>Robot Observation Stream (Alpine.js Refactor - Dark Theme)</title>
   
   <!-- Socket.IO -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.8.1/socket.io.js"></script>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Alpine.js -->
@@ -82,7 +82,6 @@
       <div
         id="cameras"
         class="grid grid-cols-1 md:grid-cols-2 gap-4"
-        x-show="configData.display_cameras"
       >
         <!-- Loop over images object -->
         <template x-for="(imageData, name) in images" :key="name">
@@ -215,7 +214,7 @@
 
   <script>
     document.addEventListener('alpine:init', () => {
-      Alpine.data('LeRobot', () => ({
+      Alpine.data('robotApp', () => ({
         // Reactive state
         configData: {},
         stateData: {},
@@ -233,7 +232,14 @@
         },
 
         initSocket() {
-          this.socket = io();
+            this.socket = io({
+                reconnection: true,
+                reconnectionAttempts: Infinity,      // Unlimited reconnection attempts
+                reconnectionDelay: 1000,             // Start with 1 second delay
+                reconnectionDelayMax: 5000,          // Max delay of 5 seconds
+                randomizationFactor: 0.5
+            });
+
           this.socket.on('connect', () => {
             console.log('Connected to server');
           });
@@ -261,7 +267,7 @@
             if (data.log_items) {
               this.logs = data.log_items;
             }
-            if (data.images && this.configData.display_cameras) {
+            if (data.images) {
               this.images = data.images;
             }
             if (data.countdown_time !== undefined) {
