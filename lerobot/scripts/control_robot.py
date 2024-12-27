@@ -177,11 +177,10 @@ def calibrate(robot: Robot, arms: list[str] | None):
 
 @safe_disconnect
 def teleoperate(
-    robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
+    robot: Robot, fps: int | None = None, teleop_time_s: float | None = None
 ):
     control_context = ControlContext(
         config=ControlContextConfig(
-            display_cameras=display_cameras,
             control_phase=ControlPhase.TELEOPERATE,
             robot=robot,
             fps=fps,
@@ -222,8 +221,6 @@ def record(
     local_files_only: bool = False,
 ) -> LeRobotDataset:
     # TODO(rcadene): Add option to record logs
-    listener = None
-    events = None
     policy = None
     device = None
     use_amp = None
@@ -282,8 +279,6 @@ def record(
         config=ControlContextConfig(
             robot=robot,
             control_phase=ControlPhase.WARMUP,
-            display_cameras=display_cameras,
-            play_sounds=play_sounds,
             assign_rewards=False,
             fps=fps,
         )
@@ -309,15 +304,13 @@ def record(
             ControlContextConfig(
                 robot=robot,
                 control_phase=ControlPhase.RECORD,
-                play_sounds=play_sounds,
                 assign_rewards=False,
                 num_episodes=num_episodes,
-                display_cameras=display_cameras,
                 fps=fps,
             )
         )
 
-        control_context.log_say(f"Recording episode {dataset.num_episodes}")
+        control_context.log_say(f"Recording episode {dataset.num_episodes + 1}")
         record_episode(
             dataset=dataset,
             robot=robot,
@@ -343,10 +336,8 @@ def record(
                 ControlContextConfig(
                     robot=robot,
                     control_phase=ControlPhase.RESET,
-                    play_sounds=play_sounds,
                     assign_rewards=False,
                     num_episodes=num_episodes,
-                    display_cameras=display_cameras,
                     fps=fps,
                 )
             )
@@ -364,10 +355,8 @@ def record(
             ControlContextConfig(
                 robot=robot,
                 control_phase=ControlPhase.SAVING,
-                play_sounds=play_sounds,
                 assign_rewards=False,
                 num_episodes=num_episodes,
-                display_cameras=display_cameras,
                 fps=fps,
             )
         )
@@ -385,10 +374,8 @@ def record(
         ControlContextConfig(
             robot=robot,
             control_phase=ControlPhase.PROCESSING_DATASET,
-            play_sounds=play_sounds,
             assign_rewards=False,
             num_episodes=num_episodes,
-            display_cameras=display_cameras,
             fps=fps,
         )
     )
@@ -403,10 +390,8 @@ def record(
             ControlContextConfig(
                 robot=robot,
                 control_phase=ControlPhase.UPLOADING_DATASET_TO_HUB,
-                play_sounds=play_sounds,
                 assign_rewards=False,
                 num_episodes=num_episodes,
-                display_cameras=display_cameras,
                 fps=fps,
             )
         )
@@ -417,10 +402,8 @@ def record(
         ControlContextConfig(
             robot=robot,
             control_phase=ControlPhase.RECORDING_COMPLETE,
-            play_sounds=play_sounds,
             assign_rewards=False,
             num_episodes=num_episodes,
-            display_cameras=display_cameras,
             fps=fps,
         )
     )
@@ -490,12 +473,6 @@ if __name__ == "__main__":
     parser_teleop = subparsers.add_parser("teleoperate", parents=[base_parser])
     parser_teleop.add_argument(
         "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
-    )
-    parser_teleop.add_argument(
-        "--display-cameras",
-        type=int,
-        default=1,
-        help="Display all cameras on screen (set to 1 to display or 0).",
     )
 
     parser_record = subparsers.add_parser("record", parents=[base_parser])

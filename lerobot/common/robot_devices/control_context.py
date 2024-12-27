@@ -9,7 +9,6 @@ import time
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.robot_devices.control_utils import log_control_info
-from lerobot.common.utils.utils import log_say
 
 
 class ControlPhase:
@@ -25,8 +24,6 @@ class ControlPhase:
 
 @dataclass
 class ControlContextConfig:
-    display_cameras: bool = False
-    play_sounds: bool = True
     assign_rewards: bool = False
     control_phase: str = ControlPhase.TELEOPERATE
     num_episodes: int = 0
@@ -115,15 +112,7 @@ class ControlContext:
 
     def update_config(self, config: ControlContextConfig):
         """Update configuration and reinitialize UI components as needed"""
-        old_display_setting = self.config.display_cameras
         self.config = config
-
-        # If display setting changed, reinitialize display
-        if old_display_setting != self.config.display_cameras:
-            self._initialize_display()
-
-        # Force screen recreation on next render
-        self.screen = None
 
         # Update ZMQ message with new config
         self._publish_config_update()
@@ -133,11 +122,9 @@ class ControlContext:
     def _publish_config_update(self):
         """Publish configuration update to ZMQ subscribers"""
         config_data = {
-            "display_cameras": self.config.display_cameras,
-            "play_sounds": self.config.play_sounds,
             "assign_rewards": self.config.assign_rewards,
             "control_phase": self.config.control_phase,
-            "num_episodes": self.config.num_episodes - 1,
+            "num_episodes": self.config.num_episodes,
             "current_episode": self.current_episode_index,
         }
 
@@ -189,11 +176,9 @@ class ControlContext:
 
         # Include current configuration in observation update
         config_data = {
-            "display_cameras": self.config.display_cameras,
-            "play_sounds": self.config.play_sounds,
             "assign_rewards": self.config.assign_rewards,
             "control_phase": self.config.control_phase,
-            "num_episodes": self.config.num_episodes - 1,
+            "num_episodes": self.config.num_episodes,
             "current_episode": self.current_episode_index,
         }
 
@@ -228,10 +213,8 @@ class ControlContext:
 
         return log_items
     
-    def log_say(self, message, blocking=False):
-        if self.config.play_sounds:
-            self._publish_log_say(message)
-            log_say(message, blocking)
+    def log_say(self, message):
+        self._publish_log_say(message)
 
     def _publish_log_say(self, message):
         message = {
