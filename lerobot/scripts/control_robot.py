@@ -367,7 +367,7 @@ def record(
         if events["stop_recording"]:
             break
 
-    control_context.log_say("Stop recording", blocking=True)
+    control_context.log_say("Stop recording")
     control_context.cleanup(robot)
 
     control_context = control_context.update_config(
