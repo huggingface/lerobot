@@ -172,18 +172,18 @@ class Logger:
         self,
         save_dir: Path,
         train_step: int,
-        optimizer: Optimizer,
-        scheduler: LRScheduler | None,
+        optimizer: Optimizer | None = None,
+        scheduler: LRScheduler | None = None,
     ):
         """Checkpoint the global training_step, optimizer state, scheduler state, and random state.
 
         All of these are saved as "training_state.pth" under the checkpoint directory.
         """
-        training_state = {
-            "step": train_step,
-            "optimizer": optimizer.state_dict(),
-            **get_global_random_state(),
-        }
+        training_state = {}
+        training_state["step"] = train_step
+        training_state.update(get_global_random_state())
+        if optimizer is not None:
+            training_state["optimizer"] = optimizer.state_dict()
         if scheduler is not None:
             training_state["scheduler"] = scheduler.state_dict()
         torch.save(training_state, save_dir / self.training_state_file_name)
@@ -191,10 +191,10 @@ class Logger:
     def save_checkpoint(
         self,
         train_step: int,
-        policy: Policy,
-        optimizer: Optimizer,
-        scheduler: LRScheduler | None,
         identifier: str,
+        policy: Policy,
+        optimizer: Optimizer | None = None,
+        scheduler: LRScheduler | None = None,
     ):
         """Checkpoint the model weights and the training state."""
         checkpoint_dir = self.checkpoints_dir / str(identifier)

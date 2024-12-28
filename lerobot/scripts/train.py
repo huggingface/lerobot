@@ -266,10 +266,10 @@ def train(cfg: TrainPipelineConfig):
             # needed (choose 6 as a minimum for consistency without being overkill).
             logger.save_checkpoint(
                 step,
+                step_identifier,
                 policy,
                 optimizer,
                 lr_scheduler,
-                identifier=step_identifier,
             )
             logging.info("Resume training")
 

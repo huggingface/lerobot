@@ -8,9 +8,11 @@ import time
 import traceback
 from contextlib import nullcontext
 from copy import copy
+from dataclasses import replace
 from functools import cache
 
 import cv2
+import draccus
 import torch
 import tqdm
 from deepdiff import DeepDiff
@@ -23,7 +25,8 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.utils import get_pretrained_policy_path
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
-from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
+from lerobot.common.utils.utils import get_safe_torch_device, set_global_seed
+from lerobot.configs.policies import PretrainedConfig
 
 
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
@@ -164,8 +167,15 @@ def init_keyboard_listener():
 def init_policy(pretrained_policy_name_or_path, policy_overrides):
     """Instantiate the policy and load fps, device and use_amp from config yaml"""
     pretrained_policy_path = get_pretrained_policy_path(pretrained_policy_name_or_path)
-    hydra_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", policy_overrides)
-    policy = make_policy(cfg=hydra_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
+    cfg_path = pretrained_policy_path / "config.json"
+    with open(cfg_path) as f:
+        policy_cfg = draccus.load(PretrainedConfig, f)
+
+    breakpoint()
+    policy_kwargs = policy_overrides
+    policy_cfg = replace(policy_cfg, **policy_kwargs)
+
+    policy = make_policy(policy_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
 
     # Check device is available
     device = get_safe_torch_device(hydra_cfg.device, log=True)

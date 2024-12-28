@@ -30,14 +30,13 @@ from unittest.mock import patch
 import pytest
 
 from lerobot.common.logger import Logger
+from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.factory import make_policy
-
-# from lerobot.common.utils.utils import init_hydra_config
-from lerobot.common.utils.utils import init_hydra_config
+from lerobot.configs.default import DatasetConfig
+from lerobot.configs.training import TrainPipelineConfig
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
-from lerobot.scripts.train import make_optimizer_and_scheduler
 from tests.test_robots import make_robot
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
+from tests.utils import DEVICE, TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
@@ -142,9 +141,6 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         # Use the default .cache/calibration folder when mock=False
         pass
 
-    env_name = "koch_real"
-    policy_name = "act_koch_real"
-
     repo_id = "lerobot/debug"
     root = tmpdir / "data" / repo_id
     single_task = "Do something."
@@ -172,49 +168,18 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
 
     replay(robot, episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False, local_files_only=True)
 
-    # TODO(rcadene, aliberts): rethink this design
-    if robot_type == "aloha":
-        env_name = "aloha_real"
-        policy_name = "act_aloha_real"
-    elif robot_type in ["koch", "koch_bimanual"]:
-        env_name = "koch_real"
-        policy_name = "act_koch_real"
-    elif robot_type == "so100":
-        env_name = "so100_real"
-        policy_name = "act_so100_real"
-    elif robot_type == "moss":
-        env_name = "moss_real"
-        policy_name = "act_moss_real"
-    else:
-        raise NotImplementedError(robot_type)
+    policy_cfg = ACTConfig()
+    policy = make_policy(policy_cfg, ds_meta=dataset.meta, device=DEVICE)
 
-    overrides = [
-        f"env={env_name}",
-        f"policy={policy_name}",
-        f"device={DEVICE}",
-    ]
-
-    if robot_type == "koch_bimanual":
-        overrides += ["env.state_dim=12", "env.action_dim=12"]
-
-    overrides += ["wandb.enable=false"]
-    overrides += ["env.fps=1"]
-
-    cfg = init_hydra_config(
-        DEFAULT_CONFIG_PATH,
-        overrides=overrides,
-    )
-
-    policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.meta.stats)
-    optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
     out_dir = tmpdir / "logger"
-    logger = Logger(cfg, out_dir, wandb_job_name="debug")
+
+    ds_cfg = DatasetConfig(repo_id, local_files_only=True)
+    train_cfg = TrainPipelineConfig(policy_cfg, ds_cfg, dir=out_dir)
+    logger = Logger(train_cfg)
     logger.save_checkpoint(
-        0,
-        policy,
-        optimizer,
-        lr_scheduler,
+        train_step=0,
         identifier=0,
+        policy=policy,
     )
     pretrained_policy_name_or_path = out_dir / "checkpoints/last/pretrained_model"
 
