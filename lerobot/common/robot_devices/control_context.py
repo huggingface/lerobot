@@ -1,14 +1,16 @@
-import numpy as np
-from typing import Dict, Optional
-from dataclasses import dataclass, asdict
-import cv2
 import base64
-import zmq
-import torch
 import time
+from dataclasses import dataclass
+from typing import Dict, Optional
+
+import cv2
+import numpy as np
+import torch
+import zmq
+
+from lerobot.common.robot_devices.control_utils import log_control_info, serialize_log_items
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
-from lerobot.common.robot_devices.control_utils import log_control_info, serialize_log_items
 
 
 class ControlPhase:
@@ -240,9 +242,10 @@ class ControlContext:
 
 
 if __name__ == "__main__":
+    import time
+
     import cv2
     import numpy as np
-    import time
     import torch
 
     def read_image_from_camera(cap):

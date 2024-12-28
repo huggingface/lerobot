@@ -1,9 +1,10 @@
-from flask import Flask, render_template
-from flask_socketio import SocketIO
 import threading
 import time
-import zmq
 from pathlib import Path
+
+import zmq
+from flask import Flask, render_template
+from flask_socketio import SocketIO
 
 # Get template directory path
 template_dir = Path(__file__).resolve().parent.parent / "templates"

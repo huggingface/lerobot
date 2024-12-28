@@ -8,9 +8,10 @@ import time
 import traceback
 from contextlib import nullcontext
 from copy import copy
+from dataclasses import asdict, dataclass
 from functools import cache
+from typing import Any, Dict, List, Optional
 
-import cv2
 import torch
 import tqdm
 from deepdiff import DeepDiff
@@ -21,11 +22,9 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import get_features_from_robot
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.utils import Robot
-from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
-from dataclasses import dataclass, asdict
-from typing import Any, Dict, List, Optional
+
 
 @dataclass
 class LogItem:
