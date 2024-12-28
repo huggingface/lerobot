@@ -59,14 +59,10 @@ class SACConfig:
         "activate_final": True,
     }
     policy_kwargs = {
-        "tanh_squash_distribution": True,
-        "std_parameterization": "uniform",
-    }
-
-    input_shapes: dict[str, list[int]] = field(
-        default_factory=lambda: {
-            "observation.image": [3, 84, 84],
-            "observation.state": [4],
+            "tanh_squash_distribution": True,
+            "std_parameterization": "softplus",
+            "std_min": 0.005,
+            "std_max": 5.0,
         }
     )
     output_shapes: dict[str, list[int]] = field(
