@@ -48,7 +48,7 @@ class SACConfig:
     critic_target_update_weight = 0.005
     utd_ratio = 2
     state_encoder_hidden_dim = 256
-    latent_dim = 50
+    latent_dim = 128
     target_entropy = None
     critic_network_kwargs = {
             "hidden_dims": [256, 256],

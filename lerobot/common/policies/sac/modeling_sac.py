@@ -64,13 +64,18 @@ class SACPolicy(
         self.unnormalize_outputs = Unnormalize(
             config.output_shapes, config.output_normalization_modes, dataset_stats
         )
-        encoder = SACObservationEncoder(config)
+        # the original code uses separate encoders for critic and actor
+        encoder_critic = SACObservationEncoder(config)
+        encoder_actor = SACObservationEncoder(config)
         # Define networks
         critic_nets = []
         for _ in range(config.num_critics):
             critic_net = Critic(
-                encoder=encoder,
-                network=MLP(**config.critic_network_kwargs)
+                encoder=encoder_critic,
+                network=MLP(
+                    input_dim=encoder_critic.output_dim + config.output_shapes["action"][0],
+                    **config.critic_network_kwargs
+                )
             )
             critic_nets.append(critic_net)
         
@@ -78,8 +83,11 @@ class SACPolicy(
         self.critic_target = deepcopy(self.critic_ensemble)
 
         self.actor = Policy(
-            encoder=encoder,
-            network=MLP(**config.actor_network_kwargs),
+            encoder=encoder_actor,
+            network=MLP(
+                input_dim=encoder_actor.output_dim,
+                **config.actor_network_kwargs
+            ),
             action_dim=config.output_shapes["action"][0],
             **config.policy_kwargs
         )
@@ -104,8 +112,28 @@ class SACPolicy(
     
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        actions, _ = self.actor(batch['observations'])
+        """Select action for inference/evaluation"""
+        distribution = self.actor(batch)
+        # Sample from the distribution and return just the actions
+        actions = distribution.mode()  # or distribution.rsample() for stochastic actions
+        actions = self.unnormalize_outputs({"action": actions})["action"]
+        return actions
 
+    def critic_forward(self, observations: dict[str, Tensor], actions: Tensor, use_target: bool = False) -> Tensor:
+        """Forward pass through a critic network ensemble
+        
+        Args:
+            observations: Dictionary of observations
+            actions: Action tensor
+            use_target: If True, use target critics, otherwise use ensemble critics
+        
+        Returns:
+            Tensor of Q-values from all critics
+        """
+        critics = self.critic_target if use_target else self.critic_ensemble
+        q_values = torch.stack([critic(observations, actions) for critic in critics])
+        return q_values
+    
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor | float]:
         """Run the batch through the model and compute the loss.
 
@@ -113,7 +141,7 @@ class SACPolicy(
         """
         batch = self.normalize_inputs(batch)
         # batch shape is (b, 2, ...) where index 1 returns the current observation and 
-        # the next observation for caluculating the right td index. 
+        # the next observation for calculating the right td index. 
         actions = batch["action"][:, 0]
         rewards = batch["next.reward"][:, 0]
         observations = {}
@@ -131,9 +159,10 @@ class SACPolicy(
 
         # calculate critics loss
         # 1- compute actions from policy
-        action_preds, log_probs = self.actor(observations)
+        action_preds, log_probs = self.actor(observations).sample_and_log_prob()
+        actions_preds = torch.clamp(action_preds, -1, +1)
         # 2- compute q targets
-        q_targets = self.target_qs(next_observations, action_preds)
+        q_targets = self.critic_forward(next_observations, action_preds, use_target=True)
 
         # subsample critics to prevent overfitting if use high UTD (update to date)
         if self.config.num_subsample_critics is not None:
@@ -142,51 +171,59 @@ class SACPolicy(
             q_targets = q_targets[indices]
 
         # critics subsample size
-        min_q = q_targets.min(dim=0)
+        min_q, _ = q_targets.min(dim=0)  # Get values from min operation
 
         # compute td target
-        td_target = rewards + self.discount * min_q
+        td_target = rewards + self.config.discount * min_q
 
         # 3- compute predicted qs
-        q_preds = self.critic_ensemble(observations, actions)
+        q_preds = self.critic_forward(observations, actions, use_target=False)
 
         # 4- Calculate loss
         # Compute state-action value loss (TD loss) for all of the Q functions in the ensemble.
-        critics_loss = (   
-            F.mse_loss(
-                    q_preds,
-                    einops.repeat(td_target, "t b -> e t b", e=q_preds.shape[0]),
-                    reduction="none",
-                ).sum(0)  # sum over ensemble
-                # `q_preds_ensemble` depends on the first observation and the actions.
-                * ~batch["observation.state_is_pad"][0]
-                * ~batch["action_is_pad"]
-                # q_targets depends on the reward and the next observations.
-                * ~batch["next.reward_is_pad"]
-                * ~batch["observation.state_is_pad"][1:]
-            ).sum(0).mean()
+        # 4- Calculate loss
+        # Compute state-action value loss (TD loss) for all of the Q functions in the ensemble.
+        critics_loss = F.mse_loss(
+            q_preds,  # shape: [num_critics, batch_size]
+            einops.repeat(td_target, "b -> e b", e=q_preds.shape[0]), # expand td_target to match q_preds shape
+            reduction="none"
+        ).sum(0).mean()
+
+        # critics_loss = (   
+        #     F.mse_loss(
+        #             q_preds,
+        #             einops.repeat(td_target, "b -> e b", e=q_preds.shape[0]),
+        #             reduction="none",
+        #         ).sum(0)  # sum over ensemble
+        #         # `q_preds_ensemble` depends on the first observation and the actions.
+        #         * ~batch["observation.state_is_pad"][0]
+        #         * ~batch["action_is_pad"]
+        #         # q_targets depends on the reward and the next observations.
+        #         * ~batch["next.reward_is_pad"]
+        #         * ~batch["observation.state_is_pad"][1:]
+        #     ).sum(0).mean()
         
         # calculate actors loss
         # 1- temperature
         temperature = self.temperature()
 
         # 2- get actions (batch_size, action_dim) and log probs (batch_size,)
-        actions, log_probs = self.actor(observations) \
-
+        actions, log_probs = self.actor(observations).sample_and_log_prob()
+        actions = torch.clamp(actions, -1, +1)
         # 3- get q-value predictions
-        with torch.no_grad():
-            q_preds = self.critic_ensemble(observations, actions, return_type="mean")
+        with torch.inference_mode():
+            q_preds = self.critic_forward(observations, actions, use_target=False)
         actor_loss = (
             -(q_preds - temperature * log_probs).mean()
-            * ~batch["observation.state_is_pad"][0]
-            * ~batch["action_is_pad"]
+            # * ~batch["observation.state_is_pad"][0]
+            # * ~batch["action_is_pad"]
         ).mean()
 
 
         # calculate temperature loss
         # 1- calculate entropy
         entropy = -log_probs.mean()
-        temperature_loss = self.temp(
+        temperature_loss = self.temperature(
             lhs=entropy,
             rhs=self.config.target_entropy
         )
@@ -204,20 +241,25 @@ class SACPolicy(
             }
     
     def update(self):
-        self.critic_target.lerp_(self.critic_ensemble, self.config.critic_target_update_weight)
         # TODO: implement UTD update
         # First update only critics for utd_ratio-1 times
         #for critic_step in range(self.config.utd_ratio - 1):
             # only update critic and critic target
         # Then update critic, critic target, actor and temperature
-
-        #for target_param, param in zip(self.critic_target.parameters(), self.critic_ensemble.parameters()):
-        #    target_param.data.copy_(target_param.data * (1.0 - self.config.critic_target_update_weight) + param.data * self.critic_target_update_weight)
+        """Update target networks with exponential moving average"""
+        with torch.no_grad():
+            for target_critic, critic in zip(self.critic_target, self.critic_ensemble):
+                for target_param, param in zip(target_critic.parameters(), critic.parameters()):
+                    target_param.data.copy_(
+                        target_param.data * self.config.critic_target_update_weight + 
+                        param.data * (1.0 - self.config.critic_target_update_weight)
+                    )
 
 
 class MLP(nn.Module):
     def __init__(
         self,
+        input_dim: int,
         hidden_dims: list[int],
         activations: Callable[[torch.Tensor], torch.Tensor] | str = nn.SiLU(),
         activate_final: bool = False,
@@ -227,20 +269,28 @@ class MLP(nn.Module):
         self.activate_final = activate_final
         layers = []
         
-        for i, size in enumerate(hidden_dims):
-            layers.append(nn.Linear(hidden_dims[i-1] if i > 0 else hidden_dims[0], size))
+        # First layer uses input_dim
+        layers.append(nn.Linear(input_dim, hidden_dims[0]))
+        
+        # Add activation after first layer
+        if dropout_rate is not None and dropout_rate > 0:
+            layers.append(nn.Dropout(p=dropout_rate))
+        layers.append(nn.LayerNorm(hidden_dims[0]))
+        layers.append(activations if isinstance(activations, nn.Module) else getattr(nn, activations)())
+        
+        # Rest of the layers
+        for i in range(1, len(hidden_dims)):
+            layers.append(nn.Linear(hidden_dims[i-1], hidden_dims[i]))
             
             if i + 1 < len(hidden_dims) or activate_final:
                 if dropout_rate is not None and dropout_rate > 0:
                     layers.append(nn.Dropout(p=dropout_rate))
-                layers.append(nn.LayerNorm(size))
+                layers.append(nn.LayerNorm(hidden_dims[i]))
                 layers.append(activations if isinstance(activations, nn.Module) else getattr(nn, activations)())
                 
         self.net = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor, train: bool = False) -> torch.Tensor:
-        # in training mode or not. TODO: find better way to do this
-        self.train(train) 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
     
     
@@ -279,13 +329,13 @@ class Critic(nn.Module):
 
     def forward(
         self, 
-        observations: torch.Tensor, 
+        observations: dict[str, torch.Tensor], 
         actions: torch.Tensor,
-        train: bool = False
     ) -> torch.Tensor:
-        self.train(train)
-        
-        observations = observations.to(self.device)
+        # Move each tensor in observations to device
+        observations = {
+            k: v.to(self.device) for k, v in observations.items()
+        }
         actions = actions.to(self.device)
         
         obs_enc = observations if self.encoder is None else self.encoder(observations)
@@ -374,15 +424,12 @@ class Policy(nn.Module):
         self, 
         observations: torch.Tensor,
         temperature: float = 1.0,
-        train: bool = False,
         non_squash_distribution: bool = False
     ) -> torch.distributions.Distribution:
-        self.train(train)
                 
         # Encode observations if encoder exists
         if self.encoder is not None:
-            with torch.set_grad_enabled(train):
-                obs_enc = self.encoder(observations, train=train)
+            obs_enc = self.encoder(observations)
         else:
             obs_enc = observations
         # Get network outputs
@@ -428,8 +475,8 @@ class Policy(nn.Module):
         """Get encoded features from observations"""
         observations = observations.to(self.device)
         if self.encoder is not None:
-            with torch.no_grad():
-                return self.encoder(observations, train=False)
+            with torch.inference_mode():
+                return self.encoder(observations)
         return observations
 
 
@@ -503,8 +550,14 @@ class SACObservationEncoder(nn.Module):
             feat.append(self.env_state_enc_layers(obs_dict["observation.environment_state"]))
         if "observation.state" in self.config.input_shapes:
             feat.append(self.state_enc_layers(obs_dict["observation.state"]))
+        # TODO(ke-wang): currently average over all features, concatenate all features maybe a better way
         return torch.stack(feat, dim=0).mean(0)
     
+    @property
+    def output_dim(self) -> int:
+        """Returns the dimension of the encoder output"""
+        return self.config.latent_dim
+
 
 class LagrangeMultiplier(nn.Module):
     def __init__(
@@ -526,8 +579,8 @@ class LagrangeMultiplier(nn.Module):
 
     def forward(
         self, 
-        lhs: Optional[torch.Tensor] = None, 
-        rhs: Optional[torch.Tensor] = None
+        lhs: Optional[torch.Tensor | float | int] = None, 
+        rhs: Optional[torch.Tensor | float | int] = None
     ) -> torch.Tensor:
         # Get the multiplier value based on parameterization        
         multiplier = torch.nn.functional.softplus(self.lagrange)
@@ -536,13 +589,11 @@ class LagrangeMultiplier(nn.Module):
         if lhs is None:
             return multiplier
             
-        # Move inputs to device
-        lhs = lhs.to(self.device)
+        # Convert inputs to tensors and move to device
+        lhs = torch.tensor(lhs, device=self.device) if not isinstance(lhs, torch.Tensor) else lhs.to(self.device)
         if rhs is not None:
-            rhs = rhs.to(self.device)
-            
-        # Use the multiplier to compute the Lagrange penalty
-        if rhs is None:
+            rhs = torch.tensor(rhs, device=self.device) if not isinstance(rhs, torch.Tensor) else rhs.to(self.device)
+        else:
             rhs = torch.zeros_like(lhs, device=self.device)
             
         diff = lhs - rhs
@@ -631,11 +682,12 @@ class TanhMultivariateNormalDiag(torch.distributions.TransformedDistribution):
         # Inverse transforms to get back to normal distribution
         q = value
         for transform in reversed(self.transforms):
-            q = transform.inv(q)
-            log_prob = log_prob - transform.log_abs_det_jacobian(q, transform(q))
+            q_prev = transform.inv(q)  # Get the pre-transform value
+            log_prob = log_prob - transform.log_abs_det_jacobian(q_prev, q).sum(-1)  # Sum over action dimensions
+            q = q_prev
         
         # Add base distribution log prob
-        log_prob = log_prob + self.base_dist.log_prob(q).sum(-1)
+        log_prob = log_prob + self.base_dist.log_prob(q).sum(-1)  # Sum over action dimensions
         
         return log_prob
 
@@ -663,15 +715,14 @@ class TanhMultivariateNormalDiag(torch.distributions.TransformedDistribution):
         return entropy
 
 
+def orthogonal_init():
+    return lambda x: torch.nn.init.orthogonal_(x, gain=1.0)
+
+
 def create_critic_ensemble(critics: list[nn.Module], num_critics: int, device: str = "cuda") -> nn.ModuleList:
     """Creates an ensemble of critic networks"""
     assert len(critics) == num_critics, f"Expected {num_critics} critics, got {len(critics)}"
     return nn.ModuleList(critics).to(device)
-
-
-def orthogonal_init():
-    return lambda x: torch.nn.init.orthogonal_(x, gain=1.0)
-
 
 # borrowed from tdmpc
 def flatten_forward_unflatten(fn: Callable[[Tensor], Tensor], image_tensor: Tensor) -> Tensor:

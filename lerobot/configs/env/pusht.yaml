@@ -11,7 +11,8 @@ env:
   fps: ${fps}
   episode_length: 300
   gym:
-    obs_type: pixels_agent_pos
+    # obs_type: pixels_agent_pos
+    obs_type: environment_state_agent_pos # for keypoints evaluation
     render_mode: rgb_array
     visualization_width: 384
     visualization_height: 384
