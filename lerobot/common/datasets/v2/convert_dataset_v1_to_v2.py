@@ -224,11 +224,11 @@ def get_features_from_hf_dataset(dataset: Dataset, robot_config: dict | None = N
             image = dataset[0][key]  # Assuming first row
             channels = get_image_pixel_channels(image)
             shape = (image.height, image.width, channels)
-            names = ["height", "width", "channel"]
+            names = ["height", "width", "channels"]
         elif ft._type == "VideoFrame":
             dtype = "video"
             shape = None  # Add shape later
-            names = ["height", "width", "channel"]
+            names = ["height", "width", "channels"]
 
         features[key] = {
             "dtype": dtype,
