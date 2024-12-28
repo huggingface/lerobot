@@ -162,7 +162,6 @@ class SACPolicy(
         # 1- compute actions from policy
         distribution = self.actor(observations)
         action_preds = distribution.sample()
-        log_probs = distribution.log_prob(action_preds)
         action_preds = torch.clamp(action_preds, -1, +1)
         # 2- compute q targets
         q_targets = self.critic_forward(next_observations, action_preds, use_target=True)
@@ -213,8 +212,9 @@ class SACPolicy(
 
         # 2- get actions (batch_size, action_dim) and log probs (batch_size,)
         distribution = self.actor(observations)
-        actions = distribution.sample()
-        log_probs = distribution.log_prob(actions)
+        actions = distribution.rsample()
+        log_probs = distribution.log_prob(actions).sum(-1)
+        # breakpoint()
         actions = torch.clamp(actions, -1, +1)
         # 3- get q-value predictions
         with torch.inference_mode():
@@ -671,7 +671,7 @@ class TanhMultivariateNormalDiag(torch.distributions.TransformedDistribution):
         """
         Reparameterized sample from the distribution
         """
-        # Sample from base distribution
+        # Sample from base distributionrsample
         x = self.base_dist.rsample(sample_shape)
         
         # Apply transforms
@@ -686,17 +686,17 @@ class TanhMultivariateNormalDiag(torch.distributions.TransformedDistribution):
         Includes the log det jacobian for the transforms
         """
         # Initialize log prob
-        log_prob = torch.zeros_like(value[..., 0])
+        log_prob = torch.zeros_like(value)
         
         # Inverse transforms to get back to normal distribution
         q = value
         for transform in reversed(self.transforms):
             q_prev = transform.inv(q)  # Get the pre-transform value
-            log_prob = log_prob - transform.log_abs_det_jacobian(q_prev, q).sum(-1)  # Sum over action dimensions
+            log_prob = log_prob - transform.log_abs_det_jacobian(q_prev, q)  # Sum over action dimensions
             q = q_prev
         
         # Add base distribution log prob
-        log_prob = log_prob + self.base_dist.log_prob(q).sum(-1)  # Sum over action dimensions
+        log_prob = log_prob + self.base_dist.log_prob(q)  # Sum over action dimensions
         
         return log_prob
 
@@ -708,20 +708,20 @@ class TanhMultivariateNormalDiag(torch.distributions.TransformedDistribution):
         log_prob = self.log_prob(x)
         return x, log_prob
 
-    def entropy(self) -> torch.Tensor:
-        """
-        Compute entropy of the distribution
-        """
-        # Start with base distribution entropy
-        entropy = self.base_dist.entropy().sum(-1)
+    # def entropy(self) -> torch.Tensor:
+    #     """
+    #     Compute entropy of the distribution
+    #     """
+    #     # Start with base distribution entropy
+    #     entropy = self.base_dist.entropy().sum(-1)
         
-        # Add log det jacobian for each transform
-        x = self.rsample()
-        for transform in self.transforms:
-            entropy = entropy + transform.log_abs_det_jacobian(x, transform(x))
-            x = transform(x)
+    #     # Add log det jacobian for each transform
+    #     x = self.rsample()
+    #     for transform in self.transforms:
+    #         entropy = entropy + transform.log_abs_det_jacobian(x, transform(x))
+    #         x = transform(x)
             
-        return entropy
+    #     return entropy
 
 
 def orthogonal_init():

@@ -60,5 +60,7 @@ class SACConfig:
         }
     policy_kwargs = {
             "tanh_squash_distribution": True,
-            "std_parameterization": "uniform",
+            "std_parameterization": "softplus",
+            "std_min": 0.005,
+            "std_max": 5.0,
         }
