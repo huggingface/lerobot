@@ -280,6 +280,7 @@ def record(
             robot=robot,
             control_phase=ControlPhase.WARMUP,
             assign_rewards=False,
+            num_episodes=num_episodes,
             fps=fps,
         )
     )

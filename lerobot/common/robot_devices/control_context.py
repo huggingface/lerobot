@@ -218,8 +218,7 @@ class ControlContext:
         return log_items
     
     def log_say(self, message):
-        # self._publish_log_say(message)
-        pass
+        self._publish_log_say(message)
 
     def _publish_log_say(self, message):
         message = {

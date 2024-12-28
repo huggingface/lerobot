@@ -39,12 +39,14 @@
         <span class="text-gray-400">Episode:</span>
         <span
           class="font-mono"
-          x-text="(configData.current_episode !== undefined && configData.num_episodes !== undefined)
-                  ? (configData.current_episode + '/' + configData.num_episodes)
-                  : '-'"
+          x-text="
+            (configData.current_episode !== undefined && configData.num_episodes !== undefined)
+              ? ((configData.current_episode + 1) + '/' + configData.num_episodes)
+              : '-'
+          "
         >
-          -
-        </span>
+        -
+      </span>
       </div>
       <!-- Reward -->
       <div class="flex items-center space-x-2">
@@ -124,9 +126,16 @@
         <div id="config-values" class="space-y-2">
           <template x-for="(value, key) in configData" :key="key">
             <div class="font-mono text-sm">
-              <span x-text="`${key}: ${value}`"></span>
+              <span
+                x-text="
+                  key === 'current_episode'
+                    ? `${key}: ${value + 1}`
+                    : `${key}: ${value}`
+                "
+              ></span>
             </div>
           </template>
+          
         </div>
       </div>
       
@@ -288,9 +297,6 @@
             if (data.timestamp) {
               this.timestamp = `Config Updated: ${this.formatTimestamp(data.timestamp)}`;
             }
-            if (data.countdown_time !== undefined) {
-              this.countdownTime = data.countdown_time;
-            }
           });
 
           this.socket.on('log_say', (data) => {
@@ -337,7 +343,7 @@
         toggleReward() {
           this.rewardEnabled = !this.rewardEnabled;
           // Emit the appropriate key event or handle reward toggle logic here
-          this.handleKey('space');
+          this.handleKey('Space');
         },
 
         enableVoice() {
@@ -370,8 +376,10 @@
         },
 
         speakMessage(message) {
-          const utterance = new SpeechSynthesisUtterance(message);
-          speechSynthesis.speak(utterance);
+          this.loadVoices().then(() => {
+            const utterance = new SpeechSynthesisUtterance(message);
+            speechSynthesis.speak(utterance);
+          });
         },
       }));
     });
