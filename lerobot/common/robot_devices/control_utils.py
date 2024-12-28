@@ -24,50 +24,86 @@ from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, List, Optional
 
-def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
-    log_items = []
+@dataclass
+class LogItem:
+    name: str
+    value: float
+    unit: str
+    color: str = "white"
+
+    def to_dict(self):
+        return asdict(self)
+
+def stringify_and_log(log_items: List[LogItem]):
+    parts = []
+    for item in log_items:
+        if item.unit:
+            info_str = f"{item.name}:{item.value:.2f} {item.unit}"
+        else:
+            info_str = f"{item.name}:{int(item.value)}"
+        
+        if item.color != "white":
+            info_str = colored(info_str, item.color)
+        
+        parts.append(info_str)
+    
+    info_str = " ".join(parts)
+    logging.info(info_str)
+
+def serialize_log_items(log_items: List[LogItem]) -> List[Dict[str, Any]]:
+    return [item.to_dict() for item in log_items]
+
+def log_control_info(robot: Robot, dt_s: float, fps: Optional[float] = None,
+                    episode_index: Optional[int] = None,
+                    frame_index: Optional[int] = None) -> List[LogItem]:
+    log_items: List[LogItem] = []
+
+    # Add episode and frame information if provided
     if episode_index is not None:
-        log_items.append(f"ep:{episode_index}")
+        log_items.append(LogItem(name="ep", value=float(episode_index), unit=""))
     if frame_index is not None:
-        log_items.append(f"frame:{frame_index}")
+        log_items.append(LogItem(name="frame", value=float(frame_index), unit=""))
 
-    def log_dt(shortname, dt_val_s):
-        nonlocal log_items, fps
-        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"
-        if fps is not None:
-            actual_fps = 1 / dt_val_s
-            if actual_fps < fps - 1:
-                info_str = colored(info_str, "yellow")
-        log_items.append(info_str)
+    # Helper function to create LogItem instances
+    def create_log_item(shortname: str, dt_val_s: float, base_fps: Optional[float]) -> LogItem:
+        value_ms = dt_val_s * 1000
+        frequency = 1 / dt_val_s if dt_val_s > 0 else 0.0
+        unit = f"ms ({frequency:.1f}Hz)"
+        color = "white"
+        if base_fps is not None and frequency < (base_fps - 1):
+            color = "yellow"
+        return LogItem(name=shortname, value=value_ms, unit=unit, color=color)
 
-    # total step time displayed in milliseconds and its frequency
-    log_dt("dt", dt_s)
+    # Log total step time
+    log_items.append(create_log_item("dt", dt_s, fps))
 
-    # TODO(aliberts): move robot-specific logs logic in robot.print_logs()
+    # Robot-specific logs
     if not robot.robot_type.startswith("stretch"):
         for name in robot.leader_arms:
             key = f"read_leader_{name}_pos_dt_s"
             if key in robot.logs:
-                log_dt("dtRlead", robot.logs[key])
+                log_items.append(create_log_item("dtRlead", robot.logs[key], fps))
 
         for name in robot.follower_arms:
-            key = f"write_follower_{name}_goal_pos_dt_s"
-            if key in robot.logs:
-                log_dt("dtWfoll", robot.logs[key])
+            key_write = f"write_follower_{name}_goal_pos_dt_s"
+            if key_write in robot.logs:
+                log_items.append(create_log_item("dtWfoll", robot.logs[key_write], fps))
 
-            key = f"read_follower_{name}_pos_dt_s"
-            if key in robot.logs:
-                log_dt("dtRfoll", robot.logs[key])
+            key_read = f"read_follower_{name}_pos_dt_s"
+            if key_read in robot.logs:
+                log_items.append(create_log_item("dtRfoll", robot.logs[key_read], fps))
 
         for name in robot.cameras:
             key = f"read_camera_{name}_dt_s"
             if key in robot.logs:
-                log_dt(f"dtR{name}", robot.logs[key])
+                log_items.append(create_log_item(f"dtR{name}", robot.logs[key], fps))
 
-    info_str = " ".join(log_items)
-    logging.info(info_str)
+    stringify_and_log(log_items)
     return log_items
+
 
 
 @cache

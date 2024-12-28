@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Dict, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import cv2
 import base64
 import zmq
@@ -8,7 +8,7 @@ import torch
 import time
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
-from lerobot.common.robot_devices.control_utils import log_control_info
+from lerobot.common.robot_devices.control_utils import log_control_info, serialize_log_items
 
 
 class ControlPhase:
@@ -192,7 +192,7 @@ class ControlContext:
             "data": processed_data,
             "events": self.get_events(),
             "config": config_data,
-            "log_items": log_items,
+            "log_items": serialize_log_items(log_items),
             "countdown_time": countdown_time,
         }
 

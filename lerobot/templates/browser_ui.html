@@ -205,7 +205,11 @@
         <h3 class="text-lg font-semibold mb-4 text-gray-300">Logs</h3>
         <div id="log-items" class="space-y-2">
           <template x-for="(log, idx) in logs" :key="idx">
-            <div class="font-mono text-sm" x-text="log"></div>
+            <div class="font-mono text-sm">
+              <span class="text-gray-400" x-text="log.name + ':'"></span>
+              <span class="text-white" x-text="log.value.toFixed(2)"></span>
+              <span class="text-gray-400" x-text="log.unit"></span>
+            </div>
           </template>
         </div>
       </div>
