@@ -19,6 +19,7 @@
 
 from collections import deque
 from copy import deepcopy
+import math
 from typing import Callable, Optional, Sequence, Tuple
 
 import einops
@@ -115,7 +116,7 @@ class SACPolicy(
         """Select action for inference/evaluation"""
         distribution = self.actor(batch)
         # Sample from the distribution and return just the actions
-        actions = distribution.mode()  # or distribution.rsample() for stochastic actions
+        actions = distribution.mode()  # or distribution.sample() for stochastic actions
         actions = self.unnormalize_outputs({"action": actions})["action"]
         return actions
 
@@ -159,8 +160,10 @@ class SACPolicy(
 
         # calculate critics loss
         # 1- compute actions from policy
-        action_preds, log_probs = self.actor(observations).sample_and_log_prob()
-        actions_preds = torch.clamp(action_preds, -1, +1)
+        distribution = self.actor(observations)
+        action_preds = distribution.sample()
+        log_probs = distribution.log_prob(action_preds)
+        action_preds = torch.clamp(action_preds, -1, +1)
         # 2- compute q targets
         q_targets = self.critic_forward(next_observations, action_preds, use_target=True)
 
@@ -188,6 +191,7 @@ class SACPolicy(
             einops.repeat(td_target, "b -> e b", e=q_preds.shape[0]), # expand td_target to match q_preds shape
             reduction="none"
         ).sum(0).mean()
+        # breakpoint()
 
         # critics_loss = (   
         #     F.mse_loss(
@@ -208,7 +212,9 @@ class SACPolicy(
         temperature = self.temperature()
 
         # 2- get actions (batch_size, action_dim) and log probs (batch_size,)
-        actions, log_probs = self.actor(observations).sample_and_log_prob()
+        distribution = self.actor(observations)
+        actions = distribution.sample()
+        log_probs = distribution.log_prob(actions)
         actions = torch.clamp(actions, -1, +1)
         # 3- get q-value predictions
         with torch.inference_mode():
@@ -372,8 +378,8 @@ class Policy(nn.Module):
         network: nn.Module,
         action_dim: int,
         std_parameterization: str = "exp",
-        std_min: float = 1e-5,
-        std_max: float = 10.0,
+        std_min: float = 0.05,
+        std_max: float = 2.0,
         tanh_squash_distribution: bool = False,
         fixed_std: Optional[torch.Tensor] = None,
         init_final: Optional[float] = None,
@@ -432,6 +438,7 @@ class Policy(nn.Module):
             obs_enc = self.encoder(observations)
         else:
             obs_enc = observations
+            
         # Get network outputs
         outputs = self.network(obs_enc)
         means = self.mean_layer(outputs)
@@ -440,20 +447,22 @@ class Policy(nn.Module):
         if self.fixed_std is None:
             if self.std_parameterization == "exp":
                 log_stds = self.std_layer(outputs)
+                # Clamp log_stds to prevent too large or small values
+                log_stds = torch.clamp(log_stds, math.log(self.std_min), math.log(self.std_max))
                 stds = torch.exp(log_stds)
             elif self.std_parameterization == "softplus":
                 stds = torch.nn.functional.softplus(self.std_layer(outputs))
+                stds = torch.clamp(stds, self.std_min, self.std_max)
             elif self.std_parameterization == "uniform":
-                stds = torch.exp(self.log_stds).expand_as(means)
+                log_stds = torch.clamp(self.log_stds, math.log(self.std_min), math.log(self.std_max))
+                stds = torch.exp(log_stds).expand_as(means)
             else:
-                raise ValueError(
-                    f"Invalid std_parameterization: {self.std_parameterization}"
-                )
+                raise ValueError(f"Invalid std_parameterization: {self.std_parameterization}")
         else:
             assert self.std_parameterization == "fixed"
             stds = self.fixed_std.expand_as(means)
 
-        # Clip standard deviations and scale with temperature
+        # Scale with temperature
         temperature = torch.tensor(temperature, device=self.device)
         stds = torch.clamp(stds, self.std_min, self.std_max) * torch.sqrt(temperature)
 
