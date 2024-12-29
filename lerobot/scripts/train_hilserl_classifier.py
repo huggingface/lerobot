@@ -22,7 +22,6 @@ from pprint import pformat
 import hydra
 import torch
 import torch.nn as nn
-import wandb
 from deepdiff import DeepDiff
 from omegaconf import DictConfig, OmegaConf
 from termcolor import colored
@@ -31,6 +30,7 @@ from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader, WeightedRandomSampler, random_split
 from tqdm import tqdm
 
+import wandb
 from lerobot.common.datasets.factory import resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.logger import Logger
