@@ -55,7 +55,7 @@ class VLAPolicy(
         self.unnormalize_outputs = Unnormalize(
             config.output_shapes, config.output_normalization_modes, dataset_stats
         )
-        precision = config.precision
+        precision = torch.float16 if "fp16" in config.precision else torch.float32
         self.model = VLA(config, precision=precision)
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
 

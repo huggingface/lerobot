@@ -2,7 +2,6 @@
 seed: 1000
 dataset_repo_id: lerobot/aloha_sim_transfer_cube_human
 
-precision: fp16
 training:
   offline_steps: 100000
   online_steps: 0
@@ -28,7 +27,7 @@ eval:
 # See `configuration_act.py` for more details.
 policy:
   name: vla
-
+  precision: fp16
   # Input / output structure.
   n_obs_steps: 1
   n_action_steps: 100

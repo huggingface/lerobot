@@ -84,7 +84,7 @@ class VLAConfig:
         kl_weight: The weight to use for the KL-divergence component of the loss if the variational objective
             is enabled. Loss is then calculated as: `reconstruction_loss + kl_weight * kld_loss`.
     """
-
+    precision: str = "fp16"
     # Input / output structure.
     n_obs_steps: int = 1
     chunk_size: int = 100
