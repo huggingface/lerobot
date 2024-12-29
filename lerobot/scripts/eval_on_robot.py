@@ -24,7 +24,7 @@ python lerobot/scripts/eval_on_robot.py \
 ```
 
 **NOTE** (michel-aractingi): This script is incomplete and it is being prepared
-for running training on the real robot. 
+for running training on the real robot.
 """
 
 import argparse
@@ -47,7 +47,7 @@ from lerobot.common.utils.utils import (
 
 
 def rollout(robot: Robot, policy: Policy, fps: int, control_time_s: float = 20, use_amp: bool = True) -> dict:
-    """Run a batched policy rollout on the real robot. 
+    """Run a batched policy rollout on the real robot.
 
     The return dictionary contains:
         "robot": A a dictionary of (batch, sequence + 1, *) tensors mapped to observation
@@ -64,7 +64,7 @@ def rollout(robot: Robot, policy: Policy, fps: int, control_time_s: float = 20, 
             extraneous elements from the sequences above.
 
     Args:
-        robot: The robot class that defines the interface with the real robot. 
+        robot: The robot class that defines the interface with the real robot.
         policy: The policy. Must be a PyTorch nn module.
 
     Returns:
@@ -77,7 +77,7 @@ def rollout(robot: Robot, policy: Policy, fps: int, control_time_s: float = 20, 
     listener, events = init_keyboard_listener()
 
     # Reset the policy. TODO (michel-aractingi) add real policy evaluation once the code is ready.
-    # policy.reset() 
+    # policy.reset()
 
     # Get observation from real robot
     observation = robot.capture_observation()

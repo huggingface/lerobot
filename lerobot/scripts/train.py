@@ -95,12 +95,14 @@ def make_optimizer_and_scheduler(cfg, policy):
         lr_scheduler = None
 
     elif policy.name == "sac":
-        optimizer = torch.optim.Adam([
-			{'params': policy.actor.parameters(), 'lr': policy.config.actor_lr},
-            {'params': policy.critic_ensemble.parameters(), 'lr': policy.config.critic_lr},
-			{'params': policy.temperature.parameters(), 'lr': policy.config.temperature_lr},
-            ])
-        lr_scheduler = None		
+        optimizer = torch.optim.Adam(
+            [
+                {"params": policy.actor.parameters(), "lr": policy.config.actor_lr},
+                {"params": policy.critic_ensemble.parameters(), "lr": policy.config.critic_lr},
+                {"params": policy.temperature.parameters(), "lr": policy.config.temperature_lr},
+            ]
+        )
+        lr_scheduler = None
 
     elif cfg.policy.name == "vqbet":
         from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTOptimizer, VQBeTScheduler

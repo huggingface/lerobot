@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 The HuggingFace Inc. team. 
+# Copyright 2024 The HuggingFace Inc. team.
 # All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -30,14 +30,36 @@ class SACConfig:
     critic_target_update_weight = 0.005
     utd_ratio = 2
     critic_network_kwargs = {
-            "hidden_dims": [256, 256],
-            "activate_final": True,
-        }
+        "hidden_dims": [256, 256],
+        "activate_final": True,
+    }
     actor_network_kwargs = {
-            "hidden_dims": [256, 256],
-            "activate_final": True,
-        }
+        "hidden_dims": [256, 256],
+        "activate_final": True,
+    }
     policy_kwargs = {
-            "tanh_squash_distribution": True,
-            "std_parameterization": "uniform",
+        "tanh_squash_distribution": True,
+        "std_parameterization": "uniform",
+    }
+
+    input_shapes: dict[str, list[int]] = field(
+        default_factory=lambda: {
+            "observation.image": [3, 84, 84],
+            "observation.state": [4],
         }
+    )
+    output_shapes: dict[str, list[int]] = field(
+        default_factory=lambda: {
+            "action": [4],
+        }
+    )
+
+    state_encoder_hidden_dim: int = 256
+    latent_dim: int = 256
+    network_hidden_dims: int = 256
+
+    # Normalization / Unnormalization
+    input_normalization_modes: dict[str, str] | None = None
+    output_normalization_modes: dict[str, str] = field(
+        default_factory=lambda: {"action": "min_max"},
+    )
