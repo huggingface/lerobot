@@ -55,7 +55,6 @@ class VQBeTPolicy(
         self,
         config: VQBeTConfig | None = None,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
-        **kwargs: Any,
     ):
         """
         Args:

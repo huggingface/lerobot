@@ -34,8 +34,6 @@ class VLAPolicy(
         self,
         config: VLAConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
-        precision: torch.dtype = torch.float32,
-        **kwargs: Any,
     ):
         """
         Initialize the VLAPolicy class with model configuration.
@@ -57,7 +55,7 @@ class VLAPolicy(
         self.unnormalize_outputs = Unnormalize(
             config.output_shapes, config.output_normalization_modes, dataset_stats
         )
-        # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        precision = config.precision
         self.model = VLA(config, precision=precision)
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
 
