@@ -98,13 +98,12 @@ def make_policy(
         raise ValueError(
             "Exactly one of `pretrained_policy_name_or_path` and `dataset_stats` must be provided."
         )
-    precision = torch.float16 if "fp16" in hydra_cfg.precision else torch.float32
     policy_cls, policy_cfg_class = get_policy_and_config_classes(hydra_cfg.policy.name)
 
     policy_cfg = _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg)
     if pretrained_policy_name_or_path is None:
         # Make a fresh policy.
-        policy = policy_cls(policy_cfg, dataset_stats, precision=precision)
+        policy = policy_cls(policy_cfg, dataset_stats)
     else:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
@@ -112,7 +111,7 @@ def make_policy(
         # pretrained weights which are then loaded into a fresh policy with the desired config. This PR in
         # huggingface_hub should make it possible to avoid the hack:
         # https://github.com/huggingface/huggingface_hub/pull/2274.
-        policy = policy_cls(policy_cfg, precision=precision)
+        policy = policy_cls(policy_cfg)
         msg = policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
         print(msg)
     policy.to(get_safe_torch_device(hydra_cfg.device))
