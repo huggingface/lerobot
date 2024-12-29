@@ -40,7 +40,7 @@ eval:
 # See `configuration_act.py` for more details.
 policy:
   name: vla
-
+  precision: fp16
   # Input / output structure.
   n_obs_steps: 1
   n_action_steps: 100
