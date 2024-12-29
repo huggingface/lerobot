@@ -51,16 +51,15 @@ class SACConfig:
     latent_dim = 128
     target_entropy = None
     critic_network_kwargs = {
-            "hidden_dims": [256, 256],
-            "activate_final": True,
+        "hidden_dims": [256, 256],
+        "activate_final": True,
         }
     actor_network_kwargs = {
-            "hidden_dims": [256, 256],
-            "activate_final": True,
+        "hidden_dims": [256, 256],
+        "activate_final": True,
         }
     policy_kwargs = {
-            "tanh_squash_distribution": True,
-            "std_parameterization": "softplus",
-            "std_min": 0.005,
-            "std_max": 5.0,
+        "use_tanh_squash": True,
+        "log_std_min": -5,
+        "log_std_max": 2,
         }
