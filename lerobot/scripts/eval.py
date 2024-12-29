@@ -51,6 +51,7 @@ from copy import deepcopy
 from datetime import datetime as dt
 from pathlib import Path
 from typing import Callable
+import os
 
 import einops
 import gymnasium as gym
@@ -140,7 +141,8 @@ def rollout(
     max_steps = env.call("_max_episode_steps")[0]
 
     def trace_handler(prof):
-        prof.export_chrome_trace(f"outputs/trace_schedule_{prof.step_num}.json")
+        if os.path.exists("outputs"):
+            prof.export_chrome_trace(f"outputs/trace_schedule_{prof.step_num}.json")
 
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
@@ -176,7 +178,6 @@ def rollout(
             observation, reward, terminated, truncated, info = env.step(action)
             if render_callback is not None:
                 render_callback(env)
-
             # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
             # available of none of the envs finished.
             if "final_info" in info:
@@ -198,10 +199,7 @@ def rollout(
             )
             progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
             progbar.update()
-
             prof.step()
-            #if step == 5:
-                #break
 
     # Track the final observation.
     if return_observations:

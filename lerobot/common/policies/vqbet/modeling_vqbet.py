@@ -19,7 +19,7 @@
 import math
 import warnings
 from collections import deque
-from typing import Callable, List
+from typing import Any, Callable, List
 
 import einops
 import numpy as np

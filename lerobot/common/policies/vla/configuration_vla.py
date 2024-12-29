@@ -84,7 +84,7 @@ class VLAConfig:
         kl_weight: The weight to use for the KL-divergence component of the loss if the variational objective
             is enabled. Loss is then calculated as: `reconstruction_loss + kl_weight * kld_loss`.
     """
-
+    precision: str = "fp16"
     # Input / output structure.
     n_obs_steps: int = 1
     chunk_size: int = 100
@@ -119,9 +119,7 @@ class VLAConfig:
     # "Please insert the tube into the socket."
 
     # Architecture.
-
     # Action decoder
-
     action_decoder: dict = field(
         default_factory=lambda: {
             "name": "act",
@@ -136,55 +134,18 @@ class VLAConfig:
             "pre_norm": False,
             "dropout": 0.1,
             "temporal_ensemble_coeff": None,
+            "chunk_size": 100,
         }
     )
-
-    # Language + Main transformer
-    vocab_size: int = 150528
-    hidden_size: int = 896
-    # n_decoder_layers: int = 1
-    # n_heads: int = 8
-    # dim_feedforward: int = 3200
-    hidden_act: str = "silu"
-    pad_token_id: int = 0
-    initializer_range: float = 0.02
-    rms_norm_eps: float = 1e-05
-    use_cache: bool = True
-    tie_word_embeddings: bool = False
-    rope_theta: float = 1000000.0
-    use_sliding_window: bool = False
-    sliding_window = 4096
-    max_window_layers = 80
-    # dropout = 0.0
-    rope_scaling: dict = field(
-        default_factory=lambda: {
-            "type": "mrope",
-            "mrope_section": [2, 2, 2],
-        }
-    )
-    pruned_heads = None
-
-    vision_config: dict = field(
-        default_factory=lambda: {
-            "depth": 32,
-            "embed_dim": 1280,
-            "hidden_size": 3584,
-            "hidden_act": "quick_gelu",
-            "mlp_ratio": 4,
-            "num_heads": 16,
-            "in_channels": 3,
-            "patch_size": 14,
-            "spatial_merge_size": 2,
-            "temporal_patch_size": 2,
-            "attn_implementation": "eager",
-        }
-    )
+    # VLM-Action head connector
+    use_action_connector: bool = False
 
     # Vision-Language Model (Qwen-VL)
     vlm_backbone: dict = field(
         default_factory=lambda: {
             "name": "llava-hf/llava-onevision-qwen2-0.5b-ov-hf",
             "feature_selection": "first_image",
+            "hidden_size": 896,
         }
     )
     use_prompt_template: bool = True
@@ -225,3 +186,21 @@ class VLAConfig:
             and "observation.environment_state" not in self.input_shapes
         ):
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
+
+    def __iter__(self):
+        """
+        Make the class iterable over its attributes.
+        """
+        for key in self.__dict__:
+            # Skip special/private attributes
+            if not key.startswith("_"):
+                yield key
+
+    def items(self):
+        """
+        Implement items() method to return key-value pairs.
+
+        Returns:
+            A view of the config's key-value pairs.
+        """
+        return {key: getattr(self, key) for key in self}.items()

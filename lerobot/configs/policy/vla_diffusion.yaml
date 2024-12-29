@@ -9,16 +9,29 @@ training:
   save_freq: 2000
   log_freq: 100
   save_checkpoint: true
-
+  num_workers: 4
   batch_size: 8
-  lr: 3e-5
+  
+
+  lr: 1.0e-4
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
   lr_backbone: 3e-5
   weight_decay: 1e-4
   grad_clip_norm: 10
   online_steps_between_rollouts: 1
 
+  adam_betas: [0.95, 0.999]
+  adam_eps: 1.0e-8
+  adam_weight_decay: 1.0e-6
+
+  # delta_timestamps:
+  #   action: "[i / ${fps} for i in range(${policy.chunk_size})]"
+
   delta_timestamps:
-    action: "[i / ${fps} for i in range(${policy.chunk_size})]"
+    observation.images.top: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.chunk_size})]"
 
 eval:
   n_episodes: 50
@@ -66,20 +79,49 @@ policy:
 
   # Action decoder
   action_decoder:
-    name: act
-    # vlm_hidden_dim: 128  # Input dim for action decoder (combined dimension)
-    # action_dim: 4  # Output dimension (action space)
-    n_decoder_layers: 1
-    n_encoder_layers: 4
+    name: diffusion
+    ## vlm_hidden_dim: 128  # Input dim for action decoder (combined dimension)
+    # n_decoder_layers: 1
+    # n_encoder_layers: 4
     dim_model: 896 # 2048 smolvlm
-    n_heads: 8
-    dim_feedforward: 3200
-    feedforward_activation: relu
-    pre_norm: false
+    global_cond_dim: "${policy.action_decoder.dim_model}"
+    # n_heads: 8
+    # dim_feedforward: 3200
+    # feedforward_activation: relu
+    # pre_norm: false
     # Training and loss computation
     dropout: 0.1
     temporal_ensemble_coeff: null
-    chunk_size: 100
+
+    n_obs_steps: "${policy.n_obs_steps}"
+    horizon: "${policy.chunk_size}"
+    chunk_size: "${policy.chunk_size}"
+    n_action_steps: "${policy.n_action_steps}"
+    action_shape: "${env.action_dim}"
+    output_shapes:
+      action: ["${env.action_dim}"]
+    # Unet.
+    # down_dims: [512, 1024, 2048]
+    down_dims: [256, 512, 1024]
+    kernel_size: 5
+    n_groups: 8
+    diffusion_step_embed_dim: 128
+    use_film_scale_modulation: True
+    # Noise scheduler.
+    noise_scheduler_type: DDPM
+    num_train_timesteps: 100
+    beta_schedule: squaredcos_cap_v2
+    beta_start: 0.0001
+    beta_end: 0.02
+    prediction_type: epsilon # epsilon / sample
+    clip_sample: True
+    clip_sample_range: 1.0
+
+    # Inference
+    num_inference_steps: null  # if not provided, defaults to `num_train_timesteps`
+
+    # Loss computation
+    do_mask_loss_for_padding: false
 
 
   # Lora config
