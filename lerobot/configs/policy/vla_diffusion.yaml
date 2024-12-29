@@ -9,13 +9,21 @@ training:
   save_freq: 2000
   log_freq: 100
   save_checkpoint: true
-
+  num_workers: 4
   batch_size: 8
-  lr: 3e-5
+  
+
+  lr: 1.0e-4
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
   lr_backbone: 3e-5
   weight_decay: 1e-4
   grad_clip_norm: 10
   online_steps_between_rollouts: 1
+
+  adam_betas: [0.95, 0.999]
+  adam_eps: 1.0e-8
+  adam_weight_decay: 1.0e-6
 
   # delta_timestamps:
   #   action: "[i / ${fps} for i in range(${policy.chunk_size})]"
@@ -93,7 +101,8 @@ policy:
     output_shapes:
       action: ["${env.action_dim}"]
     # Unet.
-    down_dims: [512, 1024, 2048]
+    # down_dims: [512, 1024, 2048]
+    down_dims: [256, 512, 1024]
     kernel_size: 5
     n_groups: 8
     diffusion_step_embed_dim: 128
