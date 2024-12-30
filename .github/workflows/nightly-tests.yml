@@ -7,10 +7,8 @@ on:
   schedule:
     - cron: "0 2 * * *"
 
-env:
-  DATA_DIR: tests/data
+# env:
   # SLACK_API_TOKEN: ${{ secrets.SLACK_API_TOKEN }}
-
 jobs:
   run_all_tests_cpu:
     name: CPU
@@ -30,13 +28,9 @@ jobs:
         working-directory: /lerobot
     steps:
       - name: Tests
-        env:
-          DATA_DIR: tests/data
         run: pytest -v --cov=./lerobot --disable-warnings tests
 
       - name: Tests end-to-end
-        env:
-          DATA_DIR: tests/data
         run: make test-end-to-end
 
 

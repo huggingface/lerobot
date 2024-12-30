@@ -55,9 +55,9 @@
 
 <table>
   <tr>
-    <td><img src="http://remicadene.com/assets/gif/aloha_act.gif" width="100%" alt="ACT policy on ALOHA env"/></td>
-    <td><img src="http://remicadene.com/assets/gif/simxarm_tdmpc.gif" width="100%" alt="TDMPC policy on SimXArm env"/></td>
-    <td><img src="http://remicadene.com/assets/gif/pusht_diffusion.gif" width="100%" alt="Diffusion policy on PushT env"/></td>
+    <td><img src="media/gym/aloha_act.gif" width="100%" alt="ACT policy on ALOHA env"/></td>
+    <td><img src="media/gym/simxarm_tdmpc.gif" width="100%" alt="TDMPC policy on SimXArm env"/></td>
+    <td><img src="media/gym/pusht_diffusion.gif" width="100%" alt="Diffusion policy on PushT env"/></td>
   </tr>
   <tr>
     <td align="center">ACT policy on ALOHA env</td>
@@ -144,7 +144,7 @@ wandb login
 
 ### Visualize datasets
 
-Check out [example 1](./examples/1_load_lerobot_dataset.py) that illustrates how to use our dataset class which automatically download data from the Hugging Face hub.
+Check out [example 1](./examples/1_load_lerobot_dataset.py) that illustrates how to use our dataset class which automatically downloads data from the Hugging Face hub.
 
 You can also locally visualize episodes from a dataset on the hub by executing our script from the command line:
 ```bash
@@ -153,10 +153,12 @@ python lerobot/scripts/visualize_dataset.py \
     --episode-index 0
 ```
 
-or from a dataset in a local folder with the root `DATA_DIR` environment variable (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
+or from a dataset in a local folder with the `root` option and the `--local-files-only` (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
 ```bash
-DATA_DIR='./my_local_data_dir' python lerobot/scripts/visualize_dataset.py \
+python lerobot/scripts/visualize_dataset.py \
     --repo-id lerobot/pusht \
+    --root ./my_local_data_dir \
+    --local-files-only 1 \
     --episode-index 0
 ```
 
@@ -208,12 +210,10 @@ dataset attributes:
 
 A `LeRobotDataset` is serialised using several widespread file formats for each of its parts, namely:
 - hf_dataset stored using Hugging Face datasets library serialization to parquet
-- videos are stored in mp4 format to save space or png files
-- episode_data_index saved using `safetensor` tensor serialization format
-- stats saved using `safetensor` tensor serialization format
-- info are saved using JSON
+- videos are stored in mp4 format to save space
+- metadata are stored in plain json/jsonl files
 
-Dataset can be uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can set the `DATA_DIR` environment variable to your root dataset folder as illustrated in the above section on dataset visualization.
+Dataset can be uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can use the `local_files_only` argument and specify its location with the `root` argument if it's not in the default `~/.cache/huggingface/lerobot` location.
 
 ### Evaluate a pretrained policy
 
@@ -280,7 +280,7 @@ To use wandb for logging training and evaluation curves, make sure you've run `w
     wandb.enable=true
 ```
 
-A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of what they look like in your browser. Please also check [here](https://github.com/huggingface/lerobot/blob/main/examples/4_train_policy_with_script.md#typical-logs-and-metrics) for the explaination of some commonly used metrics in logs.
+A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of what they look like in your browser. Please also check [here](https://github.com/huggingface/lerobot/blob/main/examples/4_train_policy_with_script.md#typical-logs-and-metrics) for the explanation of some commonly used metrics in logs.
 
 ![](media/wandb.png)
 

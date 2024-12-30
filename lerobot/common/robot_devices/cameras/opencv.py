@@ -192,6 +192,7 @@ class OpenCVCameraConfig:
     width: int | None = None
     height: int | None = None
     color_mode: str = "rgb"
+    channels: int | None = None
     rotation: int | None = None
     mock: bool = False
 
@@ -200,6 +201,8 @@ class OpenCVCameraConfig:
             raise ValueError(
                 f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
             )
+
+        self.channels = 3
 
         if self.rotation not in [-90, None, 90, 180]:
             raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
@@ -268,6 +271,7 @@ class OpenCVCamera:
         self.fps = config.fps
         self.width = config.width
         self.height = config.height
+        self.channels = config.channels
         self.color_mode = config.color_mode
         self.mock = config.mock
 
