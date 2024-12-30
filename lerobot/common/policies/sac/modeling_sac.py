@@ -40,6 +40,8 @@ class SACPolicy(
     repo_url="https://github.com/huggingface/lerobot",
     tags=["robotics", "RL", "SAC"],
 ):
+    name = "sac"
+
     def __init__(
         self, config: SACConfig | None = None, dataset_stats: dict[str, dict[str, Tensor]] | None = None
     ):
@@ -71,7 +73,7 @@ class SACPolicy(
         self.critic_ensemble = create_critic_ensemble(critic_nets, config.num_critics)
         self.critic_target = deepcopy(self.critic_ensemble)
 
-        self.actor_network = Policy(
+        self.actor = Policy(
             encoder=encoder,
             network=MLP(**config.actor_network_kwargs),
             action_dim=config.output_shapes["action"][0],
@@ -91,14 +93,17 @@ class SACPolicy(
             "observation.state": deque(maxlen=1),
             "action": deque(maxlen=1),
         }
-        if self._use_image:
+        if "observation.image" in self.config.input_shapes:
             self._queues["observation.image"] = deque(maxlen=1)
-        if self._use_env_state:
+        if "observation.environment_state" in self.config.input_shapes:
             self._queues["observation.environment_state"] = deque(maxlen=1)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        actions, _ = self.actor_network(batch["observations"])  ###
+        """Select action for inference/evaluation"""
+        actions, _ = self.actor(batch)
+        actions = self.unnormalize_outputs({"action": actions})["action"]
+        return actions
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor | float]:
         """Run the batch through the model and compute the loss.
@@ -119,13 +124,13 @@ class SACPolicy(
 
         # perform image augmentation
 
-        # reward bias
-        # from HIL-SERL code base
+        # reward bias from HIL-SERL code base
         # add_or_replace={"rewards": batch["rewards"] + self.config["reward_bias"]} in reward_batch
 
         # calculate critics loss
         # 1- compute actions from policy
-        action_preds, log_probs = self.actor_network(observations)
+        action_preds, log_probs = self.actor(next_observations)
+
         # 2- compute q targets
         q_targets = self.target_qs(next_observations, action_preds)
         # subsample critics to prevent overfitting if use high UTD (update to date)
@@ -138,26 +143,41 @@ class SACPolicy(
         min_q = q_targets.min(dim=0)
 
         # compute td target
-        td_target = rewards + self.discount * min_q
+        td_target = (
+            rewards + self.config.discount * min_q
+        )  # + self.config.discount * self.temperature() * log_probs # add entropy term
 
         # 3- compute predicted qs
         q_preds = self.critic_ensemble(observations, actions)
 
         # 4- Calculate loss
         # Compute state-action value loss (TD loss) for all of the Q functions in the ensemble.
+        # critics_loss = (
+        #    (
+        #        F.mse_loss(
+        #            q_preds,
+        #            einops.repeat(td_target, "t b -> e t b", e=q_preds.shape[0]),
+        #            reduction="none",
+        #        ).sum(0)  # sum over ensemble
+        #        # `q_preds_ensemble` depends on the first observation and the actions.
+        #        * ~batch["observation.state_is_pad"][0]
+        #        * ~batch["action_is_pad"]
+        #        # q_targets depends on the reward and the next observations.
+        #        * ~batch["next.reward_is_pad"]
+        #        * ~batch["observation.state_is_pad"][1:]
+        #    )
+        #    .sum(0)
+        #    .mean()
+        # )
+        # 4- Calculate loss
+        # Compute state-action value loss (TD loss) for all of the Q functions in the ensemble.
         critics_loss = (
-            (
-                F.mse_loss(
-                    q_preds,
-                    einops.repeat(td_target, "t b -> e t b", e=q_preds.shape[0]),
-                    reduction="none",
-                ).sum(0)  # sum over ensemble
-                # `q_preds_ensemble` depends on the first observation and the actions.
-                * ~batch["observation.state_is_pad"][0]
-                * ~batch["action_is_pad"]
-                # q_targets depends on the reward and the next observations.
-                * ~batch["next.reward_is_pad"]
-                * ~batch["observation.state_is_pad"][1:]
+            F.mse_loss(
+                q_preds,  # shape: [num_critics, batch_size]
+                einops.repeat(
+                    td_target, "b -> e b", e=q_preds.shape[0]
+                ),  # expand td_target to match q_preds shape
+                reduction="none",
             )
             .sum(0)
             .mean()
@@ -166,9 +186,8 @@ class SACPolicy(
         # calculate actors loss
         # 1- temperature
         temperature = self.temperature()
-
         # 2- get actions (batch_size, action_dim) and log probs (batch_size,)
-        actions, log_probs = self.actor_network(observations)
+        actions, log_probs = self.actor(observations)
         # 3- get q-value predictions
         with torch.no_grad():
             q_preds = self.critic_ensemble(observations, actions, return_type="mean")
@@ -209,21 +228,19 @@ class SACPolicy(
 class MLP(nn.Module):
     def __init__(
         self,
-        config: SACConfig,
+        hidden_dims: list[int],
         activations: Callable[[torch.Tensor], torch.Tensor] | str = nn.SiLU(),
         activate_final: bool = False,
         dropout_rate: Optional[float] = None,
     ):
         super().__init__()
-        self.activate_final = config.activate_final
+        self.activate_final = activate_final
         layers = []
 
-        for i, size in enumerate(config.network_hidden_dims):
-            layers.append(
-                nn.Linear(config.network_hidden_dims[i - 1] if i > 0 else config.network_hidden_dims[0], size)
-            )
+        for i, size in enumerate(hidden_dims):
+            layers.append(nn.Linear(hidden_dims[i - 1] if i > 0 else hidden_dims[0], size))
 
-            if i + 1 < len(config.network_hidden_dims) or activate_final:
+            if i + 1 < len(hidden_dims) or activate_final:
                 if dropout_rate is not None and dropout_rate > 0:
                     layers.append(nn.Dropout(p=dropout_rate))
                 layers.append(nn.LayerNorm(size))
@@ -245,7 +262,6 @@ class Critic(nn.Module):
         encoder: Optional[nn.Module],
         network: nn.Module,
         init_final: Optional[float] = None,
-        activate_final: bool = False,
         device: str = "cuda",
     ):
         super().__init__()
@@ -253,21 +269,20 @@ class Critic(nn.Module):
         self.encoder = encoder
         self.network = network
         self.init_final = init_final
-        self.activate_final = activate_final
+
+        # Find the last Linear layer's output dimension
+        for layer in reversed(network.net):
+            if isinstance(layer, nn.Linear):
+                out_features = layer.out_features
+                break
 
         # Output layer
         if init_final is not None:
-            if self.activate_final:
-                self.output_layer = nn.Linear(network.net[-3].out_features, 1)
-            else:
-                self.output_layer = nn.Linear(network.net[-2].out_features, 1)
+            self.output_layer = nn.Linear(out_features, 1)
             nn.init.uniform_(self.output_layer.weight, -init_final, init_final)
             nn.init.uniform_(self.output_layer.bias, -init_final, init_final)
         else:
-            if self.activate_final:
-                self.output_layer = nn.Linear(network.net[-3].out_features, 1)
-            else:
-                self.output_layer = nn.Linear(network.net[-2].out_features, 1)
+            self.output_layer = nn.Linear(out_features, 1)
             orthogonal_init()(self.output_layer.weight)
 
         self.to(self.device)
@@ -285,36 +300,17 @@ class Critic(nn.Module):
         value = self.output_layer(x)
         return value.squeeze(-1)
 
-    def q_value_ensemble(
-        self, observations: torch.Tensor, actions: torch.Tensor, train: bool = False
-    ) -> torch.Tensor:
-        observations = observations.to(self.device)
-        actions = actions.to(self.device)
-
-        if len(actions.shape) == 3:  # [batch_size, num_actions, action_dim]
-            batch_size, num_actions = actions.shape[:2]
-            obs_expanded = observations.unsqueeze(1).expand(-1, num_actions, -1)
-            obs_flat = obs_expanded.reshape(-1, observations.shape[-1])
-            actions_flat = actions.reshape(-1, actions.shape[-1])
-            q_values = self(obs_flat, actions_flat, train)
-            return q_values.reshape(batch_size, num_actions)
-        else:
-            return self(observations, actions, train)
-
-
 class Policy(nn.Module):
     def __init__(
         self,
         encoder: Optional[nn.Module],
         network: nn.Module,
         action_dim: int,
-        std_parameterization: str = "exp",
-        std_min: float = 1e-5,
-        std_max: float = 10.0,
-        tanh_squash_distribution: bool = False,
+        log_std_min: float = -5,
+        log_std_max: float = 2,
         fixed_std: Optional[torch.Tensor] = None,
         init_final: Optional[float] = None,
-        activate_final: bool = False,
+        use_tanh_squash: bool = False,
         device: str = "cuda",
     ):
         super().__init__()
@@ -322,18 +318,19 @@ class Policy(nn.Module):
         self.encoder = encoder
         self.network = network
         self.action_dim = action_dim
-        self.std_parameterization = std_parameterization
-        self.std_min = std_min
-        self.std_max = std_max
-        self.tanh_squash_distribution = tanh_squash_distribution
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
         self.fixed_std = fixed_std.to(self.device) if fixed_std is not None else None
-        self.activate_final = activate_final
+        self.use_tanh_squash = use_tanh_squash
+
+        # Find the last Linear layer's output dimension
+        for layer in reversed(network.net):
+            if isinstance(layer, nn.Linear):
+                out_features = layer.out_features
+                break
 
         # Mean layer
-        if self.activate_final:
-            self.mean_layer = nn.Linear(network.net[-3].out_features, action_dim)
-        else:
-            self.mean_layer = nn.Linear(network.net[-2].out_features, action_dim)
+        self.mean_layer = nn.Linear(out_features, action_dim)
         if init_final is not None:
             nn.init.uniform_(self.mean_layer.weight, -init_final, init_final)
             nn.init.uniform_(self.mean_layer.bias, -init_final, init_final)
@@ -342,72 +339,45 @@ class Policy(nn.Module):
 
         # Standard deviation layer or parameter
         if fixed_std is None:
-            if std_parameterization == "uniform":
-                self.log_stds = nn.Parameter(torch.zeros(action_dim, device=self.device))
+            self.std_layer = nn.Linear(out_features, action_dim)
+            if init_final is not None:
+                nn.init.uniform_(self.std_layer.weight, -init_final, init_final)
+                nn.init.uniform_(self.std_layer.bias, -init_final, init_final)
             else:
-                if self.activate_final:
-                    self.std_layer = nn.Linear(network.net[-3].out_features, action_dim)
-                else:
-                    self.std_layer = nn.Linear(network.net[-2].out_features, action_dim)
-                if init_final is not None:
-                    nn.init.uniform_(self.std_layer.weight, -init_final, init_final)
-                    nn.init.uniform_(self.std_layer.bias, -init_final, init_final)
-                else:
-                    orthogonal_init()(self.std_layer.weight)
+                orthogonal_init()(self.std_layer.weight)
 
         self.to(self.device)
 
     def forward(
         self,
         observations: torch.Tensor,
-        temperature: float = 1.0,
-        train: bool = False,
-        non_squash_distribution: bool = False,
-    ) -> torch.distributions.Distribution:
-        self.train(train)
-
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Encode observations if encoder exists
-        if self.encoder is not None:
-            with torch.set_grad_enabled(train):
-                obs_enc = self.encoder(observations, train=train)
-        else:
-            obs_enc = observations
+        obs_enc = observations if self.encoder is not None else self.encoder(observations)
+
         # Get network outputs
         outputs = self.network(obs_enc)
         means = self.mean_layer(outputs)
 
         # Compute standard deviations
         if self.fixed_std is None:
-            if self.std_parameterization == "exp":
-                log_stds = self.std_layer(outputs)
-                stds = torch.exp(log_stds)
-            elif self.std_parameterization == "softplus":
-                stds = torch.nn.functional.softplus(self.std_layer(outputs))
-            elif self.std_parameterization == "uniform":
-                stds = torch.exp(self.log_stds).expand_as(means)
-            else:
-                raise ValueError(f"Invalid std_parameterization: {self.std_parameterization}")
+            log_std = self.std_layer(outputs)
+            if self.use_tanh_squash:
+                log_std = torch.tanh(log_std)
+            log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
         else:
-            assert self.std_parameterization == "fixed"
             stds = self.fixed_std.expand_as(means)
 
-        # Clip standard deviations and scale with temperature
-        temperature = torch.tensor(temperature, device=self.device)
-        stds = torch.clamp(stds, self.std_min, self.std_max) * torch.sqrt(temperature)
+        # uses tahn activation function to squash the action to be in the range of [-1, 1]
+        normal = torch.distributions.Normal(means, stds)
+        x_t = normal.rsample()  # for reparameterization trick (mean + std * N(0,1))
+        log_probs = normal.log_prob(x_t)
+        if self.use_tanh_squash:
+            actions = torch.tanh(x_t)
+            log_probs -= torch.log((1 - actions.pow(2)) + 1e-6)
+        log_probs = log_probs.sum(-1)  # sum over action dim
 
-        # Create distribution
-        if self.tanh_squash_distribution and not non_squash_distribution:
-            distribution = TanhMultivariateNormalDiag(
-                loc=means,
-                scale_diag=stds,
-            )
-        else:
-            distribution = torch.distributions.Normal(
-                loc=means,
-                scale=stds,
-            )
-
-        return distribution
+        return actions, log_probs
 
     def get_features(self, observations: torch.Tensor) -> torch.Tensor:
         """Get encoded features from observations"""
@@ -528,120 +498,14 @@ class LagrangeMultiplier(nn.Module):
         return multiplier * diff
 
 
-# The TanhMultivariateNormalDiag is a probability distribution that represents a transformed normal (Gaussian) distribution where:
-# 1. The base distribution is a diagonal multivariate normal distribution
-# 2. The samples from this normal distribution are transformed through a tanh function, which squashes the values to be between -1 and 1
-# 3. Optionally, the values can be further transformed to fit within arbitrary bounds [low, high] using an affine transformation
-# This type of distribution is commonly used in reinforcement learning, particularly for continuous action spaces
-class TanhMultivariateNormalDiag(torch.distributions.TransformedDistribution):
-    DEFAULT_SAMPLE_SHAPE = torch.Size()
-
-    def __init__(
-        self,
-        loc: torch.Tensor,
-        scale_diag: torch.Tensor,
-        low: Optional[torch.Tensor] = None,
-        high: Optional[torch.Tensor] = None,
-    ):
-        # Create base normal distribution
-        base_distribution = torch.distributions.Normal(loc=loc, scale=scale_diag)
-
-        # Create list of transforms
-        transforms = []
-
-        # Add tanh transform
-        transforms.append(torch.distributions.transforms.TanhTransform())
-
-        # Add rescaling transform if bounds are provided
-        if low is not None and high is not None:
-            transforms.append(
-                torch.distributions.transforms.AffineTransform(loc=(high + low) / 2, scale=(high - low) / 2)
-            )
-
-        # Initialize parent class
-        super().__init__(base_distribution=base_distribution, transforms=transforms)
-
-        # Store parameters
-        self.loc = loc
-        self.scale_diag = scale_diag
-        self.low = low
-        self.high = high
-
-    def mode(self) -> torch.Tensor:
-        """Get the mode of the transformed distribution"""
-        # The mode of a normal distribution is its mean
-        mode = self.loc
-
-        # Apply transforms
-        for transform in self.transforms:
-            mode = transform(mode)
-
-        return mode
-
-    def rsample(self, sample_shape=DEFAULT_SAMPLE_SHAPE) -> torch.Tensor:
-        """
-        Reparameterized sample from the distribution
-        """
-        # Sample from base distribution
-        x = self.base_dist.rsample(sample_shape)
-
-        # Apply transforms
-        for transform in self.transforms:
-            x = transform(x)
-
-        return x
-
-    def log_prob(self, value: torch.Tensor) -> torch.Tensor:
-        """
-        Compute log probability of a value
-        Includes the log det jacobian for the transforms
-        """
-        # Initialize log prob
-        log_prob = torch.zeros_like(value[..., 0])
-
-        # Inverse transforms to get back to normal distribution
-        q = value
-        for transform in reversed(self.transforms):
-            q = transform.inv(q)
-            log_prob = log_prob - transform.log_abs_det_jacobian(q, transform(q))
-
-        # Add base distribution log prob
-        log_prob = log_prob + self.base_dist.log_prob(q).sum(-1)
-
-        return log_prob
-
-    def sample_and_log_prob(self, sample_shape=DEFAULT_SAMPLE_SHAPE) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Sample from the distribution and compute log probability
-        """
-        x = self.rsample(sample_shape)
-        log_prob = self.log_prob(x)
-        return x, log_prob
-
-    def entropy(self) -> torch.Tensor:
-        """
-        Compute entropy of the distribution
-        """
-        # Start with base distribution entropy
-        entropy = self.base_dist.entropy().sum(-1)
-
-        # Add log det jacobian for each transform
-        x = self.rsample()
-        for transform in self.transforms:
-            entropy = entropy + transform.log_abs_det_jacobian(x, transform(x))
-            x = transform(x)
-
-        return entropy
-
-
-def create_critic_ensemble(critic_class, num_critics: int, device: str = "cuda") -> nn.ModuleList:
-    """Creates an ensemble of critic networks"""
-    critics = nn.ModuleList([critic_class() for _ in range(num_critics)])
-    return critics.to(device)
-
-
 def orthogonal_init():
     return lambda x: torch.nn.init.orthogonal_(x, gain=1.0)
+
+
+def create_critic_ensemble(critics: list[nn.Module], num_critics: int, device: str = "cuda") -> nn.ModuleList:
+    """Creates an ensemble of critic networks"""
+    assert len(critics) == num_critics, f"Expected {num_critics} critics, got {len(critics)}"
+    return nn.ModuleList(critics).to(device)
 
 
 # borrowed from tdmpc
