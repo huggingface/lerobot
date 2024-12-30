@@ -1,13 +1,6 @@
 # @package _global_
-
 seed: 1000
 dataset_repo_id: lerobot/aloha_sim_transfer_cube_human
-
-#override_dataset_stats:
-  #observation.images.top:
-    # Stats from imagenet, since we use a pretrained vision model
-    #mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
-    #std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
 
 training:
   offline_steps: 100000
@@ -34,38 +27,36 @@ eval:
 # See `configuration_act.py` for more details.
 policy:
   name: vla
-
+  precision: fp16
   # Input / output structure.
   n_obs_steps: 1
-  chunk_size: 100
   n_action_steps: 100
+  chunk_size: 100
 
   input_shapes:
     observation.images.top: [3, 480, 640]  # Video inputs (from video frames)
-    observation.state: [14]               # State input dimension
+    observation.state: ["${env.state_dim}"]             # State input dimension
     text.input: [256]                      # Text input processed by Qwen-VL
   output_shapes:
-    action: [14]  # Action output dimension (Example: 4D actions)
+    action: ["${env.action_dim}"]  # Action output dimension (Example: 4D actions)
 
   # Normalization / Unnormalization
   input_normalization_modes:
-    #observation.images.top: mean_std
+    # observation.images.top: mean_std
     observation.state: mean_std
     # text.input: none  # No normalization needed for text input
   output_normalization_modes:
     action: mean_std
 
   # Architecture.
-  # State encoder
-  state_encoder:
-    hidden_dim: 256
-    latent_dim: 64
   prompt: "Please transfer the cube" #"Please insert the tube into the socket."
 
   # Vision-Language Model (Qwen-VL)
   vlm_backbone:
-    name: HuggingFaceTB/SmolVLM_converted_4 #llava-hf/llava-onevision-qwen2-0.5b-ov-hf
+    name: llava-hf/llava-onevision-qwen2-0.5b-ov-hf # HuggingFaceTB/SmolVLM_converted_4
     feature_selection: all_generated
+    hidden_size: 896
+  use_action_connector: False # in case vlm_backbone.hidden_size is different than action_decoder.dim_model
   use_prompt_template: true
   num_img_tokens: 598
   replace_final_stride_with_dilation: false
@@ -77,10 +68,10 @@ policy:
   action_decoder:
     name: act
     vlm_hidden_dim: 128  # Input dim for action decoder (combined dimension)
-    action_dim: 4  # Output dimension (action space)
+    # action_dim: 4  # Output dimension (action space)
     n_decoder_layers: 1
     n_encoder_layers: 4
-    dim_model: 2048 #896 this one depends on the hidden size of the vlm backbone
+    dim_model: 896 # 2048 smolvlm
     n_heads: 8
     dim_feedforward: 3200
     feedforward_activation: relu
@@ -88,6 +79,7 @@ policy:
     # Training and loss computation
     dropout: 0.1
     temporal_ensemble_coeff: null
+    chunk_size: 100
 
 
   # Lora config
