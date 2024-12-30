@@ -125,6 +125,7 @@ def init_keyboard_listener():
     events["exit_early"] = False
     events["rerecord_episode"] = False
     events["stop_recording"] = False
+    events["reset_robot"] = False
 
     if is_headless():
         logging.warning(
@@ -149,6 +150,9 @@ def init_keyboard_listener():
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
                 events["exit_early"] = True
+            elif key == keyboard.Key.down:
+                print("Resetting robot...")
+                events["reset_robot"] = True
         except Exception as e:
             print(f"Error handling key press: {e}")
 
@@ -307,6 +311,9 @@ def reset_environment(robot, events, reset_time_s):
             if events["exit_early"]:
                 events["exit_early"] = False
                 break
+            if events["reset_robot"]:
+                robot.reset()
+                events["reset_robot"] = False
 
 
 def stop_recording(robot, listener, display_cameras):
