@@ -177,25 +177,19 @@ class SACPolicy(
 
         # 4- Calculate loss
         # Compute state-action value loss (TD loss) for all of the Q functions in the ensemble.
-        critics_loss = F.mse_loss(
-            q_preds,  # shape: [num_critics, batch_size]
-            einops.repeat(td_target, "b -> e b", e=q_preds.shape[0]), # expand td_target to match q_preds shape
-            reduction="none"
-        ).sum(0).mean()
-
-        # critics_loss = (   
-        #     F.mse_loss(
-        #             q_preds,
-        #             einops.repeat(td_target, "b -> e b", e=q_preds.shape[0]),
-        #             reduction="none",
-        #         ).sum(0)  # sum over ensemble
-        #         # `q_preds_ensemble` depends on the first observation and the actions.
-        #         * ~batch["observation.state_is_pad"][0]
-        #         * ~batch["action_is_pad"]
-        #         # q_targets depends on the reward and the next observations.
-        #         * ~batch["next.reward_is_pad"]
-        #         * ~batch["observation.state_is_pad"][1:]
-        #     ).sum(0).mean()
+        critics_loss = (   
+            F.mse_loss(
+                    q_preds,
+                    einops.repeat(td_target, "b -> e b", e=q_preds.shape[0]),
+                    reduction="none",
+                ).sum(0)  # sum over ensemble
+                # `q_preds_ensemble` depends on the first observation and the actions.
+                * ~batch["observation.state_is_pad"][:,0] # shape: [batch_size, horizon+1]
+                * ~batch["action_is_pad"][:,0] # shape: [batch_size, horizon]
+                # q_targets depends on the reward and the next observations.
+                * ~batch["next.reward_is_pad"][:,0] # shape: [batch_size, horizon]
+                * ~batch["observation.state_is_pad"][:,1] # shape: [batch_size, horizon+1]
+            ).mean()
         
         # calculate actors loss
         # 1- temperature
@@ -207,8 +201,8 @@ class SACPolicy(
             q_preds = self.critic_forward(observations, actions, use_target=False)
         actor_loss = (
             -(q_preds - temperature * log_probs).mean()
-            # * ~batch["observation.state_is_pad"][0]
-            # * ~batch["action_is_pad"]
+            * ~batch["observation.state_is_pad"][:,0] # shape: [batch_size, horizon+1]
+            * ~batch["action_is_pad"][:,0] # shape: [batch_size, horizon]
         ).mean()
 
 
