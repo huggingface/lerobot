@@ -1,0 +1,1 @@
+python lerobot/scripts/train.py policy=florence env=pusht dataset_repo_id=lerobot/pusht training.log_freq=400 training.num_workers=16 training.lr=2e-5 training.eval_freq=2000 training.save_freq=2000 eval.n_episodes=16 eval.batch_size=16 eval.use_async_envs=true wandb.enable=true

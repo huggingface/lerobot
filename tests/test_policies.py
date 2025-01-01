@@ -57,6 +57,7 @@ def test_get_policy_and_config_classes(policy_name: str):
         ("xarm", "tdmpc", ["policy.use_mpc=true", "dataset_repo_id=lerobot/xarm_lift_medium"]),
         ("pusht", "diffusion", []),
         ("pusht", "vqbet", []),
+        ("pusht", "florence", []),
         ("aloha", "act", ["env.task=AlohaInsertion-v0", "dataset_repo_id=lerobot/aloha_sim_insertion_human"]),
         (
             "aloha",

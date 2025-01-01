@@ -453,6 +453,7 @@ def main(
         hydra_cfg = init_hydra_config(str(pretrained_policy_path / "config.yaml"), config_overrides)
     else:
         hydra_cfg = init_hydra_config(hydra_cfg_path, config_overrides)
+    logging.info(hydra_cfg)
 
     if hydra_cfg.eval.batch_size > hydra_cfg.eval.n_episodes:
         raise ValueError(
