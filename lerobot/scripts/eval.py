@@ -456,7 +456,7 @@ def eval(cfg: EvalPipelineConfig):
         device=device,
         env=env,
         env_cfg=cfg.env,
-        pretrained_policy_name_or_path=str(cfg.pretrained_policy_path),
+        pretrained_policy_path=str(cfg.pretrained_policy_path),
     )
     policy.eval()
 

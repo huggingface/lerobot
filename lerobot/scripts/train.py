@@ -213,7 +213,7 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg.policy,
         device=device,
         ds_meta=offline_dataset.meta,
-        pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
+        pretrained_policy_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
     )
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)

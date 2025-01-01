@@ -20,32 +20,32 @@ import torch
 from safetensors.torch import save_file
 
 from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.policies.factory import make_policy
-from lerobot.common.utils.utils import init_hydra_config, set_global_seed
+from lerobot.common.policies.factory import make_policy, make_policy_config
+from lerobot.common.utils.utils import set_global_seed
+from lerobot.configs.default import DatasetConfig
+from lerobot.configs.training import TrainPipelineConfig
 from lerobot.scripts.train import make_optimizer_and_scheduler
-from tests.utils import DEFAULT_CONFIG_PATH
 
 
-def get_policy_stats(env_name, policy_name, extra_overrides):
-    cfg = init_hydra_config(
-        DEFAULT_CONFIG_PATH,
-        overrides=[
-            f"env={env_name}",
-            f"policy={policy_name}",
-            "device=cpu",
-        ]
-        + extra_overrides,
-    )
+def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs):
+    # TODO(rcadene, aliberts): env_name?
     set_global_seed(1337)
-    dataset = make_dataset(cfg)
-    policy = make_policy(cfg, dataset_stats=dataset.meta.stats)
-    policy.train()
-    optimizer, _ = make_optimizer_and_scheduler(cfg, policy)
 
+    train_cfg = TrainPipelineConfig(
+        dataset=DatasetConfig(repo_id=ds_repo_id),
+        policy=make_policy_config(policy_name, **policy_kwargs),
+        device="cpu",
+    )
+
+    dataset = make_dataset(train_cfg)
+    policy = make_policy(train_cfg.policy, dataset_stats=dataset.meta.stats)
+    policy.train()
+
+    optimizer, _ = make_optimizer_and_scheduler(train_cfg, policy)
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=0,
-        batch_size=cfg.training.batch_size,
+        batch_size=train_cfg.batch_size,
         shuffle=False,
     )
 
@@ -80,10 +80,10 @@ def get_policy_stats(env_name, policy_name, extra_overrides):
         if k.startswith("observation"):
             obs[k] = batch[k]
 
-    if "n_action_steps" in cfg.policy:
-        actions_queue = cfg.policy.n_action_steps
+    if hasattr(train_cfg.policy, "n_action_steps"):
+        actions_queue = train_cfg.policy.n_action_steps
     else:
-        actions_queue = cfg.policy.n_action_repeats
+        actions_queue = train_cfg.policy.n_action_repeats
 
     actions = {str(i): policy.select_action(obs).contiguous() for i in range(actions_queue)}
     return output_dict, grad_stats, param_stats, actions
@@ -108,26 +108,31 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_override
 
 if __name__ == "__main__":
     env_policies = [
-        # ("xarm", "tdmpc", ["policy.use_mpc=false"], "use_policy"),
-        # ("xarm", "tdmpc", ["policy.use_mpc=true"], "use_mpc"),
-        # (
-        #     "pusht",
-        #     "diffusion",
-        #     [
-        #         "policy.n_action_steps=8",
-        #         "policy.num_inference_steps=10",
-        #         "policy.down_dims=[128, 256, 512]",
-        #     ],
-        #     "",
-        # ),
-        # ("aloha", "act", ["policy.n_action_steps=10"], ""),
-        # ("aloha", "act", ["policy.n_action_steps=1000", "policy.chunk_size=1000"], "_1000_steps"),
-        # ("dora_aloha_real", "act_real", ["policy.n_action_steps=10"], ""),
-        # ("dora_aloha_real", "act_real_no_state", ["policy.n_action_steps=10"], ""),
+        ("lerobot/xarm_lift_medium", "xarm", "tdmpc", {"use_mpc": False}, "use_policy"),
+        ("lerobot/xarm_lift_medium", "xarm", "tdmpc", {"use_mpc": True}, "use_mpc"),
+        (
+            "lerobot/pusht",
+            "pusht",
+            "diffusion",
+            {
+                "n_action_steps": 8,
+                "num_inference_steps": 10,
+                "down_dims": [128, 256, 512],
+            },
+            "",
+        ),
+        ("lerobot/aloha_sim_insertion_human", "aloha", "act", {"n_action_steps": 10}, ""),
+        (
+            "lerobot/aloha_sim_insertion_human",
+            "aloha",
+            "act",
+            {"n_action_steps": 1000, "chunk_size": 1000},
+            "_1000_steps",
+        ),
     ]
     if len(env_policies) == 0:
         raise RuntimeError("No policies were provided!")
-    for env, policy, extra_overrides, file_name_extra in env_policies:
+    for ds_repo_id, env, policy, extra_overrides, file_name_extra in env_policies:
         save_policy_to_safetensors(
-            "tests/data/save_policy_to_safetensors", env, policy, extra_overrides, file_name_extra
+            "tests/data/save_policy_to_safetensors", ds_repo_id, env, policy, extra_overrides, file_name_extra
         )

@@ -31,10 +31,6 @@ from lerobot.common.utils.import_utils import is_package_available
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# TODO(rcadene): remove
-# Pass this as the first argument to init_hydra_config.
-DEFAULT_CONFIG_PATH = "lerobot/configs/default.yaml"
-
 TEST_ROBOT_TYPES = []
 for robot_type in available_robots:
     TEST_ROBOT_TYPES += [(robot_type, True), (robot_type, False)]

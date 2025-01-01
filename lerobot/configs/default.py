@@ -23,6 +23,7 @@ from lerobot.common.datasets.transforms import ImageTransformsConfig
 
 
 @dataclass
+# TODO(rcadene, aliberts): rename LeRobotDatasetConfig ??
 class DatasetConfig:
     # You may provide a list of datasets here. `train.py` creates them all and concatenates them. Note: only data
     # keys common between the datasets are kept. Each dataset gets and additional transform that inserts the

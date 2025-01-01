@@ -1,8 +1,10 @@
 import datetime as dt
-from dataclasses import dataclass, replace
+import logging
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 import draccus
+import yaml
 
 from lerobot.common import envs
 from lerobot.common.policies.utils import get_pretrained_policy_path
@@ -41,10 +43,11 @@ class EvalPipelineConfig:
     policy: PretrainedConfig | None = None
     dir: Path | None = None
     job_name: str | None = None
-    device: str = "cuda"  # | cpu | mp
-    # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
-    # automatic gradient scaling is used.
-    use_amp: bool = False
+    # By default, use the value from policy checkpoint.
+    device: str | None = None  # cuda | cpu | mps
+    # Use Automatic Mixed Precision (AMP), expected to increase inference speed at the expend of float precision.
+    # By default, use the value from policy checkpoint.
+    use_amp: bool | None = None
     seed: int | None = 1000
 
     def __post_init__(self):
@@ -53,15 +56,8 @@ class EvalPipelineConfig:
 
         sleep(1)
         self.resolve_policy_name_or_path()
-        cfg_path = self.pretrained_policy_path / "config.json"
-        with open(cfg_path) as f:
-            policy_cfg = draccus.load(PretrainedConfig, f)
-
-        if self.policy is not None:
-            # override policy config
-            replace(policy_cfg, self.policy)
-
-        self.policy = policy_cfg
+        self.load_policy_config_from_path()
+        self.load_device_use_amp_from_path()
 
         if not self.job_name:
             self.job_name = f"{self.env.type}_{self.policy.type}"
@@ -73,3 +69,33 @@ class EvalPipelineConfig:
 
     def resolve_policy_name_or_path(self):
         self.pretrained_policy_path = get_pretrained_policy_path(self.pretrained_policy_path)
+
+    def load_policy_config_from_path(self):
+        # Load policy config from checkpoint
+        cfg_path = self.pretrained_policy_path / "config.json"
+        with open(cfg_path) as f:
+            policy_cfg = draccus.load(PretrainedConfig, f)
+
+        # Override policy config from command line
+        if self.policy is not None:
+            policy_cfg = replace(policy_cfg, **asdict(self.policy))
+
+        self.policy = policy_cfg
+
+    def load_device_use_amp_from_path(self):
+        # Load training config from checkpoint
+        cfg_path = self.pretrained_policy_path / "config.yaml"
+        with open(cfg_path) as f:
+            train_cfg = yaml.safe_load(f)
+
+        if self.device is None:
+            self.device = train_cfg["device"]
+            logging.warning(
+                f"No device value provided, so using the one from policy checkpoint ({self.device})."
+            )
+
+        if self.use_amp is None:
+            self.use_amp = train_cfg["use_amp"]
+            logging.warning(
+                f"No use_amp value provided, so using the one from policy checkpoint ({self.use_amp})."
+            )

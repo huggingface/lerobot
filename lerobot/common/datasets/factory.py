@@ -70,31 +70,11 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     Returns:
         The LeRobotDataset.
     """
-    # A soft check to warn if the environment matches the dataset. Don't check if we are using a real world env (dora).
-    if cfg.env.type != "dora":
-        if isinstance(cfg.dataset.repo_id, str):
-            dataset_repo_ids = [cfg.dataset.repo_id]  # single dataset
-        elif isinstance(cfg.dataset.repo_id, list):
-            dataset_repo_ids = cfg.dataset.repo_id  # multiple datasets
-        else:
-            raise ValueError(
-                "Expected cfg.dataset.repo_id to be either a single string to load one dataset or a list of "
-                "strings to load multiple datasets."
-            )
-
-        for dataset_repo_id in dataset_repo_ids:
-            if cfg.env.type not in dataset_repo_id:
-                logging.warning(
-                    f"There might be a mismatch between your training dataset ({dataset_repo_id=}) and your "
-                    f"environment ({cfg.env.type=})."
-                )
-
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
 
     if isinstance(cfg.dataset.repo_id, str):
-        # TODO (aliberts): add 'episodes' arg from config after removing hydra
         ds_meta = LeRobotDatasetMetadata(cfg.dataset.repo_id, local_files_only=cfg.dataset.local_files_only)
         delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
         dataset = LeRobotDataset(

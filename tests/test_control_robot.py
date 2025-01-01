@@ -32,6 +32,12 @@ import pytest
 from lerobot.common.logger import Logger
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.factory import make_policy
+from lerobot.common.robot_devices.control_configs import (
+    CalibrateControlConfig,
+    RecordControlConfig,
+    ReplayControlConfig,
+    TeleoperateControlConfig,
+)
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.training import TrainPipelineConfig
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
@@ -58,9 +64,9 @@ def test_teleoperate(tmpdir, request, robot_type, mock):
         pass
 
     robot = make_robot(**robot_kwargs)
-    teleoperate(robot, teleop_time_s=1)
-    teleoperate(robot, fps=30, teleop_time_s=1)
-    teleoperate(robot, fps=60, teleop_time_s=1)
+    teleoperate(robot, TeleoperateControlConfig(teleop_time_s=1))
+    teleoperate(robot, TeleoperateControlConfig(fps=30, teleop_time_s=1))
+    teleoperate(robot, TeleoperateControlConfig(fps=60, teleop_time_s=1))
     del robot
 
 
@@ -78,7 +84,8 @@ def test_calibrate(tmpdir, request, robot_type, mock):
     robot_kwargs["calibration_dir"] = calibration_dir
 
     robot = make_robot(**robot_kwargs)
-    calibrate(robot, arms=robot.available_arms)
+    calib_cfg = CalibrateControlConfig(arms=robot.available_arms)
+    calibrate(robot, calib_cfg)
     del robot
 
 
@@ -107,20 +114,21 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
     single_task = "Do something."
 
     robot = make_robot(**robot_kwargs)
-    record(
-        robot,
-        fps=30,
-        root=root,
+    rec_cfg = RecordControlConfig(
         repo_id=repo_id,
         single_task=single_task,
-        warmup_time_s=1,
+        root=root,
+        fps=30,
+        warmup_time_s=0.1,
         episode_time_s=1,
+        reset_time_s=0.1,
         num_episodes=2,
         run_compute_stats=False,
         push_to_hub=False,
         video=False,
         play_sounds=False,
     )
+    record(robot, rec_cfg)
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
@@ -146,15 +154,14 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     single_task = "Do something."
 
     robot = make_robot(**robot_kwargs)
-    dataset = record(
-        robot,
-        root,
-        repo_id,
-        single_task,
+    rec_cfg = RecordControlConfig(
+        repo_id=repo_id,
+        single_task=single_task,
+        root=root,
         fps=1,
-        warmup_time_s=0.5,
+        warmup_time_s=0.1,
         episode_time_s=1,
-        reset_time_s=1,
+        reset_time_s=0.1,
         num_episodes=2,
         push_to_hub=False,
         # TODO(rcadene, aliberts): test video=True
@@ -163,10 +170,14 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         display_cameras=False,
         play_sounds=False,
     )
+    dataset = record(robot, rec_cfg)
     assert dataset.meta.total_episodes == 2
     assert len(dataset) == 2
 
-    replay(robot, episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False, local_files_only=True)
+    replay_cfg = ReplayControlConfig(
+        episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False, local_files_only=True
+    )
+    replay(robot, replay_cfg)
 
     policy_cfg = ACTConfig()
     policy = make_policy(policy_cfg, ds_meta=dataset.meta, device=DEVICE)
@@ -174,14 +185,14 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     out_dir = tmpdir / "logger"
 
     ds_cfg = DatasetConfig(repo_id, local_files_only=True)
-    train_cfg = TrainPipelineConfig(policy_cfg, ds_cfg, dir=out_dir)
+    train_cfg = TrainPipelineConfig(policy_cfg, ds_cfg, dir=out_dir, device=DEVICE)
     logger = Logger(train_cfg)
     logger.save_checkpoint(
         train_step=0,
         identifier=0,
         policy=policy,
     )
-    pretrained_policy_name_or_path = out_dir / "checkpoints/last/pretrained_model"
+    pretrained_policy_path = out_dir / "checkpoints/last/pretrained_model"
 
     # In `examples/9_use_aloha.md`, we advise using `num_image_writer_processes=1`
     # during inference, to reach constent fps, so we test this here.
@@ -207,15 +218,15 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     eval_repo_id = "lerobot/eval_debug"
     eval_root = tmpdir / "data" / eval_repo_id
 
-    dataset = record(
-        robot,
-        eval_root,
-        eval_repo_id,
-        single_task,
-        pretrained_policy_name_or_path,
-        warmup_time_s=1,
+    rec_eval_cfg = RecordControlConfig(
+        repo_id=eval_repo_id,
+        root=eval_root,
+        single_task=single_task,
+        pretrained_policy_path=pretrained_policy_path,
+        fps=1,
+        warmup_time_s=0.1,
         episode_time_s=1,
-        reset_time_s=1,
+        reset_time_s=0.1,
         num_episodes=2,
         run_compute_stats=False,
         push_to_hub=False,
@@ -224,7 +235,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         play_sounds=False,
         num_image_writer_processes=num_image_writer_processes,
     )
-
+    dataset = record(robot, rec_eval_cfg)
     assert dataset.num_episodes == 2
     assert len(dataset) == 2
 
@@ -254,31 +265,31 @@ def test_resume_record(tmpdir, request, robot_type, mock):
     root = Path(tmpdir) / "data" / repo_id
     single_task = "Do something."
 
-    record_kwargs = {
-        "robot": robot,
-        "root": root,
-        "repo_id": repo_id,
-        "single_task": single_task,
-        "fps": 1,
-        "warmup_time_s": 0,
-        "episode_time_s": 1,
-        "push_to_hub": False,
-        "video": False,
-        "display_cameras": False,
-        "play_sounds": False,
-        "run_compute_stats": False,
-        "local_files_only": True,
-        "num_episodes": 1,
-    }
+    rec_cfg = RecordControlConfig(
+        repo_id=repo_id,
+        root=root,
+        single_task=single_task,
+        fps=1,
+        warmup_time_s=0,
+        episode_time_s=1,
+        push_to_hub=False,
+        video=False,
+        display_cameras=False,
+        play_sounds=False,
+        run_compute_stats=False,
+        local_files_only=True,
+        num_episodes=1,
+    )
 
-    dataset = record(**record_kwargs)
+    dataset = record(robot, rec_cfg)
     assert len(dataset) == 1, f"`dataset` should contain 1 frame, not {len(dataset)}"
 
     with pytest.raises(FileExistsError):
         # Dataset already exists, but resume=False by default
-        record(**record_kwargs)
+        record(robot, rec_cfg)
 
-    dataset = record(**record_kwargs, resume=True)
+    rec_cfg.resume = True
+    dataset = record(robot, rec_cfg)
     assert len(dataset) == 2, f"`dataset` should contain 2 frames, not {len(dataset)}"
 
 
@@ -312,11 +323,10 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
         root = Path(tmpdir) / "data" / repo_id
         single_task = "Do something."
 
-        dataset = record(
-            robot,
-            root,
-            repo_id,
-            single_task,
+        rec_cfg = RecordControlConfig(
+            repo_id=repo_id,
+            root=root,
+            single_task=single_task,
             fps=1,
             warmup_time_s=0,
             episode_time_s=1,
@@ -327,6 +337,7 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
             play_sounds=False,
             run_compute_stats=False,
         )
+        dataset = record(robot, rec_cfg)
 
         assert not mock_events["rerecord_episode"], "`rerecord_episode` wasn't properly reset to False"
         assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
@@ -363,12 +374,11 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
         root = Path(tmpdir) / "data" / repo_id
         single_task = "Do something."
 
-        dataset = record(
-            robot,
-            fps=2,
+        rec_cfg = RecordControlConfig(
+            repo_id=repo_id,
             root=root,
             single_task=single_task,
-            repo_id=repo_id,
+            fps=2,
             warmup_time_s=0,
             episode_time_s=1,
             num_episodes=1,
@@ -378,6 +388,8 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
             play_sounds=False,
             run_compute_stats=False,
         )
+
+        dataset = record(robot, rec_cfg)
 
         assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"
@@ -415,14 +427,14 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
         root = Path(tmpdir) / "data" / repo_id
         single_task = "Do something."
 
-        dataset = record(
-            robot,
-            root,
-            repo_id,
+        rec_cfg = RecordControlConfig(
+            repo_id=repo_id,
+            root=root,
             single_task=single_task,
             fps=1,
             warmup_time_s=0,
             episode_time_s=1,
+            reset_time_s=0.1,
             num_episodes=2,
             push_to_hub=False,
             video=False,
@@ -431,6 +443,8 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
             run_compute_stats=False,
             num_image_writer_processes=num_image_writer_processes,
         )
+
+        dataset = record(robot, rec_cfg)
 
         assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"

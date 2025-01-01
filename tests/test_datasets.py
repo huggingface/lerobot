@@ -43,9 +43,13 @@ from lerobot.common.datasets.utils import (
     hf_transform_to_torch,
     unflatten_dict,
 )
-from lerobot.common.utils.utils import init_hydra_config, seeded_context
+from lerobot.common.envs.factory import make_env_config
+from lerobot.common.policies.factory import make_policy_config
+from lerobot.common.utils.utils import seeded_context
+from lerobot.configs.default import DatasetConfig
+from lerobot.configs.training import TrainPipelineConfig
 from tests.fixtures.constants import DUMMY_REPO_ID
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, make_robot
+from tests.utils import DEVICE, make_robot
 
 
 def test_same_attributes_defined(lerobot_dataset_factory, tmp_path):
@@ -110,15 +114,13 @@ def test_factory(env_name, repo_id, policy_name):
         - we can create a dataset with the factory.
         - for a commonly used set of data keys, the data dimensions are correct.
     """
-    cfg = init_hydra_config(
-        DEFAULT_CONFIG_PATH,
-        overrides=[
-            f"env={env_name}",
-            f"dataset_repo_id={repo_id}",
-            f"policy={policy_name}",
-            f"device={DEVICE}",
-        ],
+    cfg = TrainPipelineConfig(
+        env=make_env_config(env_name),
+        dataset=DatasetConfig(repo_id=repo_id),
+        policy=make_policy_config(policy_name),
+        device=DEVICE,
     )
+
     dataset = make_dataset(cfg)
     delta_timestamps = dataset.delta_timestamps
     camera_keys = dataset.meta.camera_keys

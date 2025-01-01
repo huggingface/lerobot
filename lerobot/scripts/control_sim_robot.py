@@ -90,8 +90,7 @@ from lerobot.common.robot_devices.control_utils import (
     sanity_check_dataset_robot_compatibility,
     stop_recording,
 )
-from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.common.robot_devices.robots.utils import Robot, make_robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import init_hydra_config, init_logging, log_say
 

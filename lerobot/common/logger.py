@@ -155,7 +155,7 @@ class Logger:
         """
 
         self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
-        # register_features_types()
+        register_features_types()
         policy.save_pretrained(save_dir)
         # Also save the full config for the env configuration.
         with open(save_dir / "config.yaml", "w") as f:
