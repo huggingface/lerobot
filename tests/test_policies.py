@@ -239,7 +239,21 @@ def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_p
             "info": None,
         },
     }
-    info = info_factory(total_episodes=1, total_frames=1, camera_features=camera_features)
+    motor_features = {
+        "action": {
+            "dtype": "float32",
+            "shape": (6,),
+            "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+        },
+        "observation.state": {
+            "dtype": "float32",
+            "shape": (6,),
+            "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+        },
+    }
+    info = info_factory(
+        total_episodes=1, total_frames=1, camera_features=camera_features, motor_features=motor_features
+    )
     ds_meta = lerobot_dataset_metadata_factory(root=tmp_path / "init", info=info)
     return ds_meta
 
