@@ -24,6 +24,7 @@ pretrained_policy_path = Path(snapshot_download("lerobot/diffusion_pusht"))
 # OR uncomment the following to evaluate a policy from the local outputs/train folder.
 # pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")
 
+# TODO(alibert, rcadene): fix this file
 policy = DiffusionPolicy.from_pretrained(pretrained_policy_path)
 policy.eval()
 policy.to(device)

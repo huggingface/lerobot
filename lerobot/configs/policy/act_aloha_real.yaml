@@ -12,13 +12,6 @@
 #   policy=act_aloha_real \
 #   env=aloha_real
 # ```
-#
-# Example of usage for training and inference with [Dora-rs](https://github.com/dora-rs/dora-lerobot):
-# ```bash
-# python lerobot/scripts/train.py \
-#   policy=act_aloha_real \
-#   env=dora_aloha_real
-# ```
 
 seed: 1000
 dataset_repo_id: lerobot/aloha_static_vinh_cup

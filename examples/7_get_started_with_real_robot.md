@@ -946,6 +946,7 @@ fps = 30
 device = "cuda"  # TODO: On Mac, use "mps" or "cpu"
 
 ckpt_path = "outputs/train/act_koch_test/checkpoints/last/pretrained_model"
+# TODO(alibert, rcadene): fix this file
 policy = ACTPolicy.from_pretrained(ckpt_path)
 policy.to(device)
 

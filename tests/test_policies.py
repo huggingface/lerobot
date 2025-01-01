@@ -38,7 +38,9 @@ from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import seeded_context
 from lerobot.configs.default import DatasetConfig
+from lerobot.configs.policies import PolicyFeature
 from lerobot.configs.training import TrainPipelineConfig
+from lerobot.configs.types import FeatureType, NormalizationMode
 from lerobot.scripts.train import make_optimizer_and_scheduler
 from tests.scripts.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
@@ -48,9 +50,11 @@ from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
 def test_get_policy_and_config_classes(policy_name: str):
     """Check that the correct policy and config classes are returned."""
     policy_cls = get_policy_class(policy_name)
-    config_cls = make_policy_config(policy_name)
+    policy_cfg = make_policy_config(policy_name)
     assert policy_cls.name == policy_name
-    assert issubclass(config_cls, inspect.signature(policy_cls.__init__).parameters["config"].annotation)
+    assert issubclass(
+        policy_cfg.__class__, inspect.signature(policy_cls.__init__).parameters["config"].annotation
+    )
 
 
 @pytest.mark.parametrize(
@@ -215,7 +219,7 @@ def test_act_backbone_lr():
     assert cfg.policy.optimizer_lr_backbone == 0.001
 
     dataset = make_dataset(cfg)
-    policy = make_policy(cfg.policy, dataset_stats=dataset.meta.stats)
+    policy = make_policy(cfg.policy, device=DEVICE, ds_meta=dataset.meta)
     optimizer, _ = make_optimizer_and_scheduler(cfg, policy)
     assert len(optimizer.param_groups) == 2
     assert optimizer.param_groups[0]["lr"] == cfg.policy.optimizer_lr
@@ -225,19 +229,27 @@ def test_act_backbone_lr():
 
 
 @pytest.mark.parametrize("policy_name", available_policies)
-def test_policy_defaults(policy_name: str):
+def test_policy_defaults(lerobot_dataset_metadata_factory, info_factory, tmp_path, policy_name: str):
     """Check that the policy can be instantiated with defaults."""
+    info = info_factory(total_episodes=1, total_frames=1)
+    ds_meta = lerobot_dataset_metadata_factory(root=tmp_path / "init", info=info)
     policy_cls = get_policy_class(policy_name)
-    policy_cls()
+    policy_cfg = make_policy_config(policy_name)
+    policy_cfg.parse_features_from_dataset(ds_meta)
+    policy_cls(policy_cfg)
 
 
 @pytest.mark.parametrize("policy_name", available_policies)
-def test_save_and_load_pretrained(policy_name: str):
+def test_save_and_load_pretrained(lerobot_dataset_metadata_factory, info_factory, tmp_path, policy_name: str):
+    info = info_factory(total_episodes=1, total_frames=1)
+    ds_meta = lerobot_dataset_metadata_factory(root=tmp_path / "init", info=info)
     policy_cls = get_policy_class(policy_name)
-    policy: Policy = policy_cls()
-    save_dir = "/tmp/test_save_and_load_pretrained_{policy_cls.__name__}"
+    policy_cfg = make_policy_config(policy_name)
+    policy_cfg.parse_features_from_dataset(ds_meta)
+    policy = policy_cls(policy_cfg)
+    save_dir = tmp_path / f"test_save_and_load_pretrained_{policy_cls.__name__}"
     policy.save_pretrained(save_dir)
-    policy_ = policy_cls.from_pretrained(save_dir)
+    policy_ = policy_cls.from_pretrained(save_dir, config=policy_cfg)
     assert all(torch.equal(p, p_) for p, p_ in zip(policy.parameters(), policy_.parameters(), strict=True))
 
 
@@ -251,21 +263,28 @@ def test_normalize(insert_temporal_dim):
     expected.
     """
 
-    input_shapes = {
-        "observation.image": [3, 96, 96],
-        "observation.state": [10],
-    }
-    output_shapes = {
-        "action": [5],
-    }
-
-    normalize_input_modes = {
-        "observation.image": "mean_std",
-        "observation.state": "min_max",
-    }
-    unnormalize_output_modes = {
-        "action": "min_max",
-    }
+    input_features = [
+        PolicyFeature(
+            key="observation.image",
+            type=FeatureType.VISUAL,
+            normalization_mode=NormalizationMode.MEAN_STD,
+            shape=[3, 96, 96],
+        ),
+        PolicyFeature(
+            key="observation.state",
+            type=FeatureType.STATE,
+            normalization_mode=NormalizationMode.MIN_MAX,
+            shape=[10],
+        ),
+    ]
+    output_features = [
+        PolicyFeature(
+            key="action",
+            type=FeatureType.ACTION,
+            normalization_mode=NormalizationMode.MIN_MAX,
+            shape=[5],
+        ),
+    ]
 
     dataset_stats = {
         "observation.image": {
@@ -308,30 +327,30 @@ def test_normalize(insert_temporal_dim):
             output_batch[key] = torch.stack([output_batch[key]] * tdim, dim=1)
 
     # test without stats
-    normalize = Normalize(input_shapes, normalize_input_modes, stats=None)
+    normalize = Normalize(input_features, stats=None)
     with pytest.raises(AssertionError):
         normalize(input_batch)
 
     # test with stats
-    normalize = Normalize(input_shapes, normalize_input_modes, stats=dataset_stats)
+    normalize = Normalize(input_features, stats=dataset_stats)
     normalize(input_batch)
 
     # test loading pretrained models
-    new_normalize = Normalize(input_shapes, normalize_input_modes, stats=None)
+    new_normalize = Normalize(input_features, stats=None)
     new_normalize.load_state_dict(normalize.state_dict())
     new_normalize(input_batch)
 
     # test without stats
-    unnormalize = Unnormalize(output_shapes, unnormalize_output_modes, stats=None)
+    unnormalize = Unnormalize(output_features, stats=None)
     with pytest.raises(AssertionError):
         unnormalize(output_batch)
 
     # test with stats
-    unnormalize = Unnormalize(output_shapes, unnormalize_output_modes, stats=dataset_stats)
+    unnormalize = Unnormalize(output_features, stats=dataset_stats)
     unnormalize(output_batch)
 
     # test loading pretrained models
-    new_unnormalize = Unnormalize(output_shapes, unnormalize_output_modes, stats=None)
+    new_unnormalize = Unnormalize(output_features, stats=None)
     new_unnormalize.load_state_dict(unnormalize.state_dict())
     unnormalize(output_batch)
 
