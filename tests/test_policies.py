@@ -30,7 +30,7 @@ from lerobot.common.envs.factory import make_env, make_env_config
 from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.policies.act.modeling_act import ACTTemporalEnsembler
 from lerobot.common.policies.factory import (
-    get_policy_and_config_classes,
+    get_policy_class,
     make_policy,
     make_policy_config,
 )
@@ -47,7 +47,8 @@ from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
 @pytest.mark.parametrize("policy_name", available_policies)
 def test_get_policy_and_config_classes(policy_name: str):
     """Check that the correct policy and config classes are returned."""
-    policy_cls, config_cls = get_policy_and_config_classes(policy_name)
+    policy_cls = get_policy_class(policy_name)
+    config_cls = make_policy_config(policy_name)
     assert policy_cls.name == policy_name
     assert issubclass(config_cls, inspect.signature(policy_cls.__init__).parameters["config"].annotation)
 
@@ -226,13 +227,13 @@ def test_act_backbone_lr():
 @pytest.mark.parametrize("policy_name", available_policies)
 def test_policy_defaults(policy_name: str):
     """Check that the policy can be instantiated with defaults."""
-    policy_cls, _ = get_policy_and_config_classes(policy_name)
+    policy_cls = get_policy_class(policy_name)
     policy_cls()
 
 
 @pytest.mark.parametrize("policy_name", available_policies)
 def test_save_and_load_pretrained(policy_name: str):
-    policy_cls, _ = get_policy_and_config_classes(policy_name)
+    policy_cls = get_policy_class(policy_name)
     policy: Policy = policy_cls()
     save_dir = "/tmp/test_save_and_load_pretrained_{policy_cls.__name__}"
     policy.save_pretrained(save_dir)

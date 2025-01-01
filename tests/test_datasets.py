@@ -45,11 +45,12 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.envs.factory import make_env_config
 from lerobot.common.policies.factory import make_policy_config
+from lerobot.common.robot_devices.robots.utils import make_robot
 from lerobot.common.utils.utils import seeded_context
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.training import TrainPipelineConfig
 from tests.fixtures.constants import DUMMY_REPO_ID
-from tests.utils import DEVICE, make_robot
+from tests.utils import DEVICE
 
 
 def test_same_attributes_defined(lerobot_dataset_factory, tmp_path):
@@ -102,7 +103,6 @@ def test_dataset_initialization(lerobot_dataset_factory, tmp_path):
 # - [ ] test smaller methods
 
 
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
 @pytest.mark.parametrize(
     "env_name, repo_id, policy_name",
     lerobot.env_dataset_policy_triplets
@@ -173,7 +173,7 @@ def test_factory(env_name, repo_id, policy_name):
 
 
 # TODO(alexander-soare): If you're hunting for savings on testing time, this takes about 5 seconds.
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
+# @pytest.mark.skip("TODO after v2 migration / removing hydra")
 def test_multilerobotdataset_frames():
     """Check that all dataset frames are incorporated."""
     # Note: use the image variants of the dataset to make the test approx 3x faster.
@@ -207,7 +207,7 @@ def test_multilerobotdataset_frames():
 
 
 # TODO(aliberts, rcadene): Refactor and move this to a tests/test_compute_stats.py
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
+# @pytest.mark.skip("TODO after v2 migration / removing hydra")
 def test_compute_stats_on_xarm():
     """Check that the statistics are computed correctly according to the stats_patterns property.
 
@@ -291,7 +291,7 @@ def test_flatten_unflatten_dict():
     assert json.dumps(original_d, sort_keys=True) == json.dumps(d, sort_keys=True), f"{original_d} != {d}"
 
 
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
+# @pytest.mark.skip("TODO after v2 migration / removing hydra")
 @pytest.mark.parametrize(
     "repo_id",
     [
@@ -363,7 +363,7 @@ def test_backward_compatibility(repo_id):
     # load_and_compare(i - 1)
 
 
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
+# @pytest.mark.skip("TODO after v2 migration / removing hydra")
 def test_aggregate_stats():
     """Makes 3 basic datasets and checks that aggregate stats are computed correctly."""
     with seeded_context(0):
