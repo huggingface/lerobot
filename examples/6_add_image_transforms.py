@@ -1,7 +1,7 @@
 """
 This script demonstrates how to use torchvision's image transformation with LeRobotDataset for data
 augmentation purposes. The transformations are passed to the dataset as an argument upon creation, and
-transforms are applied to the observation images before they are returned in the dataset's __get_item__.
+transforms are applied to the observation images before they are returned in the dataset's __getitem__.
 """
 
 from pathlib import Path
@@ -10,17 +10,17 @@ from torchvision.transforms import ToPILImage, v2
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
-dataset_repo_id = "lerobot/aloha_static_tape"
+dataset_repo_id = "lerobot/aloha_static_screw_driver"
 
 # Create a LeRobotDataset with no transformations
-dataset = LeRobotDataset(dataset_repo_id)
+dataset = LeRobotDataset(dataset_repo_id, episodes=[0])
 # This is equivalent to `dataset = LeRobotDataset(dataset_repo_id, image_transforms=None)`
 
 # Get the index of the first observation in the first episode
 first_idx = dataset.episode_data_index["from"][0].item()
 
 # Get the frame corresponding to the first camera
-frame = dataset[first_idx][dataset.camera_keys[0]]
+frame = dataset[first_idx][dataset.meta.camera_keys[0]]
 
 
 # Define the transformations
@@ -28,15 +28,16 @@ transforms = v2.Compose(
     [
         v2.ColorJitter(brightness=(0.5, 1.5)),
         v2.ColorJitter(contrast=(0.5, 1.5)),
+        v2.ColorJitter(hue=(-0.1, 0.1)),
         v2.RandomAdjustSharpness(sharpness_factor=2, p=1),
     ]
 )
 
 # Create another LeRobotDataset with the defined transformations
-transformed_dataset = LeRobotDataset(dataset_repo_id, image_transforms=transforms)
+transformed_dataset = LeRobotDataset(dataset_repo_id, episodes=[0], image_transforms=transforms)
 
 # Get a frame from the transformed dataset
-transformed_frame = transformed_dataset[first_idx][transformed_dataset.camera_keys[0]]
+transformed_frame = transformed_dataset[first_idx][transformed_dataset.meta.camera_keys[0]]
 
 # Create a directory to store output images
 output_dir = Path("outputs/image_transforms")

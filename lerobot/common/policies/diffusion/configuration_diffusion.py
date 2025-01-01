@@ -67,6 +67,7 @@ class DiffusionConfig:
         use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
             The group sizes are set to be about 16 (to be precise, feature_dim // 16).
         spatial_softmax_num_keypoints: Number of keypoints for SpatialSoftmax.
+        use_separate_rgb_encoders_per_camera: Whether to use a separate RGB encoder for each camera view.
         down_dims: Feature dimension for each stage of temporal downsampling in the diffusion modeling Unet.
             You may provide a variable number of dimensions, therefore also controlling the degree of
             downsampling.
@@ -130,6 +131,7 @@ class DiffusionConfig:
     pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True
     spatial_softmax_num_keypoints: int = 32
+    use_separate_rgb_encoder_per_camera: bool = False
     # Unet.
     down_dims: tuple[int, ...] = (512, 1024, 2048)
     kernel_size: int = 5
@@ -195,4 +197,13 @@ class DiffusionConfig:
             raise ValueError(
                 f"`noise_scheduler_type` must be one of {supported_noise_schedulers}. "
                 f"Got {self.noise_scheduler_type}."
+            )
+
+        # Check that the horizon size and U-Net downsampling is compatible.
+        # U-Net downsamples by 2 with each stage.
+        downsampling_factor = 2 ** len(self.down_dims)
+        if self.horizon % downsampling_factor != 0:
+            raise ValueError(
+                "The horizon should be an integer multiple of the downsampling factor (which is determined "
+                f"by `len(down_dims)`). Got {self.horizon=} and {self.down_dims=}"
             )

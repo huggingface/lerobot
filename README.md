@@ -22,8 +22,22 @@
 
 </div>
 
+<h2 align="center">
+    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">New robot in town: SO-100</a></p>
+</h2>
+
+<div align="center">
+    <img src="media/so100/leader_follower.webp?raw=true" alt="SO-100 leader and follower arms" title="SO-100 leader and follower arms" width="50%">
+    <p>We just added a new tutorial on how to build a more affordable robot, at the price of $110 per arm!</p>
+    <p>Teach it new skills by showing it a few moves with just a laptop.</p>
+    <p>Then watch your homemade robot act autonomously 🤯</p>
+    <p>Follow the link to the <a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">full tutorial for SO-100</a>.</p>
+</div>
+
+<br/>
+
 <h3 align="center">
-    <p>State-of-the-art Machine Learning for real-world robotics</p>
+    <p>LeRobot: State-of-the-art AI for real-world robotics</p>
 </h3>
 
 ---
@@ -41,9 +55,9 @@
 
 <table>
   <tr>
-    <td><img src="http://remicadene.com/assets/gif/aloha_act.gif" width="100%" alt="ACT policy on ALOHA env"/></td>
-    <td><img src="http://remicadene.com/assets/gif/simxarm_tdmpc.gif" width="100%" alt="TDMPC policy on SimXArm env"/></td>
-    <td><img src="http://remicadene.com/assets/gif/pusht_diffusion.gif" width="100%" alt="Diffusion policy on PushT env"/></td>
+    <td><img src="media/gym/aloha_act.gif" width="100%" alt="ACT policy on ALOHA env"/></td>
+    <td><img src="media/gym/simxarm_tdmpc.gif" width="100%" alt="TDMPC policy on SimXArm env"/></td>
+    <td><img src="media/gym/pusht_diffusion.gif" width="100%" alt="Diffusion policy on PushT env"/></td>
   </tr>
   <tr>
     <td align="center">ACT policy on ALOHA env</td>
@@ -77,7 +91,7 @@ conda activate lerobot
 
 Install 🤗 LeRobot:
 ```bash
-pip install .
+pip install -e .
 ```
 
 > **NOTE:** Depending on your platform, If you encounter any build errors during this step
@@ -91,7 +105,7 @@ For simulations, 🤗 LeRobot comes with gymnasium environments that can be inst
 
 For instance, to install 🤗 LeRobot with aloha and pusht, use:
 ```bash
-pip install ".[aloha, pusht]"
+pip install -e ".[aloha, pusht]"
 ```
 
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
@@ -116,10 +130,12 @@ wandb login
 |   |   ├── datasets       # various datasets of human demonstrations: aloha, pusht, xarm
 |   |   ├── envs           # various sim environments: aloha, pusht, xarm
 |   |   ├── policies       # various policies: act, diffusion, tdmpc
+|   |   ├── robot_devices  # various real devices: dynamixel motors, opencv cameras, koch robots
 |   |   └── utils          # various utilities
 |   └── scripts          # contains functions to execute via command line
 |       ├── eval.py                 # load policy and evaluate it on an environment
 |       ├── train.py                # train a policy via imitation learning and/or reinforcement learning
+|       ├── control_robot.py        # teleoperate a real robot, record data, run a policy
 |       ├── push_dataset_to_hub.py  # convert your dataset into LeRobot dataset format and upload it to the Hugging Face hub
 |       └── visualize_dataset.py    # load a dataset and render its demonstrations
 ├── outputs               # contains results of scripts execution: logs, videos, model checkpoints
@@ -128,7 +144,7 @@ wandb login
 
 ### Visualize datasets
 
-Check out [example 1](./examples/1_load_lerobot_dataset.py) that illustrates how to use our dataset class which automatically download data from the Hugging Face hub.
+Check out [example 1](./examples/1_load_lerobot_dataset.py) that illustrates how to use our dataset class which automatically downloads data from the Hugging Face hub.
 
 You can also locally visualize episodes from a dataset on the hub by executing our script from the command line:
 ```bash
@@ -137,10 +153,12 @@ python lerobot/scripts/visualize_dataset.py \
     --episode-index 0
 ```
 
-or from a dataset in a local folder with the root `DATA_DIR` environment variable (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
+or from a dataset in a local folder with the `root` option and the `--local-files-only` (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
 ```bash
-DATA_DIR='./my_local_data_dir' python lerobot/scripts/visualize_dataset.py \
+python lerobot/scripts/visualize_dataset.py \
     --repo-id lerobot/pusht \
+    --root ./my_local_data_dir \
+    --local-files-only 1 \
     --episode-index 0
 ```
 
@@ -192,12 +210,10 @@ dataset attributes:
 
 A `LeRobotDataset` is serialised using several widespread file formats for each of its parts, namely:
 - hf_dataset stored using Hugging Face datasets library serialization to parquet
-- videos are stored in mp4 format to save space or png files
-- episode_data_index saved using `safetensor` tensor serialization format
-- stats saved using `safetensor` tensor serialization format
-- info are saved using JSON
+- videos are stored in mp4 format to save space
+- metadata are stored in plain json/jsonl files
 
-Dataset can be uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can set the `DATA_DIR` environment variable to your root dataset folder as illustrated in the above section on dataset visualization.
+Dataset can be uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can use the `local_files_only` argument and specify its location with the `root` argument if it's not in the default `~/.cache/huggingface/lerobot` location.
 
 ### Evaluate a pretrained policy
 
@@ -251,13 +267,20 @@ checkpoints
 │   └── training_state.pth  # optimizer/scheduler/rng state and training step
 ```
 
+To resume training from a checkpoint, you can add these to the `train.py` python command:
+```bash
+    hydra.run.dir=your/original/experiment/dir resume=true
+```
+
+It will load the pretrained model, optimizer and scheduler states for training. For more information please see our tutorial on training resumption [here](https://github.com/huggingface/lerobot/blob/main/examples/5_resume_training.md).
+
 To use wandb for logging training and evaluation curves, make sure you've run `wandb login` as a one-time setup step. Then, when running the training command above, enable WandB in the configuration by adding:
 
 ```bash
     wandb.enable=true
 ```
 
-A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of what they look like in your browser:
+A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of what they look like in your browser. Please also check [here](https://github.com/huggingface/lerobot/blob/main/examples/4_train_policy_with_script.md#typical-logs-and-metrics) for the explanation of some commonly used metrics in logs.
 
 ![](media/wandb.png)
 

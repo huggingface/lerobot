@@ -1,9 +1,22 @@
 """
+Utilities to control a robot.
+
+Useful to record a dataset, replay a recorded episode, run the policy on your robot
+and record an evaluation dataset, and to recalibrate your robot if needed.
+
 Examples of usage:
+
+- Recalibrate your robot:
+```bash
+python lerobot/scripts/control_robot.py calibrate
+```
 
 - Unlimited teleoperation at highest frequency (~200 Hz is expected), to exit with CTRL+C:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate
+
+# Remove the cameras from the robot definition. They are not used in 'teleoperate' anyway.
+python lerobot/scripts/control_robot.py teleoperate --robot-overrides '~cameras'
 ```
 
 - Unlimited teleoperation at a limited frequency of 30 Hz, to simulate data recording frequency:
@@ -14,9 +27,8 @@ python lerobot/scripts/control_robot.py teleoperate \
 
 - Record one episode in order to test replay:
 ```bash
-python lerobot/scripts/control_robot.py record_dataset \
+python lerobot/scripts/control_robot.py record \
     --fps 30 \
-    --root tmp/data \
     --repo-id $USER/koch_test \
     --num-episodes 1 \
     --run-compute-stats 0
@@ -25,16 +37,14 @@ python lerobot/scripts/control_robot.py record_dataset \
 - Visualize dataset:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
-    --root tmp/data \
     --repo-id $USER/koch_test \
     --episode-index 0
 ```
 
 - Replay this test episode:
 ```bash
-python lerobot/scripts/control_robot.py replay_episode \
+python lerobot/scripts/control_robot.py replay \
     --fps 30 \
-    --root tmp/data \
     --repo-id $USER/koch_test \
     --episode 0
 ```
@@ -42,12 +52,10 @@ python lerobot/scripts/control_robot.py replay_episode \
 - Record a full dataset in order to train a policy, with 2 seconds of warmup,
 30 seconds of recording for each episode, and 10 seconds to reset the environment in between episodes:
 ```bash
-python lerobot/scripts/control_robot.py record_dataset \
+python lerobot/scripts/control_robot.py record \
     --fps 30 \
-    --root data \
     --repo-id $USER/koch_pick_place_lego \
     --num-episodes 50 \
-    --run-compute-stats 1 \
     --warmup-time-s 2 \
     --episode-time-s 30 \
     --reset-time-s 10
@@ -60,12 +68,12 @@ python lerobot/scripts/control_robot.py record_dataset \
 - Tap escape key 'esc' to stop the data recording.
 This might require a sudo permission to allow your terminal to monitor keyboard events.
 
-**NOTE**: You can resume/continue data recording by running the same data recording command twice.
-To avoid resuming by deleting the dataset, use `--force-override 1`.
+**NOTE**: You can resume/continue data recording by running the same data recording command and adding `--resume 1`.
+If the dataset you want to extend is not on the hub, you also need to add `--local-files-only 1`.
 
 - Train on this dataset with the ACT policy:
 ```bash
-DATA_DIR=data python lerobot/scripts/train.py \
+python lerobot/scripts/train.py \
     policy=act_koch_real \
     env=koch_real \
     dataset_repo_id=$USER/koch_pick_place_lego \
@@ -74,531 +82,288 @@ DATA_DIR=data python lerobot/scripts/train.py \
 
 - Run the pretrained policy on the robot:
 ```bash
-python lerobot/scripts/control_robot.py run_policy \
+python lerobot/scripts/control_robot.py record \
+    --fps 30 \
+    --repo-id $USER/eval_act_koch_real \
+    --num-episodes 10 \
+    --warmup-time-s 2 \
+    --episode-time-s 30 \
+    --reset-time-s 10
     -p outputs/train/act_koch_real/checkpoints/080000/pretrained_model
 ```
 """
 
 import argparse
-import concurrent.futures
-import json
 import logging
-import os
-import platform
-import shutil
 import time
-from contextlib import nullcontext
 from pathlib import Path
-
-import torch
-import tqdm
-from huggingface_hub import create_branch
-from omegaconf import DictConfig
-from PIL import Image
-from termcolor import colored
+from typing import List
 
 # from safetensors.torch import load_file, save_file
-from lerobot.common.datasets.compute_stats import compute_stats
-from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
-from lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format import to_hf_dataset
-from lerobot.common.datasets.push_dataset_to_hub.utils import concatenate_episodes, get_default_encoding
-from lerobot.common.datasets.utils import calculate_episode_data_index
-from lerobot.common.datasets.video_utils import encode_video_frames
-from lerobot.common.policies.factory import make_policy
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.robot_devices.control_utils import (
+    control_loop,
+    has_method,
+    init_keyboard_listener,
+    init_policy,
+    log_control_info,
+    record_episode,
+    reset_environment,
+    sanity_check_dataset_name,
+    sanity_check_dataset_robot_compatibility,
+    stop_recording,
+    warmup_record,
+)
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
-from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, init_logging, set_global_seed
-from lerobot.scripts.eval import get_pretrained_policy_path
-from lerobot.scripts.push_dataset_to_hub import push_meta_data_to_hub, push_videos_to_hub, save_meta_data
-
-########################################################################################
-# Utilities
-########################################################################################
-
-
-def save_image(img_tensor, key, frame_index, episode_index, videos_dir):
-    img = Image.fromarray(img_tensor.numpy())
-    path = videos_dir / f"{key}_episode_{episode_index:06d}" / f"frame_{frame_index:06d}.png"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(str(path), quality=100)
-
-
-def busy_wait(seconds):
-    # Significantly more accurate than `time.sleep`, and mendatory for our use case,
-    # but it consumes CPU cycles.
-    # TODO(rcadene): find an alternative: from python 11, time.sleep is precise
-    end_time = time.perf_counter() + seconds
-    while time.perf_counter() < end_time:
-        pass
-
-
-def none_or_int(value):
-    if value == "None":
-        return None
-    return int(value)
-
-
-def log_control_info(robot, dt_s, episode_index=None, frame_index=None, fps=None):
-    log_items = []
-    if episode_index is not None:
-        log_items += [f"ep:{episode_index}"]
-    if frame_index is not None:
-        log_items += [f"frame:{frame_index}"]
-
-    def log_dt(shortname, dt_val_s):
-        nonlocal log_items
-        log_items += [f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"]
-
-    # total step time displayed in milliseconds and its frequency
-    log_dt("dt", dt_s)
-
-    for name in robot.leader_arms:
-        key = f"read_leader_{name}_pos_dt_s"
-        if key in robot.logs:
-            log_dt("dtRlead", robot.logs[key])
-
-    for name in robot.follower_arms:
-        key = f"write_follower_{name}_goal_pos_dt_s"
-        if key in robot.logs:
-            log_dt("dtRfoll", robot.logs[key])
-
-        key = f"read_follower_{name}_pos_dt_s"
-        if key in robot.logs:
-            log_dt("dtWfoll", robot.logs[key])
-
-    for name in robot.cameras:
-        key = f"read_camera_{name}_dt_s"
-        if key in robot.logs:
-            log_dt(f"dtR{name}", robot.logs[key])
-
-    info_str = " ".join(log_items)
-    if fps is not None:
-        actual_fps = 1 / dt_s
-        if actual_fps < fps - 1:
-            info_str = colored(info_str, "yellow")
-    logging.info(info_str)
-
-
-def get_is_headless():
-    if platform.system() == "Linux":
-        display = os.environ.get("DISPLAY")
-        if display is None or display == "":
-            return True
-    return False
-
+from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
+from lerobot.common.utils.utils import init_hydra_config, init_logging, log_say, none_or_int
 
 ########################################################################################
 # Control modes
 ########################################################################################
 
 
-def teleoperate(robot: Robot, fps: int | None = None, teleop_time_s: float | None = None):
+@safe_disconnect
+def calibrate(robot: Robot, arms: list[str] | None):
+    # TODO(aliberts): move this code in robots' classes
+    if robot.robot_type.startswith("stretch"):
+        if not robot.is_connected:
+            robot.connect()
+        if not robot.is_homed():
+            robot.home()
+        return
+
+    if arms is None:
+        arms = robot.available_arms
+
+    unknown_arms = [arm_id for arm_id in arms if arm_id not in robot.available_arms]
+    available_arms_str = " ".join(robot.available_arms)
+    unknown_arms_str = " ".join(unknown_arms)
+
+    if arms is None or len(arms) == 0:
+        raise ValueError(
+            "No arm provided. Use `--arms` as argument with one or more available arms.\n"
+            f"For instance, to recalibrate all arms add: `--arms {available_arms_str}`"
+        )
+
+    if len(unknown_arms) > 0:
+        raise ValueError(
+            f"Unknown arms provided ('{unknown_arms_str}'). Available arms are `{available_arms_str}`."
+        )
+
+    for arm_id in arms:
+        arm_calib_path = robot.calibration_dir / f"{arm_id}.json"
+        if arm_calib_path.exists():
+            print(f"Removing '{arm_calib_path}'")
+            arm_calib_path.unlink()
+        else:
+            print(f"Calibration file not found '{arm_calib_path}'")
+
+    if robot.is_connected:
+        robot.disconnect()
+
+    # Calling `connect` automatically runs calibration
+    # when the calibration file is missing
+    robot.connect()
+    robot.disconnect()
+    print("Calibration is done! You can now teleoperate and record datasets!")
+
+
+@safe_disconnect
+def teleoperate(
+    robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
+):
+    control_loop(
+        robot,
+        control_time_s=teleop_time_s,
+        fps=fps,
+        teleoperate=True,
+        display_cameras=display_cameras,
+    )
+
+
+@safe_disconnect
+def record(
+    robot: Robot,
+    root: Path,
+    repo_id: str,
+    single_task: str,
+    pretrained_policy_name_or_path: str | None = None,
+    policy_overrides: List[str] | None = None,
+    fps: int | None = None,
+    warmup_time_s: int | float = 2,
+    episode_time_s: int | float = 10,
+    reset_time_s: int | float = 5,
+    num_episodes: int = 50,
+    video: bool = True,
+    run_compute_stats: bool = True,
+    push_to_hub: bool = True,
+    tags: list[str] | None = None,
+    num_image_writer_processes: int = 0,
+    num_image_writer_threads_per_camera: int = 4,
+    display_cameras: bool = True,
+    play_sounds: bool = True,
+    resume: bool = False,
+    # TODO(rcadene, aliberts): remove local_files_only when refactor with dataset as argument
+    local_files_only: bool = False,
+) -> LeRobotDataset:
     # TODO(rcadene): Add option to record logs
+    listener = None
+    events = None
+    policy = None
+    device = None
+    use_amp = None
+
+    if single_task:
+        task = single_task
+    else:
+        raise NotImplementedError("Only single-task recording is supported for now")
+
+    # Load pretrained policy
+    if pretrained_policy_name_or_path is not None:
+        policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
+
+        if fps is None:
+            fps = policy_fps
+            logging.warning(f"No fps provided, so using the fps from policy config ({policy_fps}).")
+        elif fps != policy_fps:
+            logging.warning(
+                f"There is a mismatch between the provided fps ({fps}) and the one from policy config ({policy_fps})."
+            )
+
+    if resume:
+        dataset = LeRobotDataset(
+            repo_id,
+            root=root,
+            local_files_only=local_files_only,
+        )
+        dataset.start_image_writer(
+            num_processes=num_image_writer_processes,
+            num_threads=num_image_writer_threads_per_camera * len(robot.cameras),
+        )
+        sanity_check_dataset_robot_compatibility(dataset, robot, fps, video)
+    else:
+        # Create empty dataset or load existing saved episodes
+        sanity_check_dataset_name(repo_id, policy)
+        dataset = LeRobotDataset.create(
+            repo_id,
+            fps,
+            root=root,
+            robot=robot,
+            use_videos=video,
+            image_writer_processes=num_image_writer_processes,
+            image_writer_threads=num_image_writer_threads_per_camera * len(robot.cameras),
+        )
+
     if not robot.is_connected:
         robot.connect()
 
-    start_time = time.perf_counter()
+    listener, events = init_keyboard_listener()
+
+    # Execute a few seconds without recording to:
+    # 1. teleoperate the robot to move it in starting position if no policy provided,
+    # 2. give times to the robot devices to connect and start synchronizing,
+    # 3. place the cameras windows on screen
+    enable_teleoperation = policy is None
+    log_say("Warmup record", play_sounds)
+    warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
+
+    if has_method(robot, "teleop_safety_stop"):
+        robot.teleop_safety_stop()
+
+    recorded_episodes = 0
     while True:
-        now = time.perf_counter()
-        robot.teleop_step()
-
-        if fps is not None:
-            dt_s = time.perf_counter() - now
-            busy_wait(1 / fps - dt_s)
-
-        dt_s = time.perf_counter() - now
-        log_control_info(robot, dt_s, fps=fps)
-
-        if teleop_time_s is not None and time.perf_counter() - start_time > teleop_time_s:
+        if recorded_episodes >= num_episodes:
             break
 
+        # TODO(aliberts): add task prompt for multitask here. Might need to temporarily disable event if
+        # input() messes with them.
+        # if multi_task:
+        #     task = input("Enter your task description: ")
 
-def record_dataset(
-    robot: Robot,
-    fps: int | None = None,
-    root="data",
-    repo_id="lerobot/debug",
-    warmup_time_s=2,
-    episode_time_s=10,
-    reset_time_s=5,
-    num_episodes=50,
-    video=True,
-    run_compute_stats=True,
-    push_to_hub=True,
-    num_image_writers=8,
-    force_override=False,
-):
-    # TODO(rcadene): Add option to record logs
+        log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
+        record_episode(
+            dataset=dataset,
+            robot=robot,
+            events=events,
+            episode_time_s=episode_time_s,
+            display_cameras=display_cameras,
+            policy=policy,
+            device=device,
+            use_amp=use_amp,
+            fps=fps,
+        )
 
-    if not video:
-        raise NotImplementedError()
+        # Execute a few seconds without recording to give time to manually reset the environment
+        # Current code logic doesn't allow to teleoperate during this time.
+        # TODO(rcadene): add an option to enable teleoperation during reset
+        # Skip reset for the last episode to be recorded
+        if not events["stop_recording"] and (
+            (dataset.num_episodes < num_episodes - 1) or events["rerecord_episode"]
+        ):
+            log_say("Reset the environment", play_sounds)
+            reset_environment(robot, events, reset_time_s)
 
-    if not robot.is_connected:
-        robot.connect()
+        if events["rerecord_episode"]:
+            log_say("Re-record episode", play_sounds)
+            events["rerecord_episode"] = False
+            events["exit_early"] = False
+            dataset.clear_episode_buffer()
+            continue
 
-    local_dir = Path(root) / repo_id
-    if local_dir.exists() and force_override:
-        shutil.rmtree(local_dir)
+        dataset.save_episode(task)
+        recorded_episodes += 1
 
-    episodes_dir = local_dir / "episodes"
-    episodes_dir.mkdir(parents=True, exist_ok=True)
+        if events["stop_recording"]:
+            break
 
-    videos_dir = local_dir / "videos"
-    videos_dir.mkdir(parents=True, exist_ok=True)
+    log_say("Stop recording", play_sounds, blocking=True)
+    stop_recording(robot, listener, display_cameras)
 
-    # Logic to resume data recording
-    rec_info_path = episodes_dir / "data_recording_info.json"
-    if rec_info_path.exists():
-        with open(rec_info_path) as f:
-            rec_info = json.load(f)
-        episode_index = rec_info["last_episode_index"] + 1
-    else:
-        episode_index = 0
-
-    is_headless = get_is_headless()
-
-    # Execute a few seconds without recording data, to give times
-    # to the robot devices to connect and start synchronizing.
-    timestamp = 0
-    start_time = time.perf_counter()
-    is_warmup_print = False
-    while timestamp < warmup_time_s:
-        if not is_warmup_print:
-            logging.info("Warming up (no data recording)")
-            os.system('say "Warmup" &')
-            is_warmup_print = True
-
-        now = time.perf_counter()
-        observation, action = robot.teleop_step(record_data=True)
-
-        if not is_headless:
-            image_keys = [key for key in observation if "image" in key]
-
-        dt_s = time.perf_counter() - now
-        busy_wait(1 / fps - dt_s)
-
-        dt_s = time.perf_counter() - now
-        log_control_info(robot, dt_s, fps=fps)
-
-        timestamp = time.perf_counter() - start_time
-
-    # Allow to exit early while recording an episode or resetting the environment,
-    # by tapping the right arrow key '->'. This might require a sudo permission
-    # to allow your terminal to monitor keyboard events.
-    exit_early = False
-    rerecord_episode = False
-    stop_recording = False
-
-    # Only import pynput if not in a headless environment
-    if is_headless:
-        logging.info("Headless environment detected. Keyboard input will not be available.")
-    else:
-        from pynput import keyboard
-
-        def on_press(key):
-            nonlocal exit_early, rerecord_episode, stop_recording
-            try:
-                if key == keyboard.Key.right:
-                    print("Right arrow key pressed. Exiting loop...")
-                    exit_early = True
-                elif key == keyboard.Key.left:
-                    print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
-                    rerecord_episode = True
-                    exit_early = True
-                elif key == keyboard.Key.esc:
-                    print("Escape key pressed. Stopping data recording...")
-                    stop_recording = True
-                    exit_early = True
-            except Exception as e:
-                print(f"Error handling key press: {e}")
-
-        listener = keyboard.Listener(on_press=on_press)
-        listener.start()
-
-    # Save images using threads to reach high fps (30 and more)
-    # Using `with` to exist smoothly if an execption is raised.
-    # Using only 4 worker threads to avoid blocking the main thread.
-    futures = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=num_image_writers) as executor:
-        # Start recording all episodes
-        while episode_index < num_episodes:
-            logging.info(f"Recording episode {episode_index}")
-            os.system(f'say "Recording episode {episode_index}" &')
-            ep_dict = {}
-            frame_index = 0
-            timestamp = 0
-            start_time = time.perf_counter()
-            while timestamp < episode_time_s:
-                now = time.perf_counter()
-                observation, action = robot.teleop_step(record_data=True)
-
-                image_keys = [key for key in observation if "image" in key]
-                not_image_keys = [key for key in observation if "image" not in key]
-
-                for key in image_keys:
-                    futures += [
-                        executor.submit(
-                            save_image, observation[key], key, frame_index, episode_index, videos_dir
-                        )
-                    ]
-
-                for key in not_image_keys:
-                    if key not in ep_dict:
-                        ep_dict[key] = []
-                    ep_dict[key].append(observation[key])
-
-                for key in action:
-                    if key not in ep_dict:
-                        ep_dict[key] = []
-                    ep_dict[key].append(action[key])
-
-                frame_index += 1
-
-                dt_s = time.perf_counter() - now
-                busy_wait(1 / fps - dt_s)
-
-                dt_s = time.perf_counter() - now
-                log_control_info(robot, dt_s, fps=fps)
-
-                timestamp = time.perf_counter() - start_time
-
-                if exit_early:
-                    exit_early = False
-                    break
-
-            if not stop_recording:
-                # Start resetting env while the executor are finishing
-                logging.info("Reset the environment")
-                os.system('say "Reset the environment" &')
-
-            timestamp = 0
-            start_time = time.perf_counter()
-
-            # During env reset we save the data and encode the videos
-            num_frames = frame_index
-
-            for key in image_keys:
-                tmp_imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
-                fname = f"{key}_episode_{episode_index:06d}.mp4"
-                video_path = local_dir / "videos" / fname
-                if video_path.exists():
-                    video_path.unlink()
-                # Store the reference to the video frame, even tho the videos are not yet encoded
-                ep_dict[key] = []
-                for i in range(num_frames):
-                    ep_dict[key].append({"path": f"videos/{fname}", "timestamp": i / fps})
-
-            for key in not_image_keys:
-                ep_dict[key] = torch.stack(ep_dict[key])
-
-            for key in action:
-                ep_dict[key] = torch.stack(ep_dict[key])
-
-            ep_dict["episode_index"] = torch.tensor([episode_index] * num_frames)
-            ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
-            ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
-
-            done = torch.zeros(num_frames, dtype=torch.bool)
-            done[-1] = True
-            ep_dict["next.done"] = done
-
-            ep_path = episodes_dir / f"episode_{episode_index}.pth"
-            print("Saving episode dictionary...")
-            torch.save(ep_dict, ep_path)
-
-            rec_info = {
-                "last_episode_index": episode_index,
-            }
-            with open(rec_info_path, "w") as f:
-                json.dump(rec_info, f)
-
-            is_last_episode = stop_recording or (episode_index == (num_episodes - 1))
-
-            # Wait if necessary
-            with tqdm.tqdm(total=reset_time_s, desc="Waiting") as pbar:
-                while timestamp < reset_time_s and not is_last_episode:
-                    time.sleep(1)
-                    timestamp = time.perf_counter() - start_time
-                    pbar.update(1)
-                    if exit_early:
-                        exit_early = False
-                        break
-
-            # Skip updating episode index which forces re-recording episode
-            if rerecord_episode:
-                rerecord_episode = False
-                continue
-
-            episode_index += 1
-
-            if is_last_episode:
-                logging.info("Done recording")
-                os.system('say "Done recording"')
-                if not is_headless:
-                    listener.stop()
-
-                logging.info("Waiting for threads writing the images on disk to terminate...")
-                for _ in tqdm.tqdm(
-                    concurrent.futures.as_completed(futures), total=len(futures), desc="Writting images"
-                ):
-                    pass
-                break
-
-    num_episodes = episode_index
-
-    logging.info("Encoding videos")
-    os.system('say "Encoding videos" &')
-    # Use ffmpeg to convert frames stored as png into mp4 videos
-    for episode_index in tqdm.tqdm(range(num_episodes)):
-        for key in image_keys:
-            tmp_imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
-            fname = f"{key}_episode_{episode_index:06d}.mp4"
-            video_path = local_dir / "videos" / fname
-            if video_path.exists():
-                continue
-            # note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
-            # since video encoding with ffmpeg is already using multithreading.
-            encode_video_frames(tmp_imgs_dir, video_path, fps, overwrite=True)
-            shutil.rmtree(tmp_imgs_dir)
-
-    logging.info("Concatenating episodes")
-    ep_dicts = []
-    for episode_index in tqdm.tqdm(range(num_episodes)):
-        ep_path = episodes_dir / f"episode_{episode_index}.pth"
-        ep_dict = torch.load(ep_path)
-        ep_dicts.append(ep_dict)
-    data_dict = concatenate_episodes(ep_dicts)
-
-    total_frames = data_dict["frame_index"].shape[0]
-    data_dict["index"] = torch.arange(0, total_frames, 1)
-
-    hf_dataset = to_hf_dataset(data_dict, video)
-    episode_data_index = calculate_episode_data_index(hf_dataset)
-    info = {
-        "codebase_version": CODEBASE_VERSION,
-        "fps": fps,
-        "video": video,
-    }
-    if video:
-        info["encoding"] = get_default_encoding()
-
-    lerobot_dataset = LeRobotDataset.from_preloaded(
-        repo_id=repo_id,
-        hf_dataset=hf_dataset,
-        episode_data_index=episode_data_index,
-        info=info,
-        videos_dir=videos_dir,
-    )
     if run_compute_stats:
         logging.info("Computing dataset statistics")
-        os.system('say "Computing dataset statistics" &')
-        stats = compute_stats(lerobot_dataset)
-        lerobot_dataset.stats = stats
-    else:
-        logging.info("Skipping computation of the dataset statistrics")
 
-    hf_dataset = hf_dataset.with_format(None)  # to remove transforms that cant be saved
-    hf_dataset.save_to_disk(str(local_dir / "train"))
-
-    meta_data_dir = local_dir / "meta_data"
-    save_meta_data(info, stats, episode_data_index, meta_data_dir)
+    dataset.consolidate(run_compute_stats)
 
     if push_to_hub:
-        hf_dataset.push_to_hub(repo_id, revision="main")
-        push_meta_data_to_hub(repo_id, meta_data_dir, revision="main")
-        if video:
-            push_videos_to_hub(repo_id, videos_dir, revision="main")
-        create_branch(repo_id, repo_type="dataset", branch=CODEBASE_VERSION)
+        dataset.push_to_hub(tags=tags)
 
-    logging.info("Exiting")
-    os.system('say "Exiting" &')
-
-    return lerobot_dataset
+    log_say("Exiting", play_sounds)
+    return dataset
 
 
-def replay_episode(robot: Robot, episode: int, fps: int | None = None, root="data", repo_id="lerobot/debug"):
+@safe_disconnect
+def replay(
+    robot: Robot,
+    root: Path,
+    repo_id: str,
+    episode: int,
+    fps: int | None = None,
+    play_sounds: bool = True,
+    local_files_only: bool = False,
+):
+    # TODO(rcadene, aliberts): refactor with control_loop, once `dataset` is an instance of LeRobotDataset
     # TODO(rcadene): Add option to record logs
-    local_dir = Path(root) / repo_id
-    if not local_dir.exists():
-        raise ValueError(local_dir)
 
-    dataset = LeRobotDataset(repo_id, root=root)
-    items = dataset.hf_dataset.select_columns("action")
-    from_idx = dataset.episode_data_index["from"][episode].item()
-    to_idx = dataset.episode_data_index["to"][episode].item()
+    dataset = LeRobotDataset(repo_id, root=root, episodes=[episode], local_files_only=local_files_only)
+    actions = dataset.hf_dataset.select_columns("action")
 
     if not robot.is_connected:
         robot.connect()
 
-    logging.info("Replaying episode")
-    os.system('say "Replaying episode"')
+    log_say("Replaying episode", play_sounds, blocking=True)
+    for idx in range(dataset.num_frames):
+        start_episode_t = time.perf_counter()
 
-    for idx in range(from_idx, to_idx):
-        now = time.perf_counter()
-
-        action = items[idx]["action"]
+        action = actions[idx]["action"]
         robot.send_action(action)
 
-        dt_s = time.perf_counter() - now
+        dt_s = time.perf_counter() - start_episode_t
         busy_wait(1 / fps - dt_s)
 
-        dt_s = time.perf_counter() - now
+        dt_s = time.perf_counter() - start_episode_t
         log_control_info(robot, dt_s, fps=fps)
-
-
-def run_policy(robot: Robot, policy: torch.nn.Module, hydra_cfg: DictConfig, run_time_s: float | None = None):
-    # TODO(rcadene): Add option to record eval dataset and logs
-
-    # Check device is available
-    device = get_safe_torch_device(hydra_cfg.device, log=True)
-
-    policy.eval()
-    policy.to(device)
-
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
-    set_global_seed(hydra_cfg.seed)
-
-    fps = hydra_cfg.env.fps
-
-    if not robot.is_connected:
-        robot.connect()
-
-    start_time = time.perf_counter()
-    while True:
-        now = time.perf_counter()
-
-        observation = robot.capture_observation()
-
-        with (
-            torch.inference_mode(),
-            torch.autocast(device_type=device.type)
-            if device.type == "cuda" and hydra_cfg.use_amp
-            else nullcontext(),
-        ):
-            # add batch dimension to 1
-            for name in observation:
-                observation[name] = observation[name].unsqueeze(0)
-
-            if device.type == "mps":
-                for name in observation:
-                    observation[name] = observation[name].to(device)
-
-            action = policy.select_action(observation)
-
-            # remove batch dimension
-            action = action.squeeze(0)
-
-        robot.send_action(action.to("cpu"))
-
-        dt_s = time.perf_counter() - now
-        busy_wait(1 / fps - dt_s)
-
-        dt_s = time.perf_counter() - now
-        log_control_info(robot, dt_s, fps=fps)
-
-        if run_time_s is not None and time.perf_counter() - start_time > run_time_s:
-            break
 
 
 if __name__ == "__main__":
@@ -608,26 +373,58 @@ if __name__ == "__main__":
     # Set common options for all the subparsers
     base_parser = argparse.ArgumentParser(add_help=False)
     base_parser.add_argument(
-        "--robot",
+        "--robot-path",
         type=str,
-        default="koch",
-        help="Name of the robot provided to the `make_robot(name)` factory function.",
+        default="lerobot/configs/robot/koch.yaml",
+        help="Path to robot yaml file used to instantiate the robot using `make_robot` factory function.",
+    )
+    base_parser.add_argument(
+        "--robot-overrides",
+        type=str,
+        nargs="*",
+        help="Any key=value arguments to override config values (use dots for.nested=overrides)",
+    )
+
+    parser_calib = subparsers.add_parser("calibrate", parents=[base_parser])
+    parser_calib.add_argument(
+        "--arms",
+        type=str,
+        nargs="*",
+        help="List of arms to calibrate (e.g. `--arms left_follower right_follower left_leader`)",
     )
 
     parser_teleop = subparsers.add_parser("teleoperate", parents=[base_parser])
     parser_teleop.add_argument(
         "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
     )
+    parser_teleop.add_argument(
+        "--display-cameras",
+        type=int,
+        default=1,
+        help="Display all cameras on screen (set to 1 to display or 0).",
+    )
 
-    parser_record = subparsers.add_parser("record_dataset", parents=[base_parser])
+    parser_record = subparsers.add_parser("record", parents=[base_parser])
+    task_args = parser_record.add_mutually_exclusive_group(required=True)
     parser_record.add_argument(
         "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
     )
+    task_args.add_argument(
+        "--single-task",
+        type=str,
+        help="A short but accurate description of the task performed during the recording.",
+    )
+    # TODO(aliberts): add multi-task support
+    # task_args.add_argument(
+    #     "--multi-task",
+    #     type=int,
+    #     help="You will need to enter the task performed at the start of each episode.",
+    # )
     parser_record.add_argument(
         "--root",
         type=Path,
-        default="data",
-        help="Root directory where the dataset will be stored locally at '{root}/{repo_id}' (e.g. 'data/hf_username/dataset_name').",
+        default=None,
+        help="Root directory where the dataset will be stored (e.g. 'dataset/path').",
     )
     parser_record.add_argument(
         "--repo-id",
@@ -636,21 +433,27 @@ if __name__ == "__main__":
         help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
     )
     parser_record.add_argument(
+        "--local-files-only",
+        type=int,
+        default=0,
+        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
+    )
+    parser_record.add_argument(
         "--warmup-time-s",
         type=int,
-        default=2,
+        default=10,
         help="Number of seconds before starting data collection. It allows the robot devices to warmup and synchronize.",
     )
     parser_record.add_argument(
         "--episode-time-s",
         type=int,
-        default=10,
+        default=60,
         help="Number of seconds for data recording for each episode.",
     )
     parser_record.add_argument(
         "--reset-time-s",
         type=int,
-        default=5,
+        default=60,
         help="Number of seconds for resetting the environment after each episode.",
     )
     parser_record.add_argument("--num-episodes", type=int, default=50, help="Number of episodes to record.")
@@ -667,38 +470,39 @@ if __name__ == "__main__":
         help="Upload dataset to Hugging Face hub.",
     )
     parser_record.add_argument(
-        "--num-image-writers",
-        type=int,
-        default=8,
-        help="Number of threads writing the frames as png images on disk. Don't set too much as you might get unstable fps due to main thread being blocked.",
+        "--tags",
+        type=str,
+        nargs="*",
+        help="Add tags to your dataset on the hub.",
     )
     parser_record.add_argument(
-        "--force-override",
+        "--num-image-writer-processes",
         type=int,
         default=0,
-        help="By default, data recording is resumed. When set to 1, delete the local directory and start data recording from scratch.",
+        help=(
+            "Number of subprocesses handling the saving of frames as PNGs. Set to 0 to use threads only; "
+            "set to ≥1 to use subprocesses, each using threads to write images. The best number of processes "
+            "and threads depends on your system. We recommend 4 threads per camera with 0 processes. "
+            "If fps is unstable, adjust the thread count. If still unstable, try using 1 or more subprocesses."
+        ),
     )
-
-    parser_replay = subparsers.add_parser("replay_episode", parents=[base_parser])
-    parser_replay.add_argument(
-        "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
+    parser_record.add_argument(
+        "--num-image-writer-threads-per-camera",
+        type=int,
+        default=4,
+        help=(
+            "Number of threads writing the frames as png images on disk, per camera. "
+            "Too many threads might cause unstable teleoperation fps due to main thread being blocked. "
+            "Not enough threads might cause low camera fps."
+        ),
     )
-    parser_replay.add_argument(
-        "--root",
-        type=Path,
-        default="data",
-        help="Root directory where the dataset will be stored locally at '{root}/{repo_id}' (e.g. 'data/hf_username/dataset_name').",
+    parser_record.add_argument(
+        "--resume",
+        type=int,
+        default=0,
+        help="Resume recording on an existing dataset.",
     )
-    parser_replay.add_argument(
-        "--repo-id",
-        type=str,
-        default="lerobot/test",
-        help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
-    )
-    parser_replay.add_argument("--episode", type=int, default=0, help="Index of the episode to replay.")
-
-    parser_policy = subparsers.add_parser("run_policy", parents=[base_parser])
-    parser_policy.add_argument(
+    parser_record.add_argument(
         "-p",
         "--pretrained-policy-name-or-path",
         type=str,
@@ -707,31 +511,65 @@ if __name__ == "__main__":
             "saved using `Policy.save_pretrained`."
         ),
     )
-    parser_policy.add_argument(
-        "overrides",
+    parser_record.add_argument(
+        "--policy-overrides",
+        type=str,
         nargs="*",
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
+
+    parser_replay = subparsers.add_parser("replay", parents=[base_parser])
+    parser_replay.add_argument(
+        "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
+    )
+    parser_replay.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Root directory where the dataset will be stored (e.g. 'dataset/path').",
+    )
+    parser_replay.add_argument(
+        "--repo-id",
+        type=str,
+        default="lerobot/test",
+        help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
+    )
+    parser_replay.add_argument(
+        "--local-files-only",
+        type=int,
+        default=0,
+        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
+    )
+    parser_replay.add_argument("--episode", type=int, default=0, help="Index of the episode to replay.")
+
     args = parser.parse_args()
 
     init_logging()
 
     control_mode = args.mode
-    robot_name = args.robot
+    robot_path = args.robot_path
+    robot_overrides = args.robot_overrides
     kwargs = vars(args)
     del kwargs["mode"]
-    del kwargs["robot"]
+    del kwargs["robot_path"]
+    del kwargs["robot_overrides"]
 
-    robot = make_robot(robot_name)
-    if control_mode == "teleoperate":
+    robot_cfg = init_hydra_config(robot_path, robot_overrides)
+    robot = make_robot(robot_cfg)
+
+    if control_mode == "calibrate":
+        calibrate(robot, **kwargs)
+
+    elif control_mode == "teleoperate":
         teleoperate(robot, **kwargs)
-    elif control_mode == "record_dataset":
-        record_dataset(robot, **kwargs)
-    elif control_mode == "replay_episode":
-        replay_episode(robot, **kwargs)
 
-    elif control_mode == "run_policy":
-        pretrained_policy_path = get_pretrained_policy_path(args.pretrained_policy_name_or_path)
-        hydra_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", args.overrides)
-        policy = make_policy(hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
-        run_policy(robot, policy, hydra_cfg)
+    elif control_mode == "record":
+        record(robot, **kwargs)
+
+    elif control_mode == "replay":
+        replay(robot, **kwargs)
+
+    if robot.is_connected:
+        # Disconnect manually to avoid a "Core dump" during process
+        # termination due to camera threads not properly exiting.
+        robot.disconnect()

@@ -1,33 +1,92 @@
+"""
+Tests for physical motors and their mocked versions.
+If the physical motors are not connected to the computer, or not working,
+the test will be skipped.
+
+Example of running a specific test:
+```bash
+pytest -sx tests/test_motors.py::test_find_port
+pytest -sx tests/test_motors.py::test_motors_bus
+```
+
+Example of running test on real dynamixel motors connected to the computer:
+```bash
+pytest -sx 'tests/test_motors.py::test_motors_bus[dynamixel-False]'
+```
+
+Example of running test on a mocked version of dynamixel motors:
+```bash
+pytest -sx 'tests/test_motors.py::test_motors_bus[dynamixel-True]'
+```
+"""
+
+# TODO(rcadene): measure fps in nightly?
+# TODO(rcadene): test logs
+# TODO(rcadene): test calibration
+# TODO(rcadene): add compatibility with other motors bus
+
 import time
 
 import numpy as np
 import pytest
 
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import require_koch
+from lerobot.scripts.find_motors_bus_port import find_port
+from tests.utils import TEST_MOTOR_TYPES, make_motors_bus, require_motor
 
 
-@require_koch
-def test_motors_bus(request):
-    # TODO(rcadene): measure fps in nightly?
-    # TODO(rcadene): test logs
-    # TODO(rcadene): test calibration
-    # TODO(rcadene): add compatibility with other motors bus
-    from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
+@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
+@require_motor
+def test_find_port(request, motor_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+        with pytest.raises(OSError):
+            find_port()
+    else:
+        find_port()
 
-    # Test instantiating a common motors structure.
-    # Here the one from Alexander Koch follower arm.
-    port = "/dev/tty.usbmodem575E0032081"
-    motors = {
-        # name: (index, model)
-        "shoulder_pan": (1, "xl430-w250"),
-        "shoulder_lift": (2, "xl430-w250"),
-        "elbow_flex": (3, "xl330-m288"),
-        "wrist_flex": (4, "xl330-m288"),
-        "wrist_roll": (5, "xl330-m288"),
-        "gripper": (6, "xl330-m288"),
-    }
-    motors_bus = DynamixelMotorsBus(port, motors)
+
+@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
+@require_motor
+def test_configure_motors_all_ids_1(request, motor_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
+    if motor_type == "dynamixel":
+        # see X_SERIES_BAUDRATE_TABLE
+        smaller_baudrate = 9_600
+        smaller_baudrate_value = 0
+    elif motor_type == "feetech":
+        # see SCS_SERIES_BAUDRATE_TABLE
+        smaller_baudrate = 19_200
+        smaller_baudrate_value = 7
+    else:
+        raise ValueError(motor_type)
+
+    input("Are you sure you want to re-configure the motors? Press enter to continue...")
+    # This test expect the configuration was already correct.
+    motors_bus = make_motors_bus(motor_type, mock=mock)
+    motors_bus.connect()
+    motors_bus.write("Baud_Rate", [smaller_baudrate_value] * len(motors_bus.motors))
+
+    motors_bus.set_bus_baudrate(smaller_baudrate)
+    motors_bus.write("ID", [1] * len(motors_bus.motors))
+    del motors_bus
+
+    # Test configure
+    motors_bus = make_motors_bus(motor_type, mock=mock)
+    motors_bus.connect()
+    assert motors_bus.are_motors_configured()
+    del motors_bus
+
+
+@pytest.mark.parametrize("motor_type, mock", TEST_MOTOR_TYPES)
+@require_motor
+def test_motors_bus(request, motor_type, mock):
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
+    motors_bus = make_motors_bus(motor_type, mock=mock)
 
     # Test reading and writting before connecting raises an error
     with pytest.raises(RobotDeviceNotConnectedError):
@@ -41,7 +100,7 @@ def test_motors_bus(request):
     del motors_bus
 
     # Test connecting
-    motors_bus = DynamixelMotorsBus(port, motors)
+    motors_bus = make_motors_bus(motor_type, mock=mock)
     motors_bus.connect()
 
     # Test connecting twice raises an error
@@ -52,7 +111,7 @@ def test_motors_bus(request):
     motors_bus.write("Torque_Enable", 0)
     values = motors_bus.read("Torque_Enable")
     assert isinstance(values, np.ndarray)
-    assert len(values) == len(motors)
+    assert len(values) == len(motors_bus.motors)
     assert (values == 0).all()
 
     # Test writing torque on a specific motor
@@ -83,10 +142,3 @@ def test_motors_bus(request):
     time.sleep(1)
     new_values = motors_bus.read("Present_Position")
     assert (new_values == values).all()
-
-
-@require_koch
-def test_find_port(request):
-    from lerobot.common.robot_devices.motors.dynamixel import find_port
-
-    find_port()

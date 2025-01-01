@@ -1,0 +1,33 @@
+# [Stretch3 from Hello Robot](https://hello-robot.com/stretch-3-product)
+
+# Requires installing extras packages
+# With pip: `pip install -e ".[stretch]"`
+# With poetry: `poetry install --sync --extras "stretch"`
+
+# See [tutorial](https://github.com/huggingface/lerobot/blob/main/examples/8_use_stretch.md)
+
+
+_target_: lerobot.common.robot_devices.robots.stretch.StretchRobot
+robot_type: stretch3
+
+cameras:
+  navigation:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: /dev/hello-nav-head-camera
+    fps: 10
+    width: 1280
+    height: 720
+    rotation: -90
+  head:
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera.init_from_name
+    name: Intel RealSense D435I
+    fps: 30
+    width: 640
+    height: 480
+    rotation: 90
+  wrist:
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera.init_from_name
+    name: Intel RealSense D405
+    fps: 30
+    width: 640
+    height: 480

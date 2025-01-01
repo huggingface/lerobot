@@ -38,7 +38,7 @@ def get_policy_stats(env_name, policy_name, extra_overrides):
     )
     set_global_seed(1337)
     dataset = make_dataset(cfg)
-    policy = make_policy(cfg, dataset_stats=dataset.stats)
+    policy = make_policy(cfg, dataset_stats=dataset.meta.stats)
     policy.train()
     optimizer, _ = make_optimizer_and_scheduler(cfg, policy)
 

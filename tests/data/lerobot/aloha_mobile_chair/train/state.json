@@ -1,3 +1,13 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:38cf4116a65cb92a5c43f9b9da7a7b81cfa9168b17605c8c456f7d3a3a23b77a
-size 247
+{
+  "_data_files": [
+    {
+      "filename": "data-00000-of-00001.arrow"
+    }
+  ],
+  "_fingerprint": "872117944c4ecdff",
+  "_format_columns": null,
+  "_format_kwargs": {},
+  "_format_type": null,
+  "_output_all_columns": false,
+  "_split": null
+}
