@@ -168,7 +168,7 @@ class VQBeTConfig(PretrainedConfig):
         # Note: this check was previously performed inside VQBeTRgbEncoder in the form of
         # assert len(image_keys) == 1
         if not len(self.image_features) == 1:
-            raise ValueError("You must provide at least one image among the inputs.")
+            raise ValueError("You must provide only one image among the inputs.")
 
         if self.crop_shape is not None:
             for image_ft in self.image_features:

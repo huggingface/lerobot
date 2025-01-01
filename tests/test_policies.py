@@ -228,24 +228,36 @@ def test_act_backbone_lr():
     assert len(optimizer.param_groups[1]["params"]) == 20
 
 
-@pytest.mark.parametrize("policy_name", available_policies)
-def test_policy_defaults(lerobot_dataset_metadata_factory, info_factory, tmp_path, policy_name: str):
-    """Check that the policy can be instantiated with defaults."""
-    info = info_factory(total_episodes=1, total_frames=1)
+@pytest.fixture
+def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_path):
+    # Create only one camera input which is squared to fit all current policy constraints
+    # e.g. vqbet and tdmpc works with one camera only, and tdmpc requires it to be squared
+    camera_features = {
+        "observation.images.laptop": {
+            "shape": (84, 84, 3),
+            "names": ["height", "width", "channels"],
+            "info": None,
+        },
+    }
+    info = info_factory(total_episodes=1, total_frames=1, camera_features=camera_features)
     ds_meta = lerobot_dataset_metadata_factory(root=tmp_path / "init", info=info)
+    return ds_meta
+
+
+@pytest.mark.parametrize("policy_name", available_policies)
+def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
+    """Check that the policy can be instantiated with defaults."""
     policy_cls = get_policy_class(policy_name)
     policy_cfg = make_policy_config(policy_name)
-    policy_cfg.parse_features_from_dataset(ds_meta)
+    policy_cfg.parse_features_from_dataset(dummy_dataset_metadata)
     policy_cls(policy_cfg)
 
 
 @pytest.mark.parametrize("policy_name", available_policies)
-def test_save_and_load_pretrained(lerobot_dataset_metadata_factory, info_factory, tmp_path, policy_name: str):
-    info = info_factory(total_episodes=1, total_frames=1)
-    ds_meta = lerobot_dataset_metadata_factory(root=tmp_path / "init", info=info)
+def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name: str):
     policy_cls = get_policy_class(policy_name)
     policy_cfg = make_policy_config(policy_name)
-    policy_cfg.parse_features_from_dataset(ds_meta)
+    policy_cfg.parse_features_from_dataset(dummy_dataset_metadata)
     policy = policy_cls(policy_cfg)
     save_dir = tmp_path / f"test_save_and_load_pretrained_{policy_cls.__name__}"
     policy.save_pretrained(save_dir)
