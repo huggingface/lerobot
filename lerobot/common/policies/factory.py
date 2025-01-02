@@ -46,7 +46,12 @@ def _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg):
 
 def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
     """Get the policy's class and config class given a name (matching the policy class' `name` attribute)."""
-    if name == "tdmpc":
+    
+    if name == "openvla":
+        from lerobot.common.policies.openvla.configuration_openvla import OpenVLAConfig
+        from lerobot.common.policies.openvla.modeling_openvla import OpenVLAPolicy
+        return OpenVLAPolicy, OpenVLAConfig
+    elif name == "tdmpc":
         from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
         from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
 
@@ -92,6 +97,13 @@ def make_policy(
 
     policy_cls, policy_cfg_class = get_policy_and_config_classes(hydra_cfg.policy.name)
 
+    # Special handling for OpenVLA which comes pretrained
+    if hydra_cfg.policy.name == "openvla":
+        policy_cfg = policy_cfg_class(model_name=pretrained_policy_name_or_path)
+        policy = policy_cls(policy_cfg, dataset_stats)
+        return policy
+
+    # Normal flow for other policies
     policy_cfg = _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg)
     if pretrained_policy_name_or_path is None:
         # Make a fresh policy.
@@ -105,7 +117,7 @@ def make_policy(
         # https://github.com/huggingface/huggingface_hub/pull/2274.
         policy = policy_cls(policy_cfg)
         policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
-
+    # satender, pranav
     policy.to(get_safe_torch_device(hydra_cfg.device))
 
     return policy

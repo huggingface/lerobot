@@ -1,0 +1,23 @@
+# @package _global_
+
+seed: 1000
+dataset_repo_id: lerobot/test_dataset 
+
+policy:
+  name: openvla
+  model_name: "openvla/openvla-7b"
+  instruction: "pick up the blue object and drop in the bin"
+
+  # Input / output structure  
+  input_shapes:
+    observation.image: [3, 480, 640]
+    observation.state: ["${env.state_dim}"]
+  output_shapes: 
+    action: [7] # 7-DoF actions
+
+  # Normalization modes
+  input_normalization_modes:
+    observation.image: mean_std
+    observation.state: mean_std
+  output_normalization_modes:
+    action: mean_std

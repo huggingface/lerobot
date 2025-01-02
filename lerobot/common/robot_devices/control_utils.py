@@ -111,6 +111,9 @@ def predict_action(observation, policy, device, use_amp):
         # based on the current observation
         action = policy.select_action(observation)
 
+        print("\nFinal action to robot:", action)
+        print("Final action shape:", action.shape)
+
         # Remove batch dimension
         action = action.squeeze(0)
 
@@ -163,12 +166,35 @@ def init_keyboard_listener():
 
 def init_policy(pretrained_policy_name_or_path, policy_overrides):
     """Instantiate the policy and load fps, device and use_amp from config yaml"""
+    # Special handling for OpenVLA which is used directly from HF hub
+    if "openvla" in pretrained_policy_name_or_path:
+        from lerobot.common.policies.openvla.configuration_openvla import OpenVLAConfig
+        from lerobot.common.policies.openvla.modeling_openvla import OpenVLAPolicy
+        
+        config = OpenVLAConfig(model_name=pretrained_policy_name_or_path)
+        if policy_overrides:
+            for override in policy_overrides:
+                key, value = override.split("=")
+                setattr(config, key, value)
+                
+        policy = OpenVLAPolicy(config)
+        device = get_safe_torch_device("mps")
+        policy_fps = 30  # Default fps
+        use_amp = False
+        
+        policy.eval()
+        policy.to(device)
+        
+        return policy, policy_fps, device, use_amp
+
+    # Normal flow for other policies that need config.yaml
     pretrained_policy_path = get_pretrained_policy_path(pretrained_policy_name_or_path)
     hydra_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", policy_overrides)
     policy = make_policy(hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
 
     # Check device is available
-    device = get_safe_torch_device(hydra_cfg.device, log=True)
+    # satender, pranav
+    device = get_safe_torch_device("cpu", log=True)
     use_amp = hydra_cfg.use_amp
     policy_fps = hydra_cfg.env.fps
 
@@ -265,9 +291,11 @@ def control_loop(
 
             if policy is not None:
                 pred_action = predict_action(observation, policy, device, use_amp)
+                print("\nPredicted action:", pred_action)
                 # Action can eventually be clipped using `max_relative_target`,
                 # so action actually sent is saved in the dataset.
                 action = robot.send_action(pred_action)
+                print("Action sent to robot:", action)
                 action = {"action": action}
 
         if dataset is not None:
