@@ -72,26 +72,20 @@ def get_output_shape(module: nn.Module, input_shape: tuple) -> tuple:
     return tuple(output.shape)
 
 
-def get_pretrained_policy_path(pretrained_policy_name_or_path, revision=None):
+def get_pretrained_policy_path(pretrained_policy_path, revision=None):
     try:
-        pretrained_policy_path = Path(
-            snapshot_download(str(pretrained_policy_name_or_path), revision=revision)
-        )
+        pretrained_policy_path = Path(snapshot_download(str(pretrained_policy_path), revision=revision))
     except (HFValidationError, RepositoryNotFoundError) as e:
         if isinstance(e, HFValidationError):
-            error_message = (
-                "The provided pretrained_policy_name_or_path is not a valid Hugging Face Hub repo ID."
-            )
+            error_message = "The provided pretrained_policy_path is not a valid Hugging Face Hub repo ID."
         else:
-            error_message = (
-                "The provided pretrained_policy_name_or_path was not found on the Hugging Face Hub."
-            )
+            error_message = "The provided pretrained_policy_path was not found on the Hugging Face Hub."
 
         logging.warning(f"{error_message} Treating it as a local directory.")
-        pretrained_policy_path = Path(pretrained_policy_name_or_path)
+        pretrained_policy_path = Path(pretrained_policy_path)
     if not pretrained_policy_path.is_dir() or not pretrained_policy_path.exists():
         raise ValueError(
-            "The provided pretrained_policy_name_or_path is not a valid/existing Hugging Face Hub "
+            "The provided pretrained_policy_path is not a valid/existing Hugging Face Hub "
             "repo ID, nor is it an existing local directory."
         )
     return pretrained_policy_path

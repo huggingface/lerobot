@@ -73,7 +73,7 @@ def create_stats_buffers(
                 }
             )
 
-        if stats is not None:
+        if stats:
             # Note: The clone is needed to make sure that the logic in save_pretrained doesn't see duplicated
             # tensors anywhere (for example, when we use the same stats for normalization and
             # unnormalization). See the logic here

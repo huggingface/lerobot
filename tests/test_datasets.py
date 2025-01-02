@@ -43,9 +43,14 @@ from lerobot.common.datasets.utils import (
     hf_transform_to_torch,
     unflatten_dict,
 )
-from lerobot.common.utils.utils import init_hydra_config, seeded_context
+from lerobot.common.envs.factory import make_env_config
+from lerobot.common.policies.factory import make_policy_config
+from lerobot.common.robot_devices.robots.utils import make_robot
+from lerobot.common.utils.utils import seeded_context
+from lerobot.configs.default import DatasetConfig
+from lerobot.configs.training import TrainPipelineConfig
 from tests.fixtures.constants import DUMMY_REPO_ID
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, make_robot
+from tests.utils import DEVICE
 
 
 def test_same_attributes_defined(lerobot_dataset_factory, tmp_path):
@@ -98,11 +103,13 @@ def test_dataset_initialization(lerobot_dataset_factory, tmp_path):
 # - [ ] test smaller methods
 
 
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
 @pytest.mark.parametrize(
     "env_name, repo_id, policy_name",
-    lerobot.env_dataset_policy_triplets
-    + [("aloha", ["lerobot/aloha_sim_insertion_human", "lerobot/aloha_sim_transfer_cube_human"], "act")],
+    # Single dataset
+    lerobot.env_dataset_policy_triplets,
+    # Multi-dataset
+    # TODO after fix multidataset
+    # + [("aloha", ["lerobot/aloha_sim_insertion_human", "lerobot/aloha_sim_transfer_cube_human"], "act")],
 )
 def test_factory(env_name, repo_id, policy_name):
     """
@@ -110,15 +117,13 @@ def test_factory(env_name, repo_id, policy_name):
         - we can create a dataset with the factory.
         - for a commonly used set of data keys, the data dimensions are correct.
     """
-    cfg = init_hydra_config(
-        DEFAULT_CONFIG_PATH,
-        overrides=[
-            f"env={env_name}",
-            f"dataset_repo_id={repo_id}",
-            f"policy={policy_name}",
-            f"device={DEVICE}",
-        ],
+    cfg = TrainPipelineConfig(
+        env=make_env_config(env_name),
+        dataset=DatasetConfig(repo_id=repo_id),
+        policy=make_policy_config(policy_name),
+        device=DEVICE,
     )
+
     dataset = make_dataset(cfg)
     delta_timestamps = dataset.delta_timestamps
     camera_keys = dataset.meta.camera_keys
@@ -171,8 +176,8 @@ def test_factory(env_name, repo_id, policy_name):
 
 
 # TODO(alexander-soare): If you're hunting for savings on testing time, this takes about 5 seconds.
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
-def test_multilerobotdataset_frames():
+@pytest.mark.skip("TODO after fix multidataset")
+def test_multidataset_frames():
     """Check that all dataset frames are incorporated."""
     # Note: use the image variants of the dataset to make the test approx 3x faster.
     # Note: We really do need three repo_ids here as at some point this caught an issue with the chaining
@@ -205,7 +210,6 @@ def test_multilerobotdataset_frames():
 
 
 # TODO(aliberts, rcadene): Refactor and move this to a tests/test_compute_stats.py
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
 def test_compute_stats_on_xarm():
     """Check that the statistics are computed correctly according to the stats_patterns property.
 
@@ -289,7 +293,7 @@ def test_flatten_unflatten_dict():
     assert json.dumps(original_d, sort_keys=True) == json.dumps(d, sort_keys=True), f"{original_d} != {d}"
 
 
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
+# @pytest.mark.skip("TODO after v2 migration / removing hydra")
 @pytest.mark.parametrize(
     "repo_id",
     [
@@ -317,6 +321,11 @@ def test_backward_compatibility(repo_id):
         # TODO (michel-aractingi): transform language obs to langauge embeddings via tokenizer
         new_frame.pop("language_instruction", None)
         old_frame.pop("language_instruction", None)
+
+        # Remove task_index to allow for backward compatibility
+        # TODO(rcadene): remove when new features have been generated
+        if "task_index" not in old_frame:
+            del new_frame["task_index"]
 
         new_keys = set(new_frame.keys())
         old_keys = set(old_frame.keys())
@@ -361,8 +370,8 @@ def test_backward_compatibility(repo_id):
     # load_and_compare(i - 1)
 
 
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
-def test_aggregate_stats():
+@pytest.mark.skip("TODO after fix multidataset")
+def test_multidataset_aggregate_stats():
     """Makes 3 basic datasets and checks that aggregate stats are computed correctly."""
     with seeded_context(0):
         data_a = torch.rand(30, dtype=torch.float32)
