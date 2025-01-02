@@ -29,7 +29,7 @@ training:
   online_steps_between_rollouts: 1000
   online_sampling_ratio: 1.0
   online_env_seed: 10000
-  online_buffer_capacity: 10000
+  online_buffer_capacity: 40000
   online_buffer_seed_size: 0
   do_online_rollout_async: false
 
@@ -70,9 +70,9 @@ policy:
   temperature_init: 1.0
   num_critics: 2
   num_subsample_critics: None
-  critic_lr: 1e-4
-  actor_lr: 1e-4
-  temperature_lr: 1e-4
+  critic_lr: 3e-4
+  actor_lr: 3e-4
+  temperature_lr: 3e-4
   critic_target_update_weight: 0.005
   utd_ratio: 2
 

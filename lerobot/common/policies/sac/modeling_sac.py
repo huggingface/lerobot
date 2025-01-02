@@ -77,8 +77,19 @@ class SACPolicy(
             )
             critic_nets.append(critic_net)
 
+        target_critic_nets = []
+        for _ in range(config.num_critics):
+            target_critic_net = Critic(
+                encoder=encoder_critic,
+                network=MLP(
+                    input_dim=encoder_critic.output_dim + config.output_shapes["action"][0],
+                    **config.critic_network_kwargs
+                )
+            )
+            target_critic_nets.append(target_critic_net)
+
         self.critic_ensemble = create_critic_ensemble(critic_nets, config.num_critics)
-        self.critic_target = deepcopy(self.critic_ensemble)
+        self.critic_target = create_critic_ensemble(target_critic_nets, config.num_critics)
 
         self.actor = Policy(
             encoder=encoder_actor,
@@ -169,12 +180,12 @@ class SACPolicy(
 
             # critics subsample size
             min_q, _ = q_targets.min(dim=0)  # Get values from min operation
-
-            # compute td target
-            td_target = rewards + self.config.discount * min_q 
+            # breakpoint()
             if self.config.use_backup_entropy:
-                td_target -= self.config.discount * self.temperature() * log_probs \
-                        * ~batch["observation.state_is_pad"][:,0] * ~batch["action_is_pad"][:,0] # shape: [batch_size, horizon]
+                min_q -= self.temperature() * log_probs * ~batch["observation.state_is_pad"][:,0] * ~batch["action_is_pad"][:,0] # shape: [batch_size, horizon]
+            td_target = rewards + self.config.discount * min_q * ~batch["next.done"]
+                # td_target -= self.config.discount * self.temperature() * log_probs \
+                #         * ~batch["observation.state_is_pad"][:,0] * ~batch["action_is_pad"][:,0] # shape: [batch_size, horizon]
             # print(f"Target Q-values: mean={td_target.mean():.3f}, max={td_target.max():.3f}")
             
         # 3- compute predicted qs
