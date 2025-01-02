@@ -34,23 +34,13 @@ import wandb
 from lerobot.common.datasets.factory import resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.logger import Logger
-from lerobot.common.policies.factory import _policy_cfg_from_hydra_cfg
-from lerobot.common.policies.hilserl.classifier.configuration_classifier import ClassifierConfig
-from lerobot.common.policies.hilserl.classifier.modeling_classifier import Classifier
+from lerobot.common.policies.factory import make_reward_classifier_model
 from lerobot.common.utils.utils import (
     format_big_number,
     get_safe_torch_device,
     init_hydra_config,
     set_global_seed,
 )
-
-
-def get_model(cfg, logger):  # noqa I001
-    classifier_config = _policy_cfg_from_hydra_cfg(ClassifierConfig, cfg)
-    model = Classifier(classifier_config)
-    if cfg.resume:
-        model.load_state_dict(Classifier.from_pretrained(str(logger.last_pretrained_model_dir)).state_dict())
-    return model
 
 
 def create_balanced_sampler(dataset, cfg):
@@ -255,7 +245,7 @@ def train(cfg: DictConfig) -> None:
         cfg.resume = True
 
     # Initialize model and training components
-    model = get_model(cfg=cfg, logger=logger).to(device)
+    model = make_reward_classifier_model(cfg=cfg, logger=logger).to(device)
 
     optimizer = optim.AdamW(model.parameters(), lr=cfg.training.learning_rate)
     # Use BCEWithLogitsLoss for binary classification and CrossEntropyLoss for multi-class

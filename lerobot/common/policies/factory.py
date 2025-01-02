@@ -17,7 +17,10 @@ import inspect
 import logging
 
 from omegaconf import DictConfig, OmegaConf
+from torch import nn
 
+from lerobot.common.policies.hilserl.classifier.configuration_classifier import ClassifierConfig
+from lerobot.common.policies.hilserl.classifier.modeling_classifier import Classifier
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_safe_torch_device
 
@@ -115,3 +118,20 @@ def make_policy(
     policy.to(get_safe_torch_device(hydra_cfg.device))
 
     return policy
+
+
+def make_reward_classifier_model(cfg, logger) -> nn.Module:  # noqa I001
+    classifier_config = _policy_cfg_from_hydra_cfg(ClassifierConfig, cfg)
+    model = Classifier(classifier_config)
+    if cfg.resume:
+        model.load_state_dict(Classifier.from_pretrained(str(logger.last_pretrained_model_dir)).state_dict())
+    return model
+
+
+def load_reward_classifier_model(
+    cfg: DictConfig, pretrained_policy_name_or_path: str | None = None
+) -> nn.Module:  # noqa I001
+    classifier_config = _policy_cfg_from_hydra_cfg(ClassifierConfig, cfg)
+    model = Classifier(classifier_config)
+    model.load_state_dict(Classifier.from_pretrained(str(pretrained_policy_name_or_path)).state_dict())
+    return model

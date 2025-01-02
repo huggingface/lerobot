@@ -1,0 +1,85 @@
+python lerobot/scripts/control_robot.py record \
+    --robot-path lerobot/configs/robot/koch_helper2424.yaml \
+    --num-episodes 2 \
+    --warmup-time-s 5 \
+    --episode-time-s 10 \
+    --fps 30 \
+    --assign-rewards 1 \
+    --policy-overrides "device=mps" \
+    --repo-id ${HF_USER}/hil-serl-pusht-reward-classifier-test \
+    --single-task "Push small T object to the correct position"
+
+
+python lerobot/scripts/control_robot.py record \
+    --robot-path lerobot/configs/robot/koch_helper2424.yaml \
+    --num-episodes 50 \
+    --warmup-time-s 2 \
+    --episode-time-s 20  \
+    --fps 30 \
+    --policy-overrides "device=mps" \
+    --repo-id ${HF_USER}/hil-serl-push-circle-classifier \
+    --single-task "Push small circle object to the correct position" \
+    --assign-rewards 1 \
+    --resume 1
+
+
+# python lerobot/scripts/control_sim_robot.py record \
+#     --num-episodes 2 \
+#     --episode-time-s 10 \
+#     --fps 30 \
+#    --repo-id ${HF_USER}/hil12
+-serl-pusht-reward-classifier-test \
+#     --task 1
+
+
+for i in {0..20}
+    python lerobot/scripts/visualize_dataset.py \
+        --root data \
+        --repo-id ${HF_USER}/hil-serl-push-circle-classifier \
+        --episode-index $i
+
+
+
+python lerobot/scripts/train_hilserl_classifier.py
+
+
+python lerobot/scripts/control_sim_robot.py record \
+     --num-episodes 2 \
+     --episode-time-s 10 \
+     --fps 30 \
+    --sim-config lerobot/configs/env/aloha.yaml \
+    --robot-path lerobot/configs/robot/aloha.yaml\
+    --task 1
+
+
+ mjpython lerobot/scripts/control_sim_robot.py record \
+ --task 3\
+ --fps 30 \
+  --num-episodes 2 \
+  --episode-time-s 10 \
+  --assign-rewards 1 \
+  --robot-path lerobot/configs/robot/koch_helper2424.yaml --sim-config lerobot/configs/env/mujoco_train.yaml\
+      --repo-id helper2424/hil-serl-push-circle-classifier-with-sim \
+ --push-to-hub 1
+
+pip install -e ".[aloha, pusht]" --global-option="-I//Users/helper2424/.mujoco/mujoco210/include/"
+
+
+for i in {0..1}
+    python lerobot/scripts/visualize_dataset.py \
+        --root data \
+        --episode-index $i \
+         --repo-id helper2424/hil-serl-push-circle-classifier-with-si132
+
+
+
+ mjpython lerobot/scripts/control_sim_robot.py record\
+  --task 4 \
+  --fps 30 \
+  --num-episodes 1 \
+  --episode-time-s 5 \
+  --assign-rewards 1 \
+  --robot-path lerobot/configs/robot/koch_helper2424.yaml --sim-config lerobot/configs/env/mujoco_train.yaml\
+      --repo-id helper2424/hil-serl-push-circle-classifier-with-si132 \
+ --push-to-hub 1 \
+ --root data/helper2424/sim-ler12

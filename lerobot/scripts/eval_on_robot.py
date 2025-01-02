@@ -31,19 +31,27 @@ import argparse
 import logging
 import time
 from copy import deepcopy
+from queue import Queue
+from threading import Thread
 
-import numpy as np
 import torch
-from tqdm import trange
 
+from lerobot.common.envs.factory import (
+    make_env,
+)
+from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.robot_devices.control_utils import busy_wait, is_headless
 from lerobot.common.robot_devices.robots.factory import Robot, make_robot
 from lerobot.common.utils.utils import (
+    get_safe_torch_device,
     init_hydra_config,
     init_logging,
     log_say,
+    set_global_seed,
 )
+
+REPLAY_BUFFER_START_SIZE = 1000
 
 
 def rollout(robot: Robot, policy: Policy, fps: int, control_time_s: float = 20, use_amp: bool = True) -> dict:
@@ -152,9 +160,268 @@ def rollout(robot: Robot, policy: Policy, fps: int, control_time_s: float = 20, 
     return ret
 
 
+def start_learner(replay_buffer, stop_event):
+    """Thread that handles policy learning and updates"""
+
+    # Loop to wait until replay_buffer is filled
+    pbar = tqdm.tqdm(
+        total=REPLAY_BUFFER_START_SIZE,
+        initial=len(replay_buffer),
+        desc="Filling up replay buffer",
+        position=0,
+        leave=True,
+    )
+
+    while len(replay_buffer) < REPLAY_BUFFER_START_SIZE and not stop_event.is_set():
+        pbar.update(len(replay_buffer) - pbar.n)  # Update progress bar
+        time.sleep(1)
+    pbar.update(len(replay_buffer) - pbar.n)  # Update progress bar
+    pbar.close()
+
+    # 50/50 sampling from RLPD, half from demo and half from online experience
+    replay_iterator = replay_buffer.get_iterator(
+        sample_args={
+            "batch_size": config.batch_size // 2,
+            "pack_obs_and_next_obs": True,
+        },
+        device=sharding.replicate(),
+    )
+    demo_iterator = demo_buffer.get_iterator(
+        sample_args={
+            "batch_size": config.batch_size // 2,
+            "pack_obs_and_next_obs": True,
+        },
+        device=sharding.replicate(),
+    )
+
+    # wait till the replay buffer is filled with enough data
+    timer = Timer()
+
+    train_critic_networks_to_update = frozenset({"critic"})
+    train_networks_to_update = frozenset({"critic", "actor", "temperature"})
+
+    for step in tqdm.tqdm(range(start_step, config.max_steps), dynamic_ncols=True, desc="learner"):
+        # run n-1 critic updates and 1 critic + actor update.
+        # This makes training on GPU faster by reducing the large batch transfer time from CPU to GPU
+        for critic_step in range(config.cta_ratio - 1):
+            with timer.context("sample_replay_buffer"):
+                batch = next(replay_iterator)
+                demo_batch = next(demo_iterator)
+                batch = concat_batches(batch, demo_batch, axis=0)
+
+            with timer.context("train_critics"):
+                agent, critics_info = agent.update(
+                    batch,
+                    networks_to_update=train_critic_networks_to_update,
+                )
+
+        with timer.context("train"):
+            batch = next(replay_iterator)
+            demo_batch = next(demo_iterator)
+            batch = concat_batches(batch, demo_batch, axis=0)
+            agent, update_info = agent.update(
+                batch,
+                networks_to_update=train_networks_to_update,
+            )
+        # publish the updated network
+        if step > 0 and step % (config.steps_per_update) == 0:
+            agent = jax.block_until_ready(agent)
+            server.publish_network(agent.state.params)
+
+        if step % config.log_period == 0 and wandb_logger:
+            wandb_logger.log(update_info, step=step)
+            wandb_logger.log({"timer": timer.get_average_times()}, step=step)
+
+        if step > 0 and config.checkpoint_period and step % config.checkpoint_period == 0:
+            checkpoints.save_checkpoint(
+                os.path.abspath(FLAGS.checkpoint_path), agent.state, step=step, keep=100
+            )
+
+
+def process_actor():
+    """Thread that handles interaction with robot and data collection"""
+    # while not stop_event.is_set():
+    # Collect data from robot interactions
+    # Add your data collection logic here
+    # data = {"observations": [], "actions": [], "rewards": []}  # Your collected data
+    # queue.put(data)
+    logging.info("Actor: Collecting data")
+
+    # if FLAGS.eval_checkpoint_step:
+    #     success_counter = 0
+    #     time_list = []
+
+    #     ckpt = checkpoints.restore_checkpoint(
+    #         os.path.abspath(FLAGS.checkpoint_path),
+    #         agent.state,
+    #         step=FLAGS.eval_checkpoint_step,
+    #     )
+    #     agent = agent.replace(state=ckpt)
+
+    #     for episode in range(FLAGS.eval_n_trajs):
+    #         obs, _ = env.reset()
+    #         done = False
+    #         start_time = time.time()
+    #         while not done:
+    #             sampling_rng, key = jax.random.split(sampling_rng)
+    #             actions = agent.sample_actions(
+    #                 observations=jax.device_put(obs),
+    #                 argmax=False,
+    #                 seed=key
+    #             )
+    #             actions = np.asarray(jax.device_get(actions))
+
+    #             next_obs, reward, done, truncated, info = env.step(actions)
+    #             obs = next_obs
+
+    #             if done:
+    #                 if reward:
+    #                     dt = time.time() - start_time
+    #                     time_list.append(dt)
+    #                     print(dt)
+
+    #                 success_counter += reward
+    #                 print(reward)
+    #                 print(f"{success_counter}/{episode + 1}")
+
+    #     print(f"success rate: {success_counter / FLAGS.eval_n_trajs}")
+    #     print(f"average time: {np.mean(time_list)}")
+    #     return  # after done eval, return and exit
+
+    # start_step = (
+    #     int(os.path.basename(natsorted(glob.glob(os.path.join(FLAGS.checkpoint_path, "buffer/*.pkl")))[-1])[12:-4]) + 1
+    #     if FLAGS.checkpoint_path and os.path.exists(FLAGS.checkpoint_path)
+    #     else 0
+    # )
+
+    # datastore_dict = {
+    #     "actor_env": data_store,
+    #     "actor_env_intvn": intvn_data_store,
+    # }
+
+    # client = TrainerClient(
+    #     "actor_env",
+    #     FLAGS.ip,
+    #     make_trainer_config(),
+    #     data_stores=datastore_dict,
+    #     wait_for_server=True,
+    #     timeout_ms=3000,
+    # )
+
+    # # Function to update the agent with new params
+    # def update_params(params):
+    #     nonlocal agent
+    #     agent = agent.replace(state=agent.state.replace(params=params))
+
+    # client.recv_network_callback(update_params)
+
+    # transitions = []
+    # demo_transitions = []
+
+    # obs, _ = env.reset()
+    # done = False
+
+    # # training loop
+    # timer = Timer()
+    # running_return = 0.0
+    # already_intervened = False
+    # intervention_count = 0
+    # intervention_steps = 0
+
+    # pbar = tqdm.tqdm(range(start_step, config.max_steps), dynamic_ncols=True)
+    # for step in pbar:
+    #     timer.tick("total")
+
+    #     with timer.context("sample_actions"):
+    #         if step < config.random_steps:
+    #             actions = env.action_space.sample()
+    #         else:
+    #             sampling_rng, key = jax.random.split(sampling_rng)
+    #             actions = agent.sample_actions(
+    #                 observations=jax.device_put(obs),
+    #                 seed=key,
+    #                 argmax=False,
+    #             )
+    #             actions = np.asarray(jax.device_get(actions))
+
+    #     # Step environment
+    #     with timer.context("step_env"):
+
+    #         next_obs, reward, done, truncated, info = env.step(actions)
+    #         if "left" in info:
+    #             info.pop("left")
+    #         if "right" in info:
+    #             info.pop("right")
+
+    #         # override the action with the intervention action
+    #         if "intervene_action" in info:
+    #             actions = info.pop("intervene_action")
+    #             intervention_steps += 1
+    #             if not already_intervened:
+    #                 intervention_count += 1
+    #             already_intervened = True
+    #         else:
+    #             already_intervened = False
+
+    #         running_return += reward
+    #         transition = dict(
+    #             observations=obs,
+    #             actions=actions,
+    #             next_observations=next_obs,
+    #             rewards=reward,
+    #             masks=1.0 - done,
+    #             dones=done,
+    #         )
+    #         if 'grasp_penalty' in info:
+    #             transition['grasp_penalty']= info['grasp_penalty']
+    #         data_store.insert(transition)
+    #         transitions.append(copy.deepcopy(transition))
+    #         if already_intervened:
+    #             intvn_data_store.insert(transition)
+    #             demo_transitions.append(copy.deepcopy(transition))
+
+    #         obs = next_obs
+    #         if done or truncated:
+    #             info["episode"]["intervention_count"] = intervention_count
+    #             info["episode"]["intervention_steps"] = intervention_steps
+    #             stats = {"environment": info}  # send stats to the learner to log
+    #             client.request("send-stats", stats)
+    #             pbar.set_description(f"last return: {running_return}")
+    #             running_return = 0.0
+    #             intervention_count = 0
+    #             intervention_steps = 0
+    #             already_intervened = False
+    #             client.update()
+    #             obs, _ = env.reset()
+
+    #     if step > 0 and config.buffer_period > 0 and step % config.buffer_period == 0:
+    #         # dump to pickle file
+    #         buffer_path = os.path.join(FLAGS.checkpoint_path, "buffer")
+    #         demo_buffer_path = os.path.join(FLAGS.checkpoint_path, "demo_buffer")
+    #         if not os.path.exists(buffer_path):
+    #             os.makedirs(buffer_path)
+    #         if not os.path.exists(demo_buffer_path):
+    #             os.makedirs(demo_buffer_path)
+    #         with open(os.path.join(buffer_path, f"transitions_{step}.pkl"), "wb") as f:
+    #             pkl.dump(transitions, f)
+    #             transitions = []
+    #         with open(
+    #             os.path.join(demo_buffer_path, f"transitions_{step}.pkl"), "wb"
+    #         ) as f:
+    #             pkl.dump(demo_transitions, f)
+    #             demo_transitions = []
+
+    #     timer.tock("total")
+
+    #     if step % config.log_period == 0:
+    #         stats = {"timer": timer.get_average_times()}
+    #         client.request("send-stats", stats)
+
+
 def eval_policy(
     robot: Robot,
     policy: torch.nn.Module,
+    reward_classifier: torch.nn.Module,
     fps: float,
     n_episodes: int,
     control_time_s: int = 20,
@@ -172,46 +439,74 @@ def eval_policy(
     # assert isinstance(policy, Policy)
     # policy.eval()
 
-    sum_rewards = []
-    max_rewards = []
-    successes = []
-    rollouts = []
+    learner_thread = Thread(target=start_learner, args=(queue, stop_event))
+    actor_thread = Thread(target=start_actor, args=(queue, stop_event))
 
-    start_eval = time.perf_counter()
-    progbar = trange(n_episodes, desc="Evaluating policy on real robot")
-    for _batch_idx in progbar:
-        rollout_data = rollout(robot, policy, fps, control_time_s, use_amp)
+    from threading import Event
 
-        rollouts.append(rollout_data)
-        sum_rewards.append(sum(rollout_data["next.reward"]))
-        max_rewards.append(max(rollout_data["next.reward"]))
-        successes.append(rollout_data["next.success"][-1])
+    # Create communication queue
+    queue = Queue()
+    stop_event = Event()
 
-    info = {
-        "per_episode": [
-            {
-                "episode_ix": i,
-                "sum_reward": sum_reward,
-                "max_reward": max_reward,
-                "pc_success": success * 100,
-            }
-            for i, (sum_reward, max_reward, success) in enumerate(
-                zip(
-                    sum_rewards[:n_episodes],
-                    max_rewards[:n_episodes],
-                    successes[:n_episodes],
-                    strict=False,
-                )
-            )
-        ],
-        "aggregated": {
-            "avg_sum_reward": float(np.nanmean(torch.cat(sum_rewards[:n_episodes]))),
-            "avg_max_reward": float(np.nanmean(torch.cat(max_rewards[:n_episodes]))),
-            "pc_success": float(np.nanmean(torch.cat(successes[:n_episodes])) * 100),
-            "eval_s": time.time() - start_eval,
-            "eval_ep_s": (time.time() - start_eval) / n_episodes,
-        },
-    }
+    # Create threads
+    learner_thread = Thread(target=start_learner, args=(queue, stop_event))
+
+    # Start threads
+    learner_thread.start()
+
+    try:
+        # Let threads run until interrupted
+        while True:
+            time.sleep(0.1)
+            process_actor()
+    except KeyboardInterrupt:
+        print("\nStopping threads...")
+        stop_event.set()
+
+    # Wait for threads to complete
+    learner_thread.join()
+    print("Threads stopped successfully")
+
+    # sum_rewards = []
+    # max_rewards = []
+    # successes = []
+    # rollouts = []
+
+    # start_eval = time.perf_counter()
+    # progbar = trange(n_episodes, desc="Evaluating policy on real robot")
+    # for _batch_idx in progbar:
+    #     rollout_data = rollout(robot, policy, fps, control_time_s, use_amp)
+
+    #     rollouts.append(rollout_data)
+    #     sum_rewards.append(sum(rollout_data["next.reward"]))
+    #     max_rewards.append(max(rollout_data["next.reward"]))
+    #     successes.append(rollout_data["next.success"][-1])
+
+    # info = {
+    #     "per_episode": [
+    #         {
+    #             "episode_ix": i,
+    #             "sum_reward": sum_reward,
+    #             "max_reward": max_reward,
+    #             "pc_success": success * 100,
+    #         }
+    #         for i, (sum_reward, max_reward, success) in enumerate(
+    #             zip(
+    #                 sum_rewards[:n_episodes],
+    #                 max_rewards[:n_episodes],
+    #                 successes[:n_episodes],
+    #                 strict=False,
+    #             )
+    #         )
+    #     ],
+    #     "aggregated": {
+    #         "avg_sum_reward": float(np.nanmean(torch.cat(sum_rewards[:n_episodes]))),
+    #         "avg_max_reward": float(np.nanmean(torch.cat(max_rewards[:n_episodes]))),
+    #         "pc_success": float(np.nanmean(torch.cat(successes[:n_episodes])) * 100),
+    #         "eval_s": time.time() - start_eval,
+    #         "eval_ep_s": (time.time() - start_eval) / n_episodes,
+    #     },
+    # }
 
     if robot.is_connected:
         robot.disconnect()
@@ -311,6 +606,7 @@ if __name__ == "__main__":
     )
     group.add_argument(
         "--config",
+        default="lerobot/configs/hil-serl.yaml",
         help=(
             "Path to a yaml config you want to use for initializing a policy from scratch (useful for "
             "debugging). This argument is mutually exclusive with `--pretrained-policy-name-or-path` (`-p`)."
@@ -325,11 +621,44 @@ if __name__ == "__main__":
         ),
     )
 
+    group.add_argument(
+        "--pretrained-reward-classifier-or-path",
+        help=(
+            "Either the repo ID of a model hosted on the Hub or a path to a directory containing weights "
+            "saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch "
+            "(useful for debugging). This argument is mutually exclusive with `--config`."
+        ),
+    )
+
     args = parser.parse_args()
 
     robot_cfg = init_hydra_config(args.robot_path, args.robot_overrides)
     robot = make_robot(robot_cfg)
-    if not robot.is_connected:
-        robot.connect()
+    # if not robot.is_connected:
+    #     robot.connect()
 
-    eval_policy(robot, None, fps=40, n_episodes=2, control_time_s=100)
+    cfg = init_hydra_config(args.config) if args.config else None
+
+    # Check device is available
+    device = get_safe_torch_device(cfg.device, log=True)
+
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+    set_global_seed(cfg.seed)
+
+    # log_output_dir(out_dir)
+
+    logging.info("Making environment.")
+    env = make_env(cfg)
+
+    logging.info("Making policy.")
+
+    # Create main policy - SAC or Dagger
+    policy = make_policy(cfg, env)
+
+    reward_classifier = load_reward_classifier_model(cfg, args.pretrained_reward_classifier_or_path)
+
+    demo_buffer = []
+    replay_buffer = []
+
+    eval_policy(robot, policy, reward_classifier, fps=40, n_episodes=2, control_time_s=100)

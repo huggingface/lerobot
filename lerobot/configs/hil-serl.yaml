@@ -1,0 +1,42 @@
+defaults:
+  - _self_
+  - env: pusht
+
+hydra:
+  run:
+    # Set `dir` to where you would like to save all of the run outputs. If you run another training session
+    # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
+    dir: outputs/train/${now:%Y-%m-%d}/${now:%H-%M-%S}_${env.name}_${policy.name}_${hydra.job.name}
+  job:
+    name: default
+
+device: mps  # cpu
+# `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
+# automatic gradient scaling is used.
+use_amp: false
+# `seed` is used for training (eg: model initialization, dataset shuffling)
+# AND for the evaluation environments.
+seed: 12
+# You may provide a list of datasets here. `train.py` creates them all and concatenates them. Note: only data
+# keys common between the datasets are kept. Each dataset gets and additional transform that inserts the
+# "dataset_index" into the returned item. The index mapping is made according to the order in which the
+# datsets are provided.
+dataset_repo_id: lerobot/pusht
+video_backend: pyav
+
+policy:
+  name: "hilserl/classifier"
+  model_name: "facebook/convnext-base-224"
+  model_type: "cnn"
+  n_episodes: 1
+  # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
+  batch_size: 1
+  # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
+  use_async_envs: false
+
+wandb:
+  enable: true
+  # Set to true to disable saving an artifact despite save_checkpoint == True
+  disable_artifact: false
+  project: lerobot
+  notes: ""
