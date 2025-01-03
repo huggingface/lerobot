@@ -35,6 +35,7 @@ from PIL import Image as PILImage
 from torchvision import transforms
 
 from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.configs.types import DictLike
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of episodes per chunk
 
@@ -96,6 +97,18 @@ def unflatten_dict(d: dict, sep: str = "/") -> dict:
             d = d[part]
         d[parts[-1]] = value
     return outdict
+
+
+def get_nested_item(obj: DictLike, flattened_key: str, sep: str = "/") -> Any:
+    split_keys = flattened_key.split(sep)
+    getter = obj[split_keys[0]]
+    if len(split_keys) == 1:
+        return getter
+
+    for key in split_keys[1:]:
+        getter = getter[key]
+
+    return getter
 
 
 def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:

@@ -16,10 +16,13 @@
 import importlib
 
 import gymnasium as gym
-from omegaconf import DictConfig
+
+from lerobot.common.envs.configs import EnvConfig
 
 
-def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv | None:
+def make_env(
+    cfg: EnvConfig, n_envs: int | None = None, use_async_envs: bool = False
+) -> gym.vector.VectorEnv | None:
     """Makes a gym vector environment according to the evaluation config.
 
     n_envs can be used to override eval.batch_size in the configuration. Must be at least 1.
@@ -27,27 +30,25 @@ def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv
     if n_envs is not None and n_envs < 1:
         raise ValueError("`n_envs must be at least 1")
 
-    if cfg.env.name == "real_world":
+    if cfg.type == "real_world":
         return
 
-    package_name = f"gym_{cfg.env.name}"
+    package_name = f"gym_{cfg.type}"
 
     try:
         importlib.import_module(package_name)
     except ModuleNotFoundError as e:
-        print(
-            f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.env.name}]'`"
-        )
+        print(f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`")
         raise e
 
-    gym_handle = f"{package_name}/{cfg.env.task}"
-    gym_kwgs = dict(cfg.env.get("gym", {}))
+    gym_handle = f"{package_name}/{cfg.task}"
+    gym_kwgs = getattr(cfg, "gym", {})
 
-    if cfg.env.get("episode_length"):
-        gym_kwgs["max_episode_steps"] = cfg.env.episode_length
+    if getattr(cfg, "episode_length", None):
+        gym_kwgs["max_episode_steps"] = cfg.episode_length
 
     # batched version of the env that returns an observation of shape (b, c)
-    env_cls = gym.vector.AsyncVectorEnv if cfg.eval.use_async_envs else gym.vector.SyncVectorEnv
+    env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
     env = env_cls(
         [
             lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs)
