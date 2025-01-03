@@ -417,3 +417,22 @@ Additionally, if you are using any of the particular policy architecture, pretra
   year={2024}
 }
 ```
+
+## Gello
+
+Gello integration can be added by installing first the package using the corresponding fork of the `gello` package:
+
+```bash
+pip install -e "git+https://gitlab.com/accelerationrobotics/customers/standardcooper/teleop@teleop#egg=gello"
+```
+
+See `examples/u850/3_teleop_lerobot_gello.py` for an example of how to use the Gello robot.
+
+### NOTE on permissions
+
+Often, it's needed to assign permissions to the corresponding serial port.
+
+On Linux, you can do this by running:
+```bash
+sudo chmod 666 /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT9BTDLW-if00-port0 
+```
