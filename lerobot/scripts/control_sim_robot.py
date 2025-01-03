@@ -35,7 +35,7 @@ python lerobot/scripts/visualize_dataset.py \
     --episode-index 0
 ```
 
-- Replay a sequence of test episodes: 
+- Replay a sequence of test episodes:
 ```bash
 python lerobot/scripts/control_sim_robot.py replay \
     --robot-path lerobot/configs/robot/your_robot_config.yaml \
