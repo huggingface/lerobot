@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -38,6 +38,26 @@ class SACConfig:
             "activate_final": True,
         }
     policy_kwargs = {
-            "tanh_squash_distribution": True,
-            "std_parameterization": "uniform",
+            "use_tanh_squash": True,
+            # "std_parameterization": "uniform",
         }
+    input_normalization_modes: dict[str, str] = field(
+        default_factory=lambda: {
+            "observation.image": "mean_std",
+            "observation.state": "min_max",
+        }
+    )
+    input_shapes: dict[str, list[int]] = field(
+        default_factory=lambda: {
+            "observation.image": [3, 96, 96],
+            "observation.state": [2],
+        }
+    )
+    output_normalization_modes: dict[str, str] = field(default_factory=lambda: {"action": "min_max"})
+    output_shapes: dict[str, list[int]] = field(
+        default_factory=lambda: {
+            "action": [4],
+        }
+    )
+    latent_dim = 256
+    target_entropy: float | None = None

@@ -1,0 +1,46 @@
+# @package _global_
+
+# Defaults for training for the PushT dataset as per https://github.com/real-stanford/diffusion_policy.
+# Note: We do not track EMA model weights as we discovered it does not improve the results. See
+#       https://github.com/huggingface/lerobot/pull/134 for more details.
+
+seed: 100000
+dataset_repo_id: helper2424/hil-serl-push-circle-classifier
+device: mps
+
+override_dataset_stats:
+  # TODO(rcadene, alexander-soare): should we remove image stats as well? do we use a pretrained vision model?
+  observation.images.web0:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+  # TODO(rcadene, alexander-soare): we override state and action stats to use the same as the pretrained model
+  # from the original codebase, but we should remove these and train our own pretrained model
+  observation.images.web1:
+    # stats from imagenet, since we use a pretrained vision model
+    mean: [[[0.485]], [[0.456]], [[0.406]]]  # (c,1,1)
+    std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
+# ${policy.horizon} - ${policy.n_action_steps} - ${policy.n_obs_steps} + 1
+
+eval:
+  n_episodes: 50
+  batch_size: 50
+
+policy:
+  name: sac
+  output_shapes:
+    action: ["${env.action_dim}"]
+  output_normalization_modes:
+    action: min_max
+  input_shapes:
+    observation.images.web0: [3, 480, 640]
+    observation.images.web1: [3, 480, 640]
+    observation.state: ["${env.state_dim}"]
+  input_normalization_modes: 
+    "observation.images.web0": "mean_std"
+    "observation.images.web1": "mean_std"
+
+training:
+  batch_size: 128
+  num_workers: 4
+  grad_clip_norm: 10
