@@ -56,7 +56,7 @@ python lerobot/scripts/control_robot.py teleoperate \
     --robot-overrides max_relative_target=5
 ```
 
-By adding `--robot-overrides max_relative_target=5`, we override the default value for `max_relative_target` defined in `lerobot/configs/robot/aloha.yaml`. It is expected to be `5` to limit the magnitude of the movement for more safety, but the teloperation won't be smooth. When you feel confident, you can disable this limit by adding `--robot-overrides max_relative_target=null` to the command line:
+By adding `--robot-overrides max_relative_target=5`, we override the default value for `max_relative_target` defined in `lerobot/configs/robot/aloha.yaml`. It is expected to be `5` to limit the magnitude of the movement for more safety, but the teleoperation won't be smooth. When you feel confident, you can disable this limit by adding `--robot-overrides max_relative_target=null` to the command line:
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
     --robot-path lerobot/configs/robot/aloha.yaml \

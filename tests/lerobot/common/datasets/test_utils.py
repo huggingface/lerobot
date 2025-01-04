@@ -14,17 +14,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.scripts.visualize_dataset_html import visualize_dataset_html
+from huggingface_hub import DatasetCard
+
+from lerobot.common.datasets.utils import create_lerobot_dataset_card
 
 
-def test_visualize_dataset_html(tmp_path, lerobot_dataset_factory):
-    root = tmp_path / "dataset"
-    output_dir = tmp_path / "outputs"
-    dataset = lerobot_dataset_factory(root=root)
-    visualize_dataset_html(
-        dataset,
-        episodes=[0],
-        output_dir=output_dir,
-        serve=False,
-    )
-    assert (output_dir / "static" / "episode_0.csv").exists()
+def test_default_parameters():
+    card = create_lerobot_dataset_card()
+    assert isinstance(card, DatasetCard)
+    assert card.data.tags == ["LeRobot"]
+    assert card.data.task_categories == ["robotics"]
+    assert card.data.configs == [
+        {
+            "config_name": "default",
+            "data_files": "data/*/*.parquet",
+        }
+    ]
+
+
+def test_with_tags():
+    tags = ["tag1", "tag2"]
+    card = create_lerobot_dataset_card(tags=tags)
+    assert card.data.tags == ["LeRobot", "tag1", "tag2"]
