@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 The HuggingFace Inc. team. 
+# Copyright 2024 The HuggingFace Inc. team.
 # All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,17 +30,17 @@ class SACConfig:
     critic_target_update_weight = 0.005
     utd_ratio = 2
     critic_network_kwargs = {
-            "hidden_dims": [256, 256],
-            "activate_final": True,
-        }
+        "hidden_dims": [256, 256],
+        "activate_final": True,
+    }
     actor_network_kwargs = {
-            "hidden_dims": [256, 256],
-            "activate_final": True,
-        }
+        "hidden_dims": [256, 256],
+        "activate_final": True,
+    }
     policy_kwargs = {
-            "use_tanh_squash": True,
-            # "std_parameterization": "uniform",
-        }
+        "use_tanh_squash": True,
+        # "std_parameterization": "uniform",
+    }
     input_normalization_modes: dict[str, str] = field(
         default_factory=lambda: {
             "observation.image": "mean_std",

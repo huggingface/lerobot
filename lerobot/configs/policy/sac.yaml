@@ -36,7 +36,7 @@ policy:
     observation.images.web0: [3, 480, 640]
     observation.images.web1: [3, 480, 640]
     observation.state: ["${env.state_dim}"]
-  input_normalization_modes: 
+  input_normalization_modes:
     "observation.images.web0": "mean_std"
     "observation.images.web1": "mean_std"
 

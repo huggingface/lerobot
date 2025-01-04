@@ -532,7 +532,6 @@ class LagrangeMultiplier(nn.Module):
         lhs: Optional[Union[torch.Tensor, float, int]] = None,
         rhs: Optional[Union[torch.Tensor, float, int]] = None,
     ) -> torch.Tensor:
-
         # Compute alpha = exp(log_alpha)
         alpha = self.log_alpha.exp()
 
@@ -541,17 +540,9 @@ class LagrangeMultiplier(nn.Module):
             return alpha
 
         # Convert inputs to tensors and move to device
-        lhs = (
-            torch.tensor(lhs)
-            if not isinstance(lhs, torch.Tensor)
-            else lhs
-        )
+        lhs = torch.tensor(lhs) if not isinstance(lhs, torch.Tensor) else lhs
         if rhs is not None:
-            rhs = (
-                torch.tensor(rhs)
-                if not isinstance(rhs, torch.Tensor)
-                else rhs
-            )
+            rhs = torch.tensor(rhs) if not isinstance(rhs, torch.Tensor) else rhs
         else:
             rhs = torch.zeros_like(lhs)
 
