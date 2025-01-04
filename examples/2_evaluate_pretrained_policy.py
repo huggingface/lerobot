@@ -5,12 +5,20 @@ training outputs directory. In the latter case, you might want to run examples/3
 
 from pathlib import Path
 
-import gym_pusht  # noqa: F401
+try:
+    import gym_pusht  # noqa: F401
+except ModuleNotFoundError as e:
+    if e.name == "gym_pusht":
+        print("""
+            Missing library `gym_pusht`. Install it by running either:
+            1. `pip install -e ".[pusht]"`
+            2. `poetry install --sync --extras "pusht"` (prefered)
+        """)
+    raise
 import gymnasium as gym
 import imageio
 import numpy
 import torch
-from huggingface_hub import snapshot_download
 
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 
@@ -18,9 +26,9 @@ from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 output_directory = Path("outputs/eval/example_pusht_diffusion")
 output_directory.mkdir(parents=True, exist_ok=True)
 
-# Download the diffusion policy for pusht environment
-pretrained_policy_path = Path(snapshot_download("lerobot/diffusion_pusht"))
-# OR uncomment the following to evaluate a policy from the local outputs/train folder.
+# Provide the [hugging face repo id](https://huggingface.co/lerobot/diffusion_pusht):
+pretrained_policy_path = "lerobot/diffusion_pusht"
+# OR a path to a local outputs/train folder.
 # pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")
 
 # TODO(alibert, rcadene): fix this file

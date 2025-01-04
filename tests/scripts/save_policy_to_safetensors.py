@@ -27,7 +27,7 @@ from lerobot.configs.training import TrainPipelineConfig
 from lerobot.scripts.train import make_optimizer_and_scheduler
 
 
-def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs):
+def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs, train_kwargs):
     # TODO(rcadene, aliberts): env_name?
     set_global_seed(1337)
 
@@ -35,10 +35,11 @@ def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs):
         dataset=DatasetConfig(repo_id=ds_repo_id),
         policy=make_policy_config(policy_name, **policy_kwargs),
         device="cpu",
+        **train_kwargs,
     )
 
     dataset = make_dataset(train_cfg)
-    policy = make_policy(train_cfg.policy, dataset_stats=dataset.meta.stats)
+    policy = make_policy(train_cfg.policy, ds_meta=dataset.meta, device=train_cfg.device)
     policy.train()
 
     optimizer, _ = make_optimizer_and_scheduler(train_cfg, policy)
@@ -73,10 +74,14 @@ def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs):
     policy.reset()
 
     # HACK: We reload a batch with no delta_timestamps as `select_action` won't expect a timestamps dimension
+    # We simulate having an environment using a dataset by setting delta_timestamps to None and dropping tensors
+    # indicating padding (those ending with "_is_pad")
     dataset.delta_timestamps = None
     batch = next(iter(dataloader))
     obs = {}
     for k in batch:
+        if k.endswith("_is_pad"):
+            continue
         if k.startswith("observation"):
             obs[k] = batch[k]
 
@@ -89,7 +94,7 @@ def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs):
     return output_dict, grad_stats, param_stats, actions
 
 
-def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_overrides, file_name_extra):
+def save_policy_to_safetensors(output_dir, env_name, policy_name, policy_kwargs, file_name_extra):
     env_policy_dir = Path(output_dir) / f"{env_name}_{policy_name}{file_name_extra}"
 
     if env_policy_dir.exists():
@@ -99,7 +104,7 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name, extra_override
         shutil.rmtree(env_policy_dir)
 
     env_policy_dir.mkdir(parents=True, exist_ok=True)
-    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name, extra_overrides)
+    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name, policy_kwargs)
     save_file(output_dict, env_policy_dir / "output_dict.safetensors")
     save_file(grad_stats, env_policy_dir / "grad_stats.safetensors")
     save_file(param_stats, env_policy_dir / "param_stats.safetensors")
@@ -132,7 +137,7 @@ if __name__ == "__main__":
     ]
     if len(env_policies) == 0:
         raise RuntimeError("No policies were provided!")
-    for ds_repo_id, env, policy, extra_overrides, file_name_extra in env_policies:
+    for ds_repo_id, env, policy, policy_kwargs, file_name_extra in env_policies:
         save_policy_to_safetensors(
-            "tests/data/save_policy_to_safetensors", ds_repo_id, env, policy, extra_overrides, file_name_extra
+            "tests/data/save_policy_to_safetensors", ds_repo_id, env, policy, policy_kwargs, file_name_extra
         )

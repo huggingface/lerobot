@@ -29,7 +29,7 @@ from lerobot.common.robot_devices.motors.utils import MotorsBus
 from lerobot.common.robot_devices.motors.utils import make_motors_bus as make_motors_bus_device
 from lerobot.common.utils.import_utils import is_package_available
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
 
 TEST_ROBOT_TYPES = []
 for robot_type in available_robots:
