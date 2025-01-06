@@ -327,7 +327,6 @@ class Critic(nn.Module):
         value = self.output_layer(x)
         return value.squeeze(-1)
 
-
 class Policy(nn.Module):
     def __init__(
         self,
