@@ -4,7 +4,6 @@ from typing import Optional
 import torch
 from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
-from transformers import AutoImageProcessor, AutoModel
 
 from .configuration_classifier import ClassifierConfig
 
@@ -44,6 +43,8 @@ class Classifier(
     name = "classifier"
 
     def __init__(self, config: ClassifierConfig):
+        from transformers import AutoImageProcessor, AutoModel
+
         super().__init__()
         self.config = config
         self.processor = AutoImageProcessor.from_pretrained(self.config.model_name, trust_remote_code=True)

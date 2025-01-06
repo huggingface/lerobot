@@ -85,6 +85,7 @@ dora = [
 ]
 dynamixel = ["dynamixel-sdk>=3.7.31", "pynput>=1.7.7"]
 feetech = ["feetech-servo-sdk>=1.0.0", "pynput>=1.7.7"]
+hilserl = ["transformers>=4.48.0", "torchmetrics>=1.6.0"]
 intelrealsense = ["pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"]
 pi0 = ["transformers>=4.48.0"]
 pusht = ["gym-pusht>=0.1.5 ; python_version < '4.0'"]
@@ -98,6 +99,7 @@ test = ["pytest>=8.1.0", "pytest-cov>=5.0.0", "pyserial>=3.5"]
 umi = ["imagecodecs>=2024.1.1"]
 video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
 xarm = ["gym-xarm>=0.1.1 ; python_version < '4.0'"]
+
 
 [tool.poetry]
 requires-poetry = ">=2.1"

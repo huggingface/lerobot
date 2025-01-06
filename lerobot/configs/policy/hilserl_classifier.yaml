@@ -39,7 +39,6 @@ policy:
 wandb:
   enable: false
   project: "classifier-training"
-  entity: "wandb_entity"
   job_name: "classifier_training_0"
   disable_artifact: false
 
