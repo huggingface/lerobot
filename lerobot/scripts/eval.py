@@ -50,7 +50,6 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Callable
 
-import draccus
 import einops
 import gymnasium as gym
 import numpy as np
@@ -70,6 +69,7 @@ from lerobot.common.utils.utils import (
     inside_slurm,
     set_global_seed,
 )
+from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 
 
@@ -436,7 +436,7 @@ def _compile_episode_data(
     return data_dict
 
 
-@draccus.wrap()
+@parser.wrap(pathable_args=["policy"])
 def eval(cfg: EvalPipelineConfig):
     # Check device is available
     device = get_safe_torch_device(cfg.device, log=True)
@@ -445,7 +445,7 @@ def eval(cfg: EvalPipelineConfig):
     torch.backends.cuda.matmul.allow_tf32 = True
     set_global_seed(cfg.seed)
 
-    log_output_dir(cfg.dir)
+    log_output_dir(cfg.output_dir)
 
     logging.info("Making environment.")
     env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
@@ -456,7 +456,7 @@ def eval(cfg: EvalPipelineConfig):
         device=device,
         env=env,
         env_cfg=cfg.env,
-        pretrained_policy_name_or_path=str(cfg.pretrained_policy_path),
+        # pretrained_policy_name_or_path=str(cfg.policy_path),
     )
     policy.eval()
 
@@ -466,13 +466,13 @@ def eval(cfg: EvalPipelineConfig):
             policy,
             cfg.eval.n_episodes,
             max_episodes_rendered=10,
-            videos_dir=Path(cfg.dir) / "videos",
+            videos_dir=Path(cfg.output_dir) / "videos",
             start_seed=cfg.seed,
         )
     print(info["aggregated"])
 
     # Save info
-    with open(Path(cfg.dir) / "eval_info.json", "w") as f:
+    with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
         json.dump(info, f, indent=2)
 
     env.close()

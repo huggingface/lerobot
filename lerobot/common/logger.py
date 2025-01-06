@@ -33,9 +33,12 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.common.policies.policy_protocol import Policy
-from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
-from lerobot.configs.training import TrainPipelineConfig
+from lerobot.common.utils.utils import get_global_random_state
+from lerobot.configs.training import TRAIN_CONFIG_FILE, TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode
+
+PRETRAINED_MODEL = "pretrained_model"
+TRAINING_STATE = "training_state.pth"
 
 
 def log_output_dir(out_dir):
@@ -83,12 +86,12 @@ class Logger:
     │   └── last  # a softlink to the last logged checkpoint
     """
 
-    pretrained_model_dir_name = "pretrained_model"
-    training_state_file_name = "training_state.pth"
+    pretrained_model_dir_name = PRETRAINED_MODEL
+    training_state_file_name = TRAINING_STATE
 
     def __init__(self, cfg: TrainPipelineConfig):
         self._cfg = cfg
-        self.log_dir = cfg.dir
+        self.log_dir = cfg.output_dir
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.job_name = cfg.job_name
         self.checkpoints_dir = self.get_checkpoints_dir(self.log_dir)
@@ -158,8 +161,8 @@ class Logger:
         # register_features_types()
         policy.save_pretrained(save_dir)
         # Also save the full config for the env configuration.
-        with open(save_dir / "config.yaml", "w") as f:
-            draccus.dump(self._cfg, f)
+        with open(save_dir / TRAIN_CONFIG_FILE, "w") as f:
+            draccus.dump(self._cfg, f, indent=4)
         if self._wandb and not self._cfg.wandb.disable_artifact:
             # note wandb artifact does not accept ":" or "/" in its name
             artifact = self._wandb.Artifact(wandb_artifact_name, type="model")
@@ -208,23 +211,6 @@ class Logger:
         )
         self.save_training_state(checkpoint_dir, train_step, optimizer, scheduler)
         os.symlink(checkpoint_dir.absolute(), self.last_checkpoint_dir)
-
-    def load_last_training_state(self, optimizer: Optimizer, scheduler: LRScheduler | None) -> int:
-        """
-        Given the last checkpoint in the logging directory, load the optimizer state, scheduler state, and
-        random state, and return the global training step.
-        """
-        training_state = torch.load(self.last_checkpoint_dir / self.training_state_file_name)
-        optimizer.load_state_dict(training_state["optimizer"])
-        if scheduler is not None:
-            scheduler.load_state_dict(training_state["scheduler"])
-        elif "scheduler" in training_state:
-            raise ValueError(
-                "The checkpoint contains a scheduler state_dict, but no LRScheduler was provided."
-            )
-        # Small hack to get the expected keys: use `get_global_random_state`.
-        set_global_random_state({k: training_state[k] for k in get_global_random_state()})
-        return training_state["step"]
 
     def log_dict(self, d: dict, step: int, mode: str = "train"):
         assert mode in {"train", "eval"}

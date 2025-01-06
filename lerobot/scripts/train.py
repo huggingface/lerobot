@@ -22,7 +22,6 @@ from dataclasses import asdict
 from pprint import pformat
 from threading import Lock
 
-import draccus
 import numpy as np
 import torch
 from torch.amp import GradScaler
@@ -34,7 +33,7 @@ from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
-from lerobot.common.optim.factory import make_optimizer_and_scheduler
+from lerobot.common.optim.factory import load_training_state, make_optimizer_and_scheduler
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import PolicyWithUpdate
 from lerobot.common.policies.utils import get_device_from_parameters
@@ -44,6 +43,7 @@ from lerobot.common.utils.utils import (
     init_logging,
     set_global_seed,
 )
+from lerobot.configs import parser
 from lerobot.configs.training import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
 
@@ -180,7 +180,7 @@ def log_eval_info(logger, info, step, cfg, dataset, is_online):
     logger.log_dict(info, step, mode="eval")
 
 
-@draccus.wrap()
+@parser.wrap(pathable_args=["policy"])
 def train(cfg: TrainPipelineConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
@@ -213,7 +213,6 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg.policy,
         device=device,
         ds_meta=offline_dataset.meta,
-        pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
     )
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
@@ -222,12 +221,12 @@ def train(cfg: TrainPipelineConfig):
     step = 0  # number of policy updates (forward + backward + optim)
 
     if cfg.resume:
-        step = logger.load_last_training_state(optimizer, lr_scheduler)
+        step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
 
-    log_output_dir(cfg.dir)
+    log_output_dir(cfg.output_dir)
     logging.info(f"{cfg.env.task=}")
     logging.info(f"{cfg.offline.steps=} ({format_big_number(cfg.offline.steps)})")
     logging.info(f"{cfg.online.steps=}")
@@ -249,7 +248,7 @@ def train(cfg: TrainPipelineConfig):
                     eval_env,
                     policy,
                     cfg.eval.n_episodes,
-                    videos_dir=cfg.dir / "eval" / f"videos_step_{step_identifier}",
+                    videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_identifier}",
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
                 )

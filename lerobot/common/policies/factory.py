@@ -51,7 +51,6 @@ def make_policy(
     ds_meta: LeRobotDatasetMetadata | None = None,
     env: gym.Env | None = None,
     env_cfg: EnvConfig | None = None,
-    pretrained_policy_name_or_path: str | None = None,
 ) -> Policy:
     """Make an instance of a policy class.
 
@@ -67,7 +66,8 @@ def make_policy(
     if not (ds_meta is None) ^ (env is None and env_cfg is None):
         raise ValueError("Either one of a dataset metadata or a sim env must be provided.")
 
-    # Note: Currently, if you try to run vqbet with mps backend, you'll get this error.
+    # NOTE: Currently, if you try to run vqbet with mps backend, you'll get this error.
+    # TODO(aliberts, rcadene): Implement a check_backend_compatibility in policies?
     # NotImplementedError: The operator 'aten::unique_dim' is not currently implemented for the MPS device. If
     # you want this op to be added in priority during the prototype phase of this feature, please comment on
     # https://github.com/pytorch/pytorch/issues/77764. As a temporary fix, you can set the environment
@@ -90,20 +90,14 @@ def make_policy(
 
     kwargs["config"] = cfg
 
-    if pretrained_policy_name_or_path is None:
-        # Make a fresh policy.
-        policy = policy_cls(**kwargs)
-    else:
-        kwargs["pretrained_model_name_or_path"] = pretrained_policy_name_or_path
-        policy = policy_cls.from_pretrained(**kwargs)
+    if cfg.pretrained_path:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
-        # TODO(alexander-soare): This hack makes use of huggingface_hub's tooling to load the policy with,
-        # pretrained weights which are then loaded into a fresh policy with the desired config. This PR in
-        # huggingface_hub should make it possible to avoid the hack:
-        # https://github.com/huggingface/huggingface_hub/pull/2274.
-        # policy = policy_cls(cfg)
-        # policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
+        kwargs["pretrained_model_name_or_path"] = cfg.pretrained_path
+        policy = policy_cls.from_pretrained(**kwargs)
+    else:
+        # Make a fresh policy.
+        policy = policy_cls(**kwargs)
 
     policy.to(device)
     assert isinstance(policy, nn.Module)

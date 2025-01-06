@@ -1,18 +1,16 @@
 import datetime as dt
-import logging
-from dataclasses import dataclass, field
+from dataclasses import Field, dataclass, field, fields
 from pathlib import Path
-from pprint import pformat
-
-import draccus
-from deepdiff import DeepDiff
 
 from lerobot.common import envs
 from lerobot.common.optim import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
+from lerobot.configs import parser
 from lerobot.configs.default import DatasetConfig, WandBConfig
 from lerobot.configs.eval import EvalConfig
 from lerobot.configs.policies import PretrainedConfig
+
+TRAIN_CONFIG_FILE = "train_config.json"
 
 
 @dataclass
@@ -66,12 +64,12 @@ class OnlineConfig:
 
 @dataclass
 class TrainPipelineConfig:
-    policy: PretrainedConfig
     dataset: DatasetConfig
     env: envs.EnvConfig = field(default_factory=envs.RealEnv)
+    policy: PretrainedConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
-    dir: Path | None = None
+    output_dir: Path | None = None
     job_name: str | None = None
     # Set `resume` to true to resume a previous run. In order for this to work, you will need to make sure
     # `dir` is the directory of an existing run with at least one checkpoint in it.
@@ -102,62 +100,55 @@ class TrainPipelineConfig:
     wandb: WandBConfig = field(default_factory=WandBConfig)
 
     def __post_init__(self):
+        self.checkpoint_path = None
+
+        # HACK: We parse again the cli args here to get the pretrained paths if there was some.
+        if self.resume:
+            # The entire train config is already loaded, we just need to get the checkpoint dir
+            config_path = parser.parse_arg("config_path")
+            policy_path = Path(config_path).parent
+            self.policy.pretrained_path = policy_path
+            self.checkpoint_path = policy_path.parent
+        else:
+            # Only load the policy config
+            policy_path = parser.get_path_arg("policy")
+            if policy_path:
+                cli_overrides = parser.get_cli_overrides("policy")
+                self.policy = PretrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+                self.policy.set_pretrained_path(policy_path)
+
         if not self.job_name:
             self.job_name = f"{self.env.type}_{self.policy.type}"
 
-        if not self.dir:
+        if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
+            raise FileExistsError(
+                f"Output directory {self.output_dir} alreay exists and resume is {self.resume}. "
+                f"Please change your output directory so that {self.output_dir} is not overwritten."
+            )
+        elif not self.output_dir:
             now = dt.datetime.now()
             train_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"
-            self.dir = Path("outputs/train") / train_dir
+            self.output_dir = Path("outputs/train") / train_dir
 
         if self.online.steps > 0 and isinstance(self.dataset.repo_id, list):
             raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
 
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
             raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
-        elif self.use_policy_training_preset:
+        elif self.use_policy_training_preset and not self.resume:
             self.optimizer = self.policy.get_optimizer_preset()
             self.scheduler = self.policy.get_scheduler_preset()
 
-        # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
-        # to check for any differences between the provided config and the checkpoint's config.
-        checkpoint_cfg_path = self.dir / "checkpoints/last/config.yaml"
-        if self.resume:
-            if not checkpoint_cfg_path.exists():
-                raise RuntimeError(
-                    f"You have set resume=True, but there is no model checkpoint in {self.dir}"
-                )
-
-            # Get the configuration file from the last checkpoint.
-            checkpoint_cfg = self.from_checkpoint(checkpoint_cfg_path)
-
-            # # Check for differences between the checkpoint configuration and provided configuration.
-            # # Hack to resolve the delta_timestamps ahead of time in order to properly diff.
-            # resolve_delta_timestamps(cfg)
-            diff = DeepDiff(checkpoint_cfg, self)
-            # Ignore the `resume` and parameters.
-            if "values_changed" in diff and "root['resume']" in diff["values_changed"]:
-                del diff["values_changed"]["root['resume']"]
-            # Log a warning about differences between the checkpoint configuration and the provided
-            # configuration.
-            if len(diff) > 0:
-                logging.warning(
-                    "At least one difference was detected between the checkpoint configuration and "
-                    f"the provided configuration: \n{pformat(diff)}\nNote that the checkpoint configuration "
-                    "takes precedence.",
-                )
-            # Use the checkpoint config instead of the provided config (but keep `resume` parameter).
-            self = checkpoint_cfg
-            self.resume = True
-
-        elif checkpoint_cfg_path.exists():
-            raise RuntimeError(
-                f"The configured output directory {checkpoint_cfg_path} already exists. If "
-                "you meant to resume training, please use `resume=true` in your command or yaml configuration."
-            )
-
     @classmethod
-    def from_checkpoint(cls, config_path: Path):
-        with open(config_path) as f:
-            cfg = draccus.load(cls, f)
-        return cfg
+    def __get_path_fields__(cls) -> list[Field]:
+        """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
+        path_fields = ["policy"]
+        return [f for f in fields(cls) if f.name in path_fields]
+
+    # @property
+    # def checkpoint_path(self) -> str | Path | None:
+    #     return self._checkpoint_path
+
+    # @checkpoint_path.setter
+    # def set_checkpoint_path(self, path: str | Path):
+    #     self._checkpoint_path = path
