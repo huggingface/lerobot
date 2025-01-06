@@ -115,7 +115,7 @@ class TrainPipelineConfig:
             if policy_path:
                 cli_overrides = parser.get_cli_overrides("policy")
                 self.policy = PretrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-                self.policy.set_pretrained_path(policy_path)
+                self.policy.pretrained_path = policy_path
 
         if not self.job_name:
             self.job_name = f"{self.env.type}_{self.policy.type}"
