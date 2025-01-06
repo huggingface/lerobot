@@ -185,7 +185,12 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     out_dir = tmpdir / "logger"
 
     ds_cfg = DatasetConfig(repo_id, local_files_only=True)
-    train_cfg = TrainPipelineConfig(policy_cfg, ds_cfg, dir=out_dir, device=DEVICE)
+    train_cfg = TrainPipelineConfig(
+        dataset=ds_cfg,
+        policy=policy_cfg,
+        output_dir=out_dir,
+        device=DEVICE,
+    )
     logger = Logger(train_cfg)
     logger.save_checkpoint(
         train_step=0,

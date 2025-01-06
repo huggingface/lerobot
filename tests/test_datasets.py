@@ -118,8 +118,8 @@ def test_factory(env_name, repo_id, policy_name):
         - for a commonly used set of data keys, the data dimensions are correct.
     """
     cfg = TrainPipelineConfig(
-        env=make_env_config(env_name),
         dataset=DatasetConfig(repo_id=repo_id),
+        env=make_env_config(env_name),
         policy=make_policy_config(policy_name),
         device=DEVICE,
     )

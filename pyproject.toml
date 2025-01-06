@@ -43,7 +43,7 @@ opencv-python = ">=4.9.0"
 diffusers = ">=0.27.2"
 torchvision = ">=0.17.1"
 h5py = ">=3.10.0"
-huggingface-hub = {extras = ["hf-transfer", "cli"], version = ">=0.25.2"}
+huggingface-hub = {extras = ["hf-transfer", "cli"], version = ">=0.27.1"}
 gymnasium = "==0.29.1" # TODO(rcadene, aliberts): Make gym 1.0.0 work
 cmake = ">=3.29.0.1"
 gym-dora = { git = "https://github.com/dora-rs/dora-lerobot.git", subdirectory = "gym_dora", optional = true }
@@ -71,7 +71,9 @@ pyrender = {git = "https://github.com/mmatl/pyrender.git", markers = "sys_platfo
 hello-robot-stretch-body = {version = ">=0.7.27", markers = "sys_platform == 'linux'", optional = true}
 pyserial = {version = ">=3.5", optional = true}
 jsonlines = ">=4.0.0"
-draccus = ">=0.9.3"
+# draccus = ">=0.9.4"  # replace when https://github.com/dlwh/draccus/pull/29 is in release
+draccus = {git = "https://github.com/dlwh/draccus.git", rev = "55e456a"}
+# draccus = { path = "../draccus/", develop = true}
 
 
 [tool.poetry.extras]

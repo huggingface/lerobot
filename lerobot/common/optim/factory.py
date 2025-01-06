@@ -14,10 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
+import torch
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
+from lerobot.common.logger import TRAINING_STATE
 from lerobot.common.policies import Policy
+from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
 from lerobot.configs.training import TrainPipelineConfig
 
 
@@ -28,3 +33,19 @@ def make_optimizer_and_scheduler(
     optimizer = cfg.optimizer.build(params)
     lr_scheduler = cfg.scheduler.build(optimizer, cfg.offline.steps)
     return optimizer, lr_scheduler
+
+
+def load_training_state(checkpoint_dir: Path, optimizer: Optimizer, scheduler: LRScheduler | None) -> int:
+    """
+    Given the checkpoint directory, load the optimizer state, scheduler state, and random state, and
+    return the global training step.
+    """
+    training_state = torch.load(checkpoint_dir / TRAINING_STATE)
+    optimizer.load_state_dict(training_state["optimizer"])
+    if scheduler is not None:
+        scheduler.load_state_dict(training_state["scheduler"])
+    elif "scheduler" in training_state:
+        raise ValueError("The checkpoint contains a scheduler state_dict, but no LRScheduler was provided.")
+    # Small HACK to get the expected keys: use `get_global_random_state`.
+    set_global_random_state({k: training_state[k] for k in get_global_random_state()})
+    return training_state["step"], optimizer, scheduler

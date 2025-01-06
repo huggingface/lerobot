@@ -68,25 +68,23 @@ def make_policy(
     ds_meta: LeRobotDatasetMetadata | None = None,
     env: gym.Env | None = None,
     env_cfg: EnvConfig | None = None,
-    pretrained_policy_path: str | None = None,
 ) -> Policy:
     """Make an instance of a policy class.
 
     Args:
-        cfg (PretrainedConfig): A PretrainedConfig instance (see scripts). When `pretrained_policy_path` is
+        cfg (MainConfig): A MainConfig instance (see scripts). If `pretrained_policy_name_or_path` is
             provided, only `cfg.policy.type` is used while everything else is ignored.
         ds_meta (LeRobotDatasetMetadata): Dataset metadata to take input/output shapes and statistics to use
             for (un)normalization of inputs/outputs in the policy.
-        pretrained_policy_path: Either the repo ID of a model hosted on the Hub or a path to a
-            directory containing weights saved using `Policy.save_pretrained`. Note that hyperparameters,
+        pretrained_policy_name_or_path: Either the repo ID of a model hosted on the Hub or a path to a
+            directory containing weights saved using `Policy.save_pretrained`. Note that providing this
+            argument overrides everything in `hydra_cfg.policy` apart from `hydra_cfg.policy.type`.
     """
-    has_dataset = ds_meta is not None
-    has_env = env is not None or env_cfg is not None
-    has_pretrained = pretrained_policy_path is not None
+    if not (ds_meta is None) ^ (env is None and env_cfg is None):
+        raise ValueError("Either one of a dataset metadata or a sim env must be provided.")
 
-    if not (has_dataset or has_env):
-        raise ValueError("You must provide either a dataset metadata, a simulation environment (or config).")
-    # Note: Currently, if you try to run vqbet with mps backend, you'll get this error.
+    # NOTE: Currently, if you try to run vqbet with mps backend, you'll get this error.
+    # TODO(aliberts, rcadene): Implement a check_backend_compatibility in policies?
     # NotImplementedError: The operator 'aten::unique_dim' is not currently implemented for the MPS device. If
     # you want this op to be added in priority during the prototype phase of this feature, please comment on
     # https://github.com/pytorch/pytorch/issues/77764. As a temporary fix, you can set the environment
@@ -98,29 +96,25 @@ def make_policy(
             "Please use `cpu` or `cuda` backend."
         )
 
-    policy_kwargs = {}
-    if has_dataset:
-        cfg.parse_features_from_dataset(ds_meta)
-        policy_kwargs["dataset_stats"] = ds_meta.stats
-    if has_env:
-        cfg.parse_features_from_env(env, env_cfg)
-    policy_kwargs["config"] = cfg
-
     policy_cls = get_policy_class(cfg.type)
-    if has_pretrained:
-        policy_kwargs["pretrained_model_name_or_path"] = pretrained_policy_path
-        policy = policy_cls.from_pretrained(**policy_kwargs)
+
+    kwargs = {}
+    if ds_meta is not None:
+        cfg.parse_features_from_dataset(ds_meta)
+        kwargs["dataset_stats"] = ds_meta.stats
+    else:
+        cfg.parse_features_from_env(env, env_cfg)
+
+    kwargs["config"] = cfg
+
+    if cfg.pretrained_path:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
-        # TODO(alexander-soare): This hack makes use of huggingface_hub's tooling to load the policy with,
-        # pretrained weights which are then loaded into a fresh policy with the desired config. This PR in
-        # huggingface_hub should make it possible to avoid the hack:
-        # https://github.com/huggingface/huggingface_hub/pull/2274.
-        # policy = policy_cls(cfg)
-        # policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_path).state_dict())
+        kwargs["pretrained_model_name_or_path"] = cfg.pretrained_path
+        policy = policy_cls.from_pretrained(**kwargs)
     else:
         # Make a fresh policy.
-        policy = policy_cls(**policy_kwargs)
+        policy = policy_cls(**kwargs)
 
     policy.to(device)
     assert isinstance(policy, nn.Module)

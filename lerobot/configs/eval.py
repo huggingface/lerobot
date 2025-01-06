@@ -1,13 +1,9 @@
 import datetime as dt
-import logging
-from dataclasses import asdict, dataclass, replace
+from dataclasses import Field, dataclass, fields
 from pathlib import Path
 
-import draccus
-import yaml
-
-from lerobot.common import envs
-from lerobot.common.policies.utils import get_pretrained_policy_path
+from lerobot.common import envs  # F401: noqa
+from lerobot.configs import parser
 from lerobot.configs.policies import PretrainedConfig
 
 
@@ -37,65 +33,41 @@ class EvalPipelineConfig:
     # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
     # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch
     # (useful for debugging). This argument is mutually exclusive with `--config`.
-    pretrained_policy_path: Path
     eval: EvalConfig
     env: envs.EnvConfig
     policy: PretrainedConfig | None = None
-    dir: Path | None = None
+    output_dir: Path | None = None
     job_name: str | None = None
-    # By default, use the value from policy checkpoint.
+    # TODO(rcadene, aliberts): By default, use device and use_amp values from policy checkpoint.
     device: str | None = None  # cuda | cpu | mps
-    # Use Automatic Mixed Precision (AMP), expected to increase inference speed at the expend of float precision.
-    # By default, use the value from policy checkpoint.
+    # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
+    # automatic gradient scaling is used.
     use_amp: bool | None = None
     seed: int | None = 1000
 
     def __post_init__(self):
-        # TODO(aliberts, rcadene): move this logic out of the config
-        from time import sleep
-
-        sleep(1)
-        self.resolve_policy_name_or_path()
-        self.load_policy_config_from_path()
-        self.load_device_use_amp_from_path()
+        # HACK: We parse again the cli args here to get the pretrained path if there was one.
+        policy_path = parser.get_path_arg("policy")
+        if policy_path:
+            cli_overrides = parser.get_cli_overrides("policy")
+            self.policy = PretrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            self.policy.set_pretrained_path(policy_path)
 
         if not self.job_name:
             self.job_name = f"{self.env.type}_{self.policy.type}"
 
-        if not self.dir:
+        if not self.output_dir:
             now = dt.datetime.now()
             eval_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"
-            self.dir = Path("outputs/eval") / eval_dir
-
-    def resolve_policy_name_or_path(self):
-        self.pretrained_policy_path = get_pretrained_policy_path(self.pretrained_policy_path)
-
-    def load_policy_config_from_path(self):
-        # Load policy config from checkpoint
-        cfg_path = self.pretrained_policy_path / "config.json"
-        with open(cfg_path) as f:
-            policy_cfg = draccus.load(PretrainedConfig, f)
-
-        # Override policy config from command line
-        if self.policy is not None:
-            policy_cfg = replace(policy_cfg, **asdict(self.policy))
-
-        self.policy = policy_cfg
-
-    def load_device_use_amp_from_path(self):
-        # Load training config from checkpoint
-        cfg_path = self.pretrained_policy_path / "config.yaml"
-        with open(cfg_path) as f:
-            train_cfg = yaml.safe_load(f)
+            self.output_dir = Path("outputs/eval") / eval_dir
 
         if self.device is None:
-            self.device = train_cfg["device"]
-            logging.warning(
-                f"No device value provided, so using the one from policy checkpoint ({self.device})."
-            )
+            raise ValueError("Set one of the following device: cuda, cpu or mps")
+        elif self.device == "cuda" and self.use_amp is None:
+            raise ValueError("Set 'use_amp' to True or False.")
 
-        if self.use_amp is None:
-            self.use_amp = train_cfg["use_amp"]
-            logging.warning(
-                f"No use_amp value provided, so using the one from policy checkpoint ({self.use_amp})."
-            )
+    @classmethod
+    def __get_path_fields__(cls) -> list[Field]:
+        """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
+        path_fields = ["policy"]
+        return [f for f in fields(cls) if f.name in path_fields]
