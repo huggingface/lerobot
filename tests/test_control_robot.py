@@ -39,6 +39,7 @@ from lerobot.common.robot_devices.control_configs import (
     TeleoperateControlConfig,
 )
 from lerobot.configs.default import DatasetConfig
+from lerobot.configs.policies import PretrainedConfig
 from lerobot.configs.training import TrainPipelineConfig
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
 from tests.test_robots import make_robot
@@ -227,7 +228,6 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         repo_id=eval_repo_id,
         root=eval_root,
         single_task=single_task,
-        pretrained_policy_path=pretrained_policy_path,
         fps=1,
         warmup_time_s=0.1,
         episode_time_s=1,
@@ -239,7 +239,13 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         display_cameras=False,
         play_sounds=False,
         num_image_writer_processes=num_image_writer_processes,
+        device=DEVICE,
+        use_amp=False,
     )
+
+    rec_eval_cfg.policy = PretrainedConfig.from_pretrained(pretrained_policy_path)
+    rec_eval_cfg.policy.pretrained_path = pretrained_policy_path
+
     dataset = record(robot, rec_eval_cfg)
     assert dataset.num_episodes == 2
     assert len(dataset) == 2

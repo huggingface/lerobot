@@ -232,13 +232,8 @@ def record(
             image_writer_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
         )
 
-    if cfg.policy is None:
-        policy = None
-    else:
-        # Load pretrained policy
-        policy = make_policy(
-            cfg.policy, cfg.device, ds_meta=dataset.meta, pretrained_policy_path=cfg.pretrained_policy_path
-        )
+    # Load pretrained policy
+    policy = None if cfg.policy is None else make_policy(cfg.policy, cfg.device, ds_meta=dataset.meta)
 
     if not robot.is_connected:
         robot.connect()

@@ -1,13 +1,11 @@
-import logging
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import draccus
 
-from lerobot.common.policies.utils import get_pretrained_policy_path
 from lerobot.common.robot_devices.robots.configs import RobotConfig
+from lerobot.configs import parser
 from lerobot.configs.policies import PretrainedConfig
-from lerobot.configs.training import TrainPipelineConfig
 
 
 @dataclass
@@ -41,14 +39,11 @@ class RecordControlConfig(ControlConfig):
     single_task: str
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | Path | None = None
-    # Path to load a pretrained policy
-    pretrained_policy_path: str | None = None
-    # Config to override the one from the pretrained policy
     policy: PretrainedConfig | None = None
-    # By default, use the value from policy checkpoint.
+    # TODO(rcadene, aliberts): By default, use device and use_amp values from policy checkpoint.
     device: str | None = None  # cuda | cpu | mps
-    # Use Automatic Mixed Precision (AMP), expected to increase inference speed at the expend of float precision.
-    # By default, use the value from policy checkpoint.
+    # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
+    # automatic gradient scaling is used.
     use_amp: bool | None = None
     # Limit the frames per second. By default, uses the policy fps.
     fps: int | None = None
@@ -88,53 +83,18 @@ class RecordControlConfig(ControlConfig):
     local_files_only: bool = False
 
     def __post_init__(self):
-        # TODO(aliberts, rcadene): move this logic out of the config
-        from time import sleep
+        # HACK: We parse again the cli args here to get the pretrained path if there was one.
+        policy_path = parser.get_path_arg("policy")
+        if policy_path:
+            cli_overrides = parser.get_cli_overrides("policy")
+            self.policy = PretrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            self.policy.pretrained_path = policy_path
 
-        if self.pretrained_policy_path is None:
-            return
-
-        sleep(1)
-        self.resolve_policy_name_or_path()
-        self.load_policy_config_from_path()
-        self.load_fps_device_use_amp_from_path()
-
-    def resolve_policy_name_or_path(self):
-        self.pretrained_policy_path = get_pretrained_policy_path(self.pretrained_policy_path)
-
-    def load_policy_config_from_path(self):
-        # Load policy config from checkpoint
-        cfg_path = self.pretrained_policy_path / "config.json"
-        with open(cfg_path) as f:
-            policy_cfg = draccus.load(PretrainedConfig, f)
-
-        # Override policy config from command line
         if self.policy is not None:
-            policy_cfg = replace(policy_cfg, **asdict(self.policy))
-
-        self.policy = policy_cfg
-
-    def load_fps_device_use_amp_from_path(self):
-        # Load training config from checkpoint
-        cfg_path = self.pretrained_policy_path / "config.yaml"
-        with open(cfg_path) as f:
-            train_cfg = draccus.load(TrainPipelineConfig, f)
-
-        if self.fps is None:
-            self.fps = train_cfg.env.fps
-            logging.warning(f"No fps value provided, so using the one from policy checkpoint ({self.fps}).")
-
-        if self.device is None:
-            self.device = train_cfg.device
-            logging.warning(
-                f"No device value provided, so using the one from policy checkpoint ({self.device})."
-            )
-
-        if self.use_amp is None:
-            self.use_amp = train_cfg.use_amp
-            logging.warning(
-                f"No use_amp value provided, so using the one from policy checkpoint ({self.use_amp})."
-            )
+            if self.device is None:
+                raise ValueError("Set one of the following device: cuda, cpu or mps")
+            elif self.device == "cuda" and self.use_amp is None:
+                raise ValueError("Set 'use_amp' to True or False.")
 
 
 @ControlConfig.register_subclass("replay")
