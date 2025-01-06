@@ -144,7 +144,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
 
     # Check that we can make the policy object.
     dataset = make_dataset(train_cfg)
-    policy = make_policy(train_cfg.policy, dataset_stats=dataset.meta.stats)
+    policy = make_policy(train_cfg.policy, dataset_meta=dataset.meta)
     # Check that the policy follows the required protocol.
     assert isinstance(
         policy, Policy

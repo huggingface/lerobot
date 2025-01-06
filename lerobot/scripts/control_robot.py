@@ -8,30 +8,41 @@ Examples of usage:
 
 - Recalibrate your robot:
 ```bash
-python lerobot/scripts/control_robot.py calibrate
+python lerobot/scripts/control_robot.py \
+    --robot.type=so100 \
+    --control.type=calibrate
 ```
 
 - Unlimited teleoperation at highest frequency (~200 Hz is expected), to exit with CTRL+C:
 ```bash
-python lerobot/scripts/control_robot.py teleoperate
+python lerobot/scripts/control_robot.py \
+    --robot.type=so100 \
+    --control.type=teleoperate
 
 # Remove the cameras from the robot definition. They are not used in 'teleoperate' anyway.
-python lerobot/scripts/control_robot.py teleoperate --robot-overrides '~cameras'
+python lerobot/scripts/control_robot.py \
+    --robot.type=so100 \
+    --robot.cameras='{}' \
+    --control.type=teleoperate
 ```
 
 - Unlimited teleoperation at a limited frequency of 30 Hz, to simulate data recording frequency:
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
-    --fps 30
+python lerobot/scripts/control_robot.py \
+    --robot.type=so100 \
+    --control.type=teleoperate \
+    --control.fps=30
 ```
 
 - Record one episode in order to test replay:
 ```bash
-python lerobot/scripts/control_robot.py record \
-    --fps 30 \
-    --repo-id $USER/koch_test \
-    --num-episodes 1 \
-    --run-compute-stats 0
+python lerobot/scripts/control_robot.py \
+    --robot.type=so100 \
+    --control.type=record \
+    --control.fps=30 \
+    --control.repo_id=$USER/koch_test \
+    --control.num_episodes=1 \
+    --control.run_compute_stats=False
 ```
 
 - Visualize dataset:
@@ -44,21 +55,25 @@ python lerobot/scripts/visualize_dataset.py \
 - Replay this test episode:
 ```bash
 python lerobot/scripts/control_robot.py replay \
-    --fps 30 \
-    --repo-id $USER/koch_test \
-    --episode 0
+    --robot.type=so100 \
+    --control.type=replay \
+    --control.fps 30 \
+    --control.repo-id $USER/koch_test \
+    --control.episode 0
 ```
 
 - Record a full dataset in order to train a policy, with 2 seconds of warmup,
 30 seconds of recording for each episode, and 10 seconds to reset the environment in between episodes:
 ```bash
 python lerobot/scripts/control_robot.py record \
-    --fps 30 \
-    --repo-id $USER/koch_pick_place_lego \
-    --num-episodes 50 \
-    --warmup-time-s 2 \
-    --episode-time-s 30 \
-    --reset-time-s 10
+    --robot.type=so100 \
+    --control.type=record \
+    --control.fps 30 \
+    --control.repo_id=$USER/koch_pick_place_lego \
+    --control.num_episodes=50 \
+    --control.warmup_time_s=2 \
+    --control.episode_time_s=30 \
+    --control.reset_time_s=10
 ```
 
 **NOTE**: You can use your keyboard to control data recording flow.
@@ -73,6 +88,7 @@ If the dataset you want to extend is not on the hub, you also need to add `--loc
 
 - Train on this dataset with the ACT policy:
 ```bash
+# TODO(rcadene): fix
 python lerobot/scripts/train.py \
     policy=act_koch_real \
     env=koch_real \
@@ -82,14 +98,16 @@ python lerobot/scripts/train.py \
 
 - Run the pretrained policy on the robot:
 ```bash
-python lerobot/scripts/control_robot.py record \
-    --fps 30 \
-    --repo-id $USER/eval_act_koch_real \
-    --num-episodes 10 \
-    --warmup-time-s 2 \
-    --episode-time-s 30 \
-    --reset-time-s 10
-    -p outputs/train/act_koch_real/checkpoints/080000/pretrained_model
+python lerobot/scripts/control_robot.py \
+    --robot.type=so100 \
+    --control.type=record \
+    --control.fps=30 \
+    --control.repo_id=$USER/eval_act_koch_real \
+    --control.num_episodes=10 \
+    --control.warmup_time_s=2 \
+    --control.episode_time_s=30 \
+    --control.reset_time_s=10
+    --control.pretrained_policy_path=outputs/train/act_koch_real/checkpoints/080000/pretrained_model
 ```
 """
 

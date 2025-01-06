@@ -65,6 +65,7 @@ def make_env(
     env = env_cls(
         [
             lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs)
+            # TODO(rcadene, aliberts): fix cfg.eval.batch_size not exist
             for _ in range(n_envs if n_envs is not None else cfg.eval.batch_size)
         ]
     )
