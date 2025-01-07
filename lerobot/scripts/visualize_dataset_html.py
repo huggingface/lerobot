@@ -252,7 +252,7 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
             while not isinstance(column_names, list):
                 column_names = list(column_names.values())[0]
         else:
-            column_names = [f"motor_{i+1}" for i in range(dim_state)]
+            column_names = [f"motor_{i}" for i in range(dim_state)]
         columns.append({"key": column_name, "value": column_names})
 
     selected_columns.insert(0, "timestamp")
