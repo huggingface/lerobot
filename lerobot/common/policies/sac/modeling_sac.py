@@ -188,9 +188,6 @@ class SACPolicy(
                     * ~batch["action_is_pad"][:, 0]
                 )  # shape: [batch_size, horizon]
             td_target = rewards + self.config.discount * min_q * ~batch["next.done"]
-            # td_target -= self.config.discount * self.temperature() * log_probs \
-            #         * ~batch["observation.state_is_pad"][:,0] * ~batch["action_is_pad"][:,0] # shape: [batch_size, horizon]
-            # print(f"Target Q-values: mean={td_target.mean():.3f}, max={td_target.max():.3f}")
 
         # 3- compute predicted qs
         q_preds = self.critic_forward(observations, actions, use_target=False)
@@ -221,9 +218,7 @@ class SACPolicy(
             q_preds = self.critic_forward(observations, actions, use_target=False)
         # q_preds_min = torch.min(q_preds, axis=0)
         min_q_preds = q_preds.min(dim=0)[0]
-        # print(f"Q-values stats: mean={min_q_preds.mean():.3f}, min={min_q_preds.min():.3f}, max={min_q_preds.max():.3f}")
-        # print(f"Log probs stats: mean={log_probs.mean():.3f}, min={log_probs.min():.3f}, max={log_probs.max():.3f}")
-        # breakpoint()
+
         actor_loss = (
             -(min_q_preds - temperature * log_probs).mean()
             * ~batch["observation.state_is_pad"][:, 0]  # shape: [batch_size, horizon+1]
@@ -347,8 +342,8 @@ class Critic(nn.Module):
         actions: torch.Tensor,
     ) -> torch.Tensor:
         # Move each tensor in observations to device
-        # observations = {k: v.to(self.device) for k, v in observations.items()}
-        # actions = actions.to(self.device)
+        observations = {k: v.to(self.device) for k, v in observations.items()}
+        actions = actions.to(self.device)
 
         obs_enc = observations if self.encoder is None else self.encoder(observations)
 
@@ -369,6 +364,7 @@ class Policy(nn.Module):
         fixed_std: Optional[torch.Tensor] = None,
         init_final: Optional[float] = None,
         use_tanh_squash: bool = False,
+        device: str = "cuda",
     ):
         super().__init__()
         self.encoder = encoder
@@ -526,9 +522,10 @@ class SACObservationEncoder(nn.Module):
 class LagrangeMultiplier(nn.Module):
     def __init__(self, init_value: float = 1.0, constraint_shape: Sequence[int] = (), device: str = "cuda"):
         super().__init__()
+        self.device = torch.device(device)
 
         # Parameterize log(alpha) directly to ensure positivity
-        log_alpha = torch.log(torch.tensor(init_value, dtype=torch.float32))
+        log_alpha = torch.log(torch.tensor(init_value, dtype=torch.float32, device=self.device))
         self.log_alpha = nn.Parameter(torch.full(constraint_shape, log_alpha))
 
     def forward(
@@ -544,14 +541,23 @@ class LagrangeMultiplier(nn.Module):
             return alpha
 
         # Convert inputs to tensors and move to device
-        lhs = torch.tensor(lhs) if not isinstance(lhs, torch.Tensor) else lhs
+        lhs = (
+            torch.tensor(lhs, device=self.device)
+            if not isinstance(lhs, torch.Tensor)
+            else lhs.to(self.device)
+        )
         if rhs is not None:
-            rhs = torch.tensor(rhs) if not isinstance(rhs, torch.Tensor) else rhs
+            rhs = (
+                torch.tensor(rhs, device=self.device)
+                if not isinstance(rhs, torch.Tensor)
+                else rhs.to(self.device)
+            )
         else:
-            rhs = torch.zeros_like(lhs)
+            rhs = torch.zeros_like(lhs, device=self.device)
 
         # Compute the difference and apply the multiplier
         diff = lhs - rhs
+
         assert diff.shape == alpha.shape, f"Shape mismatch: {diff.shape} vs {alpha.shape}"
 
         return alpha * diff
@@ -564,7 +570,7 @@ def orthogonal_init():
 def create_critic_ensemble(critics: list[nn.Module], num_critics: int, device: str = "cuda") -> nn.ModuleList:
     """Creates an ensemble of critic networks"""
     assert len(critics) == num_critics, f"Expected {num_critics} critics, got {len(critics)}"
-    return nn.ModuleList(critics)
+    return nn.ModuleList(critics).to(device)
 
 
 # borrowed from tdmpc

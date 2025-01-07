@@ -20,6 +20,30 @@ from dataclasses import dataclass, field
 
 @dataclass
 class SACConfig:
+    input_shapes: dict[str, list[int]] = field(
+        default_factory=lambda: {
+            "observation.image": [3, 84, 84],
+            "observation.state": [4],
+        }
+    )
+    output_shapes: dict[str, list[int]] = field(
+        default_factory=lambda: {
+            "action": [2],
+        }
+    )
+
+    # Normalization / Unnormalization
+    input_normalization_modes: dict[str, str] = field(
+        default_factory=lambda: {
+            "observation.image": "mean_std",
+            "observation.state": "min_max",
+            "observation.environment_state": "min_max",
+        }
+    )
+    output_normalization_modes: dict[str, str] = field(
+        default_factory=lambda: {"action": "min_max"},
+    )
+
     discount = 0.99
     temperature_init = 1.0
     num_critics = 2
@@ -29,6 +53,10 @@ class SACConfig:
     temperature_lr = 3e-4
     critic_target_update_weight = 0.005
     utd_ratio = 2
+    state_encoder_hidden_dim = 256
+    latent_dim = 256
+    target_entropy = None
+    backup_entropy = False
     critic_network_kwargs = {
         "hidden_dims": [256, 256],
         "activate_final": True,
@@ -39,26 +67,6 @@ class SACConfig:
     }
     policy_kwargs = {
         "use_tanh_squash": True,
-        # "std_parameterization": "uniform",
+        "log_std_min": -5,
+        "log_std_max": 2,
     }
-    input_normalization_modes: dict[str, str] = field(
-        default_factory=lambda: {
-            "observation.image": "mean_std",
-            "observation.state": "min_max",
-        }
-    )
-    input_shapes: dict[str, list[int]] = field(
-        default_factory=lambda: {
-            "observation.image": [3, 96, 96],
-            "observation.state": [2],
-        }
-    )
-    output_normalization_modes: dict[str, str] = field(default_factory=lambda: {"action": "min_max"})
-    output_shapes: dict[str, list[int]] = field(
-        default_factory=lambda: {
-            "action": [4],
-        }
-    )
-    latent_dim = 256
-    target_entropy: float | None = None
-    image_encoder_hidden_dim = 256

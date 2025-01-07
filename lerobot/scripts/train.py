@@ -95,12 +95,14 @@ def make_optimizer_and_scheduler(cfg, policy):
         lr_scheduler = None
 
     elif policy.name == "sac":
-        optimizer = torch.optim.Adam([
-			{'params': policy.actor.parameters(), 'lr': policy.config.actor_lr},
-            {'params': policy.critic_ensemble.parameters(), 'lr': policy.config.critic_lr},
-			{'params': policy.temperature.parameters(), 'lr': policy.config.temperature_lr},
-            ])
-        lr_scheduler = None		
+        optimizer = torch.optim.Adam(
+            [
+                {"params": policy.actor.parameters(), "lr": policy.config.actor_lr},
+                {"params": policy.critic_ensemble.parameters(), "lr": policy.config.critic_lr},
+                {"params": policy.temperature.parameters(), "lr": policy.config.temperature_lr},
+            ]
+        )
+        lr_scheduler = None
 
     elif cfg.policy.name == "vqbet":
         from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTOptimizer, VQBeTScheduler
@@ -320,6 +322,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     logging.info("make_dataset")
     offline_dataset = make_dataset(cfg)
+    # TODO (michel-aractingi): temporary fix to avoid datasets with task_index key that doesn't exist in online environment
+    # i.e., pusht
+    if "task_index" in offline_dataset.hf_dataset[0]:
+        offline_dataset.hf_dataset = offline_dataset.hf_dataset.remove_columns(["task_index"])
+
     if isinstance(offline_dataset, MultiLeRobotDataset):
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "

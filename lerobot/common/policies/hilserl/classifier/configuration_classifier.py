@@ -2,8 +2,6 @@ import json
 import os
 from dataclasses import asdict, dataclass
 
-import torch
-
 
 @dataclass
 class ClassifierConfig:
