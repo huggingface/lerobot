@@ -366,10 +366,6 @@ def visualize_dataset_html(
                 template_folder=template_dir,
             )
     else:
-        image_keys = dataset.meta.image_keys if isinstance(dataset, LeRobotDataset) else []
-        if len(image_keys) > 0:
-            raise NotImplementedError(f"Image keys ({image_keys=}) are currently not supported.")
-
         # Create a simlink from the dataset video folder containg mp4 files to the output directory
         # so that the http server can get access to the mp4 files.
         if isinstance(dataset, LeRobotDataset):
