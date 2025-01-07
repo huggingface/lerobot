@@ -2,7 +2,7 @@ import datetime as dt
 from dataclasses import Field, dataclass, fields
 from pathlib import Path
 
-from lerobot.common import envs  # F401: noqa
+from lerobot.common import envs, policies  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PretrainedConfig
 
@@ -45,6 +45,12 @@ class EvalPipelineConfig:
     seed: int | None = 1000
 
     def __post_init__(self):
+        if self.use_amp and self.device not in ["cuda", "cpu"]:
+            raise NotImplementedError(
+                "Automatic Mixed Precision (amp) is only available for 'cuda' and 'cpu' devices. "
+                f"Selected device: {self.device}"
+            )
+
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
         if policy_path:
