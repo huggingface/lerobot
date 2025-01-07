@@ -30,6 +30,7 @@ from torch import Tensor
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.sac.configuration_sac import SACConfig
+from lerobot.common.policies.utils import is_image_feature
 
 
 class SACPolicy(
@@ -110,7 +111,8 @@ class SACPolicy(
             "observation.state": deque(maxlen=1),
             "action": deque(maxlen=1),
         }
-        if "observation.image" in self.config.input_shapes:
+        image_features = [k for k in self.config.input_shapes if is_image_feature(k)]
+        if len(image_features) > 0:
             self._queues["observation.image"] = deque(maxlen=1)
         if "observation.environment_state" in self.config.input_shapes:
             self._queues["observation.environment_state"] = deque(maxlen=1)
@@ -458,10 +460,12 @@ class SACObservationEncoder(nn.Module):
         super().__init__()
         self.config = config
 
-        if "observation.image" in config.input_shapes:
+        image_features = [k for k in self.config.input_shapes if is_image_feature(k)]
+        if len(image_features) > 0:
+            image_feature = image_features[0]
             self.image_enc_layers = nn.Sequential(
                 nn.Conv2d(
-                    config.input_shapes["observation.image"][0], config.image_encoder_hidden_dim, 7, stride=2
+                    config.input_shapes[image_feature][0], config.image_encoder_hidden_dim, 7, stride=2
                 ),
                 nn.ReLU(),
                 nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 5, stride=2),
@@ -471,7 +475,7 @@ class SACObservationEncoder(nn.Module):
                 nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 3, stride=2),
                 nn.ReLU(),
             )
-            dummy_batch = torch.zeros(1, *config.input_shapes["observation.image"])
+            dummy_batch = torch.zeros(1, *config.input_shapes[image_feature])
             with torch.inference_mode():
                 out_shape = self.image_enc_layers(dummy_batch).shape[1:]
             self.image_enc_layers.extend(
@@ -503,7 +507,7 @@ class SACObservationEncoder(nn.Module):
         """
         feat = []
         # Concatenate all images along the channel dimension.
-        image_keys = [k for k in self.config.input_shapes if k.startswith("observation.image")]
+        image_keys = [k for k in self.config.input_shapes if is_image_feature(k)]
         for image_key in image_keys:
             feat.append(flatten_forward_unflatten(self.image_enc_layers, obs_dict[image_key]))
         if "observation.environment_state" in self.config.input_shapes:

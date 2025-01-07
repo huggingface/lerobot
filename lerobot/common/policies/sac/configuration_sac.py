@@ -61,3 +61,4 @@ class SACConfig:
     )
     latent_dim = 256
     target_entropy: float | None = None
+    image_encoder_hidden_dim = 256
