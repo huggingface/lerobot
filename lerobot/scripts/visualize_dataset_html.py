@@ -232,42 +232,30 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
     """Get a csv str containing timeseries data of an episode (e.g. state and action).
     This file will be loaded by Dygraph javascript to plot data in real time."""
     columns = []
-    has_state = "observation.state" in dataset.features
-    has_action = "action" in dataset.features
+
+    selected_columns = [col for col, ft in dataset.features.items() if ft["dtype"] == "float32"]
+    selected_columns.remove("timestamp")
 
     # init header of csv with state and action names
     header = ["timestamp"]
-    if has_state:
+
+    for column_name in selected_columns:
         dim_state = (
-            dataset.meta.shapes["observation.state"][0]
+            dataset.meta.shapes[column_name][0]
             if isinstance(dataset, LeRobotDataset)
-            else dataset.features["observation.state"].shape[0]
+            else dataset.features[column_name].shape[0]
         )
-        header += [f"state_{i}" for i in range(dim_state)]
-        column_names = dataset.features["observation.state"]["names"]
+        header += [f"{column_name}_{i}" for i in range(dim_state)]
+        column_names = dataset.features[column_name]["names"]
         while not isinstance(column_names, list):
             column_names = list(column_names.values())[0]
-        columns.append({"key": "state", "value": column_names})
-    if has_action:
-        dim_action = (
-            dataset.meta.shapes["action"][0]
-            if isinstance(dataset, LeRobotDataset)
-            else dataset.features.action.shape[0]
-        )
-        header += [f"action_{i}" for i in range(dim_action)]
-        column_names = dataset.features["action"]["names"]
-        while not isinstance(column_names, list):
-            column_names = list(column_names.values())[0]
-        columns.append({"key": "action", "value": column_names})
+        columns.append({"key": column_name, "value": column_names})
+
+    selected_columns.insert(0, "timestamp")
 
     if isinstance(dataset, LeRobotDataset):
         from_idx = dataset.episode_data_index["from"][episode_index]
         to_idx = dataset.episode_data_index["to"][episode_index]
-        selected_columns = ["timestamp"]
-        if has_state:
-            selected_columns += ["observation.state"]
-        if has_action:
-            selected_columns += ["action"]
         data = (
             dataset.hf_dataset.select(range(from_idx, to_idx))
             .select_columns(selected_columns)
@@ -278,11 +266,6 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
         ).tolist()
     else:
         repo_id = dataset.repo_id
-        selected_columns = ["timestamp"]
-        if "observation.state" in dataset.features:
-            selected_columns.append("observation.state")
-        if "action" in dataset.features:
-            selected_columns.append("action")
 
         url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/" + dataset.data_path.format(
             episode_chunk=int(episode_index) // dataset.chunks_size, episode_index=episode_index
