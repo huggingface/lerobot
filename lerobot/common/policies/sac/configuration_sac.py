@@ -56,7 +56,8 @@ class SACConfig:
     state_encoder_hidden_dim = 256
     latent_dim = 256
     target_entropy = None
-    backup_entropy = False
+    # backup_entropy = False
+    use_backup_entropy = True
     critic_network_kwargs = {
         "hidden_dims": [256, 256],
         "activate_final": True,

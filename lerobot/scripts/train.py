@@ -99,7 +99,8 @@ def make_optimizer_and_scheduler(cfg, policy):
             [
                 {"params": policy.actor.parameters(), "lr": policy.config.actor_lr},
                 {"params": policy.critic_ensemble.parameters(), "lr": policy.config.critic_lr},
-                {"params": policy.temperature.parameters(), "lr": policy.config.temperature_lr},
+                # We wrap policy log temperature in list because this is a torch tensor and not a nn.Module
+                {"params": [policy.log_alpha], "lr": policy.config.temperature_lr},
             ]
         )
         lr_scheduler = None
