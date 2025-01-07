@@ -66,6 +66,8 @@ class RandomSubsetApply(Transform):
         self.n_subset = n_subset
         self.random_order = random_order
 
+        self.selected_transforms = None
+
     def forward(self, *inputs: Any) -> Any:
         needs_unpacking = len(inputs) > 1
 
@@ -73,9 +75,9 @@ class RandomSubsetApply(Transform):
         if not self.random_order:
             selected_indices = selected_indices.sort().values
 
-        selected_transforms = [self.transforms[i] for i in selected_indices]
+        self.selected_transforms = [self.transforms[i] for i in selected_indices]
 
-        for transform in selected_transforms:
+        for transform in self.selected_transforms:
             outputs = transform(*inputs)
             inputs = outputs if needs_unpacking else (outputs,)
 

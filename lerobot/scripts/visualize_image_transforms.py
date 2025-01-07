@@ -47,7 +47,7 @@ OUTPUT_DIR = Path("outputs/image_transforms")
 to_pil = ToPILImage()
 
 
-def save_config_all_transforms(cfg: ImageTransformsConfig, original_frame, output_dir, n_examples):
+def save_all_transforms(cfg: ImageTransformsConfig, original_frame, output_dir, n_examples):
     output_dir_all = output_dir / "all"
     output_dir_all.mkdir(parents=True, exist_ok=True)
 
@@ -60,7 +60,7 @@ def save_config_all_transforms(cfg: ImageTransformsConfig, original_frame, outpu
     print(f"    {output_dir_all}")
 
 
-def save_config_single_transforms(cfg: ImageTransformsConfig, original_frame, output_dir, n_examples):
+def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, n_examples):
     if not cfg.enable:
         logging.warning(
             "No single transforms will be saved, because `image_transforms.enable=False`. To enable, set `enable` to True in `ImageTransformsConfig` or in the command line with `--image_transforms.enable=True`."
@@ -122,8 +122,8 @@ def visualize_image_transforms(cfg: DatasetConfig, output_dir: Path = OUTPUT_DIR
     print("\nOriginal frame saved to:")
     print(f"    {output_dir / 'original_frame.png'}.")
 
-    save_config_all_transforms(cfg.image_transforms, original_frame, output_dir, n_examples)
-    save_config_single_transforms(cfg.image_transforms, original_frame, output_dir, n_examples)
+    save_all_transforms(cfg.image_transforms, original_frame, output_dir, n_examples)
+    save_each_transform(cfg.image_transforms, original_frame, output_dir, n_examples)
 
 
 if __name__ == "__main__":
