@@ -32,7 +32,7 @@ test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-act-pusht-tutorial
 
 test-act-ete-train:
-	debugpython lerobot/scripts/train.py \
+	python lerobot/scripts/train.py \
 		--policy.type=act \
 		--policy.dim_model=64 \
 		--policy.n_action_steps=20 \
