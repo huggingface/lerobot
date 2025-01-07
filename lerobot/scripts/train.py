@@ -339,7 +339,7 @@ def train(cfg: TrainPipelineConfig):
 
     # Create an env dedicated to online episodes collection from policy rollout.
     online_env = make_env(cfg.env, n_envs=cfg.online.rollout_batch_size)
-    detla_timestamps = resolve_delta_timestamps(cfg.policy, offline_dataset.meta)
+    delta_timestamps = resolve_delta_timestamps(cfg.policy, offline_dataset.meta)
     online_buffer_path = logger.log_dir / "online_buffer"
     if cfg.resume and not online_buffer_path.exists():
         # If we are resuming a run, we default to the data shapes and buffer capacity from the saved online
@@ -367,7 +367,7 @@ def train(cfg: TrainPipelineConfig):
         },
         buffer_capacity=cfg.online.buffer_capacity,
         fps=online_env.unwrapped.metadata["render_fps"],
-        delta_timestamps=detla_timestamps,
+        delta_timestamps=delta_timestamps,
     )
 
     # If we are doing online rollouts asynchronously, deepcopy the policy to use for online rollouts (this
