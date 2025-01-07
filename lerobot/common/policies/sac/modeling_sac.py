@@ -525,7 +525,7 @@ class LagrangeMultiplier(nn.Module):
         self.device = torch.device(device)
 
         # Parameterize log(alpha) directly to ensure positivity
-        log_alpha = torch.log(torch.tensor(init_value, dtype=torch.float32, device=self.device))
+        log_alpha = torch.log(torch.tensor(init_value, dtype=torch.float32))
         self.log_alpha = nn.Parameter(torch.full(constraint_shape, log_alpha))
 
     def forward(
@@ -570,7 +570,7 @@ def orthogonal_init():
 def create_critic_ensemble(critics: list[nn.Module], num_critics: int, device: str = "cuda") -> nn.ModuleList:
     """Creates an ensemble of critic networks"""
     assert len(critics) == num_critics, f"Expected {num_critics} critics, got {len(critics)}"
-    return nn.ModuleList(critics).to(device)
+    return nn.ModuleList(critics)
 
 
 # borrowed from tdmpc
