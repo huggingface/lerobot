@@ -247,7 +247,7 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
         )
         header += [f"{column_name}_{i}" for i in range(dim_state)]
 
-        if "names" in dataset.features[column_name]:
+        if "names" in dataset.features[column_name] and dataset.features[column_name]["names"]:
             column_names = dataset.features[column_name]["names"]
             while not isinstance(column_names, list):
                 column_names = list(column_names.values())[0]
