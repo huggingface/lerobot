@@ -38,6 +38,7 @@ test-act-ete-train:
 		--policy.n_action_steps=20 \
 		--policy.chunk_size=20 \
 		--env.type=aloha \
+		--env.episode_length=5 \
 		--dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
 		--dataset.image_transforms.enable=true \
 		--dataset.episodes="[0]" \
@@ -62,6 +63,7 @@ test-act-ete-eval:
 	python lerobot/scripts/eval.py \
 		--policy.path=tests/outputs/act/checkpoints/000004/pretrained_model \
 		--env.type=aloha \
+		--env.episode_length=5 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--eval.episode_length=8 \
@@ -74,6 +76,7 @@ test-diffusion-ete-train:
 		--policy.diffusion_step_embed_dim=32 \
 		--policy.num_inference_steps=10 \
 		--env.type=pusht \
+		--env.episode_length=5 \
 		--dataset.repo_id=lerobot/pusht \
 		--dataset.image_transforms.enable=true \
 		--dataset.episodes="[0]" \
@@ -93,6 +96,7 @@ test-diffusion-ete-eval:
 	python lerobot/scripts/eval.py \
 		--policy.path=tests/outputs/diffusion/checkpoints/000002/pretrained_model \
 		--env.type=pusht \
+		--env.episode_length=5 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--eval.episode_length=8 \
@@ -103,7 +107,7 @@ test-tdmpc-ete-train:
 		--policy.type=tdmpc \
 		--env.type=xarm \
 		--env.task=XarmLift-v0 \
-		--env.episode_length=2 \
+		--env.episode_length=5 \
 		--dataset.repo_id=lerobot/xarm_lift_medium \
 		--dataset.image_transforms.enable=true \
 		--dataset.episodes='[0]' \
@@ -123,6 +127,7 @@ test-tdmpc-ete-eval:
 	python lerobot/scripts/eval.py \
 		--policy.path=tests/outputs/tdmpc/checkpoints/000002/pretrained_model \
 		--env.type=xarm \
+		--env.episode_length=5 \
 		--env.task=XarmLift-v0 \
 		--env.episode_length=2 \
 		--eval.n_episodes=1 \
