@@ -79,9 +79,7 @@ class TDMPCPolicy(
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = (
-            Normalize(config.input_features, dataset_stats) if config.normalize_inputs else nn.Identity()
-        )
+        self.normalize_inputs = Normalize(config.input_features, dataset_stats)
         self.normalize_targets = Normalize(config.output_features, dataset_stats)
         self.unnormalize_outputs = Unnormalize(config.output_features, dataset_stats)
 

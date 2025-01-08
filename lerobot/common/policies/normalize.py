@@ -37,6 +37,9 @@ def create_stats_buffers(
     stats_buffers = {}
 
     for ft in features:
+        if ft.normalization_mode is None:
+            continue
+
         assert isinstance(ft.normalization_mode, NormalizationMode)
 
         shape = tuple(ft.shape)
@@ -134,6 +137,9 @@ class Normalize(nn.Module):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = dict(batch)  # shallow copy avoids mutating the input batch
         for ft in self.features:
+            if ft.normalization_mode is None:
+                continue
+
             buffer = getattr(self, "buffer_" + ft.key.replace(".", "_"))
 
             if ft.normalization_mode is NormalizationMode.MEAN_STD:
