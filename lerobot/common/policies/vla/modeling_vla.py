@@ -137,10 +137,10 @@ class VLA(nn.Module):
                 self.vlm_backbone_name,
                 device_map="cuda",
                 torch_dtype=precision,
-                low_cpu_mem_usage=True,
+                low_cpu_mem_usage=True
                 # attn_implementation="flash_attention_2"
             )
-            self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)
+            self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name, use_fast=True)
         elif "paligemma" in self.vlm_backbone_name:
             from transformers import PaliGemmaForConditionalGeneration
 
