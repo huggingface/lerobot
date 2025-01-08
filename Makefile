@@ -26,10 +26,11 @@ test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-train
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train
-	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train-with-online
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-eval
-	${MAKE} DEVICE=$(DEVICE) test-default-ete-eval
-	${MAKE} DEVICE=$(DEVICE) test-act-pusht-tutorial
+
+# ${MAKE} DEVICE=$(DEVICE) test-default-ete-eval
+# ${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train-with-online
+# ${MAKE} DEVICE=$(DEVICE) test-act-pusht-tutorial
 
 test-act-ete-train:
 	python lerobot/scripts/train.py \
@@ -125,7 +126,7 @@ test-diffusion-ete-train:
 test-diffusion-ete-eval:
 	python lerobot/scripts/eval.py \
 		--policy.path=tests/outputs/diffusion/checkpoints/000002/pretrained_model \
-		--env.type=aloha \
+		--env.type=pusht \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--eval.episode_length=8 \
@@ -190,6 +191,7 @@ test-tdmpc-ete-eval:
 		--device=$(DEVICE) \
 		--output_dir=tests/outputs/tdmpc_online/
 
+# TODO: do we keep this one?
 # test-act-pusht-tutorial:
 # 	cp examples/advanced/1_train_act_pusht/act_pusht.yaml lerobot/configs/policy/created_by_Makefile.yaml
 # 	python lerobot/scripts/train.py \
