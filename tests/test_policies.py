@@ -400,7 +400,7 @@ def test_normalize(insert_temporal_dim):
                 "num_inference_steps": 10,
                 "down_dims": [128, 256, 512],
             },
-            {},
+            {"batch_size": 64},
             "",
         ),
         ("lerobot/aloha_sim_insertion_human", "aloha", "act", {"n_action_steps": 10}, {}, ""),

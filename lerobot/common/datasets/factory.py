@@ -103,4 +103,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             for stats_type, stats in IMAGENET_STATS.items():
                 dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 
+    # for key in dataset.meta.camera_keys:
+    #     dataset.meta.stats[key]["mean"] = torch.tensor([[[0.5]],[[0.5]],[[0.5]]], dtype=torch.float32)
+    #     dataset.meta.stats[key]["std"] = torch.tensor([[[0.5]],[[0.5]],[[0.5]]], dtype=torch.float32)
+
     return dataset
