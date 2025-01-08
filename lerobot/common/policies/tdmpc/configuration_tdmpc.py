@@ -121,7 +121,7 @@ class TDMPCConfig(PretrainedConfig):
             "ACTION": NormalizationMode.MIN_MAX,
         }
     )
-    normalize_inputs: bool = True
+    normalize_inputs: bool = False
 
     # Architecture / modeling.
     # Neural networks.

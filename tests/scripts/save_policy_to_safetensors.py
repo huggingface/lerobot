@@ -73,10 +73,10 @@ def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs, train_kwa
     optimizer.zero_grad()
     policy.reset()
 
-    # HACK: We reload a batch with no delta_timestamps as `select_action` won't expect a timestamps dimension
-    # We simulate having an environment using a dataset by setting delta_timestamps to None and dropping tensors
+    # HACK: We reload a batch with no delta_indices as `select_action` won't expect a timestamps dimension
+    # We simulate having an environment using a dataset by setting delta_indices to None and dropping tensors
     # indicating padding (those ending with "_is_pad")
-    dataset.delta_timestamps = None
+    dataset.delta_indices = None
     batch = next(iter(dataloader))
     obs = {}
     for k in batch:
