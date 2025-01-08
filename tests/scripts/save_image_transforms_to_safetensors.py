@@ -76,7 +76,7 @@ def main():
     dataset = LeRobotDataset(DATASET_REPO_ID, image_transforms=None)
     output_dir = Path(ARTIFACT_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
-    original_frame = dataset[0][dataset.camera_keys[0]]
+    original_frame = dataset[0][dataset.meta.camera_keys[0]]
 
     save_single_transforms(original_frame, output_dir)
     save_default_config_transform(original_frame, output_dir)

@@ -4,21 +4,9 @@ import math
 import time
 import traceback
 from copy import deepcopy
-from pathlib import Path
 
 import numpy as np
 import tqdm
-from dynamixel_sdk import (
-    COMM_SUCCESS,
-    DXL_HIBYTE,
-    DXL_HIWORD,
-    DXL_LOBYTE,
-    DXL_LOWORD,
-    GroupSyncRead,
-    GroupSyncWrite,
-    PacketHandler,
-    PortHandler,
-)
 
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
@@ -166,24 +154,29 @@ def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str
     return steps
 
 
-def convert_to_bytes(value, bytes):
+def convert_to_bytes(value, bytes, mock=False):
+    if mock:
+        return value
+
+    import dynamixel_sdk as dxl
+
     # Note: No need to convert back into unsigned int, since this byte preprocessing
     # already handles it for us.
     if bytes == 1:
         data = [
-            DXL_LOBYTE(DXL_LOWORD(value)),
+            dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
         ]
     elif bytes == 2:
         data = [
-            DXL_LOBYTE(DXL_LOWORD(value)),
-            DXL_HIBYTE(DXL_LOWORD(value)),
+            dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
+            dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
         ]
     elif bytes == 4:
         data = [
-            DXL_LOBYTE(DXL_LOWORD(value)),
-            DXL_HIBYTE(DXL_LOWORD(value)),
-            DXL_LOBYTE(DXL_HIWORD(value)),
-            DXL_HIBYTE(DXL_HIWORD(value)),
+            dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
+            dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
+            dxl.DXL_LOBYTE(dxl.DXL_HIWORD(value)),
+            dxl.DXL_HIBYTE(dxl.DXL_HIWORD(value)),
         ]
     else:
         raise NotImplementedError(
@@ -235,35 +228,6 @@ def assert_same_address(model_ctrl_table, motor_models, data_name):
         )
 
 
-def find_available_ports():
-    ports = []
-    for path in Path("/dev").glob("tty*"):
-        ports.append(str(path))
-    return ports
-
-
-def find_port():
-    print("Finding all available ports for the DynamixelMotorsBus.")
-    ports_before = find_available_ports()
-    print(ports_before)
-
-    print("Remove the usb cable from your DynamixelMotorsBus and press Enter when done.")
-    input()
-
-    time.sleep(0.5)
-    ports_after = find_available_ports()
-    ports_diff = list(set(ports_before) - set(ports_after))
-
-    if len(ports_diff) == 1:
-        port = ports_diff[0]
-        print(f"The port of this DynamixelMotorsBus is '{port}'")
-        print("Reconnect the usb cable.")
-    elif len(ports_diff) == 0:
-        raise OSError(f"Could not detect the port. No difference was found ({ports_diff}).")
-    else:
-        raise OSError(f"Could not detect the port. More than one port was found ({ports_diff}).")
-
-
 class TorqueMode(enum.Enum):
     ENABLED = 1
     DISABLED = 0
@@ -296,8 +260,8 @@ class DynamixelMotorsBus:
     A DynamixelMotorsBus instance requires a port (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`)).
     To find the port, you can run our utility script:
     ```bash
-    python lerobot/common/robot_devices/motors/dynamixel.py
-    >>> Finding all available ports for the DynamixelMotorsBus.
+    python lerobot/scripts/find_motors_bus_port.py
+    >>> Finding all available ports for the MotorBus.
     >>> ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
     >>> Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
     >>> The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0031751.
@@ -333,9 +297,11 @@ class DynamixelMotorsBus:
         motors: dict[str, tuple[int, str]],
         extra_model_control_table: dict[str, list[tuple]] | None = None,
         extra_model_resolution: dict[str, int] | None = None,
+        mock=False,
     ):
         self.port = port
         self.motors = motors
+        self.mock = mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
         if extra_model_control_table:
@@ -359,8 +325,13 @@ class DynamixelMotorsBus:
                 f"DynamixelMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice."
             )
 
-        self.port_handler = PortHandler(self.port)
-        self.packet_handler = PacketHandler(PROTOCOL_VERSION)
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
+        self.port_handler = dxl.PortHandler(self.port)
+        self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)
 
         try:
             if not self.port_handler.openPort():
@@ -368,7 +339,7 @@ class DynamixelMotorsBus:
         except Exception:
             traceback.print_exc()
             print(
-                "\nTry running `python lerobot/common/robot_devices/motors/dynamixel.py` to make sure you are using the correct port.\n"
+                "\nTry running `python lerobot/scripts/find_motors_bus_port.py` to make sure you are using the correct port.\n"
             )
             raise
 
@@ -377,25 +348,18 @@ class DynamixelMotorsBus:
 
         self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
 
-        # Set expected baudrate for the bus
-        self.set_bus_baudrate(BAUDRATE)
-
-        if not self.are_motors_configured():
-            input(
-                "\n/!\\ A configuration issue has been detected with your motors: \n"
-                "If it's the first time that you use these motors, press enter to configure your motors... but before "
-                "verify that all the cables are connected the proper way. If you find an issue, before making a modification, "
-                "kill the python process, unplug the power cord to not damage the motors, rewire correctly, then plug the power "
-                "again and relaunch the script.\n"
-            )
-            print()
-            self.configure_motors()
-
     def reconnect(self):
-        self.port_handler = PortHandler(self.port)
-        self.packet_handler = PacketHandler(PROTOCOL_VERSION)
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
+        self.port_handler = dxl.PortHandler(self.port)
+        self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)
+
         if not self.port_handler.openPort():
             raise OSError(f"Failed to open port '{self.port}'.")
+
         self.is_connected = True
 
     def are_motors_configured(self):
@@ -407,120 +371,14 @@ class DynamixelMotorsBus:
             print(e)
             return False
 
-    def configure_motors(self):
-        # TODO(rcadene): This script assumes motors follow the X_SERIES baudrates
-        # TODO(rcadene): Refactor this function with intermediate high-level functions
-
-        print("Scanning all baudrates and motor indices")
-        all_baudrates = set(X_SERIES_BAUDRATE_TABLE.values())
-        ids_per_baudrate = {}
-        for baudrate in all_baudrates:
-            self.set_bus_baudrate(baudrate)
-            present_ids = self.find_motor_indices()
-            if len(present_ids) > 0:
-                ids_per_baudrate[baudrate] = present_ids
-        print(f"Motor indices detected: {ids_per_baudrate}")
-        print()
-
-        possible_baudrates = list(ids_per_baudrate.keys())
-        possible_ids = list({idx for sublist in ids_per_baudrate.values() for idx in sublist})
-        untaken_ids = list(set(range(MAX_ID_RANGE)) - set(possible_ids) - set(self.motor_indices))
-
-        # Connect successively one motor to the chain and write a unique random index for each
-        for i in range(len(self.motors)):
-            self.disconnect()
-            input(
-                "1. Unplug the power cord\n"
-                "2. Plug/unplug minimal number of cables to only have the first "
-                f"{i+1} motor(s) ({self.motor_names[:i+1]}) connected.\n"
-                "3. Re-plug the power cord\n"
-                "Press Enter to continue..."
-            )
-            print()
-            self.reconnect()
-
-            if i > 0:
-                try:
-                    self._read_with_motor_ids(self.motor_models, untaken_ids[:i], "ID")
-                except ConnectionError:
-                    print(f"Failed to read from {untaken_ids[:i+1]}. Make sure the power cord is plugged in.")
-                    input("Press Enter to continue...")
-                    print()
-                    self.reconnect()
-
-            print("Scanning possible baudrates and motor indices")
-            motor_found = False
-            for baudrate in possible_baudrates:
-                self.set_bus_baudrate(baudrate)
-                present_ids = self.find_motor_indices(possible_ids)
-                if len(present_ids) == 1:
-                    present_idx = present_ids[0]
-                    print(f"Detected motor with index {present_idx}")
-
-                    if baudrate != BAUDRATE:
-                        print(f"Setting its baudrate to {BAUDRATE}")
-                        baudrate_idx = list(X_SERIES_BAUDRATE_TABLE.values()).index(BAUDRATE)
-
-                        # The write can fail, so we allow retries
-                        for _ in range(NUM_WRITE_RETRY):
-                            self._write_with_motor_ids(
-                                self.motor_models, present_idx, "Baud_Rate", baudrate_idx
-                            )
-                            time.sleep(0.5)
-                            self.set_bus_baudrate(BAUDRATE)
-                            try:
-                                present_baudrate_idx = self._read_with_motor_ids(
-                                    self.motor_models, present_idx, "Baud_Rate"
-                                )
-                            except ConnectionError:
-                                print("Failed to write baudrate. Retrying.")
-                                self.set_bus_baudrate(baudrate)
-                                continue
-                            break
-                        else:
-                            raise
-
-                        if present_baudrate_idx != baudrate_idx:
-                            raise OSError("Failed to write baudrate.")
-
-                    print(f"Setting its index to a temporary untaken index ({untaken_ids[i]})")
-                    self._write_with_motor_ids(self.motor_models, present_idx, "ID", untaken_ids[i])
-
-                    present_idx = self._read_with_motor_ids(self.motor_models, untaken_ids[i], "ID")
-                    if present_idx != untaken_ids[i]:
-                        raise OSError("Failed to write index.")
-
-                    motor_found = True
-                    break
-                elif len(present_ids) > 1:
-                    raise OSError(f"More than one motor detected ({present_ids}), but only one was expected.")
-
-            if not motor_found:
-                raise OSError(
-                    "No motor found, but one new motor expected. Verify power cord is plugged in and retry."
-                )
-            print()
-
-        print(f"Setting expected motor indices: {self.motor_indices}")
-        self.set_bus_baudrate(BAUDRATE)
-        self._write_with_motor_ids(
-            self.motor_models, untaken_ids[: len(self.motors)], "ID", self.motor_indices
-        )
-        print()
-
-        if (self.read("ID") != self.motor_indices).any():
-            raise OSError("Failed to write motors indices.")
-
-        print("Configuration is done!")
-
-    def find_motor_indices(self, possible_ids=None):
+    def find_motor_indices(self, possible_ids=None, num_retry=2):
         if possible_ids is None:
             possible_ids = range(MAX_ID_RANGE)
 
         indices = []
         for idx in tqdm.tqdm(possible_ids):
             try:
-                present_idx = self._read_with_motor_ids(self.motor_models, [idx], "ID")[0]
+                present_idx = self.read_with_motor_ids(self.motor_models, [idx], "ID", num_retry=num_retry)[0]
             except ConnectionError:
                 continue
 
@@ -780,7 +638,12 @@ class DynamixelMotorsBus:
         values = np.round(values).astype(np.int32)
         return values
 
-    def _read_with_motor_ids(self, motor_models, motor_ids, data_name):
+    def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
         return_list = True
         if not isinstance(motor_ids, list):
             return_list = False
@@ -788,12 +651,16 @@ class DynamixelMotorsBus:
 
         assert_same_address(self.model_ctrl_table, self.motor_models, data_name)
         addr, bytes = self.model_ctrl_table[motor_models[0]][data_name]
-        group = GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
+        group = dxl.GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
         for idx in motor_ids:
             group.addParam(idx)
 
-        comm = group.txRxPacket()
-        if comm != COMM_SUCCESS:
+        for _ in range(num_retry):
+            comm = group.txRxPacket()
+            if comm == dxl.COMM_SUCCESS:
+                break
+
+        if comm != dxl.COMM_SUCCESS:
             raise ConnectionError(
                 f"Read failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
@@ -817,6 +684,11 @@ class DynamixelMotorsBus:
 
         start_time = time.perf_counter()
 
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
         if motor_names is None:
             motor_names = self.motor_names
 
@@ -836,16 +708,18 @@ class DynamixelMotorsBus:
 
         if data_name not in self.group_readers:
             # create new group reader
-            self.group_readers[group_key] = GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
+            self.group_readers[group_key] = dxl.GroupSyncRead(
+                self.port_handler, self.packet_handler, addr, bytes
+            )
             for idx in motor_ids:
                 self.group_readers[group_key].addParam(idx)
 
         for _ in range(NUM_READ_RETRY):
             comm = self.group_readers[group_key].txRxPacket()
-            if comm == COMM_SUCCESS:
+            if comm == dxl.COMM_SUCCESS:
                 break
 
-        if comm != COMM_SUCCESS:
+        if comm != dxl.COMM_SUCCESS:
             raise ConnectionError(
                 f"Read failed due to communication error on port {self.port} for group_key {group_key}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
@@ -875,7 +749,12 @@ class DynamixelMotorsBus:
 
         return values
 
-    def _write_with_motor_ids(self, motor_models, motor_ids, data_name, values):
+    def write_with_motor_ids(self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY):
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
         if not isinstance(motor_ids, list):
             motor_ids = [motor_ids]
         if not isinstance(values, list):
@@ -883,13 +762,17 @@ class DynamixelMotorsBus:
 
         assert_same_address(self.model_ctrl_table, motor_models, data_name)
         addr, bytes = self.model_ctrl_table[motor_models[0]][data_name]
-        group = GroupSyncWrite(self.port_handler, self.packet_handler, addr, bytes)
+        group = dxl.GroupSyncWrite(self.port_handler, self.packet_handler, addr, bytes)
         for idx, value in zip(motor_ids, values, strict=True):
-            data = convert_to_bytes(value, bytes)
+            data = convert_to_bytes(value, bytes, self.mock)
             group.addParam(idx, data)
 
-        comm = group.txPacket()
-        if comm != COMM_SUCCESS:
+        for _ in range(num_retry):
+            comm = group.txPacket()
+            if comm == dxl.COMM_SUCCESS:
+                break
+
+        if comm != dxl.COMM_SUCCESS:
             raise ConnectionError(
                 f"Write failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
@@ -902,6 +785,11 @@ class DynamixelMotorsBus:
             )
 
         start_time = time.perf_counter()
+
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
 
         if motor_names is None:
             motor_names = self.motor_names
@@ -932,19 +820,19 @@ class DynamixelMotorsBus:
 
         init_group = data_name not in self.group_readers
         if init_group:
-            self.group_writers[group_key] = GroupSyncWrite(
+            self.group_writers[group_key] = dxl.GroupSyncWrite(
                 self.port_handler, self.packet_handler, addr, bytes
             )
 
         for idx, value in zip(motor_ids, values, strict=True):
-            data = convert_to_bytes(value, bytes)
+            data = convert_to_bytes(value, bytes, self.mock)
             if init_group:
                 self.group_writers[group_key].addParam(idx, data)
             else:
                 self.group_writers[group_key].changeParam(idx, data)
 
         comm = self.group_writers[group_key].txPacket()
-        if comm != COMM_SUCCESS:
+        if comm != dxl.COMM_SUCCESS:
             raise ConnectionError(
                 f"Write failed due to communication error on port {self.port} for group_key {group_key}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
@@ -977,8 +865,3 @@ class DynamixelMotorsBus:
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
-
-
-if __name__ == "__main__":
-    # Helper to find the usb port associated to all your DynamixelMotorsBus.
-    find_port()

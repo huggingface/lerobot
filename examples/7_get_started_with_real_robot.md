@@ -11,7 +11,7 @@ This tutorial will guide you through the process of setting up and training a ne
 
 By following these steps, you'll be able to replicate tasks like picking up a Lego block and placing it in a bin with a high success rate, as demonstrated in [this video](https://x.com/RemiCadene/status/1814680760592572934).
 
-This tutorial is specifically made for the affordable [Koch v1.1](https://github.com/jess-moss/koch-v1-1) robot, but it contains additional information to be easily adapted to various types of robots like [Aloha bimanual robot](aloha-2.github.io) by changing some configurations. The Koch v1.1 consists of a leader arm and a follower arm, each with 6 motors. It can work with one or several cameras to record the scene, which serve as visual sensors for the robot.
+This tutorial is specifically made for the affordable [Koch v1.1](https://github.com/jess-moss/koch-v1-1) robot, but it contains additional information to be easily adapted to various types of robots like [Aloha bimanual robot](https://aloha-2.github.io) by changing some configurations. The Koch v1.1 consists of a leader arm and a follower arm, each with 6 motors. It can work with one or several cameras to record the scene, which serve as visual sensors for the robot.
 
 During the data collection phase, you will control the follower arm by moving the leader arm. This process is known as "teleoperation." This technique is used to collect robot trajectories. Afterward, you'll train a neural network to imitate these trajectories and deploy the network to enable your robot to operate autonomously.
 
@@ -29,7 +29,7 @@ For a visual walkthrough of the assembly process, you can refer to [this video t
 
 ## 2. Configure motors, calibrate arms, teleoperate your Koch v1.1
 
-First, install the additional dependencies required for robots built with dynamixel motors like Koch v1.1 by running one of the following commands.
+First, install the additional dependencies required for robots built with dynamixel motors like Koch v1.1 by running one of the following commands (make sure gcc is installed).
 
 Using `pip`:
 ```bash
@@ -45,7 +45,7 @@ poetry install --sync --extras "dynamixel"
 ```bash
 conda install -c conda-forge ffmpeg
 pip uninstall opencv-python
-conda install -c conda-forge opencv>=4.10.0
+conda install -c conda-forge "opencv>=4.10.0"
 ```
 
 You are now ready to plug the 5V power supply to the motor bus of the leader arm (the smaller one) since all its motors only require 5V.
@@ -78,12 +78,12 @@ To begin, create two instances of the  [`DynamixelMotorsBus`](../lerobot/common/
 
 To find the correct ports for each arm, run the utility script twice:
 ```bash
-python lerobot/common/robot_devices/motors/dynamixel.py
+python lerobot/scripts/find_motors_bus_port.py
 ```
 
 Example output when identifying the leader arm's port (e.g., `/dev/tty.usbmodem575E0031751` on Mac, or possibly `/dev/ttyACM0` on Linux):
 ```
-Finding all available ports for the DynamixelMotorsBus.
+Finding all available ports for the MotorBus.
 ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
 Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
 
@@ -95,7 +95,7 @@ Reconnect the usb cable.
 
 Example output when identifying the follower arm's port (e.g., `/dev/tty.usbmodem575E0032081`, or possibly `/dev/ttyACM1` on Linux):
 ```
-Finding all available ports for the DynamixelMotorsBus.
+Finding all available ports for the MotorBus.
 ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
 Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
 
@@ -778,7 +778,6 @@ Now run this to record 2 episodes:
 python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/koch.yaml \
   --fps 30 \
-  --root data \
   --repo-id ${HF_USER}/koch_test \
   --tags tutorial \
   --warmup-time-s 5 \
@@ -787,7 +786,7 @@ python lerobot/scripts/control_robot.py record \
   --num-episodes 2
 ```
 
-This will write your dataset locally to `{root}/{repo-id}` (e.g. `data/cadene/koch_test`) and push it on the hub at `https://huggingface.co/datasets/{HF_USER}/{repo-id}`. Your dataset will be automatically tagged with `LeRobot` for the community to find it easily, and you can also add custom tags (in this case `tutorial` for example).
+This will write your dataset locally to `~/.cache/huggingface/lerobot/{repo-id}` (e.g. `data/cadene/koch_test`) and push it on the hub at `https://huggingface.co/datasets/{HF_USER}/{repo-id}`. Your dataset will be automatically tagged with `LeRobot` for the community to find it easily, and you can also add custom tags (in this case `tutorial` for example).
 
 You can look for other LeRobot datasets on the hub by searching for `LeRobot` tags: https://huggingface.co/datasets?other=LeRobot
 
@@ -840,7 +839,6 @@ In the coming months, we plan to release a foundational model for robotics. We a
 You can visualize your dataset by running:
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
-  --root data \
   --repo-id ${HF_USER}/koch_test
 ```
 
@@ -858,7 +856,6 @@ To replay the first episode of the dataset you just recorded, run the following 
 python lerobot/scripts/control_robot.py replay \
   --robot-path lerobot/configs/robot/koch.yaml \
   --fps 30 \
-  --root data \
   --repo-id ${HF_USER}/koch_test \
   --episode 0
 ```
@@ -871,7 +868,7 @@ Your robot should replicate movements similar to those you recorded. For example
 
 To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
-DATA_DIR=data python lerobot/scripts/train.py \
+python lerobot/scripts/train.py \
   dataset_repo_id=${HF_USER}/koch_test \
   policy=act_koch_real \
   env=koch_real \
@@ -918,7 +915,6 @@ env:
 It should match your dataset (e.g. `fps: 30`) and your robot (e.g. `state_dim: 6` and `action_dim: 6`). We are still working on simplifying this in future versions of `lerobot`.
 4. We provided `device=cuda` since we are training on a Nvidia GPU, but you could use `device=mps` to train on Apple silicon.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
-6. We added `DATA_DIR=data` to access your dataset stored in your local `data` directory. If you dont provide `DATA_DIR`, your dataset will be downloaded from Hugging Face hub to your cache folder `$HOME/.cache/hugginface`. In future versions of `lerobot`, both directories will be in sync.
 
 For more information on the `train` script see the previous tutorial: [`examples/4_train_policy_with_script.md`](../examples/4_train_policy_with_script.md)
 
@@ -991,7 +987,6 @@ To this end, you can use the `record` function from [`lerobot/scripts/control_ro
 python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/koch.yaml \
   --fps 30 \
-  --root data \
   --repo-id ${HF_USER}/eval_koch_test \
   --tags tutorial eval \
   --warmup-time-s 5 \
@@ -1010,7 +1005,6 @@ As you can see, it's almost the same command as previously used to record your t
 You can then visualize your evaluation dataset by running the same command as before but with the new inference dataset as argument:
 ```bash
 python lerobot/scripts/visualize_dataset.py \
-  --root data \
   --repo-id ${HF_USER}/eval_koch_test
 ```
 

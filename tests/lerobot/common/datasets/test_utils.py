@@ -14,23 +14,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
+from huggingface_hub import DatasetCard
 
-import pytest
-
-from lerobot.scripts.visualize_dataset_html import visualize_dataset_html
+from lerobot.common.datasets.utils import create_lerobot_dataset_card
 
 
-@pytest.mark.parametrize(
-    "repo_id",
-    ["lerobot/pusht"],
-)
-def test_visualize_dataset_html(tmpdir, repo_id):
-    tmpdir = Path(tmpdir)
-    visualize_dataset_html(
-        repo_id,
-        episodes=[0],
-        output_dir=tmpdir,
-        serve=False,
-    )
-    assert (tmpdir / "static" / "episode_0.csv").exists()
+def test_default_parameters():
+    card = create_lerobot_dataset_card()
+    assert isinstance(card, DatasetCard)
+    assert card.data.tags == ["LeRobot"]
+    assert card.data.task_categories == ["robotics"]
+    assert card.data.configs == [
+        {
+            "config_name": "default",
+            "data_files": "data/*/*.parquet",
+        }
+    ]
+
+
+def test_with_tags():
+    tags = ["tag1", "tag2"]
+    card = create_lerobot_dataset_card(tags=tags)
+    assert card.data.tags == ["LeRobot", "tag1", "tag2"]
