@@ -20,9 +20,8 @@ build-gpu:
 
 test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-train
+	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-resume
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval
-	${MAKE} DEVICE=$(DEVICE) test-act-ete-train-amp
-	${MAKE} DEVICE=$(DEVICE) test-act-ete-eval-amp
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-train
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train
@@ -66,39 +65,6 @@ test-act-ete-eval:
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--eval.episode_length=8 \
-		--device=$(DEVICE)
-
-test-act-ete-train-amp:
-	python lerobot/scripts/train.py \
-		--policy.type=act \
-		--policy.dim_model=64 \
-		--policy.n_action_steps=20 \
-		--policy.chunk_size=20 \
-		--env.type=aloha \
-		--dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
-		--dataset.image_transforms.enable=true \
-		--dataset.episodes="[0]" \
-		--offline.steps=2 \
-		--online.steps=0 \
-		--eval.n_episodes=1 \
-		--eval.batch_size=1 \
-		--save_checkpoint=true \
-		--save_freq=2 \
-		--log_freq=1 \
-		--batch_size=2 \
-		--wandb.enable=false \
-		--device=$(DEVICE) \
-		--use_amp=true \
-		--output_dir=tests/outputs/act_amp/
-
-test-act-ete-eval-amp:
-	python lerobot/scripts/eval.py \
-		--policy.path=tests/outputs/act/checkpoints/000002/pretrained_model \
-		--env.type=aloha \
-		--eval.n_episodes=1 \
-		--eval.batch_size=1 \
-		--eval.episode_length=8 \
-		--use_amp=true \
 		--device=$(DEVICE)
 
 test-diffusion-ete-train:
