@@ -98,19 +98,19 @@
         </div>
 
         <!-- Videos -->
-        <div  class="max-w-64 relative text-sm mb-4 select-none"
+        <div  class="max-w-32 relative text-sm mb-4 select-none"
             @click.outside="isVideosDropdownOpen = false">
             <div
-            @click="isVideosDropdownOpen = !isVideosDropdownOpen"
-            class="w-full p-2 border border-slate-500 rounded flex justify-between items-center cursor-pointer"
+                @click="isVideosDropdownOpen = !isVideosDropdownOpen"
+                class="p-2 border border-slate-500 rounded flex justify-between items-center cursor-pointer"
             >
             <span class="truncate">filter videos</span>
             <div class="transition-transform" :class="{ 'rotate-180': isVideosDropdownOpen }">🔽</div>
             </div>
     
             <div x-show="isVideosDropdownOpen" 
-                class="absolute mt-1 w-full border border-slate-500 rounded shadow-lg z-10">
-            <div class="max-h-48 overflow-y-auto">
+                class="absolute mt-1 border border-slate-500 rounded shadow-lg z-10">
+            <div>
                 <template x-for="option in videosKeys" :key="option">
                 <div
                     @click="videosKeysSelected = videosKeysSelected.includes(option) ? videosKeysSelected.filter(v => v !== option) : [...videosKeysSelected, option]"
