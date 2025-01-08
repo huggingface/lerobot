@@ -111,7 +111,8 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     """
 
     train_cfg = TrainPipelineConfig(
-        dataset=DatasetConfig(repo_id=ds_repo_id),
+        # TODO(rcadene, aliberts): remove dataset download
+        dataset=DatasetConfig(repo_id=ds_repo_id, episodes=[0]),
         policy=make_policy_config(policy_name, **policy_kwargs),
         env=make_env_config(env_name, **env_kwargs),
         device=DEVICE,
@@ -210,7 +211,8 @@ def test_act_backbone_lr():
     """
 
     cfg = TrainPipelineConfig(
-        dataset=DatasetConfig(repo_id="lerobot/aloha_sim_insertion_scripted"),
+        # TODO(rcadene, aliberts): remove dataset download
+        dataset=DatasetConfig(repo_id="lerobot/aloha_sim_insertion_scripted", episodes=[0]),
         policy=make_policy_config("act", optimizer_lr=0.01, optimizer_lr_backbone=0.001),
         device=DEVICE,
     )

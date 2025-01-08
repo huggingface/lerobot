@@ -43,6 +43,7 @@ def save_dataset_to_safetensors(output_dir, repo_id="lerobot/pusht"):
     repo_dir.mkdir(parents=True, exist_ok=True)
     dataset = LeRobotDataset(
         repo_id=repo_id,
+        episodes=[0],
     )
 
     # save 2 first frames of first episode

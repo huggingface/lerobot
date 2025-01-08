@@ -32,7 +32,7 @@ def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs, train_kwa
     set_global_seed(1337)
 
     train_cfg = TrainPipelineConfig(
-        dataset=DatasetConfig(repo_id=ds_repo_id),
+        dataset=DatasetConfig(repo_id=ds_repo_id, episodes=[0]),
         policy=make_policy_config(policy_name, **policy_kwargs),
         device="cpu",
         **train_kwargs,

@@ -150,7 +150,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         # Use the default .cache/calibration folder when mock=False
         pass
 
-    repo_id = "lerobot/debug"
+    repo_id = "lerobot_test/debug"
     root = tmpdir / "data" / repo_id
     single_task = "Do something."
 
