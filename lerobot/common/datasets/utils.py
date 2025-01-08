@@ -449,7 +449,7 @@ def check_delta_timestamps(
 def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dict[str, list[int]]:
     delta_indices = {}
     for key, delta_ts in delta_timestamps.items():
-        delta_indices[key] = (torch.tensor(delta_ts) * fps).long().tolist()
+        delta_indices[key] = [round(d * fps) for d in delta_ts]
 
     return delta_indices
 
