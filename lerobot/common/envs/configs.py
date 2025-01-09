@@ -1,3 +1,4 @@
+import abc
 from dataclasses import dataclass, field
 
 import draccus
@@ -6,7 +7,7 @@ from lerobot.configs.types import FeatureType
 
 
 @dataclass
-class EnvConfig(draccus.ChoiceRegistry):
+class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     n_envs: int | None = None
     task: str | None = None
     fps: int = 30
@@ -16,11 +17,9 @@ class EnvConfig(draccus.ChoiceRegistry):
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
 
-
-@EnvConfig.register_subclass("real_world")
-@dataclass
-class RealEnv(EnvConfig):
-    pass
+    @abc.abstractproperty
+    def gym_kwargs(self) -> dict:
+        raise NotImplementedError()
 
 
 @EnvConfig.register_subclass("aloha")
@@ -38,12 +37,16 @@ class AlohaEnv(EnvConfig):
             "action": FeatureType.ACTION,
         }
     )
-    gym: dict = field(
-        default_factory=lambda: {
-            "obs_type": "pixels_agent_pos",
-            "render_mode": "rgb_array",
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "max_episode_steps": self.episode_length,
         }
-    )
 
 
 @EnvConfig.register_subclass("pusht")
@@ -59,14 +62,27 @@ class PushtEnv(EnvConfig):
             "action": FeatureType.ACTION,
         }
     )
-    gym: dict = field(
-        default_factory=lambda: {
-            "obs_type": "pixels_agent_pos",
-            "render_mode": "rgb_array",
-            "visualization_width": 384,
-            "visualization_height": 384,
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    visualization_width: int = 384
+    visualization_height: int = 384
+
+    def __post_init__(self):
+        if self.obs_type == "environment_state_agent_pos":
+            self.feature_types = {
+                "agent_pos": FeatureType.STATE,
+                "environment_state": FeatureType.ENV,
+                "action": FeatureType.ACTION,
+            }
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "visualization_width": self.visualization_width,
+            "visualization_height": self.visualization_height,
         }
-    )
 
 
 @EnvConfig.register_subclass("xarm")
@@ -82,11 +98,16 @@ class XarmEnv(EnvConfig):
             "action": FeatureType.ACTION,
         }
     )
-    gym: dict = field(
-        default_factory=lambda: {
-            "obs_type": "pixels_agent_pos",
-            "render_mode": "rgb_array",
-            "visualization_width": 384,
-            "visualization_height": 384,
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    visualization_width: int = 384
+    visualization_height: int = 384
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "visualization_width": self.visualization_width,
+            "visualization_height": self.visualization_height,
         }
-    )

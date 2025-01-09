@@ -47,7 +47,9 @@ import threading
 import time
 from contextlib import nullcontext
 from copy import deepcopy
+from dataclasses import asdict
 from pathlib import Path
+from pprint import pformat
 from typing import Callable
 
 import einops
@@ -66,6 +68,7 @@ from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.utils import (
     get_safe_torch_device,
+    init_logging,
     inside_slurm,
     set_global_seed,
 )
@@ -438,6 +441,9 @@ def _compile_episode_data(
 
 @parser.wrap(pathable_args=["policy"])
 def eval(cfg: EvalPipelineConfig):
+    init_logging()
+    logging.info(pformat(asdict(cfg)))
+
     # Check device is available
     device = get_safe_torch_device(cfg.device, log=True)
 

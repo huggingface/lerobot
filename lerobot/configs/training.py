@@ -65,7 +65,7 @@ class OnlineConfig:
 @dataclass
 class TrainPipelineConfig:
     dataset: DatasetConfig
-    env: envs.EnvConfig = field(default_factory=envs.RealEnv)
+    env: envs.EnvConfig | None = None
     policy: PretrainedConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
@@ -102,6 +102,12 @@ class TrainPipelineConfig:
     def __post_init__(self):
         self.checkpoint_path = None
 
+        if self.use_amp and self.device not in ["cuda", "cpu"]:
+            raise NotImplementedError(
+                "Automatic Mixed Precision (amp) is only available for 'cuda' and 'cpu' devices. "
+                f"Selected device: {self.device}"
+            )
+
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
         if self.resume:
             # The entire train config is already loaded, we just need to get the checkpoint dir
@@ -110,9 +116,9 @@ class TrainPipelineConfig:
             self.policy.pretrained_path = policy_path
             self.checkpoint_path = policy_path.parent
         else:
-            # Only load the policy config
             policy_path = parser.get_path_arg("policy")
             if policy_path:
+                # Only load the policy config
                 cli_overrides = parser.get_cli_overrides("policy")
                 self.policy = PretrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
                 self.policy.pretrained_path = policy_path
