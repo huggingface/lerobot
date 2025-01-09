@@ -27,7 +27,7 @@ from pathlib import Path
 import draccus
 import torch
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -121,7 +121,7 @@ class Logger:
                 notes=cfg.wandb.notes,
                 tags=cfg_to_group(cfg, return_list=True),
                 dir=self.log_dir,
-                config=OmegaConf.to_container(cfg, resolve=True),
+                config=draccus.encode(cfg),
                 # TODO(rcadene): try set to True
                 save_code=False,
                 # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
