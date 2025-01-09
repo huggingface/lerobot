@@ -124,7 +124,10 @@ class TrainPipelineConfig:
                 self.policy.pretrained_path = policy_path
 
         if not self.job_name:
-            self.job_name = f"{self.env.type}_{self.policy.type}"
+            if self.env is None:
+                self.job_name = f"{self.policy.type}"
+            else:
+                self.job_name = f"{self.env.type}_{self.policy.type}"
 
         if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
             raise FileExistsError(

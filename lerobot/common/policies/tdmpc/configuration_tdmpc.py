@@ -118,7 +118,7 @@ class TDMPCConfig(PretrainedConfig):
             "VISUAL": None,
             "STATE": None,
             "ENV": None,
-            "ACTION": None,
+            "ACTION": NormalizationMode.MIN_MAX,
         }
     )
 

@@ -17,13 +17,11 @@ import importlib
 
 import gymnasium as gym
 
-from lerobot.common.envs.configs import AlohaEnv, EnvConfig, PushtEnv, RealEnv, XarmEnv
+from lerobot.common.envs.configs import AlohaEnv, EnvConfig, PushtEnv, XarmEnv
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
-    if env_type == "real_world":
-        return RealEnv(**kwargs)
-    elif env_type == "aloha":
+    if env_type == "aloha":
         return AlohaEnv(**kwargs)
     elif env_type == "pusht":
         return PushtEnv(**kwargs)

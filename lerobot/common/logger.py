@@ -50,9 +50,10 @@ def cfg_to_group(cfg: DictConfig, return_list: bool = False) -> list[str] | str:
     lst = [
         f"policy:{cfg.policy.type}",
         f"dataset:{cfg.dataset.repo_id}",
-        f"env:{cfg.env.type}",
         f"seed:{cfg.seed}",
     ]
+    if cfg.env is not None:
+        lst.append(f"env:{cfg.env.type}")
     return lst if return_list else "-".join(lst)
 
 
