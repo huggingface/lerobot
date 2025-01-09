@@ -263,11 +263,8 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
         data = (
             dataset.hf_dataset.select(range(from_idx, to_idx))
             .select_columns(selected_columns)
-            .with_format("numpy")
+            .with_format("pandas")
         )
-        rows = np.hstack(
-            (np.expand_dims(data["timestamp"], axis=1), *[data[col] for col in selected_columns[1:]])
-        ).tolist()
     else:
         repo_id = dataset.repo_id
 
@@ -276,12 +273,13 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
         )
         df = pd.read_parquet(url)
         data = df[selected_columns]  # Select specific columns
-        rows = np.hstack(
-            (
-                np.expand_dims(data["timestamp"], axis=1),
-                *[np.vstack(data[col]) for col in selected_columns[1:]],
-            )
-        ).tolist()
+
+    rows = np.hstack(
+        (
+            np.expand_dims(data["timestamp"], axis=1),
+            *[np.vstack(data[col]) for col in selected_columns[1:]],
+        )
+    ).tolist()
 
     # Convert data to CSV string
     csv_buffer = StringIO()
