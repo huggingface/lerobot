@@ -28,6 +28,7 @@ from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env, make_env_config
 from lerobot.common.envs.utils import preprocess_observation
+from lerobot.common.optim.factory import make_optimizer_and_scheduler
 from lerobot.common.policies.act.modeling_act import ACTTemporalEnsembler
 from lerobot.common.policies.factory import (
     get_policy_class,
@@ -41,9 +42,38 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.policies import PolicyFeature
 from lerobot.configs.training import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode
-from lerobot.scripts.train import make_optimizer_and_scheduler
 from tests.scripts.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
+
+
+@pytest.fixture
+def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_path):
+    # Create only one camera input which is squared to fit all current policy constraints
+    # e.g. vqbet and tdmpc works with one camera only, and tdmpc requires it to be squared
+    camera_features = {
+        "observation.images.laptop": {
+            "shape": (84, 84, 3),
+            "names": ["height", "width", "channels"],
+            "info": None,
+        },
+    }
+    motor_features = {
+        "action": {
+            "dtype": "float32",
+            "shape": (6,),
+            "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+        },
+        "observation.state": {
+            "dtype": "float32",
+            "shape": (6,),
+            "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+        },
+    }
+    info = info_factory(
+        total_episodes=1, total_frames=1, camera_features=camera_features, motor_features=motor_features
+    )
+    ds_meta = lerobot_dataset_metadata_factory(root=tmp_path / "init", info=info)
+    return ds_meta
 
 
 @pytest.mark.parametrize("policy_name", available_policies)
@@ -117,31 +147,6 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
         env=make_env_config(env_name, **env_kwargs),
         device=DEVICE,
     )
-
-    # # Additional config override logic.
-    # if env_name == "aloha" and policy_name == "diffusion":
-    #     for keys in [
-    #         ("training", "delta_timestamps"),
-    #         ("policy", "input_shapes"),
-    #         ("policy", "input_normalization_modes"),
-    #     ]:
-    #         dct = dict(cfg[keys[0]][keys[1]])
-    #         dct["observation.images.top"] = dct["observation.image"]
-    #         del dct["observation.image"]
-    #         cfg[keys[0]][keys[1]] = dct
-    #     cfg.override_dataset_stats = None
-
-    # # Additional config override logic.
-    # if env_name == "pusht" and policy_name == "act":
-    #     for keys in [
-    #         ("policy", "input_shapes"),
-    #         ("policy", "input_normalization_modes"),
-    #     ]:
-    #         dct = dict(cfg[keys[0]][keys[1]])
-    #         dct["observation.image"] = dct["observation.images.top"]
-    #         del dct["observation.images.top"]
-    #         cfg[keys[0]][keys[1]] = dct
-    #     cfg.override_dataset_stats = None
 
     # Check that we can make the policy object.
     dataset = make_dataset(train_cfg)
@@ -228,36 +233,6 @@ def test_act_backbone_lr():
     assert optimizer.param_groups[1]["lr"] == cfg.policy.optimizer_lr_backbone
     assert len(optimizer.param_groups[0]["params"]) == 133
     assert len(optimizer.param_groups[1]["params"]) == 20
-
-
-@pytest.fixture
-def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_path):
-    # Create only one camera input which is squared to fit all current policy constraints
-    # e.g. vqbet and tdmpc works with one camera only, and tdmpc requires it to be squared
-    camera_features = {
-        "observation.images.laptop": {
-            "shape": (84, 84, 3),
-            "names": ["height", "width", "channels"],
-            "info": None,
-        },
-    }
-    motor_features = {
-        "action": {
-            "dtype": "float32",
-            "shape": (6,),
-            "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
-        },
-        "observation.state": {
-            "dtype": "float32",
-            "shape": (6,),
-            "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
-        },
-    }
-    info = info_factory(
-        total_episodes=1, total_frames=1, camera_features=camera_features, motor_features=motor_features
-    )
-    ds_meta = lerobot_dataset_metadata_factory(root=tmp_path / "init", info=info)
-    return ds_meta
 
 
 @pytest.mark.parametrize("policy_name", available_policies)

@@ -43,19 +43,6 @@ class ManipulatorRobotConfig(RobotConfig):
 
     mock: bool = False
 
-    def __setattr__(self, prop: str, val):
-        if prop == "max_relative_target" and val is not None and isinstance(val, Sequence):
-            for name in self.follower_arms:
-                if len(self.follower_arms[name].motors) != len(val):
-                    raise ValueError(
-                        f"len(max_relative_target)={len(val)} but the follower arm with name {name} has "
-                        f"{len(self.follower_arms[name].motors)} motors. Please make sure that the "
-                        f"`max_relative_target` list has as many parameters as there are motors per arm. "
-                        "Note: This feature does not yet work with robots where different follower arms have "
-                        "different numbers of motors."
-                    )
-        super().__setattr__(prop, val)
-
     def __post_init__(self):
         if self.mock:
             for arm in self.leader_arms.values():
@@ -67,6 +54,17 @@ class ManipulatorRobotConfig(RobotConfig):
             for cam in self.cameras.values():
                 if not cam.mock:
                     cam.mock = True
+
+        if self.max_relative_target is not None and isinstance(self.max_relative_target, Sequence):
+            for name in self.follower_arms:
+                if len(self.follower_arms[name].motors) != len(self.max_relative_target):
+                    raise ValueError(
+                        f"len(max_relative_target)={len(self.max_relative_target)} but the follower arm with name {name} has "
+                        f"{len(self.follower_arms[name].motors)} motors. Please make sure that the "
+                        f"`max_relative_target` list has as many parameters as there are motors per arm. "
+                        "Note: This feature does not yet work with robots where different follower arms have "
+                        "different numbers of motors."
+                    )
 
 
 @RobotConfig.register_subclass("aloha")

@@ -1,20 +1,16 @@
 """
 This scripts demonstrates how to evaluate a pretrained policy from the HuggingFace Hub or from your local
 training outputs directory. In the latter case, you might want to run examples/3_train_policy.py first.
+
+It requires the installation of the 'gym_pusht' simulation environment. Install it by running:
+```bash
+pip install -e ".[pusht]"`
+```
 """
 
 from pathlib import Path
 
-try:
-    import gym_pusht  # noqa: F401
-except ModuleNotFoundError as e:
-    if e.name == "gym_pusht":
-        print("""
-            Missing library `gym_pusht`. Install it by running either:
-            1. `pip install -e ".[pusht]"`
-            2. `poetry install --sync --extras "pusht"` (prefered)
-        """)
-    raise
+import gym_pusht  # noqa: F401
 import gymnasium as gym
 import imageio
 import numpy

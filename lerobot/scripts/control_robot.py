@@ -301,7 +301,7 @@ def record(
     dataset.consolidate(cfg.run_compute_stats)
 
     if cfg.push_to_hub:
-        dataset.push_to_hub(tags=cfg.tags)
+        dataset.push_to_hub(tags=cfg.tags, private=cfg.private)
 
     log_say("Exiting", cfg.play_sounds)
     return dataset

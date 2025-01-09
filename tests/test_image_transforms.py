@@ -91,7 +91,7 @@ def test_get_image_transforms_brightness(img_tensor_factory, min_max):
 def test_get_image_transforms_contrast(img_tensor_factory, min_max):
     img_tensor = img_tensor_factory()
     tf_cfg = ImageTransformsConfig(
-        enable=True, tfs={"contract": ImageTransformConfig(type="ColorJitter", kwargs={"contrast": min_max})}
+        enable=True, tfs={"contrast": ImageTransformConfig(type="ColorJitter", kwargs={"contrast": min_max})}
     )
     tf_actual = ImageTransforms(tf_cfg)
     tf_expected = v2.ColorJitter(contrast=min_max)

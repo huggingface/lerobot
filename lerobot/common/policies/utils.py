@@ -13,13 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
-from pathlib import Path
 
 import torch
-from huggingface_hub import snapshot_download
-from huggingface_hub.errors import RepositoryNotFoundError
-from huggingface_hub.utils._validators import HFValidationError
 from torch import nn
 
 
@@ -70,22 +65,3 @@ def get_output_shape(module: nn.Module, input_shape: tuple) -> tuple:
     with torch.inference_mode():
         output = module(dummy_input)
     return tuple(output.shape)
-
-
-def get_pretrained_policy_path(pretrained_policy_path, revision=None):
-    try:
-        pretrained_policy_path = Path(snapshot_download(str(pretrained_policy_path), revision=revision))
-    except (HFValidationError, RepositoryNotFoundError) as e:
-        if isinstance(e, HFValidationError):
-            error_message = "The provided pretrained_policy_path is not a valid Hugging Face Hub repo ID."
-        else:
-            error_message = "The provided pretrained_policy_path was not found on the Hugging Face Hub."
-
-        logging.warning(f"{error_message} Treating it as a local directory.")
-        pretrained_policy_path = Path(pretrained_policy_path)
-    if not pretrained_policy_path.is_dir() or not pretrained_policy_path.exists():
-        raise ValueError(
-            "The provided pretrained_policy_path is not a valid/existing Hugging Face Hub "
-            "repo ID, nor is it an existing local directory."
-        )
-    return pretrained_policy_path

@@ -61,6 +61,8 @@ class RecordControlConfig(ControlConfig):
     run_compute_stats: bool = True
     # Upload dataset to Hugging Face hub.
     push_to_hub: bool = True
+    # Upload on private repository on the Hugging Face hub.
+    private: bool = False
     # Add tags to your dataset on the hub.
     tags: list[str] | None = None
     # Number of subprocesses handling the saving of frames as PNGs. Set to 0 to use threads only;

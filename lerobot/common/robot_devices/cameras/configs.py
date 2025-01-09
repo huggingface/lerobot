@@ -62,8 +62,8 @@ class IntelRealSenseCameraConfig(CameraConfig):
     ```
     """
 
-    name: str = None
-    serial_number: int = None
+    name: str | None = None
+    serial_number: int | None = None
     fps: int | None = None
     width: int | None = None
     height: int | None = None
@@ -75,6 +75,12 @@ class IntelRealSenseCameraConfig(CameraConfig):
     mock: bool = False
 
     def __post_init__(self):
+        # bool is stronger than is None, since it works with empty strings
+        if bool(self.name) and bool(self.serial_number):
+            raise ValueError(
+                f"One of them must be set: name or serial_number, but {self.name=} and {self.serial_number=} provided."
+            )
+
         if self.color_mode not in ["rgb", "bgr"]:
             raise ValueError(
                 f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
@@ -92,9 +98,3 @@ class IntelRealSenseCameraConfig(CameraConfig):
 
         if self.rotation not in [-90, None, 90, 180]:
             raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
-
-        # bool is stronger than is None, since it works with empty strings
-        if bool(self.name) and bool(self.serial_number):
-            raise ValueError(
-                f"One of them must be set: name or serial_number, but {self.name=} and {self.serial_number=} provided."
-            )
