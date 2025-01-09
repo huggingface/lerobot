@@ -1297,8 +1297,8 @@ dev = ["black", "mypy", "pre-commit", "pytest", "ruff"]
 [package.source]
 type = "git"
 url = "https://github.com/dlwh/draccus.git"
-reference = "55e456a"
-resolved_reference = "55e456a3047a97135e47bbeefe06873d2727dd41"
+reference = "HEAD"
+resolved_reference = "9b690730ca108930519f48cc5dead72a72fd27cb"
 
 [[package]]
 name = "drawnow"
@@ -2264,22 +2264,6 @@ tensorflow-testing = ["keras (<3.0)", "tensorflow"]
 testing = ["InquirerPy (==0.3.4)", "Jinja2", "Pillow", "aiohttp", "fastapi", "gradio (>=4.0.0)", "jedi", "numpy", "pytest (>=8.1.1,<8.2.2)", "pytest-asyncio", "pytest-cov", "pytest-env", "pytest-mock", "pytest-rerunfailures", "pytest-vcr", "pytest-xdist", "soundfile", "urllib3 (<2.0)"]
 torch = ["safetensors[torch]", "torch"]
 typing = ["types-PyYAML", "types-requests", "types-simplejson", "types-toml", "types-tqdm", "types-urllib3", "typing-extensions (>=4.8.0)"]
-
-[[package]]
-name = "hydra-core"
-version = "1.3.2"
-description = "A framework for elegantly configuring complex applications"
-optional = false
-python-versions = "*"
-files = [
-    {file = "hydra-core-1.3.2.tar.gz", hash = "sha256:8a878ed67216997c3e9d88a8e72e7b4767e81af37afb4ea3334b269a4390a824"},
-    {file = "hydra_core-1.3.2-py3-none-any.whl", hash = "sha256:fa0238a9e31df3373b35b0bfb672c34cc92718d21f81311d8996a16de1141d8b"},
-]
-
-[package.dependencies]
-antlr4-python3-runtime = "==4.9.*"
-omegaconf = ">=2.2,<2.4"
-packaging = "*"
 
 [[package]]
 name = "identify"
@@ -7689,4 +7673,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "a67ba1530855ce3ad03d8ea9629f2fae439d8c5b83702c64f73092ea4f9fa43b"
+content-hash = "df9042654c525f96e88e868d95f8746d69f3c30b00cdf064625df8aa540ea488"
