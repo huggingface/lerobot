@@ -9,6 +9,7 @@ from typing import Type, TypeVar
 import draccus
 import gymnasium as gym
 from huggingface_hub import ModelHubMixin, hf_hub_download
+from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
@@ -72,7 +73,7 @@ class PretrainedConfig(draccus.ChoiceRegistry, ModelHubMixin, abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def get_scheduler_preset(self) -> LRSchedulerConfig:
+    def get_scheduler_preset(self) -> LRSchedulerConfig | None:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -95,7 +96,7 @@ class PretrainedConfig(draccus.ChoiceRegistry, ModelHubMixin, abc.ABC):
     def _save_pretrained(self, save_directory: Path) -> None:
         to_save = copy(self)
         del to_save.path
-        with open(save_directory / "config.json", "w") as f, draccus.config_type("json"):
+        with open(save_directory / CONFIG_NAME, "w") as f, draccus.config_type("json"):
             draccus.dump(self, f, indent=4)
 
     @classmethod
@@ -115,15 +116,15 @@ class PretrainedConfig(draccus.ChoiceRegistry, ModelHubMixin, abc.ABC):
         model_id = str(pretrained_model_name_or_path)
         config_file: str | None = None
         if Path(model_id).is_dir():
-            if "config.json" in os.listdir(model_id):
-                config_file = os.path.join(model_id, "config.json")
+            if CONFIG_NAME in os.listdir(model_id):
+                config_file = os.path.join(model_id, CONFIG_NAME)
             else:
                 print(f"config.json not found in {Path(model_id).resolve()}")
         else:
             try:
                 config_file = hf_hub_download(
                     repo_id=model_id,
-                    filename="config.json",
+                    filename=CONFIG_NAME,
                     revision=revision,
                     cache_dir=cache_dir,
                     force_download=force_download,

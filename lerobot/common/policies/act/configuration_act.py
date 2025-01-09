@@ -16,7 +16,6 @@
 from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamWConfig
-from lerobot.common.optim.schedulers import NoneSchedulerConfig
 from lerobot.configs.policies import PretrainedConfig
 from lerobot.configs.types import NormalizationMode
 
@@ -167,8 +166,8 @@ class ACTConfig(PretrainedConfig):
             weight_decay=self.optimizer_weight_decay,
         )
 
-    def get_scheduler_preset(self) -> NoneSchedulerConfig:
-        return NoneSchedulerConfig()
+    def get_scheduler_preset(self) -> None:
+        return None
 
     def validate_features(self) -> None:
         if not self.image_features and not self.env_state_feature:

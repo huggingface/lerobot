@@ -17,7 +17,6 @@
 from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamConfig
-from lerobot.common.optim.schedulers import NoneSchedulerConfig
 from lerobot.configs.policies import PretrainedConfig
 from lerobot.configs.types import NormalizationMode
 
@@ -191,8 +190,8 @@ class TDMPCConfig(PretrainedConfig):
     def get_optimizer_preset(self) -> AdamConfig:
         return AdamConfig(lr=self.optimizer_lr)
 
-    def get_scheduler_preset(self) -> NoneSchedulerConfig:
-        return NoneSchedulerConfig()
+    def get_scheduler_preset(self) -> None:
+        return None
 
     def validate_features(self) -> None:
         # There should only be one image key.
