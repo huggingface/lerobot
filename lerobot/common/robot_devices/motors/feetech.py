@@ -37,6 +37,14 @@ HALF_TURN_DEGREE = 180
 # See this link for STS3215 Memory Table:
 # https://docs.google.com/spreadsheets/d/1GVs7W1VS1PqdhA1nW-abeyAHhTUxKUdR/edit?usp=sharing&ouid=116566590112741600240&rtpof=true&sd=true
 # data_name: (address, size_byte)
+
+#####SAFETY CHECKS EXPLAINED#####
+#There are two safety checks built-in: one is based on load and the other is based on current. 
+#Current: if Protection_Current > Present_Current we wait Over_Current_Protection_Time (expressed in ms) and set Torque_Enable to 0
+#Load: if Max_Torque_Limit*Overload_Torque (expressed as a percentage) > Present_Load, we wait Protection_Time (expressed in ms 
+#and set Max_Torque_Limit to Protective_Torque)
+#Though we can specify Min-Max_Angle_Limit, Max_Temperature_Limit, Min-Max_Voltage_Limit, no safety checks are implemented for these values
+
 STS_SERIES_CONTROL_TABLE = {
     "Model": (3, 2),
     "ID": (5, 1),
@@ -86,6 +94,7 @@ STS_SERIES_CONTROL_TABLE = {
     # Not in the Memory Table
     "Maximum_Acceleration": (85, 2),
 }
+
 
 SCS_SERIES_CONTROL_TABLE = {
     "Model": (3, 2),
