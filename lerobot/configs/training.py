@@ -124,7 +124,10 @@ class TrainPipelineConfig:
                 self.policy.pretrained_path = policy_path
 
         if not self.job_name:
-            self.job_name = f"{self.env.type}_{self.policy.type}"
+            if self.env is None:
+                self.job_name = f"{self.policy.type}"
+            else:
+                self.job_name = f"{self.env.type}_{self.policy.type}"
 
         if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
             raise FileExistsError(
@@ -150,11 +153,3 @@ class TrainPipelineConfig:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
         path_fields = ["policy"]
         return [f for f in fields(cls) if f.name in path_fields]
-
-    # @property
-    # def checkpoint_path(self) -> str | Path | None:
-    #     return self._checkpoint_path
-
-    # @checkpoint_path.setter
-    # def set_checkpoint_path(self, path: str | Path):
-    #     self._checkpoint_path = path

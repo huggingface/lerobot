@@ -50,9 +50,10 @@ def cfg_to_group(cfg: DictConfig, return_list: bool = False) -> list[str] | str:
     lst = [
         f"policy:{cfg.policy.type}",
         f"dataset:{cfg.dataset.repo_id}",
-        f"env:{cfg.env.type}",
         f"seed:{cfg.seed}",
     ]
+    if cfg.env is not None:
+        lst.append(f"env:{cfg.env.type}")
     return lst if return_list else "-".join(lst)
 
 
@@ -158,7 +159,7 @@ class Logger:
         """
 
         self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
-        # register_features_types()
+        register_features_types()
         policy.save_pretrained(save_dir)
         # Also save the full config for the env configuration.
         with open(save_dir / TRAIN_CONFIG_FILE, "w") as f:
@@ -175,18 +176,18 @@ class Logger:
         self,
         save_dir: Path,
         train_step: int,
-        optimizer: Optimizer,
-        scheduler: LRScheduler | None,
+        optimizer: Optimizer | None = None,
+        scheduler: LRScheduler | None = None,
     ):
         """Checkpoint the global training_step, optimizer state, scheduler state, and random state.
 
         All of these are saved as "training_state.pth" under the checkpoint directory.
         """
-        training_state = {
-            "step": train_step,
-            "optimizer": optimizer.state_dict(),
-            **get_global_random_state(),
-        }
+        training_state = {}
+        training_state["step"] = train_step
+        training_state.update(get_global_random_state())
+        if optimizer is not None:
+            training_state["optimizer"] = optimizer.state_dict()
         if scheduler is not None:
             training_state["scheduler"] = scheduler.state_dict()
         torch.save(training_state, save_dir / self.training_state_file_name)
@@ -194,10 +195,10 @@ class Logger:
     def save_checkpoint(
         self,
         train_step: int,
-        policy: Policy,
-        optimizer: Optimizer,
-        scheduler: LRScheduler | None,
         identifier: str,
+        policy: Policy,
+        optimizer: Optimizer | None = None,
+        scheduler: LRScheduler | None = None,
     ):
         """Checkpoint the model weights and the training state."""
         checkpoint_dir = self.checkpoints_dir / str(identifier)

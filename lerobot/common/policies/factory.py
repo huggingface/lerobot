@@ -19,7 +19,11 @@ from torch import nn
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.common.envs.configs import EnvConfig
+from lerobot.common.policies.act.configuration_act import ACTConfig
+from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.policy_protocol import Policy
+from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
+from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.configs.policies import PretrainedConfig
 
 
@@ -43,6 +47,19 @@ def get_policy_class(name: str) -> Policy:
         return VQBeTPolicy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
+
+
+def make_policy_config(policy_type: str, **kwargs) -> PretrainedConfig:
+    if policy_type == "tdmpc":
+        return TDMPCConfig(**kwargs)
+    elif policy_type == "diffusion":
+        return DiffusionConfig(**kwargs)
+    elif policy_type == "act":
+        return ACTConfig(**kwargs)
+    elif policy_type == "vqbet":
+        return VQBeTConfig(**kwargs)
+    else:
+        raise ValueError(f"Policy type '{policy_type}' is not available.")
 
 
 def make_policy(

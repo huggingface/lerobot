@@ -37,6 +37,9 @@ def create_stats_buffers(
     stats_buffers = {}
 
     for ft in features:
+        if ft.normalization_mode is None:
+            continue
+
         assert isinstance(ft.normalization_mode, NormalizationMode)
 
         shape = tuple(ft.shape)
@@ -73,7 +76,7 @@ def create_stats_buffers(
                 }
             )
 
-        if stats is not None:
+        if stats:
             # Note: The clone is needed to make sure that the logic in save_pretrained doesn't see duplicated
             # tensors anywhere (for example, when we use the same stats for normalization and
             # unnormalization). See the logic here
@@ -134,6 +137,9 @@ class Normalize(nn.Module):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = dict(batch)  # shallow copy avoids mutating the input batch
         for ft in self.features:
+            if ft.normalization_mode is None:
+                continue
+
             buffer = getattr(self, "buffer_" + ft.key.replace(".", "_"))
 
             if ft.normalization_mode is NormalizationMode.MEAN_STD:

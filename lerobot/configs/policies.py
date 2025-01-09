@@ -55,14 +55,6 @@ class PretrainedConfig(draccus.ChoiceRegistry, ModelHubMixin, abc.ABC):
         self.type = self.get_choice_name(self.__class__)
         self.pretrained_path = None
 
-    # @property
-    # def pretrained_path(self) -> str | Path | None:
-    #     return self._pretrained_path
-
-    # @pretrained_path.setter
-    # def pretrained_path(self, path: str | Path):
-    #     self._pretrained_path = path
-
     @abc.abstractproperty
     def observation_delta_indices(self) -> list | None:
         raise NotImplementedError
@@ -162,7 +154,8 @@ class PretrainedConfig(draccus.ChoiceRegistry, ModelHubMixin, abc.ABC):
                 names = ds_meta.features[key]["names"]
                 if len(shape) != 3:
                     raise ValueError(f"Number of dimensions of {key} != 3 (shape={shape})")
-                if names[2] == "channel":  # (h, w, c) -> (c, h, w)
+                # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
+                if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
                     shape = (shape[2], shape[0], shape[1])
                 image_features.append(
                     PolicyFeature(

@@ -204,7 +204,7 @@ def train(cfg: TrainPipelineConfig):
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
-    if cfg.eval_freq > 0 and cfg.env.type != "real_world":
+    if cfg.eval_freq > 0 or cfg.env is None:
         logging.info("Creating env")
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size)
 
@@ -265,10 +265,10 @@ def train(cfg: TrainPipelineConfig):
             # needed (choose 6 as a minimum for consistency without being overkill).
             logger.save_checkpoint(
                 step,
+                step_identifier,
                 policy,
                 optimizer,
                 lr_scheduler,
-                identifier=step_identifier,
             )
             logging.info("Resume training")
 

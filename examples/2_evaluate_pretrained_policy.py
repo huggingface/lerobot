@@ -1,6 +1,11 @@
 """
 This scripts demonstrates how to evaluate a pretrained policy from the HuggingFace Hub or from your local
 training outputs directory. In the latter case, you might want to run examples/3_train_policy.py first.
+
+It requires the installation of the 'gym_pusht' simulation environment. Install it by running:
+```bash
+pip install -e ".[pusht]"`
+```
 """
 
 from pathlib import Path
@@ -10,7 +15,6 @@ import gymnasium as gym
 import imageio
 import numpy
 import torch
-from huggingface_hub import snapshot_download
 
 from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 
@@ -18,11 +22,12 @@ from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 output_directory = Path("outputs/eval/example_pusht_diffusion")
 output_directory.mkdir(parents=True, exist_ok=True)
 
-# Download the diffusion policy for pusht environment
-pretrained_policy_path = Path(snapshot_download("lerobot/diffusion_pusht"))
-# OR uncomment the following to evaluate a policy from the local outputs/train folder.
+# Provide the [hugging face repo id](https://huggingface.co/lerobot/diffusion_pusht):
+pretrained_policy_path = "lerobot/diffusion_pusht"
+# OR a path to a local outputs/train folder.
 # pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")
 
+# TODO(alibert, rcadene): fix this file
 policy = DiffusionPolicy.from_pretrained(pretrained_policy_path)
 policy.eval()
 

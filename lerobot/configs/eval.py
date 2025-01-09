@@ -38,10 +38,11 @@ class EvalPipelineConfig:
     policy: PretrainedConfig | None = None
     output_dir: Path | None = None
     job_name: str | None = None
-    device: str = "cuda"  # | cpu | mp
+    # TODO(rcadene, aliberts): By default, use device and use_amp values from policy checkpoint.
+    device: str | None = None  # cuda | cpu | mps
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
-    use_amp: bool = False
+    use_amp: bool | None = None
     seed: int | None = 1000
 
     def __post_init__(self):
@@ -59,12 +60,20 @@ class EvalPipelineConfig:
             self.policy.pretrained_path = policy_path
 
         if not self.job_name:
-            self.job_name = f"{self.env.type}_{self.policy.type}"
+            if self.env is None:
+                self.job_name = f"{self.policy.type}"
+            else:
+                self.job_name = f"{self.env.type}_{self.policy.type}"
 
         if not self.output_dir:
             now = dt.datetime.now()
             eval_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"
             self.output_dir = Path("outputs/eval") / eval_dir
+
+        if self.device is None:
+            raise ValueError("Set one of the following device: cuda, cpu or mps")
+        elif self.device == "cuda" and self.use_amp is None:
+            raise ValueError("Set 'use_amp' to True or False.")
 
     @classmethod
     def __get_path_fields__(cls) -> list[Field]:
