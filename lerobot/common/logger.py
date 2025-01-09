@@ -21,13 +21,13 @@
 import logging
 import os
 import re
+from dataclasses import asdict
 from glob import glob
 from pathlib import Path
 
 import draccus
 import torch
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
-from omegaconf import DictConfig, OmegaConf
 from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -45,7 +45,7 @@ def log_output_dir(out_dir):
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {out_dir}")
 
 
-def cfg_to_group(cfg: DictConfig, return_list: bool = False) -> list[str] | str:
+def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
     lst = [
         f"policy:{cfg.policy.type}",
@@ -121,7 +121,7 @@ class Logger:
                 notes=cfg.wandb.notes,
                 tags=cfg_to_group(cfg, return_list=True),
                 dir=self.log_dir,
-                config=OmegaConf.to_container(cfg, resolve=True),
+                config=asdict(self.cfg),
                 # TODO(rcadene): try set to True
                 save_code=False,
                 # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
