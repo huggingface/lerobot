@@ -98,9 +98,34 @@
         </div>
 
         <!-- Videos -->
+        <div  class="max-w-32 relative text-sm mb-4 select-none"
+            @click.outside="isVideosDropdownOpen = false">
+            <div
+                @click="isVideosDropdownOpen = !isVideosDropdownOpen"
+                class="p-2 border border-slate-500 rounded flex justify-between items-center cursor-pointer"
+            >
+            <span class="truncate">filter videos</span>
+            <div class="transition-transform" :class="{ 'rotate-180': isVideosDropdownOpen }">🔽</div>
+            </div>
+    
+            <div x-show="isVideosDropdownOpen" 
+                class="absolute mt-1 border border-slate-500 rounded shadow-lg z-10">
+            <div>
+                <template x-for="option in videosKeys" :key="option">
+                <div
+                    @click="videosKeysSelected = videosKeysSelected.includes(option) ? videosKeysSelected.filter(v => v !== option) : [...videosKeysSelected, option]"
+                    class="p-2 cursor-pointer bg-slate-900"
+                    :class="{ 'bg-slate-700': videosKeysSelected.includes(option) }"
+                    x-text="option"
+                ></div>
+                </template>
+            </div>
+            </div>
+        </div>
+
         <div class="flex flex-wrap gap-x-2 gap-y-6">
             {% for video_info in videos_info %}
-            <div x-show="!videoCodecError" class="max-w-96 relative">
+            <div x-show="!videoCodecError && videosKeysSelected.includes('{{ video_info.filename }}')" class="max-w-96 relative">
                 <p class="absolute inset-x-0 -top-4 text-sm text-gray-300 bg-gray-800 px-2 rounded-t-xl truncate">{{ video_info.filename }}</p>
                 <video muted loop type="video/mp4" class="object-contain w-full h-full" @canplaythrough="videoCanPlay" @timeupdate="() => {
                     if (video.duration) {
@@ -250,6 +275,9 @@
                 nVideos: {{ videos_info | length }},
                 nVideoReadyToPlay: 0,
                 videoCodecError: false,
+                isVideosDropdownOpen: false,
+                videosKeys: {{ videos_info | map(attribute='filename') | list | tojson }},
+                videosKeysSelected: [],
                 columns: {{ columns | tojson }},
                 rowLabels: {{ columns | tojson }}.reduce((colA, colB) => colA.value.length > colB.value.length ? colA : colB).value,
 
@@ -261,6 +289,7 @@
                     if(!canPlayVideos){
                         this.videoCodecError = true;
                     }
+                    this.videosKeysSelected = this.videosKeys.map(opt => opt)
 
                     // process CSV data
                     const csvDataStr = {{ episode_data_csv_str|tojson|safe }};
