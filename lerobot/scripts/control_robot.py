@@ -600,6 +600,12 @@ if __name__ == "__main__":
         default="lerobot/test",
         help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
     )
+    parser_replay.add_argument(
+        "--local-files-only",
+        type=int,
+        default=0,
+        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
+    )
     parser_replay.add_argument("--episode", type=int, default=0, help="Index of the episode to replay.")
 
     args = parser.parse_args()
