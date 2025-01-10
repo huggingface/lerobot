@@ -22,6 +22,7 @@ from lerobot.common.robot_devices.utils import (
     busy_wait,
 )
 from lerobot.common.utils.utils import capture_timestamp_utc
+from lerobot.common.robot_devices.control_utils import save_demonstration_video
 
 # The maximum opencv device index depends on your operating system. For instance,
 # if you have 3 cameras, they should be associated to index 0, 1, and 2. This is the case
@@ -518,3 +519,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     save_images_from_cameras(**vars(args))
+    save_demonstration_video(args.images_dir, args.images_dir)
+
