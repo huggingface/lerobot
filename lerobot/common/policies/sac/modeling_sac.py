@@ -187,7 +187,7 @@ class SACPolicy(
                     * ~batch["observation.state_is_pad"][:, 0]
                     * ~batch["action_is_pad"][:, 0]
                 )  # shape: [batch_size, horizon]
-            td_target = rewards + self.config.discount * min_q
+            td_target = rewards[:, 0] + self.config.discount * min_q
 
         # 3- compute predicted qs
         q_preds = self.critic_forward(observations, actions, use_target=False)
