@@ -19,6 +19,8 @@ import shutil
 from functools import cached_property
 from pathlib import Path
 from typing import Callable
+import copy
+
 
 import datasets
 import numpy as np
@@ -970,6 +972,35 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episode_data_index = None
         obj.video_backend = video_backend if video_backend is not None else "pyav"
         return obj
+    
+    def merge_episodes(self, num_of_sequential_episodes: int) -> None:
+        if num_of_sequential_episodes == 1:
+            return self
+        
+        # new_t = tensor
+        # split = []
+
+        # for i in range(0, new_t.shape[0] - 1):
+        #     split.append((torch.stack((new_t[i], new_t[i+1]))))
+        #     # new_t = torch.cat((new_t, tensor.roll(i).unsqueeze(1)), dim=1)
+
+        # return torch.stack(split)
+
+        for key in self.features:
+            split = []
+            feature = self.features[key]
+            for i in range(0, feature.shape[0] - 1):
+                split.append((torch.stack((feature[i], feature[i+1]))))
+
+            self.features[key] = torch.stack(split)
+    
+    def new_with_merged_episodes(self, num_of_sequential_episodes: int) -> "LeRobotDataset":
+        new_dataset = copy.deepcopy(self)
+
+        new_dataset.merge_episodes(num_of_sequential_episodes)
+        return new_dataset
+        
+
 
 
 class MultiLeRobotDataset(torch.utils.data.Dataset):

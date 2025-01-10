@@ -187,7 +187,7 @@ class SACPolicy(
                     * ~batch["observation.state_is_pad"][:, 0]
                     * ~batch["action_is_pad"][:, 0]
                 )  # shape: [batch_size, horizon]
-            td_target = rewards + self.config.discount * min_q * ~batch["next.done"]
+            td_target = rewards + self.config.discount * min_q
 
         # 3- compute predicted qs
         q_preds = self.critic_forward(observations, actions, use_target=False)
@@ -342,8 +342,8 @@ class Critic(nn.Module):
         actions: torch.Tensor,
     ) -> torch.Tensor:
         # Move each tensor in observations to device
-        observations = {k: v.to(self.device) for k, v in observations.items()}
-        actions = actions.to(self.device)
+        # observations = {k: v.to(self.device) for k, v in observations.items()}
+        # actions = actions.to(self.device)
 
         obs_enc = observations if self.encoder is None else self.encoder(observations)
 
@@ -505,7 +505,7 @@ class SACObservationEncoder(nn.Module):
         # Concatenate all images along the channel dimension.
         image_keys = [k for k in self.config.input_shapes if is_image_feature(k)]
         for image_key in image_keys:
-            feat.append(flatten_forward_unflatten(self.image_enc_layers, obs_dict[image_key]))
+            feat.append(self.image_enc_layers(obs_dict[image_key]))
         if "observation.environment_state" in self.config.input_shapes:
             feat.append(self.env_state_enc_layers(obs_dict["observation.environment_state"]))
         if "observation.state" in self.config.input_shapes:
