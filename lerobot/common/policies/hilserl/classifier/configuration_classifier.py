@@ -13,6 +13,7 @@ class ClassifierConfig:
     model_name: str = "microsoft/resnet-50"
     device: str = "cpu"
     model_type: str = "cnn"  # "transformer" or "cnn"
+    num_cameras: int = 2
 
     def save_pretrained(self, save_dir):
         """Save config to json file."""

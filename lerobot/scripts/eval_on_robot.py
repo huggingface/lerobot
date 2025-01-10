@@ -23,6 +23,15 @@ python lerobot/scripts/eval_on_robot.py \
     eval.n_episodes=10
 ```
 
+Test reward classifier with teleoperation (you need to press space to take over)
+```
+python lerobot/scripts/eval_on_robot.py \
+    --robot-path lerobot/configs/robot/so100.yaml \
+    --reward-classifier-pretrained-path outputs/classifier/checkpoints/best/pretrained_model \
+    --reward-classifier-config-file lerobot/configs/policy/hilserl_classifier.yaml \
+    --display-cameras 1
+```
+
 **NOTE** (michel-aractingi): This script is incomplete and it is being prepared
 for running training on the real robot.
 """
@@ -32,12 +41,13 @@ import logging
 import time
 from copy import deepcopy
 
+import cv2
 import numpy as np
 import torch
 from tqdm import trange
 
 from lerobot.common.policies.policy_protocol import Policy
-from lerobot.common.robot_devices.control_utils import busy_wait, is_headless
+from lerobot.common.robot_devices.control_utils import busy_wait, is_headless, reset_follower_position
 from lerobot.common.robot_devices.robots.factory import Robot, make_robot
 from lerobot.common.utils.utils import (
     init_hydra_config,
@@ -46,7 +56,33 @@ from lerobot.common.utils.utils import (
 )
 
 
-def rollout(robot: Robot, policy: Policy, fps: int, control_time_s: float = 20, use_amp: bool = True) -> dict:
+def get_classifier(pretrained_path, config_path):
+    if pretrained_path is None or config_path is None:
+        return
+
+    from lerobot.common.policies.factory import _policy_cfg_from_hydra_cfg
+    from lerobot.common.policies.hilserl.classifier.configuration_classifier import ClassifierConfig
+    from lerobot.common.policies.hilserl.classifier.modeling_classifier import Classifier
+
+    cfg = init_hydra_config(config_path)
+
+    classifier_config = _policy_cfg_from_hydra_cfg(ClassifierConfig, cfg)
+    classifier_config.num_cameras = len(cfg.training.image_keys)  # TODO automate these paths
+    model = Classifier(classifier_config)
+    model.load_state_dict(Classifier.from_pretrained(pretrained_path).state_dict())
+    model = model.to("mps")
+    return model
+
+
+def rollout(
+    robot: Robot,
+    policy: Policy,
+    reward_classifier,
+    fps: int,
+    control_time_s: float = 20,
+    use_amp: bool = True,
+    display_cameras: bool = False,
+) -> dict:
     """Run a batched policy rollout on the real robot.
 
     The return dictionary contains:
@@ -79,24 +115,20 @@ def rollout(robot: Robot, policy: Policy, fps: int, control_time_s: float = 20, 
     # Reset the policy. TODO (michel-aractingi) add real policy evaluation once the code is ready.
     # policy.reset()
 
-    # Get observation from real robot
+    # NOTE: sorting to make sure the key sequence is the same during training and testing.
     observation = robot.capture_observation()
+    image_keys = [key for key in observation if "image" in key]
+    image_keys.sort()
 
-    # Calculate reward. TODO (michel-aractingi)
-    # in HIL-SERL it will be with a reward classifier
-    reward = calculate_reward(observation)
-    all_observations = []
     all_actions = []
     all_rewards = []
     all_successes = []
 
     start_episode_t = time.perf_counter()
+    init_pos = robot.follower_arms["main"].read("Present_Position")
     timestamp = 0.0
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
-
-        all_observations.append(deepcopy(observation))
-        # observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
 
         # Apply the next action.
         while events["pause_policy"] and not events["human_intervention_step"]:
@@ -109,18 +141,27 @@ def rollout(robot: Robot, policy: Policy, fps: int, control_time_s: float = 20, 
         else:
             # explore with policy
             with torch.inference_mode():
+                # TODO (michel-aractingi) replace this part with policy (predict_action)
                 action = robot.follower_arms["main"].read("Present_Position")
                 action = torch.from_numpy(action)
                 robot.send_action(action)
                 # action = predict_action(observation, policy, device, use_amp)
 
         observation = robot.capture_observation()
-        # Calculate reward
-        # in HIL-SERL it will be with a reward classifier
-        reward = calculate_reward(observation)
+        images = []
+        for key in image_keys:
+            if display_cameras:
+                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+                cv2.waitKey(1)
+            images.append(observation[key].to("mps"))
+
+        
+        reward = reward_classifier.predict_reward(images) if reward_classifier is not None else 0.0
+        all_rewards.append(reward)
+
+        # print("REWARD : ", reward)
 
         all_actions.append(action)
-        all_rewards.append(torch.from_numpy(reward))
         all_successes.append(torch.tensor([False]))
 
         dt_s = time.perf_counter() - start_loop_t
@@ -131,7 +172,8 @@ def rollout(robot: Robot, policy: Policy, fps: int, control_time_s: float = 20, 
             events["human_intervention_step"] = False
             events["pause_policy"] = False
             break
-    all_observations.append(deepcopy(observation))
+
+    reset_follower_position(robot, target_position=init_pos)
 
     dones = torch.tensor([False] * len(all_actions))
     dones[-1] = True
@@ -142,10 +184,6 @@ def rollout(robot: Robot, policy: Policy, fps: int, control_time_s: float = 20, 
         "next.success": torch.stack(all_successes, dim=1),
         "done": dones,
     }
-    stacked_observations = {}
-    for key in all_observations[0]:
-        stacked_observations[key] = torch.stack([obs[key] for obs in all_observations], dim=1)
-    ret["observation"] = stacked_observations
 
     listener.stop()
 
@@ -159,6 +197,9 @@ def eval_policy(
     n_episodes: int,
     control_time_s: int = 20,
     use_amp: bool = True,
+    display_cameras: bool = False,
+    reward_classifier_pretrained_path: str | None = None,
+    reward_classifier_config_file: str | None = None,
 ) -> dict:
     """
     Args:
@@ -179,8 +220,12 @@ def eval_policy(
 
     start_eval = time.perf_counter()
     progbar = trange(n_episodes, desc="Evaluating policy on real robot")
-    for _batch_idx in progbar:
-        rollout_data = rollout(robot, policy, fps, control_time_s, use_amp)
+    reward_classifier = get_classifier(reward_classifier_pretrained_path, reward_classifier_config_file)
+
+    for _ in progbar:
+        rollout_data = rollout(
+            robot, policy, reward_classifier, fps, control_time_s, use_amp, display_cameras
+        )
 
         rollouts.append(rollout_data)
         sum_rewards.append(sum(rollout_data["next.reward"]))
@@ -217,15 +262,6 @@ def eval_policy(
         robot.disconnect()
 
     return info
-
-
-def calculate_reward(observation):
-    """
-    Method to calculate reward function in some way.
-    In HIL-SERL this is done through defining a reward classifier
-    """
-    # reward = reward_classifier(observation)
-    return np.array([0.0])
 
 
 def init_keyboard_listener():
@@ -324,6 +360,22 @@ if __name__ == "__main__":
             "outputs/eval/{timestamp}_{env_name}_{policy_name}"
         ),
     )
+    parser.add_argument(
+        "--display-cameras", help=("Whether to display the camera feed while the rollout is happening")
+    )
+    parser.add_argument(
+        "--reward-classifier-pretrained-path",
+        type=str,
+        default=None,
+        help="Path to the pretrained classifier weights.",
+    )
+    parser.add_argument(
+        "--reward-classifier-config-file",
+        type=str,
+        default=None, 
+        help="Path to a yaml config file that is necessary to build the reward classifier model.",
+    )
+
 
     args = parser.parse_args()
 
@@ -332,4 +384,13 @@ if __name__ == "__main__":
     if not robot.is_connected:
         robot.connect()
 
-    eval_policy(robot, None, fps=40, n_episodes=2, control_time_s=100)
+    eval_policy(
+        robot,
+        None,
+        fps=40,
+        n_episodes=2,
+        control_time_s=100,
+        display_cameras=args.display_cameras,
+        reward_classifier_config_file=args.reward_classifier_config_file,
+        reward_classifier_pretrained_path=args.reward_classifier_pretrained_path,
+    )

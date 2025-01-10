@@ -4,7 +4,7 @@ defaults:
   - _self_
 
 seed: 13
-dataset_repo_id: "dataset_repo_id"
+dataset_repo_id: aractingi/pick_place_lego_cube_1
 train_split_proportion: 0.8
 
 # Required by logger
@@ -24,7 +24,7 @@ training:
   eval_freq: 1  # How often to run validation (in epochs)
   save_freq: 1  # How often to save checkpoints (in epochs)
   save_checkpoint: true
-  image_key: "observation.images.phone"
+  image_keys: ["observation.images.top", "observation.images.wrist"]
   label_key: "next.reward"
 
 eval:
@@ -32,7 +32,7 @@ eval:
   num_samples_to_log: 30  # Number of validation samples to log in the table
 
 policy:
-  name: "hilserl/classifier"
+  name: "hilserl/classifier/pick_place_lego_cube_1"
   model_name: "facebook/convnext-base-224"
   model_type: "cnn"
 
@@ -44,4 +44,4 @@ wandb:
 
 device: "mps"
 resume: false
-output_dir: "output"
+output_dir: "outputs/classifier"
