@@ -23,10 +23,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator
 
-import hydra
 import numpy as np
 import torch
-from omegaconf import DictConfig
 
 
 def none_or_int(value):
@@ -41,9 +39,9 @@ def inside_slurm():
     return "SLURM_JOB_ID" in os.environ
 
 
-def get_safe_torch_device(cfg_device: str, log: bool = False) -> torch.device:
+def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     """Given a string, return a torch.device with checks on whether the device is available."""
-    match cfg_device:
+    match try_device:
         case "cuda":
             assert torch.cuda.is_available()
             device = torch.device("cuda")
@@ -55,9 +53,9 @@ def get_safe_torch_device(cfg_device: str, log: bool = False) -> torch.device:
             if log:
                 logging.warning("Using CPU, this will be slow.")
         case _:
-            device = torch.device(cfg_device)
+            device = torch.device(try_device)
             if log:
-                logging.warning(f"Using custom {cfg_device} device.")
+                logging.warning(f"Using custom {try_device} device.")
 
     return device
 
@@ -157,22 +155,6 @@ def _relative_path_between(path1: Path, path2: Path) -> Path:
         return Path(
             "/".join([".."] * (len(path2.parts) - len(common_parts)) + list(path1.parts[len(common_parts) :]))
         )
-
-
-def init_hydra_config(config_path: str, overrides: list[str] | None = None) -> DictConfig:
-    """Initialize a Hydra config given only the path to the relevant config file.
-
-    For config resolution, it is assumed that the config file's parent is the Hydra config dir.
-    """
-    # TODO(alexander-soare): Resolve configs without Hydra initialization.
-    hydra.core.global_hydra.GlobalHydra.instance().clear()
-    # Hydra needs a path relative to this file.
-    hydra.initialize(
-        str(_relative_path_between(Path(config_path).absolute().parent, Path(__file__).absolute().parent)),
-        version_base="1.2",
-    )
-    cfg = hydra.compose(Path(config_path).stem, overrides)
-    return cfg
 
 
 def print_cuda_memory_usage():

@@ -44,6 +44,11 @@ class Policy(Protocol):
             dataset_stats: Dataset statistics to be used for normalization.
         """
 
+    def get_optim_params(self) -> dict:
+        """
+        Returns the policy-specific parameters dict to be passed on to the optimizer.
+        """
+
     def reset(self):
         """To be called whenever the environment is reset.
 

@@ -40,6 +40,7 @@ dataset = LeRobotDataset("lerobot/pusht", delta_timestamps=delta_timestamps)
 # For this example, no arguments need to be passed because the defaults are set up for PushT.
 # If you're doing something different, you will likely need to change at least some of the defaults.
 cfg = DiffusionConfig()
+cfg.parse_features_from_dataset(dataset.meta)
 policy = DiffusionPolicy(cfg, dataset_stats=dataset.meta.stats)
 policy.train()
 policy.to(device)

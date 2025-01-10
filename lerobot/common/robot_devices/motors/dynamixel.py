@@ -4,10 +4,12 @@ import math
 import time
 import traceback
 from copy import deepcopy
+from dataclasses import replace
 
 import numpy as np
 import tqdm
 
+from lerobot.common.robot_devices.motors.configs import DynamixelMotorsBusConfig
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
 
@@ -293,15 +295,16 @@ class DynamixelMotorsBus:
 
     def __init__(
         self,
-        port: str,
-        motors: dict[str, tuple[int, str]],
+        config: DynamixelMotorsBusConfig | None = None,
         extra_model_control_table: dict[str, list[tuple]] | None = None,
         extra_model_resolution: dict[str, int] | None = None,
-        mock=False,
+        **kwargs,
     ):
-        self.port = port
-        self.motors = motors
-        self.mock = mock
+        config = DynamixelMotorsBusConfig(**kwargs) if config is None else replace(config, **kwargs)
+
+        self.port = config.port
+        self.motors = config.motors
+        self.mock = config.mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
         if extra_model_control_table:
