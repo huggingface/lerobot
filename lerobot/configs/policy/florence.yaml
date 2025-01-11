@@ -1,0 +1,78 @@
+# @package _global_
+
+# Defaults for training for the PushT dataset.
+
+seed: 100000
+dataset_repo_id: lerobot/pusht
+
+override_dataset_stats:
+  # TODO(rcadene, alexander-soare): should we remove image stats as well? do we use a pretrained vision model?
+  observation.image:
+    mean: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
+    std: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
+  # TODO(rcadene, alexander-soare): we override state and action stats to use the same as the pretrained model
+  # from the original codebase, but we should remove these and train our own pretrained model
+  observation.state:
+    min: [13.456424, 32.938293]
+    max: [496.14618, 510.9579]
+  action:
+    min: [12.0, 25.0]
+    max: [511.0, 511.0]
+
+training:
+  num_workers: 16
+  offline_steps: 250000
+  online_steps: 0
+  eval_freq: 5000
+  save_freq: 5000
+  log_freq: 1
+  save_checkpoint: true
+
+  batch_size: 64
+  grad_clip_norm: 10
+  lr: 1.0e-5
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  adam_betas: [0.95, 0.999]
+  adam_eps: 1.0e-8
+  adam_weight_decay: 1.0e-6
+  online_steps_between_rollouts: 1
+
+  delta_timestamps:
+    observation.image: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.state: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    action: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.horizon})]"
+
+eval:
+  n_episodes: 50
+  batch_size: 50
+
+policy:
+  name: florence
+
+  # Input / output structure.
+  n_obs_steps: 2
+  horizon: 16
+  n_action_steps: 1
+
+  input_shapes:
+    # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
+    observation.image: [3, 96, 96]
+    observation.state: ["${env.state_dim}"]
+  output_shapes:
+    action: ["${env.action_dim}"]
+
+  # Normalization / Unnormalization
+  input_normalization_modes:
+    observation.image: mean_std
+    observation.state: min_max
+  output_normalization_modes:
+    action: min_max
+
+  # Architecture / modeling.
+  repo_path: "microsoft/Florence-2-base"
+  freeze_vision_tower: True
+
+  # Vision settings.
+  crop_shape: [84, 84]
+  crop_is_random: True

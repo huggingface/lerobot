@@ -71,6 +71,9 @@ pyrender = {git = "https://github.com/mmatl/pyrender.git", markers = "sys_platfo
 hello-robot-stretch-body = {version = ">=0.7.27", markers = "sys_platform == 'linux'", optional = true}
 pyserial = {version = ">=3.5", optional = true}
 jsonlines = ">=4.0.0"
+transformers = { version = ">0.0", optional = true}
+timm = { version = ">0.0", optional = true}
+flash-attn = { version = ">0.0", optional = true}
 
 
 [tool.poetry.extras]
@@ -82,10 +85,12 @@ dev = ["pre-commit", "debugpy"]
 test = ["pytest", "pytest-cov", "pyserial"]
 umi = ["imagecodecs"]
 video_benchmark = ["scikit-image", "pandas"]
+koch = ["dynamixel-sdk", "pynput"]
 dynamixel = ["dynamixel-sdk", "pynput"]
 feetech = ["feetech-servo-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
 stretch = ["hello-robot-stretch-body", "pyrender", "pyrealsense2", "pynput"]
+florence = ["transformers", "timm", "flash-attn"]
 
 [tool.ruff]
 line-length = 110
