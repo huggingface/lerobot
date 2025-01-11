@@ -61,6 +61,19 @@ class OnlineConfig:
     # + eval + environment rendering simultaneously.
     do_rollout_async: bool = False
 
+    def __post_init__(self):
+        if self.steps == 0:
+            return
+
+        if self.steps_between_rollouts is None:
+            raise ValueError(
+                "'steps_between_rollouts' must be set to a positive integer, but it is currently None."
+            )
+        if self.env_seed is None:
+            raise ValueError("'env_seed' must be set to a positive integer, but it is currently None.")
+        if self.buffer_capacity is None:
+            raise ValueError("'buffer_capacity' must be set to a positive integer, but it is currently None.")
+
 
 @dataclass
 class TrainPipelineConfig:
