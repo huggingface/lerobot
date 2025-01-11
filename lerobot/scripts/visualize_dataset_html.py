@@ -233,8 +233,20 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
     This file will be loaded by Dygraph javascript to plot data in real time."""
     columns = []
 
-    selected_columns = [col for col, ft in dataset.features.items() if ft["dtype"] == "float32"]
-    selected_columns.remove("timestamp")
+    for col, ft in dataset.features.items():
+        print(col, ft["dtype"])
+
+    selected_columns = [
+        col for col, ft in dataset.features.items() if ft["dtype"].startswith(("float", "int"))
+    ]
+    selected_columns = [
+        col for col in selected_columns if "reward" not in col.lower()
+    ]  # TODO(mishig25): handle reward columns in separate graph
+
+    lerobot_reserved_columns = ["timestamp", "frame_index", "episode_index", "index", "task_index"]
+    for col in lerobot_reserved_columns:
+        if col in selected_columns:
+            selected_columns.remove(col)
 
     # init header of csv with state and action names
     header = ["timestamp"]
