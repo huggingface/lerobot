@@ -1,0 +1,124 @@
+# @package _global_
+
+# Use 'diffusion_myarm_real.yaml' to train real-world datasets collected on Elephant Robotics
+# MyArm robots.
+
+# Compared to `diffusion.yaml`, the camera is named 'wrist'. The observation state normalization is also different.
+# Also, `training.eval_freq` is set to -1 to disable in-training evaluation.
+#
+# Example of usage for training:
+# ```bash
+# python lerobot/scripts/train.py \
+#   policy=diffusion_myarm_real \
+#   env=myarm_real
+# ```
+
+seed: 100000
+dataset_repo_id: ???
+
+# TODO (Alex): Try without overriding
+override_dataset_stats:
+  observation.images.wrist:
+    mean: [[[0.52129]], [[0.43549]], [[0.36665]]]  # (c,1,1)
+    std: [[[0.20917]], [[0.20528]], [[0.21115]]]  # (c,1,1)
+  observation.images.top:
+    mean: [[[0.54635]], [[0.45889]], [[0.39330]]]  # (c,1,1)
+    std: [[[0.21034]], [[ 0.21010]], [[0.21691]]]  # (c,1,1)
+  # from the original codebase, but we should remove these and train our own pretrained model
+  observation.state:
+    min: [-1.09973, -1.00618, -1.43885, -0.91106, -0.38502, -2.2979, -0.06778]
+    max: [1.15035, 0.53372, -0.11345, 0.96936, 1.29922, 1.64427, 0.03857]
+  action:
+    min: [-1.10444, -1.9701, -1.61652, -0.92799, -0.4126, -2.30635, 0.00273]
+    max: [1.15646, 0.5243, -0.08098, 0.99074, 1.84024, 1.65754, 0.06823]
+
+training:
+  offline_steps: 200000
+  online_steps: 0
+  eval_freq: -1
+  save_freq: 10000
+  save_checkpoint: true
+
+  batch_size: 64
+  grad_clip_norm: 10
+  lr: 1.0e-4
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  adam_betas: [0.95, 0.999]
+  adam_eps: 1.0e-8
+  adam_weight_decay: 1.0e-6
+  online_steps_between_rollouts: 1
+
+  delta_timestamps:
+    observation.images.wrist: "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.images.top:   "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    observation.state:        "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1)]"
+    action:                   "[i / ${fps} for i in range(1 - ${policy.n_obs_steps}, 1 - ${policy.n_obs_steps} + ${policy.horizon})]"
+
+  # The original implementation doesn't sample frames for the last 7 steps,
+  # which avoids excessive padding and leads to improved training results.
+  drop_n_last_frames: 7  # ${policy.horizon} - ${policy.n_action_steps} - ${policy.n_obs_steps} + 1
+
+eval:
+  n_episodes: 50
+  batch_size: 50
+
+policy:
+  name: diffusion
+
+  # Input / output structure.
+  n_obs_steps: 2  # TODO (Alex): Try increasing this substantially
+  horizon: 16  # TODO (Alex): Try increasing this substantially
+  n_action_steps: 8
+
+  input_shapes:
+    observation.images.wrist: [3, 240, 320]
+    observation.images.top: [3, 240, 320]
+    observation.state: ["${env.state_dim}"]
+  output_shapes:
+    action: ["${env.action_dim}"]
+
+  # Normalization / Unnormalization
+  input_normalization_modes:
+    observation.images.wrist: mean_std
+    observation.images.top: mean_std
+    observation.state: min_max
+  output_normalization_modes:
+    action: min_max
+
+  # Architecture / modeling.
+  # Vision backbone.
+  vision_backbone: resnet18
+  crop_shape: null  # TODO (Alex): For "real" datasets, not synthetic, set the crop to help augment things
+  crop_is_random: True
+  # TODO (Alex): Try setting this to ResNet18
+  pretrained_backbone_weights: null
+  use_group_norm: True
+  spatial_softmax_num_keypoints: 32
+
+  # TODO (Alex): Worth experimenting with
+  # use_separate_rgb_encoder_per_camera: ???
+
+  # Unet.
+  down_dims: [512, 1024, 2048]
+  kernel_size: 5
+  n_groups: 8
+  diffusion_step_embed_dim: 128
+  use_film_scale_modulation: True
+  # Noise scheduler.
+  noise_scheduler_type: DDPM
+  num_train_timesteps: 100
+  beta_schedule: squaredcos_cap_v2
+  beta_start: 0.0001
+  beta_end: 0.02
+  prediction_type: epsilon # epsilon / sample
+  # TODO (Alex): If I run into trouble, disable this. clip_sample only works if the data is correctly normalized
+  clip_sample: True
+  clip_sample_range: 1.0
+
+  # Inference
+  # TODO (Alex): Try with 10, currently will default to 100
+  num_inference_steps: null  # if not provided, defaults to `num_train_timesteps`
+
+  # Loss computation
+  do_mask_loss_for_padding: false
