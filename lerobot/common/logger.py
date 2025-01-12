@@ -43,7 +43,7 @@ def cfg_to_group(cfg: DictConfig, return_list: bool = False) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
     lst = [
         f"policy:{cfg.policy.name}",
-        f"dataset:{cfg.dataset_repo_id}",
+        f"dataset:{cfg.dataset_repo_id if isinstance(cfg.dataset_repo_id, str) else cfg.dataset_repo_id[0] + '...' }",
         f"env:{cfg.env.name}",
         f"seed:{cfg.seed}",
     ]
