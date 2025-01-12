@@ -71,6 +71,8 @@ pyrender = {git = "https://github.com/mmatl/pyrender.git", markers = "sys_platfo
 hello-robot-stretch-body = {version = ">=0.7.27", markers = "sys_platform == 'linux'", optional = true}
 pyserial = {version = ">=3.5", optional = true}
 jsonlines = ">=4.0.0"
+flask-socketio = ">=5.5.0"
+pyzmq = ">=26.2.0"
 
 
 [tool.poetry.extras]

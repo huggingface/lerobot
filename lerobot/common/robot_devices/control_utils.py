@@ -8,9 +8,10 @@ import time
 import traceback
 from contextlib import nullcontext
 from copy import copy
+from dataclasses import asdict, dataclass
 from functools import cache
+from typing import Any, Dict, List, Optional
 
-import cv2
 import torch
 import tqdm
 from deepdiff import DeepDiff
@@ -21,53 +22,87 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import get_features_from_robot
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.utils import Robot
-from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 
 
-def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
-    log_items = []
+@dataclass
+class LogItem:
+    name: str
+    value: float
+    unit: str
+    color: str = "white"
+
+    def to_dict(self):
+        return asdict(self)
+
+def stringify_and_log(log_items: List[LogItem]):
+    parts = []
+    for item in log_items:
+        if item.unit:
+            info_str = f"{item.name}:{item.value:.2f} {item.unit}"
+        else:
+            info_str = f"{item.name}:{int(item.value)}"
+        
+        if item.color != "white":
+            info_str = colored(info_str, item.color)
+        
+        parts.append(info_str)
+    
+    info_str = " ".join(parts)
+    logging.info(info_str)
+
+def serialize_log_items(log_items: List[LogItem]) -> List[Dict[str, Any]]:
+    return [item.to_dict() for item in log_items]
+
+def log_control_info(robot: Robot, dt_s: float, fps: Optional[float] = None,
+                    episode_index: Optional[int] = None,
+                    frame_index: Optional[int] = None) -> List[LogItem]:
+    log_items: List[LogItem] = []
+
+    # Add episode and frame information if provided
     if episode_index is not None:
-        log_items.append(f"ep:{episode_index}")
+        log_items.append(LogItem(name="ep", value=float(episode_index), unit=""))
     if frame_index is not None:
-        log_items.append(f"frame:{frame_index}")
+        log_items.append(LogItem(name="frame", value=float(frame_index), unit=""))
 
-    def log_dt(shortname, dt_val_s):
-        nonlocal log_items, fps
-        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"
-        if fps is not None:
-            actual_fps = 1 / dt_val_s
-            if actual_fps < fps - 1:
-                info_str = colored(info_str, "yellow")
-        log_items.append(info_str)
+    # Helper function to create LogItem instances
+    def create_log_item(shortname: str, dt_val_s: float, base_fps: Optional[float]) -> LogItem:
+        value_ms = dt_val_s * 1000
+        frequency = 1 / dt_val_s if dt_val_s > 0 else 0.0
+        unit = f"ms ({frequency:.1f}Hz)"
+        color = "white"
+        if base_fps is not None and frequency < (base_fps - 1):
+            color = "yellow"
+        return LogItem(name=shortname, value=value_ms, unit=unit, color=color)
 
-    # total step time displayed in milliseconds and its frequency
-    log_dt("dt", dt_s)
+    # Log total step time
+    log_items.append(create_log_item("dt", dt_s, fps))
 
-    # TODO(aliberts): move robot-specific logs logic in robot.print_logs()
+    # Robot-specific logs
     if not robot.robot_type.startswith("stretch"):
         for name in robot.leader_arms:
             key = f"read_leader_{name}_pos_dt_s"
             if key in robot.logs:
-                log_dt("dtRlead", robot.logs[key])
+                log_items.append(create_log_item("dtRlead", robot.logs[key], fps))
 
         for name in robot.follower_arms:
-            key = f"write_follower_{name}_goal_pos_dt_s"
-            if key in robot.logs:
-                log_dt("dtWfoll", robot.logs[key])
+            key_write = f"write_follower_{name}_goal_pos_dt_s"
+            if key_write in robot.logs:
+                log_items.append(create_log_item("dtWfoll", robot.logs[key_write], fps))
 
-            key = f"read_follower_{name}_pos_dt_s"
-            if key in robot.logs:
-                log_dt("dtRfoll", robot.logs[key])
+            key_read = f"read_follower_{name}_pos_dt_s"
+            if key_read in robot.logs:
+                log_items.append(create_log_item("dtRfoll", robot.logs[key_read], fps))
 
         for name in robot.cameras:
             key = f"read_camera_{name}_dt_s"
             if key in robot.logs:
-                log_dt(f"dtR{name}", robot.logs[key])
+                log_items.append(create_log_item(f"dtR{name}", robot.logs[key], fps))
 
-    info_str = " ".join(log_items)
-    logging.info(info_str)
+    stringify_and_log(log_items)
+    return log_items
+
 
 
 @cache
@@ -183,44 +218,40 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides):
 
 def warmup_record(
     robot,
-    events,
     enable_teleoperation,
     warmup_time_s,
-    display_cameras,
     fps,
+    control_context
 ):
     control_loop(
         robot=robot,
         control_time_s=warmup_time_s,
-        display_cameras=display_cameras,
-        events=events,
         fps=fps,
         teleoperate=enable_teleoperation,
+        control_context=control_context,
     )
 
 
 def record_episode(
     robot,
     dataset,
-    events,
     episode_time_s,
-    display_cameras,
     policy,
     device,
     use_amp,
     fps,
+    control_context
 ):
     control_loop(
         robot=robot,
         control_time_s=episode_time_s,
-        display_cameras=display_cameras,
         dataset=dataset,
-        events=events,
         policy=policy,
         device=device,
         use_amp=use_amp,
         fps=fps,
         teleoperate=policy is None,
+        control_context=control_context,
     )
 
 
@@ -229,14 +260,15 @@ def control_loop(
     robot,
     control_time_s=None,
     teleoperate=False,
-    display_cameras=False,
     dataset: LeRobotDataset | None = None,
-    events=None,
     policy=None,
     device=None,
     use_amp=None,
     fps=None,
+    control_context=None,
 ):
+    events = control_context.get_events() if control_context is not None else None
+
     # TODO(rcadene): Add option to record logs
     if not robot.is_connected:
         robot.connect()
@@ -255,49 +287,48 @@ def control_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
-    while timestamp < control_time_s:
-        start_loop_t = time.perf_counter()
+    total_time = 0
+    try:
+        while timestamp < control_time_s:
+            start_loop_t = time.perf_counter()
 
-        if teleoperate:
-            observation, action = robot.teleop_step(record_data=True)
-        else:
-            observation = robot.capture_observation()
+            if teleoperate:
+                observation, action = robot.teleop_step(record_data=True)
+            else:
+                observation = robot.capture_observation()
 
-            if policy is not None:
-                pred_action = predict_action(observation, policy, device, use_amp)
-                # Action can eventually be clipped using `max_relative_target`,
-                # so action actually sent is saved in the dataset.
-                action = robot.send_action(pred_action)
-                action = {"action": action}
+                if policy is not None:
+                    pred_action = predict_action(observation, policy, device, use_amp)
+                    # Action can eventually be clipped using `max_relative_target`,
+                    # so action actually sent is saved in the dataset.
+                    action = robot.send_action(pred_action)
+                    action = {"action": action}
 
-        if dataset is not None:
-            frame = {**observation, **action}
-            dataset.add_frame(frame)
+            if dataset is not None:
+                frame = {**observation, **action}
+                dataset.add_frame(frame)
 
-        if display_cameras and not is_headless():
-            image_keys = [key for key in observation if "image" in key]
-            for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+            timestamp = time.perf_counter() - start_episode_t
+            total_time += timestamp
+            countdown_time = max(0, control_time_s - timestamp)
 
-        if fps is not None:
-            dt_s = time.perf_counter() - start_loop_t
-            busy_wait(1 / fps - dt_s)
+            control_context.update_with_observations(observation, start_loop_t, countdown_time)
 
-        dt_s = time.perf_counter() - start_loop_t
-        log_control_info(robot, dt_s, fps=fps)
+            if events["exit_early"]:
+                events["exit_early"] = False
+                break
 
-        timestamp = time.perf_counter() - start_episode_t
-        if events["exit_early"]:
-            events["exit_early"] = False
-            break
+    except Exception as e:
+        print(f"Error in control loop: {e}")
 
 
-def reset_environment(robot, events, reset_time_s):
+def reset_environment(robot, control_context, reset_time_s):
     # TODO(rcadene): refactor warmup_record and reset_environment
     # TODO(alibets): allow for teleop during reset
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
+
+    events = control_context.get_events()
 
     timestamp = 0
     start_vencod_t = time.perf_counter()
@@ -307,22 +338,13 @@ def reset_environment(robot, events, reset_time_s):
         while timestamp < reset_time_s:
             time.sleep(1)
             timestamp = time.perf_counter() - start_vencod_t
+            countdown_time = max(0, reset_time_s - timestamp)
+            control_context.update_with_observations(None, 0, countdown_time)
             pbar.update(1)
+
             if events["exit_early"]:
                 events["exit_early"] = False
                 break
-
-
-def stop_recording(robot, listener, display_cameras):
-    robot.disconnect()
-
-    if not is_headless():
-        if listener is not None:
-            listener.stop()
-
-        if display_cameras:
-            cv2.destroyAllWindows()
-
 
 def sanity_check_dataset_name(repo_id, policy):
     _, dataset_name = repo_id.split("/")

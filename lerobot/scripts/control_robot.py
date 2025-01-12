@@ -101,17 +101,20 @@ from typing import List
 
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.robot_devices.control_context import (
+    ControlContext,
+    ControlContextConfig,
+    ControlPhase,
+)
 from lerobot.common.robot_devices.control_utils import (
     control_loop,
     has_method,
-    init_keyboard_listener,
     init_policy,
     log_control_info,
     record_episode,
     reset_environment,
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
-    stop_recording,
     warmup_record,
 )
 from lerobot.common.robot_devices.robots.factory import make_robot
@@ -172,14 +175,21 @@ def calibrate(robot: Robot, arms: list[str] | None):
 
 @safe_disconnect
 def teleoperate(
-    robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
+    robot: Robot, fps: int | None = None, teleop_time_s: float | None = None
 ):
+    control_context = ControlContext(
+        config=ControlContextConfig(
+            control_phase=ControlPhase.TELEOPERATE,
+            robot=robot,
+            fps=fps,
+        )
+    )
     control_loop(
         robot,
         control_time_s=teleop_time_s,
         fps=fps,
         teleoperate=True,
-        display_cameras=display_cameras,
+        control_context=control_context,
     )
 
 
@@ -209,8 +219,6 @@ def record(
     local_files_only: bool = False,
 ) -> LeRobotDataset:
     # TODO(rcadene): Add option to record logs
-    listener = None
-    events = None
     policy = None
     device = None
     use_amp = None
@@ -259,15 +267,24 @@ def record(
     if not robot.is_connected:
         robot.connect()
 
-    listener, events = init_keyboard_listener()
-
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
-    log_say("Warmup record", play_sounds)
-    warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
+
+    control_context = ControlContext(
+        config=ControlContextConfig(
+            robot=robot,
+            control_phase=ControlPhase.WARMUP,
+            assign_rewards=False,
+            num_episodes=num_episodes,
+            fps=fps,
+        )
+    )
+    control_context.log_say("Warmup record")
+
+    warmup_record(robot, enable_teleoperation, warmup_time_s, fps, control_context)
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
@@ -282,18 +299,30 @@ def record(
         # if multi_task:
         #     task = input("Enter your task description: ")
 
-        log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
+        control_context = control_context.update_config(
+            ControlContextConfig(
+                robot=robot,
+                control_phase=ControlPhase.RECORD,
+                assign_rewards=False,
+                num_episodes=num_episodes,
+                fps=fps,
+            )
+        )
+
+        control_context.log_say(f"Recording episode {dataset.num_episodes + 1}")
         record_episode(
             dataset=dataset,
             robot=robot,
-            events=events,
             episode_time_s=episode_time_s,
-            display_cameras=display_cameras,
             policy=policy,
             device=device,
             use_amp=use_amp,
             fps=fps,
+            control_context=control_context,
         )
+
+        # Events will be updated by control loop
+        events = control_context.get_events()
 
         # Execute a few seconds without recording to give time to manually reset the environment
         # Current code logic doesn't allow to teleoperate during this time.
@@ -302,24 +331,53 @@ def record(
         if not events["stop_recording"] and (
             (dataset.num_episodes < num_episodes - 1) or events["rerecord_episode"]
         ):
-            log_say("Reset the environment", play_sounds)
-            reset_environment(robot, events, reset_time_s)
+            control_context = control_context.update_config(
+                ControlContextConfig(
+                    robot=robot,
+                    control_phase=ControlPhase.RESET,
+                    assign_rewards=False,
+                    num_episodes=num_episodes,
+                    fps=fps,
+                )
+            )
+            control_context.log_say("Reset the environment")
+            reset_environment(robot, control_context=control_context, reset_time_s=reset_time_s)
 
         if events["rerecord_episode"]:
-            log_say("Re-record episode", play_sounds)
+            control_context.log_say("Re-record episode")
             events["rerecord_episode"] = False
             events["exit_early"] = False
             dataset.clear_episode_buffer()
             continue
 
+        control_context = control_context.update_config(
+            ControlContextConfig(
+                robot=robot,
+                control_phase=ControlPhase.SAVING,
+                assign_rewards=False,
+                num_episodes=num_episodes,
+                fps=fps,
+            )
+        )
         dataset.save_episode(task)
         recorded_episodes += 1
+        control_context.update_current_episode(recorded_episodes)
 
         if events["stop_recording"]:
             break
 
-    log_say("Stop recording", play_sounds, blocking=True)
-    stop_recording(robot, listener, display_cameras)
+    control_context.log_say("Stop recording")
+    control_context.cleanup(robot)
+
+    control_context = control_context.update_config(
+        ControlContextConfig(
+            robot=robot,
+            control_phase=ControlPhase.PROCESSING_DATASET,
+            assign_rewards=False,
+            num_episodes=num_episodes,
+            fps=fps,
+        )
+    )
 
     if run_compute_stats:
         logging.info("Computing dataset statistics")
@@ -327,9 +385,27 @@ def record(
     dataset.consolidate(run_compute_stats)
 
     if push_to_hub:
+        control_context = control_context.update_config(
+            ControlContextConfig(
+                robot=robot,
+                control_phase=ControlPhase.UPLOADING_DATASET_TO_HUB,
+                assign_rewards=False,
+                num_episodes=num_episodes,
+                fps=fps,
+            )
+        )
         dataset.push_to_hub(tags=tags)
 
-    log_say("Exiting", play_sounds)
+    control_context.log_say("Exiting")
+    control_context = control_context.update_config(
+        ControlContextConfig(
+            robot=robot,
+            control_phase=ControlPhase.RECORDING_COMPLETE,
+            assign_rewards=False,
+            num_episodes=num_episodes,
+            fps=fps,
+        )
+    )
     return dataset
 
 
@@ -396,12 +472,6 @@ if __name__ == "__main__":
     parser_teleop = subparsers.add_parser("teleoperate", parents=[base_parser])
     parser_teleop.add_argument(
         "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
-    )
-    parser_teleop.add_argument(
-        "--display-cameras",
-        type=int,
-        default=1,
-        help="Display all cameras on screen (set to 1 to display or 0).",
     )
 
     parser_record = subparsers.add_parser("record", parents=[base_parser])
