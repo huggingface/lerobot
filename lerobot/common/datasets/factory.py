@@ -98,12 +98,26 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
             image_transforms=image_transforms,
             video_backend=cfg.video_backend,
         )
-    else:
+
+        # Add next.done if it doesn't exist
+        if "next.done" not in dataset.hf_dataset.features:
+            # Create a tensor of False values with True at the end of each episode
+            next_done = torch.zeros(len(dataset), dtype=torch.bool)
+            next_done[dataset.episode_data_index["to"] - 1] = True
+
+            # Add the column to the dataset
+            dataset.hf_dataset = dataset.hf_dataset.add_column("next.done", next_done.tolist())
+
+    elif isinstance(cfg.dataset_repo_id, (list, ListConfig)):
         dataset = MultiLeRobotDataset(
             cfg.dataset_repo_id,
             delta_timestamps=cfg.training.get("delta_timestamps"),
             image_transforms=image_transforms,
             video_backend=cfg.video_backend,
+        )
+    else:
+        raise ValueError(
+            f"dataset_repo_id must be a string or a list of strings, got {type(cfg.dataset_repo_id)}"
         )
 
     if cfg.get("override_dataset_stats"):
