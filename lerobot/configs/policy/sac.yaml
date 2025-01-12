@@ -24,7 +24,7 @@ override_dataset_stats:
 
 eval:
   n_episodes: 50
-  batch_size: 50
+  batch_size: 10
 
 policy:
   name: sac
