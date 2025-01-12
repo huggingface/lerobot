@@ -37,7 +37,7 @@ def create_stats_buffers(
     stats_buffers = {}
 
     for ft in features:
-        if ft.normalization_mode is None:
+        if ft.normalization_mode is NormalizationMode.IDENTITY:
             continue
 
         assert isinstance(ft.normalization_mode, NormalizationMode)
@@ -137,7 +137,7 @@ class Normalize(nn.Module):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = dict(batch)  # shallow copy avoids mutating the input batch
         for ft in self.features:
-            if ft.normalization_mode is None:
+            if ft.normalization_mode is NormalizationMode.IDENTITY:
                 continue
 
             buffer = getattr(self, "buffer_" + ft.key.replace(".", "_"))

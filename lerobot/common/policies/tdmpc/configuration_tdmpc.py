@@ -115,9 +115,9 @@ class TDMPCConfig(PretrainedConfig):
 
     normalization_mapping: dict[str, NormalizationMode | None] = field(
         default_factory=lambda: {
-            "VISUAL": None,
-            "STATE": None,
-            "ENV": None,
+            "VISUAL": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.IDENTITY,
+            "ENV": NormalizationMode.IDENTITY,
             "ACTION": NormalizationMode.MIN_MAX,
         }
     )

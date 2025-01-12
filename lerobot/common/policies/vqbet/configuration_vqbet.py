@@ -98,7 +98,7 @@ class VQBeTConfig(PretrainedConfig):
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "VISUAL": None,
+            "VISUAL": NormalizationMode.IDENTITY,
             "STATE": NormalizationMode.MIN_MAX,
             "ACTION": NormalizationMode.MIN_MAX,
         }
