@@ -101,6 +101,7 @@ from typing import List
 
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.exceptions import DatasetExistError
 from lerobot.common.robot_devices.control_utils import (
     control_loop,
     has_method,
@@ -564,7 +565,11 @@ if __name__ == "__main__":
         teleoperate(robot, **kwargs)
 
     elif control_mode == "record":
-        record(robot, **kwargs)
+        try:
+            record(robot, **kwargs)
+        except DatasetExistError as e:
+            logging.error(f"Dataset already exists: {e}")
+            logging.error("To resume from the existing dataset, please pass the `--resume` flag.")
 
     elif control_mode == "replay":
         replay(robot, **kwargs)
