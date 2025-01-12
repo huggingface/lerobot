@@ -187,7 +187,7 @@ class SACPolicy(
                     * ~batch["observation.state_is_pad"][:, 0]
                     * ~batch["action_is_pad"][:, 0]
                 )  # shape: [batch_size, horizon]
-            td_target = rewards[:, 0] + self.config.discount * min_q
+            td_target = rewards[:, 0] + self.config.discount * min_q * ~batch["next.done"][:, 0]
 
         # 3- compute predicted qs
         q_preds = self.critic_forward(observations, actions, use_target=False)
@@ -541,19 +541,11 @@ class LagrangeMultiplier(nn.Module):
             return alpha
 
         # Convert inputs to tensors and move to device
-        lhs = (
-            torch.tensor(lhs, device=self.device)
-            if not isinstance(lhs, torch.Tensor)
-            else lhs.to(self.device)
-        )
+        lhs = torch.tensor(lhs, device=self.device) if not isinstance(lhs, torch.Tensor) else lhs
         if rhs is not None:
-            rhs = (
-                torch.tensor(rhs, device=self.device)
-                if not isinstance(rhs, torch.Tensor)
-                else rhs.to(self.device)
-            )
+            rhs = torch.tensor(rhs) if not isinstance(rhs, torch.Tensor) else rhs
         else:
-            rhs = torch.zeros_like(lhs, device=self.device)
+            rhs = torch.zeros_like(lhs)
 
         # Compute the difference and apply the multiplier
         diff = lhs - rhs
