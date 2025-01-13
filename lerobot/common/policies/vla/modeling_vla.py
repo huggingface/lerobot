@@ -57,6 +57,7 @@ class VLAPolicy(
         )
         precision = torch.float16 if "fp16" in config.precision else torch.float32
         self.model = VLA(config, precision=precision)
+    
         self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
 
         self.reset()
@@ -90,6 +91,7 @@ class VLAPolicy(
         if len(self.expected_image_keys) > 0:
             batch = dict(batch)
             batch["observation.images"] = [img for k in self.expected_image_keys for img in batch[k]]
+ 
         batch = self.normalize_targets(batch)
         batch["prompt"] = self.config.prompt
 
@@ -338,10 +340,10 @@ class VLA(nn.Module):
         else:
             prompt = self.apply_prompt_template(batch["prompt"], add_generation_prompt=True)
 
-            batch_size = len(batch["observation.images"])
+            num_images = len(batch["observation.images"])
             with record_function("processor"):
                 processed_inputs = self.processor(
-                    text=[prompt] * batch_size,
+                    text=[prompt] * num_images,
                     images=list(batch["observation.images"]),
                     return_tensors="pt",
                     padding=True,
@@ -353,6 +355,13 @@ class VLA(nn.Module):
                     processed_inputs[k] = processed_inputs[k].to(device=batch["observation.state"].device)
 
             hidden_states = self.get_vlm_features(processed_inputs)
+
+            batch_size = batch["index"].shape[0]
+            num_cameras = num_images // batch_size
+            num_tokens = hidden_states.shape[1]
+            dim_feats = hidden_states.shape[2]
+            hidden_states = hidden_states.reshape(batch_size, num_tokens*num_cameras, dim_feats)
+
         if self.use_robot_state:
             robot_state = self.encoder_robot_state_input_proj(batch["observation.state"]).unsqueeze(1)
             hidden_states = torch.cat([hidden_states, robot_state], axis=1)

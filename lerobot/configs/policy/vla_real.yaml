@@ -1,0 +1,92 @@
+# @package _global_
+seed: 1000
+dataset_repo_id: danaaubakirova/koch_test
+
+training:
+  offline_steps: 100000
+  online_steps: 0
+  eval_freq: -1
+  save_freq: 2000
+  log_freq: 100
+  save_checkpoint: true
+
+  batch_size: 8
+  lr: 3e-5
+  lr_backbone: 3e-5
+  weight_decay: 1e-4
+  grad_clip_norm: 10
+  online_steps_between_rollouts: 1
+
+  delta_timestamps:
+    action: "[i / ${fps} for i in range(${policy.chunk_size})]"
+
+eval:
+  n_episodes: 50
+  batch_size: 50
+
+# See `configuration_act.py` for more details.
+policy:
+  name: vla
+  precision: fp32
+  # Input / output structure.
+  n_obs_steps: 1
+  n_action_steps: 100
+  chunk_size: 100
+
+  input_shapes:
+    observation.images.laptop: [3, 480, 640]
+    observation.images.phone: [3, 480, 640]
+    observation.state: ["${env.state_dim}"]             # State input dimension
+    text.input: [256]                      # Text input processed by Qwen-VL
+  output_shapes:
+    action: ["${env.action_dim}"]  # Action output dimension (Example: 4D actions)
+
+  # Normalization / Unnormalization
+  input_normalization_modes:
+    # observation.images.top: mean_std
+    observation.state: mean_std
+    # text.input: none  # No normalization needed for text input
+  output_normalization_modes:
+    action: mean_std
+
+  # Architecture.
+  prompt: "Pick up yellow lego block and put it in the bin" #"Please insert the tube into the socket."
+
+  # Vision-Language Model (Qwen-VL)
+  vlm_backbone:
+    name: llava-hf/llava-onevision-qwen2-0.5b-ov-hf # HuggingFaceTB/SmolVLM_converted_4
+    feature_selection: first_image
+    hidden_size: 896
+  use_action_connector: False # in case vlm_backbone.hidden_size is different than action_decoder.dim_model
+  use_prompt_template: true
+  num_img_tokens: 598
+  replace_final_stride_with_dilation: false
+
+  # Combining state, video, and text
+  combined_dim: 128  # Dimension after combining state and VLM outputs
+
+  # Action decoder
+  action_decoder:
+    name: act
+    vlm_hidden_dim: 128  # Input dim for action decoder (combined dimension)
+    # action_dim: 4  # Output dimension (action space)
+    n_decoder_layers: 1
+    n_encoder_layers: 4
+    dim_model: 896 # 2048 smolvlm
+    n_heads: 8
+    dim_feedforward: 3200
+    feedforward_activation: relu
+    pre_norm: false
+    # Training and loss computation
+    dropout: 0.1
+    temporal_ensemble_coeff: null
+    chunk_size: 100
+
+
+  # Lora config
+  peft_method: lora
+  peft_config:
+    r: 4
+    lora_alpha: 16
+    lora_dropout: 0.1
+    target_modules: ["q_proj", "v_proj"]
