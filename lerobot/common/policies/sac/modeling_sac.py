@@ -285,7 +285,6 @@ class SACPolicy(
         return critics_loss
 
     def compute_loss_temperature(self, observations) -> Tensor:
-        breakpoint()
         """Compute the temperature loss"""
         # calculate temperature loss
         with torch.no_grad():
