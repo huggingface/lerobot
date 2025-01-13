@@ -25,6 +25,7 @@ from copy import copy
 from functools import cache
 
 import rerun as rr
+import numpy as np
 import torch
 from deepdiff import DeepDiff
 from termcolor import colored
@@ -316,7 +317,17 @@ def reset_environment(robot, events, reset_time_s, fps):
     )
 
 
-def stop_recording(robot, listener, display_data):
+def reset_follower_position(robot: Robot, target_position):
+    current_position = robot.follower_arms["main"].read("Present_Position")
+    trajectory = torch.from_numpy(
+        np.linspace(current_position, target_position, 30)
+    )  # NOTE: 30 is just an aribtrary number
+    for pose in trajectory:
+        robot.send_action(pose)
+        busy_wait(0.015)
+
+
+def stop_recording(robot, listener, display_cameras):
     robot.disconnect()
 
     if not is_headless() and listener is not None:

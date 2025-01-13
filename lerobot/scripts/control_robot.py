@@ -161,6 +161,7 @@ from lerobot.common.robot_devices.control_utils import (
     log_control_info,
     record_episode,
     reset_environment,
+    reset_follower_position,
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
     stop_recording,
@@ -281,6 +282,9 @@ def record(
         robot.connect()
     listener, events = init_keyboard_listener(assign_rewards=assign_rewards)
 
+    if reset_follower:
+        initial_position = robot.follower_arms["main"].read("Present_Position")
+        
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
     # 2. give times to the robot devices to connect and start synchronizing,
