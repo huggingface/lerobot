@@ -39,7 +39,6 @@ for running training on the real robot.
 import argparse
 import logging
 import time
-from copy import deepcopy
 
 import cv2
 import numpy as np
@@ -106,6 +105,7 @@ def rollout(
     Returns:
         The dictionary described above.
     """
+    # TODO (michel-aractingi): Infer the device from policy parameters when policy is added
     # assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
     # device = get_device_from_parameters(policy)
 
@@ -155,7 +155,6 @@ def rollout(
                 cv2.waitKey(1)
             images.append(observation[key].to("mps"))
 
-        
         reward = reward_classifier.predict_reward(images) if reward_classifier is not None else 0.0
         all_rewards.append(reward)
 
@@ -372,10 +371,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--reward-classifier-config-file",
         type=str,
-        default=None, 
+        default=None,
         help="Path to a yaml config file that is necessary to build the reward classifier model.",
     )
-
 
     args = parser.parse_args()
 

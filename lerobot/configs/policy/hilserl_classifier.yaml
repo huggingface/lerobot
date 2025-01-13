@@ -35,6 +35,7 @@ policy:
   name: "hilserl/classifier/pick_place_lego_cube_1"
   model_name: "facebook/convnext-base-224"
   model_type: "cnn"
+  num_cameras: 2 # Has to be len(training.image_keys)
 
 wandb:
   enable: false

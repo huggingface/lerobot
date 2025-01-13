@@ -47,7 +47,6 @@ from lerobot.common.utils.utils import (
 
 def get_model(cfg, logger):  # noqa I001
     classifier_config = _policy_cfg_from_hydra_cfg(ClassifierConfig, cfg)
-    classifier_config.num_cameras = len(cfg.training.image_keys)
     model = Classifier(classifier_config)
     if cfg.resume:
         model.load_state_dict(Classifier.from_pretrained(str(logger.last_pretrained_model_dir)).state_dict())
