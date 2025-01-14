@@ -265,6 +265,9 @@ class ReplayBuffer:
         batch_dones = torch.tensor([t["done"] for t in list_of_transitions], dtype=torch.float32).to(
             self.device
         )
+        batch_dones = torch.tensor([t["done"] for t in list_of_transitions], dtype=torch.float32).to(
+            self.device
+        )
 
         # Return a BatchTransition typed dict
         return BatchTransition(

@@ -271,6 +271,9 @@ class SACPolicy(
             q_targets = self.critic_forward(
                 observations=next_observations, actions=next_action_preds, use_target=True
             )
+            q_targets = self.critic_forward(
+                observations=next_observations, actions=next_action_preds, use_target=True
+            )
 
             # subsample critics to prevent overfitting if use high UTD (update to date)
             if self.config.num_subsample_critics is not None:
