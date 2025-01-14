@@ -514,74 +514,75 @@ class ManipulatorRobot:
         for name in self.leader_arms:
             before_lread_t = time.perf_counter()
             leader_pos[name] = self.leader_arms[name].read("Present_Position")
-            leader_pos[name] = torch.from_numpy(leader_pos[name])
-            self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - before_lread_t
+            #leader_pos[name] = torch.from_numpy(leader_pos[name])
+            #self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - before_lread_t
 
-        # Send goal position to the follower
-        follower_goal_pos = {}
-        for name in self.follower_arms:
-            before_fwrite_t = time.perf_counter()
-            goal_pos = leader_pos[name]
+        #
+        # # Send goal position to the follower
+        # follower_goal_pos = {}
+        # for name in self.follower_arms:
+        #     before_fwrite_t = time.perf_counter()
+        #     goal_pos = leader_pos[name]
+        #
+        #     # Cap goal position when too far away from present position.
+        #     # Slower fps expected due to reading from the follower.
+        #     if self.config.max_relative_target is not None:
+        #         present_pos = self.follower_arms[name].read("Present_Position")
+        #         present_pos = torch.from_numpy(present_pos)
+        #         goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
+        #
+        #     # Used when record_data=True
+        #     follower_goal_pos[name] = goal_pos
+        #
+        #     goal_pos = goal_pos.numpy().astype(np.int32)
+        #     self.follower_arms[name].write("Goal_Position", goal_pos)
+        #     self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
+        #
+        # # Early exit when recording data is not requested
+        # if not record_data:
+        #     return
+        #
+        # # TODO(rcadene): Add velocity and other info
+        # # Read follower position
+        # follower_pos = {}
+        # for name in self.follower_arms:
+        #     before_fread_t = time.perf_counter()
+        #     follower_pos[name] = self.follower_arms[name].read("Present_Position")
+        #     follower_pos[name] = torch.from_numpy(follower_pos[name])
+        #     self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
+        #
+        # # Create state by concatenating follower current position
+        # state = []
+        # for name in self.follower_arms:
+        #     if name in follower_pos:
+        #         state.append(follower_pos[name])
+        # state = torch.cat(state)
+        #
+        # # Create action by concatenating follower goal position
+        # action = []
+        # for name in self.follower_arms:
+        #     if name in follower_goal_pos:
+        #         action.append(follower_goal_pos[name])
+        # action = torch.cat(action)
+        #
+        # # Capture images from cameras
+        # images = {}
+        # for name in self.cameras:
+        #     before_camread_t = time.perf_counter()
+        #     images[name] = self.cameras[name].async_read()
+        #     images[name] = torch.from_numpy(images[name])
+        #     self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
+        #     self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
+        #
+        # # Populate output dictionnaries
+        # obs_dict, action_dict = {}, {}
+        # obs_dict["observation.state"] = state
+        # action_dict["action"] = action
+        # for name in self.cameras:
+        #     obs_dict[f"observation.images.{name}"] = images[name]
 
-            # Cap goal position when too far away from present position.
-            # Slower fps expected due to reading from the follower.
-            if self.config.max_relative_target is not None:
-                present_pos = self.follower_arms[name].read("Present_Position")
-                present_pos = torch.from_numpy(present_pos)
-                goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
-
-            # Used when record_data=True
-            follower_goal_pos[name] = goal_pos
-
-            goal_pos = goal_pos.numpy().astype(np.int32)
-            self.follower_arms[name].write("Goal_Position", goal_pos)
-            self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
-
-        # Early exit when recording data is not requested
-        if not record_data:
-            return
-
-        # TODO(rcadene): Add velocity and other info
-        # Read follower position
-        follower_pos = {}
-        for name in self.follower_arms:
-            before_fread_t = time.perf_counter()
-            follower_pos[name] = self.follower_arms[name].read("Present_Position")
-            follower_pos[name] = torch.from_numpy(follower_pos[name])
-            self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
-
-        # Create state by concatenating follower current position
-        state = []
-        for name in self.follower_arms:
-            if name in follower_pos:
-                state.append(follower_pos[name])
-        state = torch.cat(state)
-
-        # Create action by concatenating follower goal position
-        action = []
-        for name in self.follower_arms:
-            if name in follower_goal_pos:
-                action.append(follower_goal_pos[name])
-        action = torch.cat(action)
-
-        # Capture images from cameras
-        images = {}
-        for name in self.cameras:
-            before_camread_t = time.perf_counter()
-            images[name] = self.cameras[name].async_read()
-            images[name] = torch.from_numpy(images[name])
-            self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
-            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
-
-        # Populate output dictionnaries
-        obs_dict, action_dict = {}, {}
-        obs_dict["observation.state"] = state
-        action_dict["action"] = action
-        for name in self.cameras:
-            obs_dict[f"observation.images.{name}"] = images[name]
-
-        return obs_dict, action_dict
-
+        # return obs_dict, action_dict
+        return leader_pos
     def capture_observation(self):
         """The returned observations do not have a batch dimension."""
         if not self.is_connected:

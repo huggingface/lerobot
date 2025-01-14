@@ -304,7 +304,7 @@ class FeetechMotorsBus:
             raise RobotDeviceAlreadyConnectedError(
                 f"FeetechMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice."
             )
-
+        
         if self.mock:
             import tests.mock_scservo_sdk as scs
         else:
@@ -325,7 +325,7 @@ class FeetechMotorsBus:
 
         # Allow to read and write
         self.is_connected = True
-
+        print("test########################################")
         self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
 
     def reconnect(self):

@@ -223,7 +223,7 @@ def record_episode(
         teleoperate=policy is None,
     )
 
-
+ 
 @safe_stop_image_writer
 def control_loop(
     robot,
@@ -238,12 +238,13 @@ def control_loop(
     fps=None,
 ):
     # TODO(rcadene): Add option to record logs
+    
     if not robot.is_connected:
         robot.connect()
-
+    
     if events is None:
         events = {"exit_early": False}
-
+    
     if control_time_s is None:
         control_time_s = float("inf")
 
@@ -257,9 +258,12 @@ def control_loop(
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
-
+        
         if teleoperate:
-            observation, action = robot.teleop_step(record_data=True)
+            #observation, action = robot.teleop_step(record_data=True)
+            leader_pos = robot.teleop_step(record_data=True)
+            print(leader_pos['main'][0])
+
         else:
             observation = robot.capture_observation()
 
@@ -285,7 +289,7 @@ def control_loop(
             busy_wait(1 / fps - dt_s)
 
         dt_s = time.perf_counter() - start_loop_t
-        log_control_info(robot, dt_s, fps=fps)
+        #log_control_info(robot, dt_s, fps=fps)
 
         timestamp = time.perf_counter() - start_episode_t
         if events["exit_early"]:
