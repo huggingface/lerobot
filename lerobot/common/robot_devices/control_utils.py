@@ -25,6 +25,16 @@ from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 
+##########################
+#ROS2
+import time
+import threading
+import rclpy
+from sensor_msgs.msg import JointState
+import numpy as np
+###########
+
+
 
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
@@ -223,28 +233,42 @@ def record_episode(
         teleoperate=policy is None,
     )
 
- 
+#################################
+rclpy.init()
+node = rclpy.create_node('position_velocity_publisher')
+pub = node.create_publisher(JointState, 'joint_command', 10)
+thread = threading.Thread(target=rclpy.spin, args=(node, ), daemon=True)
+thread.start()
+joint_state_position = JointState()
+joint_state_position.name = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
+# 初始角度值 (初始化为 NaN 或者其它值)
+#joint_state_position.position = [float('nan')] * 6
+import numpy as np
+#################################
+def convert_to_valid_angle(angle):
+    # 先进行标准化，将角度值限制在 [-pi, pi]
+    angle = (angle + np.pi) % (2 * np.pi) - np.pi
+    return angle
+
 @safe_stop_image_writer
 def control_loop(
-    robot,
-    control_time_s=None,
-    teleoperate=False,
-    display_cameras=False,
-    dataset: LeRobotDataset | None = None,
-    events=None,
-    policy=None,
-    device=None,
-    use_amp=None,
-    fps=None,
+        robot,
+        control_time_s=None,
+        teleoperate=False,
+        display_cameras=False,
+        dataset=None,
+        events=None,
+        policy=None,
+        device=None,
+        use_amp=None,
+        fps=None,
 ):
-    # TODO(rcadene): Add option to record logs
-    
     if not robot.is_connected:
         robot.connect()
-    
+
     if events is None:
         events = {"exit_early": False}
-    
+
     if control_time_s is None:
         control_time_s = float("inf")
 
@@ -258,19 +282,21 @@ def control_loop(
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
-        
+
         if teleoperate:
-            #observation, action = robot.teleop_step(record_data=True)
+            # 获取 leader_pos, 假设 leader_pos['main'] 包含电机角度
             leader_pos = robot.teleop_step(record_data=True)
-            print(leader_pos['main'][0])
+            angles = np.array(leader_pos['main'])/180
+            joint_state_position.position = angles.tolist()  # 转换为列表并赋值
+            # 提取角度并转换到 -pi 到 pi 的范围
+            # 发布消息
+            pub.publish(joint_state_position)
+            print(joint_state_position)
 
         else:
             observation = robot.capture_observation()
-
             if policy is not None:
                 pred_action = predict_action(observation, policy, device, use_amp)
-                # Action can eventually be clipped using `max_relative_target`,
-                # so action actually sent is saved in the dataset.
                 action = robot.send_action(pred_action)
                 action = {"action": action}
 
@@ -289,8 +315,6 @@ def control_loop(
             busy_wait(1 / fps - dt_s)
 
         dt_s = time.perf_counter() - start_loop_t
-        #log_control_info(robot, dt_s, fps=fps)
-
         timestamp = time.perf_counter() - start_episode_t
         if events["exit_early"]:
             events["exit_early"] = False
