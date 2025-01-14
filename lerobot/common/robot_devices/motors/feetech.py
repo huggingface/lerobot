@@ -149,6 +149,59 @@ SCS_SERIES_CONTROL_TABLE = {
     # "Maximum_Acceleration": (85, 2),
 }
 
+SM_SERIES_CONTROL_TABLE = {
+    "Firmware_Main_Version_No": (0, 1),
+    "Firmware_Secondary_Version_No": (1, 1),
+    "Servo_Main_Version_No": (3, 1),
+    "Servo_Secondary_Version_No": (4, 1),
+    "ID": (5, 1),
+    "Baud_Rate": (6, 1),
+    "Return_Delay": (7, 1),
+    "Response_Status_Level": (8, 1),
+    "Min_Position_Limit": (9, 2),
+    "Max_Position_Limit": (11, 2),
+    "Max_Temperature_Limit": (13, 1),
+    "Max_Input_Voltage": (14, 1),
+    "Min_Input_Voltage": (15, 1),
+    "Max_Torque_Limit": (16, 2),
+    "Unloading_Condition": (19, 1),
+    "LED_Alarm_Condition": (20, 1),
+    "P_Coefficient_Location_Ring": (21, 1),
+    "D_Coefficient_Location_Ring": (22, 1),
+    "I_Coefficient_Location_Ring": (23, 1),
+    "Minimum_Startup_Force": (24, 2),
+    "CW_Dead_Zone": (26, 1),
+    "CCW_Dead_Zone": (27, 1),
+    "Protection_Current": (28, 2),
+    "Angular_Resolution": (30, 1),
+    "Offset": (31, 2),
+    "Drive_Mode": (33, 1),
+    "Protective_Torque": (34, 1),
+    "Protection_Time": (35, 1),
+    "Overload_Torque": (36, 1),
+    "Speed_closed_loop_P_proportional_coefficient": (37, 1),
+    "Over_Current_Protection_Time": (38, 1),
+    "Velocity_closed_loop_I_integral_coefficient": (39, 1),
+
+    "Torque_Enable": (40, 1),
+    "Acceleration": (41, 1),
+    "Goal_Position": (42, 2),
+    "Goal_Speed": (46, 2),
+    "Torque_Limit": (48, 2),
+    "Lock": (55, 1),
+    "Present_Position": (56, 2),
+    "Present_Speed": (58, 2),
+    "Present_Load": (60, 2),
+    "Present_Voltage": (62, 1),
+    "Present_Temperature": (63, 1),
+
+    "Status": (65, 1),
+    "Moving": (66, 1),
+    "Present_Current": (69, 2),
+    # Not in the Memory Table  
+    "Maximum_Acceleration": (85, 2),
+}
+
 STS_SERIES_BAUDRATE_TABLE = {
     0: 1_000_000,
     1: 500_000,
@@ -171,8 +224,19 @@ SCS_SERIES_BAUDRATE_TABLE = {
     7: 19_200,
 }
 
+SM_SERIES_BAUDRATE_TABLE = {
+    0: 1_000_000,
+    1: 500_000,
+    2: 250_000,
+    3: 128_000,
+    4: 115_200,#default
+    5: 76_800,
+    6: 57_600,
+    7: 38_400,
+}
+
 CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
-CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
+CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "sm8512blPresent_Position"]
 
 
 MODEL_CONTROL_TABLE = {
@@ -181,6 +245,7 @@ MODEL_CONTROL_TABLE = {
     "sts3215": STS_SERIES_CONTROL_TABLE,
     "sts3250": STS_SERIES_CONTROL_TABLE,
     "scs0009": SCS_SERIES_CONTROL_TABLE,
+    "sm8512bl": SM_SERIES_CONTROL_TABLE, 
 }
 
 MODEL_RESOLUTION = {
@@ -189,6 +254,7 @@ MODEL_RESOLUTION = {
     "sts3215": 4096,
     "sts3250": 4096,
     "scs0009": 1024,
+    "sm8512bl": 4096, 
 }
 
 MODEL_BAUDRATE_TABLE = {
@@ -197,6 +263,7 @@ MODEL_BAUDRATE_TABLE = {
     "sts3215": STS_SERIES_BAUDRATE_TABLE,
     "sts3250": STS_SERIES_BAUDRATE_TABLE,
     "scs0009": SCS_SERIES_BAUDRATE_TABLE,
+    "sm8512bl": SM_SERIES_BAUDRATE_TABLE, 
 }
 
 # High number of retries is needed for feetech compared to dynamixel motors.
