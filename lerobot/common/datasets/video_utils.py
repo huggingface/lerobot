@@ -140,6 +140,7 @@ def encode_video_frames(
     overwrite: bool = False,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
+    imgs_dir = Path(imgs_dir)
     video_path = Path(video_path)
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
