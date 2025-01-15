@@ -3,7 +3,7 @@
 # Requires installing API 
 # https://github.com/agilexrobotics/piper_sdk
 
-_target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
+_target_: lerobot.common.robot_devices.robots.piper.PiperRobot
 robot_type: piper
 
 # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
@@ -18,9 +18,9 @@ cameras:
     fps: 30
     width: 640
     height: 480
-  top:
-    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 8
-    fps: 30
-    width: 640
-    height: 480
+  # top:
+  #   _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+  #   camera_index: 8
+  #   fps: 30
+  #   width: 640
+  #   height: 480

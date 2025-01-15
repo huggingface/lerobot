@@ -18,7 +18,8 @@ import time
 from dataclasses import dataclass, field, replace
 
 import torch
-from lerobot.common.robot_devices.robots.joystick_interface import JoystickInterface, ControllerType
+import numpy as np
+from lerobot.common.robot_devices.robots.joystick_interface import JoystickIntervention, ControllerType
 from piper_sdk import *
 
 from lerobot.common.robot_devices.cameras.utils import Camera
@@ -31,6 +32,17 @@ class PiperRobotConfig:
     # TODO(aliberts): add feature with max_relative target
     # TODO(aliberts): add comment on max_relative target
     max_relative_target: list[float] | float | None = None
+
+
+class Rate:
+    def __init__(self, hz: float):
+        self.period = 1.0 / hz
+        self.last_time = time.perf_counter()
+    
+    def sleep(self, elapsed: float):
+        if elapsed < self.period:
+            time.sleep(self.period - elapsed)
+        self.last_time = time.perf_counter()
 
 
 class PiperRobot():
@@ -46,21 +58,58 @@ class PiperRobot():
         self.robot_type = self.config.robot_type
         self.cameras = self.config.cameras
         self.is_connected = False
-        self.teleop = None
+        self.teleop = JoystickIntervention(controller_type=ControllerType.XBOX, gripper_enabled=True)
         self.logs = {}
-
-        # TODO(aliberts): test this
-        RobotParams.set_logging_level("WARNING")
-        RobotParams.set_logging_formatter("brief_console_formatter")
 
         self.state_keys = None
         self.action_keys = None
+        self.rate = Rate(200)
+        # init piper robot
+        self.piper = C_PiperInterface("can0")
+        self.piper.ConnectPort()
+        self.piper.EnableArm(7)
+        self.piper.GripperCtrl(0,1000,0x01, 0)
+        self.state_scaling_factor = 1e6 
+
+    def startup_robot(self, piper:C_PiperInterface):
+        '''
+        enable robot and check enable status, try 5s, if enable timeout, exit program
+        '''
+        enable_flag = False
+        # 设置超时时间（秒）
+        timeout = 5
+        # 记录进入循环前的时间
+        start_time = time.time()
+        elapsed_time_flag = False
+        while not (enable_flag):
+            elapsed_time = time.time() - start_time
+            print("--------------------")
+            enable_flag = piper.GetArmLowSpdInfoMsgs().motor_1.foc_status.driver_enable_status and \
+                piper.GetArmLowSpdInfoMsgs().motor_2.foc_status.driver_enable_status and \
+                piper.GetArmLowSpdInfoMsgs().motor_3.foc_status.driver_enable_status and \
+                piper.GetArmLowSpdInfoMsgs().motor_4.foc_status.driver_enable_status and \
+                piper.GetArmLowSpdInfoMsgs().motor_5.foc_status.driver_enable_status and \
+                piper.GetArmLowSpdInfoMsgs().motor_6.foc_status.driver_enable_status
+            print("enable status:",enable_flag)
+            piper.EnableArm(7)
+            piper.GripperCtrl(0,1000,0x01, 0)
+            print("--------------------")
+            # check if timeout
+            if elapsed_time > timeout:
+                print("enable timeout....")
+                elapsed_time_flag = True
+                enable_flag = False
+                break
+            time.sleep(1)
+            pass
+        if not elapsed_time_flag:
+            return enable_flag
+        else:
+            print("enable timeout, exit program")
+            raise RuntimeError("Failed to enable robot motors within timeout period")
 
     def connect(self) -> None:
-        self.is_connected = self.startup()
-        if not self.is_connected:
-            print("Another process is already using Stretch. Try running 'stretch_free_robot_process.py'")
-            raise ConnectionError()
+        self.is_connected = self.startup_robot(self.piper)
 
         for name in self.cameras:
             self.cameras[name].connect()
@@ -70,11 +119,27 @@ class PiperRobot():
             print("Could not connect to the cameras, check that all cameras are plugged-in.")
             raise ConnectionError()
 
-        self.run_calibration()
+        self.move_to_home()
 
-    def run_calibration(self) -> None:
-        if not self.is_homed():
-            self.home()
+    def move_to_home(self) -> None:
+        # TODO(ke): add logic to move to home
+        count = 0
+        while True:
+            if(count == 0):
+                print("1-----------")
+                action = [0.07,0,0.22,0,0.08,0,0]
+            elif(count == 300):
+                print("2-----------")
+                action = [0.15,0.0,0.35,0.08,0.08,0.075,0.0] # 0.08 is maximum gripper position
+            elif(count == 600):
+                print("3-----------")
+                action = [0.204381, -0.00177, 0.274648, -0.176753, 0.021866, 0.171871, 0.0]
+            count += 1
+            before_write_t = time.perf_counter()
+            self.send_action(action)
+            self.rate.sleep(time.perf_counter() - before_write_t)
+            if count > 800:
+                break
 
     def teleop_step(
         self, record_data=False
@@ -83,20 +148,18 @@ class PiperRobot():
         if not self.is_connected:
             raise ConnectionError()
 
-        if self.teleop is None:
-            self.teleop = GamePadTeleop(robot_instance=False)
-            self.teleop.startup(robot=self)
-
         before_read_t = time.perf_counter()
         state = self.get_state()
-        action = self.teleop.gamepad_controller.get_state()
+        # get relative action from joystick
+        action = self.teleop.action()
+        action[:6] += state[:6]
+        action[6] = state[6]
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         before_write_t = time.perf_counter()
-        self.teleop.do_motion(robot=self)
-        self.push_command()
+        self.send_action(action)
         self.logs["write_pos_dt_s"] = time.perf_counter() - before_write_t
-
+        self.rate.sleep(time.perf_counter() - before_write_t)
         if self.state_keys is None:
             self.state_keys = list(state)
 
@@ -104,7 +167,7 @@ class PiperRobot():
             return
 
         state = torch.as_tensor(list(state.values()))
-        action = torch.as_tensor(list(action.values()))
+        action = torch.as_tensor(action)
 
         # Capture images from cameras
         images = {}
@@ -125,19 +188,13 @@ class PiperRobot():
         return obs_dict, action_dict
 
     def get_state(self) -> dict:
-        status = self.get_status()
+        end_effector_pose = self.piper.GetArmEndPoseMsgs()
+        gripper_pose = self.piper.GetArmGripperMsgs()
+        state = np.array([end_effector_pose.end_pose.X_axis,end_effector_pose.end_pose.Y_axis,end_effector_pose.end_pose.Z_axis
+                    ,end_effector_pose.end_pose.RX_axis,end_effector_pose.end_pose.RY_axis,end_effector_pose.end_pose.RZ_axis
+                    ,gripper_pose.gripper_state.grippers_angle])/self.state_scaling_factor
         return {
-            "head_pan.pos": status["head"]["head_pan"]["pos"],
-            "head_tilt.pos": status["head"]["head_tilt"]["pos"],
-            "lift.pos": status["lift"]["pos"],
-            "arm.pos": status["arm"]["pos"],
-            "wrist_pitch.pos": status["end_of_arm"]["wrist_pitch"]["pos"],
-            "wrist_roll.pos": status["end_of_arm"]["wrist_roll"]["pos"],
-            "wrist_yaw.pos": status["end_of_arm"]["wrist_yaw"]["pos"],
-            "gripper.pos": status["end_of_arm"]["stretch_gripper"]["pos"],
-            "base_x.vel": status["base"]["x_vel"],
-            "base_y.vel": status["base"]["y_vel"],
-            "base_theta.vel": status["base"]["theta_vel"],
+            "state": state,
         }
 
     def capture_observation(self) -> dict:
@@ -168,42 +225,33 @@ class PiperRobot():
 
         return obs_dict
 
-    def send_action(self, action: torch.Tensor) -> torch.Tensor:
+    def send_action(self, action: list[float]) -> None:
         # TODO(aliberts): return ndarrays instead of torch.Tensors
         if not self.is_connected:
             raise ConnectionError()
 
-        if self.teleop is None:
-            self.teleop = GamePadTeleop(robot_instance=False)
-            self.teleop.startup(robot=self)
-
-        if self.action_keys is None:
-            dummy_action = self.teleop.gamepad_controller.get_state()
-            self.action_keys = list(dummy_action.keys())
-
-        action_dict = dict(zip(self.action_keys, action.tolist(), strict=True))
-
-        before_write_t = time.perf_counter()
-        self.teleop.do_motion(state=action_dict, robot=self)
-        self.push_command()
-        self.logs["write_pos_dt_s"] = time.perf_counter() - before_write_t
+        X = round(action[0]*self.state_scaling_factor)
+        Y = round(action[1]*self.state_scaling_factor)
+        Z = round(action[2]*self.state_scaling_factor)
+        RX = round(action[3]*self.state_scaling_factor)
+        RY = round(action[4]*self.state_scaling_factor)
+        RZ = round(action[5]*self.state_scaling_factor)
+        Gripper = round(action[6]*self.state_scaling_factor)
+        self.piper.MotionCtrl_2(0x01, 0x00, 30, 0x00)
+        self.piper.EndPoseCtrl(X, Y, Z, RX, RY, RZ)
+        self.piper.GripperCtrl(abs(Gripper), 1000, 0x01, 0)
+        self.piper.MotionCtrl_2(0x01, 0x00, 30, 0x00)
 
         # TODO(aliberts): return action_sent when motion is limited
-        return action
+        return torch.tensor(action)
 
     def print_logs(self) -> None:
         pass
         # TODO(aliberts): move robot-specific logs logic here
 
-    def teleop_safety_stop(self) -> None:
-        if self.teleop is not None:
-            self.teleop._safety_stop(robot=self)
-
     def disconnect(self) -> None:
-        self.stop()
         if self.teleop is not None:
-            self.teleop.gamepad_controller.stop()
-            self.teleop.stop()
+            self.teleop.close()
 
         if len(self.cameras) > 0:
             for cam in self.cameras.values():

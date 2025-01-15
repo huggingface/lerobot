@@ -126,7 +126,8 @@ class JoystickInterface:
                         buttons[0] = bool(event.state)
                     elif event.code == 'BTN_TR':
                         buttons[1] = bool(event.state)
-                    elif event.code == 'BTN_EAST':
+                    # Go back to home, B button on xbox controller
+                    elif event.code == 'BTN_EAST': 
                         buttons[2] = bool(event.state)
                 
 
@@ -146,3 +147,43 @@ class JoystickInterface:
     
     def close(self):
         self.process.terminate()
+
+
+class JoystickIntervention():
+    def __init__(self, controller_type=ControllerType.XBOX, gripper_enabled=True):
+        self.gripper_enabled = gripper_enabled
+        self.expert = JoystickInterface(controller_type=controller_type)
+        self.left, self.right, self.home = False, False, False
+
+    def action(self, action: np.ndarray) -> np.ndarray:
+        """
+        Input:
+        - action: policy action
+        Output:
+        - action: joystick action if nonezero; else, policy action
+        """
+        deadzone = 0.003
+
+        expert_a, buttons = self.expert.get_action()
+        self.left, self.right, self.home = tuple(buttons)
+
+        for i, a in enumerate(expert_a):
+            if abs(a) <= deadzone:
+                expert_a[i] = 0.0
+        if abs(expert_a[0]) >= 0.003 and expert_a[1] >= 0.003 and expert_a[1] <= 0.005:
+            expert_a[1] = 0.0
+        expert_a[3:6] /= 2
+
+        if self.gripper_enabled:
+            if self.left: # close gripper
+                gripper_action = [0.0]
+            elif self.right: # open gripper
+                gripper_action = [0.08]
+            else:
+                gripper_action = [0.0]
+            expert_a = np.concatenate((expert_a, gripper_action), axis=0)
+        
+        return expert_a
+    
+    def close(self):
+        self.expert.close()
