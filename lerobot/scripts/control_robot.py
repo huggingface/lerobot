@@ -309,7 +309,7 @@ def record(
         # TODO(rcadene): add an option to enable teleoperation during reset
         # Skip reset for the last episode to be recorded
         if not events["stop_recording"] and (
-            (dataset.num_episodes < num_episodes - 1) or events["rerecord_episode"]
+            (recorded_episodes < num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", play_sounds)
             if reset_follower:
