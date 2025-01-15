@@ -28,12 +28,18 @@ class SACConfig:
     )
     output_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {
-            "action": [4],
+            "action": [2],
         }
     )
 
     # Normalization / Unnormalization
-    input_normalization_modes: dict[str, str] | None = None
+    input_normalization_modes: dict[str, str] = field(
+        default_factory=lambda: {
+            "observation.image": "mean_std",
+            "observation.state": "min_max",
+            "observation.environment_state": "min_max",
+        }
+    )
     output_normalization_modes: dict[str, str] = field(
         default_factory=lambda: {"action": "min_max"},
     )
@@ -48,9 +54,9 @@ class SACConfig:
     critic_target_update_weight = 0.005
     utd_ratio = 2
     state_encoder_hidden_dim = 256
-    latent_dim = 128
+    latent_dim = 256
     target_entropy = None
-    backup_entropy = True
+    backup_entropy = False
     critic_network_kwargs = {
         "hidden_dims": [256, 256],
         "activate_final": True,
@@ -64,3 +70,6 @@ class SACConfig:
         "log_std_min": -5,
         "log_std_max": 2,
     }
+    image_encoder_hidden_dim = 256
+    use_backup_entropy = False
+    device: str = field(default="cpu")
