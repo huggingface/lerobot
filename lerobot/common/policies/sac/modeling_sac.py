@@ -266,7 +266,8 @@ class SACPolicy(
 
             # critics subsample size
             min_q, _ = q_targets.min(dim=0)  # Get values from min operation
-            min_q = min_q - (temperature * next_log_probs)
+            if self.config.use_backup_entropy:
+                min_q = min_q - (temperature * next_log_probs)
 
             td_target = rewards + (1 - done) * self.config.discount * min_q
 
