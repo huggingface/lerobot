@@ -52,3 +52,4 @@ training:
       next.reward: "[i / ${fps} for i in range(${policy.horizon})]"
       observation.images.web0: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
       observation.images.web1: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+      next.done: "[i / ${fps} for i in range(${policy.horizon})]"

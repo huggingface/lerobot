@@ -46,6 +46,7 @@ class SACPolicy(
         self, config: SACConfig | None = None, dataset_stats: dict[str, dict[str, Tensor]] | None = None
     ):
         super().__init__()
+        self.device = torch.device(config.device)
 
         if config is None:
             config = SACConfig()
@@ -99,7 +100,7 @@ class SACPolicy(
         )
         if config.target_entropy is None:
             config.target_entropy = -np.prod(config.output_shapes["action"][0]) / 2  # (-dim(A)/2)
-        self.temperature = LagrangeMultiplier(init_value=config.temperature_init)
+        self.temperature = LagrangeMultiplier(config=config)
 
     def reset(self):
         """
@@ -455,6 +456,7 @@ class SACObservationEncoder(nn.Module):
         """
         super().__init__()
         self.config = config
+        self.device = torch.device(config.device)
 
         image_features = [k for k in self.config.input_shapes if is_image_feature(k)]
         if len(image_features) > 0:
@@ -495,6 +497,8 @@ class SACObservationEncoder(nn.Module):
                 nn.Tanh(),
             )
 
+        self.to(self.device)
+
     def forward(self, obs_dict: dict[str, Tensor]) -> Tensor:
         """Encode the image and/or state vector.
 
@@ -520,13 +524,15 @@ class SACObservationEncoder(nn.Module):
 
 
 class LagrangeMultiplier(nn.Module):
-    def __init__(self, init_value: float = 1.0, constraint_shape: Sequence[int] = (), device: str = "cuda"):
+    def __init__(self, config: SACConfig, constraint_shape: Sequence[int] = ()):
         super().__init__()
-        self.device = torch.device(device)
+        self.config = config
+        self.device = torch.device(config.device)
 
         # Parameterize log(alpha) directly to ensure positivity
-        log_alpha = torch.log(torch.tensor(init_value, dtype=torch.float32))
+        log_alpha = torch.log(torch.tensor(config.temperature_init, dtype=torch.float32))
         self.log_alpha = nn.Parameter(torch.full(constraint_shape, log_alpha))
+        self = self.to(self.device)
 
     def forward(
         self,
@@ -541,11 +547,19 @@ class LagrangeMultiplier(nn.Module):
             return alpha
 
         # Convert inputs to tensors and move to device
-        lhs = torch.tensor(lhs, device=self.device) if not isinstance(lhs, torch.Tensor) else lhs
+        lhs = (
+            torch.tensor(lhs, device=self.device)
+            if not isinstance(lhs, torch.Tensor)
+            else lhs.to(self.device)
+        )
         if rhs is not None:
-            rhs = torch.tensor(rhs) if not isinstance(rhs, torch.Tensor) else rhs
+            rhs = (
+                torch.tensor(rhs, device=self.device)
+                if not isinstance(rhs, torch.Tensor)
+                else rhs.to(self.device)
+            )
         else:
-            rhs = torch.zeros_like(lhs)
+            rhs = torch.zeros_like(lhs, device=self.device)
 
         # Compute the difference and apply the multiplier
         diff = lhs - rhs

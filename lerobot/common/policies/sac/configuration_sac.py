@@ -72,3 +72,4 @@ class SACConfig:
     }
     image_encoder_hidden_dim = 256
     use_backup_entropy = False
+    device: str = field(default="cpu")
