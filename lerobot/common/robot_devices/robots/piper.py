@@ -253,7 +253,9 @@ class PiperRobot(ManipulatorRobot):
         # TODO(aliberts): return ndarrays instead of torch.Tensors
         if not self.is_connected:
             raise ConnectionError()
-
+        # check if action is tensor and if it is, convert it to list
+        if isinstance(action, torch.Tensor):
+            action = action.tolist()
         X = round(action[0]*self.state_scaling_factor)
         Y = round(action[1]*self.state_scaling_factor)
         Z = round(action[2]*self.state_scaling_factor)
