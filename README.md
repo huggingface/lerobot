@@ -417,3 +417,14 @@ Additionally, if you are using any of the particular policy architecture, pretra
   year={2024}
 }
 ```
+
+
+
+### GRPC
+
+```
+pip install grpcio-tools
+To run the GRPC server, you can use the following command:
+```bash
+python -m lerobot.common.api.grpc.server
+```

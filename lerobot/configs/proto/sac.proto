@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package sac;
+
+message ModelState {
+  repeated int32 shape = 1;  // e.g., [2, 3] means shape (2,3)
+  repeated float data = 2;   // Flattened data
+}
+
+
+message ModelRequest {
+  string model_name = 1;
+}
+
+service TensorService {
+  rpc StreamModelUpdates(ModelRequest) returns (stream ModelState);
+
+  rpc GetModel(ModelRequest) returns (ModelState);
+}
