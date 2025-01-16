@@ -74,6 +74,7 @@ jsonlines = ">=4.0.0"
 # draccus = ">=0.9.4"  # replace when https://github.com/dlwh/draccus/pull/29 is in release
 draccus = {git = "https://github.com/dlwh/draccus.git"}
 # draccus = { path = "../draccus/", develop = true}
+transformers = "^4.48.0"
 
 
 [tool.poetry.extras]
