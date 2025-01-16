@@ -25,14 +25,6 @@ from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
 from lerobot.scripts.eval import get_pretrained_policy_path
 
-##########################
-#ROS2
-import time
-import threading
-import rclpy
-from sensor_msgs.msg import JointState
-import numpy as np
-###########
 
 
 
@@ -233,23 +225,17 @@ def record_episode(
         teleoperate=policy is None,
     )
 
-#################################
-rclpy.init()
-node = rclpy.create_node('position_velocity_publisher')
-pub = node.create_publisher(JointState, 'joint_command', 10)
-thread = threading.Thread(target=rclpy.spin, args=(node, ), daemon=True)
-thread.start()
-joint_state_position = JointState()
-joint_state_position.name = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
-# 初始角度值 (初始化为 NaN 或者其它值)
-#joint_state_position.position = [float('nan')] * 6
-import numpy as np
-#################################
-def convert_to_valid_angle(angle):
-    # 先进行标准化，将角度值限制在 [-pi, pi]
-    angle = (angle + np.pi) % (2 * np.pi) - np.pi
-    return angle
 
+
+##########################
+#ROS2
+import time
+import threading
+import rclpy
+from sensor_msgs.msg import JointState
+import numpy as np
+initial_angles = None
+###########
 @safe_stop_image_writer
 def control_loop(
         robot,
@@ -263,6 +249,14 @@ def control_loop(
         use_amp=None,
         fps=None,
 ):
+    # ROS2 Publisher setup
+    rclpy.init()
+    global initial_angles
+    node = rclpy.create_node('control_loop_node')
+    pub = node.create_publisher(JointState, 'joint_command', 10)  # 发布到 joint_states 话题
+    thread = threading.Thread(target=rclpy.spin, args=(node, ), daemon=True)
+    thread.start()
+    
     if not robot.is_connected:
         robot.connect()
 
@@ -278,17 +272,34 @@ def control_loop(
     if dataset is not None and fps is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
 
+    # 变量用于存储第一次调用 teleop_step 时的角度
+
     timestamp = 0
     start_episode_t = time.perf_counter()
+
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
         if teleoperate:
-            # 获取 leader_pos, 假设 leader_pos['main'] 包含电机角度
+            # 获取 leader_pos，假设 leader_pos['main'] 包含电机角度
             leader_pos = robot.teleop_step(record_data=True)
-            angles = np.array(leader_pos['main'])/180
-            joint_state_position.position = angles.tolist()  # 转换为列表并赋值
-            # 提取角度并转换到 -pi 到 pi 的范围
+            angles = np.array(leader_pos['main']) / 50  # 转换为弧度
+
+            # 如果是第一次，记录初始角度
+            if initial_angles is None:
+                initial_angles = angles
+                print(f"Initial angles (first frame): {initial_angles}")
+
+            print(f"Adjusted angles: {initial_angles}")
+
+            # 创建 JointState 消息并发布
+            joint_state_position = JointState()
+            joint_state_position.header.stamp = node.get_clock().now().to_msg()  # 当前时间戳
+            joint_state_position.name = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]  # 设置关节名称
+            joint_state_position.position = ((angles-initial_angles)*[1,-1,1,1,1,1]).tolist()  # 设置关节角度
+            joint_state_position.velocity = [0.0] * len(angles)  # 设置关节速度（假设为0）
+            joint_state_position.effort = [0.0] * len(angles)  # 设置关节努力（假设为0）
+
             # 发布消息
             pub.publish(joint_state_position)
             print(joint_state_position)
@@ -389,3 +400,4 @@ def sanity_check_dataset_robot_compatibility(
         raise ValueError(
             "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
         )
+
