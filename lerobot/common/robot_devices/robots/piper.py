@@ -57,11 +57,11 @@ class LowPassFilter:
         self.last_ry = 0
         self.last_rz = 0
 
-    def filter(self, rx, ry, rz):
+    def filter(self, orientation):
         # Apply exponential moving average
-        self.last_rx = self.alpha * rx + (1 - self.alpha) * self.last_rx
-        self.last_ry = self.alpha * ry + (1 - self.alpha) * self.last_ry
-        self.last_rz = self.alpha * rz + (1 - self.alpha) * self.last_rz
+        self.last_rx = self.alpha * orientation[0] + (1 - self.alpha) * self.last_rx
+        self.last_ry = self.alpha * orientation[1] + (1 - self.alpha) * self.last_ry
+        self.last_rz = self.alpha * orientation[2] + (1 - self.alpha) * self.last_rz
         return self.last_rx, self.last_ry, self.last_rz
 
 
@@ -158,6 +158,9 @@ class PiperRobot(ManipulatorRobot):
                 action = [0.204381, -0.00177, 0.274648, -0.176753, 0.021866, 0.171871, 0.0]
             count += 1
             before_write_t = time.perf_counter()
+            state = self.get_state()
+            state = state["state"]
+            state[3:6] = self.euler_filter.filter(state[3:6])
             self.send_action(action)
             self.rate.sleep(time.perf_counter() - before_write_t)
             if count > 800:
@@ -173,6 +176,7 @@ class PiperRobot(ManipulatorRobot):
         before_read_t = time.perf_counter()
         state = self.get_state()
         state = state["state"]
+        state[3:6] = self.euler_filter.filter(state[3:6])
         # get relative action from joystick
         action = self.teleop.action(state)
         action[:6] += state[:6]
@@ -225,6 +229,7 @@ class PiperRobot(ManipulatorRobot):
         # TODO(aliberts): return ndarrays instead of torch.Tensors
         before_read_t = time.perf_counter()
         state = self.get_state()
+        state["state"][3:6] = self.euler_filter.filter(state["state"][3:6])
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         if self.state_keys is None:
@@ -256,6 +261,8 @@ class PiperRobot(ManipulatorRobot):
         # check if action is tensor and if it is, convert it to list
         if isinstance(action, torch.Tensor):
             action = action.tolist()
+        # clip rz value to be between -pi/2 and pi/2 for safety
+        action[5] = max(-np.pi/2, min(np.pi/2, action[5]))
         X = round(action[0]*self.state_scaling_factor)
         Y = round(action[1]*self.state_scaling_factor)
         Z = round(action[2]*self.state_scaling_factor)

@@ -42,6 +42,7 @@ def find_cameras(raise_when_empty=True, mock=False) -> list[dict]:
     for device in rs.context().query_devices():
         serial_number = int(device.get_info(rs.camera_info(SERIAL_NUMBER_INDEX)))
         name = device.get_info(rs.camera_info.name)
+        print(f"{serial_number=} {name=}")
         cameras.append(
             {
                 "serial_number": serial_number,
