@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# To run teleoperate:
+# python lerobot/scripts/control_robot.py teleoperate --robot-path lerobot/configs/robot/piper.yaml --fps 30
+
 import time
 from dataclasses import dataclass, field, replace
 
@@ -23,12 +26,14 @@ from lerobot.common.robot_devices.robots.joystick_interface import JoystickInter
 from piper_sdk import *
 
 from lerobot.common.robot_devices.cameras.utils import Camera
+from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
 
 @dataclass
 class PiperRobotConfig:
     robot_type: str | None = "piper"
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
+    leader_arms: dict = field(default_factory=lambda: {})
     # TODO(aliberts): add feature with max_relative target
     # TODO(aliberts): add comment on max_relative target
     max_relative_target: list[float] | float | None = None
@@ -45,7 +50,22 @@ class Rate:
         self.last_time = time.perf_counter()
 
 
-class PiperRobot():
+class LowPassFilter:
+    def __init__(self, alpha=0.5):
+        self.alpha = alpha
+        self.last_rx = 0
+        self.last_ry = 0
+        self.last_rz = 0
+
+    def filter(self, rx, ry, rz):
+        # Apply exponential moving average
+        self.last_rx = self.alpha * rx + (1 - self.alpha) * self.last_rx
+        self.last_ry = self.alpha * ry + (1 - self.alpha) * self.last_ry
+        self.last_rz = self.alpha * rz + (1 - self.alpha) * self.last_rz
+        return self.last_rx, self.last_ry, self.last_rz
+
+
+class PiperRobot(ManipulatorRobot):
     """Wrapper of piper_sdk.robot.Robot"""
 
     def __init__(self, config: PiperRobotConfig | None = None, **kwargs):
@@ -56,6 +76,7 @@ class PiperRobot():
         self.config = replace(config, **kwargs)
 
         self.robot_type = self.config.robot_type
+        self.leader_arms = self.config.leader_arms
         self.cameras = self.config.cameras
         self.is_connected = False
         self.teleop = JoystickIntervention(controller_type=ControllerType.XBOX, gripper_enabled=True)
@@ -64,6 +85,7 @@ class PiperRobot():
         self.state_keys = None
         self.action_keys = None
         self.rate = Rate(200)
+        self.euler_filter = LowPassFilter()
         # init piper robot
         self.piper = C_PiperInterface("can0")
         self.piper.ConnectPort()
@@ -150,10 +172,13 @@ class PiperRobot():
 
         before_read_t = time.perf_counter()
         state = self.get_state()
+        state = state["state"]
         # get relative action from joystick
-        action = self.teleop.action()
+        action = self.teleop.action(state)
         action[:6] += state[:6]
-        action[6] = state[6]
+        if self.teleop.home:
+            self.move_to_home()
+
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         before_write_t = time.perf_counter()
@@ -166,7 +191,7 @@ class PiperRobot():
         if not record_data:
             return
 
-        state = torch.as_tensor(list(state.values()))
+        state = torch.as_tensor(state)
         action = torch.as_tensor(action)
 
         # Capture images from cameras
@@ -177,7 +202,6 @@ class PiperRobot():
             images[name] = torch.from_numpy(images[name])
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
-
         # Populate output dictionnaries
         obs_dict, action_dict = {}, {}
         obs_dict["observation.state"] = state

@@ -84,7 +84,8 @@ class JoystickInterface:
         self.process.start()
 
 
-    def _read_joystick(self):        
+    def _read_joystick(self):
+        """Add a try-except to prevent thread crashes"""
         action = [0.0] * 6
         buttons = [False, False, False]
         
@@ -146,7 +147,19 @@ class JoystickInterface:
         return np.array(action), buttons
     
     def close(self):
-        self.process.terminate()
+        """Close the joystick interface and cleanup resources."""
+        try:
+            if hasattr(self, '_process') and self._process is not None:
+                import signal
+                self._process.terminate()
+                self._process.join()
+                self._process = None
+        except (ImportError, AttributeError):
+            # Fallback if signal module is not available
+            if hasattr(self, '_process') and self._process is not None:
+                self._process.kill()
+                self._process.join()
+                self._process = None
 
 
 class JoystickIntervention():
