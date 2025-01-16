@@ -1,0 +1,453 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-1-g15f4949  Build Version: 1.6.7594.29634
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM">
+  <link
+    name="Base">
+    <inertial>
+      <origin
+        xyz="0.0195624606184725 -0.0295895597276446 -2.76876897655451E-06"
+        rpy="0 0 0" />
+      <mass
+        value="0.184098970814929" />
+      <inertia
+        ixx="0.000142288448859702"
+        ixy="-2.26169251313517E-05"
+        ixz="4.23610978246252E-09"
+        iyy="0.00016758363588302"
+        iyz="-2.10119213746261E-08"
+        izz="0.000135962602722997" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Base.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Base.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="Shoulder_Pitch_Yaw">
+    <inertial>
+      <origin
+        xyz="-0.013299 0.079753 0.035058"
+        rpy="0 0 0" />
+      <mass
+        value="0.092914" />
+      <inertia
+        ixx="5.0472E-05"
+        ixy="-6.879E-06"
+        ixz="3.3863E-07"
+        iyy="2.252E-05"
+        iyz="5.9775E-07"
+        izz="5.4357E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Shoulder_Pitch_Yaw.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Shoulder_Pitch_Yaw.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Shoulder_Pitch"
+    type="continuous">
+    <origin
+      xyz="0.01 0 0"
+      rpy="-1.5708 0 -1.5723" />
+    <parent
+      link="Base" />
+    <child
+      link="Shoulder_Pitch_Yaw" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="-1"
+      upper="3"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="Upper_Humeral">
+    <inertial>
+      <origin
+        xyz="-0.045255 0.0065486 0.04097"
+        rpy="0 0 0" />
+      <mass
+        value="0.21817" />
+      <inertia
+        ixx="9.4379E-05"
+        ixy="1.3581E-05"
+        ixz="2.8938E-05"
+        iyy="0.00021514"
+        iyz="-3.2154E-06"
+        izz="0.00014492" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Upper_Humeral.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Upper_Humeral.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Shoulder_Yaw"
+    type="continuous">
+    <origin
+      xyz="-0.002 0.123 0"
+      rpy="-0.00019451 1.2429E-05 0.12763" />
+    <parent
+      link="Shoulder_Pitch_Yaw" />
+    <child
+      link="Upper_Humeral" />
+    <axis
+      xyz="0.0015282 0 -1" />
+    <limit
+      lower="-1"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="Humeral_Elbow">
+    <inertial>
+      <origin
+        xyz="-0.072262 0.021725 -0.0207"
+        rpy="0 0 0" />
+      <mass
+        value="0.16611" />
+      <inertia
+        ixx="5.0858E-05"
+        ixy="1.3362E-05"
+        ixz="-2.4207E-06"
+        iyy="0.00013739"
+        iyz="2.7097E-06"
+        izz="0.00013639" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Humeral_Elbow.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Humeral_Elbow.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Humeral_Rotation"
+    type="continuous">
+    <origin
+      xyz="-0.090614 0.016864 0.034762"
+      rpy="-0.53649 0.06528 -0.018789" />
+    <parent
+      link="Upper_Humeral" />
+    <child
+      link="Humeral_Elbow" />
+    <axis
+      xyz="0.99187 -0.12728 0.0015157" />
+    <limit
+      lower="-1.8"
+      upper="1.8"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="Forearm">
+    <inertial>
+      <origin
+        xyz="-0.02921 0.0068798 0.0036776"
+        rpy="0 0 0" />
+      <mass
+        value="0.074077" />
+      <inertia
+        ixx="3.2764E-05"
+        ixy="-2.3726E-06"
+        ixz="-2.325E-06"
+        iyy="1.9912E-05"
+        iyz="-1.1135E-05"
+        izz="3.1909E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Forearm.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Forearm.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Elbow"
+    type="continuous">
+    <origin
+      xyz="-0.10713 0.0094948 0.0068692"
+      rpy="0.0028871 0.021537 0.013065" />
+    <parent
+      link="Humeral_Elbow" />
+    <child
+      link="Forearm" />
+    <axis
+      xyz="0.10838 0.8507 0.51436" />
+    <limit
+      lower="-3"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="Wrist_Roll_Yaw">
+    <inertial>
+      <origin
+        xyz="-0.053889 0.0079735 -0.00086939"
+        rpy="0 0 0" />
+      <mass
+        value="0.091826" />
+      <inertia
+        ixx="1.7943E-05"
+        ixy="1.5108E-06"
+        ixz="-1.3157E-06"
+        iyy="3.104E-05"
+        iyz="-2.7449E-06"
+        izz="2.922E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Wrist_Roll_Yaw.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Wrist_Roll_Yaw.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Wrist_Roll"
+    type="continuous">
+    <origin
+      xyz="-0.058273 0.0045968 0.0025376"
+      rpy="2.7435 -0.099808 -0.26118" />
+    <parent
+      link="Forearm" />
+    <child
+      link="Wrist_Roll_Yaw" />
+    <axis
+      xyz="0.98986 -0.14016 0.023243" />
+    <limit
+      lower="-1.8"
+      upper="1.8"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="Wrist_Yaw_Pitch">
+    <inertial>
+      <origin
+        xyz="2.7756E-17 0.0024 0.0045832"
+        rpy="0 0 0" />
+      <mass
+        value="0.023922" />
+      <inertia
+        ixx="8.3081E-06"
+        ixy="6.951E-21"
+        ixz="-4.473E-21"
+        iyy="1.0623E-05"
+        iyz="-8.225E-21"
+        izz="1.3498E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Wrist_Yaw_Pitch.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/Wrist_Yaw_Pitch.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Wrist_Yaw"
+    type="continuous">
+    <origin
+      xyz="-0.094575 0.013474 -0.0022794"
+      rpy="1.5994 -0.62299 -1.7282" />
+    <parent
+      link="Wrist_Roll_Yaw" />
+    <child
+      link="Wrist_Yaw_Pitch" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="-0.9"
+      upper="0.5"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="End_Servo">
+    <inertial>
+      <origin
+        xyz="-0.012801 -1.9931E-09 0.00037293"
+        rpy="0 0 0" />
+      <mass
+        value="0.036217" />
+      <inertia
+        ixx="5.0606E-06"
+        ixy="-1.1965E-12"
+        ixz="7.0946E-08"
+        iyy="9.3616E-06"
+        iyz="1.0572E-12"
+        izz="7.8391E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/End_Servo.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_7DOF_ARM100_08h_HL_01d_URDF_01.SLDASM/meshes/End_Servo.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Wrist_Pitch"
+    type="continuous">
+    <origin
+      xyz="0 0.0024 0.025"
+      rpy="0 1.5708 0" />
+    <parent
+      link="Wrist_Yaw_Pitch" />
+    <child
+      link="End_Servo" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-1.8"
+      upper="1.8"
+      effort="0"
+      velocity="0" />
+  </joint>
+</robot>

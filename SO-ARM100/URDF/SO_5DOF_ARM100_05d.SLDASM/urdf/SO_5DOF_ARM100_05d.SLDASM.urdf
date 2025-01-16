@@ -1,0 +1,365 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-1-g15f4949  Build Version: 1.6.7594.29634
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="SO_5DOF_ARM100_05d.SLDASM">
+  <link
+    name="Base">
+    <inertial>
+      <origin
+        xyz="-1.55220299024015E-10 0.0275980388649202 0.0272094138963763"
+        rpy="0 0 0" />
+      <mass
+        value="0.146962928243327" />
+      <inertia
+        ixx="9.5191642834079E-05"
+        ixy="2.02405274856147E-12"
+        ixz="1.46514387606669E-13"
+        iyy="0.000123785814019492"
+        iyz="1.84608762035329E-05"
+        izz="0.000137926707148466" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Base.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Base.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="Shoulder_Rotation_Pitch">
+    <inertial>
+      <origin
+        xyz="-0.00511938391873139 0.0678779339349912 -0.000127472379243391"
+        rpy="0 0 0" />
+      <mass
+        value="0.111780100254674" />
+      <inertia
+        ixx="7.03890301713851E-05"
+        ixy="-1.55093016866869E-05"
+        ixz="1.67387694867946E-07"
+        iyy="3.32352621027575E-05"
+        iyz="9.30705606418705E-07"
+        izz="7.08694473647387E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Shoulder_Rotation_Pitch.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Shoulder_Rotation_Pitch.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Shoulder_Rotation"
+    type="continuous">
+    <origin
+      xyz="0 -0.0452 0.0181"
+      rpy="1.5708 0 1.5708" />
+    <parent
+      link="Base" />
+    <child
+      link="Shoulder_Rotation_Pitch" />
+    <axis
+      xyz="0 1 0" />
+  </joint>
+  <link
+    name="Upper_Arm">
+    <inertial>
+      <origin
+        xyz="-0.0693113774468845 0.00293741346964818 -7.61279219025209E-07"
+        rpy="0 0 0" />
+      <mass
+        value="0.167601391353176" />
+      <inertia
+        ixx="7.75332201021328E-05"
+        ixy="-2.10765620509824E-06"
+        ixz="7.52685919931984E-07"
+        iyy="0.000233751202018378"
+        iyz="-1.63496162538793E-07"
+        izz="0.000180452754687364" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Upper_Arm.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Upper_Arm.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Shoulder_Pitch"
+    type="continuous">
+    <origin
+      xyz="0.000125 0.1086 0"
+      rpy="3.1416 0 -1.5708" />
+    <parent
+      link="Shoulder_Rotation_Pitch" />
+    <child
+      link="Upper_Arm" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="Lower_Arm">
+    <inertial>
+      <origin
+        xyz="-0.0588290275819227 0.0021495318374051 0.000146772621039401"
+        rpy="0 0 0" />
+      <mass
+        value="0.142523221917339" />
+      <inertia
+        ixx="6.29078989235053E-05"
+        ixy="3.79294618448135E-06"
+        ixz="1.70733512134003E-06"
+        iyy="0.000146811163948232"
+        iyz="-2.1474403445678E-07"
+        izz="0.000102145070617562" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Lower_Arm.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Lower_Arm.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Elbow"
+    type="continuous">
+    <origin
+      xyz="-0.11238 0.0282 0"
+      rpy="0 0 -2.2391" />
+    <parent
+      link="Upper_Arm" />
+    <child
+      link="Lower_Arm" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="Wrist_Pitch_Roll">
+    <inertial>
+      <origin
+        xyz="-6.28656116854598E-09 -0.0087849429576346 -0.0309177852835532"
+        rpy="0 0 0" />
+      <mass
+        value="0.106401896179987" />
+      <inertia
+        ixx="4.78947074364113E-05"
+        ixy="-1.33871782943846E-11"
+        ixz="-8.95740683864277E-12"
+        iyy="7.01088408487287E-05"
+        iyz="-5.49748507471695E-06"
+        izz="6.17958653539553E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Wrist_Pitch_Roll.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Wrist_Pitch_Roll.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Wrist_Pitch"
+    type="continuous">
+    <origin
+      xyz="-0.1102 0.005375 0"
+      rpy="0.90254 1.5708 0" />
+    <parent
+      link="Lower_Arm" />
+    <child
+      link="Wrist_Pitch_Roll" />
+    <axis
+      xyz="1 0 0" />
+  </joint>
+  <link
+    name="Fixed_Gripper">
+    <inertial>
+      <origin
+        xyz="-0.00772179942650385 -0.000555295978140996 0.0316941559340959"
+        rpy="0 0 0" />
+      <mass
+        value="0.11710741874408" />
+      <inertia
+        ixx="5.67526018031759E-05"
+        ixy="1.04098982658207E-06"
+        ixz="8.53596077253277E-06"
+        iyy="5.78441834179299E-05"
+        iyz="-2.86014969245207E-07"
+        izz="4.22399193495317E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Fixed_Gripper.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Fixed_Gripper.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Wrist_Roll"
+    type="continuous">
+    <origin
+      xyz="0 0.002 -0.0545"
+      rpy="3.1416 0 3.1416" />
+    <parent
+      link="Wrist_Pitch_Roll" />
+    <child
+      link="Fixed_Gripper" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="Moving_Jaw">
+    <inertial>
+      <origin
+        xyz="-0.0033838985185846 -0.0322884362122416 0.000144458547748166"
+        rpy="0 0 0" />
+      <mass
+        value="0.0347149174448153" />
+      <inertia
+        ixx="1.36949844449711E-05"
+        ixy="-5.63192124555278E-07"
+        ixz="-5.74449907399212E-09"
+        iyy="7.04089001130743E-06"
+        iyz="-1.05361496046931E-07"
+        izz="8.28976960805291E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Moving_Jaw.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://SO_5DOF_ARM100_05d.SLDASM/meshes/Moving_Jaw.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Gripper"
+    type="continuous">
+    <origin
+      xyz="0.0202 0 0.024375"
+      rpy="-1.5708 0 0" />
+    <parent
+      link="Fixed_Gripper" />
+    <child
+      link="Moving_Jaw" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+</robot>
