@@ -35,7 +35,7 @@ from PIL import Image as PILImage
 from torchvision import transforms
 
 from lerobot.common.robot_devices.robots.utils import Robot
-from lerobot.configs.types import DictLike
+from lerobot.configs.types import DictLike, FeatureType, PolicyFeature
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of episodes per chunk
 
@@ -300,6 +300,37 @@ def get_features_from_robot(robot: Robot, use_videos: bool = True) -> dict:
             for key, ft in robot.camera_features.items()
         }
     return {**robot.motor_features, **camera_ft, **DEFAULT_FEATURES}
+
+
+def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFeature]:
+    # TODO(aliberts): Implement "type" in dataset features and simplify this
+    policy_features = {}
+    for key, ft in features.items():
+        shape = ft["shape"]
+        if ft["dtype"] in ["image", "video"]:
+            type = FeatureType.VISUAL
+            if len(shape) != 3:
+                raise ValueError(f"Number of dimensions of {key} != 3 (shape={shape})")
+
+            names = ft["names"]
+            # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
+            if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
+                shape = (shape[2], shape[0], shape[1])
+        elif key == "observation.environment_state":
+            type = FeatureType.ENV
+        elif key.startswith("observation"):
+            type = FeatureType.STATE
+        elif key == "action":
+            type = FeatureType.ACTION
+        else:
+            continue
+
+        policy_features[key] = PolicyFeature(
+            type=type,
+            shape=shape,
+        )
+
+    return policy_features
 
 
 def create_empty_dataset_info(

@@ -25,7 +25,7 @@ from safetensors.torch import load_file
 
 from lerobot import available_policies
 from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.datasets.utils import cycle
+from lerobot.common.datasets.utils import cycle, dataset_to_policy_features
 from lerobot.common.envs.factory import make_env, make_env_config
 from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.optim.factory import make_optimizer_and_scheduler
@@ -39,9 +39,8 @@ from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import seeded_context
 from lerobot.configs.default import DatasetConfig
-from lerobot.configs.policies import PolicyFeature
 from lerobot.configs.training import TrainPipelineConfig
-from lerobot.configs.types import FeatureType, NormalizationMode
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from tests.scripts.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
 
@@ -240,7 +239,11 @@ def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     """Check that the policy can be instantiated with defaults."""
     policy_cls = get_policy_class(policy_name)
     policy_cfg = make_policy_config(policy_name)
-    policy_cfg.parse_features_from_dataset(dummy_dataset_metadata)
+    features = dataset_to_policy_features(dummy_dataset_metadata.features)
+    policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    policy_cfg.input_features = {
+        key: ft for key, ft in features.items() if key not in policy_cfg.output_features
+    }
     policy_cls(policy_cfg)
 
 
@@ -248,7 +251,11 @@ def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
 def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name: str):
     policy_cls = get_policy_class(policy_name)
     policy_cfg = make_policy_config(policy_name)
-    policy_cfg.parse_features_from_dataset(dummy_dataset_metadata)
+    features = dataset_to_policy_features(dummy_dataset_metadata.features)
+    policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    policy_cfg.input_features = {
+        key: ft for key, ft in features.items() if key not in policy_cfg.output_features
+    }
     policy = policy_cls(policy_cfg)
     save_dir = tmp_path / f"test_save_and_load_pretrained_{policy_cls.__name__}"
     policy.save_pretrained(save_dir)
@@ -266,28 +273,28 @@ def test_normalize(insert_temporal_dim):
     expected.
     """
 
-    input_features = [
-        PolicyFeature(
-            key="observation.image",
+    input_features = {
+        "observation.image": PolicyFeature(
             type=FeatureType.VISUAL,
-            normalization_mode=NormalizationMode.MEAN_STD,
-            shape=[3, 96, 96],
+            shape=(3, 96, 96),
         ),
-        PolicyFeature(
-            key="observation.state",
+        "observation.state": PolicyFeature(
             type=FeatureType.STATE,
-            normalization_mode=NormalizationMode.MIN_MAX,
-            shape=[10],
+            shape=(10,),
         ),
-    ]
-    output_features = [
-        PolicyFeature(
-            key="action",
+    }
+    output_features = {
+        "action": PolicyFeature(
             type=FeatureType.ACTION,
-            normalization_mode=NormalizationMode.MIN_MAX,
-            shape=[5],
+            shape=(5,),
         ),
-    ]
+    }
+
+    norm_map = {
+        "VISUAL": NormalizationMode.MEAN_STD,
+        "STATE": NormalizationMode.MIN_MAX,
+        "ACTION": NormalizationMode.MIN_MAX,
+    }
 
     dataset_stats = {
         "observation.image": {
@@ -330,30 +337,30 @@ def test_normalize(insert_temporal_dim):
             output_batch[key] = torch.stack([output_batch[key]] * tdim, dim=1)
 
     # test without stats
-    normalize = Normalize(input_features, stats=None)
+    normalize = Normalize(input_features, norm_map, stats=None)
     with pytest.raises(AssertionError):
         normalize(input_batch)
 
     # test with stats
-    normalize = Normalize(input_features, stats=dataset_stats)
+    normalize = Normalize(input_features, norm_map, stats=dataset_stats)
     normalize(input_batch)
 
     # test loading pretrained models
-    new_normalize = Normalize(input_features, stats=None)
+    new_normalize = Normalize(input_features, norm_map, stats=None)
     new_normalize.load_state_dict(normalize.state_dict())
     new_normalize(input_batch)
 
     # test without stats
-    unnormalize = Unnormalize(output_features, stats=None)
+    unnormalize = Unnormalize(output_features, norm_map, stats=None)
     with pytest.raises(AssertionError):
         unnormalize(output_batch)
 
     # test with stats
-    unnormalize = Unnormalize(output_features, stats=dataset_stats)
+    unnormalize = Unnormalize(output_features, norm_map, stats=dataset_stats)
     unnormalize(output_batch)
 
     # test loading pretrained models
-    new_unnormalize = Unnormalize(output_features, stats=None)
+    new_unnormalize = Unnormalize(output_features, norm_map, stats=None)
     new_unnormalize.load_state_dict(unnormalize.state_dict())
     unnormalize(output_batch)
 
@@ -487,7 +494,3 @@ def test_act_temporal_ensembler():
         assert torch.all(offline_avg <= einops.reduce(seq_slice, "b s 1 -> b 1", "max"))
         # Selected atol=1e-4 keeping in mind actions in [-1, 1] and excepting 0.01% error.
         assert torch.allclose(online_avg, offline_avg, atol=1e-4)
-
-
-if __name__ == "__main__":
-    test_act_temporal_ensembler()

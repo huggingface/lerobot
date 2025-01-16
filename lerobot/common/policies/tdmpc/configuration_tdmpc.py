@@ -201,7 +201,7 @@ class TDMPCConfig(PretrainedConfig):
             )
 
         if len(self.image_features) > 0:
-            image_ft = next(iter(self.image_features))
+            image_ft = next(iter(self.image_features.values()))
             if image_ft.shape[-2] != image_ft.shape[-1]:
                 # TODO(alexander-soare): This limitation is solely because of code in the random shift
                 # augmentation. It should be able to be removed.
