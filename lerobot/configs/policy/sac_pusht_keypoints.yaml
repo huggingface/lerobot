@@ -15,11 +15,11 @@ training:
   # Offline training dataloader
   num_workers: 4
 
-  batch_size: 128
+  batch_size: 256
   grad_clip_norm: 10.0
   lr: 3e-4
 
-  eval_freq: 50000
+  eval_freq: 2500
   log_freq: 500
   save_freq: 50000
 
@@ -46,8 +46,8 @@ policy:
 
   # Input / output structure.
   n_action_repeats: 1
-  horizon: 5
-  n_action_steps: 5
+  horizon: 2
+  n_action_steps: 2
 
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
