@@ -34,6 +34,7 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 
+from lerobot.common.constants import OBS_ENV, OBS_ROBOT
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.utils import (
@@ -74,9 +75,13 @@ class DiffusionPolicy(
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(config.input_features, dataset_stats)
-        self.normalize_targets = Normalize(config.output_features, dataset_stats)
-        self.unnormalize_outputs = Unnormalize(config.output_features, dataset_stats)
+        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        self.normalize_targets = Normalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
+        self.unnormalize_outputs = Unnormalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
 
         # queues are populated during rollout of the policy, they contain the n latest observations and actions
         self._queues = None
@@ -125,7 +130,7 @@ class DiffusionPolicy(
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.images"] = torch.stack(
-                [batch[ft.key] for ft in self.config.image_features], dim=-4
+                [batch[key] for key in self.config.image_features], dim=-4
             )
         # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
@@ -149,7 +154,7 @@ class DiffusionPolicy(
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.images"] = torch.stack(
-                [batch[ft.key] for ft in self.config.image_features], dim=-4
+                [batch[key] for key in self.config.image_features], dim=-4
             )
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
@@ -237,8 +242,8 @@ class DiffusionModel(nn.Module):
 
     def _prepare_global_conditioning(self, batch: dict[str, Tensor]) -> Tensor:
         """Encode image features and concatenate them all together along with the state vector."""
-        batch_size, n_obs_steps = batch[self.config.robot_state_feature.key].shape[:2]
-        global_cond_feats = [batch[self.config.robot_state_feature.key]]
+        batch_size, n_obs_steps = batch[OBS_ROBOT].shape[:2]
+        global_cond_feats = [batch[OBS_ROBOT]]
         # Extract image features.
         if self.config.image_features:
             if self.config.use_separate_rgb_encoder_per_camera:
@@ -268,7 +273,7 @@ class DiffusionModel(nn.Module):
             global_cond_feats.append(img_features)
 
         if self.config.env_state_feature:
-            global_cond_feats.append(batch[self.config.env_state_feature.key])
+            global_cond_feats.append(batch[OBS_ENV])
 
         # Concatenate features then flatten to (B, global_cond_dim).
         return torch.cat(global_cond_feats, dim=-1).flatten(start_dim=1)
@@ -482,10 +487,9 @@ class DiffusionRgbEncoder(nn.Module):
         # height and width from `config.image_features`.
 
         # Note: we have a check in the config class to make sure all images have the same shape.
-        dummy_shape_h_w = (
-            config.crop_shape if config.crop_shape is not None else config.image_features[0].shape[1:]
-        )
-        dummy_shape = (1, config.image_features[0].shape[0], *dummy_shape_h_w)
+        images_shape = next(iter(config.image_features.values())).shape
+        dummy_shape_h_w = config.crop_shape if config.crop_shape is not None else images_shape[1:]
+        dummy_shape = (1, images_shape[0], *dummy_shape_h_w)
         feature_map_shape = get_output_shape(self.backbone, dummy_shape)[1:]
 
         self.pool = SpatialSoftmax(feature_map_shape, num_kp=config.spatial_softmax_num_keypoints)

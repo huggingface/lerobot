@@ -18,13 +18,16 @@ import gymnasium as gym
 from torch import nn
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.common.datasets.utils import dataset_to_policy_features
 from lerobot.common.envs.configs import EnvConfig
+from lerobot.common.envs.utils import env_to_policy_features
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.types import FeatureType
 
 
 def get_policy_class(name: str) -> Policy:
@@ -100,11 +103,18 @@ def make_policy(
 
     kwargs = {}
     if ds_meta is not None:
-        cfg.parse_features_from_dataset(ds_meta)
+        features = dataset_to_policy_features(ds_meta.features)
         kwargs["dataset_stats"] = ds_meta.stats
     else:
-        cfg.parse_features_from_env(env, env_cfg)
+        if not cfg.pretrained_path or not cfg.output_features or not cfg.input_features:
+            raise NotImplementedError(
+                "The policy must have already existing features in its config when initializing it "
+                "with an environment."
+            )
+        features = env_to_policy_features(env_cfg, cfg)
 
+    cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
 
     if cfg.pretrained_path:
