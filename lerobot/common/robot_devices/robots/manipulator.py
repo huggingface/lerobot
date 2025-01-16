@@ -81,7 +81,7 @@ class ManipulatorRobotConfig:
         super().__setattr__(prop, val)
 
     def __post_init__(self):
-        if self.robot_type not in ["koch", "koch_bimanual", "aloha", "so100", "moss"]:
+        if self.robot_type not in ["koch", "koch_bimanual", "aloha", "so100", "moss", "myarm"]:
             raise ValueError(f"Provided robot type ({self.robot_type}) is not supported.")
 
 
@@ -304,6 +304,8 @@ class ManipulatorRobot:
             from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
         elif self.robot_type in ["so100", "moss"]:
             from lerobot.common.robot_devices.motors.feetech import TorqueMode
+        elif self.robot_type == "myarm":
+            from lerobot.common.robot_devices.motors.myarm import TorqueMode
 
         # We assume that at connection time, arms are in a rest position, and torque can
         # be safely disabled to run calibration and/or set robot preset configurations.
@@ -321,6 +323,8 @@ class ManipulatorRobot:
             self.set_aloha_robot_preset()
         elif self.robot_type in ["so100", "moss"]:
             self.set_so100_robot_preset()
+        elif self.robot_type == "myarm":
+            self.set_myarm_robot_preset()
 
         # Enable torque on all motors of the follower arms
         for name in self.follower_arms:
@@ -378,6 +382,9 @@ class ManipulatorRobot:
                     )
 
                     calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
+                elif self.robot_type == "myarm":
+                    # MyArm calibration should be done using the MyArm interface
+                    calibration = {}
 
                 print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
                 arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
@@ -500,6 +507,15 @@ class ManipulatorRobot:
             # the motors. Note: this configuration is not in the official STS3215 Memory Table
             self.follower_arms[name].write("Maximum_Acceleration", 254)
             self.follower_arms[name].write("Acceleration", 254)
+
+    def set_myarm_robot_preset(self):
+        for name, robot in self.follower_arms.items():
+            logging.info(f"Setting up {name} follower arm.")
+            robot.set_up_presets()
+
+        for name, robot in self.leader_arms.items():
+            logging.info(f"Setting up {name} leader arm.")
+            robot.set_up_presets()
 
     def teleop_step(
         self, record_data=False

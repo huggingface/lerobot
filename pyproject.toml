@@ -49,6 +49,7 @@ cmake = ">=3.29.0.1"
 gym-dora = { git = "https://github.com/dora-rs/dora-lerobot.git", subdirectory = "gym_dora", optional = true }
 gym-pusht = { version = ">=0.1.5", optional = true}
 gym-xarm = { version = ">=0.1.1", optional = true}
+acton_ai = { version = "^0.3.0", optional = true}
 gym-aloha = { version = ">=0.1.1", optional = true}
 pre-commit = {version = ">=3.7.0", optional = true}
 debugpy = {version = ">=1.8.1", optional = true}
@@ -77,6 +78,7 @@ jsonlines = ">=4.0.0"
 dora = ["gym-dora"]
 pusht = ["gym-pusht"]
 xarm = ["gym-xarm"]
+my_arm = ["acton_ai", "pynput"]
 aloha = ["gym-aloha"]
 dev = ["pre-commit", "debugpy"]
 test = ["pytest", "pytest-cov", "pyserial"]
