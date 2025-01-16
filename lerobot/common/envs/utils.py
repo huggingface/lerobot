@@ -77,7 +77,7 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
             if len(ft.shape) != 3:
                 raise ValueError(f"Number of dimensions of {key} != 3 (shape={ft.shape})")
 
-            shape = get_channel_first_image_shape(ft.shape, raise_if_not_channel_first=True)
+            shape = get_channel_first_image_shape(ft.shape)
             feature = PolicyFeature(type=ft.type, shape=shape)
         else:
             feature = ft
