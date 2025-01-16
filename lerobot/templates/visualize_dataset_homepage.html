@@ -7,7 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
-<body class="h-screen overflow-hidden font-mono text-white" x-data="{ 
+<body class="h-screen overflow-hidden font-mono text-white" x-data="{
     inputValue: '',
     navigateToDataset() {
         const trimmedValue = this.inputValue.trim();
@@ -40,14 +40,14 @@
             </div>
         </div>
         <div class="flex w-full max-w-lg px-4 mb-4">
-            <input 
-                type="text" 
+            <input
+                type="text"
                 x-model="inputValue"
                 @keyup.enter="navigateToDataset"
                 placeholder="enter dataset id (ex: lerobot/droid_100)"
                 class="flex-grow px-4 py-2 rounded-l bg-white bg-opacity-20 text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-300"
             >
-            <button 
+            <button
                 @click="navigateToDataset"
                 class="px-4 py-2 bg-blue-500 text-white rounded-r hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300"
             >
