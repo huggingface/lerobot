@@ -16,6 +16,8 @@
 
 from collections import deque
 import math
+from typing import List, Optional, Union
+from pytest import Cache
 import torch
 from torch import Tensor, nn
 from transformers import AutoTokenizer, PaliGemmaForConditionalGeneration, GemmaForCausalLM
@@ -121,6 +123,139 @@ def create_sinusoidal_pos_embedding(time: torch.tensor, dimension: int, min_peri
     return pos_emb
 
 
+from transformers import PaliGemmaForConditionalGeneration, AutoModel, AutoConfig, PretrainedConfig, GemmaConfig, PreTrainedModel, PaliGemmaConfig, AutoTokenizer, PaliGemmaForConditionalGeneration, GemmaForCausalLM
+import torch
+from torch import nn 
+
+class PI0PaliGemmaConfig(PretrainedConfig):
+    model_type = "PI0"
+    sub_configs = {"paligemma_config": AutoConfig, "gemma_expert_config": AutoConfig}
+
+    def __init__(
+        self,
+        paligemma_config=None,
+        gemma_config=None,
+        state_dim=14,
+        action_dim=24,
+        width=1024,
+        **kwargs,
+    ): 
+        self.paligemma_config = paligemma_config
+        self.gemma_expert_config = gemma_config
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.width = width
+        super().__init__(**kwargs)
+
+
+class PI0PaliGemmaModel(PreTrainedModel):
+    def __init__(self, config: PI0PaliGemmaConfig):
+        super().__init__(config=config)
+        self.config = config
+        self.paligemma = PaliGemmaForConditionalGeneration(config.paligemma_config) #PaliGemmaForConditionalGeneration.from_pretrained("Tinkering/frostpunklab_bf16")
+        self.gemma_expert = AutoModel.from_config(config.gemma_expert_config) #GemmaForCausalLM.from_pretrained('Tinkering/frostpunklab_action_expert_bf16', torch_dtype="bfloat16")
+
+        self.state_proj = nn.Linear(config.state_dim, config.width)
+        self.action_in_proj = nn.Linear(config.action_dim, config.width)
+        self.action_out_proj = nn.Linear(config.width, config.action_dim)
+        self.action_time_mlp_in = nn.Linear(config.width * 2, config.width)
+        self.action_time_mlp_out = nn.Linear(config.width, config.width)
+
+    def forward(
+            self,
+            input_ids: torch.LongTensor = None,
+            pixel_values: torch.FloatTensor = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            position_ids: Optional[torch.LongTensor] = None,
+            past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
+            token_type_ids: Optional[torch.LongTensor] = None,
+            cache_position: Optional[torch.LongTensor] = None,
+            inputs_embeds: List[torch.FloatTensor] = None,
+            labels: Optional[torch.LongTensor] = None,
+            use_cache: Optional[bool] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
+            num_logits_to_keep: int = 0,
+        ):
+        
+        paligemma_hidden_states = inputs_embeds[0]
+        gemma_expert_hidden_states = inputs_embeds[1]
+
+
+        models = [self.paligemma.language_model.model, self.gemma_expert.model]
+
+        # RMSNorm
+        num_layers = self.paligemma.config.text_config.num_hidden_layers
+        for layer_idx in range(num_layers):
+
+            query_states = []
+            key_states = []
+            value_states = []
+            for i, hidden_states in enumerate(inputs_embeds):
+                layer = models[i].layers[layer_idx]
+                hidden_states = layer.input_layernorm(x)
+
+                input_shape = hidden_states.shape[:-1]
+                hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
+
+                query_state = layer.self_attn.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+                key_state = layer.self_attn.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+                value_state = layer.self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+                query_states.append(query_state)
+                key_states.append(key_state)
+                value_states.append(value_state)
+
+                # TODO: implement kv cache
+
+
+            query_states = torch.cat(query_states, dim=1)
+            key_states = torch.cat(key_states, dim=1)
+            value_states = torch.cat(value_states, dim=1)
+
+            # TODO: implement _apply_rope
+            positions 
+
+            cos, sin = position_embeddings
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+            # TODO
+
+
+                attention_interface: Callable = eager_attention_forward
+                if layer.self_attn.config._attn_implementation != "eager":
+                    if layer.self_attn.config._attn_implementation == "sdpa" and kwargs.get("output_attentions", False):
+                        logger.warning_once(
+                            "`torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to "
+                            'eager attention. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
+                        )
+                    else:
+                        attention_interface = ALL_ATTENTION_FUNCTIONS[layer.self_attn.config._attn_implementation]
+
+
+
+
+                attn_output, attn_weights = attention_interface(
+                    layer.self_attn,
+                    query_states,
+                    key_states,
+                    value_states,
+                    attention_mask,
+                    dropout=0.0 if not layer.self_attn.training else layer.self_attn.attention_dropout,
+                    scaling=layer.self_attn.scaling,
+                    #**kwargs,
+                )
+
+
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+
+
+        for i, x in enumerate(inputs_embeds):
+            
+
+
 # TODO: for training look at preprocess_observation
 
 class PI0(nn.Module):
@@ -132,6 +267,9 @@ class PI0(nn.Module):
         self.tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
         self.paligemma = PaliGemmaForConditionalGeneration.from_pretrained("Tinkering/frostpunklab_bf16")
         self.gemma_expert = GemmaForCausalLM.from_pretrained('Tinkering/frostpunklab_action_expert_bf16', torch_dtype="bfloat16")
+
+        self.pi0_paligemma = PI0PaliGemmaModel(config=PI0PaliGemmaConfig())
+        self.pi0_paligemma.from_pretrained("Tinkering/frostpunklab_full_bf16", torch_dtype="bfloat16")
 
         state_dim = self.config.action_dim
         action_dim = self.config.state_dim
@@ -256,7 +394,7 @@ class PI0(nn.Module):
         # TODO: remove for loop
         for ft in self.config.image_features:
             img_key = ft.key
-            img_emb = self.paligemma.get_image_features(batch[img_key])
+            img_emb = self.pi0_paligemma.paligemma.get_image_features(batch[img_key])
 
             # img_feats = (img_feats * math.sqrt(img_feats.shape[-1]))
             
@@ -273,7 +411,7 @@ class PI0(nn.Module):
             att_masks += [0] * num_img_embs
 
         # TODO: if language
-        lang_emb = self.paligemma.language_model.model.embed_tokens(batch["tokenized_prompt"])
+        lang_emb = self.pi0_paligemma.paligemma.language_model.model.embed_tokens(batch["tokenized_prompt"])
         # (lang_emb * math.sqrt(2048)).mean().item()
 
         embs.append(lang_emb)
