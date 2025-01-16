@@ -111,7 +111,7 @@ def make_policy(
                 "The policy must have already existing features in its config when initializing it "
                 "with an environment."
             )
-        features = env_to_policy_features(env_cfg, cfg)
+        features = env_to_policy_features(env_cfg)
 
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
