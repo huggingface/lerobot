@@ -14,21 +14,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections import deque
 import math
+from collections import deque
 from typing import List, Optional, Union
-from pytest import Cache
+
 import torch
-from torch import Tensor, nn
-from transformers import AutoTokenizer, PaliGemmaForConditionalGeneration, GemmaForCausalLM
-from huggingface_hub import PyTorchModelHubMixin
 import torch.nn.functional as F  # noqa: N812
+from huggingface_hub import PyTorchModelHubMixin
+from pytest import Cache
+from torch import Tensor, nn
+from transformers import AutoTokenizer, GemmaForCausalLM, PaliGemmaForConditionalGeneration
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
 
+
 def display(x):
+    print(x.shape)
     print(f"mean: {x.mean().item()}")
     print(f"std: {x.std().item()}")
     print(f"min: {x.min().item()}")
@@ -73,7 +76,6 @@ class PI0Policy(
         """This should be called whenever the environment is reset."""
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
-
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.
@@ -103,16 +105,18 @@ class PI0Policy(
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
-    
+
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         raise NotImplementedError()
-    
 
-def create_sinusoidal_pos_embedding(time: torch.tensor, dimension: int, min_period: float, max_period: float, device="cpu") -> Tensor:
+
+def create_sinusoidal_pos_embedding(
+    time: torch.tensor, dimension: int, min_period: float, max_period: float, device="cpu"
+) -> Tensor:
     """Computes sine-cosine positional embedding vectors for scalar positions."""
     if dimension % 2 != 0:
         raise ValueError(f"dimension ({dimension}) must be divisible by 2")
-    
+
     fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=torch.float64, device=device)
     period = min_period * (max_period / min_period) ** fraction
 
@@ -123,9 +127,16 @@ def create_sinusoidal_pos_embedding(time: torch.tensor, dimension: int, min_peri
     return pos_emb
 
 
-from transformers import PaliGemmaForConditionalGeneration, AutoModel, AutoConfig, PretrainedConfig, GemmaConfig, PreTrainedModel, PaliGemmaConfig, AutoTokenizer, PaliGemmaForConditionalGeneration, GemmaForCausalLM
 import torch
-from torch import nn 
+from torch import nn
+from transformers import (
+    AutoConfig,
+    GemmaConfig,
+    PaliGemmaConfig,
+    PretrainedConfig,
+    PreTrainedModel,
+)
+
 
 class PI0PaliGemmaConfig(PretrainedConfig):
     model_type = "PI0"
@@ -139,7 +150,7 @@ class PI0PaliGemmaConfig(PretrainedConfig):
         action_dim=24,
         width=1024,
         **kwargs,
-    ): 
+    ):
         self.paligemma_config = paligemma_config
         self.gemma_expert_config = gemma_config
         self.state_dim = state_dim
@@ -152,56 +163,51 @@ class PI0PaliGemmaModel(PreTrainedModel):
     def __init__(self, config: PI0PaliGemmaConfig):
         super().__init__(config=config)
         self.config = config
-        self.paligemma = PaliGemmaForConditionalGeneration(config.paligemma_config) #PaliGemmaForConditionalGeneration.from_pretrained("Tinkering/frostpunklab_bf16")
-        self.gemma_expert = AutoModel.from_config(config.gemma_expert_config) #GemmaForCausalLM.from_pretrained('Tinkering/frostpunklab_action_expert_bf16', torch_dtype="bfloat16")
+        # self.paligemma = PaliGemmaForConditionalGeneration(config.paligemma_config) #PaliGemmaForConditionalGeneration.from_pretrained("Tinkering/frostpunklab_bf16")
+        # self.gemma_expert = AutoModel.from_config(config.gemma_expert_config) #GemmaForCausalLM.from_pretrained('Tinkering/frostpunklab_action_expert_bf16', torch_dtype="bfloat16")
 
-        self.state_proj = nn.Linear(config.state_dim, config.width)
-        self.action_in_proj = nn.Linear(config.action_dim, config.width)
-        self.action_out_proj = nn.Linear(config.width, config.action_dim)
-        self.action_time_mlp_in = nn.Linear(config.width * 2, config.width)
-        self.action_time_mlp_out = nn.Linear(config.width, config.width)
+        self.paligemma = PaliGemmaForConditionalGeneration.from_pretrained(
+            "Tinkering/frostpunklab_bf16", torch_dtype="bfloat16"
+        )
+        self.gemma_expert = GemmaForCausalLM.from_pretrained(
+            "Tinkering/frostpunklab_action_expert_bf16", torch_dtype="bfloat16"
+        )
 
     def forward(
-            self,
-            input_ids: torch.LongTensor = None,
-            pixel_values: torch.FloatTensor = None,
-            attention_mask: Optional[torch.Tensor] = None,
-            position_ids: Optional[torch.LongTensor] = None,
-            past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
-            token_type_ids: Optional[torch.LongTensor] = None,
-            cache_position: Optional[torch.LongTensor] = None,
-            inputs_embeds: List[torch.FloatTensor] = None,
-            labels: Optional[torch.LongTensor] = None,
-            use_cache: Optional[bool] = None,
-            output_attentions: Optional[bool] = None,
-            output_hidden_states: Optional[bool] = None,
-            return_dict: Optional[bool] = None,
-            num_logits_to_keep: int = 0,
-        ):
-        
-        paligemma_hidden_states = inputs_embeds[0]
-        gemma_expert_hidden_states = inputs_embeds[1]
-
-
+        self,
+        input_ids: torch.LongTensor = None,
+        pixel_values: torch.FloatTensor = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
+        token_type_ids: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        inputs_embeds: List[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        num_logits_to_keep: int = 0,
+    ):
         models = [self.paligemma.language_model.model, self.gemma_expert.model]
 
         # RMSNorm
         num_layers = self.paligemma.config.text_config.num_hidden_layers
         for layer_idx in range(num_layers):
-
             query_states = []
             key_states = []
             value_states = []
             for i, hidden_states in enumerate(inputs_embeds):
                 layer = models[i].layers[layer_idx]
-                hidden_states = layer.input_layernorm(x)
+                hidden_states = layer.input_layernorm(hidden_states)
 
                 input_shape = hidden_states.shape[:-1]
                 hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
 
-                query_state = layer.self_attn.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-                key_state = layer.self_attn.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-                value_state = layer.self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+                query_state = layer.self_attn.q_proj(hidden_states).view(hidden_shape)
+                key_state = layer.self_attn.k_proj(hidden_states).view(hidden_shape)
+                value_state = layer.self_attn.v_proj(hidden_states).view(hidden_shape)
 
                 query_states.append(query_state)
                 key_states.append(key_state)
@@ -209,78 +215,80 @@ class PI0PaliGemmaModel(PreTrainedModel):
 
                 # TODO: implement kv cache
 
-
+            # B,L,H,D with L sequence length, H number of heads, D head dim
+            # concatenate on the number of embeddings/tokens
             query_states = torch.cat(query_states, dim=1)
             key_states = torch.cat(key_states, dim=1)
             value_states = torch.cat(value_states, dim=1)
 
             # TODO: implement _apply_rope
-            positions 
+            query_states = apply_rope(query_states, position_ids)
 
-            cos, sin = position_embeddings
-            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+            # query_states *= self.config.
 
-            # TODO
+        #     cos, sin = position_embeddings
+        #     query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
+        #     # TODO
 
-                attention_interface: Callable = eager_attention_forward
-                if layer.self_attn.config._attn_implementation != "eager":
-                    if layer.self_attn.config._attn_implementation == "sdpa" and kwargs.get("output_attentions", False):
-                        logger.warning_once(
-                            "`torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to "
-                            'eager attention. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
-                        )
-                    else:
-                        attention_interface = ALL_ATTENTION_FUNCTIONS[layer.self_attn.config._attn_implementation]
+        #         attention_interface: Callable = eager_attention_forward
+        #         if layer.self_attn.config._attn_implementation != "eager":
+        #             if layer.self_attn.config._attn_implementation == "sdpa" and kwargs.get("output_attentions", False):
+        #                 logger.warning_once(
+        #                     "`torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to "
+        #                     'eager attention. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
+        #                 )
+        #             else:
+        #                 attention_interface = ALL_ATTENTION_FUNCTIONS[layer.self_attn.config._attn_implementation]
 
+        #         attn_output, attn_weights = attention_interface(
+        #             layer.self_attn,
+        #             query_states,
+        #             key_states,
+        #             value_states,
+        #             attention_mask,
+        #             dropout=0.0 if not layer.self_attn.training else layer.self_attn.attention_dropout,
+        #             scaling=layer.self_attn.scaling,
+        #             #**kwargs,
+        #         )
 
+        #     query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-
-                attn_output, attn_weights = attention_interface(
-                    layer.self_attn,
-                    query_states,
-                    key_states,
-                    value_states,
-                    attention_mask,
-                    dropout=0.0 if not layer.self_attn.training else layer.self_attn.attention_dropout,
-                    scaling=layer.self_attn.scaling,
-                    #**kwargs,
-                )
-
-
-            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
-
-
-
-        for i, x in enumerate(inputs_embeds):
-            
+        # for i, x in enumerate(inputs_embeds):
 
 
 # TODO: for training look at preprocess_observation
 
-class PI0(nn.Module):
 
+class PI0(nn.Module):
     def __init__(self, config: PI0Config):
         super().__init__()
         self.config = config
         # TODO Should be derived from config
         self.tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
-        self.paligemma = PaliGemmaForConditionalGeneration.from_pretrained("Tinkering/frostpunklab_bf16")
-        self.gemma_expert = GemmaForCausalLM.from_pretrained('Tinkering/frostpunklab_action_expert_bf16', torch_dtype="bfloat16")
-
-        self.pi0_paligemma = PI0PaliGemmaModel(config=PI0PaliGemmaConfig())
-        self.pi0_paligemma.from_pretrained("Tinkering/frostpunklab_full_bf16", torch_dtype="bfloat16")
+        # self.paligemma = PaliGemmaForConditionalGeneration.from_pretrained("Tinkering/frostpunklab_bf16")
+        # self.gemma_expert = GemmaForCausalLM.from_pretrained('Tinkering/frostpunklab_action_expert_bf16', torch_dtype="bfloat16")
+        self.pi0_paligemma = PI0PaliGemmaModel(
+            config=PI0PaliGemmaConfig(
+                paligemma_config=PaliGemmaConfig.from_pretrained("Tinkering/frostpunklab_bf16"),
+                gemma_config=GemmaConfig.from_pretrained("Tinkering/frostpunklab_action_expert_bf16"),
+            )
+        )
+        # self.pi0_paligemma.from_pretrained("Tinkering/frostpunklab_full_bf16", torch_dtype="bfloat16")
 
         state_dim = self.config.action_dim
         action_dim = self.config.state_dim
         n_action_steps = self.config.n_action_steps
         width = self.config.action_expert_width
 
-        self.state_proj = nn.Linear(state_dim, width)
-        self.action_in_proj = nn.Linear(action_dim, width)
-        self.action_out_proj = nn.Linear(width, action_dim)
-        self.action_time_mlp_in = nn.Linear(width*2, width)
-        self.action_time_mlp_out = nn.Linear(width, width)
+        self.state_proj = nn.Linear(state_dim, width, dtype=torch.float32)
+        self.action_in_proj = nn.Linear(action_dim, width, dtype=torch.bfloat16)
+        self.action_out_proj = nn.Linear(
+            width, action_dim, dtype=torch.bfloat16
+        )  # float32 for more precision?
+
+        self.action_time_mlp_in = nn.Linear(width * 2, width, dtype=torch.bfloat16)
+        self.action_time_mlp_out = nn.Linear(width, width, dtype=torch.bfloat16)
 
         self.from_pretrained("/home/remi_cadene/code/openpi/data/aloha_sim/pi0_projs_state_dict.pth")
 
@@ -293,7 +301,13 @@ class PI0(nn.Module):
     def from_pretrained(self, path):
         state_dict = torch.load(path)
 
-        keys = ["state_proj", "action_in_proj", "action_out_proj", "action_time_mlp_in", "action_time_mlp_out"]
+        keys = [
+            "state_proj",
+            "action_in_proj",
+            "action_out_proj",
+            "action_time_mlp_in",
+            "action_time_mlp_out",
+        ]
         for key in keys:
             module_state_dict = {
                 "weight": state_dict[f"{key}.weight"].t(),
@@ -303,7 +317,6 @@ class PI0(nn.Module):
             module.load_state_dict(module_state_dict)
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
-
         for ft in self.config.image_features:
             batch[ft.key] = resize_with_pad(batch[ft.key], 224, 224)
 
@@ -318,7 +331,13 @@ class PI0(nn.Module):
         # tokenizer works on lists
         # PaliGemma prompt has to end with a new line
         max_length = 48
-        tokenized_prompt = self.tokenizer.__call__(f"Transfer cube\n", padding="max_length", padding_side="right", max_length=max_length, return_tensors="pt")
+        tokenized_prompt = self.tokenizer.__call__(
+            "Transfer cube\n",
+            padding="max_length",
+            padding_side="right",
+            max_length=max_length,
+            return_tensors="pt",
+        )
 
         tokenized_prompt["attention_mask"] = tokenized_prompt["attention_mask"].type(dtype=torch.bool)
 
@@ -329,13 +348,11 @@ class PI0(nn.Module):
         actions, _ = self.sample_actions(batch, tokenized_prompt)
 
         # new_seed = self._rng.seed() + 1
-        
-    
+
         # sample_rng = torch.Generator()
         # sample_rng.manual_seed(new_seed)
 
-
-        # resized_tensor = 
+        # resized_tensor =
 
         # from *data_config.model_transforms.inputs,
         # ResizeImages(height=224, width=224)
@@ -349,29 +366,36 @@ class PI0(nn.Module):
     def sample_actions(self, batch, tokenized_prompt, noise=None):
         skey = self.config.robot_state_feature.key
         bsize = batch[skey].shape[0]
-        dtype = batch[skey].dtype
+        dtype = torch.bfloat16
         device = batch[skey].device
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.get_prefix_embeddings(batch)
 
-        dt = - 1.0 / self.config.num_steps
+        dt = -1.0 / self.config.num_steps
         dt = torch.tensor(dt, dtype=dtype, device=device)
 
         if noise is None:
-            noise = torch.normal(mean=0., std=1., size=(bsize, self.config.n_action_steps, self.config.action_dim), dtype=dtype, device=device)
+            noise = torch.normal(
+                mean=0.0,
+                std=1.0,
+                size=(bsize, self.config.n_action_steps, self.config.action_dim),
+                dtype=dtype,
+                device=device,
+            )
 
         import pickle
+
         with open("../openpi/data/aloha_sim/noise.pkl", "rb") as f:
             noise = pickle.load(f)
         noise = torch.from_numpy(noise).to(dtype=dtype, device=device)
 
         x_t = noise
         time = 1.0
-        time = torch.tensor(time, dtype=dtype , device=device)
+        time = torch.tensor(time, dtype=dtype, device=device)
         while time >= -dt / 2:
-            #time_batched = x_t[None, ...]
+            # time_batched = x_t[None, ...]
             v_t = self.sample_step(
-                batch, 
+                batch,
                 prefix_embs,
                 prefix_pad_masks,
                 prefix_att_masks,
@@ -384,7 +408,7 @@ class PI0(nn.Module):
             time += dt
 
         return x_t
-    
+
     def get_prefix_embeddings(self, batch):
         # TODO: avoid list in python and torch.cat ; prefer pre-allocation with torch.empty
         embs = []
@@ -395,13 +419,16 @@ class PI0(nn.Module):
         for ft in self.config.image_features:
             img_key = ft.key
             img_emb = self.pi0_paligemma.paligemma.get_image_features(batch[img_key])
+            img_emb = img_emb.to(dtype=torch.bfloat16)
 
-            # img_feats = (img_feats * math.sqrt(img_feats.shape[-1]))
-            
+            # TODO: remove normalization?
+            img_emb_dim = img_emb.shape[-1]
+            img_emb = img_emb * math.sqrt(img_emb_dim)
+
             bsize, num_img_embs = img_emb.shape[:2]
             device = img_emb.device
 
-            #img_mask = batch[f"{img_key}_mask"].expand(bsize, num_img_embs)
+            # img_mask = batch[f"{img_key}_mask"].expand(bsize, num_img_embs)
             img_mask = torch.ones(bsize, num_img_embs, dtype=torch.bool, device=device)
 
             embs.append(img_emb)
@@ -412,7 +439,11 @@ class PI0(nn.Module):
 
         # TODO: if language
         lang_emb = self.pi0_paligemma.paligemma.language_model.model.embed_tokens(batch["tokenized_prompt"])
-        # (lang_emb * math.sqrt(2048)).mean().item()
+        lang_emb = lang_emb.to(dtype=torch.bfloat16)
+
+        # TODO: remove normalization?
+        lang_emb_dim = lang_emb.shape[-1]
+        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
 
         embs.append(lang_emb)
         pad_masks.append(batch["tokenized_prompt_mask"])
@@ -425,18 +456,16 @@ class PI0(nn.Module):
 
         return embs, pad_masks, att_masks
 
-    def sample_step(self, batch, prefix_embs,
-                prefix_pad_masks,
-                prefix_att_masks, x_t, time):
-
+    def sample_step(self, batch, prefix_embs, prefix_pad_masks, prefix_att_masks, x_t, time):
         # ACTUAL SAMPLE STEP
 
         embs = []
         pad_masks = []
         att_masks = []
-        
+
         # add a single state token
         state_emb = self.state_proj(batch["observation.state"])
+        state_emb = state_emb.to(dtype=torch.bfloat16)
         embs.append(state_emb[:, None, :])
 
         bsize = state_emb.shape[0]
@@ -450,10 +479,12 @@ class PI0(nn.Module):
 
         # embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         width = self.config.action_expert_width
-        time_emb = create_sinusoidal_pos_embedding(time, width, min_period=4e-3, max_period=4.0, device=device)
+        time_emb = create_sinusoidal_pos_embedding(
+            time, width, min_period=4e-3, max_period=4.0, device=device
+        )
         time_emb = time_emb.unsqueeze(0)
         time_emb = time_emb.type(dtype=dtype)
-        #time_emb = posemb_sincos(timestep, action_expert_config.width, min_period=4e-3, max_period=4.0)
+        # time_emb = posemb_sincos(timestep, action_expert_config.width, min_period=4e-3, max_period=4.0)
 
         # mix timestep + action information using an MLP
         noisy_actions = x_t
@@ -464,7 +495,7 @@ class PI0(nn.Module):
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
         action_time_emb = self.action_time_mlp_in(action_time_emb)
-        #action_time_emb = F.swish(action_time_emb)
+        # action_time_emb = F.swish(action_time_emb)
         action_time_emb = F.silu(action_time_emb)  # swish == silu
         action_time_emb = self.action_time_mlp_out(action_time_emb)
 
@@ -483,7 +514,9 @@ class PI0(nn.Module):
         if self.training:
             prefix_len = embs.shape[1]
             if att_masks[prefix_len] != 1:
-                raise ValueError("Due to prefix-lm decoding, it is very important that the prefix cannot attend to the suffix")
+                raise ValueError(
+                    "Due to prefix-lm decoding, it is very important that the prefix cannot attend to the suffix"
+                )
 
         # create attention mask (shared between prefix and suffix)
         pad_masks = torch.cat(prefix_pad_masks + pad_masks, dim=1)
@@ -505,25 +538,46 @@ class PI0(nn.Module):
                 decode=False,
             )
 
-            return self.action_out_proj(out[:, -self.config.n_action_steps:])
-        
+            return self.action_out_proj(out[:, -self.config.n_action_steps :])
 
         position_ids = torch.cumsum(pad_masks, axis=1) - 1
 
-
-        self.gemma_expert.model.forward(
+        self.pi0_paligemma.forward(
             input_ids=None,
-            attention_mask = att_2d_masks,
-            position_ids = position_ids,
-            past_key_values = None,
-            inputs_embeds=embs,
-            use_cache= None,
-            output_attentions = None,
-            output_hidden_states = None,
-            return_dict = None,
-            cache_position = None,
+            attention_mask=att_2d_masks,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, embs],
+            use_cache=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            cache_position=None,
         )
 
+
+def apply_rope(x, positions, max_wavelength=10_000):
+    # Copied from Pi0 jax codebase
+    """Applies RoPE positions [B, L] to x [B, L, H, D]."""
+    freq_exponents = (2.0 / x.shape[-1]) * torch.arange(
+        x.shape[-1] // 2, dtype=torch.float32, device=x.device
+    )
+    timescale = max_wavelength**freq_exponents
+    radians = positions[..., None] / timescale[None, None, :]
+    radians = radians[..., None, :]
+    assert radians.dtype == torch.float32
+    # radians.shape = [...,L,1,d=D/2]
+    sin, cos = torch.sin(radians), torch.cos(radians)
+    # x1, x2 = jnp.split(x, 2, axis=-1)
+    x1, x2 = torch.split(x, x.shape[-1] // 2, dim=-1)
+
+    res = torch.cat([x1 * cos - x2 * sin, x2 * cos + x1 * sin], dim=-1)
+    assert res.dtype == torch.float32
+    # The original bigvision impl allows RoPE to upcast to float32. It is then immediately downcast again to the cache
+    # dtype when in inference mode (but not in training mode). I don't think any of this was intentional. Based on the
+    # original DeepMind impl, as well as the widely-used transformers impl, it is ok to always downcast back to bfloat16
+    # here.
+    return res.astype(x.dtype)
 
 
 def combine_pad_and_att_masks(pad_masks, att_masks):
@@ -560,7 +614,7 @@ def combine_pad_and_att_masks(pad_masks, att_masks):
 
 
 def resize_with_pad(img, width, height):
-    # assume no-op when width height fits already 
+    # assume no-op when width height fits already
     if img.ndim != 4:
         raise ValueError(f"(b,c,h,w) expected, but {img.shape}")
 
@@ -569,13 +623,16 @@ def resize_with_pad(img, width, height):
     ratio = max(cur_width / width, cur_height / height)
     resized_height = int(cur_height / ratio)
     resized_width = int(cur_width / ratio)
-    resized_img = F.interpolate(img, size=(resized_height, resized_width), mode='bilinear', align_corners=False)
+    resized_img = F.interpolate(
+        img, size=(resized_height, resized_width), mode="bilinear", align_corners=False
+    )
 
-    pad_height = max(0, int((height - resized_height)))
-    pad_width = max(0, int((width - resized_width)))
+    pad_height = max(0, int(height - resized_height))
+    pad_width = max(0, int(width - resized_width))
 
     padded_img = F.pad(resized_img, (pad_height, pad_width))
     return padded_img
+
 
 def pad_vector(vector, new_dim):
     if vector.ndim != 2:
@@ -589,13 +646,13 @@ def pad_vector(vector, new_dim):
 
 
 def main():
-    import pickle
     import json
+    import pickle
     from pathlib import Path
 
     with open("../openpi/data/aloha_sim/obs.pkl", "rb") as f:
         obs = pickle.load(f)
-    
+
     with open("../openpi/data/aloha_sim/action.pkl", "rb") as f:
         action = pickle.load(f)
 
@@ -613,10 +670,10 @@ def main():
 
     dataset_stats = {
         "observation.images.top": {
-            "mean": torch.zeros(3,1,1),
-            "std": torch.ones(3,1,1),
-            "min": torch.zeros(3,1,1),
-            "max": torch.ones(3,1,1),
+            "mean": torch.zeros(3, 1, 1),
+            "std": torch.ones(3, 1, 1),
+            "min": torch.zeros(3, 1, 1),
+            "max": torch.ones(3, 1, 1),
         },
         "observation.state": {
             "mean": torch.tensor(norm_stats["norm_stats"]["state"]["mean"][:num_motors]),
@@ -629,11 +686,12 @@ def main():
             "std": torch.tensor(norm_stats["norm_stats"]["actions"]["std"][:num_motors]),
             "min": torch.zeros(num_motors),
             "max": torch.ones(num_motors),
-        }
+        },
     }
 
     batch = {
-        "observation.images.top": torch.from_numpy(obs["images"]["cam_high"]).unsqueeze(0) / 255.0 * 2.0 - 1.0,
+        "observation.images.top": torch.from_numpy(obs["images"]["cam_high"]).unsqueeze(0) / 255.0 * 2.0
+        - 1.0,
         "observation.state": torch.from_numpy(obs["state"]).unsqueeze(0),
     }
 
@@ -657,6 +715,7 @@ def main():
     policy = PI0Policy(cfg, dataset_stats=dataset_stats)
 
     policy.select_action(batch)
+
 
 if __name__ == "__main__":
     main()
