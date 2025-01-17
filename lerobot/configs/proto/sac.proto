@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package lerobot.common.api.grpc.sac;
+
+enum TransferState {
+    TRANSFER_UNKNOWN = 0;
+    TRANSFER_BEGIN = 1;
+    TRANSFER_MIDDLE = 2;
+    TRANSFER_END = 3;
+}
+
+message ModelState {
+  TransferState transfer_state = 1;
+  bytes data = 2;
+}
+
+
+message ModelRequest {
+  string model_name = 1;
+}
+
+service TensorService {
+  rpc StreamModelUpdates(ModelRequest) returns (stream ModelState);
+
+  rpc GetModel(ModelRequest) returns (ModelState);
+}
