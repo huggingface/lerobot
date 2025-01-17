@@ -66,6 +66,11 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
         from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
         return VQBeTPolicy, VQBeTConfig
+    elif name == "sac":
+        from lerobot.common.policies.sac.configuration_sac import SACConfig
+        from lerobot.common.policies.sac.modeling_sac import SACPolicy
+
+        return SACPolicy, SACConfig
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -85,10 +90,10 @@ def make_policy(
             be provided when initializing a new policy, and must not be provided when loading a pretrained
             policy. Therefore, this argument is mutually exclusive with `pretrained_policy_name_or_path`.
     """
-    if not (pretrained_policy_name_or_path is None) ^ (dataset_stats is None):
-        raise ValueError(
-            "Exactly one of `pretrained_policy_name_or_path` and `dataset_stats` must be provided."
-        )
+    # if not (pretrained_policy_name_or_path is None) ^ (dataset_stats is None):
+    #     raise ValueError(
+    #         "Exactly one of `pretrained_policy_name_or_path` and `dataset_stats` must be provided."
+    #     )
 
     policy_cls, policy_cfg_class = get_policy_and_config_classes(hydra_cfg.policy.name)
 
