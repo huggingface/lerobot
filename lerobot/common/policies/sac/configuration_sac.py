@@ -28,29 +28,41 @@ class SACConfig:
     )
     output_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {
-            "action": [4],
+            "action": [2],
         }
     )
 
     # Normalization / Unnormalization
-    input_normalization_modes: dict[str, str] | None = None
+    input_normalization_modes: dict[str, str] = field(
+        default_factory=lambda: {
+            "observation.image": "mean_std",
+            "observation.state": "min_max",
+            "observation.environment_state": "min_max",
+        }
+    )
     output_normalization_modes: dict[str, str] = field(
         default_factory=lambda: {"action": "min_max"},
     )
 
+    shared_encoder = False
     discount = 0.99
     temperature_init = 1.0
     num_critics = 2
+    # num_critics = 8
     num_subsample_critics = None
+    # num_subsample_critics = 2
+    # critic_lr = 1e-3
     critic_lr = 3e-4
     actor_lr = 3e-4
     temperature_lr = 3e-4
     critic_target_update_weight = 0.005
-    utd_ratio = 2
+    # utd_ratio = 8
+    utd_ratio = 1  # If you want enable utd_ratio, you need to set it to >1
     state_encoder_hidden_dim = 256
-    latent_dim = 128
+    latent_dim = 256
     target_entropy = None
-    backup_entropy = True
+    # backup_entropy = False
+    use_backup_entropy = True
     critic_network_kwargs = {
         "hidden_dims": [256, 256],
         "activate_final": True,
