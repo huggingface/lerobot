@@ -52,7 +52,7 @@ class Rate:
 
 def rectify_signal(current, previous):
     """Rectify a single signal value using its previous value"""
-    if abs(current - previous) > 350000:
+    if abs(current - previous) >= 180000:
         if current > previous:
             current -= 360000
         else:
