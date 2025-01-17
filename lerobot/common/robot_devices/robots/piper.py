@@ -50,19 +50,32 @@ class Rate:
         self.last_time = time.perf_counter()
 
 
-class LowPassFilter:
-    def __init__(self, alpha=0.5):
-        self.alpha = alpha
-        self.last_rx = 0
-        self.last_ry = 0
-        self.last_rz = 0
+def rectify_signal(current, previous):
+    """Rectify a single signal value using its previous value"""
+    if abs(current - previous) > 350000:
+        if current > previous:
+            current -= 360000
+        else:
+            current += 360000
+    return current
 
-    def filter(self, orientation):
-        # Apply exponential moving average
-        self.last_rx = self.alpha * orientation[0] + (1 - self.alpha) * self.last_rx
-        self.last_ry = self.alpha * orientation[1] + (1 - self.alpha) * self.last_ry
-        self.last_rz = self.alpha * orientation[2] + (1 - self.alpha) * self.last_rz
-        return self.last_rx, self.last_ry, self.last_rz
+
+class EulerAngles:
+    def __init__(self):
+        self.prev_rx = 0
+        self.prev_ry = 0
+        self.prev_rz = 0
+
+    def rectify(self, orientation):
+        rx_rectified = rectify_signal(orientation[0], self.prev_rx)
+        ry_rectified = rectify_signal(orientation[1], self.prev_ry)
+        rz_rectified = rectify_signal(orientation[2], self.prev_rz)
+        
+        self.prev_rx = rx_rectified
+        self.prev_ry = ry_rectified
+        self.prev_rz = rz_rectified
+        
+        return [rx_rectified, ry_rectified, rz_rectified]
 
 
 class PiperRobot(ManipulatorRobot):
@@ -85,7 +98,7 @@ class PiperRobot(ManipulatorRobot):
         self.state_keys = None
         self.action_keys = None
         self.rate = Rate(200)
-        self.euler_filter = LowPassFilter()
+        self.euler_filter = EulerAngles()
         # init piper robot
         self.piper = C_PiperInterface("can0")
         self.piper.ConnectPort()
@@ -160,7 +173,7 @@ class PiperRobot(ManipulatorRobot):
             before_write_t = time.perf_counter()
             state = self.get_state()
             state = state["state"]
-            state[3:6] = self.euler_filter.filter(state[3:6])
+            state[3:6] = self.euler_filter.rectify(state[3:6])
             self.send_action(action)
             self.rate.sleep(time.perf_counter() - before_write_t)
             if count > 800:
@@ -176,7 +189,7 @@ class PiperRobot(ManipulatorRobot):
         before_read_t = time.perf_counter()
         state = self.get_state()
         state = state["state"]
-        state[3:6] = self.euler_filter.filter(state[3:6])
+        state[3:6] = self.euler_filter.rectify(state[3:6])
         # get relative action from joystick
         action = self.teleop.action(state)
         action[:6] += state[:6]
@@ -229,7 +242,7 @@ class PiperRobot(ManipulatorRobot):
         # TODO(aliberts): return ndarrays instead of torch.Tensors
         before_read_t = time.perf_counter()
         state = self.get_state()
-        state["state"][3:6] = self.euler_filter.filter(state["state"][3:6])
+        state["state"][3:6] = self.euler_filter.rectify(state["state"][3:6])
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         if self.state_keys is None:
