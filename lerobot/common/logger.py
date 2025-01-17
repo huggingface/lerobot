@@ -121,7 +121,7 @@ class Logger:
                 notes=cfg.wandb.notes,
                 tags=cfg_to_group(cfg, return_list=True),
                 dir=self.log_dir,
-                config=asdict(self.cfg),
+                config=asdict(self._cfg),
                 # TODO(rcadene): try set to True
                 save_code=False,
                 # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
