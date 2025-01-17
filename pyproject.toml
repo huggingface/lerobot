@@ -29,7 +29,6 @@ packages = [{include = "lerobot"}]
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
 termcolor = ">=2.4.0"
-omegaconf = ">=2.3.0"
 wandb = ">=0.16.3"
 imageio = {extras = ["ffmpeg"], version = ">=2.34.0"}
 gdown = ">=5.1.0"
