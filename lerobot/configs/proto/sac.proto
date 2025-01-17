@@ -1,10 +1,17 @@
 syntax = "proto3";
 
-package sac;
+package lerobot.common.api.grpc.sac;
+
+enum TransferState {
+    TRANSFER_UNKNOWN = 0;
+    TRANSFER_BEGIN = 1;
+    TRANSFER_MIDDLE = 2;
+    TRANSFER_END = 3;
+}
 
 message ModelState {
-  repeated int32 shape = 1;  // e.g., [2, 3] means shape (2,3)
-  repeated float data = 2;   // Flattened data
+  TransferState transfer_state = 1;
+  bytes data = 2;
 }
 
 
