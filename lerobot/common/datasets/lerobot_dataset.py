@@ -744,9 +744,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         you can do it later with dataset.consolidate(). This is to give more flexibility on when to spend
         time for video encoding.
         """
-        if not episode_data:
-            episode_buffer = self.episode_buffer
 
+        episode_buffer = episode_data if episode_data else self.episode_buffer
         episode_length = episode_buffer.pop("size")
         episode_index = episode_buffer["episode_index"]
         if episode_index != self.meta.total_episodes:
@@ -762,7 +761,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             )
 
         task_index = self.meta.get_task_index(task)
-
+        
         if not set(episode_buffer.keys()) == set(self.features):
             raise ValueError()
 
@@ -775,7 +774,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 episode_buffer[key] = np.full((episode_length,), episode_index)
             elif key == "task_index":
                 episode_buffer[key] = np.full((episode_length,), task_index)
-            elif ft["dtype"] in ["image", "video"]:
+            elif ft["dtype"] in ["image", "video"] or "language_instruction" in key:
                 continue
             elif len(ft["shape"]) == 1 and ft["shape"][0] == 1:
                 episode_buffer[key] = np.array(episode_buffer[key], dtype=ft["dtype"])
