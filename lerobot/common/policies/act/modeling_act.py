@@ -69,6 +69,12 @@ class ACTPolicy(
             config = ACTConfig()
         self.config: ACTConfig = config
 
+        # TODO: remove this as it is quite hacky
+        print(f"n_action_steps default: {self.config.n_action_steps}")
+        # self.config.n_action_steps = 8
+        # self.config.temporal_ensemble_coeff = 0.01
+        print(f"n_action_steps override: {self.config.n_action_steps}")
+
         self.normalize_inputs = Normalize(
             config.input_shapes, config.input_normalization_modes, dataset_stats
         )
@@ -114,10 +120,10 @@ class ACTPolicy(
         # If we are doing temporal ensembling, do online updates where we keep track of the number of actions
         # we are ensembling over.
         if self.config.temporal_ensemble_coeff is not None:
-            actions, eoe_preds = self.model(batch)[0]  # (batch_size, chunk_size, action_dim)
+            actions, eoe_preds, _ = self.model(batch)
             actions = self.unnormalize_outputs({"action": actions})["action"]
             action = self.temporal_ensembler.update(actions)
-            eoe_pred = eoe_preds[0, 0]  # Take first prediction
+            eoe_pred = eoe_preds[0, -1]  # Take last prediction
             return action, eoe_pred
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by

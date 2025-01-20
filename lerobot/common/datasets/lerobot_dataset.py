@@ -286,7 +286,7 @@ class LeRobotDatasetMetadata:
         """Creates metadata for a LeRobotDataset."""
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
-        obj.root = Path(root) if root is not None else LEROBOT_HOME / repo_id
+        obj.root = Path(root) / repo_id if root is not None else LEROBOT_HOME / repo_id
 
         obj.root.mkdir(parents=True, exist_ok=False)
 
@@ -427,7 +427,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.repo_id = repo_id
-        self.root = Path(root) if root else LEROBOT_HOME / repo_id
+        self.root = Path(root) / repo_id if root else LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
@@ -664,6 +664,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_keys = self.meta.camera_keys
             for cam in image_keys:
                 item[cam] = self.image_transforms(item[cam])
+
+        # add next.done
+        done = False
+        ep_idx = item['episode_index']
+        if item['frame_index'] >= (self.meta.episodes[ep_idx]['length']) - 11:
+            # mark everything within 10 timestamps (0.5 seconds) of end as the end episode
+            done = True
+        item['next.done'] = done
 
         return item
 
