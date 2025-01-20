@@ -37,6 +37,7 @@ from huggingface_hub import create_repo, upload_folder
 class PushPretrainedConfig:
     pretrained_path: Path
     repo_id: str
+    branch: str | None = None
     private: bool = False
     exist_ok: bool = False
 
@@ -53,6 +54,7 @@ def main(cfg: PushPretrainedConfig):
         repo_id=cfg.repo_id,
         folder_path=cfg.pretrained_path,
         repo_type="model",
+        revision=cfg.branch,
     )
 
 
