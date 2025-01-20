@@ -8,7 +8,14 @@ import numpy as np
 import torch
 
 from lerobot.common.robot_devices.cameras.utils import Camera
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.robot_devices.utils import (
+    RobotDeviceAlreadyConnectedError,
+    RobotDeviceNotConnectedError,
+    busy_wait,
+)
+
+DOF = 6
+MOTOR_NAMES = []
 
 class ARXArmModel(Enum):
     """
@@ -24,7 +31,6 @@ class ARXArmConfig:
     model: ARXArmModel
     interface_name: str # name of the communication interface, e.g. `can0` or `enx6c1ff70ac436`
     urdf_path: str  # link to the robot arm URDF file. Used for gravity compensation
-    dof: int = 6    # degrees of freedom. Defaults to 6.
 
 @dataclass
 class ARX5RobotConfig:
@@ -123,17 +129,33 @@ class ARXArm:
             raise RobotDeviceNotConnectedError(
                 "ARXArm is not connected. You need to run `robot.connect()`."
             )
-        dof = self.config.dof
-        cmd = arx5.JointState(dof)
-        cmd.pos()[0:dof] = action[0:dof]
-        # if action[dof] < 0:
-        #     action[dof] = 0
-        if action[dof] > self.robot_config.gripper_width:
-            action[dof] = self.robot_config.gripper_width
-        cmd.gripper_pos = action[dof]
+        cmd = arx5.JointState(DOF)
+        cmd.pos()[0:DOF] = action[0:DOF]
+
+        if self.is_master:
+            action[DOF] /= 3.85
+        if action[DOF] > self.robot_config.gripper_width:
+            action[DOF] = self.robot_config.gripper_width
+        cmd.gripper_pos = action[DOF]
 
         # Process command, e.g., move joints
         self.joint_controller.set_joint_cmd(cmd)
+
+    def interpolate_arm_position(self, action: np.ndarray):
+        seconds = 6
+        fps = 30
+        num_steps = seconds * fps
+        current_pos = self.get_state()
+
+        for i in range(num_steps + 1):  # +1 to include the target
+            start_loop_t = time.perf_counter()
+
+            t = i / num_steps
+            interp_pos = current_pos * (1 - t) + action * t
+            self.send_command(interp_pos)
+
+            dt_s = time.perf_counter() - start_loop_t
+            busy_wait(1 / fps - dt_s)
 
 class ARX5Robot:
     """
@@ -171,6 +193,32 @@ class ARX5Robot:
     @property
     def num_cameras(self):
         return len(self.cameras)
+    
+    @property
+    def camera_features(self) -> dict:
+        cam_ft = {}
+        for cam_key, cam in self.cameras.items():
+            key = f"observation.images.{cam_key}"
+            cam_ft[key] = {
+                "shape": (cam.height, cam.width, cam.channels),
+                "names": ["height", "width", "channels"],
+                "info": None,
+            }
+        return cam_ft
+    
+    @property
+    def motor_features(self) -> dict:
+        action_space = len(self.follower_arms) * (DOF + 1)
+        return {
+            "action": {
+                "dtype": "float32",
+                "shape": (action_space,),
+            },
+            "observation.state": {
+                "dtype": "float32",
+                "shape": (action_space,),
+            },
+        }
 
     def connect(self):
         if self.is_connected:
@@ -238,8 +286,7 @@ class ARX5Robot:
                 before_fwrite_t = time.perf_counter()
 
                 action = leader_pos[name]
-                dof = self.config.follower_arms[name].dof
-                self.follower_arms[name].send_command(action[0:dof + 1])
+                self.follower_arms[name].send_command(action[0:DOF + 1])
 
                 self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
@@ -334,12 +381,31 @@ class ARX5Robot:
         follower_goal_pos = {}
         for name in self.follower_arms:
             if name in self.follower_arms:
-                to_idx = self.config.follower_arms[name].dof
+                to_idx = DOF
                 follower_goal_pos[name] = action[from_idx:(from_idx + to_idx + 1)]
                 from_idx = to_idx + 1
 
         for name in self.follower_arms:
             self.follower_arms[name].send_command(follower_goal_pos[name])
+
+    def set_followers_to_master_positions(self):
+        """
+        Used during dAgger. Safely sets follower positions to match the current master position.
+        """
+        for name, leader_arm in self.leader_arms.items():
+            leader_arm.reset()
+            
+            # capture follower arm's position
+            follower_pos = self.follower_arms[name].get_state()
+            # print the positions
+            print(f"*** Setting leader arm '{name}' to position {follower_pos} ***")
+            # lock the leader arm (??)
+            # move the leader arm
+            leader_arm.interpolate_arm_position(follower_pos)
+            # print that it's done
+            print(f"*** Leader arm '{name}' set to position {follower_pos} ***")
+            # unlock the leader arm (??)
+            leader_arm.calibrate()
 
     def disconnect(self):
         if not self.is_connected:

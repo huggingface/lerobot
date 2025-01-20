@@ -129,6 +129,7 @@ def init_keyboard_listener():
     events["rerecord_episode"] = False
     events["stop_recording"] = False
     events["reset_robot"] = False
+    events["set_master_to_follower"] = False
 
     if is_headless():
         logging.warning(
@@ -156,6 +157,8 @@ def init_keyboard_listener():
             elif key == keyboard.Key.down:
                 print("Resetting robot...")
                 events["reset_robot"] = True
+            elif key == keyboard.Key.space:
+                events["set_master_to_follower"] = True
         except Exception as e:
             print(f"Error handling key press: {e}")
 
@@ -318,6 +321,9 @@ def reset_environment(robot, events, reset_time_s):
             if events["reset_robot"]:
                 robot.reset()
                 events["reset_robot"] = False
+            # if events["set_master_to_follower"]:
+            #     robot.set_followers_to_master_positions()
+            #     events["set_master_to_follower"] = False
 
 
 def stop_recording(robot, listener, display_cameras):
