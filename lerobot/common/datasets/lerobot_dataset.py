@@ -895,7 +895,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if run_compute_stats:
             self.stop_image_writer()
             # TODO(aliberts): refactor stats in save_episodes
-            self.meta.stats = compute_stats(self)
+            self.meta.stats = compute_stats(self, num_workers=0)
             serialized_stats = serialize_dict(self.meta.stats)
             write_json(serialized_stats, self.root / STATS_PATH)
             self.consolidated = True

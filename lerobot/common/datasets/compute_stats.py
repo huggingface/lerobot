@@ -26,7 +26,6 @@ def get_stats_einops_patterns(dataset, num_workers=0):
 
     Note: We assume the images are in channel first format
     """
-
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=num_workers,

@@ -160,9 +160,8 @@ def to_lerobotdataset_with_save_episode(raw_dir: Path, repo_id: str, push_to_hub
 
         for key in other_keys:
             if "language_instruction" in key:
-                continue
                 # Some openx dataset have multiple language commands
-                # episode_data[key] = episode[key].numpy()[0].decode("utf-8")
+                episode_data[key] = episode[key].numpy()[0].decode("utf-8")
             else:
                 if key == "is_last":
                     episode_data["next.done"] = tf_to_torch(episode[key])
