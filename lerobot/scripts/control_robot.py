@@ -556,6 +556,8 @@ if __name__ == "__main__":
 
     robot_cfg = init_hydra_config(robot_path, robot_overrides)
     robot = make_robot(robot_cfg)
+    #from tests.utils import make_robot
+    #robot = make_robot("koch", mock=True)
 
     if control_mode == "calibrate":
         calibrate(robot, **kwargs)

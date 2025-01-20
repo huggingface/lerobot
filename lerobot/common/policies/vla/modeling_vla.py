@@ -137,12 +137,12 @@ class VLA(nn.Module):
         if "llava-onevision" in self.vlm_backbone_name:
             self.vision_language_model = LlavaOnevisionForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
-                device_map="cuda",
+                device_map="auto",
                 torch_dtype=precision,
                 low_cpu_mem_usage=True
                 # attn_implementation="flash_attention_2"
             )
-            self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name, use_fast=True)
+            self.processor = AutoProcessor.from_pretrained(self.vlm_backbone_name)#, use_fast=True)
         elif "paligemma" in self.vlm_backbone_name:
             from transformers import PaliGemmaForConditionalGeneration
 
@@ -271,8 +271,10 @@ class VLA(nn.Module):
         if any(k in self.vlm_backbone_name for k in ["llava-onevision", "paligemma", "SmolVLM"]):
             if "llava-onevision" in self.vlm_backbone_name:
                 batch_size = processed_inputs["input_ids"].shape[0]
-                seq_len = vlm_output.image_hidden_states.shape[0] // batch_size
-                image_features = vlm_output.image_hidden_states.view(batch_size, seq_len, -1)
+                dim_feats = self.vision_language_model.config.text_config.hidden_size
+                image_hidden_states = vlm_output.image_hidden_states.view(5858, dim_feats)
+                seq_len = image_hidden_states.shape[0] // batch_size
+                image_features = image_hidden_states.view(batch_size, seq_len, -1)
             else:
                 image_features = vlm_output.image_hidden_states
 
@@ -356,7 +358,7 @@ class VLA(nn.Module):
 
             hidden_states = self.get_vlm_features(processed_inputs)
 
-            batch_size = batch["index"].shape[0]
+            batch_size = batch["observation.state"].shape[0]
             num_cameras = num_images // batch_size
             num_tokens = hidden_states.shape[1]
             dim_feats = hidden_states.shape[2]
