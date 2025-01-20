@@ -27,14 +27,14 @@ override_dataset_stats:
     std: [[[0.229]], [[0.224]], [[0.225]]]  # (c,1,1)
 
 training:
-  offline_steps: 300000
+  offline_steps: 80000
   online_steps: 0
   eval_freq: -1
-  save_freq: 10000
-  # log_freq: 10
+  save_freq: 2500
+  log_freq: 20
   save_checkpoint: true
 
-  batch_size: 8
+  batch_size: 32
   lr: 1e-5
   lr_backbone: 1e-5
   weight_decay: 1e-4
@@ -54,9 +54,8 @@ policy:
 
   # Input / output structure.
   n_obs_steps: 1
-  chunk_size: 100 # chunk_size
-  n_action_steps: 100
-  use_language_conditioned_goals: True
+  chunk_size: 64
+  n_action_steps: 64
 
   input_shapes:
     # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
