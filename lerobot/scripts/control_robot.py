@@ -118,6 +118,7 @@ from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import init_hydra_config, init_logging, log_say, none_or_int
+from lerobot.common.datasets.utils import load_json
 
 ########################################################################################
 # Control modes
@@ -172,7 +173,7 @@ def calibrate(robot: Robot, arms: list[str] | None):
 
 @safe_disconnect
 def teleoperate(
-    robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
+    robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False, no_robot: bool = False
 ):
     control_loop(
         robot,
@@ -188,7 +189,8 @@ def record(
     robot: Robot,
     root: Path,
     repo_id: str,
-    tasks: List[str],
+    tasks: List[str] | None,
+    tasks_path: Path | None,
     pretrained_policy_name_or_path: str | None = None,
     policy_overrides: List[str] | None = None,
     fps: int | None = None,
@@ -206,6 +208,7 @@ def record(
     display_cameras: bool = True,
     play_sounds: bool = True,
     resume: bool = False,
+    no_robot: bool = False,
     # TODO(rcadene, aliberts): remove local_files_only when refactor with dataset as argument
     local_files_only: bool = False,
 ) -> LeRobotDataset:
@@ -216,20 +219,16 @@ def record(
     device = None
     use_amp = None
 
+    if not no_robot and not robot.is_connected:
+        robot.connect()
+
     # Ensure the number of tasks provided is equal to number of discrete steps.
-    assert len(tasks) == discrete_steps
-
-    # Load pretrained policy
-    if pretrained_policy_name_or_path is not None:
-        policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
-
-        if fps is None:
-            fps = policy_fps
-            logging.warning(f"No fps provided, so using the fps from policy config ({policy_fps}).")
-        elif fps != policy_fps:
-            logging.warning(
-                f"There is a mismatch between the provided fps ({fps}) and the one from policy config ({policy_fps})."
-            )
+    if tasks_path != None:
+        # TODO
+        tasks_by_episodes = load_json(tasks_path)
+        tasks_by_episodes = {int(ep_idx): task for ep_idx, task in tasks_by_episodes.items()}
+    else:
+        assert len(tasks) == discrete_steps
 
     # Construct dataset(s) we are recording
     # One dataset constructed for each discrete step in the recording
@@ -244,11 +243,12 @@ def record(
                     root=root,
                     local_files_only=local_files_only,
                 )
-                dataset.start_image_writer(
-                    num_processes=num_image_writer_processes,
-                    num_threads=num_image_writer_threads_per_camera * len(robot.cameras),
-                )
-                sanity_check_dataset_robot_compatibility(dataset, robot, fps, video)
+                if not no_robot:
+                    dataset.start_image_writer(
+                        num_processes=num_image_writer_processes,
+                        num_threads=num_image_writer_threads_per_camera * len(robot.cameras),
+                    )
+                    sanity_check_dataset_robot_compatibility(dataset, robot, fps, video)
             else:
                 # Create empty dataset or load existing saved episodes
                 sanity_check_dataset_name(name, policy)
@@ -269,11 +269,12 @@ def record(
                 root=root,
                 local_files_only=local_files_only,
             )
-            dataset.start_image_writer(
-                num_processes=num_image_writer_processes,
-                num_threads=num_image_writer_threads_per_camera * len(robot.cameras),
-            )
-            sanity_check_dataset_robot_compatibility(dataset, robot, fps, video)
+            if not no_robot:
+                dataset.start_image_writer(
+                    num_processes=num_image_writer_processes,
+                    num_threads=num_image_writer_threads_per_camera * len(robot.cameras),
+                )
+                sanity_check_dataset_robot_compatibility(dataset, robot, fps, video)
         else:
             # Create empty dataset or load existing saved episodes
             sanity_check_dataset_name(repo_id, policy)
@@ -288,26 +289,29 @@ def record(
             )
         datasets.append(dataset)
 
-    if not robot.is_connected:
-        robot.connect()
-
     listener, events = init_keyboard_listener()
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
-    enable_teleoperation = policy is None
-    log_say("Warmup record", play_sounds)
-    warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
+    if not no_robot:
+        enable_teleoperation = policy is None
+        log_say("Warmup record", play_sounds)
+        warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
 
-    if has_method(robot, "teleop_safety_stop"):
-        robot.teleop_safety_stop()
+        if has_method(robot, "teleop_safety_stop"):
+            robot.teleop_safety_stop()
 
     should_stop_recording = False
     recorded_episodes = 0
+    if resume:
+        recorded_episodes = dataset.meta.total_episodes
+        print(recorded_episodes)
     while not should_stop_recording:
         if recorded_episodes >= num_episodes:
+            break
+        if no_robot:
             break
 
         # TODO(aliberts): add task prompt for multitask here. Might need to temporarily disable event if
@@ -321,7 +325,11 @@ def record(
         # First we record current data for every discrete step
         skip_save = False
         for i in range(discrete_steps):
-            task = tasks[i]
+            if tasks is not None:
+                task = tasks[i]
+            else:
+                task = tasks_by_episodes[recorded_episodes]
+            print(task)
             
             record_episode(
                 dataset=datasets[i],
@@ -373,10 +381,12 @@ def record(
                 # Increment by one dataset["current_episode_index"]
                 datasets[i].save_episode(task)
         
+        print(f"Finished recording episode {episode_index}")
         recorded_episodes += 1
 
-    log_say("Stop recording", play_sounds, blocking=True)
-    stop_recording(robot, listener, display_cameras)
+    if not no_robot:
+        log_say("Stop recording", play_sounds, blocking=True)
+        stop_recording(robot, listener, display_cameras)
 
     for dataset in datasets:
         if run_compute_stats:
@@ -442,6 +452,12 @@ if __name__ == "__main__":
         nargs="*",
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
+    base_parser.add_argument(
+        "--no-robot",
+        type=int,
+        default=0,
+        help="set to true if you don't want to connect to robots but just want to upload the dataset",
+    )
 
     parser_calib = subparsers.add_parser("calibrate", parents=[base_parser])
     parser_calib.add_argument(
@@ -480,6 +496,11 @@ if __name__ == "__main__":
     #     type=int,
     #     help="You will need to enter the task performed at the start of each episode.",
     # )
+    task_args.add_argument(
+        "--tasks-path",
+        type=Path,
+        help="The path to a .json file containing one language instruction for each episode_index",
+    )
     parser_record.add_argument(
         "--root",
         type=Path,
@@ -513,7 +534,7 @@ if __name__ == "__main__":
     parser_record.add_argument(
         "--episode-time-s",
         type=int,
-        default=60,
+        default=180,
         help="Number of seconds for data recording for each episode.",
     )
     parser_record.add_argument(
@@ -620,8 +641,13 @@ if __name__ == "__main__":
     del kwargs["robot_path"]
     del kwargs["robot_overrides"]
 
+    print(kwargs)
     robot_cfg = init_hydra_config(robot_path, robot_overrides)
-    robot = make_robot(robot_cfg)
+    if kwargs["no_robot"]:
+        from lerobot.common.robot_devices.robots.nooprobot import NoOpRobot
+        robot = NoOpRobot()
+    else:
+        robot = make_robot(robot_cfg)
 
     if control_mode == "calibrate":
         calibrate(robot, **kwargs)
