@@ -28,6 +28,8 @@ from transformers import AutoTokenizer, GemmaForCausalLM, PaliGemmaForConditiona
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
+from lerobot.configs.policies import PolicyFeature
+from lerobot.configs.types import FeatureType, NormalizationMode
 
 
 def display(x):
@@ -192,6 +194,13 @@ class PI0PaliGemmaModel(PreTrainedModel):
     ):
         models = [self.paligemma.language_model.model, self.gemma_expert.model]
 
+        dtype = inputs_embeds[0].dtype
+        device = inputs_embeds[0].device
+        batch_size = inputs_embeds[0].shape[0]
+        sequence_length = sum(
+            [hidden_states.shape[1] for hidden_states in inputs_embeds if hidden_states is not None]
+        )
+
         # RMSNorm
         num_layers = self.paligemma.config.text_config.num_hidden_layers
         for layer_idx in range(num_layers):
@@ -199,6 +208,9 @@ class PI0PaliGemmaModel(PreTrainedModel):
             key_states = []
             value_states = []
             for i, hidden_states in enumerate(inputs_embeds):
+                if hidden_states is None:
+                    continue
+
                 layer = models[i].layers[layer_idx]
                 hidden_states = layer.input_layernorm(hidden_states)
 
@@ -221,40 +233,124 @@ class PI0PaliGemmaModel(PreTrainedModel):
             key_states = torch.cat(key_states, dim=1)
             value_states = torch.cat(value_states, dim=1)
 
-            # TODO: implement _apply_rope
             query_states = apply_rope(query_states, position_ids)
+            head_dim = self.paligemma.config.text_config.head_dim
 
-            # query_states *= self.config.
+            # display(apply_rope(query_states, position_ids)[0,256:256+48])
 
-        #     cos, sin = position_embeddings
-        #     query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+            key_states = apply_rope(key_states, position_ids)
 
-        #     # TODO
+            if query_states.dtype != dtype:
+                raise ValueError(f"{query_states.dtype=}")
+            if key_states.dtype != dtype:
+                raise ValueError(f"{key_states.dtype=}")
+            if value_states.dtype != dtype:
+                raise ValueError(f"{value_states.dtype=}")
 
-        #         attention_interface: Callable = eager_attention_forward
-        #         if layer.self_attn.config._attn_implementation != "eager":
-        #             if layer.self_attn.config._attn_implementation == "sdpa" and kwargs.get("output_attentions", False):
-        #                 logger.warning_once(
-        #                     "`torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to "
-        #                     'eager attention. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
-        #                 )
-        #             else:
-        #                 attention_interface = ALL_ATTENTION_FUNCTIONS[layer.self_attn.config._attn_implementation]
+            # TODO: implement caching
 
-        #         attn_output, attn_weights = attention_interface(
-        #             layer.self_attn,
-        #             query_states,
-        #             key_states,
-        #             value_states,
-        #             attention_mask,
-        #             dropout=0.0 if not layer.self_attn.training else layer.self_attn.attention_dropout,
-        #             scaling=layer.self_attn.scaling,
-        #             #**kwargs,
-        #         )
+            from transformers import StaticCache
 
-        #     query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+            if use_cache and past_key_values is None:
+                past_key_values = StaticCache()
 
-        # for i, x in enumerate(inputs_embeds):
+            if past_key_values is not None:
+                past_key_values.update(key_states, value_states, layer_idx)
+
+            num_att_heads = 8
+            num_key_value_heads = 1
+            num_key_value_groups = num_att_heads // num_key_value_heads  # TODO from config
+
+            # query_states: batch_size, sequence_length, num_att_head, head_dim
+            # key_states: batch_size, sequence_length, num_key_value_head, head_dim
+            # value_states: batch_size, sequence_length, num_key_value_head, head_dim
+
+            key_states = key_states[:, :, :, None, :].expand(
+                batch_size, sequence_length, num_key_value_heads, num_key_value_groups, head_dim
+            )
+            key_states = key_states.reshape(
+                batch_size, sequence_length, num_key_value_heads * num_key_value_groups, head_dim
+            )
+
+            value_states = value_states[:, :, :, None, :].expand(
+                batch_size, sequence_length, num_key_value_heads, num_key_value_groups, head_dim
+            )
+            value_states = value_states.reshape(
+                batch_size, sequence_length, num_key_value_heads * num_key_value_groups, head_dim
+            )
+
+            query_states = query_states.to(dtype=torch.float32)
+            key_states = key_states.to(dtype=torch.float32)
+
+            query_states = query_states.transpose(1, 2)
+            key_states = key_states.transpose(1, 2)
+
+            # with autocast(dtype=torch.float32, device_type=device.type):
+            att_weights = torch.matmul(query_states, key_states.transpose(2, 3))
+            att_weights *= head_dim**-0.5
+            # att_weights: batch_size, num_att_head, sequence_length, sequence_length
+
+            big_neg = -2.3819763e38  # See gemma/modules.py
+            masked_att_weights = torch.where(attention_mask[:, None, None, :, :], att_weights, big_neg)
+
+            # with autocast(dtype=torch.bfloat16, device_type=device.type):
+            probs = torch.softmax(masked_att_weights, dim=-1, dtype=torch.float32)
+            probs = probs.to(dtype=torch.bfloat16)
+
+            # TODO: investigate slight mismatch in mean of language attention probs
+            # Interestingly, no mismatch in vision attention probs
+
+            # probs: batch_size, num_key_value_head, num_att_head, sequence_length, sequence_length
+            # value_states: batch_size, sequence_length, num_att_heads, head_dim
+
+            att_output = torch.matmul(probs, value_states.permute(0, 2, 1, 3))
+
+            att_output = att_output.permute(0, 3, 1, 2, 4)
+            att_output = att_output.reshape(
+                batch_size, sequence_length, num_key_value_heads * num_key_value_groups * head_dim
+            )
+
+            outputs_embeds = []
+            start = 0
+            for i, hidden_states in enumerate(inputs_embeds):
+                layer = models[i].layers[layer_idx]
+
+                if hidden_states is not None:
+                    end = start + hidden_states.shape[1]
+                    out_emb = layer.self_attn.o_proj(att_output[:, start:end])
+
+                    # TODO: first dropout
+
+                    # first residual
+                    out_emb += hidden_states
+
+                    after_first_residual = out_emb.clone()
+
+                    out_emb = layer.post_attention_layernorm(out_emb)
+                    out_emb = layer.mlp(out_emb)
+
+                    # TODO: second dropout
+
+                    # second residual
+                    out_emb += after_first_residual
+
+                    outputs_embeds.append(out_emb)
+                    start = end
+                else:
+                    outputs_embeds.append(None)
+
+            inputs_embeds = outputs_embeds
+
+        # final norm
+        outputs_embeds = []
+        for i, hidden_states in enumerate(inputs_embeds):
+            if hidden_states is not None:
+                out_emb = models[i].norm(hidden_states)
+                outputs_embeds.append(out_emb)
+            else:
+                outputs_embeds.append(None)
+
+        return outputs_embeds, past_key_values
 
 
 # TODO: for training look at preprocess_observation
@@ -371,6 +467,30 @@ class PI0(nn.Module):
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.get_prefix_embeddings(batch)
 
+        # create attention mask (shared between prefix and suffix)
+        prefix_pad_masks_tensor = torch.cat(prefix_pad_masks, dim=1)
+        prefix_att_masks_tensor = torch.tensor(prefix_att_masks, dtype=torch.bool, device=device)
+        prefix_att_masks_tensor = prefix_att_masks_tensor.expand(bsize, len(prefix_att_masks_tensor))
+
+        prefix_att_2d_masks = combine_pad_and_att_masks(prefix_pad_masks_tensor, prefix_att_masks_tensor)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks_tensor, axis=1) - 1
+
+        use_cache = True  # TODO: from config
+
+        # fill image texte cache
+        inputs_embeds, past_key_values = self.pi0_paligemma.forward(
+            input_ids=None,
+            attention_mask=prefix_att_2d_masks,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=use_cache,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            cache_position=None,
+        )
+
         dt = -1.0 / self.config.num_steps
         dt = torch.tensor(dt, dtype=dtype, device=device)
 
@@ -399,6 +519,7 @@ class PI0(nn.Module):
                 prefix_embs,
                 prefix_pad_masks,
                 prefix_att_masks,
+                past_key_values,
                 x_t,
                 time,
             )
@@ -429,7 +550,8 @@ class PI0(nn.Module):
             device = img_emb.device
 
             # img_mask = batch[f"{img_key}_mask"].expand(bsize, num_img_embs)
-            img_mask = torch.ones(bsize, num_img_embs, dtype=torch.bool, device=device)
+            img_mask = (batch[f"{img_key}_mask"]).expand(bsize, num_img_embs)
+            # img_mask = torch.ones(bsize, num_img_embs, dtype=torch.bool, device=device)
 
             embs.append(img_emb)
             pad_masks.append(img_mask)
@@ -456,7 +578,7 @@ class PI0(nn.Module):
 
         return embs, pad_masks, att_masks
 
-    def sample_step(self, batch, prefix_embs, prefix_pad_masks, prefix_att_masks, x_t, time):
+    def sample_step(self, batch, prefix_embs, prefix_pad_masks, prefix_att_masks, past_key_values, x_t, time):
         # ACTUAL SAMPLE STEP
 
         embs = []
@@ -525,20 +647,20 @@ class PI0(nn.Module):
 
         att_2d_masks = combine_pad_and_att_masks(pad_masks, att_masks)
 
-        if self.training:
-            # full forward pass on prefix + suffix at once
-            positions = torch.cumsum(pad_masks, axis=1) - 1
+        # if self.training:
+        #     # full forward pass on prefix + suffix at once
+        #     positions = torch.cumsum(pad_masks, axis=1) - 1
 
-            # TODO: call gemma + gemma expert
-            _, out = gemma(
-                tokens=None,
-                embedded=[prefix_embs, embs],
-                mask=att_2d_masks,
-                positions=positions,
-                decode=False,
-            )
+        #     # TODO: call gemma + gemma expert
+        #     _, out = gemma(
+        #         tokens=None,
+        #         embedded=[prefix_embs, embs],
+        #         mask=att_2d_masks,
+        #         positions=positions,
+        #         decode=False,
+        #     )
 
-            return self.action_out_proj(out[:, -self.config.n_action_steps :])
+        #     return self.action_out_proj(out[:, -self.config.n_action_steps :])
 
         position_ids = torch.cumsum(pad_masks, axis=1) - 1
 
@@ -546,8 +668,8 @@ class PI0(nn.Module):
             input_ids=None,
             attention_mask=att_2d_masks,
             position_ids=position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, embs],
+            past_key_values=past_key_values,
+            inputs_embeds=[None, embs],
             use_cache=None,
             output_attentions=None,
             output_hidden_states=None,
@@ -577,7 +699,7 @@ def apply_rope(x, positions, max_wavelength=10_000):
     # dtype when in inference mode (but not in training mode). I don't think any of this was intentional. Based on the
     # original DeepMind impl, as well as the widely-used transformers impl, it is ok to always downcast back to bfloat16
     # here.
-    return res.astype(x.dtype)
+    return res.to(dtype=x.dtype)
 
 
 def combine_pad_and_att_masks(pad_masks, att_masks):
@@ -689,31 +811,47 @@ def main():
         },
     }
 
+    cam_top = torch.from_numpy(obs["images"]["cam_high"]).unsqueeze(0) / 255.0 * 2.0 - 1.0
+    cam_top = cam_top.to(dtype=torch.float32)
+    cam_top_mask = torch.ones(1, dtype=torch.bool)
+
+    state = torch.from_numpy(obs["state"]).unsqueeze(0)
+    state = state.to(dtype=torch.float32)
+
     batch = {
-        "observation.images.top": torch.from_numpy(obs["images"]["cam_high"]).unsqueeze(0) / 255.0 * 2.0
-        - 1.0,
-        "observation.state": torch.from_numpy(obs["state"]).unsqueeze(0),
+        "observation.images.top": cam_top,
+        "observation.images.top_mask": cam_top_mask,
+        "observation.images.left_wrist": torch.ones_like(cam_top) * -1,
+        "observation.images.left_wrist_mask": torch.zeros_like(cam_top_mask),
+        "observation.images.right_wrist": torch.ones_like(cam_top) * -1,
+        "observation.images.right_wrist_mask": torch.zeros_like(cam_top_mask),
+        "observation.state": state,
     }
 
+    device = "cpu"
     for k in batch:
-        batch[k] = batch[k].float()
-
-    # base_0_rgb < -- cam_high
-    # left_wrist_0_rgb mask=False for zeros_like
-    # cam_right_wrist mask=False for zeros_like
-
-    # convert_image
-    # if np.issubdtype(img.dtype, np.floating):
-    #         img = (255 * img).astype(np.uint8)
-    #     # Convert from [channel, height, width] to [height, width, channel].
-    #     return einops.rearrange(img, "c h w -> h w c")
+        batch[k] = batch[k].to(device=device)
 
     cfg = PI0Config()
-
     cfg.parse_features_from_dataset(ds_meta=LeRobotDatasetMetadata("lerobot/aloha_sim_transfer_cube_human"))
 
-    policy = PI0Policy(cfg, dataset_stats=dataset_stats)
+    cfg_img_left_wrist = PolicyFeature(
+        key="observation.images.left_wrist",
+        type=FeatureType.VISUAL,
+        shape=(3, 480, 640),
+        normalization_mode=NormalizationMode.IDENTITY,
+    )
+    cfg_img_right_wrist = PolicyFeature(
+        key="observation.images.right_wrist",
+        type=FeatureType.VISUAL,
+        shape=(3, 480, 640),
+        normalization_mode=NormalizationMode.IDENTITY,
+    )
+    cfg.image_features.append(cfg_img_left_wrist)
+    cfg.image_features.append(cfg_img_right_wrist)
 
+    policy = PI0Policy(cfg, dataset_stats=dataset_stats)
+    policy.to(device=device)
     policy.select_action(batch)
 
 
