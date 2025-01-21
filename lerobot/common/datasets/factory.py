@@ -85,8 +85,8 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
                 "random_order": False,
                 "image_size": None,
                 "interpolation": None,
-                "normalization_means": None,
-                "normalization_std": None,
+                "image_mean": None,
+                "image_std": None,
             }
         )
         cfg_tf = OmegaConf.merge(OmegaConf.create(default_tf), cfg.training.image_transforms)
@@ -106,8 +106,8 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
             random_order=cfg_tf.random_order,
             image_size=(cfg_tf.image_size.height, cfg_tf.image_size.width) if cfg_tf.image_size else None,
             interpolation=cfg_tf.interpolation,
-            normalization_means=cfg_tf.normalization_means,
-            normalization_std=cfg_tf.normalization_std,
+            image_mean=cfg_tf.image_mean,
+            image_std=cfg_tf.image_std,
         )
 
     if isinstance(cfg.dataset_repo_id, str):

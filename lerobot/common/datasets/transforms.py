@@ -152,8 +152,8 @@ def get_image_transforms(
     random_order: bool = False,
     interpolation: str | None = None,
     image_size: tuple[int, int] | None = None,
-    normalization_means: list[float] | None = None,
-    normalization_std: list[float] | None = None,
+    image_mean: list[float] | None = None,
+    image_std: list[float] | None = None,
 ):
     def check_value(name, weight, min_max):
         if min_max is not None:
@@ -201,13 +201,13 @@ def get_image_transforms(
     if sharpness_min_max is not None and sharpness_weight > 0.0:
         weights.append(sharpness_weight)
         transforms.append(SharpnessJitter(sharpness=sharpness_min_max))
-    if normalization_means is not None and normalization_std is not None:
+    if image_mean is not None and image_std is not None:
         # Weight for normalization is always 1
         weights.append(1.0)
         transforms.append(
             v2.Normalize(
-                mean=normalization_means,
-                std=normalization_std,
+                mean=image_mean,
+                std=image_std,
             )
         )
 
