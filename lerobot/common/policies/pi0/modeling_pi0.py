@@ -187,6 +187,7 @@ class PI0PaliGemmaModel(PreTrainedModel):
         inputs_embeds: List[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
+        fill_kv_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
@@ -194,12 +195,12 @@ class PI0PaliGemmaModel(PreTrainedModel):
     ):
         models = [self.paligemma.language_model.model, self.gemma_expert.model]
 
-        dtype = inputs_embeds[0].dtype
-        device = inputs_embeds[0].device
-        batch_size = inputs_embeds[0].shape[0]
-        sequence_length = sum(
-            [hidden_states.shape[1] for hidden_states in inputs_embeds if hidden_states is not None]
-        )
+        for hidden_states in inputs_embeds:
+            if hidden_states is None:
+                continue
+            dtype = hidden_states.dtype
+            device = hidden_states.device
+            batch_size = hidden_states.shape[0]
 
         # RMSNorm
         num_layers = self.paligemma.config.text_config.num_hidden_layers
@@ -249,13 +250,24 @@ class PI0PaliGemmaModel(PreTrainedModel):
 
             # TODO: implement caching
 
-            from transformers import StaticCache
-
             if use_cache and past_key_values is None:
-                past_key_values = StaticCache()
+                # past_key_values = StaticCache(batch_size=batch_size, config=self.config.paligemma_config.text_config)
+                past_key_values = {}
 
-            if past_key_values is not None:
-                past_key_values.update(key_states, value_states, layer_idx)
+            if use_cache:
+                if fill_kv_cache:
+                    # past_key_values.update(key_states, value_states, layer_idx)
+                    past_key_values[layer_idx] = {
+                        "key_states": key_states,
+                        "value_states": value_states,
+                    }
+                else:
+                    # key_states = torch.concatenate(past_key_values.key_cache[layer_idx], key_states, dim=1)
+                    # value_states = torch.concatenate(past_key_values.value_cache[layer_idx], value_states, dim=1)
+                    key_states = torch.cat([past_key_values[layer_idx]["key_states"], key_states], dim=1)
+                    value_states = torch.cat(
+                        [past_key_values[layer_idx]["value_states"], value_states], dim=1
+                    )
 
             num_att_heads = 8
             num_key_value_heads = 1
@@ -264,6 +276,8 @@ class PI0PaliGemmaModel(PreTrainedModel):
             # query_states: batch_size, sequence_length, num_att_head, head_dim
             # key_states: batch_size, sequence_length, num_key_value_head, head_dim
             # value_states: batch_size, sequence_length, num_key_value_head, head_dim
+
+            sequence_length = key_states.shape[1]
 
             key_states = key_states[:, :, :, None, :].expand(
                 batch_size, sequence_length, num_key_value_heads, num_key_value_groups, head_dim
@@ -297,9 +311,6 @@ class PI0PaliGemmaModel(PreTrainedModel):
             probs = torch.softmax(masked_att_weights, dim=-1, dtype=torch.float32)
             probs = probs.to(dtype=torch.bfloat16)
 
-            # TODO: investigate slight mismatch in mean of language attention probs
-            # Interestingly, no mismatch in vision attention probs
-
             # probs: batch_size, num_key_value_head, num_att_head, sequence_length, sequence_length
             # value_states: batch_size, sequence_length, num_att_heads, head_dim
 
@@ -307,7 +318,7 @@ class PI0PaliGemmaModel(PreTrainedModel):
 
             att_output = att_output.permute(0, 3, 1, 2, 4)
             att_output = att_output.reshape(
-                batch_size, sequence_length, num_key_value_heads * num_key_value_groups * head_dim
+                batch_size, -1, num_key_value_heads * num_key_value_groups * head_dim
             )
 
             outputs_embeds = []
@@ -438,25 +449,14 @@ class PI0(nn.Module):
         tokenized_prompt["attention_mask"] = tokenized_prompt["attention_mask"].type(dtype=torch.bool)
 
         bsize = batch[skey].shape[0]
-        batch["tokenized_prompt"] = tokenized_prompt["input_ids"].expand(bsize, max_length)
-        batch["tokenized_prompt_mask"] = tokenized_prompt["attention_mask"].expand(bsize, max_length)
+        device = batch[skey].device
 
-        actions, _ = self.sample_actions(batch, tokenized_prompt)
+        batch["tokenized_prompt"] = tokenized_prompt["input_ids"].expand(bsize, max_length).to(device=device)
+        batch["tokenized_prompt_mask"] = (
+            tokenized_prompt["attention_mask"].expand(bsize, max_length).to(device=device)
+        )
 
-        # new_seed = self._rng.seed() + 1
-
-        # sample_rng = torch.Generator()
-        # sample_rng.manual_seed(new_seed)
-
-        # resized_tensor =
-
-        # from *data_config.model_transforms.inputs,
-        # ResizeImages(height=224, width=224)
-        # TokenizePrompt(tokenizer=<openpi.models.tokenizer.PaligemmaTokenizer, default_prompt='Transfer cube')]
-
-        # Prompt that should be used if "prompt" is not present in the data or an alternative default is not provided.
-        # DEFAULT_PROMPT = "be a good robot"
-
+        actions = self.sample_actions(batch, tokenized_prompt)
         return actions
 
     def sample_actions(self, batch, tokenized_prompt, noise=None):
@@ -477,19 +477,23 @@ class PI0(nn.Module):
 
         use_cache = True  # TODO: from config
 
-        # fill image texte cache
-        inputs_embeds, past_key_values = self.pi0_paligemma.forward(
+        # fill image text cache
+        fill_kv_cache = True
+
+        _, past_key_values = self.pi0_paligemma.forward(
             input_ids=None,
             attention_mask=prefix_att_2d_masks,
             position_ids=prefix_position_ids,
             past_key_values=None,
             inputs_embeds=[prefix_embs, None],
             use_cache=use_cache,
+            fill_kv_cache=fill_kv_cache,
             output_attentions=None,
             output_hidden_states=None,
             return_dict=None,
             cache_position=None,
         )
+        fill_kv_cache = False
 
         dt = -1.0 / self.config.num_steps
         dt = torch.tensor(dt, dtype=dtype, device=device)
@@ -514,18 +518,21 @@ class PI0(nn.Module):
         time = torch.tensor(time, dtype=dtype, device=device)
         while time >= -dt / 2:
             # time_batched = x_t[None, ...]
-            v_t = self.sample_step(
+            _, v_t = self.sample_step(
                 batch,
                 prefix_embs,
                 prefix_pad_masks,
                 prefix_att_masks,
                 past_key_values,
+                fill_kv_cache,
                 x_t,
                 time,
             )
 
+            x_t_tilde = self.action_out_proj(v_t[:, -self.config.n_action_steps :])
+
             # Euler step
-            x_t += dt * v_t
+            x_t += dt * x_t_tilde
             time += dt
 
         return x_t
@@ -578,7 +585,17 @@ class PI0(nn.Module):
 
         return embs, pad_masks, att_masks
 
-    def sample_step(self, batch, prefix_embs, prefix_pad_masks, prefix_att_masks, past_key_values, x_t, time):
+    def sample_step(
+        self,
+        batch,
+        prefix_embs,
+        prefix_pad_masks,
+        prefix_att_masks,
+        past_key_values,
+        fill_kv_cache,
+        x_t,
+        time,
+    ):
         # ACTUAL SAMPLE STEP
 
         embs = []
@@ -641,11 +658,22 @@ class PI0(nn.Module):
                 )
 
         # create attention mask (shared between prefix and suffix)
-        pad_masks = torch.cat(prefix_pad_masks + pad_masks, dim=1)
-        att_masks = torch.tensor(prefix_att_masks + att_masks, dtype=torch.bool, device=device)
+        pad_masks = torch.cat(pad_masks, dim=1)
+        prefix_pad_masks = torch.cat(prefix_pad_masks, dim=1)
+        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=device)
         att_masks = att_masks.expand(bsize, len(att_masks))
 
+        suffix_len = pad_masks.shape[1]
+        prefix_len = prefix_pad_masks.shape[1]
+        prefix_pad_masks_expanded = prefix_pad_masks[:, None, :].expand(bsize, suffix_len, prefix_len)
+
+        # att_masks = torch.tensor(prefix_att_masks + att_masks, dtype=torch.bool, device=device)
+        # att_masks = att_masks.expand(bsize, len(att_masks))
+
+        # prefix_mask = einops.repeat(prefix_mask, "b p -> b s p", s=suffix_len)
         att_2d_masks = combine_pad_and_att_masks(pad_masks, att_masks)
+
+        att_2d_masks = torch.cat([prefix_pad_masks_expanded, att_2d_masks], dim=2)
 
         # if self.training:
         #     # full forward pass on prefix + suffix at once
@@ -662,20 +690,25 @@ class PI0(nn.Module):
 
         #     return self.action_out_proj(out[:, -self.config.n_action_steps :])
 
-        position_ids = torch.cumsum(pad_masks, axis=1) - 1
+        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(pad_masks, axis=1) - 1
 
-        self.pi0_paligemma.forward(
+        use_cache = True  # TODO: from config
+
+        outputs_embeds, _ = self.pi0_paligemma.forward(
             input_ids=None,
             attention_mask=att_2d_masks,
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=[None, embs],
-            use_cache=None,
+            use_cache=use_cache,
+            fill_kv_cache=fill_kv_cache,
             output_attentions=None,
             output_hidden_states=None,
             return_dict=None,
             cache_position=None,
         )
+        return outputs_embeds
 
 
 def apply_rope(x, positions, max_wavelength=10_000):
