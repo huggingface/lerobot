@@ -76,3 +76,6 @@ class SACConfig:
         "log_std_min": -5,
         "log_std_max": 2,
     }
+    image_encoder_hidden_dim = 256
+    use_backup_entropy = False
+    device: str = field(default="cpu")

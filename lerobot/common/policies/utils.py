@@ -47,3 +47,7 @@ def get_dtype_from_parameters(module: nn.Module) -> torch.dtype:
     Note: assumes that all parameters have the same dtype.
     """
     return next(iter(module.parameters())).dtype
+
+
+def is_image_feature(feature: str) -> bool:
+    return feature.startswith("observation.image")
