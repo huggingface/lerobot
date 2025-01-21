@@ -475,15 +475,13 @@ class SACObservationEncoder(nn.Module):
 
     def _setup_cnn_backbone(self):
         """Set up CNN encoder"""
-        # Initializing a timm backbone
         self.image_enc_layers = AutoModel.from_pretrained(self.config.vision_encoder_name)
         if hasattr(self.image_enc_layers, "fc"):
             self.image_enc_out_shape = self.image_enc_layers.fc.in_features
         elif hasattr(self.image_enc_layers.config, "hidden_sizes"):
             self.image_enc_out_shape = self.image_enc_layers.config.hidden_sizes[-1]  # Last channel dimension
         else:
-            raise ValueError("Unsupported architecture, make sure you are using a CNN")
-        # self.image_enc_layers = nn.Sequential(*list(self.image_enc_layers.children()))
+            raise ValueError("Unsupported vision encoder architecture, make sure you are using a CNN")
         self.image_enc_layers = self.image_enc_layers.to(self.config.device)
         self.freeze_encoder()
         return self.image_enc_layers, self.image_enc_out_shape
