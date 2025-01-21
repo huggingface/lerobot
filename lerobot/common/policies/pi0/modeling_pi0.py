@@ -386,7 +386,7 @@ class PI0(nn.Module):
         self.action_time_mlp_in = nn.Linear(width * 2, width, dtype=torch.bfloat16)
         self.action_time_mlp_out = nn.Linear(width, width, dtype=torch.bfloat16)
 
-        self.from_pretrained("/home/remi_cadene/code/openpi/data/aloha_sim/pi0_projs_state_dict.pth")
+        self.from_pretrained("/raid/pablo/alohasim/pi0_projs_state_dict.pth")
 
         # pos_emb = create_sinusoidal_pos_embedding(n_action_steps, width, min_period=4e-3, max_period=4.0)
         # self.register_buffer("pos_emb", pos_emb.unsqueeze(0))
@@ -505,7 +505,7 @@ class PI0(nn.Module):
 
         import pickle
 
-        with open("../openpi/data/aloha_sim/noise.pkl", "rb") as f:
+        with open("/raid/pablo/alohasim/noise.pkl", "rb") as f:
             noise = pickle.load(f)
         noise = torch.from_numpy(noise).to(dtype=dtype, device=device)
 
@@ -772,13 +772,13 @@ def main():
     import pickle
     from pathlib import Path
 
-    with open("../openpi/data/aloha_sim/obs.pkl", "rb") as f:
+    with open("/raid/pablo/alohasim/obs.pkl", "rb") as f:
         obs = pickle.load(f)
 
-    with open("../openpi/data/aloha_sim/action.pkl", "rb") as f:
+    with open("/raid/pablo/alohasim/action.pkl", "rb") as f:
         action = pickle.load(f)
 
-    checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+    checkpoint_dir = Path("/raid/pablo/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
 
     with open(checkpoint_dir / "assets/norm_stats.json") as f:
         norm_stats = json.load(f)
@@ -828,7 +828,7 @@ def main():
         "observation.state": state,
     }
 
-    device = "cpu"
+    device = "cuda"
     for k in batch:
         batch[k] = batch[k].to(device=device)
 
