@@ -69,7 +69,7 @@ def preprocess_path_args(fields: Field | list[Field], args: Sequence[str] | None
     return filtered_args
 
 
-def wrap(config_path: Path | None = None, pathable_args: str | list[str] | None = None):
+def wrap(config_path: Path | None = None):
     """
     HACK: Similar to draccus.wrap but adds a preprocessing of CLI args in order to overload specific parts of
     the config from a config file at that particular nesting level.

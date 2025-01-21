@@ -180,7 +180,7 @@ def log_eval_info(logger, info, step, cfg, dataset, is_online):
     logger.log_dict(info, step, mode="eval")
 
 
-@parser.wrap(pathable_args=["policy"])
+@parser.wrap()
 def train(cfg: TrainPipelineConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))

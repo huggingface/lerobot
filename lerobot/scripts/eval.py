@@ -439,7 +439,7 @@ def _compile_episode_data(
     return data_dict
 
 
-@parser.wrap(pathable_args=["policy"])
+@parser.wrap()
 def eval(cfg: EvalPipelineConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
