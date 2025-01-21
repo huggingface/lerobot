@@ -18,7 +18,7 @@
 # TODO: (1) better device management
 
 from collections import deque
-from typing import Callable, Optional, Sequence, Tuple, Union
+from typing import Callable, Optional, Tuple
 
 import einops
 import numpy as np
@@ -27,6 +27,7 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor
+from transformers import AutoModel
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.sac.configuration_sac import SACConfig
@@ -430,25 +431,31 @@ class SACObservationEncoder(nn.Module):
         self.config = config
 
         if "observation.image" in config.input_shapes:
-            self.image_enc_layers = nn.Sequential(
-                nn.Conv2d(
-                    config.input_shapes["observation.image"][0], config.image_encoder_hidden_dim, 7, stride=2
-                ),
-                nn.ReLU(),
-                nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 5, stride=2),
-                nn.ReLU(),
-                nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 3, stride=2),
-                nn.ReLU(),
-                nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 3, stride=2),
-                nn.ReLU(),
-            )
-            dummy_batch = torch.zeros(1, *config.input_shapes["observation.image"])
-            with torch.inference_mode():
-                out_shape = self.image_enc_layers(dummy_batch).shape[1:]
+            if self.config.vision_encoder_name is not None:
+                self.image_enc_layers, self.image_enc_out_shape = self._setup_cnn_backbone()
+            else:
+                self.image_enc_layers = nn.Sequential(
+                    nn.Conv2d(
+                        config.input_shapes["observation.image"][0],
+                        config.image_encoder_hidden_dim,
+                        7,
+                        stride=2,
+                    ),
+                    nn.ReLU(),
+                    nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 5, stride=2),
+                    nn.ReLU(),
+                    nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 3, stride=2),
+                    nn.ReLU(),
+                    nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 3, stride=2),
+                    nn.ReLU(),
+                )
+                dummy_batch = torch.zeros(1, *config.input_shapes["observation.image"])
+                with torch.inference_mode():
+                    self.image_enc_out_shape = self.image_enc_layers(dummy_batch).shape[1:]
+                self.image_enc_layers.extend(nn.Sequential(nn.Flatten()))
             self.image_enc_layers.extend(
                 nn.Sequential(
-                    nn.Flatten(),
-                    nn.Linear(np.prod(out_shape), config.latent_dim),
+                    nn.Linear(np.prod(self.image_enc_out_shape), config.latent_dim),
                     nn.LayerNorm(config.latent_dim),
                     nn.Tanh(),
                 )
@@ -466,6 +473,26 @@ class SACObservationEncoder(nn.Module):
                 nn.Tanh(),
             )
 
+    def _setup_cnn_backbone(self):
+        """Set up CNN encoder"""
+        # Initializing a timm backbone
+        self.image_enc_layers = AutoModel.from_pretrained(self.config.vision_encoder_name)
+        if hasattr(self.image_enc_layers, "fc"):
+            self.image_enc_out_shape = self.image_enc_layers.fc.in_features
+        elif hasattr(self.image_enc_layers.config, "hidden_sizes"):
+            self.image_enc_out_shape = self.image_enc_layers.config.hidden_sizes[-1]  # Last channel dimension
+        else:
+            raise ValueError("Unsupported architecture, make sure you are using a CNN")
+        # self.image_enc_layers = nn.Sequential(*list(self.image_enc_layers.children()))
+        self.image_enc_layers = self.image_enc_layers.to(self.config.device)
+        self.freeze_encoder()
+        return self.image_enc_layers, self.image_enc_out_shape
+
+    def freeze_encoder(self):
+        """Freeze all parameters in the encoder"""
+        for param in self.image_enc_layers.parameters():
+            param.requires_grad = False
+
     def forward(self, obs_dict: dict[str, Tensor]) -> Tensor:
         """Encode the image and/or state vector.
 
@@ -476,7 +503,13 @@ class SACObservationEncoder(nn.Module):
         # Concatenate all images along the channel dimension.
         image_keys = [k for k in self.config.input_shapes if k.startswith("observation.image")]
         for image_key in image_keys:
-            feat.append(flatten_forward_unflatten(self.image_enc_layers, obs_dict[image_key]))
+            if self.config.vision_encoder_name is not None:
+                enc_feat = self.image_enc_layers(obs_dict[image_key]).pooler_output
+                enc_feat = self.image_enc_proj(enc_feat.view(enc_feat.shape[0], -1))
+            else:
+                enc_feat = flatten_forward_unflatten(self.image_enc_layers, obs_dict[image_key])
+
+            feat.append(enc_feat)
         if "observation.environment_state" in self.config.input_shapes:
             feat.append(self.env_state_enc_layers(obs_dict["observation.environment_state"]))
         if "observation.state" in self.config.input_shapes:

@@ -27,34 +27,6 @@ class SACConfig:
             "observation.state": [4],
         }
     )
-
-    output_shapes: dict[str, list[int]] = field(
-        default_factory=lambda: {
-            "action": [2],
-        }
-    )
-
-    # Normalization / Unnormalization
-    input_normalization_modes: dict[str, str] = field(
-        default_factory=lambda: {
-            "observation.image": "mean_std",
-            "observation.state": "min_max",
-            "observation.environment_state": "min_max",
-        }
-    )
-    output_normalization_modes: dict[str, str] = field(
-        default_factory=lambda: {"action": "min_max"},
-    )
-from dataclasses import dataclass, field
-
-@dataclass
-class SACConfig:
-    input_shapes: dict[str, list[int]] = field(
-        default_factory=lambda: {
-            "observation.image": [3, 84, 84],
-            "observation.state": [4],
-        }
-    )
     output_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {
             "action": [2],
@@ -67,11 +39,10 @@ class SACConfig:
             "observation.environment_state": "min_max",
         }
     )
-    output_normalization_modes: dict[str, str] = field(
-        default_factory=lambda: {"action": "min_max"}
-    )
+    output_normalization_modes: dict[str, str] = field(default_factory=lambda: {"action": "min_max"})
 
     # Add type annotations for these fields:
+    vision_encoder_name: str = field(default="microsoft/resnet-18")
     image_encoder_hidden_dim: int = 32
     shared_encoder: bool = False
     discount: float = 0.99
