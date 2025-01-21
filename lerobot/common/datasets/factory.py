@@ -74,7 +74,23 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
 
     image_transforms = None
     if cfg.training.image_transforms.enable:
-        cfg_tf = cfg.training.image_transforms
+        default_tf = OmegaConf.create(
+            {
+                "brightness": {"weight": 0.0, "min_max": None},
+                "contrast": {"weight": 0.0, "min_max": None},
+                "saturation": {"weight": 0.0, "min_max": None},
+                "hue": {"weight": 0.0, "min_max": None},
+                "sharpness": {"weight": 0.0, "min_max": None},
+                "max_num_transforms": None,
+                "random_order": False,
+                "image_size": None,
+                "interpolation": None,
+                "normalization_means": None,
+                "normalization_std": None,
+            }
+        )
+        cfg_tf = OmegaConf.merge(OmegaConf.create(default_tf), cfg.training.image_transforms)
+
         image_transforms = get_image_transforms(
             brightness_weight=cfg_tf.brightness.weight,
             brightness_min_max=cfg_tf.brightness.min_max,
@@ -88,6 +104,10 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
             sharpness_min_max=cfg_tf.sharpness.min_max,
             max_num_transforms=cfg_tf.max_num_transforms,
             random_order=cfg_tf.random_order,
+            image_size=(cfg_tf.image_size.height, cfg_tf.image_size.width) if cfg_tf.image_size else None,
+            interpolation=cfg_tf.interpolation,
+            normalization_means=cfg_tf.normalization_means,
+            normalization_std=cfg_tf.normalization_std,
         )
 
     if isinstance(cfg.dataset_repo_id, str):
