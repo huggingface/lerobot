@@ -101,7 +101,9 @@ class PI0Policy(
             actions = self.model(batch)[0][:, : self.config.n_action_steps]
 
             # TODO(rcadene): make _forward return output dictionary?
-            actions = self.unnormalize_outputs({"action": actions})["action"]
+            # TODO Fix the action padding. Inferred and sliced from unnormalize
+            action_length = self.unnormalize_outputs.buffer_action.mean.data.shape[0]
+            actions = self.unnormalize_outputs({"action": actions[:, :action_length]})["action"]
 
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
@@ -165,14 +167,11 @@ class PI0PaliGemmaModel(PreTrainedModel):
     def __init__(self, config: PI0PaliGemmaConfig):
         super().__init__(config=config)
         self.config = config
-        # self.paligemma = PaliGemmaForConditionalGeneration(config.paligemma_config) #PaliGemmaForConditionalGeneration.from_pretrained("Tinkering/frostpunklab_bf16")
-        # self.gemma_expert = AutoModel.from_config(config.gemma_expert_config) #GemmaForCausalLM.from_pretrained('Tinkering/frostpunklab_action_expert_bf16', torch_dtype="bfloat16")
-
         self.paligemma = PaliGemmaForConditionalGeneration.from_pretrained(
             "Tinkering/frostpunklab_bf16", torch_dtype="bfloat16"
         )
         self.gemma_expert = GemmaForCausalLM.from_pretrained(
-            "Tinkering/frostpunklab_action_expert_bf16", torch_dtype="bfloat16"
+            "Tinkering/frostpunklab_action_expert_bf16_correct", torch_dtype="bfloat16"
         )
 
     def forward(
@@ -235,6 +234,7 @@ class PI0PaliGemmaModel(PreTrainedModel):
             value_states = torch.cat(value_states, dim=1)
 
             query_states = apply_rope(query_states, position_ids)
+
             head_dim = self.paligemma.config.text_config.head_dim
 
             # display(apply_rope(query_states, position_ids)[0,256:256+48])
@@ -265,9 +265,7 @@ class PI0PaliGemmaModel(PreTrainedModel):
                     # key_states = torch.concatenate(past_key_values.key_cache[layer_idx], key_states, dim=1)
                     # value_states = torch.concatenate(past_key_values.value_cache[layer_idx], value_states, dim=1)
                     key_states = torch.cat([past_key_values[layer_idx]["key_states"], key_states], dim=1)
-                    value_states = torch.cat(
-                        [past_key_values[layer_idx]["value_states"], value_states], dim=1
-                    )
+                    value_states = torch.cat([past_key_values[layer_idx]["value_states"], value_states], dim=1)
 
             num_att_heads = 8
             num_key_value_heads = 1
@@ -378,7 +376,7 @@ class PI0(nn.Module):
         self.pi0_paligemma = PI0PaliGemmaModel(
             config=PI0PaliGemmaConfig(
                 paligemma_config=PaliGemmaConfig.from_pretrained("Tinkering/frostpunklab_bf16"),
-                gemma_config=GemmaConfig.from_pretrained("Tinkering/frostpunklab_action_expert_bf16"),
+                gemma_config=GemmaConfig.from_pretrained("Tinkering/frostpunklab_action_expert_bf16_correct"),
             )
         )
         # self.pi0_paligemma.from_pretrained("Tinkering/frostpunklab_full_bf16", torch_dtype="bfloat16")
@@ -507,10 +505,8 @@ class PI0(nn.Module):
                 device=device,
             )
 
-        import pickle
 
-        with open("/raid/pablo/alohasim/noise.pkl", "rb") as f:
-            noise = pickle.load(f)
+        noise = torch.load("/raid/pablo/alohasim/noise_2.pkl")
         noise = torch.from_numpy(noise).to(dtype=dtype, device=device)
 
         x_t = noise
@@ -528,13 +524,11 @@ class PI0(nn.Module):
                 x_t,
                 time,
             )
-
             x_t_tilde = self.action_out_proj(v_t[:, -self.config.n_action_steps :])
 
             # Euler step
             x_t += dt * x_t_tilde
             time += dt
-
         return x_t
 
     def get_prefix_embeddings(self, batch):
