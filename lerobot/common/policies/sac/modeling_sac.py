@@ -432,7 +432,8 @@ class SACObservationEncoder(nn.Module):
 
         if "observation.image" in config.input_shapes:
             if self.config.vision_encoder_name is not None:
-                self.image_enc_layers, self.image_enc_out_shape = self._setup_cnn_backbone()
+                self.image_enc_layers, self.image_enc_out_shape = self._load_pretrained_vision_encoder()
+                self.freeze_encoder()
             else:
                 self.image_enc_layers = nn.Sequential(
                     nn.Conv2d(
@@ -473,7 +474,7 @@ class SACObservationEncoder(nn.Module):
                 nn.Tanh(),
             )
 
-    def _setup_cnn_backbone(self):
+    def _load_pretrained_vision_encoder(self):
         """Set up CNN encoder"""
         self.image_enc_layers = AutoModel.from_pretrained(self.config.vision_encoder_name)
         if hasattr(self.image_enc_layers, "fc"):
@@ -482,8 +483,6 @@ class SACObservationEncoder(nn.Module):
             self.image_enc_out_shape = self.image_enc_layers.config.hidden_sizes[-1]  # Last channel dimension
         else:
             raise ValueError("Unsupported vision encoder architecture, make sure you are using a CNN")
-        self.image_enc_layers = self.image_enc_layers.to(self.config.device)
-        self.freeze_encoder()
         return self.image_enc_layers, self.image_enc_out_shape
 
     def freeze_encoder(self):
