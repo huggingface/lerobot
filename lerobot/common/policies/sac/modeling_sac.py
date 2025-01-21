@@ -454,12 +454,10 @@ class SACObservationEncoder(nn.Module):
                 with torch.inference_mode():
                     self.image_enc_out_shape = self.image_enc_layers(dummy_batch).shape[1:]
                 self.image_enc_layers.extend(nn.Sequential(nn.Flatten()))
-            self.image_enc_layers.extend(
-                nn.Sequential(
-                    nn.Linear(np.prod(self.image_enc_out_shape), config.latent_dim),
-                    nn.LayerNorm(config.latent_dim),
-                    nn.Tanh(),
-                )
+            self.image_enc_proj = nn.Sequential(
+                nn.Linear(np.prod(self.image_enc_out_shape), config.latent_dim),
+                nn.LayerNorm(config.latent_dim),
+                nn.Tanh(),
             )
         if "observation.state" in config.input_shapes:
             self.state_enc_layers = nn.Sequential(
