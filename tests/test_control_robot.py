@@ -40,7 +40,7 @@ from lerobot.common.robot_devices.control_configs import (
 )
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.policies import PretrainedConfig
-from lerobot.configs.training import TrainPipelineConfig
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
 from tests.test_robots import make_robot
 from tests.utils import DEVICE, TEST_ROBOT_TYPES, mock_calibration_dir, require_robot

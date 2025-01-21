@@ -44,7 +44,7 @@ from lerobot.common.utils.utils import (
     set_global_seed,
 )
 from lerobot.configs import parser
-from lerobot.configs.training import TrainPipelineConfig
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
 
 

@@ -24,7 +24,7 @@ from lerobot.common.optim.factory import make_optimizer_and_scheduler
 from lerobot.common.policies.factory import make_policy, make_policy_config
 from lerobot.common.utils.utils import set_global_seed
 from lerobot.configs.default import DatasetConfig
-from lerobot.configs.training import TrainPipelineConfig
+from lerobot.configs.train import TrainPipelineConfig
 
 
 def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs, train_kwargs):

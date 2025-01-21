@@ -48,7 +48,7 @@ from lerobot.common.policies.factory import make_policy_config
 from lerobot.common.robot_devices.robots.utils import make_robot
 from lerobot.common.utils.utils import seeded_context
 from lerobot.configs.default import DatasetConfig
-from lerobot.configs.training import TrainPipelineConfig
+from lerobot.configs.train import TrainPipelineConfig
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.utils import DEVICE, require_x86_64_kernel
 

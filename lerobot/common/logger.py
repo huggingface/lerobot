@@ -34,7 +34,7 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.utils.utils import get_global_random_state
-from lerobot.configs.training import TRAIN_CONFIG_FILE, TrainPipelineConfig
+from lerobot.configs.train import TRAIN_CONFIG_FILE, TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode
 
 PRETRAINED_MODEL = "pretrained_model"

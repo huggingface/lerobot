@@ -23,7 +23,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from lerobot.common.logger import TRAINING_STATE
 from lerobot.common.policies import Policy
 from lerobot.common.utils.utils import get_global_random_state, set_global_random_state
-from lerobot.configs.training import TrainPipelineConfig
+from lerobot.configs.train import TrainPipelineConfig
 
 
 def make_optimizer_and_scheduler(
