@@ -207,10 +207,6 @@ class PI0(nn.Module):
             inputs_embeds=[prefix_embs, None],
             use_cache=use_cache,
             fill_kv_cache=fill_kv_cache,
-            output_attentions=None,
-            output_hidden_states=None,
-            return_dict=None,
-            cache_position=None,
         )
         fill_kv_cache = False
 
