@@ -9,6 +9,8 @@ import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
+from pathlib import Path
+from typing import Union
 
 import cv2
 import torch
@@ -46,7 +48,7 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
     log_dt("dt", dt_s)
 
     # TODO(aliberts): move robot-specific logs logic in robot.print_logs()
-    if not robot.robot_type.startswith("stretch"):
+    if not robot.robot_type.startswith("stretch") and not robot.robot_type.startswith("piper"):
         for name in robot.leader_arms:
             key = f"read_leader_{name}_pos_dt_s"
             if key in robot.logs:
@@ -361,3 +363,94 @@ def sanity_check_dataset_robot_compatibility(
         raise ValueError(
             "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
         )
+
+
+def images_to_video(
+    image_folder: Union[str, Path],
+    output_path: Union[str, Path],
+    fps: int = 30,
+    image_pattern: str = "*.jpg",
+    reverse: bool = False
+) -> None:
+    """
+    Convert a sequence of images in a folder to a video file.
+    
+    Args:
+        image_folder: Path to the folder containing image sequences
+        output_path: Path where the output video will be saved
+        fps: Frames per second for the output video
+        image_pattern: Pattern to match image files (e.g., "*.jpg", "*.png")
+        reverse: If True, process images in reverse order
+    """
+    image_folder = Path(image_folder)
+    output_path = Path(output_path)
+    
+    # Get list of image files
+    images = sorted(image_folder.glob(image_pattern))
+    if not images:
+        raise ValueError(f"No images found in {image_folder} matching pattern {image_pattern}")
+    
+    if reverse:
+        images = images[::-1]
+    
+    # Read the first image to get dimensions
+    frame = cv2.imread(str(images[0]))
+    height, width, layers = frame.shape
+    
+    # Initialize video writer
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
+    video = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+    
+    # Write frames to video
+    for image_path in images:
+        frame = cv2.imread(str(image_path))
+        video.write(frame)
+    
+    video.release()
+    print(f"Video saved to {output_path}")
+
+
+def save_demonstration_video(image_folder: str, output_folder: str):
+    """Save demonstration images as video."""
+    # Create output folder if it doesn't exist
+    output_folder = Path(output_folder)
+    output_folder.mkdir(parents=True, exist_ok=True)
+    
+    # Convert to video
+    video_path = output_folder / "demonstration.mp4"
+    images_to_video(
+        image_folder=image_folder,
+        output_path=video_path,
+        fps=30,
+        image_pattern="*.png"
+    )
+
+
+def play_video(video_path: Union[str, Path]) -> None:
+    """
+    Play an MP4 video file using OpenCV.
+    
+    Args:
+        video_path: Path to the video file
+    """
+    video_path = Path(video_path)
+    if not video_path.exists():
+        raise FileNotFoundError(f"Video file not found: {video_path}")
+        
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise ValueError(f"Error opening video file: {video_path}")
+    
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+            
+        cv2.imshow('Video', frame)
+        
+        # Press 'q' to exit
+        if cv2.waitKey(25) & 0xFF == ord('q'):
+            break
+    
+    cap.release()
+    cv2.destroyAllWindows()

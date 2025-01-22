@@ -202,7 +202,8 @@ def record(
     tags: list[str] | None = None,
     num_image_writer_processes: int = 0,
     num_image_writer_threads_per_camera: int = 4,
-    display_cameras: bool = True,
+    # Sometimes this will cause process to freeze. Set to False to disable.
+    display_cameras: bool = False,
     play_sounds: bool = True,
     resume: bool = False,
     # TODO(rcadene, aliberts): remove local_files_only when refactor with dataset as argument
@@ -400,7 +401,7 @@ if __name__ == "__main__":
     parser_teleop.add_argument(
         "--display-cameras",
         type=int,
-        default=1,
+        default=0,
         help="Display all cameras on screen (set to 1 to display or 0).",
     )
 

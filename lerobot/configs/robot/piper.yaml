@@ -1,0 +1,38 @@
+# [PIPER robot arm](https://global.agilex.ai/products/piper)
+
+# Requires installing API 
+# https://github.com/agilexrobotics/piper_sdk
+
+_target_: lerobot.common.robot_devices.robots.piper.PiperRobot
+robot_type: piper
+
+# `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+# Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+# the number of motors in your follower arms.
+max_relative_target: null
+
+leader_arms:
+  main:
+    motors:
+      # name: (index, model)
+      joint_1: [1]
+      joint_2: [2]
+      joint_3: [3]
+      joint_4: [4]
+      joint_5: [5]
+      joint_6: [6]
+      gripper: [7]
+
+cameras:
+  wrist:
+    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera.init_from_name
+    name: Intel RealSense D415
+    fps: 30
+    width: 640
+    height: 480
+  top:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 2
+    fps: 30
+    width: 640
+    height: 480

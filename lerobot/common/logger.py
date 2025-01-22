@@ -23,6 +23,8 @@ import os
 import re
 from glob import glob
 from pathlib import Path
+import signal
+from typing import Optional
 
 import torch
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
@@ -131,6 +133,13 @@ class Logger:
             print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
             logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
             self._wandb = wandb
+
+        # Add signal handler for graceful shutdown
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+
+    def _handle_shutdown(self, *args):
+        if self._wandb:
+            wandb.finish()
 
     @classmethod
     def get_checkpoints_dir(cls, log_dir: str | Path) -> Path:
