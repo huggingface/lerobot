@@ -246,7 +246,7 @@ def eval_policy(
 
     start_eval = time.perf_counter()
     progbar = trange(n_episodes, desc="Evaluating policy on real robot")
-    reward_classifier = get_classifier(reward_classifier_pretrained_path, reward_classifier_config_file).to(device)§
+    reward_classifier = get_classifier(reward_classifier_pretrained_path, reward_classifier_config_file).to(device)
 
     device = get_device_from_parameters(policy) if device is None else device
 
