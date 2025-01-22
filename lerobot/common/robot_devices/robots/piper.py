@@ -23,7 +23,6 @@ from dataclasses import dataclass, field, replace
 import torch
 import numpy as np
 from lerobot.common.robot_devices.robots.joystick_interface import JoystickIntervention, ControllerType
-from piper_sdk import *
 
 from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
@@ -82,6 +81,8 @@ class PiperRobot(ManipulatorRobot):
     """Wrapper of piper_sdk.robot.Robot"""
 
     def __init__(self, config: PiperRobotConfig | None = None, **kwargs):
+        from piper_sdk import C_PiperInterface
+
         super().__init__()
         if config is None:
             config = PiperRobotConfig()
