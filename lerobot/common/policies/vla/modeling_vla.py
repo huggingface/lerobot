@@ -66,7 +66,7 @@ class VLAPolicy(
         """This should be called whenever the environment is reset."""
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
-    @torch.no_grad()
+    @torch.no_grad
     def select_action(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         self.eval()
 
@@ -78,9 +78,8 @@ class VLAPolicy(
         batch["prompt"] = self.config.prompt
         # Forward pass through VLA
         with record_function("model"):
-            predicted_actions = self.model(batch)
-        with record_function("unnormalize_outputs"):
             if len(self._action_queue) == 0:
+                predicted_actions = self.model(batch)#[0][:, : self.config.n_action_steps] 
                 actions = self.unnormalize_outputs({"action": predicted_actions})["action"]
                 self._action_queue.extend(actions.transpose(0, 1))
 
@@ -148,7 +147,7 @@ class VLA(nn.Module):
 
             self.vision_language_model = PaliGemmaForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
-                device_map="cuda",
+                device_map="auto",
                 torch_dtype=precision,
                 low_cpu_mem_usage=True,
                 # attn_implementation="flash_attention_2"
@@ -159,7 +158,7 @@ class VLA(nn.Module):
 
             self.vision_language_model = Idefics3ForConditionalGeneration.from_pretrained(
                 self.vlm_backbone_name,
-                device_map="cuda",
+                device_map="auto",
                 torch_dtype=precision,
                 low_cpu_mem_usage=True,
                 # attn_implementation="flash_attention_2"
@@ -272,7 +271,8 @@ class VLA(nn.Module):
             if "llava-onevision" in self.vlm_backbone_name:
                 batch_size = processed_inputs["input_ids"].shape[0]
                 dim_feats = self.vision_language_model.config.text_config.hidden_size
-                image_hidden_states = vlm_output.image_hidden_states.view(5858, dim_feats)
+                flattened_size = int(vlm_output.image_hidden_states.shape[0])
+                image_hidden_states = vlm_output.image_hidden_states.view(flattened_size//dim_feats, dim_feats)
                 seq_len = image_hidden_states.shape[0] // batch_size
                 image_features = image_hidden_states.view(batch_size, seq_len, -1)
             else:
