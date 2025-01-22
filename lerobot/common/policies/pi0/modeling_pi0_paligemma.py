@@ -33,20 +33,13 @@ def apply_rope(x, positions, max_wavelength=10_000):
         x.shape[-1] // 2, dtype=torch.float32, device=x.device
     )
     timescale = max_wavelength**freq_exponents
-    radians = positions[..., None] / timescale[None, None, :]
+    radians = positions[..., None].float() / timescale[None, None, :].float()
     radians = radians[..., None, :]
-    assert radians.dtype == torch.float32
     # radians.shape = [...,L,1,d=D/2]
     sin, cos = torch.sin(radians), torch.cos(radians)
-    # x1, x2 = jnp.split(x, 2, axis=-1)
     x1, x2 = torch.split(x, x.shape[-1] // 2, dim=-1)
 
     res = torch.cat([x1 * cos - x2 * sin, x2 * cos + x1 * sin], dim=-1)
-    assert res.dtype == torch.float32
-    # The original bigvision impl allows RoPE to upcast to float32. It is then immediately downcast again to the cache
-    # dtype when in inference mode (but not in training mode). I don't think any of this was intentional. Based on the
-    # original DeepMind impl, as well as the widely-used transformers impl, it is ok to always downcast back to bfloat16
-    # here.
     return res.to(dtype=x.dtype)
 
 
@@ -157,8 +150,9 @@ class PI0PaliGemmaModel(PreTrainedModel):
             for i, hidden_states in enumerate(inputs_embeds):
                 if hidden_states is None:
                     continue
-
                 layer = models[i].layers[layer_idx]
+                # normalizer = torch.tensor(models[i].config.hidden_size**0.5, dtype=hidden_states.dtype)
+                # hidden_states = hidden_states * normalizer
                 hidden_states = layer.input_layernorm(hidden_states)
 
                 input_shape = hidden_states.shape[:-1]
@@ -248,13 +242,14 @@ class PI0PaliGemmaModel(PreTrainedModel):
             att_weights = torch.matmul(query_states, key_states.transpose(2, 3))
             att_weights *= head_dim**-0.5
             # att_weights: batch_size, num_att_head, sequence_length, sequence_length
-
+            #big_neg = torch.finfo(torch.float32).min  # See gemma/modules.py
             big_neg = -2.3819763e38  # See gemma/modules.py
             masked_att_weights = torch.where(attention_mask[:, None, None, :, :], att_weights, big_neg)
 
             # with autocast(dtype=torch.bfloat16, device_type=device.type):
             probs = torch.softmax(masked_att_weights, dim=-1, dtype=torch.float32)
-            probs = probs.to(dtype=torch.bfloat16)
+            # probs = probs.to(dtype=torch.bfloat16)
+            value_states = value_states.to(torch.float32)
 
             # probs: batch_size, num_key_value_head, num_att_head, sequence_length, sequence_length
             # value_states: batch_size, sequence_length, num_att_heads, head_dim
@@ -264,7 +259,8 @@ class PI0PaliGemmaModel(PreTrainedModel):
             att_output = att_output.permute(0, 3, 1, 2, 4)
             att_output = att_output.reshape(
                 batch_size, -1, num_key_value_heads * num_key_value_groups * head_dim
-            )
+            ).to(dtype=torch.bfloat16)
+
 
             outputs_embeds = []
             start = 0

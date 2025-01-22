@@ -32,7 +32,19 @@ from lerobot.configs.policies import PolicyFeature
 from lerobot.configs.types import FeatureType, NormalizationMode
 
 from modeling_pi0_paligemma import PaliGemmaConfig, PI0PaliGemmaConfig, PI0PaliGemmaModel, PI0Config
+from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling, ImageClassifierOutput
 
+def display(tensor: torch.Tensor):
+    """
+    Display function for a PyTorch tensor that prints its shape, mean, std, min, and max.
+    Args:
+        tensor (torch.Tensor): The tensor to analyze and display.
+    """
+    print(f"Shape: {tensor.shape}")
+    print(f"Mean: {tensor.mean().item()}")
+    print(f"Std: {tensor.std().item()}")
+    print(f"Min: {tensor.min().item()}")
+    print(f"Max: {tensor.max().item()}")
 
 class PI0Policy(
     nn.Module,
@@ -133,9 +145,9 @@ class PI0(nn.Module):
     def __init__(self, config: PI0Config):
         super().__init__()
         self.config = config
-        self.tokenizer = AutoTokenizer.from_pretrained("Tinkering/frostpunklab_full_bf16")
-        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("Tinkering/frostpunklab_full_bf16", torch_dtype="bfloat16")
-
+        self.tokenizer = AutoTokenizer.from_pretrained("/raid/pablo/pi0_hf_final/")#"Tinkering/frostpunklab_full_bf16")
+        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("/raid/pablo/pi0_hf_final/", torch_dtype="bfloat16") #"Tinkering/frostpunklab_full_bf16", torch_dtype="bfloat16")
+        self.pi0_paligemma.eval()
         # pos_emb = create_sinusoidal_pos_embedding(n_action_steps, width, min_period=4e-3, max_period=4.0)
         # self.register_buffer("pos_emb", pos_emb.unsqueeze(0))
 
@@ -241,14 +253,21 @@ class PI0(nn.Module):
                 x_t,
                 time,
             )
-            x_t_tilde = self.action_out_proj(v_t[:, -self.config.n_action_steps :])
+
+            x_t_tilde = self.pi0_paligemma.action_out_proj(v_t[:, -self.config.n_action_steps :])
+            if time == 1.0:
+                torch.save(x_t_tilde.cpu(), "/raid/pablo/xtilde_1")
+                print(x_t_tilde.mean(), -0.052490234375)
+                print(x_t_tilde.std(), 1.296875)
+                breakpoint()
 
             # Euler step
             x_t += dt * x_t_tilde
             time += dt
-        
+        # torch.save(x_t[:, :, :14].cpu(), '/raid/pablo/actions_1')
+        # actions_orig = torch.load('/raid/rcadene/tmp/openpi/data/aloha_sim/aloha_sim/aloha_sim/action_before_unnorm.pth')
         return x_t
-
+    
     def get_prefix_embeddings(self, batch):
         # TODO: avoid list in python and torch.cat ; prefer pre-allocation with torch.empty
         embs = []
@@ -264,7 +283,7 @@ class PI0(nn.Module):
             # TODO: remove normalization?
             img_emb_dim = img_emb.shape[-1]
             img_emb = img_emb * math.sqrt(img_emb_dim)
-
+            #img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype)
             bsize, num_img_embs = img_emb.shape[:2]
             device = img_emb.device
 
@@ -285,6 +304,8 @@ class PI0(nn.Module):
         # TODO: remove normalization?
         lang_emb_dim = lang_emb.shape[-1]
         lang_emb = lang_emb * math.sqrt(lang_emb_dim)
+        #lang_emb = lang_emb * torch.tensor(lang_emb_dim**0.5, dtype=lang_emb.dtype)
+
 
         embs.append(lang_emb)
         pad_masks.append(batch["tokenized_prompt_mask"])
@@ -318,10 +339,10 @@ class PI0(nn.Module):
         # add a single state token
         
         # TODO (molbap): should be moved to the model backbone methods
-        state_emb = self.pi0_paligemma.state_proj(batch["observation.state"])
+        upcasted_state_proj = self.pi0_paligemma.state_proj.to(torch.float32)
+        state_emb = upcasted_state_proj(batch["observation.state"])
         state_emb = state_emb.to(dtype=torch.bfloat16)
         embs.append(state_emb[:, None, :])
-
         bsize = state_emb.shape[0]
         dtype = state_emb.dtype
         device = state_emb.device
@@ -421,10 +442,6 @@ class PI0(nn.Module):
             inputs_embeds=[None, embs],
             use_cache=use_cache,
             fill_kv_cache=fill_kv_cache,
-            output_attentions=None,
-            output_hidden_states=None,
-            return_dict=None,
-            cache_position=None,
         )
         return outputs_embeds
 
