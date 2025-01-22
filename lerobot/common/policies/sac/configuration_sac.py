@@ -40,7 +40,12 @@ class SACConfig:
         }
     )
     output_normalization_modes: dict[str, str] = field(default_factory=lambda: {"action": "min_max"})
-
+    output_normalization_params: dict[str, dict[str, list[float]]] = field(
+        default_factory=lambda: {
+            "action": {"min": [-1, -1], "max": [1, 1]},
+        }
+    )
+    camera_number: int = 1
     # Add type annotations for these fields:
     vision_encoder_name: str = field(default="microsoft/resnet-18")
     image_encoder_hidden_dim: int = 32
