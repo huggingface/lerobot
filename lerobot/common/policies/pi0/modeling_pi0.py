@@ -133,47 +133,14 @@ class PI0(nn.Module):
     def __init__(self, config: PI0Config):
         super().__init__()
         self.config = config
-        # TODO Should be derived from config
         self.tokenizer = AutoTokenizer.from_pretrained("Tinkering/frostpunklab_full_bf16")
-        # self.paligemma = PaliGemmaForConditionalGeneration.from_pretrained("Tinkering/frostpunklab_bf16")
-        # self.gemma_expert = GemmaForCausalLM.from_pretrained('Tinkering/frostpunklab_action_expert_bf16', torch_dtype="bfloat16")
-        """
-        self.pi0_paligemma = PI0PaliGemmaModel.
-            config=PI0PaliGemmaConfig(
-                paligemma_config=PaliGemmaConfig.from_pretrained("Tinkering/frostpunklab_bf16"),
-                gemma_config=GemmaConfig.from_pretrained("Tinkering/frostpunklab_action_expert_bf16_correct"),
-            )
-        )
-        """
         self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("Tinkering/frostpunklab_full_bf16", torch_dtype="bfloat16")
-
-
-
-        self.from_pretrained("/raid/pablo/alohasim/pi0_projs_state_dict.pth")
 
         # pos_emb = create_sinusoidal_pos_embedding(n_action_steps, width, min_period=4e-3, max_period=4.0)
         # self.register_buffer("pos_emb", pos_emb.unsqueeze(0))
 
         self._rng = torch.Generator()
         self._rng.manual_seed(42)  # Set an initial seed
-
-    def from_pretrained(self, path):
-        state_dict = torch.load(path)
-
-        keys = [
-            "state_proj",
-            "action_in_proj",
-            "action_out_proj",
-            "action_time_mlp_in",
-            "action_time_mlp_out",
-        ]
-        for key in keys:
-            module_state_dict = {
-                "weight": state_dict[f"{key}.weight"].t(),
-                "bias": state_dict[f"{key}.bias"],
-            }
-            module = getattr(self, key)
-            module.load_state_dict(module_state_dict)
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
         for ft in self.config.image_features:

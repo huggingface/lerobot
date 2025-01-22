@@ -271,7 +271,7 @@ def slice_initial_orbax_checkpoint(checkpoint_dir: str):
             "projection_params": params}
 
 
-def convert_pi0_checkpoint(checkpoint_dir:str, precision: str):
+def convert_pi0_checkpoint(checkpoint_dir:str, precision: str, tokenizer_id: str, output_path:str):
     # Break down orbax ckpts - they are in OCDBT
     initial_params = slice_initial_orbax_checkpoint(checkpoint_dir=checkpoint_dir)
 
@@ -296,8 +296,6 @@ def convert_pi0_checkpoint(checkpoint_dir:str, precision: str):
     # Process Gemma  weights (at this stage they are unused)
     gemma_config = get_gemma_config(precision)
     gemma_params = slice_gemma_state_dict(gemma_raw_dictionary, config=gemma_config)
-
-
     
     # Instantiate model from configs
 
@@ -305,9 +303,13 @@ def convert_pi0_checkpoint(checkpoint_dir:str, precision: str):
     pi0_model = PI0PaliGemmaModel(pi0_config)
 
     # load state dict
-    pi0_model = pi0_model.load_state_dict({**paligemma_params, **gemma_params, **projection_params})
-
+    pi0_model.load_state_dict({**paligemma_params, **gemma_params, **projection_params})
+    pi0_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
     breakpoint()
+
+    pi0_model.save_pretrained(output_path,safe_serialization=True)
+    pi0_tokenizer.save_pretrained(output_path)
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -324,11 +326,28 @@ if __name__ == "__main__":
         type=str,
         help="Precision identifier for model conversion - should match the base checkpoint precision.",
     )
+    # tokenizer is identical to paligemma, it appears
 
+    parser.add_argument(
+        "--tokenizer_hub_id",
+        default="google/paligemma-3b-pt-224",
+        type=str,
+        help="Hub path to the tokenizer to save",
+    )
+
+    parser.add_argument(
+        "--output_path",
+        required=True,
+        type=str,
+        help="Path to save converted weights to",
+    )
+    
     args = parser.parse_args()
     convert_pi0_checkpoint(
         checkpoint_dir=args.checkpoint_dir,
-        precision=args.precision
+        precision=args.precision,
+        tokenizer_id=args.tokenizer_hub_id,
+        output_path=args.output_path,
         )
 
 
