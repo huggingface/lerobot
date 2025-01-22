@@ -425,10 +425,12 @@ class SACObservationEncoder(nn.Module):
         """
         super().__init__()
         self.config = config
+        self.has_pretrained_vision_encoder = False
         if "observation.image" in config.input_shapes:
             self.camera_number = config.camera_number
             self.aggregation_size: int = 0
             if self.config.vision_encoder_name is not None:
+                self.has_pretrained_vision_encoder = True
                 self.image_enc_layers, self.image_enc_out_shape = self._load_pretrained_vision_encoder()
                 self.freeze_encoder()
                 self.image_enc_proj = nn.Sequential(
@@ -529,7 +531,7 @@ class SACObservationEncoder(nn.Module):
         # Concatenate all images along the channel dimension.
         image_keys = [k for k in self.config.input_shapes if k.startswith("observation.image")]
         for image_key in image_keys:
-            if self.config.vision_encoder_name is not None:
+            if self.has_pretrained_vision_encoder:
                 enc_feat = self.image_enc_layers(obs_dict[image_key]).pooler_output
                 enc_feat = self.image_enc_proj(enc_feat.view(enc_feat.shape[0], -1))
             else:
