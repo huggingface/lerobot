@@ -501,6 +501,24 @@ class SACObservationEncoder(nn.Module):
         self.aggregation_size += config.latent_dim
         self.aggregation_layer = nn.Linear(in_features=self.aggregation_size, out_features=config.latent_dim)
 
+    def _load_pretrained_vision_encoder(self):
+        """Set up CNN encoder"""
+        from transformers import AutoModel
+
+        self.image_enc_layers = AutoModel.from_pretrained(self.config.vision_encoder_name)
+        if hasattr(self.image_enc_layers.config, "hidden_sizes"):
+            self.image_enc_out_shape = self.image_enc_layers.config.hidden_sizes[-1]  # Last channel dimension
+        elif hasattr(self.image_enc_layers, "fc"):
+            self.image_enc_out_shape = self.image_enc_layers.fc.in_features
+        else:
+            raise ValueError("Unsupported vision encoder architecture, make sure you are using a CNN")
+        return self.image_enc_layers, self.image_enc_out_shape
+
+    def freeze_encoder(self):
+        """Freeze all parameters in the encoder"""
+        for param in self.image_enc_layers.parameters():
+            param.requires_grad = False
+
     def forward(self, obs_dict: dict[str, Tensor]) -> Tensor:
         """Encode the image and/or state vector.
 
