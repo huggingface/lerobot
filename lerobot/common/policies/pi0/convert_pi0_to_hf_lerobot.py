@@ -29,6 +29,7 @@ import orbax.checkpoint as ocp
 import jax
 import numpy as np
 
+PRECISIONS = {"bfloat16": torch.bfloat16, "float32": torch.float32, "float16": torch.float16}
 
 def slice_paligemma_state_dict(state_dict, config):
 
@@ -271,10 +272,11 @@ def slice_initial_orbax_checkpoint(checkpoint_dir: str):
             "projection_params": params}
 
 
+
 def convert_pi0_checkpoint(checkpoint_dir:str, precision: str, tokenizer_id: str, output_path:str):
     # Break down orbax ckpts - they are in OCDBT
     initial_params = slice_initial_orbax_checkpoint(checkpoint_dir=checkpoint_dir)
-
+    breakpoint()
     # process projection params
     keys = [
         "state_proj",
@@ -288,7 +290,7 @@ def convert_pi0_checkpoint(checkpoint_dir:str, precision: str, tokenizer_id: str
     for key in keys:
         projection_params[f"{key}.weight"] = torch.from_numpy(np.array(initial_params['projection_params'][key]["kernel"])).T
         projection_params[f"{key}.bias"] = torch.from_numpy(np.array(initial_params['projection_params'][key]["bias"]))
-
+        
     # Process PaliGemma weights
     paligemma_config = get_paligemma_config(precision)
     paligemma_params, gemma_raw_dictionary = slice_paligemma_state_dict(initial_params["paligemma_params"], paligemma_config)
@@ -303,11 +305,13 @@ def convert_pi0_checkpoint(checkpoint_dir:str, precision: str, tokenizer_id: str
     pi0_model = PI0PaliGemmaModel(pi0_config)
 
     # load state dict
+    torch_dtype = PRECISIONS[precision]
     pi0_model.load_state_dict({**paligemma_params, **gemma_params, **projection_params})
+    pi0_model = pi0_model.to(torch_dtype)
     pi0_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
 
     pi0_model.save_pretrained(output_path,safe_serialization=True)
-    pi0_tokenizer.save_pretrained(output_path)
+    pi0_tokenizer.save_pretrained(output_path, dtype=torch_dtype)
 
     # assert that model loads properly
     del pi0_model
@@ -326,6 +330,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--precision",
         choices=["float32", "bfloat16", "float16"],
+        default="bfloat16",
         type=str,
         help="Precision identifier for model conversion - should match the base checkpoint precision.",
     )
