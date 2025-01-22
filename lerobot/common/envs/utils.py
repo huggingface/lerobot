@@ -37,6 +37,9 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     """
     # map to expected inputs for the policy
     return_observations = {}
+    # TODO: You have to merge all tensors from agent key and extra key
+    # You don't keep sensor param key in the observation
+    # And you keep sensor data rgb
     if "pixels" in observations:
         if isinstance(observations["pixels"], dict):
             imgs = {f"observation.images.{key}": img for key, img in observations["pixels"].items()}
@@ -60,6 +63,8 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             img /= 255
 
             return_observations[imgkey] = img
+        # obs state agent qpos and qvel
+        # image
 
     if "environment_state" in observations:
         return_observations["observation.environment_state"] = torch.from_numpy(
