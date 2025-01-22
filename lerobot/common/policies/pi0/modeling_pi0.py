@@ -31,7 +31,7 @@ from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.configs.policies import PolicyFeature
 from lerobot.configs.types import FeatureType, NormalizationMode
 
-from .modeling_pi0_paligemma import PaliGemmaConfig, PI0PaliGemmaConfig, PI0PaliGemmaModel, PI0Config
+from modeling_pi0_paligemma import PaliGemmaConfig, PI0PaliGemmaConfig, PI0PaliGemmaModel, PI0Config
 
 
 class PI0Policy(
@@ -250,6 +250,7 @@ class PI0(nn.Module):
             # Euler step
             x_t += dt * x_t_tilde
             time += dt
+        
         return x_t
 
     def get_prefix_embeddings(self, batch):
@@ -312,13 +313,16 @@ class PI0(nn.Module):
         time,
     ):
         # ACTUAL SAMPLE STEP
+        # TODO (molbap): all action projections should be moved to the model backbone methods
 
         embs = []
         pad_masks = []
         att_masks = []
 
         # add a single state token
-        state_emb = self.state_proj(batch["observation.state"])
+        
+        # TODO (molbap): should be moved to the model backbone methods
+        state_emb = self.pi0_paligemma.state_proj(batch["observation.state"])
         state_emb = state_emb.to(dtype=torch.bfloat16)
         embs.append(state_emb[:, None, :])
 
@@ -342,16 +346,19 @@ class PI0(nn.Module):
 
         # mix timestep + action information using an MLP
         noisy_actions = x_t
-        action_emb = self.action_in_proj(noisy_actions)
+        # TODO (molbap): should be moved to the model backbone methods
+        action_emb = self.pi0_paligemma.action_in_proj(noisy_actions)
 
         bsize, time_dim = time_emb.shape
         time_emb = time_emb.expand(bsize, self.config.n_action_steps, time_dim)
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
+        # TODO (molbap): should be moved to the model backbone methods
 
-        action_time_emb = self.action_time_mlp_in(action_time_emb)
+        action_time_emb = self.pi0_paligemma.action_time_mlp_in(action_time_emb)
         # action_time_emb = F.swish(action_time_emb)
         action_time_emb = F.silu(action_time_emb)  # swish == silu
-        action_time_emb = self.action_time_mlp_out(action_time_emb)
+        # TODO (molbap): should be moved to the model backbone methods
+        action_time_emb = self.pi0_paligemma.action_time_mlp_out(action_time_emb)
 
         # add to input tokens
         embs.append(action_time_emb)

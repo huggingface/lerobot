@@ -104,6 +104,8 @@ class PI0PaliGemmaConfig(PretrainedConfig):
 
 
 class PI0PaliGemmaModel(PreTrainedModel):
+    config_class = PI0PaliGemmaConfig
+
     def __init__(self, config: PI0PaliGemmaConfig):
         super().__init__(config=config)
         self.config = config

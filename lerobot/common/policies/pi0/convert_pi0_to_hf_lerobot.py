@@ -305,11 +305,14 @@ def convert_pi0_checkpoint(checkpoint_dir:str, precision: str, tokenizer_id: str
     # load state dict
     pi0_model.load_state_dict({**paligemma_params, **gemma_params, **projection_params})
     pi0_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
-    breakpoint()
 
     pi0_model.save_pretrained(output_path,safe_serialization=True)
     pi0_tokenizer.save_pretrained(output_path)
-    
+
+    # assert that model loads properly
+    del pi0_model
+    loaded_model = PI0PaliGemmaModel.from_pretrained(output_path)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
