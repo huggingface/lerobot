@@ -29,27 +29,22 @@ import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
-from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 
 
-class ACTPolicy(
-    nn.Module,
-    PyTorchModelHubMixin,
-    library_name="lerobot",
-    repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "act"],
-):
+class ACTPolicy(PreTrainedPolicy):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
     Hardware (paper: https://arxiv.org/abs/2304.13705, code: https://github.com/tonyzhaozh/act)
     """
 
+    config_class: ACTConfig
     name = "act"
 
     def __init__(
@@ -64,7 +59,7 @@ class ACTPolicy(
             dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
-        super().__init__()
+        super().__init__(config)
         config.validate_features()
         self.config = config
 

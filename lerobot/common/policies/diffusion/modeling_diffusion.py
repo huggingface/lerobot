@@ -31,12 +31,12 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 
 from lerobot.common.constants import OBS_ENV, OBS_ROBOT
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import (
     get_device_from_parameters,
     get_dtype_from_parameters,
@@ -45,18 +45,13 @@ from lerobot.common.policies.utils import (
 )
 
 
-class DiffusionPolicy(
-    nn.Module,
-    PyTorchModelHubMixin,
-    library_name="lerobot",
-    repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "diffusion-policy"],
-):
+class DiffusionPolicy(PreTrainedPolicy):
     """
     Diffusion Policy as per "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion"
     (paper: https://arxiv.org/abs/2303.04137, code: https://github.com/real-stanford/diffusion_policy).
     """
 
+    config_class = DiffusionConfig
     name = "diffusion"
 
     def __init__(
@@ -71,7 +66,7 @@ class DiffusionPolicy(
             dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
-        super().__init__()
+        super().__init__(config)
         config.validate_features()
         self.config = config
 

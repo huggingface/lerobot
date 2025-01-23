@@ -25,10 +25,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
-from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.common.policies.vqbet.vqbet_utils import GPT, ResidualVQ
@@ -36,17 +36,12 @@ from lerobot.common.policies.vqbet.vqbet_utils import GPT, ResidualVQ
 # ruff: noqa: N806
 
 
-class VQBeTPolicy(
-    nn.Module,
-    PyTorchModelHubMixin,
-    library_name="lerobot",
-    repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "vqbet"],
-):
+class VQBeTPolicy(PreTrainedPolicy):
     """
     VQ-BeT Policy as per "Behavior Generation with Latent Actions"
     """
 
+    config_class: VQBeTConfig
     name = "vqbet"
 
     def __init__(
@@ -61,7 +56,7 @@ class VQBeTPolicy(
             dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
-        super().__init__()
+        super().__init__(config)
         config.validate_features()
         self.config = config
 

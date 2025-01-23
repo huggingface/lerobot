@@ -33,22 +33,16 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
-from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor
 
 from lerobot.common.constants import OBS_ENV, OBS_ROBOT
 from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
 
 
-class TDMPCPolicy(
-    nn.Module,
-    PyTorchModelHubMixin,
-    library_name="lerobot",
-    repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "tdmpc"],
-):
+class TDMPCPolicy(PreTrainedPolicy):
     """Implementation of TD-MPC learning + inference.
 
     Please note several warnings for this policy.
@@ -66,6 +60,7 @@ class TDMPCPolicy(
           match our xarm environment.
     """
 
+    config_class: TDMPCConfig
     name = "tdmpc"
 
     def __init__(self, config: TDMPCConfig, dataset_stats: dict[str, dict[str, Tensor]] | None = None):
@@ -76,7 +71,7 @@ class TDMPCPolicy(
             dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
-        super().__init__()
+        super().__init__(config)
         config.validate_features()
         self.config = config
 
