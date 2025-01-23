@@ -15,7 +15,7 @@ from lerobot.common.utils.hub import HubMixin
 from lerobot.configs import parser
 from lerobot.configs.default import DatasetConfig, WandBConfig
 from lerobot.configs.eval import EvalConfig
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
 
@@ -73,7 +73,7 @@ class OnlineConfig:
 class TrainPipelineConfig(HubMixin):
     dataset: DatasetConfig
     env: envs.EnvConfig | None = None
-    policy: PretrainedConfig | None = None
+    policy: PreTrainedConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
     output_dir: Path | None = None
@@ -127,7 +127,7 @@ class TrainPipelineConfig(HubMixin):
             if policy_path:
                 # Only load the policy config
                 cli_overrides = parser.get_cli_overrides("policy")
-                self.policy = PretrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+                self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
                 self.policy.pretrained_path = policy_path
 
         if not self.job_name:

@@ -18,13 +18,13 @@ from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamConfig
 from lerobot.common.optim.schedulers import DiffuserSchedulerConfig
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 
 
-@PretrainedConfig.register_subclass("diffusion")
+@PreTrainedConfig.register_subclass("diffusion")
 @dataclass
-class DiffusionConfig(PretrainedConfig):
+class DiffusionConfig(PreTrainedConfig):
     """Configuration class for DiffusionPolicy.
 
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.

@@ -24,7 +24,7 @@ from lerobot.common.datasets.lerobot_dataset import (
     MultiLeRobotDataset,
 )
 from lerobot.common.datasets.transforms import ImageTransforms
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 
 IMAGENET_STATS = {
@@ -34,7 +34,7 @@ IMAGENET_STATS = {
 
 
 def resolve_delta_timestamps(
-    cfg: PretrainedConfig, ds_meta: LeRobotDatasetMetadata
+    cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
 ) -> dict[str, list] | None:
     """Resolves delta_timestamps config key (in-place) by using `eval`.
 
@@ -59,7 +59,7 @@ def resolve_delta_timestamps(
 def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
     """
     Args:
-        cfg: A TrainPipelineConfig config which contains a DatasetConfig and a PretrainedConfig.
+        cfg: A TrainPipelineConfig config which contains a DatasetConfig and a PreTrainedConfig.
 
     Returns:
         A LeRobotDataset.

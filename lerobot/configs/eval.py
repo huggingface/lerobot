@@ -4,7 +4,7 @@ from pathlib import Path
 
 from lerobot.common import envs, policies  # noqa: F401
 from lerobot.configs import parser
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 
 
 @dataclass
@@ -34,7 +34,7 @@ class EvalPipelineConfig:
     # (useful for debugging). This argument is mutually exclusive with `--config`.
     env: envs.EnvConfig
     eval: EvalConfig = field(default_factory=EvalConfig)
-    policy: PretrainedConfig | None = None
+    policy: PreTrainedConfig | None = None
     output_dir: Path | None = None
     job_name: str | None = None
     # TODO(rcadene, aliberts): By default, use device and use_amp values from policy checkpoint.
@@ -55,7 +55,7 @@ class EvalPipelineConfig:
         policy_path = parser.get_path_arg("policy")
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
-            self.policy = PretrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
 
         if not self.job_name:

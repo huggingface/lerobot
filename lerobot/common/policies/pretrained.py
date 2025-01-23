@@ -13,7 +13,7 @@ from safetensors.torch import save_model as save_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.common.utils.hub import HubMixin
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 
@@ -37,12 +37,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     config_class: None
     name: None
 
-    def __init__(self, config: PretrainedConfig, *inputs, **kwargs):
+    def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
         super().__init__()
-        if not isinstance(config, PretrainedConfig):
+        if not isinstance(config, PreTrainedConfig):
             raise ValueError(
                 f"Parameter config in `{self.__class__.__name__}(config)` should be an instance of class "
-                "`PretrainedConfig`. To create a model from a pretrained model use "
+                "`PreTrainedConfig`. To create a model from a pretrained model use "
                 f"`model = {self.__class__.__name__}.from_pretrained(PRETRAINED_MODEL_NAME)`"
             )
         self.config = config
@@ -64,7 +64,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         cls: Type[T],
         pretrained_name_or_path: str | Path,
         *,
-        config: PretrainedConfig | None = None,
+        config: PreTrainedConfig | None = None,
         force_download: bool = False,
         resume_download: bool | None = None,
         proxies: dict | None = None,
@@ -81,7 +81,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         deactivated). To train it, you should first set it back in training mode with `policy.train()`.
         """
         if config is None:
-            config = PretrainedConfig.from_pretrained(
+            config = PreTrainedConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
                 force_download=force_download,
                 resume_download=resume_download,

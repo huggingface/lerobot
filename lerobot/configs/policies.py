@@ -14,12 +14,12 @@ from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.common.utils.hub import HubMixin
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
-# Generic variable that is either PretrainedConfig or a subclass thereof
-T = TypeVar("T", bound="PretrainedConfig")
+# Generic variable that is either PreTrainedConfig or a subclass thereof
+T = TypeVar("T", bound="PreTrainedConfig")
 
 
 @dataclass
-class PretrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
+class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     """
     Base configuration class for policy models.
 

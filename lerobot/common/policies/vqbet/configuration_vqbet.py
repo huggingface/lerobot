@@ -20,13 +20,13 @@ from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamConfig
 from lerobot.common.optim.schedulers import VQBeTSchedulerConfig
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 
 
-@PretrainedConfig.register_subclass("vqbet")
+@PreTrainedConfig.register_subclass("vqbet")
 @dataclass
-class VQBeTConfig(PretrainedConfig):
+class VQBeTConfig(PreTrainedConfig):
     """Configuration class for VQ-BeT.
 
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.

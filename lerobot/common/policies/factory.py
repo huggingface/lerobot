@@ -26,7 +26,7 @@ from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionC
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
 
 
@@ -52,7 +52,7 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
 
-def make_policy_config(policy_type: str, **kwargs) -> PretrainedConfig:
+def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     if policy_type == "tdmpc":
         return TDMPCConfig(**kwargs)
     elif policy_type == "diffusion":
@@ -66,7 +66,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PretrainedConfig:
 
 
 def make_policy(
-    cfg: PretrainedConfig,
+    cfg: PreTrainedConfig,
     device: str,
     ds_meta: LeRobotDatasetMetadata | None = None,
     env: gym.Env | None = None,

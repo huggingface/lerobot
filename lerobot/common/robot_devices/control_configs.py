@@ -5,7 +5,7 @@ import draccus
 
 from lerobot.common.robot_devices.robots.configs import RobotConfig
 from lerobot.configs import parser
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 
 
 @dataclass
@@ -39,7 +39,7 @@ class RecordControlConfig(ControlConfig):
     single_task: str
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | Path | None = None
-    policy: PretrainedConfig | None = None
+    policy: PreTrainedConfig | None = None
     # TODO(rcadene, aliberts): By default, use device and use_amp values from policy checkpoint.
     device: str | None = None  # cuda | cpu | mps
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
@@ -89,7 +89,7 @@ class RecordControlConfig(ControlConfig):
         policy_path = parser.get_path_arg("policy")
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
-            self.policy = PretrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
 
         if self.policy is not None:

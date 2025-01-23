@@ -17,13 +17,13 @@
 from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamConfig
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 
 
-@PretrainedConfig.register_subclass("tdmpc")
+@PreTrainedConfig.register_subclass("tdmpc")
 @dataclass
-class TDMPCConfig(PretrainedConfig):
+class TDMPCConfig(PreTrainedConfig):
     """Configuration class for TDMPCPolicy.
 
     Defaults are configured for training with xarm_lift_medium_replay providing proprioceptive and single

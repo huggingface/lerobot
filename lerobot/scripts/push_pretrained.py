@@ -34,7 +34,7 @@ from huggingface_hub import HfApi
 
 
 @dataclass
-class PushPretrainedConfig:
+class PushPreTrainedConfig:
     pretrained_path: Path
     repo_id: str
     branch: str | None = None
@@ -43,7 +43,7 @@ class PushPretrainedConfig:
 
 
 @draccus.wrap()
-def main(cfg: PushPretrainedConfig):
+def main(cfg: PushPreTrainedConfig):
     hub_api = HfApi()
     hub_api.create_repo(
         repo_id=cfg.repo_id,
