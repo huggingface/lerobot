@@ -22,26 +22,16 @@ from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 output_directory = Path("outputs/eval/example_pusht_diffusion")
 output_directory.mkdir(parents=True, exist_ok=True)
 
+# Select your device
+device = "cuda"
+
 # Provide the [hugging face repo id](https://huggingface.co/lerobot/diffusion_pusht):
 pretrained_policy_path = "lerobot/diffusion_pusht"
 # OR a path to a local outputs/train folder.
 # pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")
 
-# TODO(alibert, rcadene): fix this file
-policy = DiffusionPolicy.from_pretrained(pretrained_policy_path)
-policy.eval()
-
-# Check if GPU is available
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-    print("GPU is available. Device set to:", device)
-else:
-    device = torch.device("cpu")
-    print(f"GPU is not available. Device set to: {device}. Inference will be slower than on GPU.")
-    # Decrease the number of reverse-diffusion steps (trades off a bit of quality for 10x speed)
-    policy.diffusion.num_inference_steps = 10
-
-policy.to(device)
+# TODO: remove revision before merge
+policy = DiffusionPolicy.from_pretrained(pretrained_policy_path, revision="remove_hydra", map_location=device)
 
 # Initialize evaluation environment to render two observation types:
 # an image of the scene and state/position of the agent. The environment
@@ -52,7 +42,17 @@ env = gym.make(
     max_episode_steps=300,
 )
 
-# Reset the policy and environmens to prepare for rollout
+# We can verify that the shapes of the features expected by the policy match the ones from the observations
+# produced by the environment
+print(policy.config.input_features)
+print(env.observation_space)
+
+# Similarly, we can check that the actions produced by the policy will match the actions expected by the
+# environment
+print(policy.config.output_features)
+print(env.action_space)
+
+# Reset the policy and environments to prepare for rollout
 policy.reset()
 numpy_observation, info = env.reset(seed=42)
 
