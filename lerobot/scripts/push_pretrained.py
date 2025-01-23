@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import draccus
-from huggingface_hub import create_repo, upload_folder
+from huggingface_hub import HfApi
 
 
 @dataclass
@@ -44,13 +44,22 @@ class PushPretrainedConfig:
 
 @draccus.wrap()
 def main(cfg: PushPretrainedConfig):
-    create_repo(
+    hub_api = HfApi()
+    hub_api.create_repo(
         repo_id=cfg.repo_id,
         private=cfg.private,
         repo_type="model",
         exist_ok=cfg.exist_ok,
     )
-    upload_folder(
+    if cfg.branch:
+        hub_api.create_branch(
+            repo_id=cfg.repo_id,
+            branch=cfg.branch,
+            repo_type="model",
+            exist_ok=cfg.exist_ok,
+        )
+
+    hub_api.upload_folder(
         repo_id=cfg.repo_id,
         folder_path=cfg.pretrained_path,
         repo_type="model",
