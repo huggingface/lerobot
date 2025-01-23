@@ -145,12 +145,12 @@ class PI0(nn.Module):
     def __init__(self, config: PI0Config):
         super().__init__()
         self.config = config
-        self.tokenizer = AutoTokenizer.from_pretrained("/raid/pablo/pi0_hf_final/")#"Tinkering/frostpunklab_full_bf16")
-        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("/raid/pablo/pi0_hf_final/", torch_dtype="bfloat16") #"Tinkering/frostpunklab_full_bf16", torch_dtype="bfloat16")
+        self.tokenizer = AutoTokenizer.from_pretrained("Tinkering/frostpunklab_23012024")
+        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("Tinkering/frostpunklab_23012024", torch_dtype="bfloat16")
         self.pi0_paligemma.eval()
         # pos_emb = create_sinusoidal_pos_embedding(n_action_steps, width, min_period=4e-3, max_period=4.0)
         # self.register_buffer("pos_emb", pos_emb.unsqueeze(0))
-
+        self.torch_dtype = torch.bfloat16
         self._rng = torch.Generator()
         self._rng.manual_seed(42)  # Set an initial seed
 
@@ -193,7 +193,8 @@ class PI0(nn.Module):
     def sample_actions(self, batch, tokenized_prompt, noise=None):
         skey = self.config.robot_state_feature.key
         bsize = batch[skey].shape[0]
-        dtype = torch.bfloat16
+        # dtype = torch.bfloat16
+        dtype = self.torch_dtype 
         device = batch[skey].device
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.get_prefix_embeddings(batch)
@@ -255,17 +256,11 @@ class PI0(nn.Module):
             )
 
             x_t_tilde = self.pi0_paligemma.action_out_proj(v_t[:, -self.config.n_action_steps :])
-            if time == 1.0:
-                torch.save(x_t_tilde.cpu(), "/raid/pablo/xtilde_1")
-                print(x_t_tilde.mean(), -0.052490234375)
-                print(x_t_tilde.std(), 1.296875)
-                breakpoint()
-
             # Euler step
             x_t += dt * x_t_tilde
             time += dt
-        # torch.save(x_t[:, :, :14].cpu(), '/raid/pablo/actions_1')
-        # actions_orig = torch.load('/raid/rcadene/tmp/openpi/data/aloha_sim/aloha_sim/aloha_sim/action_before_unnorm.pth')
+        torch.save(x_t[:, :, :14].cpu(), '/raid/pablo/actions_1')
+        actions_orig = torch.load('/raid/rcadene/tmp/openpi/data/aloha_sim/aloha_sim/aloha_sim/action_before_unnorm.pth')
         return x_t
     
     def get_prefix_embeddings(self, batch):
@@ -278,7 +273,7 @@ class PI0(nn.Module):
         for ft in self.config.image_features:
             img_key = ft.key
             img_emb = self.pi0_paligemma.paligemma.get_image_features(batch[img_key])
-            img_emb = img_emb.to(dtype=torch.bfloat16)
+            img_emb = img_emb.to(dtype=self.torch_dtype)
 
             # TODO: remove normalization?
             img_emb_dim = img_emb.shape[-1]
@@ -299,7 +294,7 @@ class PI0(nn.Module):
 
         # TODO: if language
         lang_emb = self.pi0_paligemma.paligemma.language_model.model.embed_tokens(batch["tokenized_prompt"])
-        lang_emb = lang_emb.to(dtype=torch.bfloat16)
+        lang_emb = lang_emb.to(dtype=self.torch_dtype)
 
         # TODO: remove normalization?
         lang_emb_dim = lang_emb.shape[-1]
@@ -341,7 +336,7 @@ class PI0(nn.Module):
         # TODO (molbap): should be moved to the model backbone methods
         upcasted_state_proj = self.pi0_paligemma.state_proj.to(torch.float32)
         state_emb = upcasted_state_proj(batch["observation.state"])
-        state_emb = state_emb.to(dtype=torch.bfloat16)
+        state_emb = state_emb.to(dtype=self.torch_dtype)
         embs.append(state_emb[:, None, :])
         bsize = state_emb.shape[0]
         dtype = state_emb.dtype

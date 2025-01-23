@@ -240,7 +240,7 @@ class PI0PaliGemmaModel(PreTrainedModel):
 
             # with autocast(dtype=torch.float32, device_type=device.type):
             att_weights = torch.matmul(query_states, key_states.transpose(2, 3))
-            att_weights *= head_dim**-0.5
+            att_weights *= torch.tensor(head_dim**-0.5, dtype=torch.float32)
             # att_weights: batch_size, num_att_head, sequence_length, sequence_length
             #big_neg = torch.finfo(torch.float32).min  # See gemma/modules.py
             big_neg = -2.3819763e38  # See gemma/modules.py
