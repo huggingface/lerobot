@@ -20,13 +20,13 @@ from collections import deque
 import torch
 import torch.nn.functional as F  # noqa: N812
 from huggingface_hub import PyTorchModelHubMixin
-from modeling_pi0_paligemma import PI0Config, PI0PaliGemmaModel
 from torch import Tensor, nn
 from transformers import AutoTokenizer
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
+from lerobot.common.policies.pi0.modeling_pi0_paligemma import PI0Config, PI0PaliGemmaModel
 from lerobot.configs.policies import PolicyFeature
 from lerobot.configs.types import FeatureType, NormalizationMode
 
@@ -600,8 +600,9 @@ def main():
     policy = PI0Policy(cfg, dataset_stats=dataset_stats)
 
     # policy.model.from_pretrained("../openpi/data/aloha_sim/pi0_projs_state_dict.pth")
-    policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
-
+    # policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
+    # policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
+    # policy.save_pretrained("outputs/exported/2025-01-23/14-43-01_aloha_pi0/last/pretrained_model")
     policy.to(device=device)
 
     actions = []
