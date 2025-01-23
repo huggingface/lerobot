@@ -16,14 +16,13 @@
 
 import math
 from collections import deque
-from typing import List, Optional, Union
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from huggingface_hub import PyTorchModelHubMixin
-from pytest import Cache
+from modeling_pi0_paligemma import PI0Config, PI0PaliGemmaModel
 from torch import Tensor, nn
-from transformers import AutoTokenizer, GemmaForCausalLM, PaliGemmaForConditionalGeneration
+from transformers import AutoTokenizer
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.common.policies.normalize import Normalize, Unnormalize
@@ -32,12 +31,17 @@ from lerobot.configs.policies import PolicyFeature
 from lerobot.configs.types import FeatureType, NormalizationMode
 
 
-def display(x):
-    print(x.shape)
-    print(f"mean: {x.mean().item()}")
-    print(f"std: {x.std().item()}")
-    print(f"min: {x.min().item()}")
-    print(f"max: {x.max().item()}")
+def display(tensor: torch.Tensor):
+    """
+    Display function for a PyTorch tensor that prints its shape, mean, std, min, and max.
+    Args:
+        tensor (torch.Tensor): The tensor to analyze and display.
+    """
+    print(f"Shape: {tensor.shape}")
+    print(f"Mean: {tensor.mean().item()}")
+    print(f"Std: {tensor.std().item()}")
+    print(f"Min: {tensor.min().item()}")
+    print(f"Max: {tensor.max().item()}")
 
 
 class PI0Policy(
@@ -148,239 +152,6 @@ def create_sinusoidal_pos_embedding(
     return pos_emb
 
 
-import torch
-from torch import nn
-from transformers import (
-    AutoConfig,
-    GemmaConfig,
-    PaliGemmaConfig,
-    PretrainedConfig,
-    PreTrainedModel,
-)
-
-
-class PI0PaliGemmaConfig(PretrainedConfig):
-    model_type = "PI0"
-    sub_configs = {"paligemma_config": AutoConfig, "gemma_expert_config": AutoConfig}
-
-    def __init__(
-        self,
-        paligemma_config=None,
-        gemma_config=None,
-        state_dim=14,
-        action_dim=24,
-        width=1024,
-        **kwargs,
-    ):
-        self.paligemma_config = paligemma_config
-        self.gemma_expert_config = gemma_config
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.width = width
-        super().__init__(**kwargs)
-
-
-class PI0PaliGemmaModel(PreTrainedModel):
-    def __init__(self, config: PI0PaliGemmaConfig):
-        super().__init__(config=config)
-        self.config = config
-        self.paligemma = PaliGemmaForConditionalGeneration.from_pretrained(
-            "Tinkering/frostpunklab_bf16", torch_dtype="bfloat16"
-        )
-        self.gemma_expert = GemmaForCausalLM.from_pretrained(
-            "Tinkering/frostpunklab_action_expert_bf16_correct", torch_dtype="bfloat16"
-        )
-
-    def forward(
-        self,
-        input_ids: torch.LongTensor = None,
-        pixel_values: torch.FloatTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        inputs_embeds: List[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        fill_kv_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        num_logits_to_keep: int = 0,
-    ):
-        models = [self.paligemma.language_model.model, self.gemma_expert.model]
-
-        for hidden_states in inputs_embeds:
-            if hidden_states is None:
-                continue
-            dtype = hidden_states.dtype
-            device = hidden_states.device
-            batch_size = hidden_states.shape[0]
-
-        # RMSNorm
-        num_layers = self.paligemma.config.text_config.num_hidden_layers
-        for layer_idx in range(num_layers):
-            query_states = []
-            key_states = []
-            value_states = []
-            for i, hidden_states in enumerate(inputs_embeds):
-                if hidden_states is None:
-                    continue
-
-                layer = models[i].layers[layer_idx]
-                hidden_states = layer.input_layernorm(hidden_states)
-
-                input_shape = hidden_states.shape[:-1]
-                hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
-
-                query_state = layer.self_attn.q_proj(hidden_states).view(hidden_shape)
-                key_state = layer.self_attn.k_proj(hidden_states).view(hidden_shape)
-                value_state = layer.self_attn.v_proj(hidden_states).view(hidden_shape)
-
-                query_states.append(query_state)
-                key_states.append(key_state)
-                value_states.append(value_state)
-
-                # TODO: implement kv cache
-
-            # B,L,H,D with L sequence length, H number of heads, D head dim
-            # concatenate on the number of embeddings/tokens
-            query_states = torch.cat(query_states, dim=1)
-            key_states = torch.cat(key_states, dim=1)
-            value_states = torch.cat(value_states, dim=1)
-
-            query_states = apply_rope(query_states, position_ids)
-
-            head_dim = self.paligemma.config.text_config.head_dim
-
-            # display(apply_rope(query_states, position_ids)[0,256:256+48])
-
-            key_states = apply_rope(key_states, position_ids)
-
-            if query_states.dtype != dtype:
-                raise ValueError(f"{query_states.dtype=}")
-            if key_states.dtype != dtype:
-                raise ValueError(f"{key_states.dtype=}")
-            if value_states.dtype != dtype:
-                raise ValueError(f"{value_states.dtype=}")
-
-            # TODO: implement caching
-
-            if use_cache and past_key_values is None:
-                # past_key_values = StaticCache(batch_size=batch_size, config=self.config.paligemma_config.text_config)
-                past_key_values = {}
-
-            if use_cache:
-                if fill_kv_cache:
-                    # past_key_values.update(key_states, value_states, layer_idx)
-                    past_key_values[layer_idx] = {
-                        "key_states": key_states,
-                        "value_states": value_states,
-                    }
-                else:
-                    # key_states = torch.concatenate(past_key_values.key_cache[layer_idx], key_states, dim=1)
-                    # value_states = torch.concatenate(past_key_values.value_cache[layer_idx], value_states, dim=1)
-                    key_states = torch.cat([past_key_values[layer_idx]["key_states"], key_states], dim=1)
-                    value_states = torch.cat(
-                        [past_key_values[layer_idx]["value_states"], value_states], dim=1
-                    )
-
-            num_att_heads = 8
-            num_key_value_heads = 1
-            num_key_value_groups = num_att_heads // num_key_value_heads  # TODO from config
-
-            # query_states: batch_size, sequence_length, num_att_head, head_dim
-            # key_states: batch_size, sequence_length, num_key_value_head, head_dim
-            # value_states: batch_size, sequence_length, num_key_value_head, head_dim
-
-            sequence_length = key_states.shape[1]
-
-            key_states = key_states[:, :, :, None, :].expand(
-                batch_size, sequence_length, num_key_value_heads, num_key_value_groups, head_dim
-            )
-            key_states = key_states.reshape(
-                batch_size, sequence_length, num_key_value_heads * num_key_value_groups, head_dim
-            )
-
-            value_states = value_states[:, :, :, None, :].expand(
-                batch_size, sequence_length, num_key_value_heads, num_key_value_groups, head_dim
-            )
-            value_states = value_states.reshape(
-                batch_size, sequence_length, num_key_value_heads * num_key_value_groups, head_dim
-            )
-
-            query_states = query_states.to(dtype=torch.float32)
-            key_states = key_states.to(dtype=torch.float32)
-
-            query_states = query_states.transpose(1, 2)
-            key_states = key_states.transpose(1, 2)
-
-            # with autocast(dtype=torch.float32, device_type=device.type):
-            att_weights = torch.matmul(query_states, key_states.transpose(2, 3))
-            att_weights *= head_dim**-0.5
-            # att_weights: batch_size, num_att_head, sequence_length, sequence_length
-
-            big_neg = -2.3819763e38  # See gemma/modules.py
-            masked_att_weights = torch.where(attention_mask[:, None, None, :, :], att_weights, big_neg)
-
-            # with autocast(dtype=torch.bfloat16, device_type=device.type):
-            probs = torch.softmax(masked_att_weights, dim=-1, dtype=torch.float32)
-            probs = probs.to(dtype=torch.bfloat16)
-
-            # probs: batch_size, num_key_value_head, num_att_head, sequence_length, sequence_length
-            # value_states: batch_size, sequence_length, num_att_heads, head_dim
-
-            att_output = torch.matmul(probs, value_states.permute(0, 2, 1, 3))
-
-            att_output = att_output.permute(0, 3, 1, 2, 4)
-            att_output = att_output.reshape(
-                batch_size, -1, num_key_value_heads * num_key_value_groups * head_dim
-            )
-
-            outputs_embeds = []
-            start = 0
-            for i, hidden_states in enumerate(inputs_embeds):
-                layer = models[i].layers[layer_idx]
-
-                if hidden_states is not None:
-                    end = start + hidden_states.shape[1]
-                    out_emb = layer.self_attn.o_proj(att_output[:, start:end])
-
-                    # TODO: first dropout
-
-                    # first residual
-                    out_emb += hidden_states
-
-                    after_first_residual = out_emb.clone()
-
-                    out_emb = layer.post_attention_layernorm(out_emb)
-                    out_emb = layer.mlp(out_emb)
-
-                    # TODO: second dropout
-
-                    # second residual
-                    out_emb += after_first_residual
-
-                    outputs_embeds.append(out_emb)
-                    start = end
-                else:
-                    outputs_embeds.append(None)
-
-            inputs_embeds = outputs_embeds
-
-        # final norm
-        outputs_embeds = []
-        for i, hidden_states in enumerate(inputs_embeds):
-            if hidden_states is not None:
-                out_emb = models[i].norm(hidden_states)
-                outputs_embeds.append(out_emb)
-            else:
-                outputs_embeds.append(None)
-
-        return outputs_embeds, past_key_values
-
-
 # TODO: for training look at preprocess_observation
 
 
@@ -388,55 +159,16 @@ class PI0(nn.Module):
     def __init__(self, config: PI0Config):
         super().__init__()
         self.config = config
-        # TODO Should be derived from config
-        self.tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
-        # self.paligemma = PaliGemmaForConditionalGeneration.from_pretrained("Tinkering/frostpunklab_bf16")
-        # self.gemma_expert = GemmaForCausalLM.from_pretrained('Tinkering/frostpunklab_action_expert_bf16', torch_dtype="bfloat16")
-        self.pi0_paligemma = PI0PaliGemmaModel(
-            config=PI0PaliGemmaConfig(
-                paligemma_config=PaliGemmaConfig.from_pretrained("Tinkering/frostpunklab_bf16"),
-                gemma_config=GemmaConfig.from_pretrained("Tinkering/frostpunklab_action_expert_bf16_correct"),
-            )
+        self.tokenizer = AutoTokenizer.from_pretrained("Tinkering/frostpunklab_23012024")
+        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained(
+            "Tinkering/frostpunklab_23012024", torch_dtype="bfloat16"
         )
-        # self.pi0_paligemma.from_pretrained("Tinkering/frostpunklab_full_bf16", torch_dtype="bfloat16")
-
-        state_dim = self.config.action_dim
-        action_dim = self.config.state_dim
-        n_action_steps = self.config.n_action_steps
-        width = self.config.action_expert_width
-
-        self.state_proj = nn.Linear(state_dim, width, dtype=torch.float32)
-        self.action_in_proj = nn.Linear(action_dim, width, dtype=torch.bfloat16)
-        self.action_out_proj = nn.Linear(
-            width, action_dim, dtype=torch.bfloat16
-        )  # float32 for more precision?
-
-        self.action_time_mlp_in = nn.Linear(width * 2, width, dtype=torch.bfloat16)
-        self.action_time_mlp_out = nn.Linear(width, width, dtype=torch.bfloat16)
-
+        self.pi0_paligemma.eval()
         # pos_emb = create_sinusoidal_pos_embedding(n_action_steps, width, min_period=4e-3, max_period=4.0)
         # self.register_buffer("pos_emb", pos_emb.unsqueeze(0))
-
+        self.torch_dtype = torch.bfloat16
         self._rng = torch.Generator()
         self._rng.manual_seed(42)  # Set an initial seed
-
-    def from_pretrained(self, path):
-        state_dict = torch.load(path)
-
-        keys = [
-            "state_proj",
-            "action_in_proj",
-            "action_out_proj",
-            "action_time_mlp_in",
-            "action_time_mlp_out",
-        ]
-        for key in keys:
-            module_state_dict = {
-                "weight": state_dict[f"{key}.weight"].t(),
-                "bias": state_dict[f"{key}.bias"],
-            }
-            module = getattr(self, key)
-            module.load_state_dict(module_state_dict)
 
     def forward(
         self, batch: dict[str, Tensor], noise=None
@@ -497,7 +229,8 @@ class PI0(nn.Module):
     def sample_actions(self, batch, tokenized_prompt, noise=None):
         skey = self.config.robot_state_feature.key
         bsize = batch[skey].shape[0]
-        dtype = torch.bfloat16
+        # dtype = torch.bfloat16
+        dtype = self.torch_dtype
         device = batch[skey].device
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(batch)
@@ -516,10 +249,6 @@ class PI0(nn.Module):
             inputs_embeds=[prefix_embs, None],
             use_cache=use_cache,
             fill_kv_cache=fill_kv_cache,
-            output_attentions=None,
-            output_hidden_states=None,
-            return_dict=None,
-            cache_position=None,
         )
         fill_kv_cache = False
 
@@ -552,7 +281,7 @@ class PI0(nn.Module):
                 x_t,
                 time,
             )
-            v_t = self.action_out_proj(suffix_out[:, -self.config.n_action_steps :])
+            v_t = self.pi0_paligemma.action_out_proj(suffix_out[:, -self.config.n_action_steps :])
 
             # Euler step
             x_t += dt * v_t
@@ -570,7 +299,7 @@ class PI0(nn.Module):
             img_key = ft.key
             # TODO: when do we cast to bfloat16? probably after first paligemma layer with autocast?
             img_emb = self.pi0_paligemma.paligemma.get_image_features(batch[img_key])
-            img_emb = img_emb.to(dtype=torch.bfloat16)
+            img_emb = img_emb.to(dtype=self.torch_dtype)
 
             # TODO: remove normalization?
             img_emb_dim = img_emb.shape[-1]
@@ -592,11 +321,12 @@ class PI0(nn.Module):
 
         # TODO: if language
         lang_emb = self.pi0_paligemma.paligemma.language_model.model.embed_tokens(batch["tokenized_prompt"])
-        lang_emb = lang_emb.to(dtype=torch.bfloat16)
+        lang_emb = lang_emb.to(dtype=self.torch_dtype)
 
         # TODO: remove normalization?
         lang_emb_dim = lang_emb.shape[-1]
         lang_emb = lang_emb * math.sqrt(lang_emb_dim)
+        # lang_emb = lang_emb * torch.tensor(lang_emb_dim**0.5, dtype=lang_emb.dtype)
 
         embs.append(lang_emb)
         pad_masks.append(batch["tokenized_prompt_mask"])
@@ -618,10 +348,12 @@ class PI0(nn.Module):
         att_masks = []
 
         # add a single state token
-        state_emb = self.state_proj(batch["observation.state"])
-        state_emb = state_emb.to(dtype=torch.bfloat16)
-        embs.append(state_emb[:, None, :])
 
+        # TODO (molbap): should be moved to the model backbone methods
+        upcasted_state_proj = self.pi0_paligemma.state_proj.to(torch.float32)
+        state_emb = upcasted_state_proj(batch["observation.state"])
+        state_emb = state_emb.to(dtype=self.torch_dtype)
+        embs.append(state_emb[:, None, :])
         bsize = state_emb.shape[0]
         dtype = state_emb.dtype
         device = state_emb.device
@@ -640,15 +372,17 @@ class PI0(nn.Module):
         # time_emb = posemb_sincos(timestep, action_expert_config.width, min_period=4e-3, max_period=4.0)
 
         # mix timestep + action information using an MLP
-        action_emb = self.action_in_proj(noisy_actions)
+        action_emb = self.pi0_paligemma.action_in_proj(noisy_actions)
 
         time_emb = time_emb[None, :].expand(bsize, self.config.n_action_steps, width)
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
+        # TODO (molbap): should be moved to the model backbone methods
 
-        action_time_emb = self.action_time_mlp_in(action_time_emb)
+        action_time_emb = self.pi0_paligemma.action_time_mlp_in(action_time_emb)
         # action_time_emb = F.swish(action_time_emb)
         action_time_emb = F.silu(action_time_emb)  # swish == silu
-        action_time_emb = self.action_time_mlp_out(action_time_emb)
+        # TODO (molbap): should be moved to the model backbone methods
+        action_time_emb = self.pi0_paligemma.action_time_mlp_out(action_time_emb)
 
         # add to input tokens
         embs.append(action_time_emb)
@@ -702,36 +436,8 @@ class PI0(nn.Module):
             inputs_embeds=[None, suffix_embs],
             use_cache=use_cache,
             fill_kv_cache=fill_kv_cache,
-            output_attentions=None,
-            output_hidden_states=None,
-            return_dict=None,
-            cache_position=None,
         )
         return outputs_embeds
-
-
-def apply_rope(x, positions, max_wavelength=10_000):
-    # Copied from Pi0 jax codebase
-    """Applies RoPE positions [B, L] to x [B, L, H, D]."""
-    freq_exponents = (2.0 / x.shape[-1]) * torch.arange(
-        x.shape[-1] // 2, dtype=torch.float32, device=x.device
-    )
-    timescale = max_wavelength**freq_exponents
-    radians = positions[..., None] / timescale[None, None, :]
-    radians = radians[..., None, :]
-    assert radians.dtype == torch.float32
-    # radians.shape = [...,L,1,d=D/2]
-    sin, cos = torch.sin(radians), torch.cos(radians)
-    # x1, x2 = jnp.split(x, 2, axis=-1)
-    x1, x2 = torch.split(x, x.shape[-1] // 2, dim=-1)
-
-    res = torch.cat([x1 * cos - x2 * sin, x2 * cos + x1 * sin], dim=-1)
-    assert res.dtype == torch.float32
-    # The original bigvision impl allows RoPE to upcast to float32. It is then immediately downcast again to the cache
-    # dtype when in inference mode (but not in training mode). I don't think any of this was intentional. Based on the
-    # original DeepMind impl, as well as the widely-used transformers impl, it is ok to always downcast back to bfloat16
-    # here.
-    return res.to(dtype=x.dtype)
 
 
 def make_att_2d_masks(pad_masks, att_masks):
@@ -893,8 +599,7 @@ def main():
 
     policy = PI0Policy(cfg, dataset_stats=dataset_stats)
 
-    policy.model.from_pretrained("../openpi/data/aloha_sim/pi0_projs_state_dict.pth")
-
+    # policy.model.from_pretrained("../openpi/data/aloha_sim/pi0_projs_state_dict.pth")
     policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
 
     policy.to(device=device)
