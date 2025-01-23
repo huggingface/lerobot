@@ -99,7 +99,7 @@ class PI0Policy(
         raise NotImplementedError()
 
     @torch.no_grad
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], noise=None) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -118,7 +118,7 @@ class PI0Policy(
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
-            actions = self.model(batch)[:, : self.config.n_action_steps]
+            actions = self.model.forward(batch, noise=noise)[:, : self.config.n_action_steps]
 
             actions = self.unnormalize_outputs({"action": actions})["action"]
 
@@ -438,7 +438,9 @@ class PI0(nn.Module):
             module = getattr(self, key)
             module.load_state_dict(module_state_dict)
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
+    def forward(
+        self, batch: dict[str, Tensor], noise=None
+    ) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
         for ft in self.config.image_features:
             if ft.key not in batch:
                 continue
@@ -484,7 +486,7 @@ class PI0(nn.Module):
             tokenized_prompt["attention_mask"].expand(bsize, max_length).to(device=device)
         )
 
-        actions = self.sample_actions(batch, tokenized_prompt)
+        actions = self.sample_actions(batch, tokenized_prompt, noise=noise)
 
         # unpad
         original_action_dim = self.config.output_features[0].shape[0]
@@ -532,13 +534,8 @@ class PI0(nn.Module):
                 dtype=dtype,
                 device=device,
             )
-
-        # noise = torch.load("../openpi/data/aloha_sim/noise_bsize_2.pth")
-        noise = torch.load("../openpi/data/aloha_sim/noise_2.pth")
-        # noise = torch.load("../openpi/data/aloha_sim/noise_3.pth")
-        if not isinstance(noise, torch.Tensor):
-            noise = torch.from_numpy(noise)
-        noise = noise.to(dtype=dtype, device=device)
+        else:
+            noise = noise.to(dtype=dtype, device=device)
 
         x_t = noise
         time = 1.0
@@ -820,11 +817,7 @@ def main():
     with open(checkpoint_dir / "assets/norm_stats.json") as f:
         norm_stats = json.load(f)
 
-    len(norm_stats["norm_stats"]["actions"]["mean"])
-    len(norm_stats["norm_stats"]["actions"]["std"])
-    len(norm_stats["norm_stats"]["state"]["mean"])
-    len(norm_stats["norm_stats"]["state"]["std"])
-
+    device = "cuda"
     num_motors = 14
 
     dataset_stats = {
@@ -855,8 +848,17 @@ def main():
     state = torch.from_numpy(obs["state"]).unsqueeze(0)
     state = state.to(dtype=torch.float32)
 
-    # cam_top = torch.cat([cam_top, cam_top], dim=0)
-    # state = torch.cat([state, state], dim=0)
+    # Add bsize=2
+    make_double_bsize = False
+    if make_double_bsize:
+        cam_top = torch.cat([cam_top, cam_top], dim=0)
+        state = torch.cat([state, state], dim=0)
+        noise = torch.load("../openpi/data/aloha_sim/noise_bsize_2.pth")
+    else:
+        noise = torch.load("../openpi/data/aloha_sim/noise_2.pth")
+
+    if not isinstance(noise, torch.Tensor):
+        noise = torch.from_numpy(noise)
 
     batch = {
         "observation.images.top": cam_top,
@@ -868,7 +870,6 @@ def main():
         "observation.state": state,
     }
 
-    device = "cuda"
     for k in batch:
         batch[k] = batch[k].to(device=device)
 
@@ -900,7 +901,7 @@ def main():
 
     actions = []
     for i in range(50):
-        action = policy.select_action(batch)
+        action = policy.select_action(batch, noise=noise)
         actions.append(action)
 
     actions = torch.stack(actions, dim=1)
