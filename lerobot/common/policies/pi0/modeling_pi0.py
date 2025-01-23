@@ -37,6 +37,8 @@ def display(tensor: torch.Tensor):
     Args:
         tensor (torch.Tensor): The tensor to analyze and display.
     """
+    if tensor.dtype == torch.bool:
+        tensor = tensor.float()
     print(f"Shape: {tensor.shape}")
     print(f"Mean: {tensor.mean().item()}")
     print(f"Std: {tensor.std().item()}")

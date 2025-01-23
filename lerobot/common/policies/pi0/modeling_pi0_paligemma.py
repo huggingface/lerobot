@@ -242,7 +242,7 @@ class PI0PaliGemmaModel(PreTrainedModel):
             # att_weights: batch_size, num_att_head, sequence_length, sequence_length
             # big_neg = torch.finfo(torch.float32).min  # See gemma/modules.py
             big_neg = -2.3819763e38  # See gemma/modules.py
-            masked_att_weights = torch.where(attention_mask[:, None, None, :, :], att_weights, big_neg)
+            masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
 
             # with autocast(dtype=torch.bfloat16, device_type=device.type):
             probs = torch.softmax(masked_att_weights, dim=-1, dtype=torch.float32)
@@ -254,7 +254,8 @@ class PI0PaliGemmaModel(PreTrainedModel):
 
             att_output = torch.matmul(probs, value_states.permute(0, 2, 1, 3))
             att_output = att_output.to(dtype=torch.bfloat16)
-            att_output = att_output.permute(0, 3, 1, 2, 4)
+            att_output = att_output.permute(0, 2, 1, 3)
+            # we use -1 because sequence length can change
             att_output = att_output.reshape(
                 batch_size, -1, num_key_value_heads * num_key_value_groups * head_dim
             )
