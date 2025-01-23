@@ -160,9 +160,11 @@ class PI0(nn.Module):
         super().__init__()
         self.config = config
         self.tokenizer = AutoTokenizer.from_pretrained("Tinkering/frostpunklab_23012024")
-        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained(
-            "Tinkering/frostpunklab_23012024", torch_dtype="bfloat16"
-        )
+        # self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained(
+        #     "Tinkering/frostpunklab_23012024", torch_dtype="bfloat16"
+        # )
+        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("Tinkering/frostpunklab_full_float32")
+
         self.pi0_paligemma.eval()
         # pos_emb = create_sinusoidal_pos_embedding(n_action_steps, width, min_period=4e-3, max_period=4.0)
         # self.register_buffer("pos_emb", pos_emb.unsqueeze(0))
@@ -253,22 +255,22 @@ class PI0(nn.Module):
         fill_kv_cache = False
 
         dt = -1.0 / self.config.num_steps
-        dt = torch.tensor(dt, dtype=dtype, device=device)
+        dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
         if noise is None:
             noise = torch.normal(
                 mean=0.0,
                 std=1.0,
                 size=(bsize, self.config.n_action_steps, self.config.action_dim),
-                dtype=dtype,
+                dtype=torch.float32,
                 device=device,
             )
         else:
-            noise = noise.to(dtype=dtype, device=device)
+            noise = noise.to(dtype=torch.float32, device=device)
 
         x_t = noise
         time = 1.0
-        time = torch.tensor(time, dtype=dtype, device=device)
+        time = torch.tensor(time, dtype=torch.float32, device=device)
         while time >= -dt / 2:
             # time_batched = x_t[None, ...]
             _, suffix_out = self.sample_step(
@@ -281,7 +283,9 @@ class PI0(nn.Module):
                 x_t,
                 time,
             )
-            v_t = self.pi0_paligemma.action_out_proj(suffix_out[:, -self.config.n_action_steps :])
+            suffix_out = suffix_out[:, -self.config.n_action_steps :]
+            suffix_out = suffix_out.to(dtype=torch.float32)
+            v_t = self.pi0_paligemma.action_out_proj(suffix_out)
 
             # Euler step
             x_t += dt * v_t
@@ -325,8 +329,8 @@ class PI0(nn.Module):
 
         # TODO: remove normalization?
         lang_emb_dim = lang_emb.shape[-1]
-        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
-        # lang_emb = lang_emb * torch.tensor(lang_emb_dim**0.5, dtype=lang_emb.dtype)
+        # lang_emb = lang_emb * math.sqrt(lang_emb_dim)
+        lang_emb = lang_emb * torch.tensor(lang_emb_dim**0.5, dtype=lang_emb.dtype)
 
         embs.append(lang_emb)
         pad_masks.append(batch["tokenized_prompt_mask"])
@@ -350,8 +354,7 @@ class PI0(nn.Module):
         # add a single state token
 
         # TODO (molbap): should be moved to the model backbone methods
-        upcasted_state_proj = self.pi0_paligemma.state_proj.to(torch.float32)
-        state_emb = upcasted_state_proj(batch["observation.state"])
+        state_emb = self.pi0_paligemma.state_proj(batch["observation.state"])
         state_emb = state_emb.to(dtype=self.torch_dtype)
         embs.append(state_emb[:, None, :])
         bsize = state_emb.shape[0]
@@ -602,7 +605,7 @@ def main():
     # policy.model.from_pretrained("../openpi/data/aloha_sim/pi0_projs_state_dict.pth")
     # policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
     # policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
-    # policy.save_pretrained("outputs/exported/2025-01-23/14-43-01_aloha_pi0/last/pretrained_model")
+    policy.save_pretrained("outputs/exported/2025-01-23/16-01-01_aloha_pi0/last/pretrained_model")
     policy.to(device=device)
 
     actions = []
