@@ -210,3 +210,7 @@ def get_channel_first_image_shape(image_shape: tuple) -> tuple:
         raise ValueError(image_shape)
 
     return shape
+
+
+def has_method(cls: Any, method_name: str):
+    return hasattr(cls, method_name) and callable(getattr(cls, method_name))

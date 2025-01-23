@@ -23,14 +23,14 @@ from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.envs.utils import env_to_policy_features
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.common.policies.policy_protocol import Policy
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.configs.policies import PretrainedConfig
 from lerobot.configs.types import FeatureType
 
 
-def get_policy_class(name: str) -> Policy:
+def get_policy_class(name: str) -> PreTrainedPolicy:
     """Get the policy's class and config class given a name (matching the policy class' `name` attribute)."""
     if name == "tdmpc":
         from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
@@ -71,7 +71,7 @@ def make_policy(
     ds_meta: LeRobotDatasetMetadata | None = None,
     env: gym.Env | None = None,
     env_cfg: EnvConfig | None = None,
-) -> Policy:
+) -> PreTrainedPolicy:
     """Make an instance of a policy class.
 
     Args:

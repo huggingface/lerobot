@@ -20,7 +20,6 @@ from pathlib import Path
 import einops
 import pytest
 import torch
-from huggingface_hub import PyTorchModelHubMixin
 from safetensors.torch import load_file
 
 from lerobot import available_policies
@@ -36,7 +35,7 @@ from lerobot.common.policies.factory import (
     make_policy_config,
 )
 from lerobot.common.policies.normalize import Normalize, Unnormalize
-from lerobot.common.policies.policy_protocol import Policy
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.utils.utils import seeded_context
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
@@ -150,12 +149,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     # Check that we can make the policy object.
     dataset = make_dataset(train_cfg)
     policy = make_policy(train_cfg.policy, ds_meta=dataset.meta, device=DEVICE)
-    # Check that the policy follows the required protocol.
-    assert isinstance(
-        policy, Policy
-    ), f"The policy does not follow the required protocol. Please see {Policy.__module__}.{Policy.__name__}."
-    assert isinstance(policy, torch.nn.Module)
-    assert isinstance(policy, PyTorchModelHubMixin)
+    assert isinstance(policy, PreTrainedPolicy)
 
     # Check that we run select_actions and get the appropriate output.
     env = make_env(train_cfg.env, n_envs=2)

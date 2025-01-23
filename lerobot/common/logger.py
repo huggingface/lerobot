@@ -32,7 +32,7 @@ from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from lerobot.common.policies.policy_protocol import Policy
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.utils.utils import get_global_random_state
 from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode
@@ -150,7 +150,7 @@ class Logger:
         """
         return cls.get_last_checkpoint_dir(log_dir) / cls.pretrained_model_dir_name
 
-    def save_model(self, save_dir: Path, policy: Policy, wandb_artifact_name: str | None = None):
+    def save_model(self, save_dir: Path, policy: PreTrainedPolicy, wandb_artifact_name: str | None = None):
         """Save the weights of the Policy model using PyTorchModelHubMixin.
 
         The weights are saved in a folder called "pretrained_model" under the checkpoint directory.
@@ -196,7 +196,7 @@ class Logger:
         self,
         train_step: int,
         identifier: str,
-        policy: Policy,
+        policy: PreTrainedPolicy,
         optimizer: Optimizer | None = None,
         scheduler: LRScheduler | None = None,
     ):
