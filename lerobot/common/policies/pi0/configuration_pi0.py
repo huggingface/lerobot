@@ -1,14 +1,14 @@
+from dataclasses import dataclass, field
+
 from lerobot.common.optim.optimizers import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.configs.policies import PretrainedConfig
-from dataclasses import dataclass, field
-
 from lerobot.configs.types import NormalizationMode
+
 
 @PretrainedConfig.register_subclass("pi0")
 @dataclass
 class PI0Config(PretrainedConfig):
-
     # Input / output structure.
     n_obs_steps: int = 1
     chunk_size: int = 50
@@ -32,7 +32,7 @@ class PI0Config(PretrainedConfig):
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "VISUAL": NormalizationMode.IDENTITY,
+            "VISUAL": NormalizationMode.MIN_MAX,
             "STATE": NormalizationMode.MEAN_STD,
             "ACTION": NormalizationMode.MEAN_STD,
         }
@@ -51,7 +51,7 @@ class PI0Config(PretrainedConfig):
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
             )
-        
+
     def validate_features(self) -> None:
         if not self.image_features and not self.env_state_feature:
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
@@ -67,7 +67,7 @@ class PI0Config(PretrainedConfig):
     @property
     def reward_delta_indices(self) -> None:
         return None
-    
+
     def get_optimizer_preset(self) -> OptimizerConfig:
         raise NotImplementedError
 

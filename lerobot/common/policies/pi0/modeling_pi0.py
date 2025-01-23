@@ -66,6 +66,22 @@ class PI0Policy(
         # config.validate_features()
         self.config = config
 
+        # TODO: remove hardcode
+        cfg_img_left_wrist = PolicyFeature(
+            key="observation.images.left_wrist",
+            type=FeatureType.VISUAL,
+            shape=(3, 480, 640),
+            normalization_mode=NormalizationMode.IDENTITY,
+        )
+        cfg_img_right_wrist = PolicyFeature(
+            key="observation.images.right_wrist",
+            type=FeatureType.VISUAL,
+            shape=(3, 480, 640),
+            normalization_mode=NormalizationMode.IDENTITY,
+        )
+        self.config.image_features.append(cfg_img_left_wrist)
+        self.config.image_features.append(cfg_img_right_wrist)
+
         self.normalize_inputs = Normalize(config.input_features, dataset_stats)
         self.normalize_targets = Normalize(config.output_features, dataset_stats)
         self.unnormalize_outputs = Unnormalize(config.output_features, dataset_stats)
@@ -78,6 +94,10 @@ class PI0Policy(
         """This should be called whenever the environment is reset."""
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
+    def get_optim_params(self) -> dict:
+        # return self.parameters()
+        raise NotImplementedError()
+
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.
@@ -89,21 +109,18 @@ class PI0Policy(
         self.eval()
 
         batch = self.normalize_inputs(batch)
-        if self.config.image_features:
-            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.images"] = torch.stack(
-                [batch[ft.key] for ft in self.config.image_features], dim=-4
-            )
+        # if self.config.image_features:
+        #     batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+        #     batch["observation.images"] = torch.stack(
+        #         [batch[ft.key] for ft in self.config.image_features], dim=-4
+        #     )
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
-            actions = self.model(batch)[0][:, : self.config.n_action_steps]
+            actions = self.model(batch)[:, : self.config.n_action_steps]
 
-            # TODO(rcadene): make _forward return output dictionary?
-            # TODO Fix the action padding. Inferred and sliced from unnormalize
-            action_length = self.unnormalize_outputs.buffer_action.mean.data.shape[0]
-            actions = self.unnormalize_outputs({"action": actions[:, :action_length]})["action"]
+            actions = self.unnormalize_outputs({"action": actions})["action"]
 
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
@@ -265,7 +282,9 @@ class PI0PaliGemmaModel(PreTrainedModel):
                     # key_states = torch.concatenate(past_key_values.key_cache[layer_idx], key_states, dim=1)
                     # value_states = torch.concatenate(past_key_values.value_cache[layer_idx], value_states, dim=1)
                     key_states = torch.cat([past_key_values[layer_idx]["key_states"], key_states], dim=1)
-                    value_states = torch.cat([past_key_values[layer_idx]["value_states"], value_states], dim=1)
+                    value_states = torch.cat(
+                        [past_key_values[layer_idx]["value_states"], value_states], dim=1
+                    )
 
             num_att_heads = 8
             num_key_value_heads = 1
@@ -395,8 +414,6 @@ class PI0(nn.Module):
         self.action_time_mlp_in = nn.Linear(width * 2, width, dtype=torch.bfloat16)
         self.action_time_mlp_out = nn.Linear(width, width, dtype=torch.bfloat16)
 
-        self.from_pretrained("/raid/pablo/alohasim/pi0_projs_state_dict.pth")
-
         # pos_emb = create_sinusoidal_pos_embedding(n_action_steps, width, min_period=4e-3, max_period=4.0)
         # self.register_buffer("pos_emb", pos_emb.unsqueeze(0))
 
@@ -423,15 +440,28 @@ class PI0(nn.Module):
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
         for ft in self.config.image_features:
-            batch[ft.key] = resize_with_pad(batch[ft.key], 224, 224)
+            if ft.key not in batch:
+                continue
+            img = resize_with_pad(batch[ft.key], 224, 224)
+            bsize = batch[ft.key].shape[0]
+            device = batch[ft.key].device
+            mask = torch.ones(bsize, dtype=torch.bool, device=device)
+            batch[ft.key] = img
+            batch[f"{ft.key}_mask"] = mask
+
+        # TODO: remove HARDCODE
+        for ft in self.config.image_features:
+            if ft.key in batch:
+                continue
+            batch[ft.key] = torch.ones_like(img) * -1
+            batch[f"{ft.key}_mask"] = torch.zeros_like(mask)
 
         akey = self.config.action_feature.key
-        skey = self.config.robot_state_feature.key
-
         if akey in batch:
-            batch[akey] = pad_vector(batch[akey], 24)
+            batch[akey] = pad_vector(batch[akey], self.config.action_dim)
 
-        batch[skey] = pad_vector(batch[skey], 24)
+        skey = self.config.robot_state_feature.key
+        batch[skey] = pad_vector(batch[skey], self.config.state_dim)
 
         # tokenizer works on lists
         # PaliGemma prompt has to end with a new line
@@ -455,6 +485,11 @@ class PI0(nn.Module):
         )
 
         actions = self.sample_actions(batch, tokenized_prompt)
+
+        # unpad
+        original_action_dim = self.config.output_features[0].shape[0]
+        actions = actions[:, :, :original_action_dim]
+
         return actions
 
     def sample_actions(self, batch, tokenized_prompt, noise=None):
@@ -463,21 +498,14 @@ class PI0(nn.Module):
         dtype = torch.bfloat16
         device = batch[skey].device
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.get_prefix_embeddings(batch)
-
-        # create attention mask (shared between prefix and suffix)
-        prefix_pad_masks_tensor = torch.cat(prefix_pad_masks, dim=1)
-        prefix_att_masks_tensor = torch.tensor(prefix_att_masks, dtype=torch.bool, device=device)
-        prefix_att_masks_tensor = prefix_att_masks_tensor.expand(bsize, len(prefix_att_masks_tensor))
-
-        prefix_att_2d_masks = combine_pad_and_att_masks(prefix_pad_masks_tensor, prefix_att_masks_tensor)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks_tensor, axis=1) - 1
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(batch)
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
         use_cache = True  # TODO: from config
 
         # fill image text cache
         fill_kv_cache = True
-
         _, past_key_values = self.pi0_paligemma.forward(
             input_ids=None,
             attention_mask=prefix_att_2d_masks,
@@ -505,16 +533,19 @@ class PI0(nn.Module):
                 device=device,
             )
 
-
-        noise = torch.load("/raid/pablo/alohasim/noise_2.pkl")
-        noise = torch.from_numpy(noise).to(dtype=dtype, device=device)
+        # noise = torch.load("../openpi/data/aloha_sim/noise_bsize_2.pth")
+        noise = torch.load("../openpi/data/aloha_sim/noise_2.pth")
+        # noise = torch.load("../openpi/data/aloha_sim/noise_3.pth")
+        if not isinstance(noise, torch.Tensor):
+            noise = torch.from_numpy(noise)
+        noise = noise.to(dtype=dtype, device=device)
 
         x_t = noise
         time = 1.0
         time = torch.tensor(time, dtype=dtype, device=device)
         while time >= -dt / 2:
             # time_batched = x_t[None, ...]
-            _, v_t = self.sample_step(
+            _, suffix_out = self.sample_step(
                 batch,
                 prefix_embs,
                 prefix_pad_masks,
@@ -524,14 +555,14 @@ class PI0(nn.Module):
                 x_t,
                 time,
             )
-            x_t_tilde = self.action_out_proj(v_t[:, -self.config.n_action_steps :])
+            v_t = self.action_out_proj(suffix_out[:, -self.config.n_action_steps :])
 
             # Euler step
-            x_t += dt * x_t_tilde
+            x_t += dt * v_t
             time += dt
         return x_t
 
-    def get_prefix_embeddings(self, batch):
+    def embed_prefix(self, batch):
         # TODO: avoid list in python and torch.cat ; prefer pre-allocation with torch.empty
         embs = []
         pad_masks = []
@@ -540,18 +571,20 @@ class PI0(nn.Module):
         # TODO: remove for loop
         for ft in self.config.image_features:
             img_key = ft.key
+            # TODO: when do we cast to bfloat16? probably after first paligemma layer with autocast?
             img_emb = self.pi0_paligemma.paligemma.get_image_features(batch[img_key])
             img_emb = img_emb.to(dtype=torch.bfloat16)
 
             # TODO: remove normalization?
             img_emb_dim = img_emb.shape[-1]
-            img_emb = img_emb * math.sqrt(img_emb_dim)
+            # img_emb = img_emb * math.sqrt(img_emb_dim)
+            img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
+            # img_emb *= img_emb_dim ** 0.5
 
             bsize, num_img_embs = img_emb.shape[:2]
-            device = img_emb.device
 
             # img_mask = batch[f"{img_key}_mask"].expand(bsize, num_img_embs)
-            img_mask = (batch[f"{img_key}_mask"]).expand(bsize, num_img_embs)
+            img_mask = (batch[f"{img_key}_mask"])[:, None].expand(bsize, num_img_embs)
             # img_mask = torch.ones(bsize, num_img_embs, dtype=torch.bool, device=device)
 
             embs.append(img_emb)
@@ -576,22 +609,13 @@ class PI0(nn.Module):
         att_masks += [0] * num_lang_embs
 
         embs = torch.cat(embs, dim=1)
+        pad_masks = torch.cat(pad_masks, dim=1)
+        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
+        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
         return embs, pad_masks, att_masks
 
-    def sample_step(
-        self,
-        batch,
-        prefix_embs,
-        prefix_pad_masks,
-        prefix_att_masks,
-        past_key_values,
-        fill_kv_cache,
-        x_t,
-        time,
-    ):
-        # ACTUAL SAMPLE STEP
-
+    def embed_suffix(self, batch, noisy_actions, timestep):
         embs = []
         pad_masks = []
         att_masks = []
@@ -613,18 +637,15 @@ class PI0(nn.Module):
         # embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         width = self.config.action_expert_width
         time_emb = create_sinusoidal_pos_embedding(
-            time, width, min_period=4e-3, max_period=4.0, device=device
+            timestep, width, min_period=4e-3, max_period=4.0, device=device
         )
-        time_emb = time_emb.unsqueeze(0)
         time_emb = time_emb.type(dtype=dtype)
         # time_emb = posemb_sincos(timestep, action_expert_config.width, min_period=4e-3, max_period=4.0)
 
         # mix timestep + action information using an MLP
-        noisy_actions = x_t
         action_emb = self.action_in_proj(noisy_actions)
 
-        bsize, time_dim = time_emb.shape
-        time_emb = time_emb.expand(bsize, self.config.n_action_steps, time_dim)
+        time_emb = time_emb[None, :].expand(bsize, self.config.n_action_steps, width)
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
         action_time_emb = self.action_time_mlp_in(action_time_emb)
@@ -643,58 +664,45 @@ class PI0(nn.Module):
         att_masks += [1] + ([0] * (self.config.n_action_steps - 1))
 
         embs = torch.cat(embs, dim=1)
-
-        if self.training:
-            prefix_len = embs.shape[1]
-            if att_masks[prefix_len] != 1:
-                raise ValueError(
-                    "Due to prefix-lm decoding, it is very important that the prefix cannot attend to the suffix"
-                )
-
-        # create attention mask (shared between prefix and suffix)
         pad_masks = torch.cat(pad_masks, dim=1)
-        prefix_pad_masks = torch.cat(prefix_pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=device)
-        att_masks = att_masks.expand(bsize, len(att_masks))
+        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
+        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
-        suffix_len = pad_masks.shape[1]
+        return embs, pad_masks, att_masks
+
+    def sample_step(
+        self,
+        batch,
+        prefix_embs,
+        prefix_pad_masks,
+        prefix_att_masks,
+        past_key_values,
+        fill_kv_cache,
+        x_t,
+        timestep,
+    ):
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(batch, x_t, timestep)
+
+        suffix_len = suffix_pad_masks.shape[1]
+        batch_size = prefix_pad_masks.shape[0]
         prefix_len = prefix_pad_masks.shape[1]
-        prefix_pad_masks_expanded = prefix_pad_masks[:, None, :].expand(bsize, suffix_len, prefix_len)
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
 
-        # att_masks = torch.tensor(prefix_att_masks + att_masks, dtype=torch.bool, device=device)
-        # att_masks = att_masks.expand(bsize, len(att_masks))
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
 
-        # prefix_mask = einops.repeat(prefix_mask, "b p -> b s p", s=suffix_len)
-        att_2d_masks = combine_pad_and_att_masks(pad_masks, att_masks)
-
-        att_2d_masks = torch.cat([prefix_pad_masks_expanded, att_2d_masks], dim=2)
-
-        # if self.training:
-        #     # full forward pass on prefix + suffix at once
-        #     positions = torch.cumsum(pad_masks, axis=1) - 1
-
-        #     # TODO: call gemma + gemma expert
-        #     _, out = gemma(
-        #         tokens=None,
-        #         embedded=[prefix_embs, embs],
-        #         mask=att_2d_masks,
-        #         positions=positions,
-        #         decode=False,
-        #     )
-
-        #     return self.action_out_proj(out[:, -self.config.n_action_steps :])
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
 
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-        position_ids = prefix_offsets + torch.cumsum(pad_masks, axis=1) - 1
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
         use_cache = True  # TODO: from config
 
         outputs_embeds, _ = self.pi0_paligemma.forward(
             input_ids=None,
-            attention_mask=att_2d_masks,
+            attention_mask=full_att_2d_masks,
             position_ids=position_ids,
             past_key_values=past_key_values,
-            inputs_embeds=[None, embs],
+            inputs_embeds=[None, suffix_embs],
             use_cache=use_cache,
             fill_kv_cache=fill_kv_cache,
             output_attentions=None,
@@ -729,7 +737,7 @@ def apply_rope(x, positions, max_wavelength=10_000):
     return res.to(dtype=x.dtype)
 
 
-def combine_pad_and_att_masks(pad_masks, att_masks):
+def make_att_2d_masks(pad_masks, att_masks):
     """Copied from big_vision.
 
     Tokens can attend to valid inputs tokens which have a cumulative mask_ar
@@ -779,7 +787,8 @@ def resize_with_pad(img, width, height):
     pad_height = max(0, int(height - resized_height))
     pad_width = max(0, int(width - resized_width))
 
-    padded_img = F.pad(resized_img, (pad_height, pad_width))
+    # pad on left and top of image
+    padded_img = F.pad(resized_img, (pad_width, 0, pad_height, 0), value=-1)
     return padded_img
 
 
@@ -799,13 +808,14 @@ def main():
     import pickle
     from pathlib import Path
 
-    with open("/raid/pablo/alohasim/obs.pkl", "rb") as f:
+    with open("../openpi/data/aloha_sim/obs.pkl", "rb") as f:
         obs = pickle.load(f)
 
-    with open("/raid/pablo/alohasim/action.pkl", "rb") as f:
-        action = pickle.load(f)
+    with open("../openpi/data/aloha_sim/action.pkl", "rb") as f:
+        pi_actions = torch.from_numpy(pickle.load(f)["actions"])
 
-    checkpoint_dir = Path("/raid/pablo/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+    # checkpoint_dir = Path("/raid/pablo/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+    checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
 
     with open(checkpoint_dir / "assets/norm_stats.json") as f:
         norm_stats = json.load(f)
@@ -838,20 +848,23 @@ def main():
         },
     }
 
-    cam_top = torch.from_numpy(obs["images"]["cam_high"]).unsqueeze(0) / 255.0 * 2.0 - 1.0
+    cam_top = torch.from_numpy(obs["images"]["cam_high"]).unsqueeze(0) / 255.0  # * 2.0 - 1.0
     cam_top = cam_top.to(dtype=torch.float32)
-    cam_top_mask = torch.ones(1, dtype=torch.bool)
+    # cam_top_mask = torch.ones(1, dtype=torch.bool)
 
     state = torch.from_numpy(obs["state"]).unsqueeze(0)
     state = state.to(dtype=torch.float32)
 
+    # cam_top = torch.cat([cam_top, cam_top], dim=0)
+    # state = torch.cat([state, state], dim=0)
+
     batch = {
         "observation.images.top": cam_top,
-        "observation.images.top_mask": cam_top_mask,
-        "observation.images.left_wrist": torch.ones_like(cam_top) * -1,
-        "observation.images.left_wrist_mask": torch.zeros_like(cam_top_mask),
-        "observation.images.right_wrist": torch.ones_like(cam_top) * -1,
-        "observation.images.right_wrist_mask": torch.zeros_like(cam_top_mask),
+        # "observation.images.top_mask": cam_top_mask,
+        # "observation.images.left_wrist": torch.ones_like(cam_top) * -1,
+        # "observation.images.left_wrist_mask": torch.zeros_like(cam_top_mask),
+        # "observation.images.right_wrist": torch.ones_like(cam_top) * -1,
+        # "observation.images.right_wrist_mask": torch.zeros_like(cam_top_mask),
         "observation.state": state,
     }
 
@@ -862,24 +875,45 @@ def main():
     cfg = PI0Config()
     cfg.parse_features_from_dataset(ds_meta=LeRobotDatasetMetadata("lerobot/aloha_sim_transfer_cube_human"))
 
-    cfg_img_left_wrist = PolicyFeature(
-        key="observation.images.left_wrist",
-        type=FeatureType.VISUAL,
-        shape=(3, 480, 640),
-        normalization_mode=NormalizationMode.IDENTITY,
-    )
-    cfg_img_right_wrist = PolicyFeature(
-        key="observation.images.right_wrist",
-        type=FeatureType.VISUAL,
-        shape=(3, 480, 640),
-        normalization_mode=NormalizationMode.IDENTITY,
-    )
-    cfg.image_features.append(cfg_img_left_wrist)
-    cfg.image_features.append(cfg_img_right_wrist)
+    # cfg_img_left_wrist = PolicyFeature(
+    #     key="observation.images.left_wrist",
+    #     type=FeatureType.VISUAL,
+    #     shape=(3, 480, 640),
+    #     normalization_mode=NormalizationMode.MIN_MAX,
+    # )
+    # cfg_img_right_wrist = PolicyFeature(
+    #     key="observation.images.right_wrist",
+    #     type=FeatureType.VISUAL,
+    #     shape=(3, 480, 640),
+    #     normalization_mode=NormalizationMode.MIN_MAX,
+    # )
+    # cfg.image_features.append(cfg_img_left_wrist)
+    # cfg.image_features.append(cfg_img_right_wrist)
 
     policy = PI0Policy(cfg, dataset_stats=dataset_stats)
+
+    policy.model.from_pretrained("../openpi/data/aloha_sim/pi0_projs_state_dict.pth")
+
+    policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
+
     policy.to(device=device)
-    policy.select_action(batch)
+
+    actions = []
+    for i in range(50):
+        action = policy.select_action(batch)
+        actions.append(action)
+
+    actions = torch.stack(actions, dim=1)
+    pi_actions = pi_actions.to(dtype=actions.dtype, device=actions.device)
+    pi_actions = pi_actions.unsqueeze(0)
+    print("actions")
+    display(actions)
+    print()
+    print("pi_actions")
+    display(pi_actions)
+    print("atol=3e-2", torch.allclose(actions, pi_actions, atol=3e-2))
+    print("atol=2e-2", torch.allclose(actions, pi_actions, atol=2e-2))
+    print("atol=1e-2", torch.allclose(actions, pi_actions, atol=1e-2))
 
 
 if __name__ == "__main__":
