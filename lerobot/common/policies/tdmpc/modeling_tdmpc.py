@@ -60,7 +60,7 @@ class TDMPCPolicy(PreTrainedPolicy):
           match our xarm environment.
     """
 
-    config_class: TDMPCConfig
+    config_class = TDMPCConfig
     name = "tdmpc"
 
     def __init__(self, config: TDMPCConfig, dataset_stats: dict[str, dict[str, Tensor]] | None = None):

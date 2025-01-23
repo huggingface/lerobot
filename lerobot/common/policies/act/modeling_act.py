@@ -44,7 +44,7 @@ class ACTPolicy(PreTrainedPolicy):
     Hardware (paper: https://arxiv.org/abs/2304.13705, code: https://github.com/tonyzhaozh/act)
     """
 
-    config_class: ACTConfig
+    config_class = ACTConfig
     name = "act"
 
     def __init__(

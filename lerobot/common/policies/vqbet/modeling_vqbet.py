@@ -41,7 +41,7 @@ class VQBeTPolicy(PreTrainedPolicy):
     VQ-BeT Policy as per "Behavior Generation with Latent Actions"
     """
 
-    config_class: VQBeTConfig
+    config_class = VQBeTConfig
     name = "vqbet"
 
     def __init__(
