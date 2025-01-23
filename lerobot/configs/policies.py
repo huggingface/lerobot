@@ -1,17 +1,17 @@
 import abc
 import os
-from copy import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Type, TypeVar
 
 import draccus
-from huggingface_hub import ModelHubMixin, hf_hub_download
+from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot.common.optim.optimizers import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
+from lerobot.common.utils.hub import HubMixin
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
 # Generic variable that is either PretrainedConfig or a subclass thereof
@@ -19,7 +19,7 @@ T = TypeVar("T", bound="PretrainedConfig")
 
 
 @dataclass
-class PretrainedConfig(draccus.ChoiceRegistry, ModelHubMixin, abc.ABC):
+class PretrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     """
     Base configuration class for policy models.
 
@@ -34,8 +34,6 @@ class PretrainedConfig(draccus.ChoiceRegistry, ModelHubMixin, abc.ABC):
             the original scale.
     """
 
-    type: str | None = ""
-
     n_obs_steps: int = 1
     normalization_mapping: dict[str, NormalizationMode] = field(default_factory=dict)
 
@@ -43,8 +41,11 @@ class PretrainedConfig(draccus.ChoiceRegistry, ModelHubMixin, abc.ABC):
     output_features: dict[str, PolicyFeature] = field(default_factory=dict)
 
     def __post_init__(self):
-        self.type = self.get_choice_name(self.__class__)
         self.pretrained_path = None
+
+    @property
+    def type(self) -> str:
+        return self.get_choice_name(self.__class__)
 
     @abc.abstractproperty
     def observation_delta_indices(self) -> list | None:
@@ -96,15 +97,13 @@ class PretrainedConfig(draccus.ChoiceRegistry, ModelHubMixin, abc.ABC):
         return None
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        to_save = copy(self)
-        del to_save.path
         with open(save_directory / CONFIG_NAME, "w") as f, draccus.config_type("json"):
             draccus.dump(self, f, indent=4)
 
     @classmethod
     def from_pretrained(
         cls: Type[T],
-        pretrained_model_name_or_path: str | Path,
+        pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
         resume_download: bool = None,
@@ -115,7 +114,7 @@ class PretrainedConfig(draccus.ChoiceRegistry, ModelHubMixin, abc.ABC):
         revision: str | None = None,
         **model_kwargs,
     ) -> T:
-        model_id = str(pretrained_model_name_or_path)
+        model_id = str(pretrained_name_or_path)
         config_file: str | None = None
         if Path(model_id).is_dir():
             if CONFIG_NAME in os.listdir(model_id):
@@ -141,5 +140,4 @@ class PretrainedConfig(draccus.ChoiceRegistry, ModelHubMixin, abc.ABC):
         # HACK: this is very ugly, ideally we'd like to be able to do that natively with draccus
         # something like --policy.path (in addition to --policy.type)
         cli_overrides = model_kwargs.pop("cli_overrides", [])
-        instance = draccus.parse(cls, config_file, args=[])
-        return draccus.parse(instance.__class__, config_file, args=cli_overrides)
+        return draccus.parse(cls, config_file, args=cli_overrides)
