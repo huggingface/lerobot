@@ -120,7 +120,7 @@ def make_policy(
     if cfg.pretrained_path:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
-        kwargs["pretrained_model_name_or_path"] = cfg.pretrained_path
+        kwargs["pretrained_name_or_path"] = cfg.pretrained_path
         policy = policy_cls.from_pretrained(**kwargs)
     else:
         # Make a fresh policy.
