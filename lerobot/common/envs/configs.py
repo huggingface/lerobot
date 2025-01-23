@@ -9,7 +9,6 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 
 @dataclass
 class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
-    n_envs: int | None = None
     task: str | None = None
     fps: int = 30
     features: dict[str, PolicyFeature] = field(default_factory=dict)

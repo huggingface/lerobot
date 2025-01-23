@@ -1,5 +1,5 @@
 import datetime as dt
-from dataclasses import Field, dataclass, fields
+from dataclasses import Field, dataclass, field, fields
 from pathlib import Path
 
 from lerobot.common import envs, policies  # noqa: F401
@@ -32,8 +32,8 @@ class EvalPipelineConfig:
     # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
     # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch
     # (useful for debugging). This argument is mutually exclusive with `--config`.
-    eval: EvalConfig
     env: envs.EnvConfig
+    eval: EvalConfig = field(default_factory=EvalConfig)
     policy: PretrainedConfig | None = None
     output_dir: Path | None = None
     job_name: str | None = None
