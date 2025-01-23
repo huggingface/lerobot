@@ -26,7 +26,7 @@ from transformers import AutoTokenizer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
-from lerobot.common.policies.pi0.modeling_pi0_paligemma import PI0Config, PI0PaliGemmaModel
+from lerobot.common.policies.pi0.modeling_pi0_paligemma import PI0PaliGemmaModel
 from lerobot.configs.policies import PolicyFeature
 from lerobot.configs.types import FeatureType, NormalizationMode
 
@@ -325,12 +325,12 @@ class PI0(nn.Module):
 
         # TODO: if language
         lang_emb = self.pi0_paligemma.paligemma.language_model.model.embed_tokens(batch["tokenized_prompt"])
-        lang_emb = lang_emb.to(dtype=self.torch_dtype)
+        # lang_emb = lang_emb.to(dtype=self.torch_dtype)
 
         # TODO: remove normalization?
         lang_emb_dim = lang_emb.shape[-1]
-        # lang_emb = lang_emb * math.sqrt(lang_emb_dim)
-        lang_emb = lang_emb * torch.tensor(lang_emb_dim**0.5, dtype=lang_emb.dtype)
+        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
+        # lang_emb = lang_emb * torch.tensor(lang_emb_dim**0.5, dtype=lang_emb.dtype)
 
         embs.append(lang_emb)
         pad_masks.append(batch["tokenized_prompt_mask"])
