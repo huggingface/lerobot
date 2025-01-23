@@ -112,7 +112,7 @@ class PretrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
-        **model_kwargs,
+        **policy_kwargs,
     ) -> T:
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
@@ -120,7 +120,7 @@ class PretrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             if CONFIG_NAME in os.listdir(model_id):
                 config_file = os.path.join(model_id, CONFIG_NAME)
             else:
-                print(f"config.json not found in {Path(model_id).resolve()}")
+                print(f"{CONFIG_NAME} not found in {Path(model_id).resolve()}")
         else:
             try:
                 config_file = hf_hub_download(
@@ -139,5 +139,5 @@ class PretrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
         # HACK: this is very ugly, ideally we'd like to be able to do that natively with draccus
         # something like --policy.path (in addition to --policy.type)
-        cli_overrides = model_kwargs.pop("cli_overrides", [])
+        cli_overrides = policy_kwargs.pop("cli_overrides", [])
         return draccus.parse(cls, config_file, args=cli_overrides)
