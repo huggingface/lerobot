@@ -34,7 +34,7 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.utils.utils import get_global_random_state
-from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode
 
 PRETRAINED_MODEL = "pretrained_model"
@@ -162,8 +162,7 @@ class Logger:
         register_features_types()
         policy.save_pretrained(save_dir)
         # Also save the full config for the env configuration.
-        with open(save_dir / TRAIN_CONFIG_NAME, "w") as f:
-            draccus.dump(self._cfg, f, indent=4)
+        self._cfg.save_pretrained(save_dir)
         if self._wandb and not self._cfg.wandb.disable_artifact:
             # note wandb artifact does not accept ":" or "/" in its name
             artifact = self._wandb.Artifact(wandb_artifact_name, type="model")
