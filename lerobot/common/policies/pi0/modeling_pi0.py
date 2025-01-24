@@ -618,14 +618,14 @@ def main():
     import pickle
     from pathlib import Path
 
-    with open("../openpi/data/aloha_sim/obs.pkl", "rb") as f:
+    with open("/raid/pablo/alohasim/obs.pkl", "rb") as f:
         obs = pickle.load(f)
 
-    with open("../openpi/data/aloha_sim/action.pkl", "rb") as f:
+    with open("/raid/pablo/alohasim/action.pkl", "rb") as f:
         pi_actions = torch.from_numpy(pickle.load(f)["actions"])
 
-    # checkpoint_dir = Path("/raid/pablo/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
-    checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+    checkpoint_dir = Path("/raid/pablo/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+    # checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
 
     with open(checkpoint_dir / "assets/norm_stats.json") as f:
         norm_stats = json.load(f)
@@ -668,10 +668,10 @@ def main():
     if make_double_bsize:
         cam_top = torch.cat([cam_top, cam_top], dim=0)
         state = torch.cat([state, state], dim=0)
-        noise = torch.load("../openpi/data/aloha_sim/noise_bsize_2.pth")
+        noise = torch.load("/raid/pablo/alohasim/noise_bsize_2.pkl")
         noise[1] = noise[0]
     else:
-        noise = torch.load("../openpi/data/aloha_sim/noise_2.pth")
+        noise = torch.load("/raid/pablo/alohasim/noise_2.pkl")
 
     if not isinstance(noise, torch.Tensor):
         noise = torch.from_numpy(noise)
@@ -713,7 +713,7 @@ def main():
     # policy.model.from_pretrained("../openpi/data/aloha_sim/pi0_projs_state_dict.pth")
     # policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
     # policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
-    policy.save_pretrained("outputs/exported/2025-01-23/16-01-01_aloha_pi0/last/pretrained_model")
+    policy.save_pretrained("/raid/pablo/pio_outputs/exported/2025-01-23/16-01-01_aloha_pi0/last/pretrained_model")
     policy.to(device=device)
 
     loss_dict = policy.forward(batch)
