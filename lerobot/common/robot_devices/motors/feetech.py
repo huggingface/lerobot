@@ -1,9 +1,11 @@
 import enum
+import json
 import logging
 import math
 import time
 import traceback
 from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
 import tqdm
@@ -292,6 +294,7 @@ class FeetechMotorsBus:
         self.port_handler = None
         self.packet_handler = None
         self.calibration = None
+        self.calibration_path = None
         self.is_connected = False
         self.group_readers = {}
         self.group_writers = {}
@@ -392,8 +395,9 @@ class FeetechMotorsBus:
     def motor_indices(self) -> list[int]:
         return [idx for idx, _ in self.motors.values()]
 
-    def set_calibration(self, calibration: dict[str, list]):
+    def set_calibration(self, calibration: dict[str, list], calibration_file: Path = None):
         self.calibration = calibration
+        self.calibration_file = calibration_file
 
     def apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
         """This function apply the calibration, automatically detects out of range errors for motors values and attempt to correct.
@@ -578,6 +582,16 @@ class FeetechMotorsBus:
 
                 # A full turn corresponds to 360 degrees but also to 4096 steps for a motor resolution of 4096.
                 self.calibration["homing_offset"][calib_idx] += resolution * factor
+
+                # Once autocorrect calibration is done, also store the new homing_offset in yaml
+                if self.calibration_file is not None:
+                    calibration = self.calibration
+                    print(
+                        f"Adjusting and storing homing calibration on axis '{calib_idx}' after triggering autocorrect_calibration"
+                    )
+                    self.calibration_file.parent.mkdir(parents=True, exist_ok=True)
+                    with open(self.calibration_file, "w") as f:
+                        json.dump(calibration, f)
 
     def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         """Inverse of `apply_calibration`."""

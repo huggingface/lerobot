@@ -384,14 +384,14 @@ class ManipulatorRobot:
                 with open(arm_calib_path, "w") as f:
                     json.dump(calibration, f)
 
-            return calibration
+            return calibration, arm_calib_path
 
         for name, arm in self.follower_arms.items():
-            calibration = load_or_run_calibration_(name, arm, "follower")
-            arm.set_calibration(calibration)
+            calibration, arm_calib_path = load_or_run_calibration_(name, arm, "follower")
+            arm.set_calibration(calibration, calibration_file=arm_calib_path)
         for name, arm in self.leader_arms.items():
-            calibration = load_or_run_calibration_(name, arm, "leader")
-            arm.set_calibration(calibration)
+            calibration, arm_calib_path = load_or_run_calibration_(name, arm, "leader")
+            arm.set_calibration(calibration, calibration_file=arm_calib_path)
 
     def set_koch_robot_preset(self):
         def set_operating_mode_(arm):
