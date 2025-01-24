@@ -1,7 +1,9 @@
 from dataclasses import dataclass, field
 
-from lerobot.common.optim.optimizers import OptimizerConfig
-from lerobot.common.optim.schedulers import LRSchedulerConfig
+from lerobot.common.optim.optimizers import AdamWConfig
+from lerobot.common.optim.schedulers import (
+    CosineDecayWithWarmupSchedulerConfig,
+)
 from lerobot.configs.policies import PretrainedConfig
 from lerobot.configs.types import NormalizationMode
 
@@ -30,6 +32,16 @@ class PI0Config(PretrainedConfig):
     action_expert_projection_lora: bool | None = None
     action_expert_projection_kv_lora: bool | None = None
 
+    # Training presets
+    optimizer_lr: float = 2.5e-5
+    optimizer_betas: tuple = (0.9, 0.95)
+    optimizer_eps: float = 1e-8
+    optimizer_weight_decay: float = 1e-10
+
+    scheduler_warmup_steps: int = 1_000
+    scheduler_decay_steps: int = 30_000
+    scheduler_decay_lr: int = 2.5e-6
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MIN_MAX,
@@ -56,6 +68,22 @@ class PI0Config(PretrainedConfig):
         if not self.image_features and not self.env_state_feature:
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
+    def get_optimizer_preset(self) -> AdamWConfig:
+        return AdamWConfig(
+            lr=self.optimizer_lr,
+            betas=self.optimizer_betas,
+            eps=self.optimizer_eps,
+            weight_decay=self.optimizer_weight_decay,
+        )
+
+    def get_scheduler_preset(self):
+        return CosineDecayWithWarmupSchedulerConfig(
+            peak_lr=self.optimizer_lr,
+            decay_lr=self.scheduler_decay_lr,
+            num_warmup_steps=self.scheduler_warmup_steps,
+            num_decay_steps=self.scheduler_decay_steps,
+        )
+
     @property
     def observation_delta_indices(self) -> None:
         return None
@@ -67,12 +95,3 @@ class PI0Config(PretrainedConfig):
     @property
     def reward_delta_indices(self) -> None:
         return None
-
-    def get_optimizer_preset(self) -> OptimizerConfig:
-        raise NotImplementedError
-
-    def get_scheduler_preset(self) -> LRSchedulerConfig:
-        raise NotImplementedError
-
-    def validate_features(self) -> None:
-        raise NotImplementedError

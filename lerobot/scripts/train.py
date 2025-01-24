@@ -86,6 +86,7 @@ def update_policy(
 
     optimizer.zero_grad()
 
+    # Step through pytorch scheduler at every batch instead of epoch
     if lr_scheduler is not None:
         lr_scheduler.step()
 

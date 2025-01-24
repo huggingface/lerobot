@@ -101,8 +101,8 @@ class PI0Policy(
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     def get_optim_params(self) -> dict:
-        # return self.parameters()
-        raise NotImplementedError()
+        return self.parameters()
+        # raise NotImplementedError()
 
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor], noise=None) -> Tensor:
@@ -115,16 +115,11 @@ class PI0Policy(
         self.eval()
 
         batch = self.normalize_inputs(batch)
-        # if self.config.image_features:
-        #     batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-        #     batch["observation.images"] = torch.stack(
-        #         [batch[ft.key] for ft in self.config.image_features], dim=-4
-        #     )
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
-            actions = self.model.forward(batch, noise=noise)[:, : self.config.n_action_steps]
+            actions = self.model.inference(batch, noise=noise)[:, : self.config.n_action_steps]
 
             actions = self.unnormalize_outputs({"action": actions})["action"]
 
@@ -134,7 +129,10 @@ class PI0Policy(
         return self._action_queue.popleft()
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        raise NotImplementedError()
+        batch = self.normalize_inputs(batch)
+        batch = self.normalize_targets(batch)
+        loss_dict = self.model.forward(batch)
+        return loss_dict
 
 
 def create_sinusoidal_pos_embedding(
@@ -144,17 +142,17 @@ def create_sinusoidal_pos_embedding(
     if dimension % 2 != 0:
         raise ValueError(f"dimension ({dimension}) must be divisible by 2")
 
+    if time.ndim != 1:
+        raise ValueError("The time tensor is expected to be of shape `batch_size`.")
+
     fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=torch.float64, device=device)
     period = min_period * (max_period / min_period) ** fraction
 
     # Compute the outer product
     scaling_factor = 1.0 / period * 2 * math.pi
-    sin_input = scaling_factor * time
-    pos_emb = torch.cat([torch.sin(sin_input), torch.cos(sin_input)])
+    sin_input = scaling_factor[None, :] * time[:, None]
+    pos_emb = torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
     return pos_emb
-
-
-# TODO: for training look at preprocess_observation
 
 
 class PI0(nn.Module):
@@ -174,7 +172,111 @@ class PI0(nn.Module):
         self._rng = torch.Generator()
         self._rng.manual_seed(42)  # Set an initial seed
 
-    def forward(
+    def forward(self, batch: dict[str, Tensor], noise=None):
+        for ft in self.config.image_features:
+            if ft.key not in batch:
+                continue
+            img = resize_with_pad(batch[ft.key], 224, 224)
+            bsize = batch[ft.key].shape[0]
+            device = batch[ft.key].device
+            mask = torch.ones(bsize, dtype=torch.bool, device=device)
+            batch[ft.key] = img
+            batch[f"{ft.key}_mask"] = mask
+
+        # TODO: remove HARDCODE
+        for ft in self.config.image_features:
+            if ft.key in batch:
+                continue
+            batch[ft.key] = torch.ones_like(img) * -1
+            batch[f"{ft.key}_mask"] = torch.zeros_like(mask)
+
+        skey = self.config.robot_state_feature.key
+        batch[skey] = pad_vector(batch[skey], self.config.state_dim)
+
+        akey = self.config.action_feature.key
+        actions = batch[akey]
+        actions = pad_vector(actions, self.config.action_dim)
+
+        bsize = batch[skey].shape[0]
+        device = batch[skey].device
+
+        # tokenizer works on lists
+        # PaliGemma prompt has to end with a new line
+        max_length = 48
+        tokenized_prompt = self.tokenizer.__call__(
+            "Transfer cube\n",
+            padding="max_length",
+            padding_side="right",
+            max_length=max_length,
+            return_tensors="pt",
+        )
+
+        tokenized_prompt["attention_mask"] = tokenized_prompt["attention_mask"].type(dtype=torch.bool)
+
+        batch["tokenized_prompt"] = tokenized_prompt["input_ids"].expand(bsize, max_length).to(device=device)
+        batch["tokenized_prompt_mask"] = (
+            tokenized_prompt["attention_mask"].expand(bsize, max_length).to(device=device)
+        )
+
+        if noise is None:
+            noise = torch.normal(
+                mean=0.0,
+                std=1.0,
+                size=actions.shape,
+                dtype=torch.float32,
+                device=device,
+            )
+        else:
+            noise = noise.to(dtype=torch.float32, device=device)
+
+        time_beta = torch.distributions.Beta(1.5, 1).sample((bsize,))
+
+        # noise = torch.load("../openpi/data/aloha_sim/noise_train.pth")
+        # noise = torch.from_numpy(noise).to(dtype=torch.float32, device=device)
+        # time_beta = torch.load("../openpi/data/aloha_sim/beta_time.pth")
+        # time_beta = torch.from_numpy(time_beta).to(dtype=torch.float32, device=device)
+
+        time = time_beta * 0.999 + 0.001
+        time = time.to(dtype=torch.float32, device=device)
+        time_expanded = time[..., None, None]
+
+        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        u_t = noise - actions
+
+        # one big forward pass of prefix + suffix at once
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(batch)
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(batch, x_t, time)
+
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+        position_ids = torch.cumsum(pad_masks, dim=1) - 1
+
+        (_, suffix_out), _ = self.pi0_paligemma.forward(
+            input_ids=None,
+            attention_mask=att_2d_masks,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, suffix_embs],
+            use_cache=False,
+            fill_kv_cache=False,
+        )
+        suffix_out = suffix_out[:, -self.config.n_action_steps :]
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        v_t = self.pi0_paligemma.action_out_proj(suffix_out)
+
+        losses = F.mse_loss(u_t, v_t, reduction="none")
+
+        if "action_is_pad" in batch:
+            in_episode_bound = ~batch["action_is_pad"]
+            losses = losses * in_episode_bound.unsqueeze(-1)
+
+        loss = losses.mean()
+
+        loss_dict = {"l2_loss": loss.item(), "loss": loss}
+        return loss_dict
+
+    def inference(
         self, batch: dict[str, Tensor], noise=None
     ) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
         for ft in self.config.image_features:
@@ -193,10 +295,6 @@ class PI0(nn.Module):
                 continue
             batch[ft.key] = torch.ones_like(img) * -1
             batch[f"{ft.key}_mask"] = torch.zeros_like(mask)
-
-        akey = self.config.action_feature.key
-        if akey in batch:
-            batch[akey] = pad_vector(batch[akey], self.config.action_dim)
 
         skey = self.config.robot_state_feature.key
         batch[skey] = pad_vector(batch[skey], self.config.state_dim)
@@ -275,6 +373,7 @@ class PI0(nn.Module):
         time = torch.tensor(time, dtype=torch.float32, device=device)
         while time >= -dt / 2:
             # time_batched = x_t[None, ...]
+            expanded_time = time.expand(bsize)
             _, suffix_out = self.sample_step(
                 batch,
                 prefix_embs,
@@ -283,7 +382,7 @@ class PI0(nn.Module):
                 past_key_values,
                 fill_kv_cache,
                 x_t,
-                time,
+                expanded_time,
             )
             suffix_out = suffix_out[:, -self.config.n_action_steps :]
             suffix_out = suffix_out.to(dtype=torch.float32)
@@ -303,11 +402,12 @@ class PI0(nn.Module):
         # TODO: remove for loop
         for ft in self.config.image_features:
             img_key = ft.key
-            # TODO: when do we cast to bfloat16? probably after first paligemma layer with autocast?
-            img_emb = self.pi0_paligemma.paligemma.get_image_features(batch[img_key])
+            # no finetuning of siglip
+            # TODO: requires_grad = False for paligemma siglip to g
+            with torch.no_grad():
+                img_emb = self.pi0_paligemma.paligemma.get_image_features(batch[img_key])
             img_emb = img_emb.to(dtype=self.torch_dtype)
 
-            # TODO: remove normalization?
             img_emb_dim = img_emb.shape[-1]
             # img_emb = img_emb * math.sqrt(img_emb_dim)
             img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
@@ -374,12 +474,11 @@ class PI0(nn.Module):
             timestep, width, min_period=4e-3, max_period=4.0, device=device
         )
         time_emb = time_emb.type(dtype=dtype)
-        # time_emb = posemb_sincos(timestep, action_expert_config.width, min_period=4e-3, max_period=4.0)
 
         # mix timestep + action information using an MLP
         action_emb = self.pi0_paligemma.action_in_proj(noisy_actions)
 
-        time_emb = time_emb[None, :].expand(bsize, self.config.n_action_steps, width)
+        time_emb = time_emb[:, None, :].expand_as(action_emb)
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
         # TODO (molbap): should be moved to the model backbone methods
 
@@ -501,13 +600,16 @@ def resize_with_pad(img, width, height):
 
 
 def pad_vector(vector, new_dim):
-    if vector.ndim != 2:
-        raise ValueError("Must be batched.")
-    if vector.shape[1] == new_dim:
+    """Can be (batch_size x sequence_length x features_dimension)
+    or (batch_size x features_dimension)
+    """
+    if vector.shape[-1] == new_dim:
         return vector
-    bsize, dim = vector.shape
-    new_vector = torch.zeros(bsize, new_dim, dtype=vector.dtype, device=vector.device)
-    new_vector[:, :dim] = vector
+    shape = list(vector.shape)
+    current_dim = shape[-1]
+    shape[-1] = new_dim
+    new_vector = torch.zeros(*shape, dtype=vector.dtype, device=vector.device)
+    new_vector[..., :current_dim] = vector
     return new_vector
 
 
@@ -559,12 +661,15 @@ def main():
     state = torch.from_numpy(obs["state"]).unsqueeze(0)
     state = state.to(dtype=torch.float32)
 
+    gt_action = pi_actions.to(dtype=torch.float32)
+
     # Add bsize=2
     make_double_bsize = False
     if make_double_bsize:
         cam_top = torch.cat([cam_top, cam_top], dim=0)
         state = torch.cat([state, state], dim=0)
         noise = torch.load("../openpi/data/aloha_sim/noise_bsize_2.pth")
+        noise[1] = noise[0]
     else:
         noise = torch.load("../openpi/data/aloha_sim/noise_2.pth")
 
@@ -579,6 +684,7 @@ def main():
         # "observation.images.right_wrist": torch.ones_like(cam_top) * -1,
         # "observation.images.right_wrist_mask": torch.zeros_like(cam_top_mask),
         "observation.state": state,
+        "action": gt_action.unsqueeze(0),
     }
 
     for k in batch:
@@ -609,6 +715,9 @@ def main():
     # policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
     policy.save_pretrained("outputs/exported/2025-01-23/16-01-01_aloha_pi0/last/pretrained_model")
     policy.to(device=device)
+
+    loss_dict = policy.forward(batch)
+    loss_dict["loss"].backward()
 
     actions = []
     for i in range(50):
