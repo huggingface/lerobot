@@ -26,9 +26,8 @@ test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-eval
+	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train-with-online
 
-# ${MAKE} DEVICE=$(DEVICE) test-default-ete-eval
-# ${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train-with-online
 # ${MAKE} DEVICE=$(DEVICE) test-act-pusht-tutorial
 
 test-act-ete-train:
