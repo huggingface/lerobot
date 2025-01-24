@@ -20,13 +20,13 @@ from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamConfig
 from lerobot.common.optim.schedulers import VQBeTSchedulerConfig
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 
 
-@PretrainedConfig.register_subclass("vqbet")
+@PreTrainedConfig.register_subclass("vqbet")
 @dataclass
-class VQBeTConfig(PretrainedConfig):
+class VQBeTConfig(PreTrainedConfig):
     """Configuration class for VQ-BeT.
 
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.
@@ -171,21 +171,20 @@ class VQBeTConfig(PretrainedConfig):
             raise ValueError("You must provide only one image among the inputs.")
 
         if self.crop_shape is not None:
-            for image_ft in self.image_features:
+            for key, image_ft in self.image_features.items():
                 if self.crop_shape[0] > image_ft.shape[1] or self.crop_shape[1] > image_ft.shape[2]:
                     raise ValueError(
                         f"`crop_shape` should fit within the images shapes. Got {self.crop_shape} "
                         f"for `crop_shape` and {image_ft.shape} for "
-                        f"`{image_ft.key}`."
+                        f"`{key}`."
                     )
 
         # Check that all input images have the same shape.
-        first_image_ft = next(iter(self.image_features))
-        for image_ft in self.image_features:
+        first_image_key, first_image_ft = next(iter(self.image_features.items()))
+        for key, image_ft in self.image_features.items():
             if image_ft.shape != first_image_ft.shape:
                 raise ValueError(
-                    f"`{image_ft.key}` does not match `{first_image_ft.key}`, but we "
-                    "expect all image shapes to match."
+                    f"`{key}` does not match `{first_image_key}`, but we " "expect all image shapes to match."
                 )
 
     @property

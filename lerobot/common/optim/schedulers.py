@@ -20,15 +20,6 @@ class LRSchedulerConfig(draccus.ChoiceRegistry, abc.ABC):
         raise NotImplementedError
 
 
-@LRSchedulerConfig.register_subclass("none")
-@dataclass
-class NoneSchedulerConfig(LRSchedulerConfig):
-    num_warmup_steps: int = 0
-
-    def build(self, optimizer: Optimizer, num_training_steps: int) -> None:
-        return None
-
-
 @LRSchedulerConfig.register_subclass("diffuser")
 @dataclass
 class DiffuserSchedulerConfig(LRSchedulerConfig):

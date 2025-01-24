@@ -66,7 +66,6 @@ test-act-ete-eval:
 		--env.episode_length=5 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
-		--eval.episode_length=8 \
 		--device=$(DEVICE)
 
 test-diffusion-ete-train:
@@ -99,7 +98,6 @@ test-diffusion-ete-eval:
 		--env.episode_length=5 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
-		--eval.episode_length=8 \
 		--device=$(DEVICE)
 
 test-tdmpc-ete-train:
@@ -129,10 +127,8 @@ test-tdmpc-ete-eval:
 		--env.type=xarm \
 		--env.episode_length=5 \
 		--env.task=XarmLift-v0 \
-		--env.episode_length=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
-		--eval.episode_length=8 \
 		--device=$(DEVICE)
 
 # FIXME: currently broken

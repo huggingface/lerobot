@@ -35,16 +35,16 @@ from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.optim.factory import load_training_state, make_optimizer_and_scheduler
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.policies.policy_protocol import PolicyWithUpdate
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.utils import (
     format_big_number,
     get_safe_torch_device,
+    has_method,
     init_logging,
     set_global_seed,
 )
 from lerobot.configs import parser
-from lerobot.configs.training import TrainPipelineConfig
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
 
 
@@ -89,7 +89,7 @@ def update_policy(
     if lr_scheduler is not None:
         lr_scheduler.step()
 
-    if isinstance(policy, PolicyWithUpdate):
+    if has_method(policy, "update"):
         # To possibly update an internal buffer (for instance an Exponential Moving Average like in TDMPC).
         policy.update()
 
@@ -180,7 +180,7 @@ def log_eval_info(logger, info, step, cfg, dataset, is_online):
     logger.log_dict(info, step, mode="eval")
 
 
-@parser.wrap(pathable_args=["policy"])
+@parser.wrap()
 def train(cfg: TrainPipelineConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))

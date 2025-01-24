@@ -18,16 +18,19 @@ import gymnasium as gym
 from torch import nn
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.common.datasets.utils import dataset_to_policy_features
 from lerobot.common.envs.configs import EnvConfig
+from lerobot.common.envs.utils import env_to_policy_features
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.common.policies.policy_protocol import Policy
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import FeatureType
 
 
-def get_policy_class(name: str) -> Policy:
+def get_policy_class(name: str) -> PreTrainedPolicy:
     """Get the policy's class and config class given a name (matching the policy class' `name` attribute)."""
     if name == "tdmpc":
         from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
@@ -49,7 +52,7 @@ def get_policy_class(name: str) -> Policy:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
 
-def make_policy_config(policy_type: str, **kwargs) -> PretrainedConfig:
+def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     if policy_type == "tdmpc":
         return TDMPCConfig(**kwargs)
     elif policy_type == "diffusion":
@@ -63,12 +66,12 @@ def make_policy_config(policy_type: str, **kwargs) -> PretrainedConfig:
 
 
 def make_policy(
-    cfg: PretrainedConfig,
+    cfg: PreTrainedConfig,
     device: str,
     ds_meta: LeRobotDatasetMetadata | None = None,
     env: gym.Env | None = None,
     env_cfg: EnvConfig | None = None,
-) -> Policy:
+) -> PreTrainedPolicy:
     """Make an instance of a policy class.
 
     Args:
@@ -100,17 +103,24 @@ def make_policy(
 
     kwargs = {}
     if ds_meta is not None:
-        cfg.parse_features_from_dataset(ds_meta)
+        features = dataset_to_policy_features(ds_meta.features)
         kwargs["dataset_stats"] = ds_meta.stats
     else:
-        cfg.parse_features_from_env(env, env_cfg)
+        if not cfg.pretrained_path or not cfg.output_features or not cfg.input_features:
+            raise NotImplementedError(
+                "The policy must have already existing features in its config when initializing it "
+                "with an environment."
+            )
+        features = env_to_policy_features(env_cfg)
 
+    cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
 
     if cfg.pretrained_path:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
-        kwargs["pretrained_model_name_or_path"] = cfg.pretrained_path
+        kwargs["pretrained_name_or_path"] = cfg.pretrained_path
         policy = policy_cls.from_pretrained(**kwargs)
     else:
         # Make a fresh policy.
