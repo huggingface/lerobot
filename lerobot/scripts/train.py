@@ -354,18 +354,18 @@ def train(cfg: TrainPipelineConfig):
         online_buffer_path,
         data_spec={
             **{
-                ft.key: {"shape": ft.shape, "dtype": np.dtype("float32")}
-                for ft in policy.config.input_features
+                key: {"shape": ft.shape, "dtype": np.dtype("float32")}
+                for key, ft in policy.config.input_features.items()
             },
             **{
-                ft.key: {"shape": ft.shape, "dtype": np.dtype("float32")}
-                for ft in policy.config.output_features
+                key: {"shape": ft.shape, "dtype": np.dtype("float32")}
+                for key, ft in policy.config.output_features.items()
             },
             "next.reward": {"shape": (), "dtype": np.dtype("float32")},
             "next.done": {"shape": (), "dtype": np.dtype("?")},
             "task_index": {"shape": (), "dtype": np.dtype("int64")},
-            # Removed next.success, since it's not used anywhere for now and offline dataset doesnt have it
-            # "next.success": {"shape": (), "dtype": np.dtype("?")},
+            # FIXME: 'next.success' is expected by pusht env but not xarm
+            "next.success": {"shape": (), "dtype": np.dtype("?")},
         },
         buffer_capacity=cfg.online.buffer_capacity,
         fps=online_env.unwrapped.metadata["render_fps"],
