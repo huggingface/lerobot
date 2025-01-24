@@ -79,9 +79,9 @@ class JoystickInterface:
         self.latest_data["buttons"] = [False, False, False]
 
         # Start a process to continuously read Joystick state
-        self.process = multiprocessing.Process(target=self._read_joystick)
-        self.process.daemon = True
-        self.process.start()
+        self._process = multiprocessing.Process(target=self._read_joystick)
+        self._process.daemon = True
+        self._process.start()
 
 
     def _read_joystick(self):
