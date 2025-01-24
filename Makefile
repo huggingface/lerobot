@@ -28,8 +28,6 @@ test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train-with-online
 
-# ${MAKE} DEVICE=$(DEVICE) test-act-pusht-tutorial
-
 test-act-ete-train:
 	python lerobot/scripts/train.py \
 		--policy.type=act \
@@ -155,22 +153,3 @@ test-tdmpc-ete-train-with-online:
 		--eval.batch_size=1 \
 		--device=$(DEVICE) \
 		--output_dir=tests/outputs/tdmpc_online/
-
-# TODO: do we keep this one?
-# test-act-pusht-tutorial:
-# 	cp examples/advanced/1_train_act_pusht/act_pusht.yaml lerobot/configs/policy/created_by_Makefile.yaml
-# 	python lerobot/scripts/train.py \
-# 		policy=created_by_Makefile.yaml \
-# 		env=pusht \
-# 		wandb.enable=False \
-# 		training.offline_steps=2 \
-# 		eval.n_episodes=1 \
-# 		eval.batch_size=1 \
-# 		env.episode_length=2 \
-# 		device=$(DEVICE) \
-# 		training.save_model=true \
-# 		training.save_freq=2 \
-# 		training.batch_size=2 \
-# 		training.image_transforms.enable=true \
-# 		hydra.run.dir=tests/outputs/act_pusht/
-# 	rm lerobot/configs/policy/created_by_Makefile.yaml
