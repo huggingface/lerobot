@@ -37,8 +37,8 @@ def create_stats_buffers(
     stats_buffers = {}
 
     for key, ft in features.items():
-        norm_mode = norm_map.get(ft.type, None)
-        if norm_mode is None:
+        norm_mode = norm_map.get(ft.type, NormalizationMode.IDENTITY)
+        if norm_mode is NormalizationMode.IDENTITY:
             continue
 
         assert isinstance(norm_mode, NormalizationMode)
@@ -140,8 +140,8 @@ class Normalize(nn.Module):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = dict(batch)  # shallow copy avoids mutating the input batch
         for key, ft in self.features.items():
-            norm_mode = self.norm_map.get(ft.type, None)
-            if norm_mode is None:
+            norm_mode = self.norm_map.get(ft.type, NormalizationMode.IDENTITY)
+            if norm_mode is NormalizationMode.IDENTITY:
                 continue
 
             buffer = getattr(self, "buffer_" + key.replace(".", "_"))
@@ -210,7 +210,10 @@ class Unnormalize(nn.Module):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = dict(batch)  # shallow copy avoids mutating the input batch
         for key, ft in self.features.items():
-            norm_mode = self.norm_map.get(ft.type, None)
+            norm_mode = self.norm_map.get(ft.type, NormalizationMode.IDENTITY)
+            if norm_mode is NormalizationMode.IDENTITY:
+                continue
+
             buffer = getattr(self, "buffer_" + key.replace(".", "_"))
 
             if norm_mode is NormalizationMode.MEAN_STD:

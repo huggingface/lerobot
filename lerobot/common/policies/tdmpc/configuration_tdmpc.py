@@ -112,11 +112,11 @@ class TDMPCConfig(PreTrainedConfig):
     horizon: int = 5
     n_action_steps: int = 1
 
-    normalization_mapping: dict[str, NormalizationMode | None] = field(
+    normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "VISUAL": None,
-            "STATE": None,
-            "ENV": None,
+            "VISUAL": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.IDENTITY,
+            "ENV": NormalizationMode.IDENTITY,
             "ACTION": NormalizationMode.MIN_MAX,
         }
     )

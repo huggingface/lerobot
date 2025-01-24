@@ -99,6 +99,7 @@ class PushtEnv(EnvConfig):
             "render_mode": self.render_mode,
             "visualization_width": self.visualization_width,
             "visualization_height": self.visualization_height,
+            "max_episode_steps": self.episode_length,
         }
 
 
@@ -137,4 +138,5 @@ class XarmEnv(EnvConfig):
             "render_mode": self.render_mode,
             "visualization_width": self.visualization_width,
             "visualization_height": self.visualization_height,
+            "max_episode_steps": self.episode_length,
         }

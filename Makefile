@@ -131,13 +131,12 @@ test-tdmpc-ete-eval:
 		--eval.batch_size=1 \
 		--device=$(DEVICE)
 
-# FIXME: currently broken
-# test-tdmpc-ete-train-with-online:
-# 	python lerobot/scripts/train.py \
+test-tdmpc-ete-train-with-online:
+	python lerobot/scripts/train.py \
 		--policy.type=tdmpc \
 		--env.type=pusht \
 		--env.obs_type=environment_state_agent_pos \
-		--env.episode_length=10 \
+		--env.episode_length=5 \
 		--dataset.repo_id=lerobot/pusht_keypoints \
 		--dataset.image_transforms.enable=true \
 		--dataset.episodes='[0]' \
@@ -147,7 +146,7 @@ test-tdmpc-ete-eval:
 		--online.rollout_n_episodes=2 \
 		--online.rollout_batch_size=2 \
 		--online.steps_between_rollouts=10 \
-		--online.buffer_capacity=15 \
+		--online.buffer_capacity=1000 \
 		--online.env_seed=10000 \
 		--save_checkpoint=false \
 		--save_freq=10 \
