@@ -72,21 +72,14 @@ class PI0Policy(
         # config.validate_features()
         self.config = config
 
-        # TODO: remove hardcode
-        cfg_img_left_wrist = PolicyFeature(
-            key="observation.images.left_wrist",
-            type=FeatureType.VISUAL,
-            shape=(3, 480, 640),
-            normalization_mode=NormalizationMode.IDENTITY,
-        )
-        cfg_img_right_wrist = PolicyFeature(
-            key="observation.images.right_wrist",
-            type=FeatureType.VISUAL,
-            shape=(3, 480, 640),
-            normalization_mode=NormalizationMode.IDENTITY,
-        )
-        self.config.image_features.append(cfg_img_left_wrist)
-        self.config.image_features.append(cfg_img_right_wrist)
+        for i in range(self.config.empty_cameras):
+            empty_camera = PolicyFeature(
+                key=f"observation.images.empty_camera_{i}",
+                type=FeatureType.VISUAL,
+                shape=(3, 480, 640),
+                normalization_mode=NormalizationMode.IDENTITY,
+            )
+            self.config.image_features.append(empty_camera)
 
         self.normalize_inputs = Normalize(config.input_features, dataset_stats)
         self.normalize_targets = Normalize(config.output_features, dataset_stats)
@@ -164,6 +157,16 @@ class PI0(nn.Module):
         #     "Tinkering/frostpunklab_23012024", torch_dtype="bfloat16"
         # )
         self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("Tinkering/frostpunklab_full_float32")
+        # change important stuff in bf16
+        params_to_change_dtype = [
+            "language_model.model.layers",
+            "gemma_expert.model.layers",
+            "vision_tower",
+            "multi_modal",
+        ]
+        for name, param in self.pi0_paligemma.named_parameters():
+            if any([selector in name for selector in params_to_change_dtype]):
+                param.data = param.data.to(dtype=torch.bfloat16)
 
         self.pi0_paligemma.eval()
         # pos_emb = create_sinusoidal_pos_embedding(n_action_steps, width, min_period=4e-3, max_period=4.0)
@@ -172,11 +175,14 @@ class PI0(nn.Module):
         self._rng = torch.Generator()
         self._rng.manual_seed(42)  # Set an initial seed
 
-    def forward(self, batch: dict[str, Tensor], noise=None):
+    def prepare_images(self, batch):
         for ft in self.config.image_features:
             if ft.key not in batch:
                 continue
-            img = resize_with_pad(batch[ft.key], 224, 224)
+
+            if self.config.resize_imgs_with_padding is not None:
+                img = resize_with_pad(batch[ft.key], *self.config.resize_imgs_with_padding)
+
             bsize = batch[ft.key].shape[0]
             device = batch[ft.key].device
             mask = torch.ones(bsize, dtype=torch.bool, device=device)
@@ -189,17 +195,9 @@ class PI0(nn.Module):
                 continue
             batch[ft.key] = torch.ones_like(img) * -1
             batch[f"{ft.key}_mask"] = torch.zeros_like(mask)
+        return batch
 
-        skey = self.config.robot_state_feature.key
-        batch[skey] = pad_vector(batch[skey], self.config.state_dim)
-
-        akey = self.config.action_feature.key
-        actions = batch[akey]
-        actions = pad_vector(actions, self.config.action_dim)
-
-        bsize = batch[skey].shape[0]
-        device = batch[skey].device
-
+    def prepare_language(self, batch):
         # tokenizer works on lists
         # PaliGemma prompt has to end with a new line
         max_length = 48
@@ -213,10 +211,35 @@ class PI0(nn.Module):
 
         tokenized_prompt["attention_mask"] = tokenized_prompt["attention_mask"].type(dtype=torch.bool)
 
+        skey = self.config.robot_state_feature.key
+        bsize = batch[skey].shape[0]
+        device = batch[skey].device
+
         batch["tokenized_prompt"] = tokenized_prompt["input_ids"].expand(bsize, max_length).to(device=device)
         batch["tokenized_prompt_mask"] = (
             tokenized_prompt["attention_mask"].expand(bsize, max_length).to(device=device)
         )
+        return batch
+
+    def prepare_state(self, batch):
+        skey = self.config.robot_state_feature.key
+        batch[skey] = pad_vector(batch[skey], self.config.state_dim)
+        return batch
+
+    def prepare_action(self, batch):
+        akey = self.config.action_feature.key
+        actions = batch[akey]
+        actions = pad_vector(actions, self.config.action_dim)
+        return actions
+
+    def forward(self, batch: dict[str, Tensor], noise=None):
+        batch = self.prepare_images(batch)
+        batch = self.prepare_state(batch)
+        batch = self.prepare_language(batch)
+
+        actions = self.prepare_action(batch)
+        device = actions.device
+        bsize = actions.shape[0]
 
         if noise is None:
             noise = torch.normal(
@@ -231,10 +254,11 @@ class PI0(nn.Module):
 
         time_beta = torch.distributions.Beta(1.5, 1).sample((bsize,))
 
-        # noise = torch.load("../openpi/data/aloha_sim/noise_train.pth")
-        # noise = torch.from_numpy(noise).to(dtype=torch.float32, device=device)
-        # time_beta = torch.load("../openpi/data/aloha_sim/beta_time.pth")
-        # time_beta = torch.from_numpy(time_beta).to(dtype=torch.float32, device=device)
+        if self.config.fix_noise:
+            noise = torch.load("../openpi/data/aloha_sim/noise_train.pth")
+            noise = torch.from_numpy(noise).to(dtype=torch.float32, device=device)
+            time_beta = torch.load("../openpi/data/aloha_sim/beta_time.pth")
+            time_beta = torch.from_numpy(time_beta).to(dtype=torch.float32, device=device)
 
         time = time_beta * 0.999 + 0.001
         time = time.to(dtype=torch.float32, device=device)
@@ -279,48 +303,10 @@ class PI0(nn.Module):
     def inference(
         self, batch: dict[str, Tensor], noise=None
     ) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
-        for ft in self.config.image_features:
-            if ft.key not in batch:
-                continue
-            img = resize_with_pad(batch[ft.key], 224, 224)
-            bsize = batch[ft.key].shape[0]
-            device = batch[ft.key].device
-            mask = torch.ones(bsize, dtype=torch.bool, device=device)
-            batch[ft.key] = img
-            batch[f"{ft.key}_mask"] = mask
-
-        # TODO: remove HARDCODE
-        for ft in self.config.image_features:
-            if ft.key in batch:
-                continue
-            batch[ft.key] = torch.ones_like(img) * -1
-            batch[f"{ft.key}_mask"] = torch.zeros_like(mask)
-
-        skey = self.config.robot_state_feature.key
-        batch[skey] = pad_vector(batch[skey], self.config.state_dim)
-
-        # tokenizer works on lists
-        # PaliGemma prompt has to end with a new line
-        max_length = 48
-        tokenized_prompt = self.tokenizer.__call__(
-            "Transfer cube\n",
-            padding="max_length",
-            padding_side="right",
-            max_length=max_length,
-            return_tensors="pt",
-        )
-
-        tokenized_prompt["attention_mask"] = tokenized_prompt["attention_mask"].type(dtype=torch.bool)
-
-        bsize = batch[skey].shape[0]
-        device = batch[skey].device
-
-        batch["tokenized_prompt"] = tokenized_prompt["input_ids"].expand(bsize, max_length).to(device=device)
-        batch["tokenized_prompt_mask"] = (
-            tokenized_prompt["attention_mask"].expand(bsize, max_length).to(device=device)
-        )
-
-        actions = self.sample_actions(batch, tokenized_prompt, noise=noise)
+        batch = self.prepare_images(batch)
+        batch = self.prepare_state(batch)
+        batch = self.prepare_language(batch)
+        actions = self.sample_actions(batch, noise=noise)
 
         # unpad
         original_action_dim = self.config.output_features[0].shape[0]
@@ -328,7 +314,7 @@ class PI0(nn.Module):
 
         return actions
 
-    def sample_actions(self, batch, tokenized_prompt, noise=None):
+    def sample_actions(self, batch, noise=None):
         skey = self.config.robot_state_feature.key
         bsize = batch[skey].shape[0]
         # dtype = torch.bfloat16
@@ -404,8 +390,11 @@ class PI0(nn.Module):
             img_key = ft.key
             # no finetuning of siglip
             # TODO: requires_grad = False for paligemma siglip to g
+            img = batch[img_key]
+            # normalize from range [0,1] to [-1,1] as expacted by siglip
+            img = img * 2.0 - 1.0
             with torch.no_grad():
-                img_emb = self.pi0_paligemma.paligemma.get_image_features(batch[img_key])
+                img_emb = self.pi0_paligemma.paligemma.get_image_features(img)
             img_emb = img_emb.to(dtype=self.torch_dtype)
 
             img_emb_dim = img_emb.shape[-1]

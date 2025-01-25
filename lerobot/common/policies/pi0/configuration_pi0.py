@@ -19,6 +19,10 @@ class PI0Config(PretrainedConfig):
     state_dim: int = 24
     action_dim: int = 24
 
+    resize_imgs_with_padding: tuple = (224, 224)
+    empty_cameras: int = 2
+    fix_noise: bool = True
+
     # Decoding
     num_steps: int = 10
 
@@ -44,7 +48,7 @@ class PI0Config(PretrainedConfig):
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "VISUAL": NormalizationMode.MIN_MAX,
+            "VISUAL": NormalizationMode.IDENTITY,
             "STATE": NormalizationMode.MEAN_STD,
             "ACTION": NormalizationMode.MEAN_STD,
         }

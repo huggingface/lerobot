@@ -107,6 +107,10 @@ class PI0PaliGemmaModel(PreTrainedModel):
         #     params.data = params.data.to(dtype=torch.bfloat16)
         self.paligemma = self.paligemma.to(dtype=torch.bfloat16)
 
+        for params in self.paligemma.parameters():
+            params.requires_grad = False
+
+        # TODO: finetune expert only as an option
         self.gemma_expert = GemmaForCausalLM(config=config.gemma_expert_config)
         self.gemma_expert = self.gemma_expert.to(dtype=torch.bfloat16)
 
