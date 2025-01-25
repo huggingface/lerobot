@@ -57,9 +57,9 @@ python lerobot/scripts/visualize_dataset.py \
 python lerobot/scripts/control_robot.py replay \
     --robot.type=so100 \
     --control.type=replay \
-    --control.fps 30 \
-    --control.repo-id $USER/koch_test \
-    --control.episode 0
+    --control.fps=30 \
+    --control.repo_id=$USER/koch_test \
+    --control.episode=0
 ```
 
 - Record a full dataset in order to train a policy, with 2 seconds of warmup,
@@ -88,12 +88,13 @@ If the dataset you want to extend is not on the hub, you also need to add `--loc
 
 - Train on this dataset with the ACT policy:
 ```bash
-# TODO(rcadene): fix
 python lerobot/scripts/train.py \
-    policy=act_koch_real \
-    env=koch_real \
-    dataset_repo_id=$USER/koch_pick_place_lego \
-    hydra.run.dir=outputs/train/act_koch_real
+  --dataset.repo_id=${HF_USER}/koch_pick_place_lego \
+  --policy.type=act \
+  --output_dir=outputs/train/act_koch_pick_place_lego \
+  --job_name=act_koch_pick_place_lego \
+  --device=cuda \
+  --wandb.enable=true
 ```
 
 - Run the pretrained policy on the robot:
@@ -102,12 +103,12 @@ python lerobot/scripts/control_robot.py \
     --robot.type=so100 \
     --control.type=record \
     --control.fps=30 \
-    --control.repo_id=$USER/eval_act_koch_real \
+    --control.repo_id=$USER/eval_act_koch_pick_place_lego \
     --control.num_episodes=10 \
     --control.warmup_time_s=2 \
     --control.episode_time_s=30 \
-    --control.reset_time_s=10
-    --control.pretrained_policy_path=outputs/train/act_koch_real/checkpoints/080000/pretrained_model
+    --control.reset_time_s=10 \
+    --control.policy.path=outputs/train/act_koch_pick_place_lego/checkpoints/080000/pretrained_model
 ```
 """
 

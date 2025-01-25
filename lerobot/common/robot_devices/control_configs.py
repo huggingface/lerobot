@@ -16,7 +16,7 @@ class ControlConfig(draccus.ChoiceRegistry):
 @ControlConfig.register_subclass("calibrate")
 @dataclass
 class CalibrateControlConfig(ControlConfig):
-    # List of arms to calibrate (e.g. `--arms left_follower right_follower left_leader`)
+    # List of arms to calibrate (e.g. `--arms='["left_follower","right_follower"]' left_leader`)
     arms: list[str] | None = None
 
 

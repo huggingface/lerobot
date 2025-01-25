@@ -11,7 +11,6 @@ import threading
 import time
 import traceback
 from collections import Counter
-from dataclasses import replace
 from pathlib import Path
 from threading import Thread
 
@@ -165,33 +164,35 @@ class IntelRealSenseCamera:
     When an IntelRealSenseCamera is instantiated, if no specific config is provided, the default fps, width, height and color_mode
     of the given camera will be used.
 
-    Example of usage:
+    Example of instantiating with a serial number:
     ```python
-    # Instantiate with its serial number
-    camera = IntelRealSenseCamera(serial_number=128422271347)
-    # Or by its name if it's unique
-    camera = IntelRealSenseCamera.init_from_name("Intel RealSense D405")
+    from lerobot.common.robot_devices.cameras.configs import IntelRealSenseCameraConfig
+
+    config = IntelRealSenseCameraConfig(serial_number=128422271347)
+    camera = IntelRealSenseCamera(config)
     camera.connect()
     color_image = camera.read()
     # when done using the camera, consider disconnecting
     camera.disconnect()
     ```
 
+    Example of instantiating with a name if it's unique:
+    ```
+    config = IntelRealSenseCameraConfig(name="Intel RealSense D405")
+    ```
+
     Example of changing default fps, width, height and color_mode:
     ```python
-    camera = IntelRealSenseCamera(serial_number=128422271347, fps=30, width=1280, height=720)
-    camera = connect()  # applies the settings, might error out if these settings are not compatible with the camera
-
-    camera = IntelRealSenseCamera(serial_number=128422271347, fps=90, width=640, height=480)
-    camera = connect()
-
-    camera = IntelRealSenseCamera(serial_number=128422271347, fps=90, width=640, height=480, color_mode="bgr")
-    camera = connect()
+    config = IntelRealSenseCameraConfig(serial_number=128422271347, fps=30, width=1280, height=720)
+    config = IntelRealSenseCameraConfig(serial_number=128422271347, fps=90, width=640, height=480)
+    config = IntelRealSenseCameraConfig(serial_number=128422271347, fps=90, width=640, height=480, color_mode="bgr")
+    # Note: might error out upon `camera.connect()` if these settings are not compatible with the camera
     ```
 
     Example of returning depth:
     ```python
-    camera = IntelRealSenseCamera(serial_number=128422271347, use_depth=True)
+    config = IntelRealSenseCameraConfig(serial_number=128422271347, use_depth=True)
+    camera = IntelRealSenseCamera(config)
     camera.connect()
     color_image, depth_map = camera.read()
     ```
@@ -199,12 +200,13 @@ class IntelRealSenseCamera:
 
     def __init__(
         self,
-        config: IntelRealSenseCameraConfig | None = None,
-        **kwargs,
+        config: IntelRealSenseCameraConfig,
     ):
-        config = IntelRealSenseCameraConfig(**kwargs) if config is None else replace(config, **kwargs)
-
-        self.serial_number = config.serial_number
+        self.config = config
+        if config.name is not None:
+            self.serial_number = self.find_serial_number_from_name(config.name)
+        else:
+            self.serial_number = config.serial_number
         self.fps = config.fps
         self.width = config.width
         self.height = config.height
@@ -236,8 +238,7 @@ class IntelRealSenseCamera:
         elif config.rotation == 180:
             self.rotation = cv2.ROTATE_180
 
-    @classmethod
-    def init_from_name(cls, name: str, config: IntelRealSenseCameraConfig | None = None, **kwargs):
+    def find_serial_number_from_name(self, name):
         camera_infos = find_cameras()
         camera_names = [cam["name"] for cam in camera_infos]
         this_name_count = Counter(camera_names)[name]
@@ -250,13 +251,7 @@ class IntelRealSenseCamera:
         name_to_serial_dict = {cam["name"]: cam["serial_number"] for cam in camera_infos}
         cam_sn = name_to_serial_dict[name]
 
-        if config is None:
-            config = IntelRealSenseCameraConfig()
-
-        # Overwrite the config arguments using kwargs
-        config = replace(config, **kwargs)
-
-        return cls(serial_number=cam_sn, config=config, **kwargs)
+        return cam_sn
 
     def connect(self):
         if self.is_connected:
