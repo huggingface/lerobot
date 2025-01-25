@@ -128,7 +128,6 @@ from lerobot.common.robot_devices.control_configs import (
 )
 from lerobot.common.robot_devices.control_utils import (
     control_loop,
-    has_method,
     init_keyboard_listener,
     log_control_info,
     record_episode,
@@ -140,7 +139,7 @@ from lerobot.common.robot_devices.control_utils import (
 )
 from lerobot.common.robot_devices.robots.utils import Robot, make_robot_from_config
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
-from lerobot.common.utils.utils import init_logging, log_say
+from lerobot.common.utils.utils import has_method, init_logging, log_say
 
 ########################################################################################
 # Control modes

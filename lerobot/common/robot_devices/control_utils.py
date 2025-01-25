@@ -21,7 +21,7 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import get_features_from_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
-from lerobot.common.utils.utils import get_safe_torch_device
+from lerobot.common.utils.utils import get_safe_torch_device, has_method
 
 
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
@@ -85,10 +85,6 @@ def is_headless():
         traceback.print_exc()
         print()
         return True
-
-
-def has_method(_object: object, method_name: str):
-    return hasattr(_object, method_name) and callable(getattr(_object, method_name))
 
 
 def predict_action(observation, policy, device, use_amp):
