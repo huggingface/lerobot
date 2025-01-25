@@ -1,5 +1,5 @@
 import datetime as dt
-from dataclasses import Field, dataclass, field, fields
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from lerobot.common import envs, policies  # noqa: F401
@@ -75,7 +75,6 @@ class EvalPipelineConfig:
             raise ValueError("Set 'use_amp' to True or False.")
 
     @classmethod
-    def __get_path_fields__(cls) -> list[Field]:
+    def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
-        path_fields = ["policy"]
-        return [f for f in fields(cls) if f.name in path_fields]
+        return ["policy"]
