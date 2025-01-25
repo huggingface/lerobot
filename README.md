@@ -122,10 +122,7 @@ wandb login
 ├── examples             # contains demonstration examples, start here to learn about LeRobot
 |   └── advanced         # contains even more examples for those who have mastered the basics
 ├── lerobot
-|   ├── configs          # contains hydra yaml files with all options that you can override in the command line
-|   |   ├── default.yaml   # selected by default, it loads pusht environment and diffusion policy
-|   |   ├── env            # various sim environments and their datasets: aloha.yaml, pusht.yaml, xarm.yaml
-|   |   └── policy         # various policies: act.yaml, diffusion.yaml, tdmpc.yaml
+|   ├── configs          # contains config classes with all options that you can override in the command line
 |   ├── common           # contains classes and utilities
 |   |   ├── datasets       # various datasets of human demonstrations: aloha, pusht, xarm
 |   |   ├── envs           # various sim environments: aloha, pusht, xarm
