@@ -124,6 +124,13 @@ python lerobot/scripts/train.py --config_path=outputs/train/act_aloha_transfer/c
 ```
 > Note: While `--output_dir` is not required in general, in this case we need to specify it since it will otherwise take the value from the `train_config.json` (which is `outputs/train/act_aloha_transfer`). In order to prevent accidental deletion of previous run checkpoints, we raise an error if you're trying to write in an existing directory. This is not the case when resuming a run, which is what you'll learn next.
 
+`--config_path` can also accept the repo_id of a repo on the hub that contains a `train_config.json` file, e.g. running:
+```bash
+python lerobot/scripts/train.py --config_path=lerobot/diffusion_pusht
+```
+will start a training run with the same configuration used for training [lerobot/diffusion_pusht](https://huggingface.co/lerobot/diffusion_pusht)
+
+
 ## Resume training
 
 Being able to resume a training run is important in case it crashed or aborted for any reason. We'll demonstrate how to that here.
@@ -181,8 +188,7 @@ outputs/train/run_resumption/checkpoints
 
 In addition to the features currently in Draccus, we've added a special `.path` argument for the policy, which allows to load a policy as you would with `PreTrainedPolicy.from_pretrained()`. In that case, `path` can be a local directory that contains a checkpoint or a repo_id pointing to a pretrained policy on the hub.
 
-For example, we could fine-tune a [policy pre-trained on the aloha transfer task](https://huggingface.co/lerobot/act_aloha_sim_transfer_cube_human) on the aloha insertion task.
-We can achieve this with:
+For example, we could fine-tune a [policy pre-trained on the aloha transfer task](https://huggingface.co/lerobot/act_aloha_sim_transfer_cube_human) on the aloha insertion task. We can achieve this with:
 ```bash
 python lerobot/scripts/train.py \
     --policy.path=lerobot/act_aloha_sim_transfer_cube_human \
@@ -219,6 +225,42 @@ These logs will also be saved in wandb if `wandb.enable` is set to `true`. Here 
 
 Some metrics are useful for initial performance profiling. For example, if you find the current GPU utilization is low via the `nvidia-smi` command and `data_s` sometimes is too high, you may need to modify batch size or number of dataloading workers to accelerate dataloading. We also recommend [pytorch profiler](https://github.com/huggingface/lerobot?tab=readme-ov-file#improve-your-code-with-profiling) for detailed performance probing.
 
+## In short
+
+We'll summarize here the main use cases to remember from this tutorial.
+
+#### Train a policy from scratch – CLI
+```bash
+python lerobot/scripts/train.py \
+    --policy.type=act \  # <- select 'act' policy
+    --env.type=pusht \  # <- select 'pusht' environment
+    --dataset.repo_id=lerobot/pusht  # <- train on this dataset
+```
+
+#### Train a policy from scratch - config file + CLI
+```bash
+python lerobot/scripts/train.py \
+    --config_path=path/to/train_config.json \  # <- can also be a repo_id
+    --policy.n_action_steps=80  # <- you may still override values
+```
+
+#### Resume/continue a training run
+```bash
+python lerobot/scripts/train.py \
+    --config_path=checkpoint/pretrained_model/train_config.json \
+    --resume=true \
+    --offline.steps=200000  # <- you can change some training parameters
+```
+
+#### Fine-tuning
+```bash
+python lerobot/scripts/train.py \
+    --policy.path=lerobot/act_aloha_sim_transfer_cube_human \  # <- can also be a local path to a checkpoint
+    --dataset.repo_id=lerobot/aloha_sim_insertion_human \
+    --env.type=aloha \
+    --env.task=AlohaInsertion-v0
+```
+
 ---
 
 We've seen how to train Diffusion Policy for PushT and ACT for ALOHA. What if we want to train ACT for PushT?
@@ -232,4 +274,4 @@ python lerobot/scripts/train.py \
 Now that you know the basics of how to train a policy, you might want to know how to apply this knowledge to actual robots, or how to record your own datasets and train policies on your specific task?
 If that's the case, head over to the next tutorial [`7_get_started_with_real_robot.md`](./7_get_started_with_real_robot.md).
 
-Or in the meantime, happy coding! 🤗
+Or in the meantime, happy training! 🤗
