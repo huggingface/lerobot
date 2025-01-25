@@ -19,6 +19,7 @@ import os.path as osp
 import platform
 import random
 from contextlib import contextmanager
+from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator
@@ -199,3 +200,17 @@ def log_say(text, play_sounds, blocking=False):
 
     if play_sounds:
         say(text, blocking)
+
+
+def get_channel_first_image_shape(image_shape: tuple) -> tuple:
+    shape = copy(image_shape)
+    if shape[2] < shape[0] and shape[2] < shape[1]:  # (h, w, c) -> (c, h, w)
+        shape = (shape[2], shape[0], shape[1])
+    elif not (shape[0] < shape[1] and shape[0] < shape[2]):
+        raise ValueError(image_shape)
+
+    return shape
+
+
+def has_method(cls: object, method_name: str):
+    return hasattr(cls, method_name) and callable(getattr(cls, method_name))

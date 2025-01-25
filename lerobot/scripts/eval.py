@@ -63,7 +63,7 @@ from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.logger import log_output_dir
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.policies.policy_protocol import Policy
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.utils import (
@@ -78,7 +78,7 @@ from lerobot.configs.eval import EvalPipelineConfig
 
 def rollout(
     env: gym.vector.VectorEnv,
-    policy: Policy,
+    policy: PreTrainedPolicy,
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
@@ -205,7 +205,7 @@ def rollout(
 
 def eval_policy(
     env: gym.vector.VectorEnv,
-    policy: torch.nn.Module,
+    policy: PreTrainedPolicy,
     n_episodes: int,
     max_episodes_rendered: int = 0,
     videos_dir: Path | None = None,
@@ -229,7 +229,7 @@ def eval_policy(
     if max_episodes_rendered > 0 and not videos_dir:
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
 
-    assert isinstance(policy, Policy)
+    assert isinstance(policy, PreTrainedPolicy)
     start = time.time()
     policy.eval()
 
@@ -439,7 +439,7 @@ def _compile_episode_data(
     return data_dict
 
 
-@parser.wrap(pathable_args=["policy"])
+@parser.wrap()
 def eval(cfg: EvalPipelineConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))

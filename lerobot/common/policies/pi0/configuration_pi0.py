@@ -4,17 +4,25 @@ from lerobot.common.optim.optimizers import AdamWConfig
 from lerobot.common.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
 )
-from lerobot.configs.policies import PretrainedConfig
-from lerobot.configs.types import NormalizationMode
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
 
-@PretrainedConfig.register_subclass("pi0")
+@PreTrainedConfig.register_subclass("pi0")
 @dataclass
-class PI0Config(PretrainedConfig):
+class PI0Config(PreTrainedConfig):
     # Input / output structure.
     n_obs_steps: int = 1
     chunk_size: int = 50
     n_action_steps: int = 50
+
+    normalization_mapping: dict[str, NormalizationMode] = field(
+        default_factory=lambda: {
+            "VISUAL": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.MEAN_STD,
+            "ACTION": NormalizationMode.MEAN_STD,
+        }
+    )
 
     state_dim: int = 24
     action_dim: int = 24
@@ -46,14 +54,6 @@ class PI0Config(PretrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: int = 2.5e-6
 
-    normalization_mapping: dict[str, NormalizationMode] = field(
-        default_factory=lambda: {
-            "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.MEAN_STD,
-            "ACTION": NormalizationMode.MEAN_STD,
-        }
-    )
-
     def __post_init__(self):
         super().__post_init__()
 
@@ -71,6 +71,14 @@ class PI0Config(PretrainedConfig):
     def validate_features(self) -> None:
         if not self.image_features and not self.env_state_feature:
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
+
+        for i in range(self.empty_cameras):
+            key = f"observation.images.empty_camera_{i}"
+            empty_camera = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(3, 480, 640),
+            )
+            self.input_features[key] = empty_camera
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(

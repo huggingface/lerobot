@@ -39,8 +39,8 @@ from lerobot.common.robot_devices.control_configs import (
     TeleoperateControlConfig,
 )
 from lerobot.configs.default import DatasetConfig
-from lerobot.configs.policies import PretrainedConfig
-from lerobot.configs.training import TrainPipelineConfig
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
 from tests.test_robots import make_robot
 from tests.utils import DEVICE, TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
@@ -243,7 +243,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         use_amp=False,
     )
 
-    rec_eval_cfg.policy = PretrainedConfig.from_pretrained(pretrained_policy_path)
+    rec_eval_cfg.policy = PreTrainedConfig.from_pretrained(pretrained_policy_path)
     rec_eval_cfg.policy.pretrained_path = pretrained_policy_path
 
     dataset = record(robot, rec_eval_cfg)

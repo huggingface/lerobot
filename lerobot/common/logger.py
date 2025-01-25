@@ -21,20 +21,20 @@
 import logging
 import os
 import re
+from dataclasses import asdict
 from glob import glob
 from pathlib import Path
 
 import draccus
 import torch
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
-from omegaconf import DictConfig
 from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from lerobot.common.policies.policy_protocol import Policy
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.utils.utils import get_global_random_state
-from lerobot.configs.training import TRAIN_CONFIG_FILE, TrainPipelineConfig
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode
 
 PRETRAINED_MODEL = "pretrained_model"
@@ -45,7 +45,7 @@ def log_output_dir(out_dir):
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {out_dir}")
 
 
-def cfg_to_group(cfg: DictConfig, return_list: bool = False) -> list[str] | str:
+def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
     lst = [
         f"policy:{cfg.policy.type}",
@@ -121,7 +121,7 @@ class Logger:
                 notes=cfg.wandb.notes,
                 tags=cfg_to_group(cfg, return_list=True),
                 dir=self.log_dir,
-                config=draccus.encode(cfg),
+                config=asdict(self._cfg),
                 # TODO(rcadene): try set to True
                 save_code=False,
                 # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
@@ -150,7 +150,7 @@ class Logger:
         """
         return cls.get_last_checkpoint_dir(log_dir) / cls.pretrained_model_dir_name
 
-    def save_model(self, save_dir: Path, policy: Policy, wandb_artifact_name: str | None = None):
+    def save_model(self, save_dir: Path, policy: PreTrainedPolicy, wandb_artifact_name: str | None = None):
         """Save the weights of the Policy model using PyTorchModelHubMixin.
 
         The weights are saved in a folder called "pretrained_model" under the checkpoint directory.
@@ -162,8 +162,7 @@ class Logger:
         register_features_types()
         policy.save_pretrained(save_dir)
         # Also save the full config for the env configuration.
-        with open(save_dir / TRAIN_CONFIG_FILE, "w") as f:
-            draccus.dump(self._cfg, f, indent=4)
+        self._cfg.save_pretrained(save_dir)
         if self._wandb and not self._cfg.wandb.disable_artifact:
             # note wandb artifact does not accept ":" or "/" in its name
             artifact = self._wandb.Artifact(wandb_artifact_name, type="model")
@@ -196,7 +195,7 @@ class Logger:
         self,
         train_step: int,
         identifier: str,
-        policy: Policy,
+        policy: PreTrainedPolicy,
         optimizer: Optimizer | None = None,
         scheduler: LRScheduler | None = None,
     ):

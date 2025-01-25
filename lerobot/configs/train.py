@@ -1,16 +1,23 @@
 import datetime as dt
-from dataclasses import Field, dataclass, field, fields
+import os
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Type
+
+import draccus
+from huggingface_hub import hf_hub_download
+from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot.common import envs
 from lerobot.common.optim import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
+from lerobot.common.utils.hub import HubMixin
 from lerobot.configs import parser
 from lerobot.configs.default import DatasetConfig, WandBConfig
 from lerobot.configs.eval import EvalConfig
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 
-TRAIN_CONFIG_FILE = "train_config.json"
+TRAIN_CONFIG_NAME = "train_config.json"
 
 
 @dataclass
@@ -76,10 +83,10 @@ class OnlineConfig:
 
 
 @dataclass
-class TrainPipelineConfig:
+class TrainPipelineConfig(HubMixin):
     dataset: DatasetConfig
     env: envs.EnvConfig | None = None
-    policy: PretrainedConfig | None = None
+    policy: PreTrainedConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
     output_dir: Path | None = None
@@ -125,6 +132,8 @@ class TrainPipelineConfig:
         if self.resume:
             # The entire train config is already loaded, we just need to get the checkpoint dir
             config_path = parser.parse_arg("config_path")
+            if not config_path:
+                raise ValueError("A config_path is expected when resuming a run.")
             policy_path = Path(config_path).parent
             self.policy.pretrained_path = policy_path
             self.checkpoint_path = policy_path.parent
@@ -133,7 +142,7 @@ class TrainPipelineConfig:
             if policy_path:
                 # Only load the policy config
                 cli_overrides = parser.get_cli_overrides("policy")
-                self.policy = PretrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+                self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
                 self.policy.pretrained_path = policy_path
 
         if not self.job_name:
@@ -162,7 +171,52 @@ class TrainPipelineConfig:
             self.scheduler = self.policy.get_scheduler_preset()
 
     @classmethod
-    def __get_path_fields__(cls) -> list[Field]:
+    def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
-        path_fields = ["policy"]
-        return [f for f in fields(cls) if f.name in path_fields]
+        return ["policy"]
+
+    def _save_pretrained(self, save_directory: Path) -> None:
+        with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
+            draccus.dump(self, f, indent=4)
+
+    @classmethod
+    def from_pretrained(
+        cls: Type["TrainPipelineConfig"],
+        pretrained_name_or_path: str | Path,
+        *,
+        force_download: bool = False,
+        resume_download: bool = None,
+        proxies: dict | None = None,
+        token: str | bool | None = None,
+        cache_dir: str | Path | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
+        **kwargs,
+    ) -> "TrainPipelineConfig":
+        model_id = str(pretrained_name_or_path)
+        config_file: str | None = None
+        if Path(model_id).is_dir():
+            if TRAIN_CONFIG_NAME in os.listdir(model_id):
+                config_file = os.path.join(model_id, TRAIN_CONFIG_NAME)
+            else:
+                print(f"{TRAIN_CONFIG_NAME} not found in {Path(model_id).resolve()}")
+        elif Path(model_id).is_file():
+            config_file = model_id
+        else:
+            try:
+                config_file = hf_hub_download(
+                    repo_id=model_id,
+                    filename=TRAIN_CONFIG_NAME,
+                    revision=revision,
+                    cache_dir=cache_dir,
+                    force_download=force_download,
+                    proxies=proxies,
+                    resume_download=resume_download,
+                    token=token,
+                    local_files_only=local_files_only,
+                )
+            except HfHubHTTPError as e:
+                print(f"config.json not found on the HuggingFace Hub: {str(e)}")
+
+        cli_args = kwargs.pop("cli_args", [])
+        return draccus.parse(cls, config_file, args=cli_args)

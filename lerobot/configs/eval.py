@@ -1,16 +1,15 @@
 import datetime as dt
-from dataclasses import Field, dataclass, fields
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from lerobot.common import envs, policies  # noqa: F401
 from lerobot.configs import parser
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 
 
 @dataclass
 class EvalConfig:
     n_episodes: int = 50
-    episode_length: int | None = None
     # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
     batch_size: int = 50
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
@@ -33,9 +32,9 @@ class EvalPipelineConfig:
     # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
     # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch
     # (useful for debugging). This argument is mutually exclusive with `--config`.
-    eval: EvalConfig
     env: envs.EnvConfig
-    policy: PretrainedConfig | None = None
+    eval: EvalConfig = field(default_factory=EvalConfig)
+    policy: PreTrainedConfig | None = None
     output_dir: Path | None = None
     job_name: str | None = None
     # TODO(rcadene, aliberts): By default, use device and use_amp values from policy checkpoint.
@@ -56,7 +55,7 @@ class EvalPipelineConfig:
         policy_path = parser.get_path_arg("policy")
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
-            self.policy = PretrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
 
         if not self.job_name:
@@ -76,7 +75,6 @@ class EvalPipelineConfig:
             raise ValueError("Set 'use_amp' to True or False.")
 
     @classmethod
-    def __get_path_fields__(cls) -> list[Field]:
+    def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
-        path_fields = ["policy"]
-        return [f for f in fields(cls) if f.name in path_fields]
+        return ["policy"]

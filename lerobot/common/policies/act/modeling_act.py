@@ -29,27 +29,22 @@ import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
-from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 
 
-class ACTPolicy(
-    nn.Module,
-    PyTorchModelHubMixin,
-    library_name="lerobot",
-    repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "act"],
-):
+class ACTPolicy(PreTrainedPolicy):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
     Hardware (paper: https://arxiv.org/abs/2304.13705, code: https://github.com/tonyzhaozh/act)
     """
 
+    config_class = ACTConfig
     name = "act"
 
     def __init__(
@@ -64,13 +59,17 @@ class ACTPolicy(
             dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
-        super().__init__()
+        super().__init__(config)
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(config.input_features, dataset_stats)
-        self.normalize_targets = Normalize(config.output_features, dataset_stats)
-        self.unnormalize_outputs = Unnormalize(config.output_features, dataset_stats)
+        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        self.normalize_targets = Normalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
+        self.unnormalize_outputs = Unnormalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
 
         self.model = ACT(config)
 
@@ -121,7 +120,7 @@ class ACTPolicy(
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.images"] = torch.stack(
-                [batch[ft.key] for ft in self.config.image_features], dim=-4
+                [batch[key] for key in self.config.image_features], dim=-4
             )
 
         # If we are doing temporal ensembling, do online updates where we keep track of the number of actions
@@ -151,7 +150,7 @@ class ACTPolicy(
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.images"] = torch.stack(
-                [batch[ft.key] for ft in self.config.image_features], dim=-4
+                [batch[key] for key in self.config.image_features], dim=-4
             )
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
@@ -411,7 +410,7 @@ class ACT(nn.Module):
         """
         if self.config.use_vae and self.training:
             assert (
-                self.config.action_feature.key in batch
+                "action" in batch
             ), "actions must be provided when using the variational objective in training mode."
 
         batch_size = (

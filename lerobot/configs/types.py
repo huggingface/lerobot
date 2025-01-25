@@ -1,5 +1,6 @@
 # Note: We subclass str so that serialization is straightforward
 # https://stackoverflow.com/questions/24481852/serialising-an-enum-member-to-json
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol
 
@@ -19,3 +20,9 @@ class NormalizationMode(str, Enum):
 
 class DictLike(Protocol):
     def __getitem__(self, key: Any) -> Any: ...
+
+
+@dataclass
+class PolicyFeature:
+    type: FeatureType
+    shape: tuple

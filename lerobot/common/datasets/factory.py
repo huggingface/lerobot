@@ -24,8 +24,8 @@ from lerobot.common.datasets.lerobot_dataset import (
     MultiLeRobotDataset,
 )
 from lerobot.common.datasets.transforms import ImageTransforms
-from lerobot.configs.policies import PretrainedConfig
-from lerobot.configs.training import TrainPipelineConfig
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.train import TrainPipelineConfig
 
 IMAGENET_STATS = {
     "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
@@ -34,7 +34,7 @@ IMAGENET_STATS = {
 
 
 def resolve_delta_timestamps(
-    cfg: PretrainedConfig, ds_meta: LeRobotDatasetMetadata
+    cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
 ) -> dict[str, list] | None:
     """Resolves delta_timestamps config key (in-place) by using `eval`.
 
@@ -59,16 +59,10 @@ def resolve_delta_timestamps(
 def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
     """
     Args:
-        cfg: A Hydra config as per the LeRobot config scheme.
-        split: Select the data subset used to create an instance of LeRobotDataset.
-            All datasets hosted on [lerobot](https://huggingface.co/lerobot) contain only one subset: "train".
-            Thus, by default, `split="train"` selects all the available data. `split` aims to work like the
-            slicer in the hugging face datasets:
-            https://huggingface.co/docs/datasets/v2.19.0/loading#slice-splits
-            As of now, it only supports `split="train[:n]"` to load the first n frames of the dataset or
-            `split="train[n:]"` to load the last n frames. For instance `split="train[:1000]"`.
+        cfg: A TrainPipelineConfig config which contains a DatasetConfig and a PreTrainedConfig.
+
     Returns:
-        The LeRobotDataset.
+        A LeRobotDataset.
     """
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
@@ -86,6 +80,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             local_files_only=cfg.dataset.local_files_only,
         )
     else:
+        raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
         dataset = MultiLeRobotDataset(
             cfg.dataset.repo_id,
             # TODO(aliberts): add proper support for multi dataset

@@ -26,10 +26,7 @@ test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-eval
-
-# ${MAKE} DEVICE=$(DEVICE) test-default-ete-eval
-# ${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train-with-online
-# ${MAKE} DEVICE=$(DEVICE) test-act-pusht-tutorial
+	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train-with-online
 
 test-act-ete-train:
 	python lerobot/scripts/train.py \
@@ -66,7 +63,6 @@ test-act-ete-eval:
 		--env.episode_length=5 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
-		--eval.episode_length=8 \
 		--device=$(DEVICE)
 
 test-diffusion-ete-train:
@@ -99,7 +95,6 @@ test-diffusion-ete-eval:
 		--env.episode_length=5 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
-		--eval.episode_length=8 \
 		--device=$(DEVICE)
 
 test-tdmpc-ete-train:
@@ -129,19 +124,16 @@ test-tdmpc-ete-eval:
 		--env.type=xarm \
 		--env.episode_length=5 \
 		--env.task=XarmLift-v0 \
-		--env.episode_length=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
-		--eval.episode_length=8 \
 		--device=$(DEVICE)
 
-# FIXME: currently broken
-# test-tdmpc-ete-train-with-online:
-# 	python lerobot/scripts/train.py \
+test-tdmpc-ete-train-with-online:
+	python lerobot/scripts/train.py \
 		--policy.type=tdmpc \
 		--env.type=pusht \
 		--env.obs_type=environment_state_agent_pos \
-		--env.episode_length=10 \
+		--env.episode_length=5 \
 		--dataset.repo_id=lerobot/pusht_keypoints \
 		--dataset.image_transforms.enable=true \
 		--dataset.episodes='[0]' \
@@ -151,7 +143,7 @@ test-tdmpc-ete-eval:
 		--online.rollout_n_episodes=2 \
 		--online.rollout_batch_size=2 \
 		--online.steps_between_rollouts=10 \
-		--online.buffer_capacity=15 \
+		--online.buffer_capacity=1000 \
 		--online.env_seed=10000 \
 		--save_checkpoint=false \
 		--save_freq=10 \
@@ -161,22 +153,3 @@ test-tdmpc-ete-eval:
 		--eval.batch_size=1 \
 		--device=$(DEVICE) \
 		--output_dir=tests/outputs/tdmpc_online/
-
-# TODO: do we keep this one?
-# test-act-pusht-tutorial:
-# 	cp examples/advanced/1_train_act_pusht/act_pusht.yaml lerobot/configs/policy/created_by_Makefile.yaml
-# 	python lerobot/scripts/train.py \
-# 		policy=created_by_Makefile.yaml \
-# 		env=pusht \
-# 		wandb.enable=False \
-# 		training.offline_steps=2 \
-# 		eval.n_episodes=1 \
-# 		eval.batch_size=1 \
-# 		env.episode_length=2 \
-# 		device=$(DEVICE) \
-# 		training.save_model=true \
-# 		training.save_freq=2 \
-# 		training.batch_size=2 \
-# 		training.image_transforms.enable=true \
-# 		hydra.run.dir=tests/outputs/act_pusht/
-# 	rm lerobot/configs/policy/created_by_Makefile.yaml

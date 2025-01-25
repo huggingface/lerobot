@@ -17,14 +17,13 @@
 from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamConfig
-from lerobot.common.optim.schedulers import NoneSchedulerConfig
-from lerobot.configs.policies import PretrainedConfig
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 
 
-@PretrainedConfig.register_subclass("tdmpc")
+@PreTrainedConfig.register_subclass("tdmpc")
 @dataclass
-class TDMPCConfig(PretrainedConfig):
+class TDMPCConfig(PreTrainedConfig):
     """Configuration class for TDMPCPolicy.
 
     Defaults are configured for training with xarm_lift_medium_replay providing proprioceptive and single
@@ -113,7 +112,7 @@ class TDMPCConfig(PretrainedConfig):
     horizon: int = 5
     n_action_steps: int = 1
 
-    normalization_mapping: dict[str, NormalizationMode | None] = field(
+    normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
             "STATE": NormalizationMode.IDENTITY,
@@ -191,8 +190,8 @@ class TDMPCConfig(PretrainedConfig):
     def get_optimizer_preset(self) -> AdamConfig:
         return AdamConfig(lr=self.optimizer_lr)
 
-    def get_scheduler_preset(self) -> NoneSchedulerConfig:
-        return NoneSchedulerConfig()
+    def get_scheduler_preset(self) -> None:
+        return None
 
     def validate_features(self) -> None:
         # There should only be one image key.
@@ -202,7 +201,7 @@ class TDMPCConfig(PretrainedConfig):
             )
 
         if len(self.image_features) > 0:
-            image_ft = next(iter(self.image_features))
+            image_ft = next(iter(self.image_features.values()))
             if image_ft.shape[-2] != image_ft.shape[-1]:
                 # TODO(alexander-soare): This limitation is solely because of code in the random shift
                 # augmentation. It should be able to be removed.

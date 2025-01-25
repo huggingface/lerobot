@@ -25,10 +25,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
-from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.common.policies.vqbet.vqbet_utils import GPT, ResidualVQ
@@ -36,17 +36,12 @@ from lerobot.common.policies.vqbet.vqbet_utils import GPT, ResidualVQ
 # ruff: noqa: N806
 
 
-class VQBeTPolicy(
-    nn.Module,
-    PyTorchModelHubMixin,
-    library_name="lerobot",
-    repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "vqbet"],
-):
+class VQBeTPolicy(PreTrainedPolicy):
     """
     VQ-BeT Policy as per "Behavior Generation with Latent Actions"
     """
 
+    config_class = VQBeTConfig
     name = "vqbet"
 
     def __init__(
@@ -61,13 +56,17 @@ class VQBeTPolicy(
             dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
-        super().__init__()
+        super().__init__(config)
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(config.input_features, dataset_stats)
-        self.normalize_targets = Normalize(config.output_features, dataset_stats)
-        self.unnormalize_outputs = Unnormalize(config.output_features, dataset_stats)
+        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        self.normalize_targets = Normalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
+        self.unnormalize_outputs = Unnormalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
 
         self.vqbet = VQBeTModel(config)
 
@@ -135,9 +134,7 @@ class VQBeTPolicy(
 
         batch = self.normalize_inputs(batch)
         batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-        batch["observation.images"] = torch.stack(
-            [batch[ft.key] for ft in self.config.image_features], dim=-4
-        )
+        batch["observation.images"] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
 
@@ -163,9 +160,7 @@ class VQBeTPolicy(
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-        batch["observation.images"] = torch.stack(
-            [batch[ft.key] for ft in self.config.image_features], dim=-4
-        )
+        batch["observation.images"] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         batch = self.normalize_targets(batch)
         # VQ-BeT discretizes action using VQ-VAE before training BeT (please refer to section 3.2 in the VQ-BeT paper https://arxiv.org/pdf/2403.03181)
         if not self.vqbet.action_head.vqvae_model.discretized.item():
@@ -703,10 +698,9 @@ class VQBeTRgbEncoder(nn.Module):
         # use the height and width from `config.crop_shape` if it is provided, otherwise it should use the
         # height and width from `config.image_features`.
 
-        dummy_shape_h_w = (
-            config.crop_shape if config.crop_shape is not None else config.image_features[0].shape[1:]
-        )
-        dummy_shape = (1, config.image_features[0].shape[0], *dummy_shape_h_w)
+        images_shape = next(iter(config.image_features.values())).shape
+        dummy_shape_h_w = config.crop_shape if config.crop_shape is not None else images_shape[1:]
+        dummy_shape = (1, images_shape[0], *dummy_shape_h_w)
         feature_map_shape = get_output_shape(self.backbone, dummy_shape)[1:]
 
         self.pool = SpatialSoftmax(feature_map_shape, num_kp=config.spatial_softmax_num_keypoints)

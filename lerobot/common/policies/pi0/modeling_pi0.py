@@ -19,16 +19,17 @@ from collections import deque
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 from transformers import AutoTokenizer
 
+from lerobot.common.constants import ACTION, OBS_ROBOT
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.common.datasets.utils import dataset_to_policy_features
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.common.policies.pi0.modeling_pi0_paligemma import PI0PaliGemmaModel
-from lerobot.configs.policies import PolicyFeature
-from lerobot.configs.types import FeatureType, NormalizationMode
+from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.configs.types import FeatureType
 
 
 def display(tensor: torch.Tensor):
@@ -46,13 +47,8 @@ def display(tensor: torch.Tensor):
     print(f"Max: {tensor.max().item()}")
 
 
-class PI0Policy(
-    nn.Module,
-    PyTorchModelHubMixin,
-    library_name="lerobot",
-    repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "pi0"],
-):
+class PI0Policy(PreTrainedPolicy):
+    config_class = PI0Config
     name = "pi0"
 
     def __init__(
@@ -68,22 +64,17 @@ class PI0Policy(
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
 
-        super().__init__()
-        # config.validate_features()
+        super().__init__(config)
+        config.validate_features()
         self.config = config
 
-        for i in range(self.config.empty_cameras):
-            empty_camera = PolicyFeature(
-                key=f"observation.images.empty_camera_{i}",
-                type=FeatureType.VISUAL,
-                shape=(3, 480, 640),
-                normalization_mode=NormalizationMode.IDENTITY,
-            )
-            self.config.image_features.append(empty_camera)
-
-        self.normalize_inputs = Normalize(config.input_features, dataset_stats)
-        self.normalize_targets = Normalize(config.output_features, dataset_stats)
-        self.unnormalize_outputs = Unnormalize(config.output_features, dataset_stats)
+        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        self.normalize_targets = Normalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
+        self.unnormalize_outputs = Unnormalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
 
         self.model = PI0(config)
 
@@ -95,7 +86,6 @@ class PI0Policy(
 
     def get_optim_params(self) -> dict:
         return self.parameters()
-        # raise NotImplementedError()
 
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor], noise=None) -> Tensor:
@@ -176,25 +166,25 @@ class PI0(nn.Module):
         self._rng.manual_seed(42)  # Set an initial seed
 
     def prepare_images(self, batch):
-        for ft in self.config.image_features:
-            if ft.key not in batch:
+        for key in self.config.image_features:
+            if key not in batch:
                 continue
 
             if self.config.resize_imgs_with_padding is not None:
-                img = resize_with_pad(batch[ft.key], *self.config.resize_imgs_with_padding)
+                img = resize_with_pad(batch[key], *self.config.resize_imgs_with_padding)
 
-            bsize = batch[ft.key].shape[0]
-            device = batch[ft.key].device
+            bsize = batch[key].shape[0]
+            device = batch[key].device
             mask = torch.ones(bsize, dtype=torch.bool, device=device)
-            batch[ft.key] = img
-            batch[f"{ft.key}_mask"] = mask
+            batch[key] = img
+            batch[f"{key}_mask"] = mask
 
         # TODO: remove HARDCODE
-        for ft in self.config.image_features:
-            if ft.key in batch:
+        for key in self.config.image_features:
+            if key in batch:
                 continue
-            batch[ft.key] = torch.ones_like(img) * -1
-            batch[f"{ft.key}_mask"] = torch.zeros_like(mask)
+            batch[key] = torch.ones_like(img) * -1
+            batch[f"{key}_mask"] = torch.zeros_like(mask)
         return batch
 
     def prepare_language(self, batch):
@@ -211,9 +201,8 @@ class PI0(nn.Module):
 
         tokenized_prompt["attention_mask"] = tokenized_prompt["attention_mask"].type(dtype=torch.bool)
 
-        skey = self.config.robot_state_feature.key
-        bsize = batch[skey].shape[0]
-        device = batch[skey].device
+        bsize = batch[OBS_ROBOT].shape[0]
+        device = batch[OBS_ROBOT].device
 
         batch["tokenized_prompt"] = tokenized_prompt["input_ids"].expand(bsize, max_length).to(device=device)
         batch["tokenized_prompt_mask"] = (
@@ -222,13 +211,11 @@ class PI0(nn.Module):
         return batch
 
     def prepare_state(self, batch):
-        skey = self.config.robot_state_feature.key
-        batch[skey] = pad_vector(batch[skey], self.config.state_dim)
+        batch[OBS_ROBOT] = pad_vector(batch[OBS_ROBOT], self.config.state_dim)
         return batch
 
     def prepare_action(self, batch):
-        akey = self.config.action_feature.key
-        actions = batch[akey]
+        actions = batch[ACTION]
         actions = pad_vector(actions, self.config.action_dim)
         return actions
 
@@ -309,17 +296,16 @@ class PI0(nn.Module):
         actions = self.sample_actions(batch, noise=noise)
 
         # unpad
-        original_action_dim = self.config.output_features[0].shape[0]
+        original_action_dim = self.config.action_feature.shape[0]
         actions = actions[:, :, :original_action_dim]
 
         return actions
 
     def sample_actions(self, batch, noise=None):
-        skey = self.config.robot_state_feature.key
-        bsize = batch[skey].shape[0]
+        bsize = batch[OBS_ROBOT].shape[0]
         # dtype = torch.bfloat16
         dtype = self.torch_dtype
-        device = batch[skey].device
+        device = batch[OBS_ROBOT].device
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(batch)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
@@ -386,11 +372,10 @@ class PI0(nn.Module):
         att_masks = []
 
         # TODO: remove for loop
-        for ft in self.config.image_features:
-            img_key = ft.key
+        for key in self.config.image_features:
             # no finetuning of siglip
             # TODO: requires_grad = False for paligemma siglip to g
-            img = batch[img_key]
+            img = batch[key]
             # normalize from range [0,1] to [-1,1] as expacted by siglip
             img = img * 2.0 - 1.0
             with torch.no_grad():
@@ -404,8 +389,8 @@ class PI0(nn.Module):
 
             bsize, num_img_embs = img_emb.shape[:2]
 
-            # img_mask = batch[f"{img_key}_mask"].expand(bsize, num_img_embs)
-            img_mask = (batch[f"{img_key}_mask"])[:, None].expand(bsize, num_img_embs)
+            # img_mask = batch[f"{key}_mask"].expand(bsize, num_img_embs)
+            img_mask = (batch[f"{key}_mask"])[:, None].expand(bsize, num_img_embs)
             # img_mask = torch.ones(bsize, num_img_embs, dtype=torch.bool, device=device)
 
             embs.append(img_emb)
@@ -679,8 +664,11 @@ def main():
     for k in batch:
         batch[k] = batch[k].to(device=device)
 
-    cfg = PI0Config()
-    cfg.parse_features_from_dataset(ds_meta=LeRobotDatasetMetadata("lerobot/aloha_sim_transfer_cube_human"))
+    ds_meta = LeRobotDatasetMetadata("lerobot/aloha_sim_transfer_cube_human")
+    features = dataset_to_policy_features(ds_meta.features)
+    output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    input_features = {key: ft for key, ft in features.items() if key not in output_features}
+    cfg = PI0Config(output_features=output_features, input_features=input_features)
 
     # cfg_img_left_wrist = PolicyFeature(
     #     key="observation.images.left_wrist",
@@ -705,8 +693,8 @@ def main():
     policy.save_pretrained("outputs/exported/2025-01-23/16-01-01_aloha_pi0/last/pretrained_model")
     policy.to(device=device)
 
-    loss_dict = policy.forward(batch)
-    loss_dict["loss"].backward()
+    # loss_dict = policy.forward(batch)
+    # loss_dict["loss"].backward()
 
     actions = []
     for i in range(50):

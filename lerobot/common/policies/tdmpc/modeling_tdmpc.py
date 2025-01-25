@@ -33,21 +33,16 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
-from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor
 
+from lerobot.common.constants import OBS_ENV, OBS_ROBOT
 from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
 
 
-class TDMPCPolicy(
-    nn.Module,
-    PyTorchModelHubMixin,
-    library_name="lerobot",
-    repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "tdmpc"],
-):
+class TDMPCPolicy(PreTrainedPolicy):
     """Implementation of TD-MPC learning + inference.
 
     Please note several warnings for this policy.
@@ -65,6 +60,7 @@ class TDMPCPolicy(
           match our xarm environment.
     """
 
+    config_class = TDMPCConfig
     name = "tdmpc"
 
     def __init__(self, config: TDMPCConfig, dataset_stats: dict[str, dict[str, Tensor]] | None = None):
@@ -75,13 +71,17 @@ class TDMPCPolicy(
             dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
-        super().__init__()
+        super().__init__(config)
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(config.input_features, dataset_stats)
-        self.normalize_targets = Normalize(config.output_features, dataset_stats)
-        self.unnormalize_outputs = Unnormalize(config.output_features, dataset_stats)
+        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        self.normalize_targets = Normalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
+        self.unnormalize_outputs = Unnormalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
 
         self.model = TDMPCTOLD(config)
         self.model_target = deepcopy(self.model)
@@ -116,7 +116,7 @@ class TDMPCPolicy(
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.image"] = batch[self.config.image_features[0].key]
+            batch["observation.image"] = batch[next(iter(self.config.image_features))]
 
         self._queues = populate_queues(self._queues, batch)
 
@@ -312,7 +312,7 @@ class TDMPCPolicy(
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.image"] = batch[self.config.image_features[0].key]
+            batch["observation.image"] = batch[next(iter(self.config.image_features))]
         batch = self.normalize_targets(batch)
 
         info = {}
@@ -696,7 +696,12 @@ class TDMPCObservationEncoder(nn.Module):
 
         if config.image_features:
             self.image_enc_layers = nn.Sequential(
-                nn.Conv2d(config.image_features[0].shape[0], config.image_encoder_hidden_dim, 7, stride=2),
+                nn.Conv2d(
+                    next(iter(config.image_features.values())).shape[0],
+                    config.image_encoder_hidden_dim,
+                    7,
+                    stride=2,
+                ),
                 nn.ReLU(),
                 nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 5, stride=2),
                 nn.ReLU(),
@@ -705,7 +710,7 @@ class TDMPCObservationEncoder(nn.Module):
                 nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 3, stride=2),
                 nn.ReLU(),
             )
-            dummy_shape = (1, *config.image_features[0].shape)
+            dummy_shape = (1, *next(iter(config.image_features.values())).shape)
             out_shape = get_output_shape(self.image_enc_layers, dummy_shape)[1:]
             self.image_enc_layers.extend(
                 nn.Sequential(
@@ -744,12 +749,14 @@ class TDMPCObservationEncoder(nn.Module):
         # NOTE: Order of observations matters here.
         if self.config.image_features:
             feat.append(
-                flatten_forward_unflatten(self.image_enc_layers, obs_dict[self.config.image_features[0].key])
+                flatten_forward_unflatten(
+                    self.image_enc_layers, obs_dict[next(iter(self.config.image_features))]
+                )
             )
         if self.config.env_state_feature:
-            feat.append(self.env_state_enc_layers(obs_dict[self.config.env_state_feature.key]))
+            feat.append(self.env_state_enc_layers(obs_dict[OBS_ENV]))
         if self.config.robot_state_feature:
-            feat.append(self.state_enc_layers(obs_dict[self.config.robot_state_feature.key]))
+            feat.append(self.state_enc_layers(obs_dict[OBS_ROBOT]))
         return torch.stack(feat, dim=0).mean(0)
 
 
