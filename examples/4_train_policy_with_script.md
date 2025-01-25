@@ -181,7 +181,7 @@ outputs/train/run_resumption/checkpoints
 │   │   └── README.md  # model card
 │   └── training_state.pth  # optimizer/scheduler/rng state and training step
 .
-└── last -> /Users/simon/projects/lerobot/outputs/train/run_resumption/checkpoints/000500  # symlink to the last available checkpoint
+└── last  # symlink to the last available checkpoint
 ```
 
 ## Fine-tuning a pre-trained policy
@@ -262,14 +262,6 @@ python lerobot/scripts/train.py \
 ```
 
 ---
-
-We've seen how to train Diffusion Policy for PushT and ACT for ALOHA. What if we want to train ACT for PushT?
-```bash
-python lerobot/scripts/train.py \
-    --policy.type=act \
-    --env.type=pusht \
-    --dataset.repo_id=lerobot/pusht
-```
 
 Now that you know the basics of how to train a policy, you might want to know how to apply this knowledge to actual robots, or how to record your own datasets and train policies on your specific task?
 If that's the case, head over to the next tutorial [`7_get_started_with_real_robot.md`](./7_get_started_with_real_robot.md).
