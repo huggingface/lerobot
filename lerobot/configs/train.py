@@ -164,8 +164,8 @@ class TrainPipelineConfig(HubMixin):
         if self.online.steps > 0 and isinstance(self.dataset.repo_id, list):
             raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
 
-        if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
-            raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
+        if not self.use_policy_training_preset and self.optimizer is None:
+            raise ValueError("Optimizer must be set when the policy presets are not used.")
         elif self.use_policy_training_preset and not self.resume:
             self.optimizer = self.policy.get_optimizer_preset()
             self.scheduler = self.policy.get_scheduler_preset()

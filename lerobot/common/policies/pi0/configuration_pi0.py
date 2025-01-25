@@ -34,6 +34,9 @@ class PI0Config(PreTrainedConfig):
     # Decoding
     num_steps: int = 10
 
+    # finetune
+    train_expert_only: bool = True
+
     # Action expert
     action_expert_width: int = 1024
     action_expert_depth: int = 18
@@ -69,8 +72,9 @@ class PI0Config(PreTrainedConfig):
             )
 
     def validate_features(self) -> None:
-        if not self.image_features and not self.env_state_feature:
-            raise ValueError("You must provide at least one image or the environment state among the inputs.")
+        # TODO: implement value error
+        # if not self.image_features and not self.env_state_feature:
+        #     raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
         for i in range(self.empty_cameras):
             key = f"observation.images.empty_camera_{i}"

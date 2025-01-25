@@ -158,6 +158,10 @@ class PI0(nn.Module):
             if any([selector in name for selector in params_to_change_dtype]):
                 param.data = param.data.to(dtype=torch.bfloat16)
 
+        if self.config.train_expert_only:
+            for params in self.pi0_paligemma.paligemma.parameters():
+                params.requires_grad = False
+
         self.pi0_paligemma.eval()
         # pos_emb = create_sinusoidal_pos_embedding(n_action_steps, width, min_period=4e-3, max_period=4.0)
         # self.register_buffer("pos_emb", pos_emb.unsqueeze(0))
