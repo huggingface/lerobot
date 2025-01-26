@@ -465,7 +465,6 @@ def eval(cfg: EvalPipelineConfig):
     policy = make_policy(
         cfg=cfg.policy,
         device=device,
-        env=env,
         env_cfg=cfg.env,
     )
     policy.eval()
