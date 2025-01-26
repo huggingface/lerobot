@@ -117,8 +117,8 @@ python lerobot/scripts/control_robot.py \
 
 import logging
 import time
-
-import draccus
+from dataclasses import asdict
+from pprint import pformat
 
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -144,6 +144,7 @@ from lerobot.common.robot_devices.control_utils import (
 from lerobot.common.robot_devices.robots.utils import Robot, make_robot_from_config
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import has_method, init_logging, log_say
+from lerobot.configs import parser
 
 ########################################################################################
 # Control modes
@@ -217,10 +218,11 @@ def record(
             root=cfg.root,
             local_files_only=cfg.local_files_only,
         )
-        dataset.start_image_writer(
-            num_processes=cfg.num_image_writer_processes,
-            num_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
-        )
+        if len(robot.cameras) > 0:
+            dataset.start_image_writer(
+                num_processes=cfg.num_image_writer_processes,
+                num_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
+            )
         sanity_check_dataset_robot_compatibility(dataset, robot, cfg.fps, cfg.video)
     else:
         # Create empty dataset or load existing saved episodes
@@ -340,9 +342,10 @@ def replay(
         log_control_info(robot, dt_s, fps=cfg.fps)
 
 
-@draccus.wrap()
+@parser.wrap()
 def control_robot(cfg: ControlPipelineConfig):
     init_logging()
+    logging.info(pformat(asdict(cfg)))
 
     robot = make_robot_from_config(cfg.robot)
 
