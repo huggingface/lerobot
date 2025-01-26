@@ -214,7 +214,15 @@ class LeRobotDatasetMetadata:
         task_index = self.task_to_task_index.get(task, None)
         return task_index if task_index is not None else self.total_tasks
 
-    def save_episode(self, episode_index: int, episode_length: int, task: str, task_index: int) -> None:
+    def save_episode(
+        self,
+        episode_index: int,
+        episode_length: int,
+        task: str,
+        task_index: int,
+        reward: int | None = None,
+        policy_name: str | None = None,
+    ) -> None:
         self.info["total_episodes"] += 1
         self.info["total_frames"] += episode_length
 
@@ -240,6 +248,10 @@ class LeRobotDatasetMetadata:
             "tasks": [task],
             "length": episode_length,
         }
+        if reward is not None:
+            episode_dict['reward'] = reward
+        if policy_name is not None:
+            episode_dict['policy_name'] = policy_name
         self.episodes.append(episode_dict)
         append_jsonlines(episode_dict, self.root / EPISODES_PATH)
 
@@ -282,7 +294,7 @@ class LeRobotDatasetMetadata:
         robot_type: str | None = None,
         features: dict | None = None,
         use_videos: bool = True,
-    ) -> "LeRobotDatasetMetadata":
+    ) -> "LeRobotDatasetMetadata": 
         """Creates metadata for a LeRobotDataset."""
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
@@ -665,10 +677,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             for cam in image_keys:
                 item[cam] = self.image_transforms(item[cam])
 
-        # add next.done
+        # add next.done, but only for non-dAgger datasets
         done = False
         ep_idx = item['episode_index']
-        if item['frame_index'] >= (self.meta.episodes[ep_idx]['length']) - 11:
+        if "dAgger" not in self.repo_id and item['frame_index'] >= (self.meta.episodes[ep_idx]['length']) - 11:
             # mark everything within 10 timestamps (0.5 seconds) of end as the end episode
             done = True
         item['next.done'] = done
@@ -742,7 +754,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         self.episode_buffer["size"] += 1
 
-    def save_episode(self, task: str, encode_videos: bool = True, episode_data: dict | None = None) -> None:
+    def save_episode(
+            self,
+            task: str,
+            encode_videos: bool = True,
+            episode_data: dict | None = None,
+            reward: int | None = None,
+            policy_name: str | None = None,
+        ) -> None:
         """
         This will save to disk the current episode in self.episode_buffer. Note that since it affects files on
         disk, it sets self.consolidated to False to ensure proper consolidation later on before uploading to
@@ -795,7 +814,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._wait_image_writer()
         self._save_episode_table(episode_buffer, episode_index)
 
-        self.meta.save_episode(episode_index, episode_length, task, task_index)
+        self.meta.save_episode(
+            episode_index,
+            episode_length,
+            task,
+            task_index,
+            reward,
+            policy_name,
+        )
 
         if encode_videos and len(self.meta.video_keys) > 0:
             video_paths = self.encode_episode_videos(episode_index)

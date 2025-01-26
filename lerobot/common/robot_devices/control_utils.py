@@ -321,10 +321,6 @@ def reset_environment(robot, events, reset_time_s):
             if events["reset_robot"]:
                 robot.reset()
                 events["reset_robot"] = False
-            # if events["set_master_to_follower"]:
-            #     robot.set_followers_to_master_positions()
-            #     events["set_master_to_follower"] = False
-
 
 def stop_recording(robot, listener, display_cameras):
     robot.disconnect()
@@ -349,7 +345,9 @@ def sanity_check_dataset_name(repo_id, policy):
         )
 
     # Check if dataset_name does not start with "eval_" but policy is provided
-    if not dataset_name.startswith("eval_") and policy is not None:
+    if policy is not None and not (
+        dataset_name.startswith("eval_") or dataset_name.startswith("dAgger_")
+    ):
         raise ValueError(
             f"Your dataset name does not begin with 'eval_' ({dataset_name}), but a policy is provided ({policy})."
         )

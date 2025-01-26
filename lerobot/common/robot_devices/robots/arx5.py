@@ -142,7 +142,7 @@ class ARXArm:
         self.joint_controller.set_joint_cmd(cmd)
 
     def interpolate_arm_position(self, action: np.ndarray):
-        seconds = 6
+        seconds = 5
         fps = 30
         num_steps = seconds * fps
         current_pos = self.get_state()
@@ -388,7 +388,7 @@ class ARX5Robot:
         for name in self.follower_arms:
             self.follower_arms[name].send_command(follower_goal_pos[name])
 
-    def set_followers_to_master_positions(self):
+    def set_leader_arms_to_follower_positions(self):
         """
         Used during dAgger. Safely sets follower positions to match the current master position.
         """

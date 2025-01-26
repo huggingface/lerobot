@@ -380,9 +380,8 @@ def record(
             for i in range(discrete_steps):         
                 # Increment by one dataset["current_episode_index"]
                 datasets[i].save_episode(task)
-        
-        print(f"Finished recording episode {episode_index}")
-        recorded_episodes += 1
+            print(f"Finished recording episode {episode_index}")
+            recorded_episodes += 1
 
     if not no_robot:
         log_say("Stop recording", play_sounds, blocking=True)

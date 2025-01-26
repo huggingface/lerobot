@@ -26,7 +26,7 @@ from pathlib import Path
 
 import torch
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, ListConfig
 from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -41,9 +41,12 @@ def log_output_dir(out_dir):
 
 def cfg_to_group(cfg: DictConfig, return_list: bool = False) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
+    dataset_tag = cfg.dataset_repo_id
+    if isinstance(dataset_tag, ListConfig):
+        dataset_tag = f"{dataset_tag[0]}_and_more"
     lst = [
         f"policy:{cfg.policy.name}",
-        f"dataset:{cfg.dataset_repo_id}",
+        f"dataset:{dataset_tag}",
         f"env:{cfg.env.name}",
         f"seed:{cfg.seed}",
     ]

@@ -111,6 +111,10 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
             for stats_type, listconfig in stats_dict.items():
                 # example of stats_type: min, max, mean, std
                 stats = OmegaConf.to_container(listconfig, resolve=True)
-                dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+                if isinstance(dataset, MultiLeRobotDataset):
+                    for ds in dataset._datasets:
+                        ds.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+                else:
+                    dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 
     return dataset

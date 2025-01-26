@@ -326,9 +326,16 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         eval_env = make_env(cfg)
 
     logging.info("make_policy")
+    # if using multi-robot dataset, use stats from first dataset
+    dataset_stats = None
+    if not cfg.resume:
+        if isinstance(offline_dataset, MultiLeRobotDataset):
+            dataset_stats = offline_dataset._datasets[0].meta.stats
+        else:
+            dataset_stats = offline_dataset.meta.stats
     policy = make_policy(
         hydra_cfg=cfg,
-        dataset_stats=offline_dataset.meta.stats if not cfg.resume else None,
+        dataset_stats=dataset_stats,
         pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
     )
     assert isinstance(policy, nn.Module)
