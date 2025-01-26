@@ -131,6 +131,7 @@ python lerobot/scripts/control_robot.py \
   --robot.type=stretch \
   --control.type=record \
   --control.fps=30 \
+  --control.single_task="Grasp a lego block and put it in the bin." \
   --control.repo_id=${HF_USER}/stretch_test \
   --control.tags='["tutorial"]' \
   --control.warmup_time_s=5 \

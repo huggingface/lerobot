@@ -17,12 +17,12 @@ python lerobot/scripts/control_robot.py \
 ```bash
 python lerobot/scripts/control_robot.py \
     --robot.type=so100 \
+    --robot.cameras='{}' \
     --control.type=teleoperate
 
-# Remove the cameras from the robot definition. They are not used in 'teleoperate' anyway.
+# Add the cameras from the robot definition to visualize them:
 python lerobot/scripts/control_robot.py \
     --robot.type=so100 \
-    --robot.cameras='{}' \
     --control.type=teleoperate
 ```
 
@@ -40,9 +40,10 @@ python lerobot/scripts/control_robot.py \
     --robot.type=so100 \
     --control.type=record \
     --control.fps=30 \
+    --control.single_task="Grasp a lego block and put it in the bin." \
     --control.repo_id=$USER/koch_test \
     --control.num_episodes=1 \
-    --control.run_compute_stats=False
+    --control.push_to_hub=True
 ```
 
 - Visualize dataset:
@@ -83,8 +84,8 @@ python lerobot/scripts/control_robot.py record \
 - Tap escape key 'esc' to stop the data recording.
 This might require a sudo permission to allow your terminal to monitor keyboard events.
 
-**NOTE**: You can resume/continue data recording by running the same data recording command and adding `--resume 1`.
-If the dataset you want to extend is not on the hub, you also need to add `--local-files-only 1`.
+**NOTE**: You can resume/continue data recording by running the same data recording command and adding `--control.resume=true`.
+If the dataset you want to extend is not on the hub, you also need to add `--control.local_files_only=true`.
 
 - Train on this dataset with the ACT policy:
 ```bash
@@ -103,11 +104,13 @@ python lerobot/scripts/control_robot.py \
     --robot.type=so100 \
     --control.type=record \
     --control.fps=30 \
+    --control.single_task="Grasp a lego block and put it in the bin." \
     --control.repo_id=$USER/eval_act_koch_pick_place_lego \
     --control.num_episodes=10 \
     --control.warmup_time_s=2 \
     --control.episode_time_s=30 \
     --control.reset_time_s=10 \
+    --control.push_to_hub=true \
     --control.policy.path=outputs/train/act_koch_pick_place_lego/checkpoints/080000/pretrained_model
 ```
 """

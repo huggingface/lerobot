@@ -60,7 +60,7 @@ In the upcoming sections, you'll learn about our classes and functions by runnin
 ```bash
 python lerobot/scripts/control_robot.py \
   --robot.type=koch \
-  --robot.cameras='{}' # do not instantiate the cameras
+  --control.type=teleoperate
 ```
 
 It will automatically:
@@ -671,8 +671,8 @@ Instead of manually running the python code in a terminal window, you can use [`
 Try running this code to teleoperate your robot (if you dont have a camera, keep reading):
 ```bash
 python lerobot/scripts/control_robot.py \
-    --robot.type=koch \
-    --control.type=teleoperate
+  --robot.type=koch \
+  --control.type=teleoperate
 ```
 
 You will see a lot of lines appearing like this one:
@@ -689,7 +689,7 @@ It contains
 
 Importantly: If you don't have any camera, you can remove them dynamically with this [draccus](https://github.com/dlwh/draccus) syntax `--robot.cameras='{}'`:
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
+python lerobot/scripts/control_robot.py \
   --robot.type=koch \
   --robot.cameras='{}' \
   --control.type=teleoperate
@@ -762,6 +762,7 @@ Now run this to record 2 episodes:
 python lerobot/scripts/control_robot.py \
   --robot.type=koch \
   --control.type=record \
+  --control.single_task="Grasp a lego block and put it in the bin." \
   --control.fps=30 \
   --control.repo_id=${HF_USER}/koch_test \
   --control.tags='["tutorial"]' \
@@ -771,6 +772,7 @@ python lerobot/scripts/control_robot.py \
   --control.num_episodes=2 \
   --control.push_to_hub=true
 ```
+
 
 This will write your dataset locally to `~/.cache/huggingface/lerobot/{repo-id}` (e.g. `data/cadene/koch_test`) and push it on the hub at `https://huggingface.co/datasets/{HF_USER}/{repo-id}`. Your dataset will be automatically tagged with `LeRobot` for the community to find it easily, and you can also add custom tags (in this case `tutorial` for example).
 
@@ -826,6 +828,8 @@ python lerobot/scripts/visualize_dataset_html.py \
   --repo-id ${HF_USER}/koch_test
 ```
 
+Note: You might need to add `--local-files-only 1` if your dataset was not uploaded to hugging face hub.
+
 This will launch a local web server that looks like this:
 <div style="text-align:center;">
   <img src="../media/tutorial/visualize_dataset_html.webp?raw=true" alt="Koch v1.1 leader and follower arms" title="Koch v1.1 leader and follower arms" width="100%">
@@ -863,6 +867,8 @@ python lerobot/scripts/train.py \
   --device=cuda \
   --wandb.enable=true
 ```
+
+Note: You might need to add `--dataset.local_files_only=true` if your dataset was not uploaded to hugging face hub.
 
 Let's explain it:
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/koch_test`.
@@ -948,6 +954,7 @@ python lerobot/scripts/control_robot.py \
   --control.episode_time_s=30 \
   --control.reset_time_s=30 \
   --control.num_episodes=10 \
+  --control.push_to_hub=true \
   --control.policy.path=outputs/train/act_koch_test/checkpoints/last/pretrained_model
 ```
 

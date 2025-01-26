@@ -213,8 +213,7 @@ Then you are ready to teleoperate your robot! Run this simple script (it won't c
 python lerobot/scripts/control_robot.py \
   --robot.type=moss \
   --robot.cameras='{}' \
-  --control.type=teleoperate \
-  --control.display_cameras=false
+  --control.type=teleoperate
 ```
 
 
@@ -247,6 +246,7 @@ python lerobot/scripts/control_robot.py \
   --robot.type=moss \
   --control.type=record \
   --control.fps=30 \
+  --control.single_task="Grasp a lego block and put it in the bin." \
   --control.repo_id=${HF_USER}/moss_test \
   --control.tags='["moss","tutorial"]' \
   --control.warmup_time_s=5 \
@@ -256,17 +256,20 @@ python lerobot/scripts/control_robot.py \
   --control.push_to_hub=true
 ```
 
+Note: You can resume recording by adding `--control.resume=true`. Also if you didn't push your dataset yet, add `--control.local_files_only=true`.
+
 ## Visualize a dataset
 
-If you uploaded your dataset to the hub with `--push-to-hub 1`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
+If you uploaded your dataset to the hub with `--control.push_to_hub=true`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
 ```bash
 echo ${HF_USER}/moss_test
 ```
 
-If you didn't upload with `--push-to-hub 0`, you can also visualize it locally with:
+If you didn't upload with `--control.push_to_hub=false`, you can also visualize it locally with:
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
-  --repo-id ${HF_USER}/moss_test
+  --repo-id ${HF_USER}/moss_test \
+  --local-files-only 1
 ```
 
 ## Replay an episode
@@ -281,6 +284,8 @@ python lerobot/scripts/control_robot.py \
   --control.episode=0
 ```
 
+Note: If you didn't push your dataset yet, add `--control.local_files_only=true`.
+
 ## Train a policy
 
 To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
@@ -293,6 +298,8 @@ python lerobot/scripts/train.py \
   --device=cuda \
   --wandb.enable=true
 ```
+
+Note: If you didn't push your dataset yet, add `--control.local_files_only=true`.
 
 Let's explain it:
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/moss_test`.
@@ -310,12 +317,14 @@ python lerobot/scripts/control_robot.py \
   --robot.type=moss \
   --control.type=record \
   --control.fps=30 \
+  --control.single_task="Grasp a lego block and put it in the bin." \
   --control.repo_id=${HF_USER}/eval_act_moss_test \
   --control.tags='["tutorial"]' \
   --control.warmup_time_s=5 \
   --control.episode_time_s=30 \
   --control.reset_time_s=30 \
   --control.num_episodes=10 \
+  --control.push_to_hub=true \
   --control.policy.path=outputs/train/act_moss_test/checkpoints/last/pretrained_model
 ```
 

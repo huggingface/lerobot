@@ -87,6 +87,7 @@ python lerobot/scripts/control_robot.py \
   --robot.max_relative_target=null \
   --control.type=record \
   --control.fps=30 \
+  --control.single_task="Grasp a lego block and put it in the bin." \
   --control.repo_id=${HF_USER}/aloha_test \
   --control.tags='["tutorial"]' \
   --control.warmup_time_s=5 \
@@ -156,12 +157,14 @@ python lerobot/scripts/control_robot.py \
   --robot.type=aloha \
   --control.type=record \
   --control.fps=30 \
+  --control.single_task="Grasp a lego block and put it in the bin." \
   --control.repo_id=${HF_USER}/eval_act_aloha_test \
   --control.tags='["tutorial"]' \
   --control.warmup_time_s=5 \
   --control.episode_time_s=30 \
   --control.reset_time_s=30 \
   --control.num_episodes=10 \
+  --control.push_to_hub=true \
   --control.policy.path=outputs/train/act_aloha_test/checkpoints/last/pretrained_model \
   --control.num_image_writer_processes=1
 ```
