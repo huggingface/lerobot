@@ -105,10 +105,10 @@ The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0032081
 Reconnect the usb cable.
 ```
 
-Troubleshooting: On Linux, you might need to give access to the USB ports by running:
+Troubleshooting: On Linux, you might need to give access to the USB ports by running this command with your ports:
 ```bash
-sudo chmod 666 /dev/ttyACM0
-sudo chmod 666 /dev/ttyACM1
+sudo chmod 666 /dev/tty.usbmodem575E0032081
+sudo chmod 666 /dev/tty.usbmodem575E0031751
 ```
 
 *Listing and Configuring Motors*
