@@ -1,4 +1,5 @@
 import datetime as dt
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,9 +13,9 @@ from lerobot.common import envs
 from lerobot.common.optim import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.common.utils.hub import HubMixin
+from lerobot.common.utils.utils import auto_select_torch_device
 from lerobot.configs import parser
-from lerobot.configs.default import DatasetConfig, WandBConfig
-from lerobot.configs.eval import EvalConfig
+from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
 from lerobot.configs.policies import PreTrainedConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
@@ -96,7 +97,7 @@ class TrainPipelineConfig(HubMixin):
     # Note that when resuming a run, the default behavior is to use the configuration from the checkpoint,
     # regardless of what's provided with the training command at the time of resumption.
     resume: bool = False
-    device: str = "cuda"  # | cpu | mp
+    device: str | None = None  # cuda | cpu | mp
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
     use_amp: bool = False
@@ -121,6 +122,11 @@ class TrainPipelineConfig(HubMixin):
 
     def __post_init__(self):
         self.checkpoint_path = None
+
+        if not self.device:
+            logging.warning("No device specified, trying to infer device automatically")
+            device = auto_select_torch_device()
+            self.device = device.type
 
         if self.use_amp and self.device not in ["cuda", "cpu"]:
             raise NotImplementedError(
