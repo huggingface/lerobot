@@ -126,7 +126,8 @@ def save_images_from_cameras(
     print("Connecting cameras")
     cameras = []
     for cam_idx in camera_ids:
-        camera = OpenCVCamera(camera_index=cam_idx, fps=fps, width=width, height=height, mock=mock)
+        config = OpenCVCameraConfig(camera_index=cam_idx, fps=fps, width=width, height=height, mock=mock)
+        camera = OpenCVCamera(config)
         camera.connect()
         print(
             f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, "

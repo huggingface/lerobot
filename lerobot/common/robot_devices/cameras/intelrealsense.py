@@ -94,7 +94,10 @@ def save_images_from_cameras(
     cameras = []
     for cam_sn in serial_numbers:
         print(f"{cam_sn=}")
-        camera = IntelRealSenseCamera(serial_number=cam_sn, fps=fps, width=width, height=height, mock=mock)
+        config = IntelRealSenseCameraConfig(
+            serial_number=cam_sn, fps=fps, width=width, height=height, mock=mock
+        )
+        camera = IntelRealSenseCamera(config)
         camera.connect()
         print(
             f"IntelRealSenseCamera({camera.serial_number}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
