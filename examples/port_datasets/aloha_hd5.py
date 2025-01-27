@@ -132,7 +132,7 @@ class AlohaHD5Extractor:
                         frame[feature_id] = torch.from_numpy(image.transpose(2, 0, 1))
                     else:
                         frame[feature_id] = torch.from_numpy(file[feature_name_hd5][frame_idx])
-            frames.append(frame)
+                frames.append(frame)
         return frames
 
     @staticmethod
