@@ -46,13 +46,13 @@ class EvalPipelineConfig:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
-            pretrained_cfg = TrainPipelineConfig.from_pretrained(policy_path)
-            if self.use_amp != pretrained_cfg.use_amp:
+            train_cfg = TrainPipelineConfig.from_pretrained(policy_path, validate=False)
+            if self.use_amp != train_cfg.use_amp:
                 raise ValueError(
-                    f"The policy you are trying to load has been trained with use_amp={pretrained_cfg.use_amp} "
+                    f"The policy you are trying to load has been trained with use_amp={train_cfg.use_amp} "
                     f"but you're trying to evaluate it with use_amp={self.use_amp}"
                 )
-            if self.device == "mps" and pretrained_cfg.device == "cuda":
+            if self.device == "mps" and train_cfg.device == "cuda":
                 logging.warning(
                     "You are loading a policy that has been trained with a Cuda kernel on a Metal backend."
                     "This is lilely to produced unexpected results due to differences between these two kernels."

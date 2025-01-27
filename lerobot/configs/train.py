@@ -123,6 +123,7 @@ class TrainPipelineConfig(HubMixin):
     def __post_init__(self):
         self.checkpoint_path = None
 
+    def validate(self):
         if not self.device:
             logging.warning("No device specified, trying to infer device automatically")
             device = auto_select_torch_device()
@@ -197,6 +198,7 @@ class TrainPipelineConfig(HubMixin):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
+        validate: bool = True,
         **kwargs,
     ) -> "TrainPipelineConfig":
         model_id = str(pretrained_name_or_path)
@@ -224,5 +226,8 @@ class TrainPipelineConfig(HubMixin):
             except HfHubHTTPError as e:
                 print(f"config.json not found on the HuggingFace Hub: {str(e)}")
 
-        cli_args = kwargs.pop("cli_args", [])
-        return draccus.parse(cls, config_file, args=cli_args)
+        cfg = draccus.parse(cls, config_file, args=[])
+        if validate:
+            cfg.validate()
+
+        return cfg

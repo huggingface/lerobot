@@ -182,6 +182,8 @@ def log_eval_info(logger, info, step, cfg, dataset, is_online):
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
+    cfg.validate()
+
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
