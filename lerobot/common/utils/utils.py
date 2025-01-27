@@ -40,6 +40,19 @@ def inside_slurm():
     return "SLURM_JOB_ID" in os.environ
 
 
+def auto_select_torch_device() -> torch.device:
+    """Tries to select automatically a torch device."""
+    if torch.cuda.is_available():
+        logging.log("Cuda backend detected, using cuda.")
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        logging.log("Metal backend detected, using cuda.")
+        return torch.device("mps")
+    else:
+        logging.warning("No accelerated backend detected. Using default cpu, this will be slow.")
+        return torch.device("cpu")
+
+
 def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     """Given a string, return a torch.device with checks on whether the device is available."""
     match try_device:
