@@ -161,6 +161,12 @@ def create_sinusoidal_pos_embedding(
     return pos_emb
 
 
+def sample_beta_gpu(alpha, beta, bsize, device):
+    gamma1 = torch.empty((bsize,), device=device).uniform_(0, 1).pow(1 / alpha)
+    gamma2 = torch.empty((bsize,), device=device).uniform_(0, 1).pow(1 / beta)
+    return gamma1 / (gamma1 + gamma2)
+
+
 class PI0(nn.Module):
     def __init__(self, config: PI0Config):
         super().__init__()
@@ -185,7 +191,6 @@ class PI0(nn.Module):
             for params in self.pi0_paligemma.paligemma.parameters():
                 params.requires_grad = False
 
-        self.pi0_paligemma.eval()
         # pos_emb = create_sinusoidal_pos_embedding(n_action_steps, width, min_period=4e-3, max_period=4.0)
         # self.register_buffer("pos_emb", pos_emb.unsqueeze(0))
         self.torch_dtype = torch.bfloat16
@@ -215,6 +220,9 @@ class PI0(nn.Module):
         return batch
 
     def prepare_language(self, batch):
+        bsize = batch[OBS_ROBOT].shape[0]
+        device = batch[OBS_ROBOT].device
+
         # tokenizer works on lists
         # PaliGemma prompt has to end with a new line
         max_length = 48
@@ -224,17 +232,12 @@ class PI0(nn.Module):
             padding_side="right",
             max_length=max_length,
             return_tensors="pt",
-        )
+        ).to(device=device)
 
         tokenized_prompt["attention_mask"] = tokenized_prompt["attention_mask"].type(dtype=torch.bool)
 
-        bsize = batch[OBS_ROBOT].shape[0]
-        device = batch[OBS_ROBOT].device
-
-        batch["tokenized_prompt"] = tokenized_prompt["input_ids"].expand(bsize, max_length).to(device=device)
-        batch["tokenized_prompt_mask"] = (
-            tokenized_prompt["attention_mask"].expand(bsize, max_length).to(device=device)
-        )
+        batch["tokenized_prompt"] = tokenized_prompt["input_ids"].repeat(bsize, 1).to(device=device)
+        batch["tokenized_prompt_mask"] = tokenized_prompt["attention_mask"].repeat(bsize, 1).to(device=device)
         return batch
 
     def prepare_state(self, batch):
@@ -266,7 +269,9 @@ class PI0(nn.Module):
         else:
             noise = noise.to(dtype=torch.float32, device=device)
 
-        time_beta = torch.distributions.Beta(1.5, 1).sample((bsize,))
+        # time_beta = torch.distributions.Beta(1.5, 1).sample((bsize,))
+        # compute directly sampling on GPU
+        time_beta = sample_beta_gpu(1.5, 1.0, bsize, device)
 
         if self.config.fix_noise:
             noise = torch.load("../openpi/data/aloha_sim/noise_train.pth")
@@ -313,7 +318,7 @@ class PI0(nn.Module):
 
         loss = losses.mean()
 
-        loss_dict = {"l2_loss": loss.item(), "loss": loss}
+        loss_dict = {"l2_loss": loss.detach(), "loss": loss}
         return loss_dict
 
     def inference(
@@ -621,14 +626,25 @@ def main():
     import pickle
     from pathlib import Path
 
-    with open("../openpi/data/aloha_sim/obs.pkl", "rb") as f:
+    # obs_path = "/raid/pablo/alohasim/obs.pkl"
+    # action_path = "/raid/pablo/alohasim/action.pkl"
+    # checkpoint_dir = Path("/raid/pablo/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+    # noise_bsize_2_path = "/raid/pablo/alohasim/noise_bsize_2.pkl"
+    # noise_path = "/raid/pablo/alohasim/noise_2.pkl"
+    # save_pretrained_path = "outputs/exported/2025-01-27/12-17-01_aloha_pi0/last/pretrained_model"
+
+    obs_path = "../openpi/data/aloha_sim/obs.pkl"
+    action_path = "../openpi/data/aloha_sim/action.pkl"
+    checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+    noise_bsize_2_path = "../openpi/data/aloha_sim/noise_bsize_2.pkl"
+    noise_path = "../openpi/data/aloha_sim/noise_2.pkl"
+    save_pretrained_path = "outputs/exported/2025-01-27/12-17-01_aloha_pi0/last/pretrained_model"
+
+    with open(obs_path, "rb") as f:
         obs = pickle.load(f)
 
-    with open("../openpi/data/aloha_sim/action.pkl", "rb") as f:
+    with open(action_path, "rb") as f:
         pi_actions = torch.from_numpy(pickle.load(f)["actions"])
-
-    # checkpoint_dir = Path("/raid/pablo/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
-    checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
 
     with open(checkpoint_dir / "assets/norm_stats.json") as f:
         norm_stats = json.load(f)
@@ -659,7 +675,6 @@ def main():
 
     cam_top = torch.from_numpy(obs["images"]["cam_high"]).unsqueeze(0) / 255.0  # * 2.0 - 1.0
     cam_top = cam_top.to(dtype=torch.float32)
-    # cam_top_mask = torch.ones(1, dtype=torch.bool)
 
     state = torch.from_numpy(obs["state"]).unsqueeze(0)
     state = state.to(dtype=torch.float32)
@@ -671,21 +686,16 @@ def main():
     if make_double_bsize:
         cam_top = torch.cat([cam_top, cam_top], dim=0)
         state = torch.cat([state, state], dim=0)
-        noise = torch.load("../openpi/data/aloha_sim/noise_bsize_2.pth")
+        noise = torch.load(noise_bsize_2_path)
         noise[1] = noise[0]
     else:
-        noise = torch.load("../openpi/data/aloha_sim/noise_2.pth")
+        noise = torch.load(noise_path)
 
     if not isinstance(noise, torch.Tensor):
         noise = torch.from_numpy(noise)
 
     batch = {
         "observation.images.top": cam_top,
-        # "observation.images.top_mask": cam_top_mask,
-        # "observation.images.left_wrist": torch.ones_like(cam_top) * -1,
-        # "observation.images.left_wrist_mask": torch.zeros_like(cam_top_mask),
-        # "observation.images.right_wrist": torch.ones_like(cam_top) * -1,
-        # "observation.images.right_wrist_mask": torch.zeros_like(cam_top_mask),
         "observation.state": state,
         "action": gt_action.unsqueeze(0),
     }
@@ -698,13 +708,6 @@ def main():
     output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     input_features = {key: ft for key, ft in features.items() if key not in output_features}
 
-    # cfg = PI0Config(output_features=output_features, input_features=input_features, chunk_size=10, n_action_steps=10)
-    # cfg = PI0Config(
-    #     output_features=output_features,
-    #     input_features=input_features,
-    #     fix_noise=True,
-    #     empty_cameras=2,
-    # )
     cfg = PI0Config(
         output_features=output_features,
         input_features=input_features,
@@ -715,10 +718,7 @@ def main():
 
     policy = PI0Policy(cfg, dataset_stats=dataset_stats)
 
-    # policy.model.from_pretrained("../openpi/data/aloha_sim/pi0_projs_state_dict.pth")
-    # policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
-    # policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
-    policy.save_pretrained("outputs/exported/2025-01-27/12-17-01_aloha_pi0/last/pretrained_model")
+    policy.save_pretrained(save_pretrained_path)
     policy.to(device=device)
 
     loss_dict = policy.forward(batch)
