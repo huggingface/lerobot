@@ -226,7 +226,8 @@ class TrainPipelineConfig(HubMixin):
             except HfHubHTTPError as e:
                 print(f"config.json not found on the HuggingFace Hub: {str(e)}")
 
-        cfg = draccus.parse(cls, config_file, args=[])
+        cli_args = kwargs.pop("cli_args", [])
+        cfg = draccus.parse(cls, config_file, args=cli_args)
         if validate:
             cfg.validate()
 
