@@ -54,9 +54,9 @@ Then plug the 12V power supply to the motor bus of the follower arm. It has two 
 
 Finally, connect both arms to your computer via USB. Note that the USB doesn't provide any power, and both arms need to be plugged in with their associated power supply to be detected by your computer.
 
-*Copy pasting python code*
+Now you are ready to configure your motors for the first time, as detailed in the sections below. In the upcoming sections, you'll learn about our classes and functions by running some python code in an interactive session, or by copy-pasting it in a python file.
 
-In the upcoming sections, you'll learn about our classes and functions by running some python code, in an interactive session, or by copy-pasting it in a python file. If this is your first time using the tutorial., we highly recommend going through these steps to get deeper intuition about how things work. Once you're more familiar, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
+If you have already configured your motors the first time, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
 ```bash
 python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml \
@@ -64,13 +64,42 @@ python lerobot/scripts/control_robot.py teleoperate \
 ```
 
 It will automatically:
-1. Detect and help you correct any motor configuration issues.
-2. Identify any missing calibrations and initiate the calibration procedure.
-3. Connect the robot and start teleoperation.
+1. Identify any missing calibrations and initiate the calibration procedure.
+2. Connect the robot and start teleoperation.
 
 ### a. Control your motors with DynamixelMotorsBus
 
 You can use the [`DynamixelMotorsBus`](../lerobot/common/robot_devices/motors/dynamixel.py) to communicate with the motors connected as a chain to the corresponding USB bus. This class leverages the Python [Dynamixel SDK](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20) to facilitate reading from and writing to the motors.
+
+**First Configuration of your motors** 
+
+You will need to unplug each motor in turn and run a command the identify the motor. The motor will save its own identification, so you only need to do this once. Start by unplugging all of the motors.
+
+Do the Leader arm first, as all of its motors are of the same type. Plug in your first motor on your leader arm and run this script to set its ID to 1.
+```bash
+python lerobot/scripts/configure_motor.py \
+  --port /dev/tty.usbmodem58760432961 \
+  --brand dynamixel \
+  --model xl330-m288 \
+  --baudrate 1000000 \
+  --ID 1
+```
+
+Then unplug your first motor and plug the second motor and set its ID to 2.
+```bash
+python lerobot/scripts/configure_motor.py \
+  --port /dev/tty.usbmodem58760432961 \
+  --brand dynamixel \
+  --model xl330-m288 \
+  --baudrate 1000000 \
+  --ID 2
+```
+
+Redo the process for all your motors until ID 6.
+
+The process for the follower arm is almost the same, but the follower arm has two types of motors. For the first two motors, make sure you set the model to `xl430-w250`. _Important: configuring follower motors requires plugging and unplugging power. Make sure you use the 5V power for the XL330s and the 12V power for the XL430s!_
+
+After all of your motors are configured properly, you're ready to plug them all together in a daisy-chain as shown in the original video.
 
 **Instantiate the DynamixelMotorsBus**
 
