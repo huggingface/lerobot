@@ -14,8 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import math
 from collections import deque
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -67,6 +69,27 @@ class PI0Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
+
+        checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+
+        with open(checkpoint_dir / "assets/norm_stats.json") as f:
+            norm_stats = json.load(f)
+
+        num_motors = 14
+        dataset_stats = {
+            "observation.state": {
+                "mean": torch.tensor(norm_stats["norm_stats"]["state"]["mean"][:num_motors]),
+                "std": torch.tensor(norm_stats["norm_stats"]["state"]["std"][:num_motors]),
+                "min": torch.zeros(num_motors),
+                "max": torch.ones(num_motors),
+            },
+            "action": {
+                "mean": torch.tensor(norm_stats["norm_stats"]["actions"]["mean"][:num_motors]),
+                "std": torch.tensor(norm_stats["norm_stats"]["actions"]["std"][:num_motors]),
+                "min": torch.zeros(num_motors),
+                "max": torch.ones(num_motors),
+            },
+        }
 
         self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
         self.normalize_targets = Normalize(
@@ -285,6 +308,8 @@ class PI0(nn.Module):
         if "action_is_pad" in batch:
             in_episode_bound = ~batch["action_is_pad"]
             losses = losses * in_episode_bound.unsqueeze(-1)
+
+        # pi_loss = torch.from_numpy(torch.load("../openpi/data/aloha_sim/loss.pth"))
 
         loss = losses.mean()
 
@@ -668,37 +693,36 @@ def main():
     for k in batch:
         batch[k] = batch[k].to(device=device)
 
-    ds_meta = LeRobotDatasetMetadata("lerobot/aloha_sim_transfer_cube_human")
+    ds_meta = LeRobotDatasetMetadata("lerobot/aloha_transfer_cube_human")
     features = dataset_to_policy_features(ds_meta.features)
     output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     input_features = {key: ft for key, ft in features.items() if key not in output_features}
-    cfg = PI0Config(output_features=output_features, input_features=input_features)
 
-    # cfg_img_left_wrist = PolicyFeature(
-    #     key="observation.images.left_wrist",
-    #     type=FeatureType.VISUAL,
-    #     shape=(3, 480, 640),
-    #     normalization_mode=NormalizationMode.MIN_MAX,
+    # cfg = PI0Config(output_features=output_features, input_features=input_features, chunk_size=10, n_action_steps=10)
+    # cfg = PI0Config(
+    #     output_features=output_features,
+    #     input_features=input_features,
+    #     fix_noise=True,
+    #     empty_cameras=2,
     # )
-    # cfg_img_right_wrist = PolicyFeature(
-    #     key="observation.images.right_wrist",
-    #     type=FeatureType.VISUAL,
-    #     shape=(3, 480, 640),
-    #     normalization_mode=NormalizationMode.MIN_MAX,
-    # )
-    # cfg.image_features.append(cfg_img_left_wrist)
-    # cfg.image_features.append(cfg_img_right_wrist)
+    cfg = PI0Config(
+        output_features=output_features,
+        input_features=input_features,
+        empty_cameras=2,
+        fix_noise=True,
+        train_expert_only=False,
+    )
 
     policy = PI0Policy(cfg, dataset_stats=dataset_stats)
 
     # policy.model.from_pretrained("../openpi/data/aloha_sim/pi0_projs_state_dict.pth")
     # policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
     # policy.save_pretrained("outputs/exported/2025-01-21/16-47-01_aloha_pi0/last/pretrained_model")
-    policy.save_pretrained("outputs/exported/2025-01-23/16-01-01_aloha_pi0/last/pretrained_model")
+    policy.save_pretrained("outputs/exported/2025-01-27/12-17-01_aloha_pi0/last/pretrained_model")
     policy.to(device=device)
 
-    # loss_dict = policy.forward(batch)
-    # loss_dict["loss"].backward()
+    loss_dict = policy.forward(batch)
+    loss_dict["loss"].backward()
 
     actions = []
     for i in range(50):

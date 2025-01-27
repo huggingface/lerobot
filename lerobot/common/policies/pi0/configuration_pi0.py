@@ -27,15 +27,15 @@ class PI0Config(PreTrainedConfig):
     state_dim: int = 24
     action_dim: int = 24
 
-    resize_imgs_with_padding: tuple = (224, 224)
+    resize_imgs_with_padding: tuple[int, int] = (224, 224)
     empty_cameras: int = 2
-    fix_noise: bool = True
+    fix_noise: bool = False
 
     # Decoding
     num_steps: int = 10
 
     # finetune
-    train_expert_only: bool = True
+    train_expert_only: bool = False
 
     # Action expert
     action_expert_width: int = 1024
@@ -49,13 +49,13 @@ class PI0Config(PreTrainedConfig):
 
     # Training presets
     optimizer_lr: float = 2.5e-5
-    optimizer_betas: tuple = (0.9, 0.95)
+    optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 1e-10
 
     scheduler_warmup_steps: int = 1_000
     scheduler_decay_steps: int = 30_000
-    scheduler_decay_lr: int = 2.5e-6
+    scheduler_decay_lr: float = 2.5e-6
 
     def __post_init__(self):
         super().__post_init__()
