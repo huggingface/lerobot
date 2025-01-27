@@ -586,9 +586,6 @@ class FeetechMotorsBus:
                 # Once autocorrect calibration is done, also store the new homing_offset in yaml
                 if self.calibration_file is not None:
                     calibration = self.calibration
-                    print(
-                        f"Adjusting and storing homing calibration on axis '{calib_idx}' after triggering autocorrect_calibration"
-                    )
                     self.calibration_file.parent.mkdir(parents=True, exist_ok=True)
                     with open(self.calibration_file, "w") as f:
                         json.dump(calibration, f)
