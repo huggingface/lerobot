@@ -1,7 +1,0 @@
-transformers
-trl
-peft
-accelerate
-datasets
-wandb
-bitsandbytes
