@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -6,6 +7,7 @@ import draccus
 from lerobot.common.robot_devices.robots.configs import RobotConfig
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.train import TrainPipelineConfig
 
 
 @dataclass
@@ -91,12 +93,21 @@ class RecordControlConfig(ControlConfig):
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
-
-        if self.policy is not None:
-            if self.device is None:
-                raise ValueError("Set one of the following device: cuda, cpu or mps")
-            elif self.device == "cuda" and self.use_amp is None:
-                raise ValueError("Set 'use_amp' to True or False.")
+            train_cfg = TrainPipelineConfig.from_pretrained(policy_path)
+            if self.use_amp != train_cfg.use_amp:
+                raise ValueError(
+                    f"The policy you are trying to load has been trained with use_amp={train_cfg.use_amp} "
+                    f"but you're trying to evaluate it with use_amp={self.use_amp}"
+                )
+            if self.device == "mps" and train_cfg.device == "cuda":
+                logging.warning(
+                    "You are loading a policy that has been trained with a Cuda kernel on a Metal backend."
+                    "This is lilely to produced unexpected results due to differences between these two kernels."
+                )
+        else:
+            logging.warning(
+                "No pretrained path was provided, evaluated policy will be built from scratch (random weights)."
+            )
 
 
 @ControlConfig.register_subclass("replay")
