@@ -198,7 +198,6 @@ class TrainPipelineConfig(HubMixin):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
-        validate: bool = True,
         **kwargs,
     ) -> "TrainPipelineConfig":
         model_id = str(pretrained_name_or_path)
@@ -228,7 +227,5 @@ class TrainPipelineConfig(HubMixin):
 
         cli_args = kwargs.pop("cli_args", [])
         cfg = draccus.parse(cls, config_file, args=cli_args)
-        if validate:
-            cfg.validate()
 
         return cfg

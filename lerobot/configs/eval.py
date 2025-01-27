@@ -46,7 +46,7 @@ class EvalPipelineConfig:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
-            train_cfg = TrainPipelineConfig.from_pretrained(policy_path, validate=False)
+            train_cfg = TrainPipelineConfig.from_pretrained(policy_path)
             if self.use_amp != train_cfg.use_amp:
                 raise ValueError(
                     f"The policy you are trying to load has been trained with use_amp={train_cfg.use_amp} "
