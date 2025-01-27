@@ -5,6 +5,7 @@ from pathlib import Path
 import draccus
 
 from lerobot.common.robot_devices.robots.configs import RobotConfig
+from lerobot.common.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
@@ -93,21 +94,27 @@ class RecordControlConfig(ControlConfig):
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
-            train_cfg = TrainPipelineConfig.from_pretrained(policy_path)
-            if self.use_amp != train_cfg.use_amp:
-                raise ValueError(
-                    f"The policy you are trying to load has been trained with use_amp={train_cfg.use_amp} "
-                    f"but you're trying to evaluate it with use_amp={self.use_amp}"
-                )
-            if self.device == "mps" and train_cfg.device == "cuda":
+
+            # When no device or use_amp are given, use the one from training config.
+            if self.device is None or self.use_amp is None:
+                train_cfg = TrainPipelineConfig.from_pretrained(policy_path)
+                if self.device is None:
+                    self.device = train_cfg.device
+                if self.use_amp is None:
+                    self.use_amp = train_cfg.use_amp
+
+            # Automatically switch to available device if necessary
+            if not is_torch_device_available(self.device):
+                auto_device = auto_select_torch_device()
+                logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
+                self.device = auto_device
+
+            # Automatically deactivate AMP if necessary
+            if self.use_amp and not is_amp_available(self.device):
                 logging.warning(
-                    "You are loading a policy that has been trained with a Cuda kernel on a Metal backend."
-                    "This is lilely to produced unexpected results due to differences between these two kernels."
+                    f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
                 )
-        else:
-            logging.warning(
-                "No pretrained path was provided, evaluated policy will be built from scratch (random weights)."
-            )
+                self.use_amp = False
 
 
 @ControlConfig.register_subclass("replay")
