@@ -155,6 +155,12 @@ def create_sinusoidal_pos_embedding(
     return pos_emb
 
 
+def sample_beta_gpu(alpha, beta, bsize, device):
+    gamma1 = torch.empty((bsize,), device=device).uniform_(0, 1).pow(1 / alpha)
+    gamma2 = torch.empty((bsize,), device=device).uniform_(0, 1).pow(1 / beta)    
+    return gamma1 / (gamma1 + gamma2)
+
+
 class PI0(nn.Module):
     def __init__(self, config: PI0Config):
         super().__init__()
@@ -163,9 +169,8 @@ class PI0(nn.Module):
         # self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained(
         #     "Tinkering/frostpunklab_23012024", torch_dtype="bfloat16"
         # )
-        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("Tinkering/frostpunklab_full_float32")
-
-        self.pi0_paligemma.eval()
+        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("Tinkering/frostpunklab_full_float32", torch_dtype=torch.bfloat16)
+        #self.pi0_paligemma.eval()
         # pos_emb = create_sinusoidal_pos_embedding(n_action_steps, width, min_period=4e-3, max_period=4.0)
         # self.register_buffer("pos_emb", pos_emb.unsqueeze(0))
         self.torch_dtype = torch.bfloat16
@@ -209,13 +214,13 @@ class PI0(nn.Module):
             padding_side="right",
             max_length=max_length,
             return_tensors="pt",
-        )
+        ).to(device=device)
 
         tokenized_prompt["attention_mask"] = tokenized_prompt["attention_mask"].type(dtype=torch.bool)
 
-        batch["tokenized_prompt"] = tokenized_prompt["input_ids"].expand(bsize, max_length).to(device=device)
+        batch["tokenized_prompt"] = tokenized_prompt["input_ids"].repeat(bsize, 1).to(device=device)
         batch["tokenized_prompt_mask"] = (
-            tokenized_prompt["attention_mask"].expand(bsize, max_length).to(device=device)
+            tokenized_prompt["attention_mask"].repeat(bsize, 1).to(device=device)
         )
 
         if noise is None:
@@ -229,7 +234,10 @@ class PI0(nn.Module):
         else:
             noise = noise.to(dtype=torch.float32, device=device)
 
-        time_beta = torch.distributions.Beta(1.5, 1).sample((bsize,))
+        # time_beta = torch.distributions.Beta(1.5, 1).sample((bsize,))
+        # compute directly sampling on GPU
+        time_beta = sample_beta_gpu(1.5, 1.0, bsize, device)
+
 
         # noise = torch.load("../openpi/data/aloha_sim/noise_train.pth")
         # noise = torch.from_numpy(noise).to(dtype=torch.float32, device=device)
@@ -273,7 +281,7 @@ class PI0(nn.Module):
 
         loss = losses.mean()
 
-        loss_dict = {"l2_loss": loss.item(), "loss": loss}
+        loss_dict = {"l2_loss": loss.detach(), "loss": loss}
         return loss_dict
 
     def inference(
@@ -302,24 +310,24 @@ class PI0(nn.Module):
         # tokenizer works on lists
         # PaliGemma prompt has to end with a new line
         max_length = 48
+        bsize = batch[skey].shape[0]
+        device = batch[skey].device
         tokenized_prompt = self.tokenizer.__call__(
             "Transfer cube\n",
             padding="max_length",
             padding_side="right",
             max_length=max_length,
             return_tensors="pt",
-        )
+        ).to(device=device)
 
         tokenized_prompt["attention_mask"] = tokenized_prompt["attention_mask"].type(dtype=torch.bool)
 
-        bsize = batch[skey].shape[0]
-        device = batch[skey].device
+        tokenized_prompt = tokenized_prompt.to(device=device)  # Move everything to the target device
+        # batch["tokenized_prompt"] = tokenized_prompt["input_ids"].expand(bsize, max_length).to(device=device)
+        batch["tokenized_prompt"] = tokenized_prompt["input_ids"].repeat(bsize, 1)
 
-        batch["tokenized_prompt"] = tokenized_prompt["input_ids"].expand(bsize, max_length).to(device=device)
-        batch["tokenized_prompt_mask"] = (
-            tokenized_prompt["attention_mask"].expand(bsize, max_length).to(device=device)
-        )
-
+        # batch["tokenized_prompt_mask"] = (tokenized_prompt["attention_mask"].expand(bsize, max_length).to(device=device))
+        batch["tokenized_prompt_mask"] = tokenized_prompt["attention_mask"].repeat(bsize, 1)
         actions = self.sample_actions(batch, tokenized_prompt, noise=noise)
 
         # unpad

@@ -230,30 +230,30 @@ class PI0PaliGemmaModel(PreTrainedModel):
                 batch_size, sequence_length, num_key_value_heads * num_key_value_groups, head_dim
             )
 
-            query_states = query_states.to(dtype=torch.float32)
-            key_states = key_states.to(dtype=torch.float32)
+            # query_states = query_states.to(dtype=torch.float32)
+            # key_states = key_states.to(dtype=torch.float32)
 
             query_states = query_states.transpose(1, 2)
             key_states = key_states.transpose(1, 2)
 
             # with autocast(dtype=torch.float32, device_type=device.type):
             att_weights = torch.matmul(query_states, key_states.transpose(2, 3))
-            att_weights *= torch.tensor(head_dim**-0.5, dtype=torch.float32)
+            att_weights *= torch.tensor(head_dim**-0.5)#, dtype=torch.float32)
             # att_weights: batch_size, num_att_head, sequence_length, sequence_length
             # big_neg = torch.finfo(torch.float32).min  # See gemma/modules.py
             big_neg = -2.3819763e38  # See gemma/modules.py
             masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
 
             # with autocast(dtype=torch.bfloat16, device_type=device.type):
-            probs = torch.softmax(masked_att_weights, dim=-1, dtype=torch.float32)
+            probs = torch.softmax(masked_att_weights, dim=-1)#, dtype=torch.float32)
             # probs = probs.to(dtype=torch.bfloat16)
-            value_states = value_states.to(torch.float32)
+            value_states = value_states#.to(torch.float32)
 
             # probs: batch_size, num_key_value_head, num_att_head, sequence_length, sequence_length
             # value_states: batch_size, sequence_length, num_att_heads, head_dim
 
             att_output = torch.matmul(probs, value_states.permute(0, 2, 1, 3))
-            att_output = att_output.to(dtype=torch.bfloat16)
+            # att_output = att_output.to(dtype=torch.bfloat16)
             att_output = att_output.permute(0, 2, 1, 3)
             # we use -1 because sequence length can change
             att_output = att_output.reshape(
