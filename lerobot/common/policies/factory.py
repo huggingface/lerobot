@@ -16,6 +16,7 @@
 
 import logging
 
+import torch
 from torch import nn
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
@@ -68,7 +69,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
 def make_policy(
     cfg: PreTrainedConfig,
-    device: str,
+    device: str | torch.device,
     ds_meta: LeRobotDatasetMetadata | None = None,
     env_cfg: EnvConfig | None = None,
 ) -> PreTrainedPolicy:
@@ -93,7 +94,7 @@ def make_policy(
     Returns:
         PreTrainedPolicy: _description_
     """
-    if not (ds_meta is None) ^ (env_cfg is None):
+    if bool(ds_meta) == bool(env_cfg):
         raise ValueError("Either one of a dataset metadata or a sim env must be provided.")
 
     # NOTE: Currently, if you try to run vqbet with mps backend, you'll get this error.
@@ -103,7 +104,7 @@ def make_policy(
     # https://github.com/pytorch/pytorch/issues/77764. As a temporary fix, you can set the environment
     # variable `PYTORCH_ENABLE_MPS_FALLBACK=1` to use the CPU as a fallback for this op. WARNING: this will be
     # slower than running natively on MPS.
-    if cfg.type == "vqbet" and device == "mps":
+    if cfg.type == "vqbet" and str(device) == "mps":
         raise NotImplementedError(
             "Current implementation of VQBeT does not support `mps` backend. "
             "Please use `cpu` or `cuda` backend."
