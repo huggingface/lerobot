@@ -177,6 +177,7 @@ class ReplayBuffer:
         )
         self.position: int = (self.position + 1) % self.capacity
 
+    # TODO: ADD image_augmentation and use_drq arguments in this function in order to instantiate the class with them
     @classmethod
     def from_lerobot_dataset(
         cls,

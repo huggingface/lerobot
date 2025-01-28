@@ -127,6 +127,8 @@ class Logger:
                 job_type="train_eval",
                 resume="must" if cfg.resume else None,
             )
+            # Handle custom step key for rl asynchronous training.
+            self._wandb_custom_step_key = None
             print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
             logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
             self._wandb = wandb
@@ -226,17 +228,46 @@ class Logger:
         set_global_random_state({k: training_state[k] for k in get_global_random_state()})
         return training_state["step"]
 
-    def log_dict(self, d, step, mode="train"):
+    def log_dict(self, d, step:int | None = None, mode="train", custom_step_key: str | None = None):
+        """Log a dictionary of metrics to WandB."""
         assert mode in {"train", "eval"}
         # TODO(alexander-soare): Add local text log.
+        if step is None and custom_step_key is None:
+            raise ValueError("Either step or custom_step_key must be provided.")
+
         if self._wandb is not None:
+            
+            # NOTE: This is not simple. Wandb step is it must always monotonically increase and it 
+            # increases with each wandb.log call, but in the case of asynchronous RL for example,
+            # multiple time steps is possible for example, the interaction step with the environment, 
+            # the training step, the evaluation step, etc. So we need to define a custom step key
+            # to log the correct step for each metric.
+            if custom_step_key is not None and self._wandb_custom_step_key is None:
+                # NOTE: Define the custom step key, once for the moment this implementation support only one
+                # custom step.
+                self._wandb_custom_step_key = f"{mode}/{custom_step_key}"
+                self._wandb.define_metric(self._wandb_custom_step_key, hidden=True)
+            
             for k, v in d.items():
                 if not isinstance(v, (int, float, str, wandb.Table)):
                     logging.warning(
                         f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
                     )
                     continue
+
+                # We don't want to log the custom step
+                if k == custom_step_key:
+                    continue
+
+                if self._wandb_custom_step_key is not None:
+                    # NOTE: Log the metric with the custom step key.
+                    value_custom_step_key = d[custom_step_key]
+                    self._wandb.log({f"{mode}/{k}": v, self._wandb_custom_step_key: value_custom_step_key})
+                    continue
+
                 self._wandb.log({f"{mode}/{k}": v}, step=step)
+
+
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         assert mode in {"train", "eval"}
