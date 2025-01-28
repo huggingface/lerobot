@@ -74,6 +74,26 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     return device
 
 
+def is_torch_device_available(try_device: str) -> bool:
+    if try_device == "cuda":
+        return torch.cuda.is_available()
+    elif try_device == "mps":
+        return torch.backends.mps.is_available()
+    elif try_device == "cpu":
+        return True
+    else:
+        raise ValueError(f"Unknown device '{try_device}.")
+
+
+def is_amp_available(device: str):
+    if device in ["cuda", "cpu"]:
+        return True
+    elif device == "mps":
+        return False
+    else:
+        raise ValueError(f"Unknown device '{device}.")
+
+
 def get_global_random_state() -> dict[str, Any]:
     """Get the random state for `random`, `numpy`, and `torch`."""
     random_state_dict = {

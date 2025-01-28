@@ -8,7 +8,6 @@ import json
 import logging
 import time
 import warnings
-from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -144,11 +143,8 @@ class ManipulatorRobot:
     def __init__(
         self,
         config: ManipulatorRobotConfig,
-        **kwargs,
     ):
-        # Overwrite config arguments using kwargs
-        self.config = replace(config, **kwargs)
-
+        self.config = config
         self.robot_type = self.config.type
         self.calibration_dir = Path(self.config.calibration_dir)
         self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)

@@ -1,6 +1,10 @@
 from typing import Protocol
 
-from lerobot.common.robot_devices.motors.configs import MotorsBusConfig
+from lerobot.common.robot_devices.motors.configs import (
+    DynamixelMotorsBusConfig,
+    FeetechMotorsBusConfig,
+    MotorsBusConfig,
+)
 
 
 class MotorsBus(Protocol):
@@ -36,12 +40,14 @@ def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
     if motor_type == "dynamixel":
         from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 
-        return DynamixelMotorsBus(**kwargs)
+        config = DynamixelMotorsBusConfig(**kwargs)
+        return DynamixelMotorsBus(config)
 
     elif motor_type == "feetech":
         from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus
 
-        return FeetechMotorsBus(**kwargs)
+        config = FeetechMotorsBusConfig(**kwargs)
+        return FeetechMotorsBus(config)
 
     else:
         raise ValueError(f"The motor type '{motor_type}' is not valid.")

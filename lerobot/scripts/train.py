@@ -229,7 +229,8 @@ def train(cfg: TrainPipelineConfig):
     num_total_params = sum(p.numel() for p in policy.parameters())
 
     log_output_dir(cfg.output_dir)
-    logging.info(f"{cfg.env.task=}")
+    if cfg.env is not None:
+        logging.info(f"{cfg.env.task=}")
     logging.info(f"{cfg.offline.steps=} ({format_big_number(cfg.offline.steps)})")
     logging.info(f"{cfg.online.steps=}")
     logging.info(f"{offline_dataset.num_frames=} ({format_big_number(offline_dataset.num_frames)})")
