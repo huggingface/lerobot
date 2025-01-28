@@ -82,7 +82,7 @@ policy:
   temperature_lr: 3e-4
   # critic_target_update_weight: 0.005
   critic_target_update_weight: 0.01
-  utd_ratio: 1
+  utd_ratio: 2
 
 
   # # Loss coefficients.

@@ -259,7 +259,7 @@ class Logger:
                 if k == custom_step_key:
                     continue
 
-                if self._wandb_custom_step_key is not None:
+                if self._wandb_custom_step_key is not None and custom_step_key is not None:
                     # NOTE: Log the metric with the custom step key.
                     value_custom_step_key = d[custom_step_key]
                     self._wandb.log({f"{mode}/{k}": v, self._wandb_custom_step_key: value_custom_step_key})
