@@ -181,8 +181,8 @@ outputs/train/run_resumption/checkpoints
 │   │   ├── train_config.json  # train config
 │   │   └── README.md  # model card
 │   └── training_state.pth  # optimizer/scheduler/rng state and training step
-.
-└── last  # symlink to the last available checkpoint
+├── 000200
+└── last -> 000200  # symlink to the last available checkpoint
 ```
 
 ## Fine-tuning a pre-trained policy
