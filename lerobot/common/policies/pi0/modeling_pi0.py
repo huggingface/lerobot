@@ -188,7 +188,10 @@ class PI0(nn.Module):
                 param.data = param.data.to(dtype=torch.bfloat16)
 
         if self.config.train_expert_only:
+            self.pi0_paligemma.paligemma.eval()
             for params in self.pi0_paligemma.paligemma.parameters():
+                params.requires_grad = False
+            for params in self.pi0_paligemma.state_proj.parameters():
                 params.requires_grad = False
 
         # pos_emb = create_sinusoidal_pos_embedding(n_action_steps, width, min_period=4e-3, max_period=4.0)
@@ -196,6 +199,14 @@ class PI0(nn.Module):
         self.torch_dtype = torch.bfloat16
         self._rng = torch.Generator()
         self._rng.manual_seed(42)  # Set an initial seed
+
+    def train(self, mode: bool = True):
+        # Apply train() to all submodules
+        super().train(mode)
+
+        if self.config.train_expert_only:
+            # Explicitly set paligemma to eval mode
+            self.pi0_paligemma.paligemma.eval()
 
     def prepare_images(self, batch):
         for key in self.config.image_features:
