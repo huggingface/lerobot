@@ -184,7 +184,6 @@ def log_eval_info(logger, info, step, cfg, dataset, is_online):
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
 
-    init_logging()
     logging.info(pformat(asdict(cfg)))
 
     # log metrics to terminal and wandb
@@ -547,4 +546,5 @@ def train(cfg: TrainPipelineConfig):
 
 
 if __name__ == "__main__":
+    init_logging()
     train()
