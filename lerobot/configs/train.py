@@ -223,7 +223,9 @@ class TrainPipelineConfig(HubMixin):
                     local_files_only=local_files_only,
                 )
             except HfHubHTTPError as e:
-                print(f"config.json not found on the HuggingFace Hub: {str(e)}")
+                raise FileNotFoundError(
+                    f"{TRAIN_CONFIG_NAME} not found on the HuggingFace Hub in {model_id}"
+                ) from e
 
         cli_args = kwargs.pop("cli_args", [])
         cfg = draccus.parse(cls, config_file, args=cli_args)
