@@ -76,7 +76,11 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
 
 
 def make_policy(
-    hydra_cfg: DictConfig, pretrained_policy_name_or_path: str | None = None, dataset_stats=None
+    hydra_cfg: DictConfig,
+    pretrained_policy_name_or_path: str | None = None,
+    dataset_stats=None,
+    *args,
+    **kwargs,
 ) -> Policy:
     """Make an instance of a policy class.
 
@@ -100,7 +104,9 @@ def make_policy(
     policy_cfg = _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg)
     if pretrained_policy_name_or_path is None:
         # Make a fresh policy.
-        policy = policy_cls(policy_cfg, dataset_stats)
+        # HACK: We pass *args and **kwargs to the policy constructor to allow for additional arguments
+        # for example device for the sac policy.
+        policy = policy_cls(*args, **kwargs, config=policy_cfg, dataset_stats=dataset_stats)
     else:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
