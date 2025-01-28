@@ -13,7 +13,7 @@ from lerobot.common import envs
 from lerobot.common.optim import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.common.utils.hub import HubMixin
-from lerobot.common.utils.utils import auto_select_torch_device
+from lerobot.common.utils.utils import auto_select_torch_device, is_amp_available
 from lerobot.configs import parser
 from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
 from lerobot.configs.policies import PreTrainedConfig
@@ -129,14 +129,21 @@ class TrainPipelineConfig(HubMixin):
             device = auto_select_torch_device()
             self.device = device.type
 
-        if self.use_amp and self.device not in ["cuda", "cpu"]:
-            raise NotImplementedError(
-                "Automatic Mixed Precision (amp) is only available for 'cuda' and 'cpu' devices. "
-                f"Selected device: {self.device}"
+        # Automatically deactivate AMP if necessary
+        if self.use_amp and not is_amp_available(self.device):
+            logging.warning(
+                f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
             )
+            self.use_amp = False
 
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
-        if self.resume:
+        policy_path = parser.get_path_arg("policy")
+        if policy_path:
+            # Only load the policy config
+            cli_overrides = parser.get_cli_overrides("policy")
+            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            self.policy.pretrained_path = policy_path
+        elif self.resume:
             # The entire train config is already loaded, we just need to get the checkpoint dir
             config_path = parser.parse_arg("config_path")
             if not config_path:
@@ -144,13 +151,6 @@ class TrainPipelineConfig(HubMixin):
             policy_path = Path(config_path).parent
             self.policy.pretrained_path = policy_path
             self.checkpoint_path = policy_path.parent
-        else:
-            policy_path = parser.get_path_arg("policy")
-            if policy_path:
-                # Only load the policy config
-                cli_overrides = parser.get_cli_overrides("policy")
-                self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-                self.policy.pretrained_path = policy_path
 
         if not self.job_name:
             if self.env is None:
