@@ -168,8 +168,11 @@ class TrainPipelineConfig(HubMixin):
             train_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"
             self.output_dir = Path("outputs/train") / train_dir
 
-        if self.online.steps > 0 and isinstance(self.dataset.repo_id, list):
-            raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
+        if self.online.steps > 0:
+            if isinstance(self.dataset.repo_id, list):
+                raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
+            if self.env is None:
+                raise ValueError("An environment is required for online training")
 
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
             raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
