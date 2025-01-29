@@ -32,18 +32,6 @@ IMAGENET_STATS = {
     "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
 }
 
-# Stats used in the original Diffusion repo
-PUSHT_STATS = {
-    "observation.state": {
-        "min": [13.456424, 32.938293],
-        "max": [496.14618, 510.9579],
-    },
-    "action": {
-        "min": [12.0, 25.0],
-        "max": [511.0, 511.0],
-    },
-}
-
 
 def resolve_delta_timestamps(
     cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
@@ -123,12 +111,5 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         for key in dataset.meta.camera_keys:
             for stats_type, stats in IMAGENET_STATS.items():
                 dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
-
-    # HACK for pusht
-    if cfg.dataset.repo_id.startswith("lerobot/pusht"):
-        for key in PUSHT_STATS:
-            if key in dataset.meta.features:
-                for stats_type, stats in PUSHT_STATS[key].items():
-                    dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 
     return dataset
