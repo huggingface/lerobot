@@ -87,9 +87,6 @@ def stream_transitions_from_actor(host="127.0.0.1", port=50051):
         if response.HasField("interaction_message"):
             content = pickle.loads(response.interaction_message.interaction_message_bytes)
             interaction_message_queue.put(content)
-        # NOTE: Cool down the CPU, if you comment this line you will make a huge bottleneck
-        # TODO: LOOK TO REMOVE IT
-        time.sleep(0.001)
 
 
 def learner_push_parameters(
