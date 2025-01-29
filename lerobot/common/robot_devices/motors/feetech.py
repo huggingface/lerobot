@@ -1,6 +1,4 @@
 import enum
-import logging
-import math
 import time
 import traceback
 from copy import deepcopy
@@ -98,10 +96,6 @@ SCS_SERIES_BAUDRATE_TABLE = {
     7: 19_200,
 }
 
-CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
-CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
-
-
 MODEL_CONTROL_TABLE = {
     "scs_series": SCS_SERIES_CONTROL_TABLE,
     "sts3215": SCS_SERIES_CONTROL_TABLE,
@@ -131,6 +125,17 @@ def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str
     steps = degrees / 180 * np.array(resolutions) / 2
     steps = steps.astype(int)
     return steps
+
+
+def convert_steps_to_degrees(steps: int | np.ndarray, models: str | list[str]) -> np.ndarray:
+    """This function converts the step range to the degrees range for indicating motors rotation.
+    It assumes a motor achieves a full rotation by going from -180 degree position to +180.
+    The motor resolution (e.g. 4096) corresponds to the number of steps needed to achieve a full rotation.
+    """
+    resolutions = [MODEL_RESOLUTION[model] for model in models]
+    steps = np.array(steps, dtype=float)
+    degrees = steps * (360.0 / resolutions)
+    return degrees
 
 
 def convert_to_bytes(value, bytes, mock=False):
@@ -395,33 +400,7 @@ class FeetechMotorsBus:
     def set_calibration(self, calibration: dict[str, list]):
         self.calibration = calibration
 
-    def apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
-        """This function apply the calibration, automatically detects out of range errors for motors values and attempt to correct.
-
-        For more info, see docstring of `apply_calibration` and `autocorrect_calibration`.
-        """
-        try:
-            values = self.apply_calibration(values, motor_names)
-        except JointOutOfRangeError as e:
-            print(e)
-            self.autocorrect_calibration(values, motor_names)
-            values = self.apply_calibration(values, motor_names)
-        return values
-
     def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
-        """Convert from unsigned int32 joint position range [0, 2**32[ to the universal float32 nominal degree range ]-180.0, 180.0[ with
-        a "zero position" at 0 degree.
-
-        Note: We say "nominal degree range" since the motors can take values outside this range. For instance, 190 degrees, if the motor
-        rotate more than a half a turn from the zero position. However, most motors can't rotate more than 180 degrees and will stay in this range.
-
-        Joints values are original in [0, 2**32[ (unsigned int32). Each motor are expected to complete a full rotation
-        when given a goal position that is + or - their resolution. For instance, feetech xl330-m077 have a resolution of 4096, and
-        at any position in their original range, let's say the position 56734, they complete a full rotation clockwise by moving to 60830,
-        or anticlockwise by moving to 52638. The position in the original range is arbitrary and might change a lot between each motor.
-        To harmonize between motors of the same model, different robots, or even models of different brands, we propose to work
-        in the centered nominal degree range ]-180, 180[.
-        """
         if motor_names is None:
             motor_names = self.motor_names
 
@@ -482,103 +461,6 @@ class FeetechMotorsBus:
 
         return values
 
-    def autocorrect_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
-        """This function automatically detects issues with values of motors after calibration, and correct for these issues.
-
-        Some motors might have values outside of expected maximum bounds after calibration.
-        For instance, for a joint in degree, its value can be outside [-270, 270] degrees, which is totally unexpected given
-        a nominal range of [-180, 180] degrees, which represents half a turn to the left or right starting from zero position.
-
-        Known issues:
-        #1: Motor value randomly shifts of a full turn, caused by hardware/connection errors.
-        #2: Motor internal homing offset is shifted of a full turn, caused by using default calibration (e.g Aloha).
-        #3: motor internal homing offset is shifted of less or more than a full turn, caused by using default calibration
-            or by human error during manual calibration.
-
-        Issues #1 and #2 can be solved by shifting the calibration homing offset by a full turn.
-        Issue #3 will be visually detected by user and potentially captured by the safety feature `max_relative_target`,
-        that will slow down the motor, raise an error asking to recalibrate. Manual recalibrating will solve the issue.
-
-        Note: A full turn corresponds to 360 degrees but also to 4096 steps for a motor resolution of 4096.
-        """
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        # Convert from unsigned int32 original range [0, 2**32] to signed float32 range
-        values = values.astype(np.float32)
-
-        for i, name in enumerate(motor_names):
-            calib_idx = self.calibration["motor_names"].index(name)
-            calib_mode = self.calibration["calib_mode"][calib_idx]
-
-            if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
-                drive_mode = self.calibration["drive_mode"][calib_idx]
-                homing_offset = self.calibration["homing_offset"][calib_idx]
-                _, model = self.motors[name]
-                resolution = self.model_resolution[model]
-
-                if drive_mode:
-                    values[i] *= -1
-
-                # Convert from initial range to range [-180, 180] degrees
-                calib_val = (values[i] + homing_offset) / (resolution // 2) * HALF_TURN_DEGREE
-                in_range = (calib_val > LOWER_BOUND_DEGREE) and (calib_val < UPPER_BOUND_DEGREE)
-
-                # Solve this inequality to find the factor to shift the range into [-180, 180] degrees
-                # values[i] = (values[i] + homing_offset + resolution * factor) / (resolution // 2) * HALF_TURN_DEGREE
-                # - HALF_TURN_DEGREE <= (values[i] + homing_offset + resolution * factor) / (resolution // 2) * HALF_TURN_DEGREE <= HALF_TURN_DEGREE
-                # (- HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2) - values[i] - homing_offset) / resolution <= factor <= (HALF_TURN_DEGREE / 180 * (resolution // 2) - values[i] - homing_offset) / resolution
-                low_factor = (
-                    -HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2) - values[i] - homing_offset
-                ) / resolution
-                upp_factor = (
-                    HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2) - values[i] - homing_offset
-                ) / resolution
-
-            elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
-                start_pos = self.calibration["start_pos"][calib_idx]
-                end_pos = self.calibration["end_pos"][calib_idx]
-
-                # Convert from initial range to range [0, 100] in %
-                calib_val = (values[i] - start_pos) / (end_pos - start_pos) * 100
-                in_range = (calib_val > LOWER_BOUND_LINEAR) and (calib_val < UPPER_BOUND_LINEAR)
-
-                # Solve this inequality to find the factor to shift the range into [0, 100] %
-                # values[i] = (values[i] - start_pos + resolution * factor) / (end_pos + resolution * factor - start_pos - resolution * factor) * 100
-                # values[i] = (values[i] - start_pos + resolution * factor) / (end_pos - start_pos) * 100
-                # 0 <= (values[i] - start_pos + resolution * factor) / (end_pos - start_pos) * 100 <= 100
-                # (start_pos - values[i]) / resolution <= factor <= (end_pos - values[i]) / resolution
-                low_factor = (start_pos - values[i]) / resolution
-                upp_factor = (end_pos - values[i]) / resolution
-
-            if not in_range:
-                # Get first integer between the two bounds
-                if low_factor < upp_factor:
-                    factor = math.ceil(low_factor)
-
-                    if factor > upp_factor:
-                        raise ValueError(f"No integer found between bounds [{low_factor=}, {upp_factor=}]")
-                else:
-                    factor = math.ceil(upp_factor)
-
-                    if factor > low_factor:
-                        raise ValueError(f"No integer found between bounds [{low_factor=}, {upp_factor=}]")
-
-                if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
-                    out_of_range_str = f"{LOWER_BOUND_DEGREE} < {calib_val} < {UPPER_BOUND_DEGREE} degrees"
-                    in_range_str = f"{LOWER_BOUND_DEGREE} < {calib_val} < {UPPER_BOUND_DEGREE} degrees"
-                elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
-                    out_of_range_str = f"{LOWER_BOUND_LINEAR} < {calib_val} < {UPPER_BOUND_LINEAR} %"
-                    in_range_str = f"{LOWER_BOUND_LINEAR} < {calib_val} < {UPPER_BOUND_LINEAR} %"
-
-                logging.warning(
-                    f"Auto-correct calibration of motor '{name}' by shifting value by {abs(factor)} full turns, "
-                    f"from '{out_of_range_str}' to '{in_range_str}'."
-                )
-
-                # A full turn corresponds to 360 degrees but also to 4096 steps for a motor resolution of 4096.
-                self.calibration["homing_offset"][calib_idx] += resolution * factor
-
     def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         """Inverse of `apply_calibration`."""
         if motor_names is None:
@@ -616,43 +498,6 @@ class FeetechMotorsBus:
                 values[i] = values[i] / 100 * (end_pos - start_pos) + start_pos
 
         values = np.round(values).astype(np.int32)
-        return values
-
-    def avoid_rotation_reset(self, values, motor_names, data_name):
-        if data_name not in self.track_positions:
-            self.track_positions[data_name] = {
-                "prev": [None] * len(self.motor_names),
-                # Assume False at initialization
-                "below_zero": [False] * len(self.motor_names),
-                "above_max": [False] * len(self.motor_names),
-            }
-
-        track = self.track_positions[data_name]
-
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        for i, name in enumerate(motor_names):
-            idx = self.motor_names.index(name)
-
-            if track["prev"][idx] is None:
-                track["prev"][idx] = values[i]
-                continue
-
-            # Detect a full rotation occured
-            if abs(track["prev"][idx] - values[i]) > 2048:
-                # Position went below 0 and got reset to 4095
-                if track["prev"][idx] < values[i]:
-                    # So we set negative value by adding a full rotation
-                    values[i] -= 4096
-
-                # Position went above 4095 and got reset to 0
-                elif track["prev"][idx] > values[i]:
-                    # So we add a full rotation
-                    values[i] += 4096
-
-            track["prev"][idx] = values[i]
-
         return values
 
     def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
@@ -724,7 +569,11 @@ class FeetechMotorsBus:
         group_key = get_group_sync_key(data_name, motor_names)
 
         if data_name not in self.group_readers:
-            # create new group reader
+            # Very Important to flush the buffer!
+            self.port_handler.ser.reset_output_buffer()
+            self.port_handler.ser.reset_input_buffer()
+
+            # Create new group reader
             self.group_readers[group_key] = scs.GroupSyncRead(
                 self.port_handler, self.packet_handler, addr, bytes
             )
@@ -749,15 +598,7 @@ class FeetechMotorsBus:
 
         values = np.array(values)
 
-        # Convert to signed int to use range [-2048, 2048] for our motor positions.
-        if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
-            values = values.astype(np.int32)
-
-        if data_name in CALIBRATION_REQUIRED:
-            values = self.avoid_rotation_reset(values, motor_names, data_name)
-
-        if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
-            values = self.apply_calibration_autocorrect(values, motor_names)
+        # TODO: Apply calibration and homign offset, output is homeing = 0 and direction.
 
         # log the number of seconds it took to read the data from the motors
         delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
@@ -829,8 +670,7 @@ class FeetechMotorsBus:
             motor_ids.append(motor_idx)
             models.append(model)
 
-        if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
-            values = self.revert_calibration(values, motor_names)
+        # TODO: add invesre of apply homing to go back to motor ticks
 
         values = values.tolist()
 
