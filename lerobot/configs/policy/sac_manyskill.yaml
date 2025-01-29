@@ -8,8 +8,7 @@
 #   env.gym.obs_type=environment_state_agent_pos \
 
 seed: 1
-dataset_repo_id: null 
-
+dataset_repo_id: null
 
 training:
   # Offline training dataloader
@@ -75,15 +74,18 @@ policy:
   # discount: 0.99
   discount: 0.80
   temperature_init: 1.0
-  num_critics: 2
+  num_critics: 2 #10
   num_subsample_critics: null
   critic_lr: 3e-4
   actor_lr: 3e-4
   temperature_lr: 3e-4
   # critic_target_update_weight: 0.005
   critic_target_update_weight: 0.01
-  utd_ratio: 2
+  utd_ratio: 2 # 10
 
+actor_learner_config:
+  actor_ip: "127.0.0.1"
+  port: 50051
 
   # # Loss coefficients.
   # reward_coeff: 0.5

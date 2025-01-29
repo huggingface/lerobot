@@ -45,6 +45,14 @@ class SACConfig:
             "action": {"min": [-1, -1], "max": [1, 1]},
         }
     )
+    # TODO: Move it outside of the config
+    actor_learner_config: dict[str, str | int] = field(
+        default_factory=lambda: {
+            "actor_ip": "127.0.0.1",
+            "port": 50051,
+            "learner_ip": "127.0.0.1",
+        }
+    )
     camera_number: int = 1
     # Add type annotations for these fields:
     image_encoder_hidden_dim: int = 32
