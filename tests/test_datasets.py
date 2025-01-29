@@ -414,3 +414,20 @@ def test_create_branch():
 
     # Clean
     api.delete_repo(repo_id, repo_type=repo_type)
+
+
+def test_dataset_feature_with_forward_slash_raises_error():
+    # make sure dir does not exist
+    from lerobot.common.datasets.lerobot_dataset import LEROBOT_HOME
+
+    dataset_dir = LEROBOT_HOME / "lerobot/test/with/slash"
+    # make sure does not exist
+    if dataset_dir.exists():
+        dataset_dir.rmdir()
+
+    with pytest.raises(ValueError):
+        LeRobotDataset.create(
+            repo_id="lerobot/test/with/slash",
+            fps=30,
+            features={"a/b": {"dtype": "float32", "shape": 2, "names": None}},
+        )

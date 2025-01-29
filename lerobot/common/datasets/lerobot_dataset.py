@@ -304,6 +304,13 @@ class LeRobotDatasetMetadata:
             )
         else:
             # TODO(aliberts, rcadene): implement sanity check for features
+
+            # check if none of the features contains a "/" in their names,
+            # as this would break the dict flattening in the stats computation, which uses '/' as separator
+            for key in features:
+                if "/" in key:
+                    raise ValueError(f"Feature names should not contain '/'. Found '/' in feature '{key}'.")
+
             features = {**features, **DEFAULT_FEATURES}
 
         obj.tasks, obj.stats, obj.episodes = {}, {}, []
