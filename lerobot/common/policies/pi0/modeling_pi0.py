@@ -31,6 +31,7 @@ from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.common.policies.pi0.modeling_pi0_paligemma import PI0PaliGemmaModel
 from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.utils.utils import get_safe_dtype
 from lerobot.configs.types import FeatureType
 
 
@@ -211,7 +212,8 @@ def create_sinusoidal_pos_embedding(
     if time.ndim != 1:
         raise ValueError("The time tensor is expected to be of shape `batch_size`.")
 
-    fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=torch.float64, device=device)
+    dtype = get_safe_dtype(torch.float64, device.type)
+    fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
     period = min_period * (max_period / min_period) ** fraction
 
     # Compute the outer product
