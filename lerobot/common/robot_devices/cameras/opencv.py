@@ -9,7 +9,6 @@ import platform
 import shutil
 import threading
 import time
-from dataclasses import replace
 from pathlib import Path
 from threading import Thread
 
@@ -127,7 +126,8 @@ def save_images_from_cameras(
     print("Connecting cameras")
     cameras = []
     for cam_idx in camera_ids:
-        camera = OpenCVCamera(camera_index=cam_idx, fps=fps, width=width, height=height, mock=mock)
+        config = OpenCVCameraConfig(camera_index=cam_idx, fps=fps, width=width, height=height, mock=mock)
+        camera = OpenCVCamera(config)
         camera.connect()
         print(
             f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, "
@@ -195,7 +195,10 @@ class OpenCVCamera:
 
     Example of usage:
     ```python
-    camera = OpenCVCamera(camera_index=0)
+    from lerobot.common.robot_devices.cameras.configs import OpenCVCameraConfig
+
+    config = OpenCVCameraConfig(camera_index=0)
+    camera = OpenCVCamera(config)
     camera.connect()
     color_image = camera.read()
     # when done using the camera, consider disconnecting
@@ -204,20 +207,15 @@ class OpenCVCamera:
 
     Example of changing default fps, width, height and color_mode:
     ```python
-    camera = OpenCVCamera(camera_index=0, fps=30, width=1280, height=720)
-    camera = connect()  # applies the settings, might error out if these settings are not compatible with the camera
-
-    camera = OpenCVCamera(camera_index=0, fps=90, width=640, height=480)
-    camera = connect()
-
-    camera = OpenCVCamera(camera_index=0, fps=90, width=640, height=480, color_mode="bgr")
-    camera = connect()
+    config = OpenCVCameraConfig(camera_index=0, fps=30, width=1280, height=720)
+    config = OpenCVCameraConfig(camera_index=0, fps=90, width=640, height=480)
+    config = OpenCVCameraConfig(camera_index=0, fps=90, width=640, height=480, color_mode="bgr")
+    # Note: might error out open `camera.connect()` if these settings are not compatible with the camera
     ```
     """
 
-    def __init__(self, config: OpenCVCameraConfig | None = None, **kwargs):
-        config = OpenCVCameraConfig(**kwargs) if config is None else replace(config, **kwargs)
-
+    def __init__(self, config: OpenCVCameraConfig):
+        self.config = config
         self.camera_index = config.camera_index
         self.port = None
 

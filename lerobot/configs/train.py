@@ -1,4 +1,5 @@
 import datetime as dt
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,9 +13,9 @@ from lerobot.common import envs
 from lerobot.common.optim import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.common.utils.hub import HubMixin
+from lerobot.common.utils.utils import auto_select_torch_device, is_amp_available
 from lerobot.configs import parser
-from lerobot.configs.default import DatasetConfig, WandBConfig
-from lerobot.configs.eval import EvalConfig
+from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
 from lerobot.configs.policies import PreTrainedConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
@@ -96,7 +97,7 @@ class TrainPipelineConfig(HubMixin):
     # Note that when resuming a run, the default behavior is to use the configuration from the checkpoint,
     # regardless of what's provided with the training command at the time of resumption.
     resume: bool = False
-    device: str = "cuda"  # | cpu | mp
+    device: str | None = None  # cuda | cpu | mp
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
     use_amp: bool = False
@@ -122,14 +123,27 @@ class TrainPipelineConfig(HubMixin):
     def __post_init__(self):
         self.checkpoint_path = None
 
-        if self.use_amp and self.device not in ["cuda", "cpu"]:
-            raise NotImplementedError(
-                "Automatic Mixed Precision (amp) is only available for 'cuda' and 'cpu' devices. "
-                f"Selected device: {self.device}"
+    def validate(self):
+        if not self.device:
+            logging.warning("No device specified, trying to infer device automatically")
+            device = auto_select_torch_device()
+            self.device = device.type
+
+        # Automatically deactivate AMP if necessary
+        if self.use_amp and not is_amp_available(self.device):
+            logging.warning(
+                f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
             )
+            self.use_amp = False
 
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
-        if self.resume:
+        policy_path = parser.get_path_arg("policy")
+        if policy_path:
+            # Only load the policy config
+            cli_overrides = parser.get_cli_overrides("policy")
+            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            self.policy.pretrained_path = policy_path
+        elif self.resume:
             # The entire train config is already loaded, we just need to get the checkpoint dir
             config_path = parser.parse_arg("config_path")
             if not config_path:
@@ -137,13 +151,6 @@ class TrainPipelineConfig(HubMixin):
             policy_path = Path(config_path).parent
             self.policy.pretrained_path = policy_path
             self.checkpoint_path = policy_path.parent
-        else:
-            policy_path = parser.get_path_arg("policy")
-            if policy_path:
-                # Only load the policy config
-                cli_overrides = parser.get_cli_overrides("policy")
-                self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-                self.policy.pretrained_path = policy_path
 
         if not self.job_name:
             if self.env is None:
@@ -161,8 +168,11 @@ class TrainPipelineConfig(HubMixin):
             train_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"
             self.output_dir = Path("outputs/train") / train_dir
 
-        if self.online.steps > 0 and isinstance(self.dataset.repo_id, list):
-            raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
+        if self.online.steps > 0:
+            if isinstance(self.dataset.repo_id, list):
+                raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
+            if self.env is None:
+                raise ValueError("An environment is required for online training")
 
         if not self.use_policy_training_preset and self.optimizer is None:
             raise ValueError("Optimizer must be set when the policy presets are not used.")
@@ -216,7 +226,11 @@ class TrainPipelineConfig(HubMixin):
                     local_files_only=local_files_only,
                 )
             except HfHubHTTPError as e:
-                print(f"config.json not found on the HuggingFace Hub: {str(e)}")
+                raise FileNotFoundError(
+                    f"{TRAIN_CONFIG_NAME} not found on the HuggingFace Hub in {model_id}"
+                ) from e
 
         cli_args = kwargs.pop("cli_args", [])
-        return draccus.parse(cls, config_file, args=cli_args)
+        cfg = draccus.parse(cls, config_file, args=cli_args)
+
+        return cfg

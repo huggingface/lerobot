@@ -17,12 +17,12 @@ python lerobot/scripts/control_robot.py \
 ```bash
 python lerobot/scripts/control_robot.py \
     --robot.type=so100 \
+    --robot.cameras='{}' \
     --control.type=teleoperate
 
-# Remove the cameras from the robot definition. They are not used in 'teleoperate' anyway.
+# Add the cameras from the robot definition to visualize them:
 python lerobot/scripts/control_robot.py \
     --robot.type=so100 \
-    --robot.cameras='{}' \
     --control.type=teleoperate
 ```
 
@@ -40,9 +40,10 @@ python lerobot/scripts/control_robot.py \
     --robot.type=so100 \
     --control.type=record \
     --control.fps=30 \
+    --control.single_task="Grasp a lego block and put it in the bin." \
     --control.repo_id=$USER/koch_test \
     --control.num_episodes=1 \
-    --control.run_compute_stats=False
+    --control.push_to_hub=True
 ```
 
 - Visualize dataset:
@@ -57,9 +58,9 @@ python lerobot/scripts/visualize_dataset.py \
 python lerobot/scripts/control_robot.py replay \
     --robot.type=so100 \
     --control.type=replay \
-    --control.fps 30 \
-    --control.repo-id $USER/koch_test \
-    --control.episode 0
+    --control.fps=30 \
+    --control.repo_id=$USER/koch_test \
+    --control.episode=0
 ```
 
 - Record a full dataset in order to train a policy, with 2 seconds of warmup,
@@ -83,17 +84,18 @@ python lerobot/scripts/control_robot.py record \
 - Tap escape key 'esc' to stop the data recording.
 This might require a sudo permission to allow your terminal to monitor keyboard events.
 
-**NOTE**: You can resume/continue data recording by running the same data recording command and adding `--resume 1`.
-If the dataset you want to extend is not on the hub, you also need to add `--local-files-only 1`.
+**NOTE**: You can resume/continue data recording by running the same data recording command and adding `--control.resume=true`.
+If the dataset you want to extend is not on the hub, you also need to add `--control.local_files_only=true`.
 
 - Train on this dataset with the ACT policy:
 ```bash
-# TODO(rcadene): fix
 python lerobot/scripts/train.py \
-    policy=act_koch_real \
-    env=koch_real \
-    dataset_repo_id=$USER/koch_pick_place_lego \
-    hydra.run.dir=outputs/train/act_koch_real
+  --dataset.repo_id=${HF_USER}/koch_pick_place_lego \
+  --policy.type=act \
+  --output_dir=outputs/train/act_koch_pick_place_lego \
+  --job_name=act_koch_pick_place_lego \
+  --device=cuda \
+  --wandb.enable=true
 ```
 
 - Run the pretrained policy on the robot:
@@ -102,19 +104,21 @@ python lerobot/scripts/control_robot.py \
     --robot.type=so100 \
     --control.type=record \
     --control.fps=30 \
-    --control.repo_id=$USER/eval_act_koch_real \
+    --control.single_task="Grasp a lego block and put it in the bin." \
+    --control.repo_id=$USER/eval_act_koch_pick_place_lego \
     --control.num_episodes=10 \
     --control.warmup_time_s=2 \
     --control.episode_time_s=30 \
-    --control.reset_time_s=10
-    --control.pretrained_policy_path=outputs/train/act_koch_real/checkpoints/080000/pretrained_model
+    --control.reset_time_s=10 \
+    --control.push_to_hub=true \
+    --control.policy.path=outputs/train/act_koch_pick_place_lego/checkpoints/080000/pretrained_model
 ```
 """
 
 import logging
 import time
-
-import draccus
+from dataclasses import asdict
+from pprint import pformat
 
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -140,6 +144,7 @@ from lerobot.common.robot_devices.control_utils import (
 from lerobot.common.robot_devices.robots.utils import Robot, make_robot_from_config
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import has_method, init_logging, log_say
+from lerobot.configs import parser
 
 ########################################################################################
 # Control modes
@@ -213,10 +218,11 @@ def record(
             root=cfg.root,
             local_files_only=cfg.local_files_only,
         )
-        dataset.start_image_writer(
-            num_processes=cfg.num_image_writer_processes,
-            num_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
-        )
+        if len(robot.cameras) > 0:
+            dataset.start_image_writer(
+                num_processes=cfg.num_image_writer_processes,
+                num_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
+            )
         sanity_check_dataset_robot_compatibility(dataset, robot, cfg.fps, cfg.video)
     else:
         # Create empty dataset or load existing saved episodes
@@ -336,9 +342,10 @@ def replay(
         log_control_info(robot, dt_s, fps=cfg.fps)
 
 
-@draccus.wrap()
+@parser.wrap()
 def control_robot(cfg: ControlPipelineConfig):
     init_logging()
+    logging.info(pformat(asdict(cfg)))
 
     robot = make_robot_from_config(cfg.robot)
 

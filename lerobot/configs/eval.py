@@ -1,30 +1,14 @@
 import datetime as dt
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from lerobot.common import envs, policies  # noqa: F401
+from lerobot.common.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.configs import parser
+from lerobot.configs.default import EvalConfig
 from lerobot.configs.policies import PreTrainedConfig
-
-
-@dataclass
-class EvalConfig:
-    n_episodes: int = 50
-    # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
-    batch_size: int = 50
-    # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
-    use_async_envs: bool = False
-
-    def __post_init__(self):
-        if self.batch_size > self.n_episodes:
-            raise ValueError(
-                "The eval batch size is greater than the number of eval episodes "
-                f"({self.batch_size} > {self.n_episodes}). As a result, {self.batch_size} "
-                f"eval environments will be instantiated, but only {self.n_episodes} will be used. "
-                "This might significantly slow down evaluation. To fix this, you should update your command "
-                f"to increase the number of episodes to match the batch size (e.g. `eval.n_episodes={self.batch_size}`), "
-                f"or lower the batch size (e.g. `eval.batch_size={self.n_episodes}`)."
-            )
+from lerobot.configs.train import TrainPipelineConfig
 
 
 @dataclass
@@ -41,22 +25,42 @@ class EvalPipelineConfig:
     device: str | None = None  # cuda | cpu | mps
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
-    use_amp: bool | None = None
+    use_amp: bool = False
     seed: int | None = 1000
 
     def __post_init__(self):
-        if self.use_amp and self.device not in ["cuda", "cpu"]:
-            raise NotImplementedError(
-                "Automatic Mixed Precision (amp) is only available for 'cuda' and 'cpu' devices. "
-                f"Selected device: {self.device}"
-            )
-
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
+
+            # When no device or use_amp are given, use the one from training config.
+            if self.device is None or self.use_amp is None:
+                train_cfg = TrainPipelineConfig.from_pretrained(policy_path)
+                if self.device is None:
+                    self.device = train_cfg.device
+                if self.use_amp is None:
+                    self.use_amp = train_cfg.use_amp
+
+            # Automatically switch to available device if necessary
+            if not is_torch_device_available(self.device):
+                auto_device = auto_select_torch_device()
+                logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
+                self.device = auto_device
+
+            # Automatically deactivate AMP if necessary
+            if self.use_amp and not is_amp_available(self.device):
+                logging.warning(
+                    f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
+                )
+                self.use_amp = False
+
+        else:
+            logging.warning(
+                "No pretrained path was provided, evaluated policy will be built from scratch (random weights)."
+            )
 
         if not self.job_name:
             if self.env is None:

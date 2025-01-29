@@ -21,24 +21,29 @@ You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/di
 for 10 episodes.
 
 ```
-python lerobot/scripts/eval.py -p lerobot/diffusion_pusht eval.n_episodes=10
+python lerobot/scripts/eval.py \
+    --policy.path=lerobot/diffusion_pusht \
+    --env.type=pusht \
+    --eval.batch_size=10 \
+    --eval.n_episodes=10 \
+    --use_amp=false \
+    --device=cuda
 ```
 
 OR, you want to evaluate a model checkpoint from the LeRobot training script for 10 episodes.
-
 ```
 python lerobot/scripts/eval.py \
-    -p outputs/train/diffusion_pusht/checkpoints/005000/pretrained_model \
-    eval.n_episodes=10
+    --policy.path=outputs/train/diffusion_pusht/checkpoints/005000/pretrained_model \
+    --env.type=pusht \
+    --eval.batch_size=10 \
+    --eval.n_episodes=10 \
+    --use_amp=false \
+    --device=cuda
 ```
 
-Note that in both examples, the repo/folder should contain at least `config.json`, `config.yaml` and
-`model.safetensors`.
+Note that in both examples, the repo/folder should contain at least `config.json` and `model.safetensors` files.
 
-Note the formatting for providing the number of episodes. Generally, you may provide any number of arguments
-with `qualified.parameter.name=value`. In this case, the parameter eval.n_episodes appears as `n_episodes`
-nested under `eval` in the `config.yaml` found at
-https://huggingface.co/lerobot/diffusion_pusht/tree/main.
+You can learn about the CLI options for this script in the `EvalPipelineConfig` in lerobot/configs/eval.py
 """
 
 import json
@@ -447,7 +452,6 @@ def _compile_episode_data(
 
 @parser.wrap()
 def eval(cfg: EvalPipelineConfig):
-    init_logging()
     logging.info(pformat(asdict(cfg)))
 
     # Check device is available
@@ -466,7 +470,6 @@ def eval(cfg: EvalPipelineConfig):
     policy = make_policy(
         cfg=cfg.policy,
         device=device,
-        env=env,
         env_cfg=cfg.env,
     )
     policy.eval()
@@ -492,4 +495,5 @@ def eval(cfg: EvalPipelineConfig):
 
 
 if __name__ == "__main__":
+    init_logging()
     eval()

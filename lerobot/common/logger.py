@@ -75,7 +75,6 @@ class Logger:
     The logger creates the following directory structure:
 
     provided_log_dir
-    ├── .hydra  # hydra's configuration cache
     ├── checkpoints
     │   ├── specific_checkpoint_name
     │   │   ├── pretrained_model  # Hugging Face pretrained model directory
@@ -214,7 +213,9 @@ class Logger:
             checkpoint_dir / self.pretrained_model_dir_name, policy, wandb_artifact_name=wandb_artifact_name
         )
         self.save_training_state(checkpoint_dir, train_step, optimizer, scheduler)
-        os.symlink(checkpoint_dir.absolute(), self.last_checkpoint_dir)
+
+        relative_target = checkpoint_dir.relative_to(self.last_checkpoint_dir.parent)
+        self.last_checkpoint_dir.symlink_to(relative_target)
 
     def log_dict(self, d: dict, step: int, mode: str = "train"):
         assert mode in {"train", "eval"}

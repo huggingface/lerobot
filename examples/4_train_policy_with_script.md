@@ -111,14 +111,16 @@ Now, let's assume that we want to reproduce the run just above. That run has pro
 
 We can then simply load the config values from this file using:
 ```bash
-python lerobot/scripts/train.py --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/train_config.json \
+python lerobot/scripts/train.py \
+    --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/ \
     --output_dir=outputs/train/act_aloha_transfer_2
 ```
-`--config_path` is also a special argument which allows to initialize the config from a local config file.
+`--config_path` is also a special argument which allows to initialize the config from a local config file. It can point to a directory that contains `train_config.json` or to the config file itself directly.
 
 Similarly to Hydra, we can still override some parameters in the CLI if we want to, e.g.:
 ```bash
-python lerobot/scripts/train.py --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/train_config.json \
+python lerobot/scripts/train.py \
+    --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/ \
     --output_dir=outputs/train/act_aloha_transfer_2
     --policy.n_action_steps=80
 ```
@@ -154,17 +156,16 @@ INFO 2025-01-24 16:10:56 ts/train.py:263 Checkpoint policy after step 100
 Now let's simulate a crash by killing the process (hit `ctrl`+`c`). We can then simply resume this run from the last checkpoint available with:
 ```bash
 python lerobot/scripts/train.py \
-    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/train_config.json \
+    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
     --resume=true
 ```
-
 You should see from the logging that your training picks up from where it left off.
 
 Another reason for which you might want to resume a run is simply to extend training and add more training steps. The number of training steps is set by the option `--offline.steps`, which is 100 000 by default.
 You could double the number of steps of the previous run with:
 ```bash
 python lerobot/scripts/train.py \
-    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/train_config.json \
+    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
     --resume=true \
     --offline.steps=200000
 ```
@@ -180,8 +181,8 @@ outputs/train/run_resumption/checkpoints
 │   │   ├── train_config.json  # train config
 │   │   └── README.md  # model card
 │   └── training_state.pth  # optimizer/scheduler/rng state and training step
-.
-└── last -> /Users/simon/projects/lerobot/outputs/train/run_resumption/checkpoints/000500  # symlink to the last available checkpoint
+├── 000200
+└── last -> 000200  # symlink to the last available checkpoint
 ```
 
 ## Fine-tuning a pre-trained policy
@@ -240,14 +241,14 @@ python lerobot/scripts/train.py \
 #### Train a policy from scratch - config file + CLI
 ```bash
 python lerobot/scripts/train.py \
-    --config_path=path/to/train_config.json \  # <- can also be a repo_id
+    --config_path=path/to/pretrained_model \  # <- can also be a repo_id
     --policy.n_action_steps=80  # <- you may still override values
 ```
 
 #### Resume/continue a training run
 ```bash
 python lerobot/scripts/train.py \
-    --config_path=checkpoint/pretrained_model/train_config.json \
+    --config_path=checkpoint/pretrained_model/ \
     --resume=true \
     --offline.steps=200000  # <- you can change some training parameters
 ```
@@ -262,14 +263,6 @@ python lerobot/scripts/train.py \
 ```
 
 ---
-
-We've seen how to train Diffusion Policy for PushT and ACT for ALOHA. What if we want to train ACT for PushT?
-```bash
-python lerobot/scripts/train.py \
-    --policy.type=act \
-    --env.type=pusht \
-    --dataset.repo_id=lerobot/pusht
-```
 
 Now that you know the basics of how to train a policy, you might want to know how to apply this knowledge to actual robots, or how to record your own datasets and train policies on your specific task?
 If that's the case, head over to the next tutorial [`7_get_started_with_real_robot.md`](./7_get_started_with_real_robot.md).

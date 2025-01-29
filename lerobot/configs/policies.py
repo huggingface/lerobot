@@ -135,7 +135,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
                     local_files_only=local_files_only,
                 )
             except HfHubHTTPError as e:
-                print(f"config.json not found on the HuggingFace Hub: {str(e)}")
+                raise FileNotFoundError(
+                    f"{CONFIG_NAME} not found on the HuggingFace Hub in {model_id}"
+                ) from e
 
         # HACK: this is very ugly, ideally we'd like to be able to do that natively with draccus
         # something like --policy.path (in addition to --policy.type)

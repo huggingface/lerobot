@@ -38,6 +38,7 @@ def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs, train_kwa
         device="cpu",
         **train_kwargs,
     )
+    train_cfg.validate()  # Needed for auto-setting some parameters
 
     dataset = make_dataset(train_cfg)
     policy = make_policy(train_cfg.policy, ds_meta=dataset.meta, device=train_cfg.device)

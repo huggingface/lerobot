@@ -36,10 +36,20 @@ IMAGENET_STATS = {
 def resolve_delta_timestamps(
     cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
 ) -> dict[str, list] | None:
-    """Resolves delta_timestamps config key (in-place) by using `eval`.
+    """Resolves delta_timestamps by reading from the 'delta_indices' properties of the PreTrainedConfig.
 
-    Doesn't do anything if delta_timestamps is not specified or has already been resolve (as evidenced by
-    the data type of its values).
+    Args:
+        cfg (PreTrainedConfig): The PreTrainedConfig to read delta_indices from.
+        ds_meta (LeRobotDatasetMetadata): The dataset from which features and fps are used to build
+            delta_timestamps against.
+
+    Returns:
+        dict[str, list] | None: A dictionary of delta_timestamps, e.g.:
+            {
+                "observation.state": [-0.04, -0.02, 0]
+                "observation.action": [-0.02, 0, 0.02]
+            }
+            returns `None` if the the resulting dict is empty.
     """
     delta_timestamps = {}
     for key in ds_meta.features:
@@ -57,12 +67,16 @@ def resolve_delta_timestamps(
 
 
 def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
-    """
+    """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
+
     Args:
-        cfg: A TrainPipelineConfig config which contains a DatasetConfig and a PreTrainedConfig.
+        cfg (TrainPipelineConfig): A TrainPipelineConfig config which contains a DatasetConfig and a PreTrainedConfig.
+
+    Raises:
+        NotImplementedError: The MultiLeRobotDataset is currently deactivated.
 
     Returns:
-        A LeRobotDataset.
+        LeRobotDataset | MultiLeRobotDataset
     """
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None

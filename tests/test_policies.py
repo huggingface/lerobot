@@ -214,6 +214,7 @@ def test_act_backbone_lr():
         policy=make_policy_config("act", optimizer_lr=0.01, optimizer_lr_backbone=0.001),
         device=DEVICE,
     )
+    cfg.validate()  # Needed for auto-setting some parameters
 
     assert cfg.policy.optimizer_lr == 0.01
     assert cfg.policy.optimizer_lr_backbone == 0.001

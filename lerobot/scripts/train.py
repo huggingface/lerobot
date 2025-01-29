@@ -186,7 +186,8 @@ def log_eval_info(logger, info, step, cfg, dataset, is_online):
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
-    init_logging()
+    cfg.validate()
+
     logging.info(pformat(asdict(cfg)))
 
     # log metrics to terminal and wandb
@@ -208,7 +209,7 @@ def train(cfg: TrainPipelineConfig):
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
-    if cfg.eval_freq > 0 or cfg.env is None:
+    if cfg.eval_freq > 0 and cfg.env is not None:
         logging.info("Creating env")
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size)
 
@@ -556,4 +557,5 @@ def train(cfg: TrainPipelineConfig):
 
 
 if __name__ == "__main__":
+    init_logging()
     train()

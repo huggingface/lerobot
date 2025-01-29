@@ -32,13 +32,21 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
 
 
 def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> gym.vector.VectorEnv | None:
-    """Makes a gym vector environment according to the evaluation config.
+    """Makes a gym vector environment according to the config.
 
-    n_envs can be used to override eval.batch_size in the configuration. Must be at least 1.
+    Args:
+        cfg (EnvConfig): the config of the environment to instantiate.
+        n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
+        use_async_envs (bool, optional): Wether to return an AsyncVectorEnv or a SyncVectorEnv. Defaults to
+            False.
+
+    Raises:
+        ValueError: if n_envs < 1
+        ModuleNotFoundError: If the requested env package is not intalled
+
+    Returns:
+        gym.vector.VectorEnv: The parallelized gym.env instance.
     """
-    if cfg is None:
-        return
-
     if n_envs < 1:
         raise ValueError("`n_envs must be at least 1")
 
