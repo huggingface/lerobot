@@ -118,6 +118,8 @@ class PI0PaliGemmaModel(PreTrainedModel):
         self.action_time_mlp_in = nn.Linear(self.config.width * 2, self.config.width, dtype=torch.float32)
         self.action_time_mlp_out = nn.Linear(self.config.width, self.config.width, dtype=torch.float32)
 
+        self.gemma_expert.model.embed_tokens = None
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
