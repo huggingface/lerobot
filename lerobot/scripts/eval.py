@@ -120,6 +120,9 @@ def rollout(
     # Reset the policy and environments.
     policy.reset()
 
+    if hasattr(policy, "use_ema_modules"):
+        policy.use_ema_modules()
+
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
@@ -199,6 +202,9 @@ def rollout(
         for key in all_observations[0]:
             stacked_observations[key] = torch.stack([obs[key] for obs in all_observations], dim=1)
         ret["observation"] = stacked_observations
+
+    if hasattr(policy, "use_original_modules"):
+        policy.use_original_modules()
 
     return ret
 

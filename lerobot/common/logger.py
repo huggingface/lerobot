@@ -161,6 +161,10 @@ class Logger:
         self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
         register_features_types()
         policy.save_pretrained(save_dir)
+
+        if hasattr(policy, "state_dict_ema_modules"):
+            torch.save(policy.state_dict_ema_modules(), save_dir / "ema.pth")
+
         # Also save the full config for the env configuration.
         self._cfg.save_pretrained(save_dir)
         if self._wandb and not self._cfg.wandb.disable_artifact:

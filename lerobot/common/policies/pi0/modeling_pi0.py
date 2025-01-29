@@ -110,6 +110,66 @@ class PI0Policy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
+    def init_ema_modules(self) -> dict[str, torch.optim.swa_utils.AveragedModel]:
+        ema_decay = 0.99
+        ema_names = [
+            "model.pi0_paligemma.gemma_expert",
+            "model.pi0_paligemma.action_in_proj",
+            "model.pi0_paligemma.action_out_proj",
+            "model.pi0_paligemma.action_time_mlp_in",
+            "model.pi0_paligemma.action_time_mlp_out",
+        ]
+
+        self.ema_module_dict = {}
+        for name, module in self.named_modules():
+            if name not in ema_names:
+                continue
+            self.ema_module_dict[name] = torch.optim.swa_utils.AveragedModel(
+                module,
+                multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(ema_decay),
+                use_buffers=False,
+            )
+
+        if len(self.ema_module_dict) != len(ema_names):
+            raise ValueError("Some modules were not found.")
+
+    def update_ema_modules(self):
+        updated_module_names = []
+        for name, module in self.named_modules():
+            if name in self.ema_module_dict:
+                self.ema_module_dict[name].update_parameters(module)
+                updated_module_names.append(name)
+
+        if len(updated_module_names) != len(self.ema_module_dict):
+            raise ValueError(
+                'Some EMA modules have not been updated. Possibly a mismatch in names between EMA module names and their original counterpart. EMA module names must have the same name as original module but ends with "_ema" (e.g  "linear_ema" and "linear").'
+            )
+
+    def state_dict_ema_modules(self):
+        return {name: module.module.state_dict() for name, module in self.ema_module_dict.items()}
+
+    def init_from_state_dict_ema(self):
+        path = "outputs/train/2025-01-28/20-06-16_aloha_pi0/checkpoints/080000/pretrained_model/ema.pth"
+        ema_state_dict = torch.load(path)
+        for name, module in self.ema_module_dict.items():
+            module.module.load_state_dict(ema_state_dict[name])
+
+    def use_ema_modules(self):
+        # self.init_ema_modules()
+        # self.init_from_state_dict_ema()
+        self.saved_state_dict = {}
+        for name, module in self.named_modules():
+            if name in self.ema_module_dict:
+                self.saved_state_dict[name] = module.state_dict()
+                module.load_state_dict(self.ema_module_dict[name].module.state_dict())
+        return self.saved_state_dict
+
+    def use_original_modules(self):
+        for name, module in self.named_modules():
+            if name in self.ema_module_dict:
+                module.load_state_dict(self.saved_state_dict[name])
+        del self.saved_state_dict
+
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor], noise=None) -> Tensor:
         """Select a single action given environment observations.
