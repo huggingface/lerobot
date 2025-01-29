@@ -70,26 +70,26 @@ class PI0Policy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+        # checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
 
-        with open(checkpoint_dir / "assets/norm_stats.json") as f:
-            norm_stats = json.load(f)
+        # with open(checkpoint_dir / "assets/norm_stats.json") as f:
+        #     norm_stats = json.load(f)
 
-        num_motors = 14
-        dataset_stats = {
-            "observation.state": {
-                "mean": torch.tensor(norm_stats["norm_stats"]["state"]["mean"][:num_motors]),
-                "std": torch.tensor(norm_stats["norm_stats"]["state"]["std"][:num_motors]),
-                "min": torch.zeros(num_motors),
-                "max": torch.ones(num_motors),
-            },
-            "action": {
-                "mean": torch.tensor(norm_stats["norm_stats"]["actions"]["mean"][:num_motors]),
-                "std": torch.tensor(norm_stats["norm_stats"]["actions"]["std"][:num_motors]),
-                "min": torch.zeros(num_motors),
-                "max": torch.ones(num_motors),
-            },
-        }
+        # num_motors = 14
+        # dataset_stats = {
+        #     "observation.state": {
+        #         "mean": torch.tensor(norm_stats["norm_stats"]["state"]["mean"][:num_motors]),
+        #         "std": torch.tensor(norm_stats["norm_stats"]["state"]["std"][:num_motors]),
+        #         "min": torch.zeros(num_motors),
+        #         "max": torch.ones(num_motors),
+        #     },
+        #     "action": {
+        #         "mean": torch.tensor(norm_stats["norm_stats"]["actions"]["mean"][:num_motors]),
+        #         "std": torch.tensor(norm_stats["norm_stats"]["actions"]["std"][:num_motors]),
+        #         "min": torch.zeros(num_motors),
+        #         "max": torch.ones(num_motors),
+        #     },
+        # }
 
         self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
         self.normalize_targets = Normalize(
@@ -231,11 +231,19 @@ class PI0(nn.Module):
     def __init__(self, config: PI0Config):
         super().__init__()
         self.config = config
-        self.tokenizer = AutoTokenizer.from_pretrained("Tinkering/frostpunklab_23012024")
+
+        # tokenizer_path = "Tinkering/frostpunklab_23012024"
+        # pi0_paligemma_path = "Tinkering/frostpunklab_full_float32"
+
+        tokenizer_path = "/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base_pytorch"
+        pi0_paligemma_path = "/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base_pytorch"
+
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+
         # self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained(
         #     "Tinkering/frostpunklab_23012024", torch_dtype="bfloat16"
         # )
-        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("Tinkering/frostpunklab_full_float32")
+        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained(pi0_paligemma_path)
         # change important stuff in bf16
         params_to_change_dtype = [
             "language_model.model.layers",
@@ -297,18 +305,22 @@ class PI0(nn.Module):
         # tokenizer works on lists
         # PaliGemma prompt has to end with a new line
         max_length = 48
-        tokenized_prompt = self.tokenizer.__call__(
-            "Transfer cube\n",
-            padding="max_length",
-            padding_side="right",
-            max_length=max_length,
-            return_tensors="pt",
-        ).to(device=device)
+        if not hasattr(self, "tokenized_prompt"):
+            tokenized_prompt = self.tokenizer.__call__(
+                "Pick up yellow lego block and put it in the bin\n",
+                padding="max_length",
+                padding_side="right",
+                max_length=max_length,
+                return_tensors="pt",
+            ).to(device=device)
 
-        tokenized_prompt["attention_mask"] = tokenized_prompt["attention_mask"].type(dtype=torch.bool)
+            tokenized_prompt["attention_mask"] = tokenized_prompt["attention_mask"].type(dtype=torch.bool)
 
-        batch["tokenized_prompt"] = tokenized_prompt["input_ids"].repeat(bsize, 1).to(device=device)
-        batch["tokenized_prompt_mask"] = tokenized_prompt["attention_mask"].repeat(bsize, 1).to(device=device)
+            self.tokenized_prompt = tokenized_prompt["input_ids"].repeat(bsize, 1).to(device=device)
+            self.tokenized_prompt_mask = tokenized_prompt["attention_mask"].repeat(bsize, 1).to(device=device)
+
+        batch["tokenized_prompt"] = self.tokenized_prompt
+        batch["tokenized_prompt_mask"] = self.tokenized_prompt_mask
         return batch
 
     def prepare_state(self, batch):
@@ -387,9 +399,12 @@ class PI0(nn.Module):
 
         # pi_loss = torch.from_numpy(torch.load("../openpi/data/aloha_sim/loss.pth"))
 
+        real_num_motors = 6
+        losses = losses[:, :, :real_num_motors]
+
         loss = losses.mean()
 
-        loss_dict = {"l2_loss": loss.detach(), "loss": loss}
+        loss_dict = {"l2_loss": loss.item(), "loss": loss}
         return loss_dict
 
     def inference(
@@ -693,9 +708,7 @@ def pad_vector(vector, new_dim):
 
 
 def main():
-    import json
     import pickle
-    from pathlib import Path
 
     # obs_path = "/raid/pablo/alohasim/obs.pkl"
     # action_path = "/raid/pablo/alohasim/action.pkl"

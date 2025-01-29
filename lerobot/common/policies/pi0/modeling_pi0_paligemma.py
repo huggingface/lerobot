@@ -38,8 +38,8 @@ class PI0PaliGemmaConfig(PretrainedConfig):
         self,
         paligemma_config=None,
         gemma_expert_config=None,
-        state_dim=24,
-        action_dim=24,
+        state_dim=32,
+        action_dim=32,
         width=1024,
         **kwargs,
     ):

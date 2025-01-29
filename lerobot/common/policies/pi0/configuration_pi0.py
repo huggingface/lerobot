@@ -24,8 +24,8 @@ class PI0Config(PreTrainedConfig):
         }
     )
 
-    state_dim: int = 32 # 24
-    action_dim: int = 32 # 24
+    state_dim: int = 32  # 24
+    action_dim: int = 32  # 24
 
     resize_imgs_with_padding: tuple[int, int] = (224, 224)
     empty_cameras: int = 2
