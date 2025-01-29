@@ -308,7 +308,7 @@ def main():
         "--video",
         type=int,
         default=1,
-        help="Convert each episode of the raw dataset to an mp4 video. This option allows 60 times lower disk space consumption and 25 faster loading time during training.",
+        help="Convert each episode of the raw dataset to an mp4 video. This option allows 60 times lower disk space consumption and 25 times faster loading time during training.",
     )
     parser.add_argument(
         "--batch-size",
