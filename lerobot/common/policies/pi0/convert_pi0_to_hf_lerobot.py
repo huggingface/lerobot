@@ -1,38 +1,40 @@
-import subprocess
-import sys
-from modeling_pi0_paligemma import PI0PaliGemmaModel, PI0PaliGemmaConfig
+"""
+    Convert pi0 parameters from Jax to Pytorch
 
+    Example downloading parameters:
+    ```bash
+    python
+    >>> import openpi.shared.download as download
+    >>> path='s3://openpi-assets/checkpoints/pi0_base/params'
+    >>> download.maybe_download(path)
+    ```
+
+    Example converting:
+    ```python
+    python lerobot/common/policies/pi0/convert_pi0_to_hf_lerobot.py \
+        --checkpoint_dir /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base/params \
+        --output_path /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base_pytorch
+    ```
+"""
 
 import argparse
-import collections
-
-import torch
-from numpy import load
-
-from transformers import (
-    AutoTokenizer,
-    GemmaTokenizer,
-    GemmaTokenizerFast,
-    PaliGemmaConfig,
-    PaliGemmaForConditionalGeneration,
-    PaliGemmaProcessor,
-    SiglipImageProcessor,
-)
-from transformers.tokenization_utils_base import AddedToken
-from transformers.utils import logging
-
-from conversion_scripts.conversion_utils import get_paligemma_config, get_gemma_config
 import pathlib
-import jax
-import jax.numpy as jnp
-import orbax.checkpoint as ocp
+
 import jax
 import numpy as np
+import orbax.checkpoint as ocp
+import torch
+from conversion_scripts.conversion_utils import get_gemma_config, get_paligemma_config
+from jax.sharding import SingleDeviceSharding
+from modeling_pi0_paligemma import PI0PaliGemmaConfig, PI0PaliGemmaModel
+from transformers import (
+    AutoTokenizer,
+)
 
 PRECISIONS = {"bfloat16": torch.bfloat16, "float32": torch.float32, "float16": torch.float16}
 
-def slice_paligemma_state_dict(state_dict, config):
 
+def slice_paligemma_state_dict(state_dict, config):
     # fmt: off
     # patch embeddings
     state_dict["paligemma.vision_tower.vision_model.embeddings.patch_embedding.weight"] = state_dict.pop("img/embedding/kernel").transpose(
@@ -143,19 +145,24 @@ def slice_paligemma_state_dict(state_dict, config):
     expert_dict = {}
     final_state_dict = {}
     for key, value in state_dict.items():
-        if key not in ["llm/final_norm_1/scale", "llm/layers/attn/attn_vec_einsum_1/w",
-                       "llm/layers/attn/kv_einsum_1/w", "llm/layers/attn/q_einsum_1/w", "llm/layers/mlp_1/gating_einsum", 
-                       "llm/layers/mlp_1/linear", "llm/layers/pre_attention_norm_1/scale", "llm/layers/pre_ffw_norm_1/scale"]:
+        if key not in [
+            "llm/final_norm_1/scale",
+            "llm/layers/attn/attn_vec_einsum_1/w",
+            "llm/layers/attn/kv_einsum_1/w",
+            "llm/layers/attn/q_einsum_1/w",
+            "llm/layers/mlp_1/gating_einsum",
+            "llm/layers/mlp_1/linear",
+            "llm/layers/pre_attention_norm_1/scale",
+            "llm/layers/pre_ffw_norm_1/scale",
+        ]:
             final_state_dict[key] = torch.from_numpy(value)
         else:
             expert_dict[key] = value
-            
+
     return final_state_dict, expert_dict
 
 
-
 def slice_gemma_state_dict(state_dict, config, num_expert=1):
-
     # fmt: off
     # text decoder (gemma)
     # no embedding vector, the expert just has the decoder layers
@@ -214,6 +221,7 @@ def slice_gemma_state_dict(state_dict, config, num_expert=1):
             final_state_dict[key] = value
     return final_state_dict
 
+
 def flatten_for_memory(tree, parent_key=""):
     out = {}
     for k, v in tree.items():
@@ -244,9 +252,12 @@ def slice_initial_orbax_checkpoint(checkpoint_dir: str):
     metadata = checkpointer.metadata(params_path)
     print("Metadata keys:", list(metadata.keys()))
 
-    params_name = 'params'
+    params_name = "params"
 
     item = {params_name: metadata[params_name]}
+
+    device = jax.local_devices()[0]
+    sharding = SingleDeviceSharding(device)
 
     restored = checkpointer.restore(
         params_path,
@@ -255,6 +266,7 @@ def slice_initial_orbax_checkpoint(checkpoint_dir: str):
             restore_args=jax.tree_util.tree_map(
                 lambda _: ocp.ArrayRestoreArgs(
                     restore_type=jax.Array,  # or np.ndarray, but bf16 is annoying about it
+                    sharding=sharding,
                 ),
                 item,
             ),
@@ -268,15 +280,12 @@ def slice_initial_orbax_checkpoint(checkpoint_dir: str):
     pali_params = params["PaliGemma"]
     del params["PaliGemma"]
     pali_params_flat = flatten_for_npz(pali_params)
-    return {"paligemma_params": pali_params_flat,
-            "projection_params": params}
+    return {"paligemma_params": pali_params_flat, "projection_params": params}
 
 
-
-def convert_pi0_checkpoint(checkpoint_dir:str, precision: str, tokenizer_id: str, output_path:str):
+def convert_pi0_checkpoint(checkpoint_dir: str, precision: str, tokenizer_id: str, output_path: str):
     # Break down orbax ckpts - they are in OCDBT
     initial_params = slice_initial_orbax_checkpoint(checkpoint_dir=checkpoint_dir)
-    breakpoint()
     # process projection params
     keys = [
         "state_proj",
@@ -288,17 +297,23 @@ def convert_pi0_checkpoint(checkpoint_dir:str, precision: str, tokenizer_id: str
 
     projection_params = {}
     for key in keys:
-        projection_params[f"{key}.weight"] = torch.from_numpy(np.array(initial_params['projection_params'][key]["kernel"])).T
-        projection_params[f"{key}.bias"] = torch.from_numpy(np.array(initial_params['projection_params'][key]["bias"]))
-        
+        projection_params[f"{key}.weight"] = torch.from_numpy(
+            np.array(initial_params["projection_params"][key]["kernel"])
+        ).T
+        projection_params[f"{key}.bias"] = torch.from_numpy(
+            np.array(initial_params["projection_params"][key]["bias"])
+        )
+
     # Process PaliGemma weights
     paligemma_config = get_paligemma_config(precision)
-    paligemma_params, gemma_raw_dictionary = slice_paligemma_state_dict(initial_params["paligemma_params"], paligemma_config)
-    
+    paligemma_params, gemma_raw_dictionary = slice_paligemma_state_dict(
+        initial_params["paligemma_params"], paligemma_config
+    )
+
     # Process Gemma  weights (at this stage they are unused)
     gemma_config = get_gemma_config(precision)
     gemma_params = slice_gemma_state_dict(gemma_raw_dictionary, config=gemma_config)
-    
+
     # Instantiate model from configs
 
     pi0_config = PI0PaliGemmaConfig(gemma_config=gemma_config, paligemma_config=paligemma_config)
@@ -310,7 +325,7 @@ def convert_pi0_checkpoint(checkpoint_dir:str, precision: str, tokenizer_id: str
     pi0_model = pi0_model.to(torch_dtype)
     pi0_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
 
-    pi0_model.save_pretrained(output_path,safe_serialization=True)
+    pi0_model.save_pretrained(output_path, safe_serialization=True)
     pi0_tokenizer.save_pretrained(output_path, dtype=torch_dtype)
 
     # assert that model loads properly
@@ -330,7 +345,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--precision",
         choices=["float32", "bfloat16", "float16"],
-        default="bfloat16",
+        default="float32",
         type=str,
         help="Precision identifier for model conversion - should match the base checkpoint precision.",
     )
@@ -349,13 +364,11 @@ if __name__ == "__main__":
         type=str,
         help="Path to save converted weights to",
     )
-    
+
     args = parser.parse_args()
     convert_pi0_checkpoint(
         checkpoint_dir=args.checkpoint_dir,
         precision=args.precision,
         tokenizer_id=args.tokenizer_hub_id,
         output_path=args.output_path,
-        )
-
-
+    )
