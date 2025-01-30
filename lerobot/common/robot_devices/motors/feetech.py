@@ -96,6 +96,8 @@ SCS_SERIES_BAUDRATE_TABLE = {
     7: 19_200,
 }
 
+CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
+
 MODEL_CONTROL_TABLE = {
     "scs_series": SCS_SERIES_CONTROL_TABLE,
     "sts3215": SCS_SERIES_CONTROL_TABLE,
@@ -471,6 +473,8 @@ class FeetechMotorsBus:
                 start_pos = self.calibration["start_pos"][calib_idx]
                 end_pos = self.calibration["end_pos"][calib_idx]
 
+                # TODO(pepijn): Check if a homing (something similar to homing) should be applied to linear joint (think so)
+
                 # Rescale the present position to a nominal range [0, 100] %,
                 # useful for joints with linear motions like Aloha gripper
                 values[i] = (values[i] - start_pos) / (end_pos - start_pos) * 100
@@ -619,7 +623,7 @@ class FeetechMotorsBus:
 
         values = np.array(values)
 
-        if self.calibration is not None:
+        if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
             values = self.apply_calibration(values, motor_names)
 
         # log the number of seconds it took to read the data from the motors
@@ -692,7 +696,7 @@ class FeetechMotorsBus:
             motor_ids.append(motor_idx)
             models.append(model)
 
-        if self.calibration is not None:
+        if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
             values = self.revert_calibration(values, motor_names)
 
         values = values.tolist()

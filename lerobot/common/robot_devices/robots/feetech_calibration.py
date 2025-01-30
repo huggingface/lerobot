@@ -57,7 +57,7 @@ def calibrate_linear_motor(motor_id, motor_bus):
     start_pos = motor_bus.read("Present_Position")[motor_id - 1]  # Read index starts ar 0
     print(f"  [Motor {motor_id}] start position recorded: {start_pos}")
 
-    input("Open the {motor_name} fully, then press Enter...")
+    input(f"Open the {motor_name} fully, then press Enter...")
     end_pos = motor_bus.read("Present_Position")[motor_id - 1]  # Read index starts ar 0
     print(f"  [Motor {motor_id}] end position recorded: {end_pos}")
 
