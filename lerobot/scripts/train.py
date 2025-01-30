@@ -249,10 +249,9 @@ def train(cfg: TrainPipelineConfig):
         _num_digits = max(6, len(str(cfg.offline.steps + cfg.online.steps)))
         step_identifier = f"{step:0{_num_digits}d}"
 
-        if cfg.eval_freq > 0 and step % cfg.eval_freq == 0:
+        if cfg.env is not None and cfg.eval_freq > 0 and step % cfg.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
-                assert eval_env is not None
                 eval_info = eval_policy(
                     eval_env,
                     policy,
