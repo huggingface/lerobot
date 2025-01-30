@@ -8,7 +8,7 @@
 #   env.gym.obs_type=environment_state_agent_pos \
 
 seed: 1
-dataset_repo_id: null
+dataset_repo_id: aractingi/hil-serl-maniskill-pushcube
 
 training:
   # Offline training dataloader
@@ -21,7 +21,7 @@ training:
 
   eval_freq: 2500
   log_freq: 500
-  save_freq: 50000
+  save_freq: 1000000
 
   online_steps: 1000000
   online_rollout_n_episodes: 10

@@ -275,6 +275,7 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
             hf_features[key] = datasets.Sequence(
                 length=ft["shape"][0], feature=datasets.Value(dtype=ft["dtype"])
             )
+            # TODO: (alibers, azouitine) Add support for ft["shap"] == 0 as Value
 
     return datasets.Features(hf_features)
 
