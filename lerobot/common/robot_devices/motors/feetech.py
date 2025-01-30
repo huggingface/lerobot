@@ -140,27 +140,65 @@ def convert_steps_to_degrees(steps: int | np.ndarray, models: list[str]) -> np.n
     return degrees
 
 
-def adjusted_to_homing_ticks(raw_motor_ticks: int, encoder_offset: int, model: str) -> int:
+def adjusted_to_homing_ticks(
+    raw_motor_ticks: int, encoder_offset: int, model: str, motorbus, motor_id: int
+) -> int:
     """
-    raw_motor_ticks : int in [0..4095]  (the homed, shifted value)
-    encoder_offset : int (the offset computed so that `home` becomes zero)
-    Returns the homed servo ticks in [-2048 .. +2047].
+    Converts raw motor ticks [0..4095] to homed servo ticks in [-2048..2047].
+    Tracks multi-turn rotations by adjusting a multi-turn index.
     """
+
     resolutions = MODEL_RESOLUTION[model]
+    # Retrieve "previous shifted" and the multi-turn index
+    prev_value = motorbus.previous_value[motor_id - 1]
+    multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
+
+    # Compute the new shifted value in the range [-2048..2047]
     shifted = (raw_motor_ticks + encoder_offset) % resolutions
-    shifted = shifted - 4096 if shifted > 2047 else shifted
-    return shifted
+    if shifted > 2047:
+        shifted -= 4096
+
+    # If we have a valid previous value, detect big jumps
+    if prev_value is not None:
+        delta = shifted - prev_value
+
+        # If we jump forward by more than half a turn, we must have wrapped negatively
+        if delta > 2048:
+            multi_turn_index -= 1
+
+        # If we jump backward by more than half a turn, we must have wrapped positively
+        elif delta < -2048:
+            multi_turn_index += 1
+
+    # Store the new shifted value and updated multi-turn index
+    motorbus.previous_value[motor_id - 1] = shifted
+    motorbus.multi_turn_index[motor_id - 1] = multi_turn_index
+
+    # Return the final multi-turn adjusted position
+    return shifted + multi_turn_index * 4096
 
 
-def adjusted_to_motor_ticks(adjusted_pos: int, encoder_offset: int, model: str) -> int:
+def adjusted_to_motor_ticks(
+    adjusted_pos: int, encoder_offset: int, model: str, motorbus, motor_id: int
+) -> int:
     """
     Inverse of adjusted_to_homing_ticks().
-    adjusted_pos : int in [-2048 .. +2047]  (the homed, shifted value)
-    encoder_offset : int (the offset computed so that `home` becomes zero)
-    Returns the raw servo ticks in [0..4095].
+    Converts homed servo ticks (with multi-turn indexing) back to [0..4095].
     """
+
     resolutions = MODEL_RESOLUTION[model]
-    adjusted_pos = adjusted_pos + 4096 if adjusted_pos < 0 else adjusted_pos
+
+    # Get the current multi-turn index and remove that offset
+    multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
+    adjusted_pos -= multi_turn_index * 4096
+
+    #  Convert back into [−2048..2047] before final modulo
+    if adjusted_pos > 2047:
+        adjusted_pos -= 4096
+    elif adjusted_pos < -2048:
+        adjusted_pos += 4096
+
+    # Map back to raw ticks [0..4095]
     raw_ticks = (adjusted_pos - encoder_offset) % resolutions
     return raw_ticks
 
@@ -329,8 +367,8 @@ class FeetechMotorsBus:
         self.group_writers = {}
         self.logs = {}
 
-        # TODO(pepijn): Add multi turn support
         self.multi_turn_index = self.multi_turn_index = [0] * len(motors)
+        self.previous_value = self.previous_value = [0] * len(motors)
 
     def connect(self):
         if self.is_connected:
@@ -442,10 +480,10 @@ class FeetechMotorsBus:
             if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
                 drive_mode = self.calibration["drive_mode"][calib_idx]
                 homing_offset = self.calibration["homing_offset"][calib_idx]
-                _, model = self.motors[name]
+                motor_idx, model = self.motors[name]
 
                 # Convert raw motor ticks to homed ticks, then convert the homed ticks to degrees
-                values[i] = adjusted_to_homing_ticks(values[i], homing_offset, model)
+                values[i] = adjusted_to_homing_ticks(values[i], homing_offset, model, self, motor_idx)
                 values[i] = convert_steps_to_degrees(values[i], [model])
 
                 # Update direction of rotation of the motor to match between leader and follower.
@@ -498,11 +536,11 @@ class FeetechMotorsBus:
             if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
                 drive_mode = self.calibration["drive_mode"][calib_idx]
                 homing_offset = self.calibration["homing_offset"][calib_idx]
-                _, model = self.motors[name]
+                motor_idx, model = self.motors[name]
 
                 # Convert degrees to homed ticks, then convert the homed ticks to raw ticks
                 values[i] = convert_degrees_to_steps(values[i], [model])
-                values[i] = adjusted_to_motor_ticks(values[i], homing_offset, model)
+                values[i] = adjusted_to_motor_ticks(values[i], homing_offset, model, self, motor_idx)
 
                 # Remove drive mode, which is the rotation direction of the motor, to come back to
                 # actual motor rotation direction which can be arbitrary.
