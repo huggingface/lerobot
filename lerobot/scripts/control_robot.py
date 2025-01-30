@@ -304,6 +304,9 @@ def record(
             (recorded_episodes < num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", play_sounds)
+            if robot.robot_type == "piper":
+                robot.move_to_home_2()
+
             reset_environment(robot, events, reset_time_s)
 
         if events["rerecord_episode"]:

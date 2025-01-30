@@ -26,6 +26,7 @@ from lerobot.common.robot_devices.robots.joystick_interface import JoystickInter
 
 from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
+from piper_sdk import *
 
 
 @dataclass
@@ -81,7 +82,6 @@ class PiperRobot(ManipulatorRobot):
     """Wrapper of piper_sdk.robot.Robot"""
 
     def __init__(self, config: PiperRobotConfig | None = None, **kwargs):
-        from piper_sdk import C_PiperInterface
 
         super().__init__()
         if config is None:
@@ -157,8 +157,8 @@ class PiperRobot(ManipulatorRobot):
 
         self.move_to_home()
 
+    # Used when connecting to robot
     def move_to_home(self) -> None:
-        # TODO(ke): add logic to move to home
         count = 0
         while True:
             if(count == 0):
@@ -169,7 +169,7 @@ class PiperRobot(ManipulatorRobot):
                 action = [0.15,0.0,0.35,0.08,0.08,0.075,0.0] # 0.08 is maximum gripper position
             elif(count == 600):
                 print("3-----------")
-                action = [0.204381, -0.00177, 0.274648, -0.176753, 0.021866, 0.171871, 0.0]
+                action = [0.200337, 0.020786, 0.289284, 0.179831, 0.010918, 0.173467, 0.0]
             count += 1
             before_write_t = time.perf_counter()
             state = self.get_state()
@@ -179,6 +179,25 @@ class PiperRobot(ManipulatorRobot):
             self.rate.sleep(time.perf_counter() - before_write_t)
             if count > 800:
                 break
+    
+    # Used when returning to home after finishing a demo
+    def move_to_home_2(self):
+        count = 0
+        while True:
+            if count <= 100:
+                action = [0.200337, 0.020786, 0.289284, 0.179831, 0.010918, 0.173467, 0.08]
+            elif count > 100:
+                action = [0.200337, 0.020786, 0.289284, 0.179831, 0.010918, 0.173467, 0.0]
+            count += 1
+            before_write_t = time.perf_counter()
+            state = self.get_state()
+            state = state["state"]
+            state[3:6] = self.euler_filter.rectify(state[3:6])
+            self.send_action(action)
+            self.rate.sleep(time.perf_counter() - before_write_t)
+            if count > 200:
+                break
+
 
     def teleop_step(
         self, record_data=False
@@ -195,7 +214,7 @@ class PiperRobot(ManipulatorRobot):
         action = self.teleop.action(state)
         action[:6] += state[:6]
         if self.teleop.home:
-            self.move_to_home()
+            self.move_to_home_2()
 
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
