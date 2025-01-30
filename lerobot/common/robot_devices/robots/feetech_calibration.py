@@ -121,7 +121,7 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
     print("\nMove arm to homing position")
     print(
         "See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="zero")
-    )  # TODO: replace with new instruction homing pos (all motors in center)
+    )  # TODO(pepijn): replace with new instruction homing pos (all motors in center)
     input("Press Enter to continue...")
 
     start_positions = np.zeros(len(arm.motor_indices))
@@ -137,6 +137,9 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
             encoder_offsets[i] = calibrate_homing_motor(id, arm)
             start_positions[i] = 0
             end_positions[i] = 0
+
+    print("\nMove arm to rest position")
+    input("Press Enter to continue...")
 
     print(f"\n calibration of {robot_type} {arm_name} {arm_type} done!")
 
