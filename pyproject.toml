@@ -41,7 +41,7 @@ numba = ">=0.59.0"
 torch = ">=2.2.1"
 opencv-python = ">=4.9.0"
 diffusers = ">=0.27.2"
-torchvision = ">=0.17.1"
+torchvision = ">=0.21.0"
 h5py = ">=3.10.0"
 huggingface-hub = {extras = ["hf-transfer", "cli"], version = ">=0.25.2"}
 gymnasium = "==0.29.1" # TODO(rcadene, aliberts): Make gym 1.0.0 work
