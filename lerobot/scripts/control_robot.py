@@ -303,7 +303,7 @@ def record(
             (recorded_episodes < num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", play_sounds)
-            reset_environment(robot, events, reset_time_s)
+            reset_environment(robot, events, reset_time_s, episode_index)
 
         if events["rerecord_episode"]:
             log_say("Re-record episode", play_sounds)

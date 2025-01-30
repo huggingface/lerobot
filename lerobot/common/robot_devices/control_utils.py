@@ -101,6 +101,10 @@ def predict_action(observation, policy, device, use_amp):
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
+            # Check if tensor is double precision and convert if needed
+            if observation[name].dtype == torch.float64:  # Explicitly check for double
+                observation[name] = observation[name].double().float()  # Convert double to float32
+
             if "image" in name:
                 observation[name] = observation[name].type(torch.float32) / 255
                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
@@ -293,21 +297,36 @@ def control_loop(
             break
 
 
-def reset_environment(robot, events, reset_time_s):
+def reset_environment(robot, events, reset_time_s, episode_index):
     # TODO(rcadene): refactor warmup_record and reset_environment
     # TODO(alibets): allow for teleop during reset
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
+    if has_method(robot, "robot_reset"):
+        robot.robot_reset()
+
     timestamp = 0
     start_vencod_t = time.perf_counter()
 
     # Wait if necessary
-    with tqdm.tqdm(total=reset_time_s, desc="Waiting") as pbar:
+    with tqdm.tqdm(total=reset_time_s, desc=f"Waiting (next episode: {episode_index + 1})") as pbar:
         while timestamp < reset_time_s:
-            time.sleep(1)
-            timestamp = time.perf_counter() - start_vencod_t
-            pbar.update(1)
+            ## previous implementation
+            ##  increments in 1 second and not controllable
+            #
+            # time.sleep(1)
+            # timestamp = time.perf_counter() - start_vencod_t
+            # pbar.update(1)
+
+            ## current implementation
+            ##  increments in teleop cycle time, controllable
+            ##
+            robot.teleop_step(record_data=False)
+            new_timestamp = time.perf_counter() - start_vencod_t
+            pbar.update(round(new_timestamp - timestamp, 2))
+            timestamp = new_timestamp
+
             if events["exit_early"]:
                 events["exit_early"] = False
                 break

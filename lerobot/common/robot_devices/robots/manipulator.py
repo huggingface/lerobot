@@ -81,7 +81,7 @@ class ManipulatorRobotConfig:
         super().__setattr__(prop, val)
 
     def __post_init__(self):
-        if self.robot_type not in ["koch", "koch_bimanual", "aloha", "so100", "moss"]:
+        if self.robot_type not in ["koch", "koch_bimanual", "aloha", "so100", "moss", "u850"]:
             raise ValueError(f"Provided robot type ({self.robot_type}) is not supported.")
 
 
@@ -304,6 +304,8 @@ class ManipulatorRobot:
             from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
         elif self.robot_type in ["so100", "moss"]:
             from lerobot.common.robot_devices.motors.feetech import TorqueMode
+        elif self.robot_type == "u850":
+            from lerobot.common.robot_devices.motors.ufactory import TorqueMode
 
         # We assume that at connection time, arms are in a rest position, and torque can
         # be safely disabled to run calibration and/or set robot preset configurations.
@@ -312,7 +314,10 @@ class ManipulatorRobot:
         for name in self.leader_arms:
             self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
 
-        self.activate_calibration()
+        if self.robot_type == "u850":
+            pass
+        else:
+            self.activate_calibration()
 
         # Set robot preset (e.g. torque in leader gripper for Koch v1.1)
         if self.robot_type in ["koch", "koch_bimanual"]:
@@ -321,6 +326,8 @@ class ManipulatorRobot:
             self.set_aloha_robot_preset()
         elif self.robot_type in ["so100", "moss"]:
             self.set_so100_robot_preset()
+        elif self.robot_type == "u850":
+            self.set_u850_robot_preset()
 
         # Enable torque on all motors of the follower arms
         for name in self.follower_arms:
@@ -501,6 +508,14 @@ class ManipulatorRobot:
             self.follower_arms[name].write("Maximum_Acceleration", 254)
             self.follower_arms[name].write("Acceleration", 254)
 
+    def set_u850_robot_preset(self):
+        for name in self.follower_arms:
+            print(f"Preset and enable {name} follower arm.")
+            self.follower_arms[name].enable(follower=True)
+        for name in self.leader_arms:
+            print(f"Preset and enable {name} leader arm.")
+            self.leader_arms[name].enable()
+
     def teleop_step(
         self, record_data=False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
@@ -513,7 +528,10 @@ class ManipulatorRobot:
         leader_pos = {}
         for name in self.leader_arms:
             before_lread_t = time.perf_counter()
-            leader_pos[name] = self.leader_arms[name].read("Present_Position")
+            if self.robot_type == "u850":
+                leader_pos[name] = np.array(self.leader_arms[name].get_position())
+            else:
+                leader_pos[name] = self.leader_arms[name].read("Present_Position")
             leader_pos[name] = torch.from_numpy(leader_pos[name])
             self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - before_lread_t
 
@@ -526,15 +544,21 @@ class ManipulatorRobot:
             # Cap goal position when too far away from present position.
             # Slower fps expected due to reading from the follower.
             if self.config.max_relative_target is not None:
-                present_pos = self.follower_arms[name].read("Present_Position")
-                present_pos = torch.from_numpy(present_pos)
+                if self.robot_type == "u850":
+                    leader_pos[name] = np.array(self.leader_arms[name].get_position())
+                else:
+                    leader_pos[name] = self.leader_arms[name].read("Present_Position")
+                present_pos = torch.from_numpy(leader_pos[name])
                 goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
 
             # Used when record_data=True
             follower_goal_pos[name] = goal_pos
 
             goal_pos = goal_pos.numpy().astype(np.int32)
-            self.follower_arms[name].write("Goal_Position", goal_pos)
+            if self.robot_type == "u850":
+                self.follower_arms[name].set_position(goal_pos)
+            else:
+                self.follower_arms[name].write("Goal_Position", goal_pos)
             self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
         # Early exit when recording data is not requested
@@ -546,7 +570,10 @@ class ManipulatorRobot:
         follower_pos = {}
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
-            follower_pos[name] = self.follower_arms[name].read("Present_Position")
+            if self.robot_type == "u850":
+                follower_pos[name] = np.array(self.follower_arms[name].get_position())
+            else:
+                follower_pos[name] = self.follower_arms[name].read("Present_Position")
             follower_pos[name] = torch.from_numpy(follower_pos[name])
             self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
@@ -593,7 +620,12 @@ class ManipulatorRobot:
         follower_pos = {}
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
-            follower_pos[name] = self.follower_arms[name].read("Present_Position")
+
+            if self.robot_type == "u850":
+                follower_pos[name] = np.array(self.follower_arms[name].get_position())
+            else:
+                follower_pos[name] = self.follower_arms[name].read("Present_Position")
+
             follower_pos[name] = torch.from_numpy(follower_pos[name])
             self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
@@ -647,7 +679,10 @@ class ManipulatorRobot:
             # Cap goal position when too far away from present position.
             # Slower fps expected due to reading from the follower.
             if self.config.max_relative_target is not None:
-                present_pos = self.follower_arms[name].read("Present_Position")
+                if self.robot_type == "u850":
+                    present_pos = np.array(self.follower_arms[name].get_position())
+                else:
+                    present_pos = self.follower_arms[name].read("Present_Position")
                 present_pos = torch.from_numpy(present_pos)
                 goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
 
@@ -656,7 +691,10 @@ class ManipulatorRobot:
 
             # Send goal position to each follower
             goal_pos = goal_pos.numpy().astype(np.int32)
-            self.follower_arms[name].write("Goal_Position", goal_pos)
+            if self.robot_type == "u850":
+                self.follower_arms[name].set_position(goal_pos)
+            else:
+                self.follower_arms[name].write("Goal_Position", goal_pos)
 
         return torch.cat(action_sent)
 

@@ -1,0 +1,58 @@
+# See user manual at https://www.ufactory.cc/wp-content/uploads/2023/07/UFactory-850-User-Manual-V2.1.0.pdf
+#
+_target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
+robot_type: u850
+calibration_dir: .cache/calibration/u850
+
+# `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+# Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+# the number of motors in your follower arms.
+max_relative_target: null
+
+leader_arms:  # L
+  main:
+    _target_: lerobot.common.robot_devices.motors.ufactory.XArmWrapper
+    port: 192.168.1.236
+    motors:
+      # name: (index, model)
+      joint1: [1, "ufactory-850"]  # +/- 360 degrees
+      joint2: [2, "ufactory-850"]  # +/- 132 degrees
+      joint3: [3, "ufactory-850"]  # -242 to 3.5 degrees
+      joint4: [4, "ufactory-850"]  # +/- 360 degrees
+      joint5: [5, "ufactory-850"]  # +/- 124 degrees
+      joint6: [6, "ufactory-850"]  # +/- 360 degrees
+      gripper: [7, "ufactory-850"]
+
+follower_arms:
+  main:
+    _target_: lerobot.common.robot_devices.motors.ufactory.XArmWrapper
+    port: 192.168.1.218
+    motors:
+      # name: (index, model)
+      joint1: [1, "ufactory-850"]  # +/- 360 degrees
+      joint2: [2, "ufactory-850"]  # +/- 132 degrees
+      joint3: [3, "ufactory-850"]  # -242 to 3.5 degrees
+      joint4: [4, "ufactory-850"]  # +/- 360 degrees
+      joint5: [5, "ufactory-850"]  # +/- 124 degrees
+      joint6: [6, "ufactory-850"]  # +/- 360 degrees
+      joint7: [7, "ufactory-850"]  # NOT PRESENT in 850
+      gripper: [8, "ufactory-850"]  # gripper
+
+cameras:
+  top:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 4
+    fps: 30
+    width: 640
+    height: 480
+  wrist:
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 10
+    fps: 30
+    width: 640
+    height: 480
+
+# # ~ Koch specific settings ~
+# # Sets the leader arm in torque mode with the gripper motor set to this angle. This makes it possible
+# # to squeeze the gripper and have it spring back to an open position on its own.
+# gripper_open_degree: 35.156
