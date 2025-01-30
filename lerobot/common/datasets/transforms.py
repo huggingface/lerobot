@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import collections
-from typing import Any, Callable, Dict, Sequence
+from typing import Any, Callable, Sequence
 
 import torch
 from torchvision.transforms import v2
@@ -129,11 +129,12 @@ class SharpnessJitter(Transform):
 
         return float(sharpness[0]), float(sharpness[1])
 
-    def _generate_value(self, left: float, right: float) -> float:
-        return torch.empty(1).uniform_(left, right).item()
+    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
+        sharpness_factor = torch.empty(1).uniform_(self.sharpness[0], self.sharpness[1]).item()
+        return {"sharpness_factor": sharpness_factor}
 
-    def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        sharpness_factor = self._generate_value(self.sharpness[0], self.sharpness[1])
+    def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
+        sharpness_factor = params["sharpness_factor"]
         return self._call_kernel(F.adjust_sharpness, inpt, sharpness_factor=sharpness_factor)
 
 
