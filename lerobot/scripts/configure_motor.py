@@ -76,6 +76,7 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
                         "Error: More than one motor ID detected. This script is designed to only handle one motor at a time. Please disconnect all but one motor."
                     )
                 motor_index = present_ids[0]
+                break
 
         if motor_index == -1:
             raise ValueError("No motors detected. Please ensure you have one motor connected.")
@@ -102,7 +103,8 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
                 raise OSError("Failed to write baudrate.")
 
         print(f"Setting its index to desired index {motor_idx_des}")
-        motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Lock", 0)
+        if brand == "feetech":
+            motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Lock", 0)
         motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "ID", motor_idx_des)
 
         present_idx = motor_bus.read_with_motor_ids(motor_bus.motor_models, motor_idx_des, "ID", num_retry=2)
