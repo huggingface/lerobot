@@ -374,10 +374,10 @@ class ManipulatorRobot:
 
                 elif self.robot_type in ["so100", "moss"]:
                     from lerobot.common.robot_devices.robots.feetech_calibration import (
-                        run_arm_manual_calibration,
+                        run_full_arm_calibration,
                     )
 
-                    calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
+                    calibration = run_full_arm_calibration(arm, self.robot_type, name, arm_type)
 
                 print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
                 arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
