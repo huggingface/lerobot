@@ -128,15 +128,18 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
     end_positions = np.zeros(len(arm.motor_indices))
     encoder_offsets = np.zeros(len(arm.motor_indices))
 
-    # Call single motor calibration for each motor id
-    for i, id in enumerate(arm.motor_indices):
-        if id == 6:
-            start_positions[i], end_positions[i] = calibrate_linear_motor(id, arm)
-            encoder_offsets[i] = 0
-        else:
-            encoder_offsets[i] = calibrate_homing_motor(id, arm)
+    modes = get_calibration_modes(arm)
+
+    for i, motor_id in enumerate(arm.motor_indices):
+        if modes[i] == CalibrationMode.DEGREE.name:
+            encoder_offsets[i] = calibrate_homing_motor(motor_id, arm)
             start_positions[i] = 0
             end_positions[i] = 0
+
+    for i, motor_id in enumerate(arm.motor_indices):
+        if modes[i] == CalibrationMode.LINEAR.name:
+            start_positions[i], end_positions[i] = calibrate_linear_motor(motor_id, arm)
+            encoder_offsets[i] = 0
 
     print("\nMove arm to rest position")
     input("Press Enter to continue...")

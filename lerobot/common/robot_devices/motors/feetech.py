@@ -140,33 +140,27 @@ def convert_steps_to_degrees(steps: int | np.ndarray, models: list[str]) -> np.n
     return degrees
 
 
-def adjusted__to_homing_ticks(
-    raw_motor_ticks: int | np.ndarray, encoder_offset: int, models: list[str]
-) -> np.ndarray:
+def adjusted_to_homing_ticks(raw_motor_ticks: int, encoder_offset: int, model: str) -> int:
     """
     raw_motor_ticks : int in [0..4095]  (the homed, shifted value)
     encoder_offset : int (the offset computed so that `home` becomes zero)
     Returns the homed servo ticks in [-2048 .. +2047].
     """
-    resolutions = np.array([MODEL_RESOLUTION[m] for m in models], dtype=float)
-    raw_motor_ticks = np.asarray(raw_motor_ticks)
+    resolutions = MODEL_RESOLUTION[model]
     shifted = (raw_motor_ticks + encoder_offset) % resolutions
-    shifted = np.where(shifted > 2047, shifted - 4096, shifted)
+    shifted = shifted - 4096 if shifted > 2047 else shifted
     return shifted
 
 
-def adjusted_to_motor_ticks(
-    adjusted_pos: int | np.ndarray, encoder_offset: int, models: list[str]
-) -> np.ndarray:
+def adjusted_to_motor_ticks(adjusted_pos: int, encoder_offset: int, model: str) -> int:
     """
-    Inverse of read_adjusted_position().
+    Inverse of adjusted_to_homing_ticks().
     adjusted_pos : int in [-2048 .. +2047]  (the homed, shifted value)
     encoder_offset : int (the offset computed so that `home` becomes zero)
     Returns the raw servo ticks in [0..4095].
     """
-    resolutions = np.array([MODEL_RESOLUTION[m] for m in models], dtype=float)
-    adjusted_pos = np.asarray(adjusted_pos)
-    adjusted_pos = np.where(adjusted_pos < 0, adjusted_pos + 4096, adjusted_pos)
+    resolutions = MODEL_RESOLUTION[model]
+    adjusted_pos = adjusted_pos + 4096 if adjusted_pos < 0 else adjusted_pos
     raw_ticks = (adjusted_pos - encoder_offset) % resolutions
     return raw_ticks
 
@@ -335,7 +329,8 @@ class FeetechMotorsBus:
         self.group_writers = {}
         self.logs = {}
 
-        self.track_positions = {}
+        # TODO(pepijn): Add multi turn support
+        self.multi_turn_index = self.multi_turn_index = [0] * len(motors)
 
     def connect(self):
         if self.is_connected:
@@ -450,7 +445,7 @@ class FeetechMotorsBus:
                 _, model = self.motors[name]
 
                 # Convert raw motor ticks to homed ticks, then convert the homed ticks to degrees
-                values[i] = adjusted__to_homing_ticks(values[i], homing_offset, [model])
+                values[i] = adjusted_to_homing_ticks(values[i], homing_offset, model)
                 values[i] = convert_steps_to_degrees(values[i], [model])
 
                 # Update direction of rotation of the motor to match between leader and follower.
@@ -507,7 +502,7 @@ class FeetechMotorsBus:
 
                 # Convert degrees to homed ticks, then convert the homed ticks to raw ticks
                 values[i] = convert_degrees_to_steps(values[i], [model])
-                values[i] = adjusted_to_motor_ticks(values[i], homing_offset, [model])
+                values[i] = adjusted_to_motor_ticks(values[i], homing_offset, model)
 
                 # Remove drive mode, which is the rotation direction of the motor, to come back to
                 # actual motor rotation direction which can be arbitrary.
