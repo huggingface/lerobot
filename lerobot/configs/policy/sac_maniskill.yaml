@@ -21,7 +21,7 @@ training:
 
   eval_freq: 2500
   log_freq: 500
-  save_freq: 1000000
+  save_freq: 2000000
 
   online_steps: 1000000
   online_rollout_n_episodes: 10
