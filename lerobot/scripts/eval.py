@@ -71,11 +71,11 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
+from lerobot.common.utils.random_utils import set_seed
 from lerobot.common.utils.utils import (
     get_safe_torch_device,
     init_logging,
     inside_slurm,
-    set_global_seed,
 )
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
@@ -455,7 +455,7 @@ def eval(cfg: EvalPipelineConfig):
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    set_global_seed(cfg.seed)
+    set_seed(cfg.seed)
 
     log_output_dir(cfg.output_dir)
 

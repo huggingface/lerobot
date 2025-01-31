@@ -36,12 +36,12 @@ from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.optim.factory import load_training_state, make_optimizer_and_scheduler
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.utils import get_device_from_parameters
+from lerobot.common.utils.random_utils import set_seed
 from lerobot.common.utils.utils import (
     format_big_number,
     get_safe_torch_device,
     has_method,
     init_logging,
-    set_global_seed,
 )
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
@@ -190,7 +190,7 @@ def train(cfg: TrainPipelineConfig):
     logger = Logger(cfg)
 
     if cfg.seed is not None:
-        set_global_seed(cfg.seed)
+        set_seed(cfg.seed)
 
     # Check device is available
     device = get_safe_torch_device(cfg.device, log=True)
