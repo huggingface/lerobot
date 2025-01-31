@@ -65,7 +65,7 @@ from tqdm import trange
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.utils import preprocess_observation
-from lerobot.common.logger import log_output_dir
+from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.policy_protocol import Policy
 from lerobot.common.policies.utils import get_device_from_parameters

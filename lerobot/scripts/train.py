@@ -291,8 +291,8 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             "you meant to resume training, please use `resume=true` in your command or yaml configuration."
         )
 
-    # log metrics to terminal and wandb
-    logger = Logger(cfg, out_dir, wandb_job_name=job_name)
+    # log metrics to terminal and ClearML
+    logger = Logger(cfg, out_dir, task_name=job_name)
 
     set_global_seed(cfg.seed)
 
@@ -366,7 +366,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
                     start_seed=cfg.seed,
                 )
             log_eval_info(logger, eval_info["aggregated"], step, cfg, offline_dataset, is_online=is_online)
-            if cfg.wandb.enable:
+            if cfg.clearml.enable:
                 logger.log_video(eval_info["video_paths"][0], step, mode="eval")
             logging.info("Resume training")
 
@@ -377,12 +377,12 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             logging.info(f"Checkpoint policy after step {step}")
             # Note: Save with step as the identifier, and format it to have at least 6 digits but more if
             # needed (choose 6 as a minimum for consistency without being overkill).
-            logger.save_checkpont(
+            logger.save_checkpoint(
                 step,
                 policy,
                 optimizer,
                 lr_scheduler,
-                identifier=step_identifier,
+                identifier=step_identifier
             )
             logging.info("Resume training")
 

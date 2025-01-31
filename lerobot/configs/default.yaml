@@ -125,7 +125,7 @@ eval:
   # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
   use_async_envs: false
 
-wandb:
+clearml:
   enable: true
   # Set to true to disable saving an artifact despite save_checkpoint == True
   disable_artifact: false
