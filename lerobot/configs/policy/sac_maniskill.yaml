@@ -52,6 +52,8 @@ policy:
   n_action_steps: 1
 
   shared_encoder: true
+  # vision_encoder_name: null
+  freeze_vision_encoder: false
   input_shapes:
     # # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
     observation.state: ["${env.state_dim}"]
