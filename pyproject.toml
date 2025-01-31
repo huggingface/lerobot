@@ -29,11 +29,9 @@ packages = [{include = "lerobot"}]
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
 termcolor = ">=2.4.0"
-omegaconf = ">=2.3.0"
 wandb = ">=0.16.3"
 imageio = {extras = ["ffmpeg"], version = ">=2.34.0"}
 gdown = ">=5.1.0"
-hydra-core = ">=1.3.2"
 einops = ">=0.8.0"
 pymunk = ">=6.6.0"
 zarr = ">=2.17.0"
@@ -43,7 +41,7 @@ opencv-python = ">=4.9.0"
 diffusers = ">=0.27.2"
 torchvision = ">=0.21.0"
 h5py = ">=3.10.0"
-huggingface-hub = {extras = ["hf-transfer", "cli"], version = ">=0.25.2"}
+huggingface-hub = {extras = ["hf-transfer", "cli"], version = ">=0.27.1"}
 gymnasium = "==0.29.1" # TODO(rcadene, aliberts): Make gym 1.0.0 work
 cmake = ">=3.29.0.1"
 gym-dora = { git = "https://github.com/dora-rs/dora-lerobot.git", subdirectory = "gym_dora", optional = true }
@@ -71,6 +69,7 @@ pyrender = {git = "https://github.com/mmatl/pyrender.git", markers = "sys_platfo
 hello-robot-stretch-body = {version = ">=0.7.27", markers = "sys_platform == 'linux'", optional = true}
 pyserial = {version = ">=3.5", optional = true}
 jsonlines = ">=4.0.0"
+draccus = {git = "https://github.com/dlwh/draccus.git"} # replace with draccus = ">=0.9.4" when https://github.com/dlwh/draccus/pull/29 is in release
 
 
 [tool.poetry.extras]
