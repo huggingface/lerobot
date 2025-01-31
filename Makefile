@@ -105,7 +105,7 @@ test-tdmpc-ete-train:
 		--env.episode_length=5 \
 		--dataset.repo_id=lerobot/xarm_lift_medium \
 		--dataset.image_transforms.enable=true \
-		--dataset.episodes='[0]' \
+		--dataset.episodes="[0]" \
 		--batch_size=2 \
 		--offline.steps=2 \
 		--online.steps=0 \
@@ -136,7 +136,7 @@ test-tdmpc-ete-train-with-online:
 		--env.episode_length=5 \
 		--dataset.repo_id=lerobot/pusht_keypoints \
 		--dataset.image_transforms.enable=true \
-		--dataset.episodes='[0]' \
+		--dataset.episodes="[0]" \
 		--batch_size=2 \
 		--offline.steps=2 \
 		--online.steps=20 \
