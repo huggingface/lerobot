@@ -18,17 +18,22 @@ import time
 
 def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     if brand == "feetech":
+        from lerobot.common.robot_devices.motors.configs import FeetechMotorsBusConfig as MotorsBusConfigClass
         from lerobot.common.robot_devices.motors.feetech import MODEL_BAUDRATE_TABLE
         from lerobot.common.robot_devices.motors.feetech import (
             SCS_SERIES_BAUDRATE_TABLE as SERIES_BAUDRATE_TABLE,
         )
         from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus as MotorsBusClass
+
     elif brand == "dynamixel":
         from lerobot.common.robot_devices.motors.dynamixel import MODEL_BAUDRATE_TABLE
         from lerobot.common.robot_devices.motors.dynamixel import (
             X_SERIES_BAUDRATE_TABLE as SERIES_BAUDRATE_TABLE,
         )
         from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus as MotorsBusClass
+        from lerobot.common.robot_devices.motors.dynamixel import (
+            DynamixelMotorsBusConfig as MotorsBusConfigClass,
+        )
     else:
         raise ValueError(
             f"Currently we do not support this motor brand: {brand}. We currently support feetech and dynamixel motors."
@@ -45,8 +50,10 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     motor_index_arbitrary = motor_idx_des  # Use the motor ID passed via argument
     motor_model = model  # Use the motor model passed via argument
 
+    config = MotorsBusConfigClass(port=port, motors={motor_name: (motor_index_arbitrary, motor_model)})
+
     # Initialize the MotorBus with the correct port and motor configurations
-    motor_bus = MotorsBusClass(port=port, motors={motor_name: (motor_index_arbitrary, motor_model)})
+    motor_bus = MotorsBusClass(config=config)
 
     # Try to connect to the motor bus and handle any connection-specific errors
     try:
