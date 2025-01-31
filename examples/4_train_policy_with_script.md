@@ -180,7 +180,7 @@ outputs/train/run_resumption/checkpoints
 │   │   ├── model.safetensors  # model weights
 │   │   ├── train_config.json  # train config
 │   │   └── README.md  # model card
-│   └── training_state.pth  # optimizer/scheduler/rng state and training step
+│   └── training_state.safetensors  # optimizer/scheduler/rng state and training step
 ├── 000200
 └── last -> 000200  # symlink to the last available checkpoint
 ```

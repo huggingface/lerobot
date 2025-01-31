@@ -28,17 +28,18 @@ from pathlib import Path
 import draccus
 import torch
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
+from safetensors.torch import save_file
 from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.utils.utils import get_global_random_state
+from lerobot.common.utils.random_utils import serialize_rng_state
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode
 
 PRETRAINED_MODEL = "pretrained_model"
-TRAINING_STATE = "training_state.pth"
+TRAINING_STATE = "training_state.safetensors"
 
 
 def log_output_dir(out_dir):
@@ -79,15 +80,12 @@ class Logger:
     │   ├── specific_checkpoint_name
     │   │   ├── pretrained_model  # Hugging Face pretrained model directory
     │   │   │   ├── ...
-    │   │   └── training_state.pth  # optimizer, scheduler, and random states + training step
+    │   │   └── training_state.safetensors  # optimizer, scheduler, and random states + training step
     |   ├── another_specific_checkpoint_name
     │   │   ├── ...
     |   ├── ...
     │   └── last  # a softlink to the last logged checkpoint
     """
-
-    pretrained_model_dir_name = PRETRAINED_MODEL
-    training_state_file_name = TRAINING_STATE
 
     def __init__(self, cfg: TrainPipelineConfig):
         self._cfg = cfg
@@ -147,7 +145,7 @@ class Logger:
         Given the log directory, get the sub-directory in which the last checkpoint's pretrained weights will
         be saved.
         """
-        return cls.get_last_checkpoint_dir(log_dir) / cls.pretrained_model_dir_name
+        return cls.get_last_checkpoint_dir(log_dir) / PRETRAINED_MODEL
 
     def save_model(self, save_dir: Path, policy: PreTrainedPolicy, wandb_artifact_name: str | None = None):
         """Save the weights of the Policy model using PyTorchModelHubMixin.
@@ -177,18 +175,19 @@ class Logger:
         optimizer: Optimizer | None = None,
         scheduler: LRScheduler | None = None,
     ):
-        """Checkpoint the global training_step, optimizer state, scheduler state, and random state.
-
-        All of these are saved as "training_state.pth" under the checkpoint directory.
+        """
+        Checkpoint the global training_step, optimizer state, scheduler state, and random state.
+        All of these are saved as "training_state.safetensors" under the checkpoint directory.
         """
         training_state = {}
-        training_state["step"] = train_step
-        training_state.update(get_global_random_state())
+        training_state["step"] = torch.tensor([train_step], dtype=torch.int64)
+        rng_state_dict = serialize_rng_state()
+        training_state.update(rng_state_dict)
         if optimizer is not None:
             training_state["optimizer"] = optimizer.state_dict()
         if scheduler is not None:
             training_state["scheduler"] = scheduler.state_dict()
-        torch.save(training_state, save_dir / self.training_state_file_name)
+        save_file(training_state, save_dir / TRAINING_STATE)
 
     def save_checkpoint(
         self,
@@ -205,9 +204,7 @@ class Logger:
             if self._wandb is None
             else f"{self._group.replace(':', '_').replace('/', '_')}-{self._cfg.seed}-{identifier}"
         )
-        self.save_model(
-            checkpoint_dir / self.pretrained_model_dir_name, policy, wandb_artifact_name=wandb_artifact_name
-        )
+        self.save_model(checkpoint_dir / PRETRAINED_MODEL, policy, wandb_artifact_name=wandb_artifact_name)
         self.save_training_state(checkpoint_dir, train_step, optimizer, scheduler)
 
         relative_target = checkpoint_dir.relative_to(self.last_checkpoint_dir.parent)
