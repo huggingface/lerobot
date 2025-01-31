@@ -109,7 +109,7 @@ class ManipulatorRobot:
     ```
 
     Example of highest frequency teleoperation, which doesn't require cameras:
-    ```
+    ```python
     while True:
         robot.teleop_step()
     ```

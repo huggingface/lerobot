@@ -234,7 +234,9 @@ def eval_policy(
     if max_episodes_rendered > 0 and not videos_dir:
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
 
-    assert isinstance(policy, PreTrainedPolicy)
+    if not isinstance(policy, PreTrainedPolicy):
+        raise ValueError(policy)
+
     start = time.time()
     policy.eval()
 

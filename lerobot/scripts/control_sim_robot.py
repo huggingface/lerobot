@@ -94,6 +94,8 @@ from lerobot.common.robot_devices.robots.utils import Robot, make_robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import init_hydra_config, init_logging, log_say
 
+raise NotImplementedError("This script is currently deactivated")
+
 DEFAULT_FEATURES = {
     "next.reward": {
         "dtype": "float32",
