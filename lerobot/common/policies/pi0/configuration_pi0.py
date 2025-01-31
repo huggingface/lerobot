@@ -24,28 +24,29 @@ class PI0Config(PreTrainedConfig):
         }
     )
 
-    state_dim: int = 32  # 24
-    action_dim: int = 32  # 24
+    # Shorter state and action vectors will be padded
+    max_state_dim: int = 32  # 24
+    max_action_dim: int = 32  # 24
 
+    # Image preprocessing
     resize_imgs_with_padding: tuple[int, int] = (224, 224)
-    empty_cameras: int = 2
-    fix_noise: bool = False
+    empty_cameras: int = 0
+
+    # Tokenizer
+    tokenizer_max_length: int = 48
+
+    # Projector
+    proj_width: int = 1024
 
     # Decoding
     num_steps: int = 10
 
-    # finetune
-    train_expert_only: bool = False
+    # Utils
+    use_cache: bool = True
 
-    # Action expert
-    action_expert_width: int = 1024
-    action_expert_depth: int = 18
-    action_expert_mlp_dim: int = 4096
-    action_expert_num_heads: int = 8
-    action_expert_num_kv_heads: int = 1
-    action_expert_head_dim: int = 256
-    action_expert_projection_lora: bool | None = None
-    action_expert_projection_kv_lora: bool | None = None
+    # Frozen parameters
+    freeze_vision_encoder: bool = True
+    train_expert_only: bool = False
 
     # Training presets
     optimizer_lr: float = 2.5e-5

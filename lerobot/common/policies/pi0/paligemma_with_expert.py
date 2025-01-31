@@ -2,7 +2,6 @@ from typing import List, Optional, Union
 
 import torch
 from pytest import Cache
-from torch import nn
 from transformers import (
     AutoConfig,
     GemmaForCausalLM,
@@ -10,7 +9,7 @@ from transformers import (
     PretrainedConfig,
     PreTrainedModel,
 )
-from transformers.models.auto import CONFIG_MAPPING, AutoConfig
+from transformers.models.auto import CONFIG_MAPPING
 
 
 def apply_rope(x, positions, max_wavelength=10_000):
@@ -30,99 +29,169 @@ def apply_rope(x, positions, max_wavelength=10_000):
     return res.to(dtype=x.dtype)
 
 
-class PI0PaliGemmaConfig(PretrainedConfig):
-    model_type = "PI0"
+class PaliGemmaWithExpertConfig(PretrainedConfig):
+    model_type = "PaliGemmaWithExpertModel"
     sub_configs = {"paligemma_config": AutoConfig, "gemma_expert_config": AutoConfig}
 
     def __init__(
         self,
         paligemma_config=None,
         gemma_expert_config=None,
-        state_dim=32,
-        action_dim=32,
-        width=1024,
+        freeze_vision_encoder=True,
+        train_expert_only=True,
         **kwargs,
     ):
-        self.paligemma_config = paligemma_config
-        self.gemma_expert_config = gemma_expert_config
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.width = width
+        self.freeze_vision_encoder = freeze_vision_encoder
+        self.train_expert_only = train_expert_only
 
-        if isinstance(self.paligemma_config, dict):
-            paligemma_config["model_type"] = (
-                paligemma_config["model_type"] if "model_type" in paligemma_config else "paligemma"
-            )
-            self.paligemma_config = CONFIG_MAPPING[paligemma_config["model_type"]](**paligemma_config)
-        elif paligemma_config is None:
+        if paligemma_config is None:
+            # Default config from Pi0
             self.paligemma_config = CONFIG_MAPPING["paligemma"](
-                intermediate_size=16384,
-                hidden_size=1152,
-                patch_size=14,
-                image_size=224,
-                num_hidden_layers=27,
-                num_attention_heads=16,
-                vocab_size=257152,
-                vision_use_head=False,
+                transformers_version="4.48.1",
+                _vocab_size=257152,
+                bos_token_id=2,
+                eos_token_id=1,
+                hidden_size=2048,
+                image_token_index=257152,
+                model_type="paligemma",
+                pad_token_id=0,
+                projection_dim=2048,
+                text_config={
+                    "hidden_activation": "gelu_pytorch_tanh",
+                    "hidden_size": 2048,
+                    "intermediate_size": 16384,
+                    "model_type": "gemma",
+                    "num_attention_heads": 8,
+                    "num_hidden_layers": 18,
+                    "num_image_tokens": 256,
+                    "num_key_value_heads": 1,
+                    "torch_dtype": "float32",
+                    "vocab_size": 257152,
+                },
+                vision_config={
+                    "hidden_size": 1152,
+                    "intermediate_size": 4304,
+                    "model_type": "siglip_vision_model",
+                    "num_attention_heads": 16,
+                    "num_hidden_layers": 27,
+                    "num_image_tokens": 256,
+                    "patch_size": 14,
+                    "projection_dim": 2048,
+                    "projector_hidden_act": "gelu_fast",
+                    "torch_dtype": "float32",
+                    "vision_use_head": False,
+                },
             )
-        if isinstance(self.gemma_expert_config, dict):
-            gemma_expert_config["model_type"] = (
-                gemma_expert_config["model_type"] if "model_type" in gemma_expert_config else "gemma"
-            )
-            self.gemma_expert_config = CONFIG_MAPPING[gemma_expert_config["model_type"]](
-                **gemma_expert_config
-            )
-        elif gemma_expert_config is None:
+        elif isinstance(self.paligemma_config, dict):
+            # Override Pi0 default config for PaliGemma
+            if "model_type" not in gemma_expert_config:
+                paligemma_config["model_type"] = "paligemma"
+
+            cfg_cls = CONFIG_MAPPING[paligemma_config["model_type"]]
+            self.paligemma_config = cfg_cls(**paligemma_config)
+
+        if gemma_expert_config is None:
+            # Default config from Pi0
             self.gemma_expert_config = CONFIG_MAPPING["gemma"](
+                attention_bias=False,
+                attention_dropout=0.0,
+                bos_token_id=2,
+                eos_token_id=1,
+                head_dim=256,
+                hidden_act="gelu_pytorch_tanh",
+                hidden_activation="gelu_pytorch_tanh",
                 hidden_size=1024,
-                num_hidden_layers=18,
+                initializer_range=0.02,
                 intermediate_size=4096,
+                max_position_embeddings=8192,
+                model_type="gemma",
                 num_attention_heads=8,
+                num_hidden_layers=18,
                 num_key_value_heads=1,
-                is_encoder_decoder=False,
+                pad_token_id=0,
+                rms_norm_eps=1e-06,
+                rope_theta=10000.0,
+                torch_dtype="float32",
+                transformers_version="4.48.1",
+                use_cache=True,
                 vocab_size=257152,
             )
+        elif isinstance(self.gemma_expert_config, dict):
+            # Override Pi0 default config for Gemma Expert
+            if "model_type" not in gemma_expert_config:
+                gemma_expert_config["model_type"] = "gemma"
+
+            cfg_cls = CONFIG_MAPPING[paligemma_config["model_type"]]
+            self.gemma_expert_config = cfg_cls(**gemma_expert_config)
 
         super().__init__(**kwargs)
 
 
-class PI0PaliGemmaModel(PreTrainedModel):
-    config_class = PI0PaliGemmaConfig
+class PaliGemmaWithExpertModel(PreTrainedModel):
+    config_class = PaliGemmaWithExpertConfig
 
-    def __init__(self, config: PI0PaliGemmaConfig):
+    def __init__(self, config: PaliGemmaWithExpertConfig):
         super().__init__(config=config)
         self.config = config
-        """
-        self.paligemma = PaliGemmaForConditionalGeneration.from_pretrained(
-            "Tinkering/frostpunklab_bf16", torch_dtype="bfloat16"
-        )
-        self.gemma_expert = GemmaForCausalLM.from_pretrained(
-            "Tinkering/frostpunklab_action_expert_bf16_correct", torch_dtype="bfloat16"
-        )
-        """
         self.paligemma = PaliGemmaForConditionalGeneration(config=config.paligemma_config)
-        # for pname, params in self.paligemma.named_parameters():
-        #     if "language_model.model.embed_tokens" in pname:
-        #         continue
-        #     params.data = params.data.to(dtype=torch.bfloat16)
         self.paligemma = self.paligemma.to(dtype=torch.bfloat16)
 
-        # TODO: finetune expert only as an option
         self.gemma_expert = GemmaForCausalLM(config=config.gemma_expert_config)
         self.gemma_expert = self.gemma_expert.to(dtype=torch.bfloat16)
 
-        self.state_proj = nn.Linear(self.config.state_dim, self.config.width, dtype=torch.float32)
-        self.action_in_proj = nn.Linear(self.config.action_dim, self.config.width, dtype=torch.float32)
-        self.action_out_proj = nn.Linear(self.config.width, self.config.action_dim, dtype=torch.float32)
-
-        self.action_time_mlp_in = nn.Linear(self.config.width * 2, self.config.width, dtype=torch.float32)
-        self.action_time_mlp_out = nn.Linear(self.config.width, self.config.width, dtype=torch.float32)
-
+        # Remove unused embed_tokens
         self.gemma_expert.model.embed_tokens = None
 
+        self.to_bfloat16_like_physical_intelligence()
+        self.set_requires_grad()
+
+    def set_requires_grad(self):
+        if self.config.freeze_vision_encoder:
+            self.paligemma.vision_tower.eval()
+            for params in self.paligemma.vision_tower.parameters():
+                params.requires_grad = False
+
+        if self.config.train_expert_only:
+            if not self.config.freeze_vision_encoder:
+                raise ValueError()
+
+            self.paligemma.eval()
+            for params in self.paligemma.parameters():
+                params.requires_grad = False
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+
+        if self.config.freeze_vision_encoder:
+            self.paligemma.vision_tower.eval()
+
+        if self.config.train_expert_only:
+            self.paligemma.eval()
+
+    def to_bfloat16_like_physical_intelligence(self):
+        self.paligemma = self.paligemma.to(dtype=torch.bfloat16)
+
+        params_to_change_dtype = [
+            "language_model.model.layers",
+            "gemma_expert.model.layers",
+            "vision_tower",
+            "multi_modal",
+        ]
+        for name, param in self.named_parameters():
+            if any(selector in name for selector in params_to_change_dtype):
+                param.data = param.data.to(dtype=torch.bfloat16)
+
+    def embed_image(self, image: torch.Tensor):
+        # Normalize from range [0,1] to [-1,1] as expacted by siglip
+        image = image * 2.0 - 1.0
+        return self.paligemma.get_image_features(image)
+
+    def embed_language_tokens(self, tokens: torch.Tensor):
+        return self.paligemma.language_model.model.embed_tokens(tokens)
+
+    # TODO: break down this huge forward into modules or functions
     def forward(
         self,
-        input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
@@ -135,8 +204,6 @@ class PI0PaliGemmaModel(PreTrainedModel):
         for hidden_states in inputs_embeds:
             if hidden_states is None:
                 continue
-            # dtype = hidden_states.dtype
-            device = hidden_states.device
             batch_size = hidden_states.shape[0]
 
         # RMSNorm
@@ -165,8 +232,6 @@ class PI0PaliGemmaModel(PreTrainedModel):
                 key_states.append(key_state)
                 value_states.append(value_state)
 
-                # TODO: implement kv cache
-
             # B,L,H,D with L sequence length, H number of heads, D head dim
             # concatenate on the number of embeddings/tokens
             query_states = torch.cat(query_states, dim=1)
@@ -174,36 +239,18 @@ class PI0PaliGemmaModel(PreTrainedModel):
             value_states = torch.cat(value_states, dim=1)
 
             query_states = apply_rope(query_states, position_ids)
-
-            head_dim = self.paligemma.config.text_config.head_dim
-
-            # display(apply_rope(query_states, position_ids)[0,256:256+48])
-
             key_states = apply_rope(key_states, position_ids)
 
-            # if query_states.dtype != dtype:
-            #     raise ValueError(f"{query_states.dtype=}")
-            # if key_states.dtype != dtype:
-            #     raise ValueError(f"{key_states.dtype=}")
-            # if value_states.dtype != dtype:
-            #     raise ValueError(f"{value_states.dtype=}")
-
-            # TODO: implement caching
-
             if use_cache and past_key_values is None:
-                # past_key_values = StaticCache(batch_size=batch_size, config=self.config.paligemma_config.text_config)
                 past_key_values = {}
 
             if use_cache:
                 if fill_kv_cache:
-                    # past_key_values.update(key_states, value_states, layer_idx)
                     past_key_values[layer_idx] = {
                         "key_states": key_states,
                         "value_states": value_states,
                     }
                 else:
-                    # key_states = torch.concatenate(past_key_values.key_cache[layer_idx], key_states, dim=1)
-                    # value_states = torch.concatenate(past_key_values.value_cache[layer_idx], value_states, dim=1)
                     key_states = torch.cat([past_key_values[layer_idx]["key_states"], key_states], dim=1)
                     value_states = torch.cat(
                         [past_key_values[layer_idx]["value_states"], value_states], dim=1
@@ -219,6 +266,7 @@ class PI0PaliGemmaModel(PreTrainedModel):
 
             sequence_length = key_states.shape[1]
 
+            head_dim = self.paligemma.config.text_config.head_dim
             key_states = key_states[:, :, :, None, :].expand(
                 batch_size, sequence_length, num_key_value_heads, num_key_value_groups, head_dim
             )
@@ -239,17 +287,13 @@ class PI0PaliGemmaModel(PreTrainedModel):
             query_states = query_states.transpose(1, 2)
             key_states = key_states.transpose(1, 2)
 
-            # with autocast(dtype=torch.float32, device_type=device.type):
             att_weights = torch.matmul(query_states, key_states.transpose(2, 3))
             att_weights *= torch.tensor(head_dim**-0.5, dtype=torch.float32)
             # att_weights: batch_size, num_att_head, sequence_length, sequence_length
-            # big_neg = torch.finfo(torch.float32).min  # See gemma/modules.py
             big_neg = -2.3819763e38  # See gemma/modules.py
             masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
 
-            # with autocast(dtype=torch.bfloat16, device_type=device.type):
             probs = torch.softmax(masked_att_weights, dim=-1, dtype=torch.float32)
-            # probs = probs.to(dtype=torch.bfloat16)
             value_states = value_states.to(torch.float32)
 
             # probs: batch_size, num_key_value_head, num_att_head, sequence_length, sequence_length

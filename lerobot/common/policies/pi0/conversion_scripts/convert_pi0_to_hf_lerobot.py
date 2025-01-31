@@ -1,20 +1,26 @@
 """
-    Convert pi0 parameters from Jax to Pytorch
+Convert pi0 parameters from Jax to Pytorch
 
-    Example downloading parameters:
-    ```bash
-    python
-    >>> import openpi.shared.download as download
-    >>> path='s3://openpi-assets/checkpoints/pi0_base/params'
-    >>> download.maybe_download(path)
-    ```
+Example downloading parameters:
+```bash
+python
+>>> import openpi.shared.download as download
+>>> path='s3://openpi-assets/checkpoints/pi0_base/params'
+>>> download.maybe_download(path)
+```
 
-    Example converting:
-    ```python
-    python lerobot/common/policies/pi0/convert_pi0_to_hf_lerobot.py \
-        --checkpoint_dir /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base/params \
-        --output_path /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base_pytorch
-    ```
+Example converting:
+```python
+python lerobot/common/policies/pi0/conversion_scripts/convert_pi0_to_hf_lerobot.py \
+    --checkpoint_dir /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base/params \
+    --output_path /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base_pytorch
+```
+
+```python
+python lerobot/common/policies/pi0/conversion_scripts/convert_pi0_to_hf_lerobot.py \
+    --checkpoint_dir /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim/params \
+    --output_path /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim_pytorch
+```
 """
 
 import argparse
@@ -24,12 +30,14 @@ import jax
 import numpy as np
 import orbax.checkpoint as ocp
 import torch
-from conversion_scripts.conversion_utils import get_gemma_config, get_paligemma_config
 from jax.sharding import SingleDeviceSharding
-from modeling_pi0_paligemma import PI0PaliGemmaConfig, PI0PaliGemmaModel
-from transformers import (
-    AutoTokenizer,
+
+from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
+from lerobot.common.policies.pi0.conversion_scripts.conversion_utils import (
+    get_gemma_config,
+    get_paligemma_config,
 )
+from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
 
 PRECISIONS = {"bfloat16": torch.bfloat16, "float32": torch.float32, "float16": torch.float16}
 
@@ -212,7 +220,6 @@ def slice_gemma_state_dict(state_dict, config, num_expert=1):
     state_dict["gemma_expert.lm_head.weight"] = embedding_vector # weights are tied. (and zeros here)
 
     # fmt: on
-    expert_dict = {}
     final_state_dict = {}
     for key, value in state_dict.items():
         if not isinstance(value, torch.Tensor):
@@ -283,6 +290,11 @@ def slice_initial_orbax_checkpoint(checkpoint_dir: str):
     return {"paligemma_params": pali_params_flat, "projection_params": params}
 
 
+def update_keys_with_prefix(d: dict, prefix: str) -> dict:
+    """Update dictionary keys by adding a prefix."""
+    return {f"{prefix}{key}": value for key, value in d.items()}
+
+
 def convert_pi0_checkpoint(checkpoint_dir: str, precision: str, tokenizer_id: str, output_path: str):
     # Break down orbax ckpts - they are in OCDBT
     initial_params = slice_initial_orbax_checkpoint(checkpoint_dir=checkpoint_dir)
@@ -316,21 +328,35 @@ def convert_pi0_checkpoint(checkpoint_dir: str, precision: str, tokenizer_id: st
 
     # Instantiate model from configs
 
-    pi0_config = PI0PaliGemmaConfig(gemma_config=gemma_config, paligemma_config=paligemma_config)
-    pi0_model = PI0PaliGemmaModel(pi0_config)
+    if "sim" in checkpoint_dir:
+        pi0_config = PI0Config(
+            empty_cameras=2,
+            train_expert_only=False,
+            max_state_dim=24,
+            max_action_dim=24,
+        )
+    else:
+        pi0_config = PI0Config()
+
+    # gemma_config=gemma_config, paligemma_config=paligemma_config)
+    pi0_model = PI0Policy(pi0_config)
+
+    paligemma_params = update_keys_with_prefix(paligemma_params, "model.paligemma_with_expert.")
+    gemma_params = update_keys_with_prefix(gemma_params, "model.paligemma_with_expert.")
+    projection_params = update_keys_with_prefix(projection_params, "model.")
 
     # load state dict
     torch_dtype = PRECISIONS[precision]
     pi0_model.load_state_dict({**paligemma_params, **gemma_params, **projection_params})
     pi0_model = pi0_model.to(torch_dtype)
-    pi0_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
+    # pi0_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
 
     pi0_model.save_pretrained(output_path, safe_serialization=True)
-    pi0_tokenizer.save_pretrained(output_path, dtype=torch_dtype)
+    # pi0_tokenizer.save_pretrained(output_path, dtype=torch_dtype)
 
     # assert that model loads properly
     del pi0_model
-    loaded_model = PI0PaliGemmaModel.from_pretrained(output_path)
+    PI0Policy.from_pretrained(output_path)
 
 
 if __name__ == "__main__":
