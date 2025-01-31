@@ -69,12 +69,6 @@ def main():
     # We can then instantiate the dataset with these delta_timestamps configuration.
     dataset = LeRobotDataset("lerobot/pusht", delta_timestamps=delta_timestamps)
 
-    # TODO: keep?
-    # from lerobot.common.optim.factory import make_optimizer_and_scheduler
-    # from lerobot.configs.train import TrainPipelineConfig
-    # train_cfg = TrainPipelineConfig.from_pretrained("lerobot/diffusion_pusht", revision="remove_hydra")
-    # optimizer, _ = make_optimizer_and_scheduler(train_cfg, policy)
-
     # Then we create our optimizer and dataloader for offline training.
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-4)
     dataloader = torch.utils.data.DataLoader(
