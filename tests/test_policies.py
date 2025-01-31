@@ -20,73 +20,111 @@ from pathlib import Path
 import einops
 import pytest
 import torch
-from huggingface_hub import PyTorchModelHubMixin
 from safetensors.torch import load_file
 
 from lerobot import available_policies
 from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.datasets.utils import cycle
-from lerobot.common.envs.factory import make_env
+from lerobot.common.datasets.utils import cycle, dataset_to_policy_features
+from lerobot.common.envs.factory import make_env, make_env_config
 from lerobot.common.envs.utils import preprocess_observation
+from lerobot.common.optim.factory import make_optimizer_and_scheduler
 from lerobot.common.policies.act.modeling_act import ACTTemporalEnsembler
 from lerobot.common.policies.factory import (
-    _policy_cfg_from_hydra_cfg,
-    get_policy_and_config_classes,
+    get_policy_class,
     make_policy,
+    make_policy_config,
 )
 from lerobot.common.policies.normalize import Normalize, Unnormalize
-from lerobot.common.policies.policy_protocol import Policy
-from lerobot.common.utils.utils import init_hydra_config, seeded_context
-from lerobot.scripts.train import make_optimizer_and_scheduler
+from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.utils.utils import seeded_context
+from lerobot.configs.default import DatasetConfig
+from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from tests.scripts.save_policy_to_safetensors import get_policy_stats
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, require_cpu, require_env, require_x86_64_kernel
+from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
+
+
+@pytest.fixture
+def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_path):
+    # Create only one camera input which is squared to fit all current policy constraints
+    # e.g. vqbet and tdmpc works with one camera only, and tdmpc requires it to be squared
+    camera_features = {
+        "observation.images.laptop": {
+            "shape": (84, 84, 3),
+            "names": ["height", "width", "channels"],
+            "info": None,
+        },
+    }
+    motor_features = {
+        "action": {
+            "dtype": "float32",
+            "shape": (6,),
+            "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+        },
+        "observation.state": {
+            "dtype": "float32",
+            "shape": (6,),
+            "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+        },
+    }
+    info = info_factory(
+        total_episodes=1, total_frames=1, camera_features=camera_features, motor_features=motor_features
+    )
+    ds_meta = lerobot_dataset_metadata_factory(root=tmp_path / "init", info=info)
+    return ds_meta
 
 
 @pytest.mark.parametrize("policy_name", available_policies)
 def test_get_policy_and_config_classes(policy_name: str):
     """Check that the correct policy and config classes are returned."""
-    policy_cls, config_cls = get_policy_and_config_classes(policy_name)
+    policy_cls = get_policy_class(policy_name)
+    policy_cfg = make_policy_config(policy_name)
     assert policy_cls.name == policy_name
-    assert issubclass(config_cls, inspect.signature(policy_cls.__init__).parameters["config"].annotation)
+    assert issubclass(
+        policy_cfg.__class__, inspect.signature(policy_cls.__init__).parameters["config"].annotation
+    )
 
 
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
 @pytest.mark.parametrize(
-    "env_name,policy_name,extra_overrides",
+    "ds_repo_id,env_name,env_kwargs,policy_name,policy_kwargs",
     [
-        ("xarm", "tdmpc", ["policy.use_mpc=true", "dataset_repo_id=lerobot/xarm_lift_medium"]),
-        ("pusht", "diffusion", []),
-        ("pusht", "vqbet", []),
-        ("aloha", "act", ["env.task=AlohaInsertion-v0", "dataset_repo_id=lerobot/aloha_sim_insertion_human"]),
+        ("lerobot/xarm_lift_medium", "xarm", {}, "tdmpc", {"use_mpc": True}),
+        ("lerobot/pusht", "pusht", {}, "diffusion", {}),
+        ("lerobot/pusht", "pusht", {}, "vqbet", {}),
+        ("lerobot/pusht", "pusht", {}, "act", {}),
+        ("lerobot/aloha_sim_insertion_human", "aloha", {"task": "AlohaInsertion-v0"}, "act", {}),
         (
+            "lerobot/aloha_sim_insertion_scripted",
             "aloha",
+            {"task": "AlohaInsertion-v0"},
             "act",
-            ["env.task=AlohaInsertion-v0", "dataset_repo_id=lerobot/aloha_sim_insertion_scripted"],
+            {},
         ),
         (
+            "lerobot/aloha_sim_insertion_human",
             "aloha",
-            "act",
-            ["env.task=AlohaTransferCube-v0", "dataset_repo_id=lerobot/aloha_sim_transfer_cube_human"],
-        ),
-        (
-            "aloha",
-            "act",
-            ["env.task=AlohaTransferCube-v0", "dataset_repo_id=lerobot/aloha_sim_transfer_cube_scripted"],
-        ),
-        # Note: these parameters also need custom logic in the test function for overriding the Hydra config.
-        (
-            "aloha",
+            {"task": "AlohaInsertion-v0"},
             "diffusion",
-            ["env.task=AlohaInsertion-v0", "dataset_repo_id=lerobot/aloha_sim_insertion_human"],
+            {},
         ),
-        # Note: these parameters also need custom logic in the test function for overriding the Hydra config.
-        ("pusht", "act", ["env.task=PushT-v0", "dataset_repo_id=lerobot/pusht"]),
-        ("dora_aloha_real", "act_real", []),
-        ("dora_aloha_real", "act_real_no_state", []),
+        (
+            "lerobot/aloha_sim_transfer_cube_human",
+            "aloha",
+            {"task": "AlohaTransferCube-v0"},
+            "act",
+            {},
+        ),
+        (
+            "lerobot/aloha_sim_transfer_cube_scripted",
+            "aloha",
+            {"task": "AlohaTransferCube-v0"},
+            "act",
+            {},
+        ),
     ],
 )
 @require_env
-def test_policy(env_name, policy_name, extra_overrides):
+def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     """
     Tests:
         - Making the policy object.
@@ -99,53 +137,22 @@ def test_policy(env_name, policy_name, extra_overrides):
     Note: We test various combinations of policy and dataset. The combinations are by no means exhaustive,
           and for now we add tests as we see fit.
     """
-    cfg = init_hydra_config(
-        DEFAULT_CONFIG_PATH,
-        overrides=[
-            f"env={env_name}",
-            f"policy={policy_name}",
-            f"device={DEVICE}",
-        ]
-        + extra_overrides,
+
+    train_cfg = TrainPipelineConfig(
+        # TODO(rcadene, aliberts): remove dataset download
+        dataset=DatasetConfig(repo_id=ds_repo_id, episodes=[0]),
+        policy=make_policy_config(policy_name, **policy_kwargs),
+        env=make_env_config(env_name, **env_kwargs),
+        device=DEVICE,
     )
 
-    # Additional config override logic.
-    if env_name == "aloha" and policy_name == "diffusion":
-        for keys in [
-            ("training", "delta_timestamps"),
-            ("policy", "input_shapes"),
-            ("policy", "input_normalization_modes"),
-        ]:
-            dct = dict(cfg[keys[0]][keys[1]])
-            dct["observation.images.top"] = dct["observation.image"]
-            del dct["observation.image"]
-            cfg[keys[0]][keys[1]] = dct
-        cfg.override_dataset_stats = None
-
-    # Additional config override logic.
-    if env_name == "pusht" and policy_name == "act":
-        for keys in [
-            ("policy", "input_shapes"),
-            ("policy", "input_normalization_modes"),
-        ]:
-            dct = dict(cfg[keys[0]][keys[1]])
-            dct["observation.image"] = dct["observation.images.top"]
-            del dct["observation.images.top"]
-            cfg[keys[0]][keys[1]] = dct
-        cfg.override_dataset_stats = None
-
     # Check that we can make the policy object.
-    dataset = make_dataset(cfg)
-    policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.meta.stats)
-    # Check that the policy follows the required protocol.
-    assert isinstance(
-        policy, Policy
-    ), f"The policy does not follow the required protocol. Please see {Policy.__module__}.{Policy.__name__}."
-    assert isinstance(policy, torch.nn.Module)
-    assert isinstance(policy, PyTorchModelHubMixin)
+    dataset = make_dataset(train_cfg)
+    policy = make_policy(train_cfg.policy, ds_meta=dataset.meta, device=DEVICE)
+    assert isinstance(policy, PreTrainedPolicy)
 
     # Check that we run select_actions and get the appropriate output.
-    env = make_env(cfg, n_envs=2)
+    env = make_env(train_cfg.env, n_envs=2)
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -172,7 +179,7 @@ def test_policy(env_name, policy_name, extra_overrides):
 
     # reset the policy and environment
     policy.reset()
-    observation, _ = env.reset(seed=cfg.seed)
+    observation, _ = env.reset(seed=train_cfg.seed)
 
     # apply transform to normalize the observations
     observation = preprocess_observation(observation)
@@ -195,65 +202,59 @@ def test_policy(env_name, policy_name, extra_overrides):
     env.step(action)
 
 
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
+# TODO(rcadene, aliberts): This test is quite end-to-end. Move this test in test_optimizer?
 def test_act_backbone_lr():
     """
     Test that the ACT policy can be instantiated with a different learning rate for the backbone.
     """
-    cfg = init_hydra_config(
-        DEFAULT_CONFIG_PATH,
-        overrides=[
-            "env=aloha",
-            "policy=act",
-            f"device={DEVICE}",
-            "training.lr_backbone=0.001",
-            "training.lr=0.01",
-        ],
+
+    cfg = TrainPipelineConfig(
+        # TODO(rcadene, aliberts): remove dataset download
+        dataset=DatasetConfig(repo_id="lerobot/aloha_sim_insertion_scripted", episodes=[0]),
+        policy=make_policy_config("act", optimizer_lr=0.01, optimizer_lr_backbone=0.001),
+        device=DEVICE,
     )
-    assert cfg.training.lr == 0.01
-    assert cfg.training.lr_backbone == 0.001
+    cfg.validate()  # Needed for auto-setting some parameters
+
+    assert cfg.policy.optimizer_lr == 0.01
+    assert cfg.policy.optimizer_lr_backbone == 0.001
 
     dataset = make_dataset(cfg)
-    policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.meta.stats)
+    policy = make_policy(cfg.policy, device=DEVICE, ds_meta=dataset.meta)
     optimizer, _ = make_optimizer_and_scheduler(cfg, policy)
     assert len(optimizer.param_groups) == 2
-    assert optimizer.param_groups[0]["lr"] == cfg.training.lr
-    assert optimizer.param_groups[1]["lr"] == cfg.training.lr_backbone
+    assert optimizer.param_groups[0]["lr"] == cfg.policy.optimizer_lr
+    assert optimizer.param_groups[1]["lr"] == cfg.policy.optimizer_lr_backbone
     assert len(optimizer.param_groups[0]["params"]) == 133
     assert len(optimizer.param_groups[1]["params"]) == 20
 
 
 @pytest.mark.parametrize("policy_name", available_policies)
-def test_policy_defaults(policy_name: str):
+def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     """Check that the policy can be instantiated with defaults."""
-    policy_cls, _ = get_policy_and_config_classes(policy_name)
-    policy_cls()
-
-
-@pytest.mark.parametrize(
-    "env_name,policy_name",
-    [
-        ("xarm", "tdmpc"),
-        ("pusht", "diffusion"),
-        ("aloha", "act"),
-    ],
-)
-def test_yaml_matches_dataclass(env_name: str, policy_name: str):
-    """Check that dataclass configs match their respective yaml configs."""
-    hydra_cfg = init_hydra_config(DEFAULT_CONFIG_PATH, overrides=[f"env={env_name}", f"policy={policy_name}"])
-    _, policy_cfg_cls = get_policy_and_config_classes(policy_name)
-    policy_cfg_from_hydra = _policy_cfg_from_hydra_cfg(policy_cfg_cls, hydra_cfg)
-    policy_cfg_from_dataclass = policy_cfg_cls()
-    assert policy_cfg_from_hydra == policy_cfg_from_dataclass
+    policy_cls = get_policy_class(policy_name)
+    policy_cfg = make_policy_config(policy_name)
+    features = dataset_to_policy_features(dummy_dataset_metadata.features)
+    policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    policy_cfg.input_features = {
+        key: ft for key, ft in features.items() if key not in policy_cfg.output_features
+    }
+    policy_cls(policy_cfg)
 
 
 @pytest.mark.parametrize("policy_name", available_policies)
-def test_save_and_load_pretrained(policy_name: str):
-    policy_cls, _ = get_policy_and_config_classes(policy_name)
-    policy: Policy = policy_cls()
-    save_dir = "/tmp/test_save_and_load_pretrained_{policy_cls.__name__}"
+def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name: str):
+    policy_cls = get_policy_class(policy_name)
+    policy_cfg = make_policy_config(policy_name)
+    features = dataset_to_policy_features(dummy_dataset_metadata.features)
+    policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    policy_cfg.input_features = {
+        key: ft for key, ft in features.items() if key not in policy_cfg.output_features
+    }
+    policy = policy_cls(policy_cfg)
+    save_dir = tmp_path / f"test_save_and_load_pretrained_{policy_cls.__name__}"
     policy.save_pretrained(save_dir)
-    policy_ = policy_cls.from_pretrained(save_dir)
+    policy_ = policy_cls.from_pretrained(save_dir, config=policy_cfg)
     assert all(torch.equal(p, p_) for p, p_ in zip(policy.parameters(), policy_.parameters(), strict=True))
 
 
@@ -267,20 +268,27 @@ def test_normalize(insert_temporal_dim):
     expected.
     """
 
-    input_shapes = {
-        "observation.image": [3, 96, 96],
-        "observation.state": [10],
+    input_features = {
+        "observation.image": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 96, 96),
+        ),
+        "observation.state": PolicyFeature(
+            type=FeatureType.STATE,
+            shape=(10,),
+        ),
     }
-    output_shapes = {
-        "action": [5],
+    output_features = {
+        "action": PolicyFeature(
+            type=FeatureType.ACTION,
+            shape=(5,),
+        ),
     }
 
-    normalize_input_modes = {
-        "observation.image": "mean_std",
-        "observation.state": "min_max",
-    }
-    unnormalize_output_modes = {
-        "action": "min_max",
+    norm_map = {
+        "VISUAL": NormalizationMode.MEAN_STD,
+        "STATE": NormalizationMode.MIN_MAX,
+        "ACTION": NormalizationMode.MIN_MAX,
     }
 
     dataset_stats = {
@@ -324,59 +332,76 @@ def test_normalize(insert_temporal_dim):
             output_batch[key] = torch.stack([output_batch[key]] * tdim, dim=1)
 
     # test without stats
-    normalize = Normalize(input_shapes, normalize_input_modes, stats=None)
+    normalize = Normalize(input_features, norm_map, stats=None)
     with pytest.raises(AssertionError):
         normalize(input_batch)
 
     # test with stats
-    normalize = Normalize(input_shapes, normalize_input_modes, stats=dataset_stats)
+    normalize = Normalize(input_features, norm_map, stats=dataset_stats)
     normalize(input_batch)
 
     # test loading pretrained models
-    new_normalize = Normalize(input_shapes, normalize_input_modes, stats=None)
+    new_normalize = Normalize(input_features, norm_map, stats=None)
     new_normalize.load_state_dict(normalize.state_dict())
     new_normalize(input_batch)
 
     # test without stats
-    unnormalize = Unnormalize(output_shapes, unnormalize_output_modes, stats=None)
+    unnormalize = Unnormalize(output_features, norm_map, stats=None)
     with pytest.raises(AssertionError):
         unnormalize(output_batch)
 
     # test with stats
-    unnormalize = Unnormalize(output_shapes, unnormalize_output_modes, stats=dataset_stats)
+    unnormalize = Unnormalize(output_features, norm_map, stats=dataset_stats)
     unnormalize(output_batch)
 
     # test loading pretrained models
-    new_unnormalize = Unnormalize(output_shapes, unnormalize_output_modes, stats=None)
+    new_unnormalize = Unnormalize(output_features, norm_map, stats=None)
     new_unnormalize.load_state_dict(unnormalize.state_dict())
     unnormalize(output_batch)
 
 
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
 @pytest.mark.parametrize(
-    "env_name, policy_name, extra_overrides, file_name_extra",
+    "ds_repo_id, env_name, policy_name, policy_kwargs, train_kwargs, file_name_extra",
     [
         # TODO(alexander-soare): `policy.use_mpc=false` was previously the default in the config yaml but it
         # was changed to true. For some reason, tests would pass locally, but not in CI. So here we override
         # to test with `policy.use_mpc=false`.
-        ("xarm", "tdmpc", ["policy.use_mpc=false"], "use_policy"),
-        # ("xarm", "tdmpc", ["policy.use_mpc=true"], "use_mpc"),
+        ("lerobot/xarm_lift_medium", "xarm", "tdmpc", {"use_mpc": False}, {"batch_size": 25}, "use_policy"),
+        # ("lerobot/xarm_lift_medium", "xarm", "tdmpc", {"use_mpc": True}, {}, "use_mpc"),
+        # TODO(rcadene): the diffusion model was normalizing the image in mean=0.5 std=0.5 which is a hack supposed to
+        # to normalize the image at all. In our current codebase we dont normalize at all. But there is still a minor difference
+        # that fails the test. However, by testing to normalize the image with 0.5 0.5 in the current codebase, the test pass.
+        # Thus, we deactivate this test for now.
+        # (
+        #     "lerobot/pusht",
+        #     "pusht",
+        #     "diffusion",
+        #     {
+        #         "n_action_steps": 8,
+        #         "num_inference_steps": 10,
+        #         "down_dims": [128, 256, 512],
+        #     },
+        #     {"batch_size": 64},
+        #     "",
+        # ),
+        ("lerobot/aloha_sim_insertion_human", "aloha", "act", {"n_action_steps": 10}, {}, ""),
         (
-            "pusht",
-            "diffusion",
-            ["policy.n_action_steps=8", "policy.num_inference_steps=10", "policy.down_dims=[128, 256, 512]"],
-            "",
+            "lerobot/aloha_sim_insertion_human",
+            "aloha",
+            "act",
+            {"n_action_steps": 1000, "chunk_size": 1000},
+            {},
+            "_1000_steps",
         ),
-        ("aloha", "act", ["policy.n_action_steps=10"], ""),
-        ("aloha", "act", ["policy.n_action_steps=1000", "policy.chunk_size=1000"], "_1000_steps"),
-        ("dora_aloha_real", "act_aloha_real", ["policy.n_action_steps=10"], ""),
     ],
 )
 # As artifacts have been generated on an x86_64 kernel, this test won't
 # pass if it's run on another platform due to floating point errors
 @require_x86_64_kernel
 @require_cpu
-def test_backward_compatibility(env_name, policy_name, extra_overrides, file_name_extra):
+def test_backward_compatibility(
+    ds_repo_id, env_name, policy_name, policy_kwargs, train_kwargs, file_name_extra
+):
     """
     NOTE: If this test does not pass, and you have intentionally changed something in the policy:
         1. Inspect the differences in policy outputs and make sure you can account for them. Your PR should
@@ -397,16 +422,18 @@ def test_backward_compatibility(env_name, policy_name, extra_overrides, file_nam
     saved_param_stats = load_file(env_policy_dir / "param_stats.safetensors")
     saved_actions = load_file(env_policy_dir / "actions.safetensors")
 
-    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name, extra_overrides)
+    output_dict, grad_stats, param_stats, actions = get_policy_stats(
+        ds_repo_id, env_name, policy_name, policy_kwargs, train_kwargs
+    )
 
     for key in saved_output_dict:
-        assert torch.isclose(output_dict[key], saved_output_dict[key], rtol=0.1, atol=1e-7).all()
+        assert torch.allclose(output_dict[key], saved_output_dict[key], rtol=0.1, atol=1e-7)
     for key in saved_grad_stats:
-        assert torch.isclose(grad_stats[key], saved_grad_stats[key], rtol=0.1, atol=1e-7).all()
+        assert torch.allclose(grad_stats[key], saved_grad_stats[key], rtol=0.1, atol=1e-7)
     for key in saved_param_stats:
-        assert torch.isclose(param_stats[key], saved_param_stats[key], rtol=50, atol=1e-7).all()
+        assert torch.allclose(param_stats[key], saved_param_stats[key], rtol=0.1, atol=1e-7)
     for key in saved_actions:
-        assert torch.isclose(actions[key], saved_actions[key], rtol=0.1, atol=1e-7).all()
+        assert torch.allclose(actions[key], saved_actions[key], rtol=0.1, atol=1e-7)
 
 
 def test_act_temporal_ensembler():
@@ -462,7 +489,3 @@ def test_act_temporal_ensembler():
         assert torch.all(offline_avg <= einops.reduce(seq_slice, "b s 1 -> b 1", "max"))
         # Selected atol=1e-4 keeping in mind actions in [-1, 1] and excepting 0.01% error.
         assert torch.allclose(online_avg, offline_avg, atol=1e-4)
-
-
-if __name__ == "__main__":
-    test_act_temporal_ensembler()

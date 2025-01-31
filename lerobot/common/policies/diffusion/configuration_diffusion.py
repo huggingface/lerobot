@@ -16,9 +16,15 @@
 # limitations under the License.
 from dataclasses import dataclass, field
 
+from lerobot.common.optim.optimizers import AdamConfig
+from lerobot.common.optim.schedulers import DiffuserSchedulerConfig
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import NormalizationMode
 
+
+@PreTrainedConfig.register_subclass("diffusion")
 @dataclass
-class DiffusionConfig:
+class DiffusionConfig(PreTrainedConfig):
     """Configuration class for DiffusionPolicy.
 
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.
@@ -102,26 +108,17 @@ class DiffusionConfig:
     horizon: int = 16
     n_action_steps: int = 8
 
-    input_shapes: dict[str, list[int]] = field(
+    normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "observation.image": [3, 96, 96],
-            "observation.state": [2],
-        }
-    )
-    output_shapes: dict[str, list[int]] = field(
-        default_factory=lambda: {
-            "action": [2],
+            "VISUAL": NormalizationMode.MEAN_STD,
+            "STATE": NormalizationMode.MIN_MAX,
+            "ACTION": NormalizationMode.MIN_MAX,
         }
     )
 
-    # Normalization / Unnormalization
-    input_normalization_modes: dict[str, str] = field(
-        default_factory=lambda: {
-            "observation.image": "mean_std",
-            "observation.state": "min_max",
-        }
-    )
-    output_normalization_modes: dict[str, str] = field(default_factory=lambda: {"action": "min_max"})
+    # The original implementation doesn't sample frames for the last 7 steps,
+    # which avoids excessive padding and leads to improved training results.
+    drop_n_last_frames: int = 7  # horizon - n_action_steps - n_obs_steps + 1
 
     # Architecture / modeling.
     # Vision backbone.
@@ -154,38 +151,22 @@ class DiffusionConfig:
     # Loss computation
     do_mask_loss_for_padding: bool = False
 
+    # Training presets
+    optimizer_lr: float = 1e-4
+    optimizer_betas: tuple = (0.95, 0.999)
+    optimizer_eps: float = 1e-8
+    optimizer_weight_decay: float = 1e-6
+    scheduler_name: str = "cosine"
+    scheduler_warmup_steps: int = 500
+
     def __post_init__(self):
+        super().__post_init__()
+
         """Input validation (not exhaustive)."""
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
-
-        image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
-
-        if len(image_keys) == 0 and "observation.environment_state" not in self.input_shapes:
-            raise ValueError("You must provide at least one image or the environment state among the inputs.")
-
-        if len(image_keys) > 0:
-            if self.crop_shape is not None:
-                for image_key in image_keys:
-                    if (
-                        self.crop_shape[0] > self.input_shapes[image_key][1]
-                        or self.crop_shape[1] > self.input_shapes[image_key][2]
-                    ):
-                        raise ValueError(
-                            f"`crop_shape` should fit within `input_shapes[{image_key}]`. Got {self.crop_shape} "
-                            f"for `crop_shape` and {self.input_shapes[image_key]} for "
-                            "`input_shapes[{image_key}]`."
-                        )
-            # Check that all input images have the same shape.
-            first_image_key = next(iter(image_keys))
-            for image_key in image_keys:
-                if self.input_shapes[image_key] != self.input_shapes[first_image_key]:
-                    raise ValueError(
-                        f"`input_shapes[{image_key}]` does not match `input_shapes[{first_image_key}]`, but we "
-                        "expect all image shapes to match."
-                    )
 
         supported_prediction_types = ["epsilon", "sample"]
         if self.prediction_type not in supported_prediction_types:
@@ -207,3 +188,50 @@ class DiffusionConfig:
                 "The horizon should be an integer multiple of the downsampling factor (which is determined "
                 f"by `len(down_dims)`). Got {self.horizon=} and {self.down_dims=}"
             )
+
+    def get_optimizer_preset(self) -> AdamConfig:
+        return AdamConfig(
+            lr=self.optimizer_lr,
+            betas=self.optimizer_betas,
+            eps=self.optimizer_eps,
+            weight_decay=self.optimizer_weight_decay,
+        )
+
+    def get_scheduler_preset(self) -> DiffuserSchedulerConfig:
+        return DiffuserSchedulerConfig(
+            name=self.scheduler_name,
+            num_warmup_steps=self.scheduler_warmup_steps,
+        )
+
+    def validate_features(self) -> None:
+        if len(self.image_features) == 0 and self.env_state_feature is None:
+            raise ValueError("You must provide at least one image or the environment state among the inputs.")
+
+        if self.crop_shape is not None:
+            for key, image_ft in self.image_features.items():
+                if self.crop_shape[0] > image_ft.shape[1] or self.crop_shape[1] > image_ft.shape[2]:
+                    raise ValueError(
+                        f"`crop_shape` should fit within the images shapes. Got {self.crop_shape} "
+                        f"for `crop_shape` and {image_ft.shape} for "
+                        f"`{key}`."
+                    )
+
+        # Check that all input images have the same shape.
+        first_image_key, first_image_ft = next(iter(self.image_features.items()))
+        for key, image_ft in self.image_features.items():
+            if image_ft.shape != first_image_ft.shape:
+                raise ValueError(
+                    f"`{key}` does not match `{first_image_key}`, but we " "expect all image shapes to match."
+                )
+
+    @property
+    def observation_delta_indices(self) -> list:
+        return list(range(1 - self.n_obs_steps, 1))
+
+    @property
+    def action_delta_indices(self) -> list:
+        return list(range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.horizon))
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return None
