@@ -55,9 +55,10 @@ class SACConfig:
     )
     camera_number: int = 1
     # Add type annotations for these fields:
-    vision_encoder_name: str = field(default="microsoft/resnet-18")
+    vision_encoder_name: str | None = field(default="microsoft/resnet-18")
+    freeze_vision_encoder: bool = True
     image_encoder_hidden_dim: int = 32
-    shared_encoder: bool = False
+    shared_encoder: bool = True
     discount: float = 0.99
     temperature_init: float = 1.0
     num_critics: int = 2

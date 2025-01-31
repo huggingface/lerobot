@@ -13,26 +13,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
 import functools
-from pprint import pformat
+import logging
 import random
-from typing import Optional, Sequence, TypedDict, Callable
+from pprint import pformat
+from typing import Callable, Optional, Sequence, TypedDict
 
 import hydra
 import torch
 import torch.nn.functional as F
-from torch import nn
-from tqdm import tqdm
 from deepdiff import DeepDiff
 from omegaconf import DictConfig, OmegaConf
-
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from torch import nn
+from tqdm import tqdm
 
 # TODO: Remove the import of maniskill
 from lerobot.common.datasets.factory import make_dataset
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.envs.factory import make_env, make_maniskill_env
-from lerobot.common.envs.utils import preprocess_observation, preprocess_maniskill_observation
+from lerobot.common.envs.utils import preprocess_maniskill_observation, preprocess_observation
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.sac.modeling_sac import SACPolicy

@@ -312,7 +312,7 @@ class CriticEnsemble(nn.Module):
     def __init__(
         self,
         encoder: Optional[nn.Module],
-        network_list: nn.Module,
+        network_list: nn.ModuleList,
         init_final: Optional[float] = None,
     ):
         super().__init__()
@@ -320,6 +320,12 @@ class CriticEnsemble(nn.Module):
         self.network_list = network_list
         self.init_final = init_final
 
+        self.parameters_to_optimize = []
+        # Handle the case where a part of the encoder if frozen
+        if self.encoder is not None:
+            self.parameters_to_optimize += list(self.encoder.parameters_to_optimize)
+
+        self.parameters_to_optimize += list(self.network_list.parameters())
         # Find the last Linear layer's output dimension
         for layer in reversed(network_list[0].net):
             if isinstance(layer, nn.Linear):
@@ -342,6 +348,7 @@ class CriticEnsemble(nn.Module):
                 self.output_layers.append(output_layer)
 
         self.output_layers = nn.ModuleList(self.output_layers)
+        self.parameters_to_optimize += list(self.output_layers.parameters())
 
     def forward(
         self,
@@ -474,61 +481,25 @@ class SACObservationEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.has_pretrained_vision_encoder = False
+        self.parameters_to_optimize = []
+
+        self.aggregation_size: int = 0
         if "observation.image" in config.input_shapes:
             self.camera_number = config.camera_number
-            self.aggregation_size: int = 0
+
             if self.config.vision_encoder_name is not None:
+                self.image_enc_layers = PretrainedImageEncoder(config)
                 self.has_pretrained_vision_encoder = True
-                self.image_enc_layers, self.image_enc_out_shape = self._load_pretrained_vision_encoder()
-                self.freeze_encoder()
-                self.image_enc_proj = nn.Sequential(
-                    nn.Linear(np.prod(self.image_enc_out_shape), config.latent_dim),
-                    nn.LayerNorm(config.latent_dim),
-                    nn.Tanh(),
-                )
             else:
-                self.image_enc_layers = nn.Sequential(
-                    nn.Conv2d(
-                        in_channels=config.input_shapes["observation.image"][0],
-                        out_channels=config.image_encoder_hidden_dim,
-                        kernel_size=7,
-                        stride=2,
-                    ),
-                    nn.ReLU(),
-                    nn.Conv2d(
-                        in_channels=config.image_encoder_hidden_dim,
-                        out_channels=config.image_encoder_hidden_dim,
-                        kernel_size=5,
-                        stride=2,
-                    ),
-                    nn.ReLU(),
-                    nn.Conv2d(
-                        in_channels=config.image_encoder_hidden_dim,
-                        out_channels=config.image_encoder_hidden_dim,
-                        kernel_size=3,
-                        stride=2,
-                    ),
-                    nn.ReLU(),
-                    nn.Conv2d(
-                        in_channels=config.image_encoder_hidden_dim,
-                        out_channels=config.image_encoder_hidden_dim,
-                        kernel_size=3,
-                        stride=2,
-                    ),
-                    nn.ReLU(),
-                )
-                dummy_batch = torch.zeros(1, *config.input_shapes["observation.image"])
-                with torch.inference_mode():
-                    self.image_enc_out_shape = self.image_enc_layers(dummy_batch).shape[1:]
-                self.image_enc_layers.extend(
-                    nn.Sequential(
-                        nn.Flatten(),
-                        nn.Linear(np.prod(self.image_enc_out_shape), config.latent_dim),
-                        nn.LayerNorm(config.latent_dim),
-                        nn.Tanh(),
-                    )
-                )
+                self.image_enc_layers = DefaultImageEncoder(config)
+
             self.aggregation_size += config.latent_dim * self.camera_number
+
+            if config.freeze_vision_encoder:
+                freeze_image_encoder(self.image_enc_layers)
+            else:
+                self.parameters_to_optimize += list(self.image_enc_layers.parameters())
+
         if "observation.state" in config.input_shapes:
             self.state_enc_layers = nn.Sequential(
                 nn.Linear(
@@ -539,6 +510,8 @@ class SACObservationEncoder(nn.Module):
             )
             self.aggregation_size += config.latent_dim
 
+            self.parameters_to_optimize += list(self.state_enc_layers.parameters())
+
         if "observation.environment_state" in config.input_shapes:
             self.env_state_enc_layers = nn.Sequential(
                 nn.Linear(
@@ -548,26 +521,11 @@ class SACObservationEncoder(nn.Module):
                 nn.LayerNorm(normalized_shape=config.latent_dim),
                 nn.Tanh(),
             )
-        self.aggregation_size += config.latent_dim
+            self.aggregation_size += config.latent_dim
+            self.parameters_to_optimize += list(self.env_state_enc_layers.parameters())
+
         self.aggregation_layer = nn.Linear(in_features=self.aggregation_size, out_features=config.latent_dim)
-
-    def _load_pretrained_vision_encoder(self):
-        """Set up CNN encoder"""
-        from transformers import AutoModel
-
-        self.image_enc_layers = AutoModel.from_pretrained(self.config.vision_encoder_name)
-        if hasattr(self.image_enc_layers.config, "hidden_sizes"):
-            self.image_enc_out_shape = self.image_enc_layers.config.hidden_sizes[-1]  # Last channel dimension
-        elif hasattr(self.image_enc_layers, "fc"):
-            self.image_enc_out_shape = self.image_enc_layers.fc.in_features
-        else:
-            raise ValueError("Unsupported vision encoder architecture, make sure you are using a CNN")
-        return self.image_enc_layers, self.image_enc_out_shape
-
-    def freeze_encoder(self):
-        """Freeze all parameters in the encoder"""
-        for param in self.image_enc_layers.parameters():
-            param.requires_grad = False
+        self.parameters_to_optimize += list(self.aggregation_layer.parameters())
 
     def forward(self, obs_dict: dict[str, Tensor]) -> Tensor:
         """Encode the image and/or state vector.
@@ -579,12 +537,10 @@ class SACObservationEncoder(nn.Module):
         # Concatenate all images along the channel dimension.
         image_keys = [k for k in self.config.input_shapes if k.startswith("observation.image")]
         for image_key in image_keys:
-            if self.has_pretrained_vision_encoder:
-                enc_feat = self.image_enc_layers(obs_dict[image_key]).pooler_output
-                enc_feat = self.image_enc_proj(enc_feat.view(enc_feat.shape[0], -1))
-            else:
-                enc_feat = flatten_forward_unflatten(self.image_enc_layers, obs_dict[image_key])
+            enc_feat = self.image_enc_layers(obs_dict[image_key])
 
+            # if not self.has_pretrained_vision_encoder:
+            #     enc_feat = flatten_forward_unflatten(self.image_enc_layers, obs_dict[image_key])
             feat.append(enc_feat)
         if "observation.environment_state" in self.config.input_shapes:
             feat.append(self.env_state_enc_layers(obs_dict["observation.environment_state"]))
@@ -602,8 +558,105 @@ class SACObservationEncoder(nn.Module):
         return self.config.latent_dim
 
 
+class DefaultImageEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.image_enc_layers = nn.Sequential(
+            nn.Conv2d(
+                in_channels=config.input_shapes["observation.image"][0],
+                out_channels=config.image_encoder_hidden_dim,
+                kernel_size=7,
+                stride=2,
+            ),
+            nn.ReLU(),
+            nn.Conv2d(
+                in_channels=config.image_encoder_hidden_dim,
+                out_channels=config.image_encoder_hidden_dim,
+                kernel_size=5,
+                stride=2,
+            ),
+            nn.ReLU(),
+            nn.Conv2d(
+                in_channels=config.image_encoder_hidden_dim,
+                out_channels=config.image_encoder_hidden_dim,
+                kernel_size=3,
+                stride=2,
+            ),
+            nn.ReLU(),
+            nn.Conv2d(
+                in_channels=config.image_encoder_hidden_dim,
+                out_channels=config.image_encoder_hidden_dim,
+                kernel_size=3,
+                stride=2,
+            ),
+            nn.ReLU(),
+        )
+        dummy_batch = torch.zeros(1, *config.input_shapes["observation.image"])
+        with torch.inference_mode():
+            self.image_enc_out_shape = self.image_enc_layers(dummy_batch).shape[1:]
+        self.image_enc_layers.extend(
+            nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(np.prod(self.image_enc_out_shape), config.latent_dim),
+                nn.LayerNorm(config.latent_dim),
+                nn.Tanh(),
+            )
+        )
+
+    def forward(self, x):
+        return self.image_enc_layers(x)
+
+
+class PretrainedImageEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+        self.image_enc_layers, self.image_enc_out_shape = self._load_pretrained_vision_encoder(config)
+        self.image_enc_proj = nn.Sequential(
+            nn.Linear(np.prod(self.image_enc_out_shape), config.latent_dim),
+            nn.LayerNorm(config.latent_dim),
+            nn.Tanh(),
+        )
+
+    def _load_pretrained_vision_encoder(self, config):
+        """Set up CNN encoder"""
+        from transformers import AutoModel
+
+        self.image_enc_layers = AutoModel.from_pretrained(config.vision_encoder_name)
+        # self.image_enc_layers.pooler = Identity()
+
+        if hasattr(self.image_enc_layers.config, "hidden_sizes"):
+            self.image_enc_out_shape = self.image_enc_layers.config.hidden_sizes[-1]  # Last channel dimension
+        elif hasattr(self.image_enc_layers, "fc"):
+            self.image_enc_out_shape = self.image_enc_layers.fc.in_features
+        else:
+            raise ValueError("Unsupported vision encoder architecture, make sure you are using a CNN")
+        return self.image_enc_layers, self.image_enc_out_shape
+
+    def forward(self, x):
+        # TODO: (maractingi, azouitine) check the forward pass of the pretrained model
+        # doesn't reach the classifier layer because we don't need it
+        enc_feat = self.image_enc_layers(x).pooler_output
+        enc_feat = self.image_enc_proj(enc_feat.view(enc_feat.shape[0], -1))
+        return enc_feat
+
+
+def freeze_image_encoder(image_encoder: nn.Module):
+    """Freeze all parameters in the encoder"""
+    for param in image_encoder.parameters():
+        param.requires_grad = False
+
+
 def orthogonal_init():
     return lambda x: torch.nn.init.orthogonal_(x, gain=1.0)
+
+
+class Identity(nn.Module):
+    def __init__(self):
+        super(Identity, self).__init__()
+
+    def forward(self, x):
+        return x
 
 
 # TODO (azouitine): I think in our case this function is not usefull we should remove it
@@ -626,3 +679,54 @@ def flatten_forward_unflatten(fn: Callable[[Tensor], Tensor], image_tensor: Tens
     inp = torch.flatten(image_tensor, end_dim=-4)
     flat_out = fn(inp)
     return torch.reshape(flat_out, (*start_dims, *flat_out.shape[1:]))
+
+
+if __name__ == "__main__":
+    # Test the SACObservationEncoder
+    import time
+
+    config = SACConfig()
+    config.num_critics = 10
+    encoder = SACObservationEncoder(config)
+    actor_encoder = SACObservationEncoder(config)
+    encoder = torch.compile(encoder)
+    critic_ensemble = CriticEnsemble(
+        encoder=encoder,
+        network_list=nn.ModuleList(
+            [
+                MLP(
+                    input_dim=encoder.output_dim + config.output_shapes["action"][0],
+                    **config.critic_network_kwargs,
+                )
+                for _ in range(config.num_critics)
+            ]
+        ),
+    )
+    actor = Policy(
+        encoder=actor_encoder,
+        network=MLP(input_dim=actor_encoder.output_dim, **config.actor_network_kwargs),
+        action_dim=config.output_shapes["action"][0],
+        encoder_is_shared=config.shared_encoder,
+        **config.policy_kwargs,
+    )
+    encoder = encoder.to("cuda:0")
+    critic_ensemble = torch.compile(critic_ensemble)
+    critic_ensemble = critic_ensemble.to("cuda:0")
+    actor = torch.compile(actor)
+    actor = actor.to("cuda:0")
+    obs_dict = {
+        "observation.image": torch.randn(1, 3, 84, 84),
+        "observation.state": torch.randn(1, 4),
+    }
+    actions = torch.randn(1, 2).to("cuda:0")
+    obs_dict = {k: v.to("cuda:0") for k, v in obs_dict.items()}
+    print("compiling...")
+    # q_value = critic_ensemble(obs_dict, actions)
+    action = actor(obs_dict)
+    print("compiled")
+    start = time.perf_counter()
+    for _ in range(1000):
+        # features = encoder(obs_dict)
+        action = actor(obs_dict)
+        # q_value = critic_ensemble(obs_dict, actions)
+    print("Time taken:", time.perf_counter() - start)
