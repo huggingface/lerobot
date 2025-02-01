@@ -299,13 +299,6 @@
                     const csvUrl = URL.createObjectURL(blob);
 
                     // process CSV data
-                    const csvDataStr = {{ episode_data_csv_str|tojson|safe }};
-                    // Create a Blob with the CSV data
-                    const blob = new Blob([csvDataStr], { type: 'text/csv;charset=utf-8;' });
-                    // Create a URL for the Blob
-                    const csvUrl = URL.createObjectURL(blob);
-
-                    // process CSV data
                     this.videos = document.querySelectorAll('video');
                     this.video = this.videos[0];
                     this.dygraph = new Dygraph(document.getElementById("graph"), csvUrl, {

@@ -299,6 +299,9 @@ class LeRobotDatasetMetadata:
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
         obj.root = Path(root) / repo_id if root is not None else LEROBOT_HOME / repo_id
+        # obj = cls.__new__(cls)
+        # obj.repo_id = repo_id
+        # obj.root = Path(root) if root is not None else LEROBOT_HOME / repo_id
 
         obj.root.mkdir(parents=True, exist_ok=False)
 
@@ -440,6 +443,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         self.repo_id = repo_id
         self.root = Path(root) / repo_id if root else LEROBOT_HOME / repo_id
+        # self.root = Path(root) if root else LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
