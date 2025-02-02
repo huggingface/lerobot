@@ -34,6 +34,7 @@ from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.configs.types import FeatureType
 
 
+
 def display(tensor: torch.Tensor):
     """
     Display function for a PyTorch tensor that prints its shape, mean, std, min, and max.
@@ -70,7 +71,8 @@ class PI0Policy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+        # checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+        checkpoint_dir = Path("/raid/pablo/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
 
         with open(checkpoint_dir / "assets/norm_stats.json") as f:
             norm_stats = json.load(f)
@@ -175,7 +177,11 @@ class PI0(nn.Module):
         # self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained(
         #     "Tinkering/frostpunklab_23012024", torch_dtype="bfloat16"
         # )
-        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("Tinkering/frostpunklab_full_float32")
+        # self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("Tinkering/frostpunklab_full_float32", torch_dtype="float32")
+        self.pi0_paligemma = PI0PaliGemmaModel.from_pretrained("/raid/pablo/pi0_hf_final_float32", torch_dtype="float32")
+        # self.pi0_paligemma.paligemma.config.text_config.hidden_act = "quick_gelu"
+
+        # self.pi0_paligemma.gemma_expert.config.hidden_act = "quick_gelu"
         # change important stuff in bf16
         params_to_change_dtype = [
             "language_model.model.layers",
@@ -183,9 +189,16 @@ class PI0(nn.Module):
             "vision_tower",
             "multi_modal",
         ]
+        params_to_keep_dtype = [
+            "layer_norm",
+            "layernorm",
+            "mlp",
+
+        ]
         for name, param in self.pi0_paligemma.named_parameters():
             if any([selector in name for selector in params_to_change_dtype]):
-                param.data = param.data.to(dtype=torch.bfloat16)
+                if name not in params_to_keep_dtype:
+                    param.data = param.data.to(dtype=torch.bfloat16)
 
         if self.config.train_expert_only:
             for params in self.pi0_paligemma.paligemma.parameters():
@@ -249,6 +262,123 @@ class PI0(nn.Module):
         actions = pad_vector(actions, self.config.action_dim)
         return actions
 
+    def embed_prefix(self, batch):
+        # TODO: avoid list in python and torch.cat ; prefer pre-allocation with torch.empty
+        embs = []
+        pad_masks = []
+        att_masks = []
+
+        # TODO: remove for loop
+        for key in self.config.image_features:
+            # no finetuning of siglip
+            # TODO: requires_grad = False for paligemma siglip to g
+            img = batch[key]
+            # normalize from range [0,1] to [-1,1] as expacted by siglip
+            img = img * 2.0 - 1.0
+            # with record_function("get_images_features"):
+            with torch.no_grad():
+                # torch.cuda.synchronize()
+                img_emb = self.pi0_paligemma.paligemma.get_image_features(img)
+            img_emb = img_emb.to(dtype=self.torch_dtype)
+
+            img_emb_dim = img_emb.shape[-1]
+            # img_emb = img_emb * math.sqrt(img_emb_dim)
+            #img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
+            img_emb *= img_emb_dim ** 0.5
+
+            bsize, num_img_embs = img_emb.shape[:2]
+
+            # img_mask = batch[f"{key}_mask"].expand(bsize, num_img_embs)
+            img_mask = (batch[f"{key}_mask"])[:, None].expand(bsize, num_img_embs)
+
+            # img_mask = torch.ones(bsize, num_img_embs, dtype=torch.bool, device=device)
+
+            embs.append(img_emb)
+            pad_masks.append(img_mask)
+
+            # image tokens attend to each other
+            att_masks += [0] * num_img_embs
+        # att_masks is a list of 256 * 3 (say) zeros, [0, 0, 0 ... 0, 0] 
+        # at this stage img_mask is a list of three lists of booleans, all True or all False (for empty cameras)
+        # 
+        # TODO: if language
+        # with record_function("lang_embs_and_padding"):
+        lang_emb = self.pi0_paligemma.paligemma.language_model.model.embed_tokens(batch["tokenized_prompt"])
+        lang_emb = lang_emb.to(dtype=self.torch_dtype)
+
+        # TODO: remove normalization?
+        lang_emb_dim = lang_emb.shape[-1]
+        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
+        # lang_emb = lang_emb * torch.tensor(lang_emb_dim**0.5, dtype=lang_emb.dtype)
+
+        embs.append(lang_emb)
+        pad_masks.append(batch["tokenized_prompt_mask"])
+
+        # full attention between image and language inputs
+        num_lang_embs = lang_emb.shape[1]
+        att_masks += [0] * num_lang_embs
+
+        embs = torch.cat(embs, dim=1)
+        pad_masks = torch.cat(pad_masks, dim=1)
+        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
+        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        return embs, pad_masks, att_masks
+
+    def embed_suffix(self, batch, noisy_actions, timestep):
+        embs = []
+        pad_masks = []
+        att_masks = []
+
+        # add a single state token
+
+        # TODO (molbap): should be moved to the model backbone methods
+        state_emb = self.pi0_paligemma.state_proj(batch["observation.state"])
+        state_emb = state_emb.to(dtype=self.torch_dtype)
+        embs.append(state_emb[:, None, :])
+        bsize = state_emb.shape[0]
+        dtype = state_emb.dtype
+        device = state_emb.device
+
+        state_mask = torch.ones(bsize, 1, dtype=torch.bool, device=device)
+        pad_masks.append(state_mask)
+        # image/language inputs do not attend to state or actions
+        att_masks += [1]
+
+        # embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
+        width = self.config.action_expert_width
+        time_emb = create_sinusoidal_pos_embedding(
+            timestep, width, min_period=4e-3, max_period=4.0, device=device
+        )
+        time_emb = time_emb.type(dtype=dtype)
+
+        # mix timestep + action information using an MLP
+        action_emb = self.pi0_paligemma.action_in_proj(noisy_actions)
+
+        time_emb = time_emb[:, None, :].expand_as(action_emb)
+        action_time_emb = torch.cat([action_emb, time_emb], dim=2)
+        # TODO (molbap): should be moved to the model backbone methods
+
+        action_time_emb = self.pi0_paligemma.action_time_mlp_in(action_time_emb)
+        # action_time_emb = F.swish(action_time_emb)
+        action_time_emb = F.silu(action_time_emb)  # swish == silu
+        # TODO (molbap): should be moved to the model backbone methods
+        action_time_emb = self.pi0_paligemma.action_time_mlp_out(action_time_emb)
+
+        # add to input tokens
+        embs.append(action_time_emb)
+
+        bsize, action_time_dim = action_time_emb.shape[:2]
+        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=device)
+        pad_masks.append(action_time_mask)
+
+        # image/language/state inputs do not attend to action tokens
+        att_masks += [1] + ([0] * (self.config.n_action_steps - 1))
+        embs = torch.cat(embs, dim=1)
+        pad_masks = torch.cat(pad_masks, dim=1)
+        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
+        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        return embs, pad_masks, att_masks
+
     def forward(self, batch: dict[str, Tensor], noise=None):
         batch = self.prepare_images(batch)
         batch = self.prepare_state(batch)
@@ -274,11 +404,14 @@ class PI0(nn.Module):
         time_beta = sample_beta_gpu(1.5, 1.0, bsize, device)
 
         if self.config.fix_noise:
-            noise = torch.load("../openpi/data/aloha_sim/noise_train.pth")
+            """
+            base_ckpt = "/raid/pablo/alohasim/"
+            # base_ckpt = "../openpi/data/aloha_sim/"
+            noise = torch.load(base_ckpt + "noise_train.pth")
             noise = torch.from_numpy(noise).to(dtype=torch.float32, device=device)
-            time_beta = torch.load("../openpi/data/aloha_sim/beta_time.pth")
+            time_beta = torch.load(base_ckpt + "beta_time.pth")
             time_beta = torch.from_numpy(time_beta).to(dtype=torch.float32, device=device)
-
+            """
         time = time_beta * 0.999 + 0.001
         time = time.to(dtype=torch.float32, device=device)
         time_expanded = time[..., None, None]
@@ -328,7 +461,6 @@ class PI0(nn.Module):
         batch = self.prepare_state(batch)
         batch = self.prepare_language(batch)
         actions = self.sample_actions(batch, noise=noise)
-
         # unpad
         original_action_dim = self.config.action_feature.shape[0]
         actions = actions[:, :, :original_action_dim]
@@ -340,9 +472,9 @@ class PI0(nn.Module):
         # dtype = torch.bfloat16
         dtype = self.torch_dtype
         device = batch[OBS_ROBOT].device
-
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(batch)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
         use_cache = True  # TODO: from config
@@ -397,121 +529,9 @@ class PI0(nn.Module):
             # Euler step
             x_t += dt * v_t
             time += dt
+
         return x_t
 
-    def embed_prefix(self, batch):
-        # TODO: avoid list in python and torch.cat ; prefer pre-allocation with torch.empty
-        embs = []
-        pad_masks = []
-        att_masks = []
-
-        # TODO: remove for loop
-        for key in self.config.image_features:
-            # no finetuning of siglip
-            # TODO: requires_grad = False for paligemma siglip to g
-            img = batch[key]
-            # normalize from range [0,1] to [-1,1] as expacted by siglip
-            img = img * 2.0 - 1.0
-            with torch.no_grad():
-                img_emb = self.pi0_paligemma.paligemma.get_image_features(img)
-            img_emb = img_emb.to(dtype=self.torch_dtype)
-
-            img_emb_dim = img_emb.shape[-1]
-            # img_emb = img_emb * math.sqrt(img_emb_dim)
-            img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
-            # img_emb *= img_emb_dim ** 0.5
-
-            bsize, num_img_embs = img_emb.shape[:2]
-
-            # img_mask = batch[f"{key}_mask"].expand(bsize, num_img_embs)
-            img_mask = (batch[f"{key}_mask"])[:, None].expand(bsize, num_img_embs)
-            # img_mask = torch.ones(bsize, num_img_embs, dtype=torch.bool, device=device)
-
-            embs.append(img_emb)
-            pad_masks.append(img_mask)
-
-            # image tokens attend to each other
-            att_masks += [0] * num_img_embs
-
-        # TODO: if language
-        lang_emb = self.pi0_paligemma.paligemma.language_model.model.embed_tokens(batch["tokenized_prompt"])
-        # lang_emb = lang_emb.to(dtype=self.torch_dtype)
-
-        # TODO: remove normalization?
-        lang_emb_dim = lang_emb.shape[-1]
-        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
-        # lang_emb = lang_emb * torch.tensor(lang_emb_dim**0.5, dtype=lang_emb.dtype)
-
-        embs.append(lang_emb)
-        pad_masks.append(batch["tokenized_prompt_mask"])
-
-        # full attention between image and language inputs
-        num_lang_embs = lang_emb.shape[1]
-        att_masks += [0] * num_lang_embs
-
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-
-        return embs, pad_masks, att_masks
-
-    def embed_suffix(self, batch, noisy_actions, timestep):
-        embs = []
-        pad_masks = []
-        att_masks = []
-
-        # add a single state token
-
-        # TODO (molbap): should be moved to the model backbone methods
-        state_emb = self.pi0_paligemma.state_proj(batch["observation.state"])
-        state_emb = state_emb.to(dtype=self.torch_dtype)
-        embs.append(state_emb[:, None, :])
-        bsize = state_emb.shape[0]
-        dtype = state_emb.dtype
-        device = state_emb.device
-
-        state_mask = torch.ones(bsize, 1, dtype=torch.bool, device=device)
-        pad_masks.append(state_mask)
-        # image/language inputs do not attend to state or actions
-        att_masks += [1]
-
-        # embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
-        width = self.config.action_expert_width
-        time_emb = create_sinusoidal_pos_embedding(
-            timestep, width, min_period=4e-3, max_period=4.0, device=device
-        )
-        time_emb = time_emb.type(dtype=dtype)
-
-        # mix timestep + action information using an MLP
-        action_emb = self.pi0_paligemma.action_in_proj(noisy_actions)
-
-        time_emb = time_emb[:, None, :].expand_as(action_emb)
-        action_time_emb = torch.cat([action_emb, time_emb], dim=2)
-        # TODO (molbap): should be moved to the model backbone methods
-
-        action_time_emb = self.pi0_paligemma.action_time_mlp_in(action_time_emb)
-        # action_time_emb = F.swish(action_time_emb)
-        action_time_emb = F.silu(action_time_emb)  # swish == silu
-        # TODO (molbap): should be moved to the model backbone methods
-        action_time_emb = self.pi0_paligemma.action_time_mlp_out(action_time_emb)
-
-        # add to input tokens
-        embs.append(action_time_emb)
-
-        bsize, action_time_dim = action_time_emb.shape[:2]
-        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=device)
-        pad_masks.append(action_time_mask)
-
-        # image/language/state inputs do not attend to action tokens
-        att_masks += [1] + ([0] * (self.config.n_action_steps - 1))
-
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-
-        return embs, pad_masks, att_masks
 
     def sample_step(
         self,
@@ -532,14 +552,10 @@ class PI0(nn.Module):
         prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
 
         suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-
         full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-
         use_cache = True  # TODO: from config
-
         outputs_embeds, _ = self.pi0_paligemma.forward(
             input_ids=None,
             attention_mask=full_att_2d_masks,
@@ -626,19 +642,19 @@ def main():
     import pickle
     from pathlib import Path
 
-    # obs_path = "/raid/pablo/alohasim/obs.pkl"
-    # action_path = "/raid/pablo/alohasim/action.pkl"
-    # checkpoint_dir = Path("/raid/pablo/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
-    # noise_bsize_2_path = "/raid/pablo/alohasim/noise_bsize_2.pkl"
-    # noise_path = "/raid/pablo/alohasim/noise_2.pkl"
-    # save_pretrained_path = "outputs/exported/2025-01-27/12-17-01_aloha_pi0/last/pretrained_model"
-
-    obs_path = "../openpi/data/aloha_sim/obs.pkl"
-    action_path = "../openpi/data/aloha_sim/action.pkl"
-    checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
-    noise_bsize_2_path = "../openpi/data/aloha_sim/noise_bsize_2.pkl"
-    noise_path = "../openpi/data/aloha_sim/noise_2.pkl"
+    obs_path = "/raid/pablo/alohasim/obs.pkl"
+    action_path = "/raid/pablo/alohasim/action.pkl"
+    checkpoint_dir = Path("/raid/pablo/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+    noise_bsize_2_path = "/raid/pablo/alohasim/noise_bsize_2.pkl"
+    noise_path = "/raid/pablo/alohasim/noise_2.pkl"
     save_pretrained_path = "outputs/exported/2025-01-27/12-17-01_aloha_pi0/last/pretrained_model"
+
+    # obs_path = "../openpi/data/aloha_sim/obs.pkl"
+    # action_path = "../openpi/data/aloha_sim/action.pkl"
+    # checkpoint_dir = Path("/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim")
+    # noise_bsize_2_path = "../openpi/data/aloha_sim/noise_bsize_2.pkl"
+    # noise_path = "../openpi/data/aloha_sim/noise_2.pkl"
+    # save_pretrained_path = "outputs/exported/2025-01-27/12-17-01_aloha_pi0/last/pretrained_model"
 
     with open(obs_path, "rb") as f:
         obs = pickle.load(f)
@@ -703,7 +719,7 @@ def main():
     for k in batch:
         batch[k] = batch[k].to(device=device)
 
-    ds_meta = LeRobotDatasetMetadata("lerobot/aloha_transfer_cube_human")
+    ds_meta = LeRobotDatasetMetadata("lerobot/aloha_sim_transfer_cube_human")
     features = dataset_to_policy_features(ds_meta.features)
     output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     input_features = {key: ft for key, ft in features.items() if key not in output_features}
@@ -720,9 +736,13 @@ def main():
 
     policy.save_pretrained(save_pretrained_path)
     policy.to(device=device)
-
-    loss_dict = policy.forward(batch)
-    loss_dict["loss"].backward()
+    # policy = torch.compile(policy, mode="default")
+    # policy = torch.compile(policy, mode="reduce-overhead")
+    
+    # select just one action here
+    action = policy.select_action(batch, noise=noise)
+    # loss_dict = policy.forward(batch)
+    # "loss_dict["loss"].backward()
 
     actions = []
     for i in range(50):
@@ -737,6 +757,8 @@ def main():
     print()
     print("pi_actions")
     display(pi_actions)
+
+    print("atol=5e-1", torch.allclose(actions, pi_actions, atol=5e-1))
     print("atol=3e-2", torch.allclose(actions, pi_actions, atol=3e-2))
     print("atol=2e-2", torch.allclose(actions, pi_actions, atol=2e-2))
     print("atol=1e-2", torch.allclose(actions, pi_actions, atol=1e-2))
