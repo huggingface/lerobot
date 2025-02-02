@@ -7,7 +7,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # Install apt dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git \
+    build-essential cmake git git-lfs \
     libglib2.0-0 libgl1-mesa-glx libegl1-mesa ffmpeg \
     speech-dispatcher libgeos-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -19,7 +19,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN echo "source /opt/venv/bin/activate" >> /root/.bashrc
 
 # Install LeRobot
-RUN GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/huggingface/lerobot.git /lerobot
+RUN git lfs install
+RUN git clone https://github.com/huggingface/lerobot.git /lerobot
 WORKDIR /lerobot
 RUN pip install --upgrade --no-cache-dir pip
 RUN pip install --no-cache-dir ".[test, aloha, xarm, pusht, dynamixel]" \
