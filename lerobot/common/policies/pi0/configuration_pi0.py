@@ -25,12 +25,23 @@ class PI0Config(PreTrainedConfig):
     )
 
     # Shorter state and action vectors will be padded
-    max_state_dim: int = 32  # 24
-    max_action_dim: int = 32  # 24
+    max_state_dim: int = 32
+    max_action_dim: int = 32
 
     # Image preprocessing
     resize_imgs_with_padding: tuple[int, int] = (224, 224)
+
+    # Add empty images. Used by pi0_aloha_sim which adds the emtpy
+    # left and right wrist cameras in addition to the top camera.
     empty_cameras: int = 0
+
+    # Converts the joint and gripper values from the standard Aloha space to
+    # the space used by the pi internal runtime which was used to train the base model.
+    adapt_to_pi_aloha: bool = False
+
+    # Converts joint dimensions to deltas with respect to the current state before passing to the model.
+    # Gripper dimensions will remain in absolute values.
+    use_delta_joint_actions_aloha: bool = False
 
     # Tokenizer
     tokenizer_max_length: int = 48
@@ -57,6 +68,8 @@ class PI0Config(PreTrainedConfig):
     scheduler_warmup_steps: int = 1_000
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
+
+    # TODO: Add EMA
 
     def __post_init__(self):
         super().__post_init__()

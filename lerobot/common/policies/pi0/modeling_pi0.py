@@ -33,6 +33,23 @@ from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.utils.utils import get_safe_dtype
 
 
+def display(tensor: torch.Tensor):
+    if tensor.dtype == torch.bool:
+        tensor = tensor.float()
+    print(f"Shape: {tensor.shape}")
+    print(f"Mean: {tensor.mean().item()}")
+    print(f"Std: {tensor.std().item()}")
+    print(f"Min: {tensor.min().item()}")
+    print(f"Max: {tensor.max().item()}")
+
+
+def display_batch(batch):
+    for key in batch:
+        if isinstance(batch[key], torch.Tensor):
+            print(key)
+            display(batch[key])
+
+
 def create_sinusoidal_pos_embedding(
     time: torch.tensor, dimension: int, min_period: float, max_period: float, device="cpu"
 ) -> Tensor:
@@ -93,7 +110,7 @@ def make_att_2d_masks(pad_masks, att_masks):
     return att_2d_masks
 
 
-def resize_with_pad(img, width, height):
+def resize_with_pad(img, width, height, pad_value=-1):
     # assume no-op when width height fits already
     if img.ndim != 4:
         raise ValueError(f"(b,c,h,w) expected, but {img.shape}")
@@ -111,7 +128,7 @@ def resize_with_pad(img, width, height):
     pad_width = max(0, int(width - resized_width))
 
     # pad on left and top of image
-    padded_img = F.pad(resized_img, (pad_width, 0, pad_height, 0), value=-1)
+    padded_img = F.pad(resized_img, (pad_width, 0, pad_height, 0), value=pad_value)
     return padded_img
 
 
@@ -127,6 +144,60 @@ def pad_vector(vector, new_dim):
     new_vector = torch.zeros(*shape, dtype=vector.dtype, device=vector.device)
     new_vector[..., :current_dim] = vector
     return new_vector
+
+
+def normalize(x, min_val, max_val):
+    return (x - min_val) / (max_val - min_val)
+
+
+def unnormalize(x, min_val, max_val):
+    return x * (max_val - min_val) + min_val
+
+
+def safe_arcsin(value):
+    # This ensures that the input stays within
+    # [−1,1] to avoid invalid values for arcsin
+    return torch.arcsin(torch.clamp(value, -1.0, 1.0))
+
+
+def aloha_gripper_to_angular(value):
+    # Aloha transforms the gripper positions into a linear space. The following code
+    # reverses this transformation to be consistent with pi0 which is pretrained in
+    # angular space.
+    #
+    # These values are coming from the Aloha code:
+    # PUPPET_GRIPPER_POSITION_OPEN, PUPPET_GRIPPER_POSITION_CLOSED
+    value = unnormalize(value, min_val=0.01844, max_val=0.05800)
+
+    # This is the inverse of the angular to linear transformation inside the Interbotix code.
+    def linear_to_radian(linear_position, arm_length, horn_radius):
+        value = (horn_radius**2 + linear_position**2 - arm_length**2) / (2 * horn_radius * linear_position)
+        return safe_arcsin(value)
+
+    # The constants are taken from the Interbotix code.
+    value = linear_to_radian(value, arm_length=0.036, horn_radius=0.022)
+
+    # Normalize to [0, 1].
+    # The values 0.4 and 1.5 were measured on an actual Trossen robot.
+    return normalize(value, min_val=0.4, max_val=1.5)
+
+
+def aloha_gripper_from_angular(value):
+    # Convert from the gripper position used by pi0 to the gripper position that is used by Aloha.
+    # Note that the units are still angular but the range is different.
+
+    # The values 0.4 and 1.5 were measured on an actual Trossen robot.
+    value = unnormalize(value, min_val=0.4, max_val=1.5)
+
+    # These values are coming from the Aloha code:
+    # PUPPET_GRIPPER_JOINT_OPEN, PUPPET_GRIPPER_JOINT_CLOSE
+    return normalize(value, min_val=-0.6213, max_val=1.4910)
+
+
+def aloha_gripper_from_angular_inv(value):
+    # Directly inverts the gripper_from_angular function.
+    value = unnormalize(value, min_val=-0.6213, max_val=1.4910)
+    return normalize(value, min_val=0.4, max_val=1.5)
 
 
 class PI0Policy(PreTrainedPolicy):
@@ -183,6 +254,9 @@ class PI0Policy(PreTrainedPolicy):
         """
         self.eval()
 
+        if self.config.adapt_to_pi_aloha:
+            batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
+
         batch = self.normalize_inputs(batch)
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
@@ -202,12 +276,19 @@ class PI0Policy(PreTrainedPolicy):
 
             actions = self.unnormalize_outputs({"action": actions})["action"]
 
+            if self.config.adapt_to_pi_aloha:
+                actions = self._pi_aloha_encode_actions(actions)
+
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> dict[str, Tensor]:
+        if self.config.adapt_to_pi_aloha:
+            batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
+            batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
+
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
 
@@ -256,7 +337,10 @@ class PI0Policy(PreTrainedPolicy):
             img = batch[key]
 
             if self.config.resize_imgs_with_padding is not None:
-                img = resize_with_pad(img, *self.config.resize_imgs_with_padding)
+                img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
+
+            # Normalize from range [0,1] to [-1,1] as expacted by siglip
+            img = img * 2.0 - 1.0
 
             bsize = img.shape[0]
             device = img.device
@@ -266,11 +350,15 @@ class PI0Policy(PreTrainedPolicy):
 
         # Create image features not present in the batch
         # as fully 0 padded images.
+        empty_cameras = 0
         for _ in missing_img_keys:
+            if empty_cameras >= self.config.empty_cameras:
+                break
             img = torch.ones_like(img) * -1
             mask = torch.zeros_like(mask)
             images.append(img)
             img_masks.append(mask)
+            empty_cameras += 1
 
         return images, img_masks
 
@@ -295,10 +383,38 @@ class PI0Policy(PreTrainedPolicy):
 
         return lang_tokens, lang_masks
 
+    def _pi_aloha_decode_state(self, state):
+        # Flip the joints.
+        for motor_idx in [1, 2, 8, 9]:
+            state[:, motor_idx] *= -1
+        # Reverse the gripper transformation that is being applied by the Aloha runtime.
+        for motor_idx in [6, 13]:
+            state[:, motor_idx] = aloha_gripper_to_angular(state[:, motor_idx])
+        return state
+
+    def _pi_aloha_encode_actions(self, actions):
+        # Flip the joints.
+        for motor_idx in [1, 2, 8, 9]:
+            actions[:, :, motor_idx] *= -1
+        # Reverse the gripper transformation that is being applied by the Aloha runtime.
+        for motor_idx in [6, 13]:
+            actions[:, :, motor_idx] = aloha_gripper_from_angular(actions[:, :, motor_idx])
+        return actions
+
+    def _pi_aloha_encode_actions_inv(self, actions):
+        # Flip the joints again.
+        for motor_idx in [1, 2, 8, 9]:
+            actions[:, :, motor_idx] *= -1
+        # Reverse the gripper transformation that is being applied by the Aloha runtime.
+        for motor_idx in [6, 13]:
+            actions[:, :, motor_idx] = aloha_gripper_from_angular_inv(actions[:, :, motor_idx])
+        return actions
+
     def prepare_state(self, batch):
         """Preprocess LeRobot batch into Pi0 inputs"""
-        states = pad_vector(batch[OBS_ROBOT], self.config.max_state_dim)
-        return states
+        state = batch[OBS_ROBOT]
+        state = pad_vector(state, self.config.max_state_dim)
+        return state
 
     def prepare_action(self, batch):
         """Preprocess LeRobot batch into Pi0 inputs"""
@@ -342,10 +458,6 @@ class PI0FlowMatching(nn.Module):
             train_expert_only=self.config.train_expert_only,
         )
         self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config)
-
-        # path = "Tinkering/frostpunklab_full_float32"
-        # path = "/home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base_pytorch"
-        # self.paligemma_with_expert = PaliGemmaWithExpertModel.from_pretrained(path)
 
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width, dtype=torch.float32)
         self.action_in_proj = nn.Linear(

@@ -182,8 +182,6 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 param.data = param.data.to(dtype=torch.bfloat16)
 
     def embed_image(self, image: torch.Tensor):
-        # Normalize from range [0,1] to [-1,1] as expacted by siglip
-        image = image * 2.0 - 1.0
         return self.paligemma.get_image_features(image)
 
     def embed_language_tokens(self, tokens: torch.Tensor):
