@@ -21,6 +21,9 @@ from transformers import (
 from transformers.tokenization_utils_base import AddedToken
 from transformers.utils import logging
 
+
+
+
 from conversion_scripts.conversion_utils import get_paligemma_config, get_gemma_config
 import pathlib
 import jax
@@ -28,6 +31,7 @@ import jax.numpy as jnp
 import orbax.checkpoint as ocp
 import jax
 import numpy as np
+from jax.sharding import SingleDeviceSharding
 
 PRECISIONS = {"bfloat16": torch.bfloat16, "float32": torch.float32, "float16": torch.float16}
 
@@ -247,7 +251,8 @@ def slice_initial_orbax_checkpoint(checkpoint_dir: str):
     params_name = 'params'
 
     item = {params_name: metadata[params_name]}
-
+    device = jax.local_devices()[0]  # Use the first local device
+    sharding = SingleDeviceSharding(device)
     restored = checkpointer.restore(
         params_path,
         ocp.args.PyTreeRestore(
@@ -255,13 +260,13 @@ def slice_initial_orbax_checkpoint(checkpoint_dir: str):
             restore_args=jax.tree_util.tree_map(
                 lambda _: ocp.ArrayRestoreArgs(
                     restore_type=jax.Array,  # or np.ndarray, but bf16 is annoying about it
+                    sharding=sharding,
                 ),
                 item,
             ),
             transforms={},
         ),
     )
-
     params = restored[params_name]
 
     # get params for PaliGemma
@@ -276,7 +281,6 @@ def slice_initial_orbax_checkpoint(checkpoint_dir: str):
 def convert_pi0_checkpoint(checkpoint_dir:str, precision: str, tokenizer_id: str, output_path:str):
     # Break down orbax ckpts - they are in OCDBT
     initial_params = slice_initial_orbax_checkpoint(checkpoint_dir=checkpoint_dir)
-    breakpoint()
     # process projection params
     keys = [
         "state_proj",
