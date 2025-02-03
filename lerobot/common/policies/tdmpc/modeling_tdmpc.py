@@ -502,7 +502,7 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         # Undo (b, t) -> (t, b).
         for key in batch:
-            if batch[key].ndim > 1:
+            if isinstance(batch[key], torch.Tensor) and batch[key].ndim > 1:
                 batch[key] = batch[key].transpose(1, 0)
 
         return info
