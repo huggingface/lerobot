@@ -7925,6 +7925,7 @@ dora = ["gym-dora"]
 dynamixel = ["dynamixel-sdk", "pynput"]
 feetech = ["feetech-servo-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
+pi0 = ["transformers"]
 pusht = ["gym-pusht"]
 stretch = ["hello-robot-stretch-body", "pynput", "pyrealsense2", "pyrender"]
 test = ["pyserial", "pytest", "pytest-cov"]
@@ -7935,4 +7936,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "bfbb623cef6079fd40cf01f9f51d802c3db39c21f505500aee3545c415bd5dbd"
+content-hash = "089df92a0455bb58d2f600ad645b99362c9ff2b800a0c6108edc09f51509c716"

@@ -75,6 +75,9 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
 
 
 def get_safe_dtype(dtype: torch.dtype, device: str):
+    """
+    mps is currently not compatible with float64
+    """
     if device == "mps" and dtype == torch.float64:
         return torch.float32
     else:
