@@ -14,6 +14,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+π0: A Vision-Language-Action Flow Model for General Robot Control
+
+[Paper](https://www.physicalintelligence.company/download/pi0.pdf)
+[Jax code](https://github.com/Physical-Intelligence/openpi)
+
+Designed by Physical Intelligence. Ported from Jax by Hugging Face.
+
+Example of finetuning the pi0 pretrained model (`pi0_base` in `openpi`):
+```bash
+python lerobot/scripts/train.py \
+--policy.path=lerobot/pi0 \
+--dataset.repo_id=danaaubakirova/koch_test
+```
+
+Example of finetuning the pi0 neural network with PaliGemma and expert Gemma
+pretrained with VLM default parameters before pi0 finetuning:
+```bash
+python lerobot/scripts/train.py \
+--policy.type=pi0 \
+--dataset.repo_id=danaaubakirova/koch_test
+```
+
+Example of using the pi0 pretrained model outside LeRobot training framework:
+```python
+policy = Pi0Policy.from_pretrained("lerobot/pi0")
+```
+
+"""
+
 import math
 from collections import deque
 
@@ -350,15 +380,13 @@ class PI0Policy(PreTrainedPolicy):
 
         # Create image features not present in the batch
         # as fully 0 padded images.
-        empty_cameras = 0
-        for _ in missing_img_keys:
-            if empty_cameras >= self.config.empty_cameras:
+        for num_empty_cameras in range(len(missing_img_keys)):
+            if num_empty_cameras >= self.config.empty_cameras:
                 break
             img = torch.ones_like(img) * -1
             mask = torch.zeros_like(mask)
             images.append(img)
             img_masks.append(mask)
-            empty_cameras += 1
 
         return images, img_masks
 

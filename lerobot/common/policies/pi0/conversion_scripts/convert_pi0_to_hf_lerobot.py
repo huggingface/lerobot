@@ -4,6 +4,11 @@ Convert pi0 parameters from Jax to Pytorch
 Follow [README of openpi](https://github.com/Physical-Intelligence/openpi) to create a new environment
 and install the required librairies.
 
+```bash
+cd ~/code/openpi
+source .venv/bin/activate
+```
+
 Example downloading parameters:
 ```bash
 python
@@ -349,6 +354,12 @@ def convert_pi0_checkpoint(checkpoint_dir: str, precision: str, tokenizer_id: st
         pi0_config = PI0Config(
             adapt_to_pi_aloha=True,
             use_delta_joint_actions_aloha=True,
+        )
+    elif "pi0_base" in checkpoint_dir:
+        pi0_config = PI0Config(
+            empty_cameras=0,
+            adapt_to_pi_aloha=False,
+            use_delta_joint_actions_aloha=False,
         )
     else:
         raise ValueError()
