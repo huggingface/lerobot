@@ -59,6 +59,8 @@ class VQBeTSchedulerConfig(LRSchedulerConfig):
 @LRSchedulerConfig.register_subclass("cosine_decay_with_warmup")
 @dataclass
 class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
+    """Used by Physical Intelligence to train Pi0"""
+
     num_warmup_steps: int
     num_decay_steps: int
     peak_lr: float

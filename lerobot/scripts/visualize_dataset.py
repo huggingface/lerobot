@@ -15,14 +15,14 @@
 # limitations under the License.
 """ Visualize data of **all** frames of any episode of a dataset of type LeRobotDataset.
 
-Note: The last frame of the episode doesnt always correspond to a final state.
+Note: The last frame of the episode doesn't always correspond to a final state.
 That's because our datasets are composed of transition from state to state up to
 the antepenultimate state associated to the ultimate action to arrive in the final state.
 However, there might not be a transition from a final state to another state.
 
 Note: This script aims to visualize the data used to train the neural networks.
 ~What you see is what you get~. When visualizing image modality, it is often expected to observe
-lossly compression artifacts since these images have been decoded from compressed mp4 videos to
+lossy compression artifacts since these images have been decoded from compressed mp4 videos to
 save disk space. The compression factor applied has been tuned to not affect success rate.
 
 Examples:
@@ -199,7 +199,7 @@ def main():
         "--repo-id",
         type=str,
         required=True,
-        help="Name of hugging face repositery containing a LeRobotDataset dataset (e.g. `lerobot/pusht`).",
+        help="Name of hugging face repository containing a LeRobotDataset dataset (e.g. `lerobot/pusht`).",
     )
     parser.add_argument(
         "--episode-index",

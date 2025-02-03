@@ -49,7 +49,8 @@ def load_training_state(checkpoint_dir: Path, optimizer: Optimizer, scheduler: L
     Given the checkpoint directory, load the optimizer state, scheduler state, and random state, and
     return the global training step.
     """
-    training_state = torch.load(checkpoint_dir / TRAINING_STATE)
+    # TODO(aliberts): use safetensors instead as weights_only=False is unsafe
+    training_state = torch.load(checkpoint_dir / TRAINING_STATE, weights_only=False)
     optimizer.load_state_dict(training_state["optimizer"])
     if scheduler is not None:
         scheduler.load_state_dict(training_state["scheduler"])

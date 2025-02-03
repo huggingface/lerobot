@@ -220,8 +220,6 @@ def train(cfg: TrainPipelineConfig):
         ds_meta=offline_dataset.meta,
     )
 
-    # policy = torch.compile(policy, mode="reduce-overhead")
-
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
     grad_scaler = GradScaler(device, enabled=cfg.use_amp)
