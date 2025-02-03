@@ -319,7 +319,7 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         # (b, t) -> (t, b)
         for key in batch:
-            if batch[key].ndim > 1:
+            if isinstance(batch[key], torch.Tensor) and batch[key].ndim > 1:
                 batch[key] = batch[key].transpose(1, 0)
 
         action = batch["action"]  # (t, b, action_dim)
