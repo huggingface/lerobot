@@ -1,4 +1,4 @@
-from transformers import PaliGemmaConfig, GemmaConfig
+from transformers import GemmaConfig, PaliGemmaConfig
 
 
 def get_paligemma_config(precision: str):
@@ -9,9 +9,9 @@ def get_paligemma_config(precision: str):
         "eos_token_id": 1,
     }
 
-    #image_sizes = {"2b-test": 224, "3b-224px": 224, "3b-448px": 448, "3b-896px": 896}
+    # image_sizes = {"2b-test": 224, "3b-224px": 224, "3b-448px": 448, "3b-896px": 896}
 
-    image_size = 224 # image_sizes[variant]
+    image_size = 224  # image_sizes[variant]
     patch_size = 14
     num_image_tokens = (image_size**2) // (patch_size**2)
 
@@ -68,5 +68,3 @@ def get_gemma_config(precision: str):
     final_config = GemmaConfig()
     final_config.update(text_config)
     return final_config
-
-
