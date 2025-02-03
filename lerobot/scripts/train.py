@@ -38,6 +38,7 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.utils import (
     format_big_number,
+    get_safe_dtype,
     get_safe_torch_device,
     has_method,
     init_logging,
@@ -375,6 +376,8 @@ def train(cfg: TrainPipelineConfig):
             "next.reward": {"shape": (), "dtype": np.dtype("float32")},
             "next.done": {"shape": (), "dtype": np.dtype("?")},
             "task_index": {"shape": (), "dtype": np.dtype("int64")},
+            # FIXME: 'task' is a string
+            # "task": {"shape": (), "dtype": np.dtype("?")},
             # FIXME: 'next.success' is expected by pusht env but not xarm
             "next.success": {"shape": (), "dtype": np.dtype("?")},
         },
@@ -461,9 +464,10 @@ def train(cfg: TrainPipelineConfig):
             if len(offline_dataset.meta.tasks) > 1:
                 raise NotImplementedError("Add support for multi task.")
 
-            # Hack to add a task to the online_dataset (0 is the first task of the offline_dataset)
+            # TODO(rcadene, aliberts): Hack to add a task to the online_dataset (0 is the first task of the offline_dataset)
             total_num_frames = eval_info["episodes"]["index"].shape[0]
             eval_info["episodes"]["task_index"] = torch.tensor([0] * total_num_frames, dtype=torch.int64)
+            eval_info["episodes"]["task"] = ["do the thing"] * total_num_frames
 
             with lock if lock is not None else nullcontext():
                 start_update_buffer_time = time.perf_counter()
@@ -510,7 +514,8 @@ def train(cfg: TrainPipelineConfig):
 
             for key in batch:
                 if isinstance(batch[key], torch.Tensor):
-                    batch[key] = batch[key].to(device, non_blocking=True)
+                    dtype = get_safe_dtype(batch[key].dtype, device)
+                    batch[key] = batch[key].to(device=device, dtype=dtype, non_blocking=True)
 
             train_info = update_policy(
                 policy,
