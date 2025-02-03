@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import torch
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -11,9 +9,10 @@ torch.backends.cudnn.benchmark = True
 
 def main():
     device = "cuda"
-    model_name = "pi0_base"
     dataset_repo_id = "danaaubakirova/koch_test"
-    ckpt_torch_dir = Path.home() / f".cache/openpi/openpi-assets/checkpoints/{model_name}_pytorch"
+    # model_name = "pi0_base"
+    # ckpt_torch_dir = Path.home() / f".cache/openpi/openpi-assets/checkpoints/{model_name}_pytorch"
+    ckpt_torch_dir = "lerobot/pi0"
 
     dataset = LeRobotDataset(dataset_repo_id, episodes=[0])
 

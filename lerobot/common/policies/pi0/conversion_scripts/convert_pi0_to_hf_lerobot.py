@@ -274,10 +274,8 @@ def slice_initial_orbax_checkpoint(checkpoint_dir: str):
     params_name = "params"
 
     item = {params_name: metadata[params_name]}
-
-    device = jax.local_devices()[0]
+    device = jax.local_devices()[0]  # Use the first local device
     sharding = SingleDeviceSharding(device)
-
     restored = checkpointer.restore(
         params_path,
         ocp.args.PyTreeRestore(
@@ -292,7 +290,6 @@ def slice_initial_orbax_checkpoint(checkpoint_dir: str):
             transforms={},
         ),
     )
-
     params = restored[params_name]
 
     # get params for PaliGemma
