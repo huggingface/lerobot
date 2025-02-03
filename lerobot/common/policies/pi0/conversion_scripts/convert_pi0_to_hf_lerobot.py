@@ -1,6 +1,9 @@
 """
 Convert pi0 parameters from Jax to Pytorch
 
+Follow [README of openpi](https://github.com/Physical-Intelligence/openpi) to create a new environment
+and install the required librairies.
+
 Example downloading parameters:
 ```bash
 python
@@ -43,10 +46,7 @@ PRECISIONS = {"bfloat16": torch.bfloat16, "float32": torch.float32, "float16": t
 
 
 def slice_paligemma_state_dict(state_dict, config):
-    if "img/embedding/kernel/value" in state_dict:
-        suffix = "/value"
-    else:
-        suffix = ""
+    suffix = "/value" if "img/embedding/kernel/value" in state_dict else ""
 
     # fmt: off
     # patch embeddings
@@ -185,10 +185,7 @@ def slice_gemma_state_dict(state_dict, config, num_expert=1):
 
     # pop the einsum attention + mlp representations. There are 18 layers in gemma-2b.
 
-    if f"llm/layers/attn/attn_vec_einsum_{num_expert}/w/value" in state_dict:
-        suffix = "/value"
-    else:
-        suffix = ""
+    suffix = "/value" if f"llm/layers/attn/attn_vec_einsum_{num_expert}/w/value" in state_dict else ""
 
     llm_attention_attn_vec_einsum = state_dict.pop(f"llm/layers/attn/attn_vec_einsum_{num_expert}/w{suffix}")
     llm_attention_kv_einsum = state_dict.pop(f"llm/layers/attn/kv_einsum_{num_expert}/w{suffix}")
