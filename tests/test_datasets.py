@@ -323,6 +323,8 @@ def test_backward_compatibility(repo_id):
         # TODO (michel-aractingi): transform language obs to langauge embeddings via tokenizer
         new_frame.pop("language_instruction", None)
         old_frame.pop("language_instruction", None)
+        new_frame.pop("task", None)
+        old_frame.pop("task", None)
 
         # Remove task_index to allow for backward compatibility
         # TODO(rcadene): remove when new features have been generated
