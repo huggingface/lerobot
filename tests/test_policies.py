@@ -175,7 +175,8 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     policy.forward(batch)
     assert set(batch) == set(batch_), "Batch keys are not the same after a forward pass."
     assert all(
-        torch.equal(batch[k], batch_[k]) for k in batch
+        torch.equal(batch[k], batch_[k]) if isinstance(batch[k], torch.Tensor) else batch[k] == batch_[k]
+        for k in batch
     ), "Batch values are not the same after a forward pass."
 
     # reset the policy and environment
