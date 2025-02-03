@@ -46,11 +46,15 @@ class PortHandler:
         self.port = port
         # factory default baudrate
         self.baudrate = DEFAULT_BAUDRATE
+        self.ser = None
 
     def openPort(self):  # noqa: N802
         return True
 
     def closePort(self):  # noqa: N802
+        pass
+
+    def clearPort(self):  # noqa: N802
         pass
 
     def setPacketTimeoutMillis(self, timeout_ms):  # noqa: N802
