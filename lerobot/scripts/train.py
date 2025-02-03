@@ -375,7 +375,6 @@ def train(cfg: TrainPipelineConfig):
             "next.reward": {"shape": (), "dtype": np.dtype("float32")},
             "next.done": {"shape": (), "dtype": np.dtype("?")},
             "task_index": {"shape": (), "dtype": np.dtype("int64")},
-            "task": {"shape": (), "dtype": np.dtype("?")},
             # FIXME: 'next.success' is expected by pusht env but not xarm
             "next.success": {"shape": (), "dtype": np.dtype("?")},
         },
