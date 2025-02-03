@@ -509,7 +509,8 @@ def train(cfg: TrainPipelineConfig):
                 dataloading_s = time.perf_counter() - start_time
 
             for key in batch:
-                batch[key] = batch[key].to(device, non_blocking=True)
+                if isinstance(batch[key], torch.Tensor):
+                    batch[key] = batch[key].to(device, non_blocking=True)
 
             train_info = update_policy(
                 policy,

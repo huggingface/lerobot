@@ -167,7 +167,8 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     batch = next(dl_iter)
 
     for key in batch:
-        batch[key] = batch[key].to(DEVICE, non_blocking=True)
+        if isinstance(batch[key], torch.Tensor):
+            batch[key] = batch[key].to(DEVICE, non_blocking=True)
 
     # Test updating the policy (and test that it does not mutate the batch)
     batch_ = deepcopy(batch)
