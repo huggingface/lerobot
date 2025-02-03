@@ -36,7 +36,7 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
 
     def log_dt(shortname, dt_val_s):
         nonlocal log_items, fps
-        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"
+        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1 / dt_val_s:3.1f}hz)"
         if fps is not None:
             actual_fps = 1 / dt_val_s
             if actual_fps < fps - 1:
@@ -335,7 +335,9 @@ def reset_environment(robot, events, reset_time_s):
 
 def reset_follower_position(robot: Robot, target_position):
     current_position = robot.follower_arms["main"].read("Present_Position")
-    trajectory = torch.from_numpy(np.linspace(current_position, target_position, 30)) # NOTE: 30 is just an aribtrary number 
+    trajectory = torch.from_numpy(
+        np.linspace(current_position, target_position, 30)
+    )  # NOTE: 30 is just an aribtrary number
     for pose in trajectory:
         robot.send_action(pose)
         busy_wait(0.015)
