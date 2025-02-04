@@ -3,7 +3,7 @@
 # Heavy inspiration taken from
 # * DETR by Meta AI (Carion et. al.): https://github.com/facebookresearch/detr
 # * DiT by Meta AI (Peebles and Xie): https://github.com/facebookresearch/DiT
-# * DiT Policy by Dasari et. al. : https://dit-policy.github.io/
+# * DiT Policy by Dasari et. al. : https://github.com/sudeepdasari/dit-policy
 
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
