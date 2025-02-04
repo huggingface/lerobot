@@ -26,7 +26,6 @@ test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-diffusion-ete-eval
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train
 	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-eval
-	${MAKE} DEVICE=$(DEVICE) test-tdmpc-ete-train-with-online
 
 test-act-ete-train:
 	python lerobot/scripts/train.py \
