@@ -2,7 +2,6 @@ from typing import List, Optional, Union
 
 import torch
 import torch.version
-from packaging.version import Version
 from pytest import Cache
 from torch import nn
 from transformers import (
@@ -14,215 +13,7 @@ from transformers import (
 )
 from transformers.models.auto import CONFIG_MAPPING
 
-if Version(torch.__version__) > Version("2.5.0"):
-    # Ffex attention is only available from torch 2.5 onwards
-    from torch.nn.attention.flex_attention import create_block_mask, flex_attention
-
-
-import torch.nn.functional as F  # noqa: N812
-from torch.nn.attention.flex_attention import (
-    _mask_mod_signature,
-    _round_up_to_multiple,
-    create_block_mask,
-    create_mask,
-)
-
-
-####
-# @torch.compile(dynamic=False)
-def flex_attention_forward(
-    attention_mask: torch.Tensor,
-    batch_size: int,
-    head_dim: int,
-    query_states: torch.Tensor,
-    key_states: torch.Tensor,
-    value_states: torch.Tensor,
-    scaling=None,
-):
-    """
-    This is defined out of classes to make compile happy.
-    """
-
-    original_dtype = query_states.dtype
-    num_att_heads = 8
-    num_key_value_heads = 1
-    num_key_value_groups = num_att_heads // num_key_value_heads
-
-    key_states = key_states[:, :, :, None, :]
-    key_states = key_states.expand(
-        batch_size, key_states.shape[1], num_key_value_heads, num_key_value_groups, head_dim
-    )
-    key_states = key_states.reshape(
-        batch_size, key_states.shape[1], num_key_value_heads * num_key_value_groups, head_dim
-    )
-
-    value_states = value_states[:, :, :, None, :]
-    value_states = value_states.expand(
-        batch_size, value_states.shape[1], num_key_value_heads, num_key_value_groups, head_dim
-    )
-    value_states = value_states.reshape(
-        batch_size, value_states.shape[1], num_key_value_heads * num_key_value_groups, head_dim
-    )
-
-    query_states = query_states.transpose(1, 2)
-    key_states = key_states.transpose(1, 2)
-    value_states = value_states.transpose(1, 2)
-
-    query_states = query_states.to(torch.float32)
-    key_states = key_states.to(torch.float32)
-    value_states = value_states.to(torch.float32)
-
-    causal_mask = attention_mask
-    if causal_mask is not None:
-        causal_mask = causal_mask[:, None, :, : key_states.shape[2]]
-
-        if causal_mask.shape[1] == 1 and query_states.shape[1] > 1:
-            causal_mask = causal_mask.expand(-1, query_states.shape[1], -1, -1)
-
-    def precomputed_mask_factory(precomputed_mask: torch.Tensor) -> _mask_mod_signature:
-        def mask_mod(b, h, q_idx, kv_idx):
-            # Danger zone: if b,h,q_idx,kv_idx exceed the shape, device-side assert occurs.
-            return precomputed_mask[b][h][q_idx][kv_idx]
-
-        return mask_mod
-
-    b_mask, h_mask, q_len, kv_len = causal_mask.shape  # The shape of your mask
-
-    block_size = 128
-    q_len_rounded = _round_up_to_multiple(q_len, block_size)
-    kv_len_rounded = _round_up_to_multiple(kv_len, block_size)
-
-    # *CRITICAL* we do need to expand here, else we get a CUDA index error
-
-    pad_q = q_len_rounded - q_len
-    pad_k = kv_len_rounded - kv_len
-
-    padded_causal_mask = F.pad(causal_mask, (0, pad_k, 0, pad_q), value=0.0)
-    mask_mod_fn_orig = precomputed_mask_factory(padded_causal_mask)
-
-    mask_4d = create_mask(
-        mod_fn=mask_mod_fn_orig,
-        B=b_mask,
-        H=h_mask,
-        Q_LEN=q_len_rounded,
-        KV_LEN=kv_len_rounded,
-        device=causal_mask.device,
-        _compile=False,
-    )
-
-    mask_mod_fn_padded = precomputed_mask_factory(mask_4d)
-    block_mask = create_block_mask(
-        mask_mod=mask_mod_fn_padded,
-        B=b_mask,
-        H=h_mask,
-        Q_LEN=q_len_rounded,
-        KV_LEN=kv_len_rounded,
-        BLOCK_SIZE=block_size,
-        device=causal_mask.device,
-        _compile=False,
-    )
-
-    #  mask is applied inside the kernel, ideally more efficiently than score_mod.
-    attn_output, attention_weights = flex_attention(
-        query_states,
-        key_states,
-        value_states,
-        block_mask=block_mask,
-        enable_gqa=True,  # because we shaped query/key states for GQA
-        scale=head_dim**-0.5 if scaling is None else scaling,
-        return_lse=True,
-    )
-
-    attn_output = attn_output.to(dtype=original_dtype)
-    attn_output = attn_output.transpose(1, 2).contiguous()  # [B, Q_LEN, H, head_dim]
-    attn_output = attn_output.reshape(
-        batch_size,
-        -1,
-        attn_output.shape[2] * attn_output.shape[3],  # merges [H, head_dim]
-    )
-    return attn_output
-
-
-####
-
-
-def causal_mask_condition(b, h, q_idx, kv_idx):
-    """
-    Returns True if q_idx can attend to kv_idx based on the desired constraints:
-      - Image tokens attend only to image (non-padding) + text (non-padding).
-      - Image padding attends to nothing, and no one attends to image padding.
-      - Text tokens attend only to image (non-padding) + text (non-padding).
-      - Text padding attends to nothing, and no one attends to text padding.
-      - State tokens attend to image, text, and previously defined state tokens (triangular among states, even though there's just one).
-      - Action tokens attend to image, text, all states, and all actions (but never padding).
-    """
-
-    n_img_tokens = 256
-    n_empty_img_tokens = 512
-    n_txt_tokens = 4
-    n_txt_padding_tokens = 44
-    n_state_tokens = 1
-    n_action_tokens = 50
-
-    img_pad_start = n_img_tokens
-    txt_start = img_pad_start + n_empty_img_tokens
-    txt_pad_start = txt_start + n_txt_tokens
-    state_start = txt_pad_start + n_txt_padding_tokens
-    action_start = state_start + n_state_tokens
-    n = action_start + n_action_tokens  # total
-
-    # If kv is in image or text padding => False
-    if (img_pad_start <= kv_idx and kv_idx < txt_start) or (txt_pad_start <= kv_idx and kv_idx < state_start):
-        return False
-
-    # If q is in image padding or text padding => attends to nothing
-    if img_pad_start <= q_idx < txt_start or txt_pad_start <= q_idx < state_start:
-        return False
-
-    is_image = q_idx < n_img_tokens
-    is_text = txt_start <= q_idx < txt_start + n_txt_tokens
-    is_state = state_start <= q_idx < action_start
-    is_action = action_start <= q_idx < n
-
-    if is_image:
-        # Image tokens: attend to (non-padding) image tokens + (non-padding) text tokens only
-        if kv_idx < n_img_tokens:  # other image tokens
-            return True
-        if txt_start <= kv_idx < txt_start + n_txt_tokens:  # text that is not padded # noqa: SIM103
-            return True
-        return False
-
-    elif is_text:
-        # Text tokens: attend to (non-padding) image + text
-        if kv_idx < n_img_tokens:  # image
-            return True
-        if txt_start <= kv_idx < txt_start + n_txt_tokens:  # text # noqa: SIM103
-            return True
-        return False
-
-    elif is_state:
-        # state tokens: attend to non-padding image, non-padding text, and states up to q_idx
-        if kv_idx < n_img_tokens:  # image
-            return True
-        if txt_start <= kv_idx < txt_start + n_txt_tokens:  # text
-            return True
-        if state_start <= kv_idx <= q_idx:  # triangular among states # noqa: SIM103
-            return True
-        return False
-
-    elif is_action:
-        # action tokens: attend to non-padding image, non-padding text, all states, and all actions
-        if kv_idx < n_img_tokens:  # image
-            return True
-        if txt_start <= kv_idx < txt_start + n_txt_tokens:  # text
-            return True
-        if state_start <= kv_idx < action_start:  # any state
-            return True
-        if action_start <= kv_idx < n:  # any action (including self I think) (yes) # noqa: SIM103
-            return True
-        return False
-
-    return False
+from lerobot.common.policies.pi0.flex_attention import flex_attention_forward
 
 
 def apply_rope(x, positions, max_wavelength=10_000):
@@ -257,14 +48,16 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
 
     def __init__(
         self,
-        paligemma_config=None,
-        gemma_expert_config=None,
-        freeze_vision_encoder=True,
-        train_expert_only=True,
+        paligemma_config: dict | None = None,
+        gemma_expert_config: dict | None = None,
+        freeze_vision_encoder: bool = True,
+        train_expert_only: bool = True,
+        attention_implementation: str = "eager",
         **kwargs,
     ):
         self.freeze_vision_encoder = freeze_vision_encoder
         self.train_expert_only = train_expert_only
+        self.attention_implementation = attention_implementation
 
         if paligemma_config is None:
             # Default config from Pi0
@@ -348,6 +141,18 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
 
         super().__init__(**kwargs)
 
+    def __post_init__(self):
+        super().__post_init__()
+        if self.train_expert_only and not self.freeze_vision_encoder:
+            raise ValueError(
+                "You set `freeze_vision_encoder=False` and `train_expert_only=True` which are not compatible."
+            )
+
+        if self.attention_implementation not in ["eager", "fa2", "flex"]:
+            raise ValueError(
+                f"Wrong value provided for `attention_implementation` ({self.attention_implementation}). Expected 'eager', 'fa2' or 'flex'."
+            )
+
 
 class PaliGemmaWithExpertModel(PreTrainedModel):
     config_class = PaliGemmaWithExpertConfig
@@ -356,10 +161,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         super().__init__(config=config)
         self.config = config
         self.paligemma = PaliGemmaForConditionalGeneration(config=config.paligemma_config)
-        self.paligemma = self.paligemma.to(dtype=torch.bfloat16)
-
         self.gemma_expert = GemmaForCausalLM(config=config.gemma_expert_config)
-
         # Remove unused embed_tokens
         self.gemma_expert.model.embed_tokens = None
 
@@ -373,9 +175,6 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 params.requires_grad = False
 
         if self.config.train_expert_only:
-            if not self.config.freeze_vision_encoder:
-                raise ValueError()
-
             self.paligemma.eval()
             for params in self.paligemma.parameters():
                 params.requires_grad = False
@@ -483,15 +282,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                         [past_key_values[layer_idx]["value_states"], value_states], dim=1
                     )
 
-            # TODO use a from config instantiation with supported attention classes
-            use_fa2 = False
-            use_flex = False
-            if use_fa2:
-                attention_interface = self.flash_attention_forward
-            elif use_flex:
-                attention_interface = flex_attention_forward
-            else:
-                attention_interface = self.eager_attention_forward
+            attention_interface = self.get_attention_interface()
             att_output = attention_interface(
                 attention_mask, batch_size, head_dim, query_states, key_states, value_states
             )
@@ -510,7 +301,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                         att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
                     out_emb = layer.self_attn.o_proj(att_output[:, start:end])
 
-                    # TODO: first dropout
+                    # TODO: first dropout (by default 0.0)
 
                     # first residual
                     out_emb += hidden_states
@@ -519,7 +310,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                     out_emb = layer.post_attention_layernorm(out_emb)
                     out_emb = layer.mlp(out_emb)
 
-                    # TODO: second dropout
+                    # TODO: second dropout (by default 0.0)
 
                     # second residual
                     out_emb += after_first_residual
@@ -543,6 +334,15 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
 
         return outputs_embeds, past_key_values
 
+    def get_attention_interface(self):
+        if self.config.attention_implementation == "fa2":
+            attention_interface = self.flash_attention_forward
+        elif self.config.attention_implementation == "flex":
+            attention_interface = flex_attention_forward
+        else:
+            attention_interface = self.eager_attention_forward
+        return attention_interface
+
     def flash_attention_forward(
         self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
     ):
@@ -551,9 +351,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
     def eager_attention_forward(
         self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
     ):
-        num_att_heads = 8
-        num_key_value_heads = 1
-        num_key_value_groups = num_att_heads // num_key_value_heads  # TODO from config
+        num_att_heads = self.config.paligemma_config.text_config.num_attention_heads
+        num_key_value_heads = self.config.paligemma_config.text_config.num_key_value_heads
+        num_key_value_groups = num_att_heads // num_key_value_heads
 
         # query_states: batch_size, sequence_length, num_att_head, head_dim
         # key_states: batch_size, sequence_length, num_key_value_head, head_dim

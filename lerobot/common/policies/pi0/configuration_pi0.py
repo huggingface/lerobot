@@ -31,7 +31,7 @@ class PI0Config(PreTrainedConfig):
     # Image preprocessing
     resize_imgs_with_padding: tuple[int, int] = (224, 224)
 
-    # Add empty images. Used by pi0_aloha_sim which adds the emtpy
+    # Add empty images. Used by pi0_aloha_sim which adds the empty
     # left and right wrist cameras in addition to the top camera.
     empty_cameras: int = 0
 
@@ -52,12 +52,14 @@ class PI0Config(PreTrainedConfig):
     # Decoding
     num_steps: int = 10
 
-    # Utils
+    # Attention utils
     use_cache: bool = True
+    attention_implementation: str = "eager"  # or fa2, flex
 
-    # Frozen parameters
+    # Finetuning settings
     freeze_vision_encoder: bool = True
     train_expert_only: bool = False
+    train_state_proj: bool = True
 
     # Training presets
     optimizer_lr: float = 2.5e-5
@@ -83,6 +85,11 @@ class PI0Config(PreTrainedConfig):
         if self.n_obs_steps != 1:
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
+            )
+
+        if self.use_delta_joint_actions_aloha:
+            raise NotImplementedError(
+                "`use_delta_joint_actions_aloha` is used by pi0 for aloha real models. It is not ported yet in LeRobot."
             )
 
     def validate_features(self) -> None:
