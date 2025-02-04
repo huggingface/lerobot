@@ -672,6 +672,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             for cam in image_keys:
                 item[cam] = self.image_transforms(item[cam])
 
+        # Add task as a string
+        task_idx = item["task_index"].item()
+        item["task"] = self.meta.tasks[task_idx]
+
         return item
 
     def __repr__(self):
@@ -840,7 +844,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def stop_image_writer(self) -> None:
         """
         Whenever wrapping this dataset inside a parallelized DataLoader, this needs to be called first to
-        remove the image_write in order for the LeRobotDataset object to be pickleable and parallelized.
+        remove the image_writer in order for the LeRobotDataset object to be pickleable and parallelized.
         """
         if self.image_writer is not None:
             self.image_writer.stop()

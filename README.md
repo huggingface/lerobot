@@ -122,10 +122,7 @@ wandb login
 ├── examples             # contains demonstration examples, start here to learn about LeRobot
 |   └── advanced         # contains even more examples for those who have mastered the basics
 ├── lerobot
-|   ├── configs          # contains hydra yaml files with all options that you can override in the command line
-|   |   ├── default.yaml   # selected by default, it loads pusht environment and diffusion policy
-|   |   ├── env            # various sim environments and their datasets: aloha.yaml, pusht.yaml, xarm.yaml
-|   |   └── policy         # various policies: act.yaml, diffusion.yaml, tdmpc.yaml
+|   ├── configs          # contains config classes with all options that you can override in the command line
 |   ├── common           # contains classes and utilities
 |   |   ├── datasets       # various datasets of human demonstrations: aloha, pusht, xarm
 |   |   ├── envs           # various sim environments: aloha, pusht, xarm
@@ -222,87 +219,48 @@ Check out [example 2](./examples/2_evaluate_pretrained_policy.py) that illustrat
 We also provide a more capable script to parallelize the evaluation over multiple environments during the same rollout. Here is an example with a pretrained model hosted on [lerobot/diffusion_pusht](https://huggingface.co/lerobot/diffusion_pusht):
 ```bash
 python lerobot/scripts/eval.py \
-    -p lerobot/diffusion_pusht \
-    eval.n_episodes=10 \
-    eval.batch_size=10
+    --policy.path=lerobot/diffusion_pusht \
+    --env.type=pusht \
+    --eval.batch_size=10 \
+    --eval.n_episodes=10 \
+    --use_amp=false \
+    --device=cuda
 ```
 
 Note: After training your own policy, you can re-evaluate the checkpoints with:
 
 ```bash
-python lerobot/scripts/eval.py -p {OUTPUT_DIR}/checkpoints/last/pretrained_model
+python lerobot/scripts/eval.py --policy.path={OUTPUT_DIR}/checkpoints/last/pretrained_model
 ```
 
 See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ### Train your own policy
 
-Check out [example 3](./examples/3_train_policy.py) that illustrates how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
+Check out [example 3](./examples/3_train_policy.py) that illustrate how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
 
-In general, you can use our training script to easily train any policy. Here is an example of training the ACT policy on trajectories collected by humans on the Aloha simulation environment for the insertion task:
+To use wandb for logging training and evaluation curves, make sure you've run `wandb login` as a one-time setup step. Then, when running the training command above, enable WandB in the configuration by adding `--wandb.enable=true`.
 
-```bash
-python lerobot/scripts/train.py \
-    policy=act \
-    env=aloha \
-    env.task=AlohaInsertion-v0 \
-    dataset_repo_id=lerobot/aloha_sim_insertion_human \
-```
-
-The experiment directory is automatically generated and will show up in yellow in your terminal. It looks like `outputs/train/2024-05-05/20-21-12_aloha_act_default`. You can manually specify an experiment directory by adding this argument to the `train.py` python command:
-```bash
-    hydra.run.dir=your/new/experiment/dir
-```
-
-In the experiment directory there will be a folder called `checkpoints` which will have the following structure:
-
-```bash
-checkpoints
-├── 000250  # checkpoint_dir for training step 250
-│   ├── pretrained_model  # Hugging Face pretrained model dir
-│   │   ├── config.json  # Hugging Face pretrained model config
-│   │   ├── config.yaml  # consolidated Hydra config
-│   │   ├── model.safetensors  # model weights
-│   │   └── README.md  # Hugging Face model card
-│   └── training_state.pth  # optimizer/scheduler/rng state and training step
-```
-
-To resume training from a checkpoint, you can add these to the `train.py` python command:
-```bash
-    hydra.run.dir=your/original/experiment/dir resume=true
-```
-
-It will load the pretrained model, optimizer and scheduler states for training. For more information please see our tutorial on training resumption [here](https://github.com/huggingface/lerobot/blob/main/examples/5_resume_training.md).
-
-To use wandb for logging training and evaluation curves, make sure you've run `wandb login` as a one-time setup step. Then, when running the training command above, enable WandB in the configuration by adding:
-
-```bash
-    wandb.enable=true
-```
-
-A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of what they look like in your browser. Please also check [here](https://github.com/huggingface/lerobot/blob/main/examples/4_train_policy_with_script.md#typical-logs-and-metrics) for the explanation of some commonly used metrics in logs.
+A link to the wandb logs for the run will also show up in yellow in your terminal. Here is an example of what they look like in your browser. Please also check [here](./examples/4_train_policy_with_script.md#typical-logs-and-metrics) for the explanation of some commonly used metrics in logs.
 
 ![](media/wandb.png)
 
-Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. You may use `eval.n_episodes=500` to evaluate on more episodes than the default. Or, after training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
+Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. You may use `--eval.n_episodes=500` to evaluate on more episodes than the default. Or, after training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
 
 #### Reproduce state-of-the-art (SOTA)
 
-We have organized our configuration files (found under [`lerobot/configs`](./lerobot/configs)) such that they reproduce SOTA results from a given model variant in their respective original works. Simply running:
-
+We provide some pretrained policies on our [hub page](https://huggingface.co/lerobot) that can achieve state-of-the-art performances.
+You can reproduce their training by loading the config from their run. Simply running:
 ```bash
-python lerobot/scripts/train.py policy=diffusion env=pusht
+python lerobot/scripts/train.py --config_path=lerobot/diffusion_pusht
 ```
-
 reproduces SOTA results for Diffusion Policy on the PushT task.
-
-Pretrained policies, along with reproduction details, can be found under the "Models" section of https://huggingface.co/lerobot.
 
 ## Contribute
 
 If you would like to contribute to 🤗 LeRobot, please check out our [contribution guide](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md).
 
-### Add a new dataset
+<!-- ### Add a new dataset
 
 To add a dataset to the hub, you need to login using a write-access token, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
 ```bash
@@ -320,7 +278,7 @@ python lerobot/scripts/push_dataset_to_hub.py \
 
 See `python lerobot/scripts/push_dataset_to_hub.py --help` for more instructions.
 
-If your dataset format is not supported, implement your own in `lerobot/common/datasets/push_dataset_to_hub/${raw_format}_format.py` by copying examples like [pusht_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/pusht_zarr_format.py), [umi_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/umi_zarr_format.py), [aloha_hdf5](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/aloha_hdf5_format.py), or [xarm_pkl](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/xarm_pkl_format.py).
+If your dataset format is not supported, implement your own in `lerobot/common/datasets/push_dataset_to_hub/${raw_format}_format.py` by copying examples like [pusht_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/pusht_zarr_format.py), [umi_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/umi_zarr_format.py), [aloha_hdf5](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/aloha_hdf5_format.py), or [xarm_pkl](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/xarm_pkl_format.py). -->
 
 
 ### Add a pretrained policy
@@ -330,7 +288,7 @@ Once you have trained a policy you may upload it to the Hugging Face hub using a
 You first need to find the checkpoint folder located inside your experiment directory (e.g. `outputs/train/2024-05-05/20-21-12_aloha_act_default/checkpoints/002500`). Within that there is a `pretrained_model` directory which should contain:
 - `config.json`: A serialized version of the policy configuration (following the policy's dataclass config).
 - `model.safetensors`: A set of `torch.nn.Module` parameters, saved in [Hugging Face Safetensors](https://huggingface.co/docs/safetensors/index) format.
-- `config.yaml`: A consolidated Hydra training configuration containing the policy, environment, and dataset configs. The policy configuration should match `config.json` exactly. The environment config is useful for anyone who wants to evaluate your policy. The dataset config just serves as a paper trail for reproducibility.
+- `train_config.json`: A consolidated configuration containing all parameter userd for training. The policy configuration should match `config.json` exactly. Thisis useful for anyone who wants to evaluate your policy or for reproducibility.
 
 To upload these to the hub, run the following:
 ```bash
