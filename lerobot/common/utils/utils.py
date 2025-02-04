@@ -74,6 +74,18 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     return device
 
 
+def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
+    """
+    mps is currently not compatible with float64
+    """
+    if isinstance(device, torch.device):
+        device = device.type
+    if device == "mps" and dtype == torch.float64:
+        return torch.float32
+    else:
+        return dtype
+
+
 def is_torch_device_available(try_device: str) -> bool:
     if try_device == "cuda":
         return torch.cuda.is_available()

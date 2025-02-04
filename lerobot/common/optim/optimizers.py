@@ -8,8 +8,6 @@ import torch
 @dataclass
 class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
     lr: float
-    betas: tuple[float, float]
-    eps: float
     weight_decay: float
     grad_clip_norm: float
 
@@ -54,3 +52,19 @@ class AdamWConfig(OptimizerConfig):
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
         return torch.optim.AdamW(params, **kwargs)
+
+
+@OptimizerConfig.register_subclass("sgd")
+@dataclass
+class SGDConfig(OptimizerConfig):
+    lr: float = 1e-3
+    momentum: float = 0.0
+    dampening: float = 0.0
+    nesterov: bool = False
+    weight_decay: float = 0.0
+    grad_clip_norm: float = 10.0
+
+    def build(self, params: dict) -> torch.optim.Optimizer:
+        kwargs = asdict(self)
+        kwargs.pop("grad_clip_norm")
+        return torch.optim.SGD(params, **kwargs)
