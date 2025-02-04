@@ -130,6 +130,9 @@ class DiTFlowConfig(PreTrainedConfig):
     activation: str = "gelu"
 
     # Noise scheduler.
+    training_noise_sampling: str = (
+        "beta"  # "uniform" or "beta", from pi0 https://www.physicalintelligence.company/download/pi0.pdf
+    )
     clip_sample: bool = True
     clip_sample_range: float = 1.0
 
@@ -154,6 +157,11 @@ class DiTFlowConfig(PreTrainedConfig):
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
+            )
+
+        if self.training_noise_sampling not in ("uniform", "beta"):
+            raise ValueError(
+                f"`training_noise_sampling` must be either 'uniform' or 'beta'. Got {self.training_noise_sampling}."
             )
 
     def get_optimizer_preset(self) -> AdamConfig:
