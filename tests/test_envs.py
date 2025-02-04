@@ -21,11 +21,10 @@ import torch
 from gymnasium.utils.env_checker import check_env
 
 import lerobot
-from lerobot.common.envs.factory import make_env
+from lerobot.common.envs.factory import make_env, make_env_config
 from lerobot.common.envs.utils import preprocess_observation
-from lerobot.common.utils.utils import init_hydra_config
 
-from .utils import DEFAULT_CONFIG_PATH, DEVICE, require_env
+from .utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
 
@@ -47,11 +46,7 @@ def test_env(env_name, env_task, obs_type):
 @pytest.mark.parametrize("env_name", lerobot.available_envs)
 @require_env
 def test_factory(env_name):
-    cfg = init_hydra_config(
-        DEFAULT_CONFIG_PATH,
-        overrides=[f"env={env_name}", f"device={DEVICE}"],
-    )
-
+    cfg = make_env_config(env_name)
     env = make_env(cfg, n_envs=1)
     obs, _ = env.reset()
     obs = preprocess_observation(obs)
