@@ -125,6 +125,9 @@ def rollout(
     # Reset the policy and environments.
     policy.reset()
 
+    if hasattr(policy, "use_ema_modules"):
+        policy.use_ema_modules()
+
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
@@ -205,6 +208,9 @@ def rollout(
             stacked_observations[key] = torch.stack([obs[key] for obs in all_observations], dim=1)
         ret["observation"] = stacked_observations
 
+    if hasattr(policy, "use_original_modules"):
+        policy.use_original_modules()
+
     return ret
 
 
@@ -235,7 +241,9 @@ def eval_policy(
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
 
     if not isinstance(policy, PreTrainedPolicy):
-        raise ValueError(policy)
+        raise ValueError(
+            f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
+        )
 
     start = time.time()
     policy.eval()
