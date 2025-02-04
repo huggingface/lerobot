@@ -35,6 +35,7 @@ def decode_video_frames_torchvision(
     tolerance_s: float,
     backend: str = "pyav",
     log_loaded_timestamps: bool = False,
+    reader: torchvision.io.VideoReader | None = None
 ) -> torch.Tensor:
     """Loads frames associated to the requested timestamps of a video
 
@@ -55,17 +56,21 @@ def decode_video_frames_torchvision(
     and all subsequent frames until reaching the requested frame. The number of key frames in a video
     can be adjusted during encoding to take into account decoding time and video size in bytes.
     """
-    video_path = str(video_path)
-
+    #video_path = str(video_path)
+    if reader is None:
+        raise ValueError(
+            "reader must be provided"
+        )
     # set backend
     keyframes_only = False
-    torchvision.set_video_backend(backend)
+    # torchvision.set_video_backend(backend)
     if backend == "pyav":
         keyframes_only = True  # pyav doesnt support accuracte seek
 
     # set a video stream reader
     # TODO(rcadene): also load audio stream at the same time
-    reader = torchvision.io.VideoReader(video_path, "video")
+    # reader = torchvision.io.VideoReader(video_path, "video")
+    # print(video_reader)
 
     # set the first and last requested timestamps
     # Note: previous timestamps are usually loaded, since we need to access the previous key frame
@@ -89,8 +94,8 @@ def decode_video_frames_torchvision(
         if current_ts >= last_ts:
             break
 
-    if backend == "pyav":
-        reader.container.close()
+    # if backend == "pyav":
+    #     reader.container.close()
 
     reader = None
 
