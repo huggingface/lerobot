@@ -16,15 +16,18 @@
 import logging
 import os
 import shutil
+import time
 from functools import cached_property
 from pathlib import Path
 from typing import Callable
 
 import datasets
+import pandas as pd
 import numpy as np
 import PIL.Image
 import torch
 import torch.utils
+import torchvision
 from datasets import load_dataset
 from huggingface_hub import create_repo, snapshot_download, upload_folder
 
@@ -435,7 +438,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.video_backend = video_backend if video_backend else "pyav"
         self.delta_indices = None
         self.local_files_only = local_files_only
-
+    
         # Unused attributes
         self.image_writer = None
         self.episode_buffer = None
@@ -463,7 +466,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Available stats implies all videos have been encoded and dataset is iterable
         self.consolidated = self.meta.stats is not None
-
+        self.video_readers = {}
+        
     def push_to_hub(
         self,
         tags: list | None = None,
@@ -625,12 +629,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         item = {}
         for vid_key, query_ts in query_timestamps.items():
-            video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
+            reader = self.video_readers[(ep_idx, vid_key)]
+            #video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
             frames = decode_video_frames_torchvision(
-                video_path, query_ts, self.tolerance_s, self.video_backend
+                video_path=None, 
+                timestamps=query_ts, 
+                tolerance_s=self.tolerance_s, 
+                backend=self.video_backend, 
+                reader=reader
             )
             item[vid_key] = frames.squeeze(0)
-
         return item
 
     def _add_padding_keys(self, item: dict, padding: dict[str, list[bool]]) -> dict:
@@ -642,6 +650,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
+        if len(self.video_readers) == 0:
+            torchvision.set_video_backend(self.video_backend)
+            for vid_key in self.meta.video_keys:
+                for ep_idx in range(self.num_episodes):
+                    video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
+                    reader = torchvision.io.VideoReader(str(video_path), "video")
+                    self.video_readers[(ep_idx, vid_key)] = reader
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
 
@@ -664,7 +679,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_keys = self.meta.camera_keys
             for cam in image_keys:
                 item[cam] = self.image_transforms(item[cam])
-
         return item
 
     def __repr__(self):
