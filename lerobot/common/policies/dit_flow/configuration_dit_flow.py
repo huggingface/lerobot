@@ -131,7 +131,7 @@ class DiTFlowConfig(PreTrainedConfig):
 
     # Noise scheduler.
     training_noise_sampling: str = (
-        "beta"  # "uniform" or "beta", from pi0 https://www.physicalintelligence.company/download/pi0.pdf
+        "uniform"  # "uniform" or "beta", from pi0 https://www.physicalintelligence.company/download/pi0.pdf
     )
     clip_sample: bool = True
     clip_sample_range: float = 1.0
