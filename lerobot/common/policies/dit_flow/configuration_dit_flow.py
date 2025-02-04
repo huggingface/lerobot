@@ -122,11 +122,11 @@ class DiTFlowConfig(PreTrainedConfig):
 
     # Diffusion Transformer (DiT) parameters.
     frequency_embedding_dim: int = 256
-    hidden_dim: int = 256
+    hidden_dim: int = 512
     num_blocks: int = 6
-    num_heads: int = 8
-    dropout: float = 0.0
-    dim_feedforward: int = 2048
+    num_heads: int = 16
+    dropout: float = 0.1
+    dim_feedforward: int = 4096
     activation: str = "gelu"
 
     # Noise scheduler.
