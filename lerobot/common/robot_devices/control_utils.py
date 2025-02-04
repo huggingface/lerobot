@@ -19,11 +19,9 @@ from termcolor import colored
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import get_features_from_robot
-from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
-from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
-from lerobot.scripts.eval import get_pretrained_policy_path
+from lerobot.common.utils.utils import get_safe_torch_device, has_method
 
 
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
@@ -87,10 +85,6 @@ def is_headless():
         traceback.print_exc()
         print()
         return True
-
-
-def has_method(_object: object, method_name: str):
-    return hasattr(_object, method_name) and callable(getattr(_object, method_name))
 
 
 def predict_action(observation, policy, device, use_amp):
@@ -161,26 +155,6 @@ def init_keyboard_listener():
     return listener, events
 
 
-def init_policy(pretrained_policy_name_or_path, policy_overrides):
-    """Instantiate the policy and load fps, device and use_amp from config yaml"""
-    pretrained_policy_path = get_pretrained_policy_path(pretrained_policy_name_or_path)
-    hydra_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", policy_overrides)
-    policy = make_policy(hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
-
-    # Check device is available
-    device = get_safe_torch_device(hydra_cfg.device, log=True)
-    use_amp = hydra_cfg.use_amp
-    policy_fps = hydra_cfg.env.fps
-
-    policy.eval()
-    policy.to(device)
-
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
-    set_global_seed(hydra_cfg.seed)
-    return policy, policy_fps, device, use_amp
-
-
 def warmup_record(
     robot,
     events,
@@ -233,9 +207,9 @@ def control_loop(
     dataset: LeRobotDataset | None = None,
     events=None,
     policy=None,
-    device=None,
-    use_amp=None,
-    fps=None,
+    device: torch.device | str | None = None,
+    use_amp: bool | None = None,
+    fps: int | None = None,
 ):
     # TODO(rcadene): Add option to record logs
     if not robot.is_connected:
@@ -252,6 +226,9 @@ def control_loop(
 
     if dataset is not None and fps is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
+
+    if isinstance(device, str):
+        device = get_safe_torch_device(device)
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -324,21 +301,21 @@ def stop_recording(robot, listener, display_cameras):
             cv2.destroyAllWindows()
 
 
-def sanity_check_dataset_name(repo_id, policy):
+def sanity_check_dataset_name(repo_id, policy_cfg):
     _, dataset_name = repo_id.split("/")
     # either repo_id doesnt start with "eval_" and there is no policy
     # or repo_id starts with "eval_" and there is a policy
 
     # Check if dataset_name starts with "eval_" but policy is missing
-    if dataset_name.startswith("eval_") and policy is None:
+    if dataset_name.startswith("eval_") and policy_cfg is None:
         raise ValueError(
-            f"Your dataset name begins with 'eval_' ({dataset_name}), but no policy is provided."
+            f"Your dataset name begins with 'eval_' ({dataset_name}), but no policy is provided ({policy_cfg.type})."
         )
 
     # Check if dataset_name does not start with "eval_" but policy is provided
-    if not dataset_name.startswith("eval_") and policy is not None:
+    if not dataset_name.startswith("eval_") and policy_cfg is not None:
         raise ValueError(
-            f"Your dataset name does not begin with 'eval_' ({dataset_name}), but a policy is provided ({policy})."
+            f"Your dataset name does not begin with 'eval_' ({dataset_name}), but a policy is provided ({policy_cfg.type})."
         )
 
 

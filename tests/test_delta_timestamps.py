@@ -54,8 +54,10 @@ def slightly_off_hf_dataset_factory(synced_hf_dataset_factory):
 
 @pytest.fixture(scope="module")
 def valid_delta_timestamps_factory():
-    def _create_valid_delta_timestamps(fps: int = 30, keys: list = DUMMY_MOTOR_FEATURES) -> dict:
-        delta_timestamps = {key: [i * (1 / fps) for i in range(-10, 10)] for key in keys}
+    def _create_valid_delta_timestamps(
+        fps: int = 30, keys: list = DUMMY_MOTOR_FEATURES, min_max_range: tuple[int, int] = (-10, 10)
+    ) -> dict:
+        delta_timestamps = {key: [i * (1 / fps) for i in range(*min_max_range)] for key in keys}
         return delta_timestamps
 
     return _create_valid_delta_timestamps
@@ -91,8 +93,11 @@ def slightly_off_delta_timestamps_factory(valid_delta_timestamps_factory):
 
 
 @pytest.fixture(scope="module")
-def delta_indices(keys: list = DUMMY_MOTOR_FEATURES) -> dict:
-    return {key: list(range(-10, 10)) for key in keys}
+def delta_indices_factory():
+    def _delta_indices(keys: list = DUMMY_MOTOR_FEATURES, min_max_range: tuple[int, int] = (-10, 10)) -> dict:
+        return {key: list(range(*min_max_range)) for key in keys}
+
+    return _delta_indices
 
 
 def test_check_timestamps_sync_synced(synced_hf_dataset_factory):
@@ -248,9 +253,10 @@ def test_check_delta_timestamps_empty():
     assert result is True
 
 
-def test_delta_indices(valid_delta_timestamps_factory, delta_indices):
-    fps = 30
-    delta_timestamps = valid_delta_timestamps_factory(fps)
-    expected_delta_indices = delta_indices
+def test_delta_indices(valid_delta_timestamps_factory, delta_indices_factory):
+    fps = 50
+    min_max_range = (-100, 100)
+    delta_timestamps = valid_delta_timestamps_factory(fps, min_max_range=min_max_range)
+    expected_delta_indices = delta_indices_factory(min_max_range=min_max_range)
     actual_delta_indices = get_delta_indices(delta_timestamps, fps)
     assert expected_delta_indices == actual_delta_indices
