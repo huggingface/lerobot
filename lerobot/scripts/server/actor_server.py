@@ -273,6 +273,9 @@ def act_with_policy(cfg: DictConfig):
         # TODO (michel-aractingi): Label the reward
         # if config.label_reward_on_actor:
         #     reward = reward_classifier(obs)
+        if info["is_intervention"]:
+            # TODO: Check the shape
+            action = info["action_intervention"]
 
         list_transition_to_send_to_learner.append(
             Transition(
@@ -281,7 +284,7 @@ def act_with_policy(cfg: DictConfig):
                 reward=reward,
                 next_state=next_obs,
                 done=done,
-                complementary_info=None,
+                complementary_info=info,  # TODO Handle information for the transition, is_demonstraction: bool
             )
         )
 

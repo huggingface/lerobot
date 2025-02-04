@@ -332,6 +332,9 @@ def add_actor_information_and_train(
                 transition = move_transition_to_device(transition, device=device)
                 replay_buffer.add(**transition)
 
+                if transition.get("complementary_info", {}).get("is_interaction"):
+                    offline_replay_buffer.add(**transition)
+
         while not interaction_message_queue.empty():
             interaction_message = interaction_message_queue.get()
             # If cfg.resume, shift the interaction step with the last checkpointed step in order to not break the logging
