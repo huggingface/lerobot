@@ -1,6 +1,7 @@
 import abc
 from dataclasses import dataclass, field
 from typing import Sequence
+from enum import Enum
 
 import draccus
 
@@ -514,3 +515,197 @@ class StretchRobotConfig(RobotConfig):
     )
 
     mock: bool = False
+
+@RobotConfig.register_subclass("no_op")
+@dataclass
+class NoOpRobotConfig(RobotConfig):
+    pass
+
+class ARXArmModel(Enum):
+    """
+    Two models of ARX arms are supported: the X5 and L5.
+    The main difference between the two is the type of motor used in the three base joints.
+    Ensure you are using the right arm model before starting the robot, as choosing the wrong one can lead to dangerous movements.
+    """
+    X5 = "X5"
+    L5 = "L5"
+
+# Configs for ARX5 robot
+@dataclass
+class ARX5ArmConfig:
+    model: str
+    interface_name: str
+    urdf_path: str
+
+@dataclass
+class ARX5RobotConfig:
+    leader_arms: dict[str, ARX5ArmConfig]
+    follower_arms: dict[str, ARX5ArmConfig]
+    cameras: dict[str, CameraConfig]
+
+@RobotConfig.register_subclass("arx5")
+@dataclass
+class ARX5SingleArmRobotConfig(RobotConfig):
+    """Single-armed ARX5 configuration with both leader and follower arms."""
+    leader_arms: dict[str, ARX5ArmConfig] = field(
+        default_factory=lambda: {
+            "main": ARX5ArmConfig(
+                model="L5",
+                interface_name="enx5c5310ecc0ec",
+                urdf_path="lerobot/models/arx5.urdf",
+            ),
+        }
+    )
+    follower_arms: dict[str, ARX5ArmConfig] = field(
+        default_factory=lambda: {
+            "main": ARX5ArmConfig(
+                model="L5",
+                interface_name="enx5c5310ecc38c",
+                urdf_path="lerobot/models/arx5.urdf",
+            ),
+        }
+    )
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "front": OpenCVCameraConfig(
+                camera_index=0,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+            "wrist": OpenCVCameraConfig(
+                camera_index=2,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+        }
+    )
+
+@RobotConfig.register_subclass("arx5_bimanual")
+@dataclass
+class ARX5BimanualRobotConfig(RobotConfig):
+    """Bimanual ARX5 configuration with both leader and follower arms."""
+    leader_arms: dict[str, ARX5ArmConfig] = field(
+        default_factory=lambda: {
+            "left": ARX5ArmConfig(
+                model="L5",
+                interface_name="enx5c5310ecc0ec",  
+                urdf_path="lerobot/models/arx5.urdf",
+            ),
+            "right": ARX5ArmConfig(
+                model="L5",
+                interface_name="enx5c5310ec6299",  
+                urdf_path="lerobot/models/arx5.urdf",
+            ),
+        }
+    )
+    follower_arms: dict[str, ARX5ArmConfig] = field(
+        default_factory=lambda: {
+            "left": ARX5ArmConfig(
+                model="L5",
+                interface_name="enx5c5310ecc38c",  
+                urdf_path="lerobot/models/arx5.urdf",
+            ),
+            "right": ARX5ArmConfig(
+                model="L5",
+                interface_name="enx5c5310ecc90b",  
+                urdf_path="lerobot/models/arx5.urdf",
+            ),
+        }
+    )
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "front": OpenCVCameraConfig(
+                camera_index=0,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+            "left_wrist": OpenCVCameraConfig(
+                camera_index=2,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+            "right_wrist": OpenCVCameraConfig(
+                camera_index=4,  
+                fps=30,
+                width=640,
+                height=480,
+            ),
+        }
+    )
+
+@RobotConfig.register_subclass("arx5_follow")
+@dataclass
+class ARX5SingleArmFollowOnlyConfig(RobotConfig):
+    """Single-armed ARX5 configuration with follower arm only (for inference)."""
+    leader_arms: dict[str, ARX5ArmConfig] = field(default_factory=dict)
+    follower_arms: dict[str, ARX5ArmConfig] = field(
+        default_factory=lambda: {
+            "main": ARX5ArmConfig(
+                model="L5",
+                interface_name="enx5c5310ecc38c",
+                urdf_path="lerobot/models/arx5.urdf",
+            ),
+        }
+    )
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "front": OpenCVCameraConfig(
+                camera_index=0,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+            "wrist": OpenCVCameraConfig(
+                camera_index=2,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+        }
+    )
+
+@RobotConfig.register_subclass("arx5_bimanual_follow")
+@dataclass
+class ARX5BimanualFollowOnlyConfig(RobotConfig):
+    """Bimanual ARX5 configuration with follower arms only (for inference)."""
+    leader_arms: dict[str, ARX5ArmConfig] = field(default_factory=dict)
+    follower_arms: dict[str, ARX5ArmConfig] = field(
+        default_factory=lambda: {
+            "left": ARX5ArmConfig(
+                model="L5",
+                interface_name="enx5c5310ecc38c",  
+                urdf_path="lerobot/models/arx5.urdf",
+            ),
+            "right": ARX5ArmConfig(
+                model="L5",
+                interface_name="enx5c5310ecc90b",  
+                urdf_path="lerobot/models/arx5.urdf",
+            ),
+        }
+    )
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "front": OpenCVCameraConfig(
+                camera_index=0,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+            "left_wrist": OpenCVCameraConfig(
+                camera_index=2,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+            "right_wrist": OpenCVCameraConfig(
+                camera_index=4,  
+                fps=30,
+                width=640,
+                height=480,
+            ),
+        }
+    )

@@ -4,6 +4,8 @@ class NoOpRobot:
     """
    Robot that does nothing. 
     """
+    cameras = {}
+    robot_type: str | None = "no_op"
 
     @property
     def has_camera(self):

@@ -37,7 +37,7 @@ class StretchRobot(StretchAPI):
             self.config = replace(config, **kwargs)
 
         self.robot_type = self.config.type
-        self.cameras = self.config.cameras
+        self.cameras = make_cameras_from_configs(self.config.cameras)
         self.is_connected = False
         self.teleop = None
         self.logs = {}

@@ -7,52 +7,25 @@ import arx5_interface as arx5
 import numpy as np
 import torch
 
-from lerobot.common.robot_devices.cameras.utils import Camera
+from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
     busy_wait,
 )
+from lerobot.common.robot_devices.robots.configs import ARX5ArmConfig, ARX5RobotConfig
 
 DOF = 6
 MOTOR_NAMES = []
 
-class ARXArmModel(Enum):
-    """
-    Two models of ARX arms are supported: the X5 and L5.
-    The main difference between the two is the type of motor used in the three base joints.
-    Ensure you are using the right arm model before starting the robot, as choosing the wrong one can lead to dangerous movements.
-    """
-    X5 = "X5"
-    L5 = "L5"
-
-@dataclass
-class ARXArmConfig:
-    model: ARXArmModel
-    interface_name: str # name of the communication interface, e.g. `can0` or `enx6c1ff70ac436`
-    urdf_path: str  # link to the robot arm URDF file. Used for gravity compensation
-
-@dataclass
-class ARX5RobotConfig:
-    """
-    Example of usage:
-    ```python
-    ARX5RobotConfig()
-    ```
-    """
-    # Define all components of the robot
-    leader_arms: dict[str, ARXArmConfig] = field(default_factory=lambda: {})
-    follower_arms: dict[str, ARXArmConfig] = field(default_factory=lambda: {})
-    cameras: dict[str, Camera] = field(default_factory=lambda: {})
-
-class ARXArm:
+class ARX5Arm:
     """
     Class for controlling a single ARX arm.
     """
 
     def __init__(
         self,
-        config: ARXArmConfig,
+        config: ARX5ArmConfig,
         is_master: bool,
     ):
         self.config = config
@@ -64,7 +37,7 @@ class ARXArm:
     def connect(self):
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
-                "ARXArm is already connected. Do not run `robot.connect()` twice."
+                "ARX5Arm is already connected. Do not run `robot.connect()` twice."
             )
         self.is_connected = True
 
@@ -81,7 +54,7 @@ class ARXArm:
     def disconnect(self):
         if not self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
-                "ARXArm is not connected. Do not run `robot.disconnect()` twice."
+                "ARX5Arm is not connected. Do not run `robot.disconnect()` twice."
             )
         # notify the arm process of imminent shutdown
         self.is_connected = False
@@ -94,14 +67,14 @@ class ARXArm:
     def reset(self):
         if not self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
-                "ARXArm is not connected. Do not run `robot.disconnect()` twice."
+                "ARX5Arm is not connected. Do not run `robot.disconnect()` twice."
             )
         self.joint_controller.reset_to_home()
 
     def calibrate(self):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "ARXArm is not connected. You need to run `robot.connect()`."
+                "ARX5Arm is not connected. You need to run `robot.connect()`."
             )
         if self.is_master:
             self.joint_controller.set_to_damping()
@@ -113,7 +86,7 @@ class ARXArm:
     def get_state(self) -> np.ndarray:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "ARXArm is not connected. You need to run `robot.connect()`."
+                "ARX5Arm is not connected. You need to run `robot.connect()`."
             )
         joint_state = self.joint_controller.get_state()
         state = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
@@ -127,7 +100,7 @@ class ARXArm:
     def send_command(self, action: np.ndarray):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
-                "ARXArm is not connected. You need to run `robot.connect()`."
+                "ARX5Arm is not connected. You need to run `robot.connect()`."
             )
         cmd = arx5.JointState(DOF)
         cmd.pos()[0:DOF] = action[0:DOF]
@@ -178,11 +151,11 @@ class ARX5Robot:
         self.leader_arms = {}
         self.follower_arms = {}
         for key, arm_config in self.config.leader_arms.items():
-            self.leader_arms[key] = ARXArm(arm_config, True)
+            self.leader_arms[key] = ARX5Arm(arm_config, True)
         for key, arm_config in self.config.follower_arms.items():
-            self.follower_arms[key] = ARXArm(arm_config, False)
+            self.follower_arms[key] = ARX5Arm(arm_config, False)
 
-        self.cameras = self.config.cameras
+        self.cameras = make_cameras_from_configs(self.config.cameras)
         self.is_connected = False
         self.logs = {}
 

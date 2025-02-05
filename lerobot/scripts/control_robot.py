@@ -216,9 +216,6 @@ def record(
     # TODO(rcadene): Add option to record logs
     listener = None
     events = None
-    policy = None
-    device = None
-    use_amp = None
 
     if cfg.resume:
         dataset = LeRobotDataset(
@@ -231,7 +228,8 @@ def record(
                 num_processes=cfg.num_image_writer_processes,
                 num_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
             )
-        sanity_check_dataset_robot_compatibility(dataset, robot, cfg.fps, cfg.video)
+        if not no_robot:
+            sanity_check_dataset_robot_compatibility(dataset, robot, cfg.fps, cfg.video)
     else:
         # Create empty dataset or load existing saved episodes
         sanity_check_dataset_name(cfg.repo_id, cfg.policy)
@@ -245,44 +243,14 @@ def record(
             image_writer_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
         )
 
-    # Load pretrained policy
-    policy = None if cfg.policy is None else make_policy(cfg.policy, cfg.device, ds_meta=dataset.meta)
-
     if not no_robot and not robot.is_connected:
         robot.connect()
 
     # Ensure the number of tasks provided is equal to number of discrete steps.
-    if tasks_path != None:
+    if cfg.tasks_path != None:
         # TODO
-        tasks_by_episodes = load_json(tasks_path)
+        tasks_by_episodes = load_json(cfg.tasks_path)
         tasks_by_episodes = {int(ep_idx): task for ep_idx, task in tasks_by_episodes.items()}
-
-    # Construct dataset(s) we are recording
-    # One dataset constructed for each discrete step in the recording
-    if resume:
-        dataset = LeRobotDataset(
-            repo_id,
-            root=root,
-            local_files_only=local_files_only,
-        )
-        if not no_robot:
-            dataset.start_image_writer(
-                num_processes=num_image_writer_processes,
-                num_threads=num_image_writer_threads_per_camera * len(robot.cameras),
-            )
-            sanity_check_dataset_robot_compatibility(dataset, robot, fps, video)
-    else:
-        # Create empty dataset or load existing saved episodes
-        sanity_check_dataset_name(repo_id, policy)
-        dataset = LeRobotDataset.create(
-            repo_id,
-            fps,
-            root=root,
-            robot=robot,
-            use_videos=video,
-            image_writer_processes=num_image_writer_processes,
-            image_writer_threads=num_image_writer_threads_per_camera * len(robot.cameras),
-        )
 
     listener, events = init_keyboard_listener()
 
@@ -291,15 +259,17 @@ def record(
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
     if not no_robot:
-        enable_teleoperation = policy is None
-        log_say("Warmup record", play_sounds)
-        warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
+        log_say("Warmup record", cfg.play_sounds)
+        warmup_record(robot, events, True, cfg.warmup_time_s, cfg.display_cameras, cfg.fps)
 
         if has_method(robot, "teleop_safety_stop"):
             robot.teleop_safety_stop()
 
-    should_stop_recording = False
     recorded_episodes = 0
+    if cfg.resume:
+        recorded_episodes = dataset.meta.total_episodes
+        print(recorded_episodes)
+
     while True:
         if recorded_episodes >= cfg.num_episodes:
             break
@@ -313,7 +283,7 @@ def record(
             events=events,
             episode_time_s=cfg.episode_time_s,
             display_cameras=cfg.display_cameras,
-            policy=policy,
+            policy=None,
             device=cfg.device,
             use_amp=cfg.use_amp,
             fps=cfg.fps,
@@ -389,7 +359,7 @@ def control_robot(cfg: ControlPipelineConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
-    if kwargs["no_robot"]:
+    if cfg.no_robot:
         from lerobot.common.robot_devices.robots.nooprobot import NoOpRobot
         robot = NoOpRobot()
     else:
@@ -400,7 +370,7 @@ def control_robot(cfg: ControlPipelineConfig):
     elif isinstance(cfg.control, TeleoperateControlConfig):
         teleoperate(robot, cfg.control)
     elif isinstance(cfg.control, RecordControlConfig):
-        record(robot, cfg.control)
+        record(robot, cfg.control, no_robot=cfg.no_robot)
     elif isinstance(cfg.control, ReplayControlConfig):
         replay(robot, cfg.control)
 

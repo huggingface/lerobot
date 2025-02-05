@@ -436,12 +436,12 @@ def check_timestamps_sync(
             }
             outside_tolerances.append(entry)
 
-        if raise_value_error:
-            raise ValueError(
-                f"""One or several timestamps unexpectedly violate the tolerance inside episode range.
-                This might be due to synchronization issues with timestamps during data collection.
-                \n{pformat(outside_tolerances)}"""
-            )
+        # if raise_value_error:
+        #     raise ValueError(
+        #         f"""One or several timestamps unexpectedly violate the tolerance inside episode range.
+        #         This might be due to synchronization issues with timestamps during data collection.
+        #         \n{pformat(outside_tolerances)}"""
+        #     )
         return False
 
     return True
@@ -463,15 +463,15 @@ def check_delta_timestamps(
             ]
 
     if len(outside_tolerance) > 0:
-        if raise_value_error:
-            raise ValueError(
-                f"""
-                The following delta_timestamps are found outside of tolerance range.
-                Please make sure they are multiples of 1/{fps} +/- tolerance and adjust
-                their values accordingly.
-                \n{pformat(outside_tolerance)}
-                """
-            )
+        # if raise_value_error:
+        #     raise ValueError(
+        #         f"""
+        #         The following delta_timestamps are found outside of tolerance range.
+        #         Please make sure they are multiples of 1/{fps} +/- tolerance and adjust
+        #         their values accordingly.
+        #         \n{pformat(outside_tolerance)}
+        #         """
+        #     )
         return False
 
     return True

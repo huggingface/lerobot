@@ -9,6 +9,12 @@ from lerobot.common.robot_devices.robots.configs import (
     RobotConfig,
     So100RobotConfig,
     StretchRobotConfig,
+    NoOpRobotConfig,
+    ARX5RobotConfig,
+    ARX5SingleArmRobotConfig,
+    ARX5BimanualRobotConfig,
+    ARX5SingleArmFollowOnlyConfig,
+    ARX5BimanualFollowOnlyConfig,
 )
 
 
@@ -54,6 +60,38 @@ def make_robot_from_config(config: RobotConfig):
         from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
         return ManipulatorRobot(config)
+    elif isinstance(config, ARX5SingleArmRobotConfig):
+        from lerobot.common.robot_devices.robots.arx5 import ARX5Robot
+        common_config = ARX5RobotConfig(
+            leader_arms=config.leader_arms,
+            follower_arms=config.follower_arms,
+            cameras=config.cameras
+        )
+        return ARX5Robot(common_config)
+    elif isinstance(config, ARX5BimanualRobotConfig):
+        from lerobot.common.robot_devices.robots.arx5 import ARX5Robot
+        common_config = ARX5RobotConfig(
+            leader_arms=config.leader_arms,
+            follower_arms=config.follower_arms,
+            cameras=config.cameras
+        )
+        return ARX5Robot(common_config)
+    elif isinstance(config, ARX5SingleArmFollowOnlyConfig):
+        from lerobot.common.robot_devices.robots.arx5 import ARX5Robot
+        common_config = ARX5RobotConfig(
+            leader_arms=config.leader_arms,
+            follower_arms=config.follower_arms,
+            cameras=config.cameras
+        )
+        return ARX5Robot(common_config)
+    elif isinstance(config, ARX5BimanualFollowOnlyConfig):
+        from lerobot.common.robot_devices.robots.arx5 import ARX5Robot
+        common_config = ARX5RobotConfig(
+            leader_arms=config.leader_arms,
+            follower_arms=config.follower_arms,
+            cameras=config.cameras
+        )
+        return ARX5Robot(common_config)
     else:
         from lerobot.common.robot_devices.robots.stretch import StretchRobot
 
