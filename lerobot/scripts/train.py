@@ -24,7 +24,13 @@ from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
 
+<<<<<<< HEAD
 from lerobot.common.datasets.factory import make_dataset
+=======
+from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
+from lerobot.common.datasets.online_buffer import OnlineBuffer, compute_sampler_weights
+>>>>>>> 1c9d53c1 (fix: support multi repo datasets for training)
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
@@ -136,10 +142,14 @@ def train(cfg: TrainPipelineConfig):
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size)
 
     logging.info("Creating policy")
+    if isinstance(dataset, MultiLeRobotDataset):
+        ds_meta = dataset._datasets[0].meta
+    else:
+        ds_meta = dataset.meta
     policy = make_policy(
         cfg=cfg.policy,
         device=device,
-        ds_meta=dataset.meta,
+        ds_meta=ds_meta,
     )
 
     logging.info("Creating optimizer and scheduler")
