@@ -179,14 +179,14 @@ class MobileManipulator:
 
     def capture_observation(self) -> dict:
         """
-        Retrieve sensor data (observations) from the remote robot.
-
-        Steps:
-          1. Send a request (if needed) to the remote robot to get the current state/sensor data.
-          2. Wait for and read the response data from the network.
-          3. Parse and convert the data (e.g., positions, images) into a standardized format,
-             such as torch.Tensors.
-          4. Return the observations as a dictionary.
+           Retrieve sensor data (observations) from the remote robot.
+        xc
+           Steps:
+             1. Send a request (if needed) to the remote robot to get the current state/sensor data.
+             2. Wait for and read the response data from the network.
+             3. Parse and convert the data (e.g., positions, images) into a standardized format,
+                such as torch.Tensors.
+             4. Return the observations as a dictionary.
         """
         # Pseudo-code outline:
         # self.socket.sendall(b'GET_STATE')
@@ -242,3 +242,5 @@ class MobileManipulator:
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
+        if self.listener:
+            self.listener.stop()
