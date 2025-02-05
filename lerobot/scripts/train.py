@@ -27,7 +27,7 @@ import torch
 from torch.amp import GradScaler
 
 from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
 from lerobot.common.datasets.online_buffer import OnlineBuffer, compute_sampler_weights
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
@@ -216,18 +216,14 @@ def train(cfg: TrainPipelineConfig):
 
     logging.info("Creating policy")
     # TODO: support multi-lerobot dataset
-    # if isinstance(offline_dataset, MultiLeRobotDataset):
-    #     dataset_stats = offline_dataset._datasets[0].meta.stats
-    # else:
-    #     dataset_stats = offline_dataset.meta.stats
-    # policy = make_policy(
-    #     hydra_cfg=cfg,
-    #     dataset_stats=dataset_stats,
-    #     pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
+    if isinstance(offline_dataset, MultiLeRobotDataset):
+        ds_meta = offline_dataset._datasets[0].meta
+    else:
+        ds_meta = offline_dataset.meta
     policy = make_policy(
         cfg=cfg.policy,
         device=device,
-        ds_meta=offline_dataset.meta,
+        ds_meta=ds_meta,
     )
 
     logging.info("Creating optimizer and scheduler")
