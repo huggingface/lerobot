@@ -130,11 +130,12 @@ wandb login
 |   |   ├── robot_devices  # various real devices: dynamixel motors, opencv cameras, koch robots
 |   |   └── utils          # various utilities
 |   └── scripts          # contains functions to execute via command line
-|       ├── eval.py                 # load policy and evaluate it on an environment
-|       ├── train.py                # train a policy via imitation learning and/or reinforcement learning
-|       ├── control_robot.py        # teleoperate a real robot, record data, run a policy
-|       ├── push_dataset_to_hub.py  # convert your dataset into LeRobot dataset format and upload it to the Hugging Face hub
-|       └── visualize_dataset.py    # load a dataset and render its demonstrations
+|       ├── eval.py                    # load policy and evaluate it on an environment
+|       ├── train.py                   # train a policy via imitation learning and/or reinforcement learning
+|       ├── control_robot.py           # teleoperate a real robot, record data, run a policy
+|       ├── push_dataset_to_hub.py     # convert your dataset into LeRobot dataset format and upload it to the Hugging Face hub
+|       ├── visualize_dataset.py       # load a dataset and render its demonstrations in rerun.io
+|       └── visualize_dataset_html.py  # load a dataset and render its demonstrations in a browser
 ├── outputs               # contains results of scripts execution: logs, videos, model checkpoints
 └── tests                 # contains pytest utilities for continuous integration
 ```
@@ -145,18 +146,15 @@ Check out [example 1](./examples/1_load_lerobot_dataset.py) that illustrates how
 
 You can also locally visualize episodes from a dataset on the hub by executing our script from the command line:
 ```bash
-python lerobot/scripts/visualize_dataset.py \
-    --repo-id lerobot/pusht \
-    --episode-index 0
+python lerobot/scripts/visualize_dataset_html.py --repo-id lerobot/pusht
 ```
 
 or from a dataset in a local folder with the `root` option and the `--local-files-only` (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
 ```bash
-python lerobot/scripts/visualize_dataset.py \
+python lerobot/scripts/visualize_dataset_html.py \
     --repo-id lerobot/pusht \
     --root ./my_local_data_dir \
-    --local-files-only 1 \
-    --episode-index 0
+    --local-files-only 1
 ```
 
 
