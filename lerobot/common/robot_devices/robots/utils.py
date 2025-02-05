@@ -51,6 +51,14 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         return So100RobotConfig(**kwargs)
     elif robot_type == "stretch":
         return StretchRobotConfig(**kwargs)
+    elif robot_type == "arx5":
+        return ARX5SingleArmRobotConfig(**kwargs)
+    elif robot_type == "arx5_bimanual":
+        return ARX5BimanualRobotConfig(**kwargs)
+    elif robot_type == "arx5_follow":
+        return ARX5SingleArmFollowOnlyConfig(**kwargs)
+    elif robot_type == "arx5_bimanual_follow":
+        return ARX5BimanualFollowOnlyConfig(**kwargs)
     else:
         raise ValueError(f"Robot type '{robot_type}' is not available.")
 
