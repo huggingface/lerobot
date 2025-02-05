@@ -189,63 +189,7 @@ def log_eval_info(logger, info, step, cfg, dataset, is_online):
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
 
-    init_logging()
-    logging.info(pformat(OmegaConf.to_container(cfg)))
-
-    if cfg.training.online_steps > 0 and isinstance(cfg.dataset_repo_id, ListConfig):
-        raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
-
-    # If we are resuming a run, we need to check that a checkpoint exists in the log directory, and we need
-    # to check for any differences between the provided config and the checkpoint's config.
-    if cfg.resume:
-        if not Logger.get_last_checkpoint_dir(out_dir).exists():
-            raise RuntimeError(
-                "You have set resume=True, but there is no model checkpoint in "
-                f"{Logger.get_last_checkpoint_dir(out_dir)}"
-            )
-        checkpoint_cfg_path = str(Logger.get_last_pretrained_model_dir(out_dir) / "config.yaml")
-        logging.info(
-            colored(
-                "You have set resume=True, indicating that you wish to resume a run",
-                color="yellow",
-                attrs=["bold"],
-            )
-        )
-        # Get the configuration file from the last checkpoint.
-        checkpoint_cfg = init_hydra_config(checkpoint_cfg_path)
-        # Check for differences between the checkpoint configuration and provided configuration.
-        # Hack to resolve the delta_timestamps ahead of time in order to properly diff.
-        resolve_delta_timestamps(cfg)
-        diff = DeepDiff(OmegaConf.to_container(checkpoint_cfg), OmegaConf.to_container(cfg))
-        # Ignore the `resume` and parameters.
-        if "values_changed" in diff and "root['resume']" in diff["values_changed"]:
-            del diff["values_changed"]["root['resume']"]
-        # Log a warning about differences between the checkpoint configuration and the provided
-        # configuration.
-        if len(diff) > 0:
-            logging.warning(
-                "At least one difference was detected between the checkpoint configuration and "
-                f"the provided configuration: \n{pformat(diff)}\nNote that the checkpoint configuration "
-                "takes precedence.",
-            )
-        # Use the checkpoint config instead of the provided config (but keep `resume` parameter).
-        # cfg = checkpoint_cfg
-        cfg.resume = True
-    elif Logger.get_last_checkpoint_dir(out_dir).exists():
-        raise RuntimeError(
-            f"The configured output directory {Logger.get_last_checkpoint_dir(out_dir)} already exists. If "
-            "you meant to resume training, please use `resume=true` in your command or yaml configuration."
-        )
-
-    if cfg.eval.batch_size > cfg.eval.n_episodes:
-        raise ValueError(
-            "The eval batch size is greater than the number of eval episodes "
-            f"({cfg.eval.batch_size} > {cfg.eval.n_episodes}). As a result, {cfg.eval.batch_size} "
-            f"eval environments will be instantiated, but only {cfg.eval.n_episodes} will be used. "
-            "This might significantly slow down evaluation. To fix this, you should update your command "
-            f"to increase the number of episodes to match the batch size (e.g. `eval.n_episodes={cfg.eval.batch_size}`), "
-            f"or lower the batch size (e.g. `eval.batch_size={cfg.eval.n_episodes}`)."
-        )
+    logging.info(pformat(asdict(cfg)))
 
     # log metrics to terminal and wandb
     logger = Logger(cfg)
