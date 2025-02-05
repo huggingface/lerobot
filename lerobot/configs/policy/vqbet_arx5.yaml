@@ -14,7 +14,7 @@ override_dataset_stats:
   # from the original codebase, but we should remove these and train our own pretrained model
 
 training:
-  offline_steps: 50000
+  offline_steps: 150000
   online_steps: 0
   eval_freq: -1
   save_freq: 5000
