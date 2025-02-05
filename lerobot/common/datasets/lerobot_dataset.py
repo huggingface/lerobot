@@ -319,6 +319,13 @@ class LeRobotDatasetMetadata:
             )
         else:
             # TODO(aliberts, rcadene): implement sanity check for features
+
+            # check if none of the features contains a "/" in their names,
+            # as this would break the dict flattening in the stats computation, which uses '/' as separator
+            for key in features:
+                if "/" in key:
+                    raise ValueError(f"Feature names should not contain '/'. Found '/' in feature '{key}'.")
+
             features = {**features, **DEFAULT_FEATURES}
 
         obj.tasks, obj.stats, obj.episodes = {}, {}, []
@@ -688,6 +695,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # mark everything within 10 timestamps (0.5 seconds) of end as the end episode
             done = True
         item['next.done'] = done
+        
+        # Add task as a string
+        task_idx = item["task_index"].item()
+        item["task"] = self.meta.tasks[task_idx]
 
         return item
 
@@ -871,7 +882,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def stop_image_writer(self) -> None:
         """
         Whenever wrapping this dataset inside a parallelized DataLoader, this needs to be called first to
-        remove the image_write in order for the LeRobotDataset object to be pickleable and parallelized.
+        remove the image_writer in order for the LeRobotDataset object to be pickleable and parallelized.
         """
         if self.image_writer is not None:
             self.image_writer.stop()
