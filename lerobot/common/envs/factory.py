@@ -20,7 +20,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 from omegaconf import DictConfig
-from mani_skill.utils import common
+# from mani_skill.utils import common
 
 
 def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv | None:
@@ -122,27 +122,29 @@ class PixelWrapper(gym.Wrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
         return self._get_obs(obs), reward, terminated, truncated, info
 
+
 class ConvertToLeRobotEnv(gym.Wrapper):
     def __init__(self, env, num_envs):
         super().__init__(env)
+
     def reset(self, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options={})
         return self._get_obs(obs), info
+
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
         return self._get_obs(obs), reward, terminated, truncated, info
+
     def _get_obs(self, observation):
         sensor_data = observation.pop("sensor_data")
         del observation["sensor_param"]
         images = []
         for cam_data in sensor_data.values():
-                images.append(cam_data["rgb"])
+            images.append(cam_data["rgb"])
 
         images = torch.concat(images, axis=-1)
         # flatten the rest of the data which should just be state data
-        observation = common.flatten_state_dict(
-            observation, use_torch=True, device=self.base_env.device
-        )
+        observation = common.flatten_state_dict(observation, use_torch=True, device=self.base_env.device)
         ret = dict()
         ret["state"] = observation
         ret["pixels"] = images

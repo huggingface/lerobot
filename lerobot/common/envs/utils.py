@@ -31,28 +31,25 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     # TODO: You have to merge all tensors from agent key and extra key
     # You don't keep sensor param key in the observation
     # And you keep sensor data rgb
-    if "pixels" in observations:
-        if isinstance(observations["pixels"], dict):
-            imgs = {f"observation.images.{key}": img for key, img in observations["pixels"].items()}
-        else:
-            imgs = {"observation.image": observations["pixels"]}
+    for key, img in observations.items():
+        if "images" not in key:
+            continue
 
-        for imgkey, img in imgs.items():
-            img = torch.from_numpy(img)
+        if img.ndim == 3:
+            img = img.unsqueeze(0)
+        # sanity check that images are channel last
+        _, h, w, c = img.shape
+        assert c < h and c < w, f"expect channel last images, but instead got {img.shape=}"
 
-            # sanity check that images are channel last
-            _, h, w, c = img.shape
-            assert c < h and c < w, f"expect channel last images, but instead got {img.shape=}"
+        # sanity check that images are uint8
+        assert img.dtype == torch.uint8, f"expect torch.uint8, but instead {img.dtype=}"
 
-            # sanity check that images are uint8
-            assert img.dtype == torch.uint8, f"expect torch.uint8, but instead {img.dtype=}"
+        # convert to channel first of type float32 in range [0,1]
+        img = einops.rearrange(img, "b h w c -> b c h w").contiguous()
+        img = img.type(torch.float32)
+        img /= 255
 
-            # convert to channel first of type float32 in range [0,1]
-            img = einops.rearrange(img, "b h w c -> b c h w").contiguous()
-            img = img.type(torch.float32)
-            img /= 255
-
-            return_observations[imgkey] = img
+        return_observations[key] = img
         # obs state agent qpos and qvel
         # image
 
@@ -63,7 +60,8 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
     # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
     # requirement for "agent_pos"
-    return_observations["observation.state"] = torch.from_numpy(observations["agent_pos"]).float()
+    # return_observations["observation.state"] = torch.from_numpy(observations["agent_pos"]).float()
+    return_observations["observation.state"] = observations["observation.state"].float()
     return return_observations
 
 
