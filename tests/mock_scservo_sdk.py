@@ -46,6 +46,7 @@ class PortHandler:
         self.port = port
         # factory default baudrate
         self.baudrate = DEFAULT_BAUDRATE
+        self.ser = SerialMock()
 
     def openPort(self):  # noqa: N802
         return True
@@ -101,3 +102,11 @@ class GroupSyncWrite:
 
     def changeParam(self, index, data):  # noqa: N802
         self.packet_handler.data[index][self.address] = data
+
+
+class SerialMock:
+    def reset_output_buffer(self):
+        pass
+
+    def reset_input_buffer(self):
+        pass

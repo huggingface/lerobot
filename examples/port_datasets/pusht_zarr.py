@@ -44,7 +44,7 @@ PUSHT_FEATURES = {
         "dtype": None,
         "shape": (3, 96, 96),
         "names": [
-            "channel",
+            "channels",
             "height",
             "width",
         ],
