@@ -529,11 +529,6 @@ class MobileSO100RobotConfig(RobotConfig):
     port: int = 5555
     video_port: int = 5556
 
-    cameras: dict[str, CameraConfig] = field(
-        default_factory=lambda: {
-            "laptop": OpenCVCameraConfig(camera_index=0, fps=30, width=640, height=480),
-            "phone": OpenCVCameraConfig(camera_index=1, fps=30, width=640, height=480),
-        }
-    )
+    cameras: dict[str, CameraConfig] = field(default_factory=lambda: {})
 
     mock: bool = False
