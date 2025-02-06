@@ -27,6 +27,8 @@ training:
   # image_keys: ["observation.images.top", "observation.images.wrist"]
   image_keys: ["observation.images.laptop", "observation.images.phone"]
   label_key: "next.reward"
+  profile_inference_time: false
+  profile_inference_time_iters: 20
 
 eval:
   batch_size: 16
