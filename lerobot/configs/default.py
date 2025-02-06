@@ -34,6 +34,7 @@ class DatasetConfig:
     local_files_only: bool = False
     use_imagenet_stats: bool = True
     video_backend: str = "pyav"
+    root_dir: str | None = None
 
 
 @dataclass
