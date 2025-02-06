@@ -26,6 +26,8 @@ training:
   save_checkpoint: true
   image_keys: ["observation.images.top", "observation.images.wrist"]
   label_key: "next.reward"
+  profile_inference_time: false
+  profile_inference_time_iters: 20
 
 eval:
   batch_size: 16
