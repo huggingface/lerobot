@@ -527,6 +527,7 @@ class MobileSO100RobotConfig(RobotConfig):
     # Network Configuration
     ip: str = "172.17.133.91"
     port: int = 5555
+    video_port: int = 5556
 
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {

@@ -1,5 +1,8 @@
+import base64
 import json
 
+import cv2
+import numpy as np
 import torch
 import zmq
 from pynput import keyboard
@@ -12,13 +15,7 @@ from lerobot.common.robot_devices.robots.configs import MobileSO100RobotConfig
 
 class MobileManipulator:
     """
-    MobileManipulator is a new class for connecting to and controlling a remote robot.
-
-    In contrast to the ManipulatorRobot that directly interfaces with hardware,
-    MobileManipulator communicates over a network (e.g. via TCP sockets) and accepts keyboard input
-    for teleoperation.
-
-    All I/O operations (network communications and keyboard input) are described in the method comments.
+    MobileManipulator is a new class for connecting to and controlling a remote robot such as Mobile-SO100.
     """
 
     def __init__(
@@ -37,11 +34,12 @@ class MobileManipulator:
         self.robot_type = config.type
         self.config = config
         self.remote_ip = config.ip
-        # Use port 5555 by default for ZMQ (adjust as needed)
         self.remote_port = config.port
+        self.remote_port_video = config.video_port
         self.is_connected = False
         self.context = None
         self.cmd_socket = None
+        self.video_socket = None
 
         # Flag to allow clean shutdown.
         self.running = True
@@ -110,36 +108,58 @@ class MobileManipulator:
         """
         Connect to the remote robot.
 
-        Steps:
-          1. Create a network socket (e.g., using the socket module).
-          2. Connect to the remote IP and port specified in the configuration.
-          3. Optionally perform a handshake or initialization sequence with the remote robot.
-          4. Set self.is_connected to True and log the connection details.
         """
         self.context = zmq.Context()
         self.cmd_socket = self.context.socket(zmq.PUSH)
         connection_string = f"tcp://{self.remote_ip}:{self.remote_port}"
         self.cmd_socket.connect(connection_string)
+        self.cmd_socket.setsockopt(zmq.CONFLATE, 1)
         self.is_connected = True
         print(f"[INFO] Connected to remote robot at {connection_string} using ZMQ.")
+
+        self.video_socket = self.context.socket(zmq.SUB)
+        self.video_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+        video_connection = f"tcp://{self.remote_ip}:{self.remote_port_video}"
+        self.video_socket.connect(video_connection)
+        self.video_socket.setsockopt(zmq.CONFLATE, 1)
+        print(f"[INFO] Connected to remote video stream at {video_connection}.")
+
+    def _get_video_frame(self, timeout: int = 1):
+        """
+        Helper method to poll the video socket and decode the latest frame.
+
+        Args:
+            timeout (int): The poll timeout in milliseconds.
+
+        Returns:
+            tuple: (frame, present_speed) where 'frame' is a decoded image (or None)
+                   and 'present_speed' is any accompanying speed data (or None).
+        """
+        if self.video_socket is not None:
+            poller = zmq.Poller()
+            poller.register(self.video_socket, zmq.POLLIN)
+            socks = dict(poller.poll(timeout=timeout))
+            if self.video_socket in socks and socks[self.video_socket] == zmq.POLLIN:
+                try:
+                    obs_string = self.video_socket.recv_string(zmq.NOBLOCK)
+                    observation = json.loads(obs_string)
+                    image_b64 = observation.get("image", "")
+                    present_speed = observation.get("present_speed", None)
+                    # Decode the base64 image.
+                    jpg_original = base64.b64decode(image_b64)
+                    np_arr = np.frombuffer(jpg_original, dtype=np.uint8)
+                    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                    return frame, present_speed
+                except Exception as e:
+                    print(f"[DEBUG] Error receiving video frame: {e}")
+        return None, None
 
     def teleop_step(
         self, record_data: bool = False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         """
         Perform one teleoperation step using keyboard input.
-
-        Steps:
-          1. Capture keyboard input:
-             - Use a keyboard input library or a non-blocking I/O method.
-             - Map specific keys (e.g., arrow keys, WASD) to robot commands.
-          2. Process the input to create a control command for the robot.
-          3. Send the command over the network connection to the remote robot.
-          4. Optionally, if record_data is True:
-             - Request and retrieve sensor data or feedback from the remote robot.
-             - Convert received data to torch.Tensors.
-             - Return a tuple (observations, actions) as dictionaries.
-          5. Log the durations for input reading, command processing, and network I/O.
+        Additionally, receive and display the latest video frame.
         """
         # Process the current key states.
         x = 0.0
@@ -169,6 +189,20 @@ class MobileManipulator:
         else:
             print("[WARNING] Not connected. Unable to send command.")
 
+        # Use the helper method to receive a video frame.
+        frame, present_speed = self._get_video_frame(timeout=1)
+        if frame is not None:
+            # Overlay the present_speed if available.
+            if present_speed is not None:
+                text = f"Velocity: {present_speed}"
+                cv2.putText(
+                    frame, text, (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2
+                )
+            cv2.imshow("Robot Camera", frame)
+            cv2.waitKey(1)
+        else:
+            print("[DEBUG] No video frame received.")
+
         # If record_data is enabled, simulate receiving sensor data.
         if record_data:
             # In a real application, you might wait for a sensor response here.
@@ -179,23 +213,24 @@ class MobileManipulator:
 
     def capture_observation(self) -> dict:
         """
-           Retrieve sensor data (observations) from the remote robot.
-        xc
-           Steps:
-             1. Send a request (if needed) to the remote robot to get the current state/sensor data.
-             2. Wait for and read the response data from the network.
-             3. Parse and convert the data (e.g., positions, images) into a standardized format,
-                such as torch.Tensors.
-             4. Return the observations as a dictionary.
+        Retrieve sensor data (observations) from the remote robot.
+        In addition to the state and camera images (if any), the camera stream observation is added:
+          - "observation.image": a tensor containing the camera image from the video stream.
+          - "observation.present_speed": the velocity information received along with the image.
         """
-        # Pseudo-code outline:
-        # self.socket.sendall(b'GET_STATE')
-        # response = self.socket.recv(8192)
-        # observations = parse_observation_response(response)
-        # Convert data to torch.Tensor as needed:
-        # observations["observation.state"] = torch.tensor(observations["state_data"])
-        # Return the dictionary.
-        pass
+        obs_dict = {}
+
+        # Use the helper method to get the latest video frame.
+        frame, present_speed = self._get_video_frame(timeout=5)
+        if frame is not None:
+            # Convert the image from BGR to RGB and then to a torch tensor.
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            tensor_img = torch.from_numpy(frame_rgb)
+            obs_dict["observation.image"] = tensor_img
+        if present_speed is not None:
+            obs_dict["observation.present_speed"] = torch.tensor(present_speed)
+
+        return obs_dict
 
     def send_action(self, action: torch.Tensor) -> torch.Tensor:
         """
@@ -233,6 +268,8 @@ class MobileManipulator:
             stop_cmd = {"x": 0, "y": 0, "theta": 0}
             self.cmd_socket.send_string(json.dumps(stop_cmd))
             self.cmd_socket.close()
+            if self.video_socket:
+                self.video_socket.close()
             self.context.term()
             self.is_connected = False
             print("[INFO] Disconnected from remote robot.")
