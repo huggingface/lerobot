@@ -131,17 +131,17 @@ class MobileManipulator:
     # --- Keyboard Event Handlers ---
     def on_press(self, key):
         try:
-            if key == keyboard.Key.up:
+            if key.char == "w":
                 self.pressed_keys["forward"] = True
-            elif key == keyboard.Key.down:
+            elif key.char == "s":
                 self.pressed_keys["backward"] = True
-            elif key == keyboard.Key.left:
+            elif key.char == "a":
                 self.pressed_keys["left"] = True
-            elif key == keyboard.Key.right:
+            elif key.char == "d":
                 self.pressed_keys["right"] = True
-            elif key.char == "x":
+            elif key.char == "z":
                 self.pressed_keys["rotate_left"] = True
-            elif key.char == "c":
+            elif key.char == "x":
                 self.pressed_keys["rotate_right"] = True
             elif key.char == "q":
                 # Set the running flag to False and stop the listener.
@@ -155,18 +155,18 @@ class MobileManipulator:
 
     def on_release(self, key):
         try:
-            if key == keyboard.Key.up:
-                self.pressed_keys["forward"] = False
-            elif key == keyboard.Key.down:
-                self.pressed_keys["backward"] = False
-            elif key == keyboard.Key.left:
-                self.pressed_keys["left"] = False
-            elif key == keyboard.Key.right:
-                self.pressed_keys["right"] = False
-            elif hasattr(key, "char"):
-                if key.char == "x":
+            if hasattr(key, "char"):
+                if key.char == "w":
+                    self.pressed_keys["forward"] = False
+                elif key.char == "s":
+                    self.pressed_keys["backward"] = False
+                elif key.char == "a":
+                    self.pressed_keys["left"] = False
+                elif key.char == "d":
+                    self.pressed_keys["right"] = False
+                elif key.char == "z":
                     self.pressed_keys["rotate_left"] = False
-                elif key.char == "c":
+                elif key.char == "x":
                     self.pressed_keys["rotate_right"] = False
         except AttributeError:
             pass
@@ -235,62 +235,85 @@ class MobileManipulator:
                 "MobileManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
-        # Process the current key states.
-        x = 0.0
-        y = 0.0
-        theta = 0.0
+        # --- Teleop Command Processing ---
+        # Teleoperation commands are given in physical units:
+        #   x_cmd: forward/backward velocity in m/s (positive = backward, negative = forward)
+        #   y_cmd: left/right velocity in m/s (positive = right, negative = left)
+        #   theta_cmd: rotation rate in degrees/s (positive = counterclockwise)
+        x_cmd = 0.0  # m/s
+        y_cmd = 0.0  # m/s
+        theta_cmd = 0.0  # deg/s
 
-        if self.pressed_keys["forward"]:
-            x -= 0.2
-        if self.pressed_keys["backward"]:
-            x += 0.2
-        if self.pressed_keys["left"]:
-            y -= 0.2
-        if self.pressed_keys["right"]:
-            y += 0.2
+        # Swap x_cmd and y_cmd
+        if self.pressed_keys["forward"]:  # w
+            y_cmd -= 0.2  # move forward
+        if self.pressed_keys["backward"]:  # s
+            y_cmd += 0.2  # move backward
+        if self.pressed_keys["left"]:  # a
+            x_cmd -= 0.2  # move left
+        if self.pressed_keys["right"]:  # d
+            x_cmd += 0.2  # move right
         if self.pressed_keys["rotate_left"]:
-            theta += 1.4
+            theta_cmd += 90  # Rotate counterclockwise (deg/s)
         if self.pressed_keys["rotate_right"]:
-            theta -= 1.4
+            theta_cmd -= 90  # Rotate clockwise (deg/s)
 
-        # --- Convert Input Command to Raw Wheel Velocities ---
-        # Define the kinematic parameters (these match those in your MobileSO100 class).
-        wheel_radius = 0.05  # 5 cm wheel radius
-        base_radius = 0.125  # 12.5 cm from center to wheel
-        angles = np.radians([0, 120, 240])  # mounting angles in radians
+        # --- Convert rotational command from deg/s to rad/s ---
+        theta_rad = theta_cmd * (np.pi / 180)  # rad/s
 
-        # Build the kinematic matrix:
-        # For omni-wheels the contribution is: [-sin(theta), cos(theta), base_radius]
-        kinematic_matrix = np.array([[-np.sin(a), np.cos(a), base_radius] for a in angles])
+        # --- Omniwheel Kinematics Setup ---
+        # Wheel and robot parameters:
+        wheel_radius = 0.05  # in meters
+        base_radius = 0.125  # distance from robot center to wheel (in meters)
 
-        # Form the desired velocity vector.
-        velocity_vector = np.array([x, y, theta])
-        # Compute individual wheel speeds (in m/s).
-        wheel_speeds = kinematic_matrix.dot(velocity_vector)
+        # The wheels are mounted at 0°, 120°, and 240° relative to the robot frame.
+        angles = np.radians([0, 120, 240])
 
-        # Convert wheel speeds (m/s) to motor speeds (steps per second).
-        # Conversion factor: first, linear speed -> RPM, then RPM -> steps/s.
-        conversion_factor = (60 / (2 * np.pi)) * (50 / 0.732)  # approximately 652.0
-        motor_speeds = (wheel_speeds / wheel_radius) * conversion_factor
+        # IMPORTANT: Use the standard inverse kinematics matrix:
+        #   For each wheel i:
+        #      wheel_speed_i (m/s) = cos(alpha_i)*v_x + sin(alpha_i)*v_y + base_radius*omega
+        #
+        # This replaces the previous definition which used [-sin(a), cos(a), base_radius].
+        kinematic_matrix = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
 
-        # Convert to a list of integers.
-        motor_speeds = [int(round(speed)) for speed in motor_speeds]
+        # The robot velocity vector:
+        #   v_x is forward (m/s), v_y is lateral (m/s), and omega is rotation (rad/s)
+        velocity_vector = np.array([x_cmd, y_cmd, theta_rad])
 
-        # If any absolute speed exceeds 3400, scale all speeds.
-        max_speed_in_steps = 3400.0
-        max_abs_speed = max(abs(speed) for speed in motor_speeds)
-        if max_abs_speed > max_speed_in_steps:
-            scalar = max_speed_in_steps / max_abs_speed
-            motor_speeds = [int(round(speed * scalar)) for speed in motor_speeds]
+        # Compute the required wheel linear speeds (in m/s)
+        wheel_linear_speeds = kinematic_matrix.dot(velocity_vector)
 
-        # Encode each speed into a 16-bit command:
-        #   - The lower 15 bits hold the speed value.
-        #   - Bit 15 is set (i.e. OR 0x8000) when the speed is negative.
-        command_speeds = [(abs(speed) | 0x8000) if speed < 0 else (speed & 0x7FFF) for speed in motor_speeds]
+        # --- Convert Wheel Speeds to Motor Ticks/s ---
+        # Step 1: Convert wheel linear speeds (m/s) to wheel angular speeds (rad/s)
+        #         using: wheel_angular_speed = wheel_linear_speed / wheel_radius
+        wheel_angular_speeds = wheel_linear_speeds / wheel_radius
 
-        # --- Send the Raw Command via ZMQ ---
-        # Build the message as a JSON dictionary. We assume the remote robot expects the raw speeds
-        # under a key "raw_velocity" with subkeys for each wheel.
+        # Step 3: Convert motor angular speed (rad/s) to ticks/s.
+        #         One full rotation (2π rad) equals 4096 ticks.
+        ticks_per_second = wheel_angular_speeds * (4096 / (2 * np.pi))
+
+        # --- Limit the Motor Speed ---
+        # Define the maximum allowed motor speed.
+        max_ticks = 4096  # equals 4096 ticks/s
+
+        # Scale the ticks/s values if any exceed the maximum.
+        max_abs_ticks = max(abs(tick) for tick in ticks_per_second)
+        if max_abs_ticks > max_ticks:
+            scale = max_ticks / max_abs_ticks
+            ticks_limited = [tick * scale for tick in ticks_per_second]
+        else:
+            ticks_limited = ticks_per_second
+
+        # Round to integer tick values.
+        motor_ticks = [int(round(tick)) for tick in ticks_limited]
+
+        # --- Encode Each Tick Speed into a 16-bit Command ---
+        # The encoding format is:
+        #   - Lower 15 bits: absolute tick value.
+        #   - MSB (bit 15): set (i.e. OR with 0x8000) if the tick value is negative.
+        command_speeds = [(abs(tick) | 0x8000) if tick < 0 else (tick & 0x7FFF) for tick in motor_ticks]
+
+        # --- Package and Send the Command ---
         raw_velocity_command = {
             "wheel_1": command_speeds[0],
             "wheel_2": command_speeds[1],
@@ -298,21 +321,16 @@ class MobileManipulator:
         }
         message = {"raw_velocity": raw_velocity_command}
         self.cmd_socket.send_string(json.dumps(message))
-        print(f"[DEBUG] Sent raw velocity command: {raw_velocity_command}")
+
+        # Decode each wheel’s raw command back into deg/s for debugging.
+        decoded_speed = {
+            wheel: MobileManipulator.raw_to_degps(raw_value)
+            for wheel, raw_value in raw_velocity_command.items()
+        }
+        print(f"[DEBUG] Sent raw velocity command (decoded): {decoded_speed} deg/s")
 
         # Use the helper method to receive a video frame.
         frame, present_speed = self._get_video_frame(timeout=1)
-        if frame is not None:
-            # Overlay the present_speed if available.
-            if present_speed is not None:
-                text = f"Velocity: {present_speed}"
-                cv2.putText(
-                    frame, text, (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2
-                )
-            cv2.imshow("Robot Camera", frame)
-            cv2.waitKey(1)
-        else:
-            print("[DEBUG] No video frame received.")
 
         # Early exit when recording data is not requested
         if not record_data:
@@ -321,25 +339,22 @@ class MobileManipulator:
         # --- Recording Data ---
         obs_dict, action_dict = {}, {}
 
-        # Create a tensor for state.
-        # If present_speed is None, create a zero tensor.
         if present_speed is None:
             state_tensor = torch.zeros(3, dtype=torch.int32)
         else:
-            # Ensure present_speed is an iterable of numbers.
-            state_tensor = torch.tensor(present_speed, dtype=torch.int32)
+            # Decode each raw speed in the present_speed observation.
+            decoded_present_speed = [MobileManipulator.raw_to_degps(raw) for raw in present_speed]
+            state_tensor = torch.tensor(decoded_present_speed, dtype=torch.int32)
 
-        # Create a tensor for the action (raw command speeds).
-        action_tensor = torch.tensor(command_speeds, dtype=torch.int32)
+        # Similarly, store the sent action in degrees per second.
+        decoded_action = [MobileManipulator.raw_to_degps(raw) for raw in command_speeds]
+        action_tensor = torch.tensor(decoded_action, dtype=torch.int32)
 
         obs_dict["observation.state"] = state_tensor
         action_dict["action"] = action_tensor
 
-        # For cameras: assuming a single camera "mobile", convert the frame to a tensor.
         if frame is not None:
-            # Convert the BGR image (NumPy array) to a tensor.
             frame_tensor = torch.from_numpy(frame)
-            # Assuming the camera key is "mobile".
             obs_dict["observation.images.mobile"] = frame_tensor
 
         return obs_dict, action_dict
@@ -348,8 +363,8 @@ class MobileManipulator:
         """
         Retrieve sensor data (observations) from the remote robot.
         In addition to the state and camera images (if any), the camera stream observation is added:
-          - "observation.image": a tensor containing the camera image from the video stream.
-          - "observation.present_speed": the velocity information received along with the image.
+        - "observation.image": a tensor containing the camera image from the video stream.
+        - "observation.speed": the velocity information (in degrees/s) received along with the image.
         """
         obs_dict = {}
 
@@ -360,8 +375,11 @@ class MobileManipulator:
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             tensor_img = torch.from_numpy(frame_rgb)
             obs_dict["observation.image"] = tensor_img
+
         if present_speed is not None:
-            obs_dict["observation.present_speed"] = torch.tensor(present_speed)
+            # Assume present_speed is an iterable of raw 16-bit values.
+            decoded_speeds = [MobileManipulator.raw_to_degps(raw) for raw in present_speed]
+            obs_dict["observation.speed"] = torch.tensor(decoded_speeds, dtype=torch.int32)
 
         return obs_dict
 
@@ -382,9 +400,9 @@ class MobileManipulator:
         # Construct the raw velocity command dictionary.
         # We assume that the action tensor has exactly three elements.
         raw_velocity_command = {
-            "wheel_1": int(action[0].item()),
-            "wheel_2": int(action[1].item()),
-            "wheel_3": int(action[2].item()),
+            "wheel_1": self.degps_to_raw(int(action[0].item())),
+            "wheel_2": self.degps_to_raw(int(action[1].item())),
+            "wheel_3": self.degps_to_raw(int(action[2].item())),
         }
 
         # Wrap it in a dictionary with key "raw_velocity" so the remote robot recognizes it.
@@ -392,7 +410,7 @@ class MobileManipulator:
 
         # Send the JSON-encoded command over the ZMQ socket.
         self.cmd_socket.send_string(json.dumps(message))
-        print(f"[DEBUG] Sent raw velocity command: {raw_velocity_command}")
+        print(f"[DEBUG] Sent raw velocity command: {raw_velocity_command} deg/s")
 
         action_sent = [action]
         return torch.cat(action_sent)
@@ -427,3 +445,43 @@ class MobileManipulator:
             self.disconnect()
         if self.listener:
             self.listener.stop()
+
+    @staticmethod
+    def degps_to_raw(degps: float) -> int:
+        """
+        Convert speed in degrees/s to a 16-bit signed raw command,
+        where the lower 15 bits store the speed in steps/s (4096 steps per 360°),
+        and bit 15 is the sign bit (1 = negative).
+        """
+        steps_per_deg = 4096.0 / 360.0  # ~11.3778 steps per degree
+        # Convert deg/s to steps/s
+        speed_in_steps = abs(degps) * steps_per_deg
+
+        # Round and clamp to the 15-bit maximum (0x7FFF = 32767)
+        speed_int = int(round(speed_in_steps))
+        if speed_int > 0x7FFF:
+            speed_int = 0x7FFF
+
+        # Set the sign bit if negative
+        if degps < 0:
+            return speed_int | 0x8000  # 0x8000 sets bit 15
+        else:
+            return speed_int & 0x7FFF  # Ensure bit 15 is cleared
+
+    @staticmethod
+    def raw_to_degps(raw_speed: int) -> float:
+        """
+        Convert a 16-bit signed raw speed (steps/s in lower 15 bits, sign in bit 15)
+        back to degrees/s (°/s). 4096 steps = 360°.
+        """
+        steps_per_deg = 4096.0 / 360.0
+        # Extract the magnitude (lower 15 bits)
+        magnitude = raw_speed & 0x7FFF
+        # Convert steps/s -> deg/s
+        degps = magnitude / steps_per_deg
+
+        # Check bit 15 for sign
+        if raw_speed & 0x8000:  # negative speed
+            degps = -degps
+
+        return degps
