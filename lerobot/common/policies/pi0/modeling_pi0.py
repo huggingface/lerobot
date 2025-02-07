@@ -44,7 +44,7 @@ python lerobot/scripts/train.py \
 
 Example of using the pi0 pretrained model outside LeRobot training framework:
 ```python
-policy = Pi0Policy.from_pretrained("lerobot/pi0")
+policy = PI0Policy.from_pretrained("lerobot/pi0")
 ```
 
 """
@@ -470,6 +470,7 @@ class PI0FlowMatching(nn.Module):
         paligemma_with_export_config = PaliGemmaWithExpertConfig(
             freeze_vision_encoder=self.config.freeze_vision_encoder,
             train_expert_only=self.config.train_expert_only,
+            paligemma_pretrained_path=self.config.paligemma_pretrained_path,
             attention_implementation=self.config.attention_implementation,
         )
         self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config)
