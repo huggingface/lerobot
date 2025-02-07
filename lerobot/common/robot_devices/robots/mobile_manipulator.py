@@ -188,38 +188,42 @@ class MobileManipulator:
         self.video_socket.setsockopt_string(zmq.SUBSCRIBE, "")
         video_connection = f"tcp://{self.remote_ip}:{self.remote_port_video}"
         self.video_socket.connect(video_connection)
-        self.video_socket.setsockopt(zmq.CONFLATE, 1)
+        self.video_socket.setsockopt(zmq.RCVHWM, 1)
         print(f"[INFO] Connected to remote video stream at {video_connection}.")
 
-    def _get_video_frame(self, timeout: int = 1):
+    def _get_video_frame(self):
         """
-        Helper method to poll the video socket and decode the latest frame.
-
-        Args:
-            timeout (int): The poll timeout in milliseconds.
-
-        Returns:
-            tuple: (frame, present_speed) where 'frame' is a decoded image (or None)
-                   and 'present_speed' is any accompanying speed data (or None).
+        Always read (and discard) all buffered messages from the SUB socket,
+        decoding only the latest one so we have the freshest frame/speed data.
         """
-        if self.video_socket is not None:
-            poller = zmq.Poller()
-            poller.register(self.video_socket, zmq.POLLIN)
-            socks = dict(poller.poll(timeout=timeout))
-            if self.video_socket in socks and socks[self.video_socket] == zmq.POLLIN:
-                try:
-                    obs_string = self.video_socket.recv_string(zmq.NOBLOCK)
-                    observation = json.loads(obs_string)
-                    image_b64 = observation.get("image", "")
-                    present_speed = observation.get("present_speed", None)
-                    # Decode the base64 image.
+        frame, present_speed = None, {}
+
+        while True:
+            try:
+                obs_string = self.video_socket.recv_string(flags=zmq.NOBLOCK)
+                observation = json.loads(obs_string)
+
+                image_b64 = observation.get("image", "")
+                speed_data = observation.get("present_speed", {})
+
+                # Attempt to decode the latest image
+                if image_b64:
                     jpg_original = base64.b64decode(image_b64)
                     np_arr = np.frombuffer(jpg_original, dtype=np.uint8)
-                    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-                    return frame, present_speed
-                except Exception as e:
-                    print(f"[DEBUG] Error receiving video frame: {e}")
-        return None, None
+                    frame_candidate = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                    if frame_candidate is not None:
+                        frame = frame_candidate
+                present_speed = speed_data
+
+            except zmq.Again:
+                # No more messages in the queue, so break
+                break
+            except Exception as e:
+                print(f"[DEBUG] Error decoding message: {e}")
+                # ignore and move on
+                pass
+
+        return frame, present_speed
 
     def teleop_step(
         self, record_data: bool = False
@@ -235,24 +239,19 @@ class MobileManipulator:
                 "MobileManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
-        # --- Teleop Command Processing ---
-        # Teleoperation commands are given in physical units:
-        #   x_cmd: forward/backward velocity in m/s (positive = backward, negative = forward)
-        #   y_cmd: left/right velocity in m/s (positive = right, negative = left)
-        #   theta_cmd: rotation rate in degrees/s (positive = counterclockwise)
         x_cmd = 0.0  # m/s
         y_cmd = 0.0  # m/s
         theta_cmd = 0.0  # deg/s
 
         # Swap x_cmd and y_cmd
         if self.pressed_keys["forward"]:  # w
-            y_cmd -= 0.2  # move forward
+            y_cmd -= 0.1  # move forward
         if self.pressed_keys["backward"]:  # s
-            y_cmd += 0.2  # move backward
+            y_cmd += 0.1  # move backward
         if self.pressed_keys["left"]:  # a
-            x_cmd -= 0.2  # move left
+            x_cmd -= 0.1  # move left
         if self.pressed_keys["right"]:  # d
-            x_cmd += 0.2  # move right
+            x_cmd += 0.1  # move right
         if self.pressed_keys["rotate_left"]:
             theta_cmd += 90  # Rotate counterclockwise (deg/s)
         if self.pressed_keys["rotate_right"]:
@@ -288,13 +287,13 @@ class MobileManipulator:
         #         using: wheel_angular_speed = wheel_linear_speed / wheel_radius
         wheel_angular_speeds = wheel_linear_speeds / wheel_radius
 
-        # Step 3: Convert motor angular speed (rad/s) to ticks/s.
+        # Step 2: Convert motor angular speed (rad/s) to ticks/s.
         #         One full rotation (2π rad) equals 4096 ticks.
         ticks_per_second = wheel_angular_speeds * (4096 / (2 * np.pi))
 
         # --- Limit the Motor Speed ---
         # Define the maximum allowed motor speed.
-        max_ticks = 4096  # equals 4096 ticks/s
+        max_ticks = 3000  # equals 3000 ticks/s
 
         # Scale the ticks/s values if any exceed the maximum.
         max_abs_ticks = max(abs(tick) for tick in ticks_per_second)
@@ -322,31 +321,34 @@ class MobileManipulator:
         message = {"raw_velocity": raw_velocity_command}
         self.cmd_socket.send_string(json.dumps(message))
 
-        # Decode each wheel’s raw command back into deg/s for debugging.
+        # TODO(pepijn): remove this?
         decoded_speed = {
             wheel: MobileManipulator.raw_to_degps(raw_value)
             for wheel, raw_value in raw_velocity_command.items()
         }
         print(f"[DEBUG] Sent raw velocity command (decoded): {decoded_speed} deg/s")
 
-        # Use the helper method to receive a video frame.
-        frame, present_speed = self._get_video_frame(timeout=1)
+        frame, present_speed = self._get_video_frame()
 
-        # Early exit when recording data is not requested
         if not record_data:
             return
 
-        # --- Recording Data ---
         obs_dict, action_dict = {}, {}
 
         if present_speed is None:
             state_tensor = torch.zeros(3, dtype=torch.int32)
         else:
-            # Decode each raw speed in the present_speed observation.
-            decoded_present_speed = [MobileManipulator.raw_to_degps(raw) for raw in present_speed]
-            state_tensor = torch.tensor(decoded_present_speed, dtype=torch.int32)
+            state_tensor = torch.zeros(3, dtype=torch.int32)
+            decoded_present_speed = {
+                key: MobileManipulator.raw_to_degps(value) for key, value in present_speed.items()
+            }
+            if "1" in decoded_present_speed:
+                state_tensor[0] = decoded_present_speed["1"]
+            if "2" in decoded_present_speed:
+                state_tensor[1] = decoded_present_speed["2"]
+            if "3" in decoded_present_speed:
+                state_tensor[2] = decoded_present_speed["3"]
 
-        # Similarly, store the sent action in degrees per second.
         decoded_action = [MobileManipulator.raw_to_degps(raw) for raw in command_speeds]
         action_tensor = torch.tensor(decoded_action, dtype=torch.int32)
 
@@ -368,18 +370,28 @@ class MobileManipulator:
         """
         obs_dict = {}
 
-        # Use the helper method to get the latest video frame.
-        frame, present_speed = self._get_video_frame(timeout=5)
-        if frame is not None:
-            # Convert the image from BGR to RGB and then to a torch tensor.
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            tensor_img = torch.from_numpy(frame_rgb)
-            obs_dict["observation.image"] = tensor_img
+        frame, present_speed = self._get_video_frame()
 
-        if present_speed is not None:
-            # Assume present_speed is an iterable of raw 16-bit values.
-            decoded_speeds = [MobileManipulator.raw_to_degps(raw) for raw in present_speed]
-            obs_dict["observation.speed"] = torch.tensor(decoded_speeds, dtype=torch.int32)
+        if present_speed is None:
+            state_tensor = torch.zeros(3, dtype=torch.int32)
+            print("[DEBUG] No velocity command received! Using zeros.")
+        else:
+            state_tensor = torch.zeros(3, dtype=torch.int32)
+            decoded_present_speed = {
+                key: MobileManipulator.raw_to_degps(value) for key, value in present_speed.items()
+            }
+            if "1" in decoded_present_speed:
+                state_tensor[0] = decoded_present_speed["1"]
+            if "2" in decoded_present_speed:
+                state_tensor[1] = decoded_present_speed["2"]
+            if "3" in decoded_present_speed:
+                state_tensor[2] = decoded_present_speed["3"]
+
+        obs_dict["observation.speed"] = state_tensor
+
+        if frame is not None:
+            frame_tensor = torch.from_numpy(frame)
+            obs_dict["observation.images.mobile"] = frame_tensor
 
         return obs_dict
 
@@ -398,14 +410,13 @@ class MobileManipulator:
             )
 
         # Construct the raw velocity command dictionary.
-        # We assume that the action tensor has exactly three elements.
         raw_velocity_command = {
             "wheel_1": self.degps_to_raw(int(action[0].item())),
             "wheel_2": self.degps_to_raw(int(action[1].item())),
             "wheel_3": self.degps_to_raw(int(action[2].item())),
         }
 
-        # Wrap it in a dictionary with key "raw_velocity" so the remote robot recognizes it.
+        # Wrap it in a dictionary with key "raw_velocity"
         message = {"raw_velocity": raw_velocity_command}
 
         # Send the JSON-encoded command over the ZMQ socket.
@@ -421,12 +432,6 @@ class MobileManipulator:
     def disconnect(self):
         """
         Disconnect from the remote robot.
-
-        Steps:
-          1. Optionally send a disconnect or shutdown command to the remote robot.
-          2. Close the network socket.
-          3. Update self.is_connected to False.
-          4. Log the disconnection event.
         """
         if self.is_connected and self.cmd_socket:
             stop_cmd = {"x": 0, "y": 0, "theta": 0}
