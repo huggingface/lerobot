@@ -78,10 +78,16 @@ def save_checkpoint(
     """This function creates the following directory structure:
 
     checkpoint_dir/
-    ├── pretrained_model/  # Hugging Face pretrained model & configs directory
-    │   └── ...
-    └── training_state/  # training step, optimizer, scheduler, and rng states
-        └── ...
+    ├── pretrained_model/
+    │   ├── config.json  # policy config
+    │   ├── model.safetensors  # policy weights
+    │   └── train_config.json  # train config
+    └── training_state/
+        ├── optimizer_param_groups.json  #  optimizer param groups
+        ├── optimizer_state.safetensors  # optimizer state
+        ├── rng_state.safetensors  # rng states
+        ├── scheduler_state.json  # scheduler state
+        └── training_step.json  # training step
 
     Args:
         cfg (TrainPipelineConfig): The training config used for this run.

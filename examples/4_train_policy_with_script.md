@@ -175,12 +175,16 @@ In the output directory, there will be a folder called `checkpoints` with the fo
 ```bash
 outputs/train/run_resumption/checkpoints
 ├── 000100  # checkpoint_dir for training step 100
-│   ├── pretrained_model
-│   │   ├── config.json  # pretrained policy config
-│   │   ├── model.safetensors  # model weights
-│   │   ├── train_config.json  # train config
-│   │   └── README.md  # model card
-│   └── training_state.safetensors  # optimizer/scheduler/rng state and training step
+│   ├── pretrained_model/
+│   │   ├── config.json  # policy config
+│   │   ├── model.safetensors  # policy weights
+│   │   └── train_config.json  # train config
+│   └── training_state/
+│       ├── optimizer_param_groups.json  #  optimizer param groups
+│       ├── optimizer_state.safetensors  # optimizer state
+│       ├── rng_state.safetensors  # rng states
+│       ├── scheduler_state.json  # scheduler state
+│       └── training_step.json  # training step
 ├── 000200
 └── last -> 000200  # symlink to the last available checkpoint
 ```
