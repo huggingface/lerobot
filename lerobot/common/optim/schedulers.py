@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 
 import draccus
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LambdaLR, LRScheduler
+from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR, LRScheduler
 
 
 @dataclass
@@ -89,3 +89,16 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
             return cosine_decay_schedule(current_step)
 
         return LambdaLR(optimizer, lr_lambda, -1)
+
+
+@LRSchedulerConfig.register_subclass("cosine_annealing")
+@dataclass
+class CosineAnnealingSchedulerConfig(LRSchedulerConfig):
+    """Implements Cosine Annealing learning rate scheduler"""
+
+    min_lr: float = 0  # Minimum learning rate
+    T_max: int = 100000  # Number of iterations for a full decay (half-cycle)
+    num_warmup_steps: int = 0  # Not used but somehow required by the parent class
+
+    def build(self, optimizer: Optimizer, num_training_steps: int) -> LRScheduler:
+        return CosineAnnealingLR(optimizer, T_max=self.T_max, eta_min=self.min_lr)
