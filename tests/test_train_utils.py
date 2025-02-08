@@ -1,8 +1,6 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import pytest
-
 from lerobot.common.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
@@ -23,20 +21,6 @@ from lerobot.common.utils.train_utils import (
     save_training_step,
     update_last_checkpoint,
 )
-
-
-@pytest.fixture
-def mock_optimizer():
-    optimizer = Mock()
-    optimizer.state_dict.return_value = {"param_groups": [{"lr": 0.001}], "state": {}}
-    return optimizer
-
-
-@pytest.fixture
-def mock_scheduler():
-    scheduler = Mock()
-    scheduler.state_dict.return_value = {"last_epoch": 5}
-    return scheduler
 
 
 def test_get_step_identifier():
@@ -73,17 +57,17 @@ def test_update_last_checkpoint(tmp_path):
 
 
 @patch("lerobot.common.utils.train_utils.save_training_state")
-def test_save_checkpoint(mock_save_training_state, tmp_path, mock_optimizer):
+def test_save_checkpoint(mock_save_training_state, tmp_path, optimizer):
     policy = Mock()
     cfg = Mock()
-    save_checkpoint(tmp_path, 10, cfg, policy, mock_optimizer)
+    save_checkpoint(tmp_path, 10, cfg, policy, optimizer)
     policy.save_pretrained.assert_called_once()
     cfg.save_pretrained.assert_called_once()
     mock_save_training_state.assert_called_once()
 
 
-def test_save_training_state(tmp_path, mock_optimizer, mock_scheduler):
-    save_training_state(tmp_path, 10, mock_optimizer, mock_scheduler)
+def test_save_training_state(tmp_path, optimizer, scheduler):
+    save_training_state(tmp_path, 10, optimizer, scheduler)
     assert (tmp_path / TRAINING_STATE_DIR).is_dir()
     assert (tmp_path / TRAINING_STATE_DIR / TRAINING_STEP).is_file()
     assert (tmp_path / TRAINING_STATE_DIR / RNG_STATE).is_file()
@@ -92,11 +76,9 @@ def test_save_training_state(tmp_path, mock_optimizer, mock_scheduler):
     assert (tmp_path / TRAINING_STATE_DIR / SCHEDULER_STATE).is_file()
 
 
-def test_save_load_training_state(tmp_path, mock_optimizer, mock_scheduler):
-    save_training_state(tmp_path, 10, mock_optimizer, mock_scheduler)
-    loaded_step, loaded_optimizer, loaded_scheduler = load_training_state(
-        tmp_path, mock_optimizer, mock_scheduler
-    )
+def test_save_load_training_state(tmp_path, optimizer, scheduler):
+    save_training_state(tmp_path, 10, optimizer, scheduler)
+    loaded_step, loaded_optimizer, loaded_scheduler = load_training_state(tmp_path, optimizer, scheduler)
     assert loaded_step == 10
-    assert loaded_optimizer is mock_optimizer
-    assert loaded_scheduler is mock_scheduler
+    assert loaded_optimizer is optimizer
+    assert loaded_scheduler is scheduler

@@ -14,11 +14,6 @@ from lerobot.common.optim.optimizers import (
 )
 
 
-@pytest.fixture
-def model_params():
-    return [torch.nn.Parameter(torch.randn(10, 10))]
-
-
 @pytest.mark.parametrize(
     "config_cls, expected_class",
     [
@@ -34,21 +29,13 @@ def test_optimizer_build(config_cls, expected_class, model_params):
     assert optimizer.defaults["lr"] == config.lr
 
 
-def test_save_optimizer_state(model_params, tmp_path):
-    optimizer = AdamConfig().build(model_params)
+def test_save_optimizer_state(optimizer, tmp_path):
     save_optimizer_state(optimizer, tmp_path)
     assert (tmp_path / OPTIMIZER_STATE).is_file()
     assert (tmp_path / OPTIMIZER_PARAM_GROUPS).is_file()
 
 
-def test_save_and_load_optimizer_state(model_params, tmp_path):
-    optimizer = AdamConfig().build(model_params)
-
-    # Dummy step to populate state
-    loss = sum(param.sum() for param in model_params)
-    loss.backward()
-    optimizer.step()
-
+def test_save_and_load_optimizer_state(model_params, optimizer, tmp_path):
     save_optimizer_state(optimizer, tmp_path)
     loaded_optimizer = AdamConfig().build(model_params)
     loaded_optimizer = load_optimizer_state(loaded_optimizer, tmp_path)

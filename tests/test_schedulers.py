@@ -1,6 +1,3 @@
-import pytest
-import torch
-from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
 
 from lerobot.common.constants import SCHEDULER_STATE
@@ -13,23 +10,18 @@ from lerobot.common.optim.schedulers import (
 )
 
 
-@pytest.fixture
-def optimizer():
-    return Adam([torch.nn.Parameter(torch.randn(2, 2, requires_grad=True))], lr=0.01)
-
-
 def test_diffuser_scheduler(optimizer):
     config = DiffuserSchedulerConfig(name="cosine", num_warmup_steps=5)
     scheduler = config.build(optimizer, num_training_steps=100)
     assert isinstance(scheduler, LambdaLR)
 
-    optimizer.step()
+    optimizer.step()  # so that we don't get torch warning
     scheduler.step()
     expected_state_dict = {
         "_get_lr_called_within_step": False,
-        "_last_lr": [0.002],
+        "_last_lr": [0.0002],
         "_step_count": 2,
-        "base_lrs": [0.01],
+        "base_lrs": [0.001],
         "last_epoch": 1,
         "lr_lambdas": [None],
         "verbose": False,
@@ -46,9 +38,9 @@ def test_vqbet_scheduler(optimizer):
     scheduler.step()
     expected_state_dict = {
         "_get_lr_called_within_step": False,
-        "_last_lr": [0.01],
+        "_last_lr": [0.001],
         "_step_count": 2,
-        "base_lrs": [0.01],
+        "base_lrs": [0.001],
         "last_epoch": 1,
         "lr_lambdas": [None],
         "verbose": False,
@@ -67,9 +59,9 @@ def test_cosine_decay_with_warmup_scheduler(optimizer):
     scheduler.step()
     expected_state_dict = {
         "_get_lr_called_within_step": False,
-        "_last_lr": [0.0018181818181818188],
+        "_last_lr": [0.0001818181818181819],
         "_step_count": 2,
-        "base_lrs": [0.01],
+        "base_lrs": [0.001],
         "last_epoch": 1,
         "lr_lambdas": [None],
         "verbose": False,
@@ -77,17 +69,12 @@ def test_cosine_decay_with_warmup_scheduler(optimizer):
     assert scheduler.state_dict() == expected_state_dict
 
 
-def test_save_scheduler_state(optimizer, tmp_path):
-    config = VQBeTSchedulerConfig(num_warmup_steps=10, num_vqvae_training_steps=20, num_cycles=0.5)
-    scheduler = config.build(optimizer, num_training_steps=100)
+def test_save_scheduler_state(scheduler, tmp_path):
     save_scheduler_state(scheduler, tmp_path)
     assert (tmp_path / SCHEDULER_STATE).is_file()
 
 
-def test_save_load_scheduler_state(optimizer, tmp_path):
-    config = VQBeTSchedulerConfig(num_warmup_steps=10, num_vqvae_training_steps=20, num_cycles=0.5)
-    scheduler = config.build(optimizer, num_training_steps=100)
-
+def test_save_load_scheduler_state(scheduler, tmp_path):
     save_scheduler_state(scheduler, tmp_path)
     loaded_scheduler = load_scheduler_state(scheduler, tmp_path)
 

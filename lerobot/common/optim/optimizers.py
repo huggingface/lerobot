@@ -103,14 +103,16 @@ def save_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Path) -> No
 
 
 def load_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Path) -> torch.optim.Optimizer:
-    param_groups = deserialize_json_into_object(
-        save_dir / OPTIMIZER_PARAM_GROUPS, optimizer.state_dict()["param_groups"]
-    )
+    current_state_dict = optimizer.state_dict()
     flat_state = load_file(save_dir / OPTIMIZER_STATE)
     state = unflatten_dict(flat_state)
-    state_dict = {
-        "state": {int(k): v for k, v in state["state"].items()},
-        "param_groups": param_groups,
-    }
-    optimizer.load_state_dict(state_dict)
+    loaded_state_dict = {"state": {int(k): v for k, v in state["state"].items()}}
+
+    if "param_groups" in current_state_dict:
+        param_groups = deserialize_json_into_object(
+            save_dir / OPTIMIZER_PARAM_GROUPS, current_state_dict["param_groups"]
+        )
+        loaded_state_dict["param_groups"] = param_groups
+
+    optimizer.load_state_dict(loaded_state_dict)
     return optimizer
