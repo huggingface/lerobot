@@ -70,7 +70,7 @@ hello-robot-stretch-body = {version = ">=0.7.27", markers = "sys_platform == 'li
 pyserial = {version = ">=3.5", optional = true}
 jsonlines = ">=4.0.0"
 transformers = {version = ">=4.48.0", optional = true}
-draccus = {git = "https://github.com/dlwh/draccus.git", rev = "08370e5"} # replace with draccus = ">=0.9.4" when https://github.com/dlwh/draccus/pull/29 is in release
+draccus = ">=0.10.0"
 
 
 [tool.poetry.extras]
