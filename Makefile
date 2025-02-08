@@ -40,8 +40,8 @@ test-act-ete-train:
 		--dataset.image_transforms.enable=true \
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
-		--offline.steps=4 \
-		--online.steps=0 \
+		--steps=4 \
+		--eval_freq=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--save_freq=2 \
@@ -77,8 +77,8 @@ test-diffusion-ete-train:
 		--dataset.image_transforms.enable=true \
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
-		--offline.steps=2 \
-		--online.steps=0 \
+		--steps=2 \
+		--eval_freq=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--save_checkpoint=true \
@@ -107,8 +107,8 @@ test-tdmpc-ete-train:
 		--dataset.image_transforms.enable=true \
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
-		--offline.steps=2 \
-		--online.steps=0 \
+		--steps=2 \
+		--eval_freq=2 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--save_checkpoint=true \
@@ -127,29 +127,3 @@ test-tdmpc-ete-eval:
 		--eval.n_episodes=1 \
 		--eval.batch_size=1 \
 		--device=$(DEVICE)
-
-test-tdmpc-ete-train-with-online:
-	python lerobot/scripts/train.py \
-		--policy.type=tdmpc \
-		--env.type=pusht \
-		--env.obs_type=environment_state_agent_pos \
-		--env.episode_length=5 \
-		--dataset.repo_id=lerobot/pusht_keypoints \
-		--dataset.image_transforms.enable=true \
-		--dataset.episodes="[0]" \
-		--batch_size=2 \
-		--offline.steps=2 \
-		--online.steps=20 \
-		--online.rollout_n_episodes=2 \
-		--online.rollout_batch_size=2 \
-		--online.steps_between_rollouts=10 \
-		--online.buffer_capacity=1000 \
-		--online.env_seed=10000 \
-		--save_checkpoint=false \
-		--save_freq=10 \
-		--log_freq=1 \
-		--eval.use_async_envs=true \
-		--eval.n_episodes=1 \
-		--eval.batch_size=1 \
-		--device=$(DEVICE) \
-		--output_dir=tests/outputs/tdmpc_online/
