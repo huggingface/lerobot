@@ -23,7 +23,8 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR, LRScheduler
 
 from lerobot.common.constants import SCHEDULER_STATE
-from lerobot.common.datasets.utils import load_json, write_json
+from lerobot.common.datasets.utils import write_json
+from lerobot.common.utils.io_utils import deserialize_json_into_object
 
 
 @dataclass
@@ -116,6 +117,6 @@ def save_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> None:
 
 
 def load_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> LRScheduler:
-    state_dict = load_json(save_dir / SCHEDULER_STATE)
+    state_dict = deserialize_json_into_object(save_dir / SCHEDULER_STATE, scheduler.state_dict())
     scheduler.load_state_dict(state_dict)
     return scheduler
