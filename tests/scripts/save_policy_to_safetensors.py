@@ -53,9 +53,9 @@ def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs, train_kwa
     )
 
     batch = next(iter(dataloader))
-    output_dict = policy.forward(batch)
+    loss, output_dict = policy.forward(batch)
     output_dict = {k: v for k, v in output_dict.items() if isinstance(v, torch.Tensor)}
-    loss = output_dict["loss"]
+    output_dict["loss"] = loss
 
     loss.backward()
     grad_stats = {}
