@@ -25,7 +25,8 @@ from lerobot.common.constants import (
     OPTIMIZER_PARAM_GROUPS,
     OPTIMIZER_STATE,
 )
-from lerobot.common.datasets.utils import flatten_dict, load_json, unflatten_dict, write_json
+from lerobot.common.datasets.utils import flatten_dict, unflatten_dict, write_json
+from lerobot.common.utils.io_utils import deserialize_json_into_object
 
 
 @dataclass
@@ -102,11 +103,13 @@ def save_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Path) -> No
 
 
 def load_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Path) -> torch.optim.Optimizer:
-    param_groups = load_json(save_dir / OPTIMIZER_PARAM_GROUPS)
+    param_groups = deserialize_json_into_object(
+        save_dir / OPTIMIZER_PARAM_GROUPS, optimizer.state_dict()["param_groups"]
+    )
     flat_state = load_file(save_dir / OPTIMIZER_STATE)
     state = unflatten_dict(flat_state)
     state_dict = {
-        **state,
+        "state": {int(k): v for k, v in state["state"].items()},
         "param_groups": param_groups,
     }
     optimizer.load_state_dict(state_dict)
