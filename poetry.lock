@@ -1277,8 +1277,8 @@ dev = ["black", "mypy", "pre-commit", "pytest", "ruff"]
 [package.source]
 type = "git"
 url = "https://github.com/dlwh/draccus.git"
-reference = "HEAD"
-resolved_reference = "9b690730ca108930519f48cc5dead72a72fd27cb"
+reference = "08370e5"
+resolved_reference = "08370e52c158a4429abed64768ba102b66dd27b5"
 
 [[package]]
 name = "drawnow"
@@ -7934,4 +7934,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "5f87c427ca23b719a0592a3ad446809c9598aa1c3ce7a2bfdc05fdf695d3c70b"
+content-hash = "0910057a032c24ce7c4234a898159bd46095664d40f8e76a99472670f5ada57b"
