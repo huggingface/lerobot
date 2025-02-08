@@ -16,7 +16,6 @@
 import logging
 from pathlib import Path
 
-import draccus
 from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -34,7 +33,6 @@ from lerobot.common.optim.schedulers import load_scheduler_state, save_scheduler
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.utils.random_utils import load_rng_state, save_rng_state
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.configs.types import FeatureType, NormalizationMode
 
 
 def log_output_dir(out_dir):
@@ -46,25 +44,10 @@ def get_step_identifier(step: int, total_steps: int) -> str:
     return f"{step:0{num_digits}d}"
 
 
-def get_checkpoints_dir(cfg: TrainPipelineConfig) -> Path:
-    """Returns the sub-directory from the training output_dir in which checkpoints are saved."""
-    return Path(cfg.output_dir) / CHECKPOINTS_DIR
-
-
-def get_step_checkpoint_dir(cfg: TrainPipelineConfig, step: int) -> Path:
-    """Returns the checkpoint directory corresponding to the step number."""
-    step_identifier = get_step_identifier(step, cfg.steps)
-    return get_checkpoints_dir(cfg) / step_identifier
-
-
-def get_last_checkpoint_dir(cfg: TrainPipelineConfig) -> Path:
-    """Returns the 'last' checkpoint symlink."""
-    return get_checkpoints_dir(cfg) / LAST_CHECKPOINT_LINK
-
-
-def get_pretrained_dir(checkpoint_dir: Path, step: int) -> Path:
-    """Returns the 'pretrained_model' checkpoint directory corresponding to the step number."""
-    return checkpoint_dir / PRETRAINED_MODEL_DIR
+def get_step_checkpoint_dir(output_dir: Path, total_steps: int, step: int) -> Path:
+    """Returns the checkpoint sub-directory corresponding to the step number."""
+    step_identifier = get_step_identifier(step, total_steps)
+    return output_dir / CHECKPOINTS_DIR / step_identifier
 
 
 def save_training_step(step: int, save_dir: Path) -> None:
@@ -107,16 +90,14 @@ def save_checkpoint(
         optimizer (Optimizer | None, optional): The optimizer to save the state from. Defaults to None.
         scheduler (LRScheduler | None, optional): The scheduler to save the state from. Defaults to None.
     """
-    register_features_types()  # TODO(aliberts): remove?
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     policy.save_pretrained(pretrained_dir)
     cfg.save_pretrained(pretrained_dir)
-    training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
-    save_training_state(training_state_dir, step, optimizer, scheduler)
+    save_training_state(checkpoint_dir, step, optimizer, scheduler)
 
 
 def save_training_state(
-    save_dir: Path,
+    checkpoint_dir: Path,
     train_step: int,
     optimizer: Optimizer | None = None,
     scheduler: LRScheduler | None = None,
@@ -132,6 +113,7 @@ def save_training_state(
         scheduler (LRScheduler | None, optional): The scheduler from which to save the state_dict.
             Defaults to None.
     """
+    save_dir = checkpoint_dir / TRAINING_STATE_DIR
     save_dir.mkdir(parents=True, exist_ok=True)
     save_training_step(train_step, save_dir)
     save_rng_state(save_dir)
@@ -171,11 +153,3 @@ def load_training_state(
         scheduler = load_scheduler_state(scheduler, training_state_dir)
 
     return step, optimizer, scheduler
-
-
-def register_features_types():
-    draccus.decode.register(FeatureType, lambda x: FeatureType[x])
-    draccus.encode.register(FeatureType, lambda x: x.name)
-
-    draccus.decode.register(NormalizationMode, lambda x: NormalizationMode[x])
-    draccus.encode.register(NormalizationMode, lambda x: x.name)
