@@ -717,6 +717,10 @@ class FeetechMotorsBus:
         group_key = get_group_sync_key(data_name, motor_names)
 
         if data_name not in self.group_readers:
+            # Very Important to flush the buffer!
+            self.port_handler.ser.reset_output_buffer()
+            self.port_handler.ser.reset_input_buffer()
+
             # create new group reader
             self.group_readers[group_key] = scs.GroupSyncRead(
                 self.port_handler, self.packet_handler, addr, bytes

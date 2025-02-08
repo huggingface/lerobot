@@ -91,6 +91,10 @@ def update_policy(
 
     optimizer.zero_grad()
 
+    if hasattr(policy, "update_ema_modules"):
+        policy.update_ema_modules()
+
+    # Step through pytorch scheduler at every batch instead of epoch
     if lr_scheduler is not None:
         lr_scheduler.step()
 
@@ -141,6 +145,7 @@ def train(cfg: TrainPipelineConfig):
         device=device,
         ds_meta=dataset.meta,
     )
+
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
     grad_scaler = GradScaler(device, enabled=cfg.use_amp)
@@ -186,6 +191,9 @@ def train(cfg: TrainPipelineConfig):
     dl_iter = cycle(dataloader)
 
     policy.train()
+    if hasattr(policy, "init_ema_modules"):
+        policy.init_ema_modules()
+
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f"),
         "grad_norm": AverageMeter("grdn", ":.3f"),
@@ -203,7 +211,8 @@ def train(cfg: TrainPipelineConfig):
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
         for key in batch:
-            batch[key] = batch[key].to(device, non_blocking=True)
+            if isinstance(batch[key], torch.Tensor):
+                batch[key] = batch[key].to(device, non_blocking=True)
 
         train_tracker, output_dict = update_policy(
             train_tracker,
