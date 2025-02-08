@@ -15,10 +15,15 @@
 # limitations under the License.
 import random
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Generator
 
 import numpy as np
 import torch
+from safetensors.torch import load_file, save_file
+
+from lerobot.common.constants import RNG_STATE
+from lerobot.common.datasets.utils import flatten_dict, unflatten_dict
 
 
 def serialize_python_rng_state() -> dict[str, torch.Tensor]:
@@ -121,6 +126,18 @@ def deserialize_rng_state(rng_state_dict: dict[str, torch.Tensor]) -> None:
     deserialize_torch_rng_state(torch_rng_state_dict)
 
 
+def save_rng_state(save_dir: Path) -> None:
+    rng_state_dict = serialize_rng_state()
+    flat_rng_state_dict = flatten_dict(rng_state_dict)
+    save_file(flat_rng_state_dict, save_dir / RNG_STATE)
+
+
+def load_rng_state(save_dir: Path) -> None:
+    flat_rng_state_dict = load_file(save_dir / RNG_STATE)
+    rng_state_dict = unflatten_dict(flat_rng_state_dict)
+    deserialize_rng_state(rng_state_dict)
+
+
 def get_rng_state() -> dict[str, Any]:
     """Get the random state for `random`, `numpy`, and `torch`."""
     random_state_dict = {
@@ -146,7 +163,7 @@ def set_rng_state(random_state_dict: dict[str, Any]):
         torch.cuda.random.set_rng_state(random_state_dict["torch_cuda_random_state"])
 
 
-def set_seed(seed):
+def set_seed(seed) -> None:
     """Set seed for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)

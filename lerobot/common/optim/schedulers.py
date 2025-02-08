@@ -1,10 +1,14 @@
 import abc
 import math
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import draccus
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR, LRScheduler
+
+from lerobot.common.constants import SCHEDULER_STATE
+from lerobot.common.datasets.utils import load_json, write_json
 
 
 @dataclass
@@ -54,3 +58,14 @@ class VQBeTSchedulerConfig(LRSchedulerConfig):
                 return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(self.num_cycles) * 2.0 * progress)))
 
         return LambdaLR(optimizer, lr_lambda, -1)
+
+
+def save_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> None:
+    state_dict = scheduler.state_dict()
+    write_json(state_dict, save_dir / SCHEDULER_STATE)
+
+
+def load_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> LRScheduler:
+    state_dict = load_json(save_dir / SCHEDULER_STATE)
+    scheduler.load_state_dict(state_dict)
+    return scheduler
