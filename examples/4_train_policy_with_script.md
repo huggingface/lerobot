@@ -161,13 +161,13 @@ python lerobot/scripts/train.py \
 ```
 You should see from the logging that your training picks up from where it left off.
 
-Another reason for which you might want to resume a run is simply to extend training and add more training steps. The number of training steps is set by the option `--offline.steps`, which is 100 000 by default.
+Another reason for which you might want to resume a run is simply to extend training and add more training steps. The number of training steps is set by the option `--steps`, which is 100 000 by default.
 You could double the number of steps of the previous run with:
 ```bash
 python lerobot/scripts/train.py \
     --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
     --resume=true \
-    --offline.steps=200000
+    --steps=200000
 ```
 
 ## Outputs of a run
@@ -250,7 +250,7 @@ python lerobot/scripts/train.py \
 python lerobot/scripts/train.py \
     --config_path=checkpoint/pretrained_model/ \
     --resume=true \
-    --offline.steps=200000  # <- you can change some training parameters
+    --steps=200000  # <- you can change some training parameters
 ```
 
 #### Fine-tuning
