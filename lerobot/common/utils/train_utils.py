@@ -69,15 +69,15 @@ def update_last_checkpoint(checkpoint_dir: Path) -> Path:
 
 def save_checkpoint(
     checkpoint_dir: Path,
-    cfg: TrainPipelineConfig,
     step: int,
+    cfg: TrainPipelineConfig,
     policy: PreTrainedPolicy,
-    optimizer: Optimizer | None = None,
+    optimizer: Optimizer,
     scheduler: LRScheduler | None = None,
 ) -> None:
     """This function creates the following directory structure:
 
-    checkpoint_dir/
+    005000/  #  training step at checkpoint
     ├── pretrained_model/
     │   ├── config.json  # policy config
     │   ├── model.safetensors  # policy weights

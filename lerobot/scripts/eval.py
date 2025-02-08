@@ -61,6 +61,7 @@ import einops
 import gymnasium as gym
 import numpy as np
 import torch
+from termcolor import colored
 from torch import Tensor, nn
 from tqdm import trange
 
@@ -71,7 +72,6 @@ from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.random_utils import set_seed
-from lerobot.common.utils.train_utils import log_output_dir
 from lerobot.common.utils.utils import (
     get_safe_torch_device,
     init_logging,
@@ -465,7 +465,7 @@ def eval(cfg: EvalPipelineConfig):
     torch.backends.cuda.matmul.allow_tf32 = True
     set_seed(cfg.seed)
 
-    log_output_dir(cfg.output_dir)
+    logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
 
     logging.info("Making environment.")
     env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
