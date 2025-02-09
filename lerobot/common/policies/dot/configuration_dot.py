@@ -35,7 +35,18 @@ class DOTConfig(PreTrainedConfig):
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
             "STATE": NormalizationMode.MIN_MAX,
+            "ENV": NormalizationMode.MIN_MAX,
             "ACTION": NormalizationMode.MIN_MAX,
+        }
+    )
+
+    # Not sure if there is a better way to do this with new config system.
+    override_dataset_stats: bool = False
+    new_dataset_stats: dict[str, dict[str, list[float]]] = field(
+        default_factory=lambda: {
+            "action": {"max": [512.0] * 2, "min": [0.0] * 2},
+            "observation.environment_state": {"max": [512.0] * 16, "min": [0.0] * 16},
+            "observation.state": {"max": [512.0] * 2, "min": [0.0] * 2},
         }
     )
 
@@ -44,7 +55,7 @@ class DOTConfig(PreTrainedConfig):
     pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
     pre_norm: bool = True
     lora_rank: int = 20
-    merge_lora: bool = True
+    merge_lora: bool = False
 
     dim_model: int = 128
     n_heads: int = 8
