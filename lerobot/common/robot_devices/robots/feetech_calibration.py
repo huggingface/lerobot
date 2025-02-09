@@ -1,6 +1,7 @@
 """Logic to calibrate a robot arm built with feetech motors"""
 # TODO(rcadene, aliberts): move this logic into the robot code when refactoring
 
+import os
 import time
 
 import numpy as np
@@ -11,6 +12,7 @@ from lerobot.common.robot_devices.motors.feetech import (
     convert_degrees_to_steps,
 )
 from lerobot.common.robot_devices.motors.utils import MotorsBus
+from lerobot.common.utils.gui import PromptGUI
 
 URL_TEMPLATE = (
     "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"
@@ -398,7 +400,14 @@ def run_arm_auto_calibration_moss(arm: MotorsBus, robot_type: str, arm_name: str
     return calib_dict
 
 
-def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
+def run_arm_manual_calibration_core(
+    arm: MotorsBus,
+    robot_type: str,
+    arm_name: str,
+    arm_type: str,
+    display_message: callable,
+    wait_for_input: callable,
+):
     """This function ensures that a neural network trained on data collected on a given robot
     can work on another robot. For instance before calibration, setting a same goal position
     for each motor of two different robots will get two very different positions. But after calibration,
@@ -423,11 +432,14 @@ def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, a
     if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
         raise ValueError("To run calibration, the torque must be disabled on all motors.")
 
-    print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
+    display_message(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
 
-    print("\nMove arm to zero position")
-    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="zero"))
-    input("Press Enter to continue...")
+    display_message(
+        "\nMove arm to zero position\n(See: "
+        + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="zero"),
+        button="Continue",
+    )
+    wait_for_input("Press Enter to continue...")
 
     # We arbitrarily chose our zero target position to be a straight horizontal position with gripper upwards and closed.
     # It is easy to identify and all motors are in a "quarter turn" position. Once calibration is done, this position will
@@ -445,9 +457,12 @@ def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, a
     # Sometimes, there is only one possible rotation direction. For instance, if the gripper is closed, there is only one direction which
     # corresponds to opening the gripper. When the rotation direction is ambiguous, we arbitrarely rotate clockwise from the point of view
     # of the previous motor in the kinetic chain.
-    print("\nMove arm to rotated target position")
-    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rotated"))
-    input("Press Enter to continue...")
+    display_message(
+        "\nMove arm to rotated target position\n(See: "
+        + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rotated"),
+        button="Continue",
+    )
+    wait_for_input("Press Enter to continue...")
 
     rotated_target_pos = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, arm.motor_models)
 
@@ -460,10 +475,12 @@ def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, a
     rotated_drived_pos = apply_drive_mode(rotated_pos, drive_mode)
     homing_offset = rotated_target_pos - rotated_drived_pos
 
-    print("\nMove arm to rest position")
-    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rest"))
-    input("Press Enter to continue...")
-    print()
+    display_message(
+        "\nMove arm to rest position\nSee: "
+        + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rest"),
+        button="Exit",
+    )
+    wait_for_input("Press Enter to continue...")
 
     # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
     calib_modes = []
@@ -482,3 +499,41 @@ def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, a
         "motor_names": arm.motor_names,
     }
     return calib_dict
+
+
+def run_arm_manual_calibration_with_console(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
+    display_message = print
+    wait_for_input = input
+
+    return run_arm_manual_calibration_core(
+        arm, robot_type, arm_name, arm_type, display_message, wait_for_input
+    )
+
+
+def run_arm_manual_calibration_with_gui(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
+    gui = PromptGUI("Arm Manual Calibration")
+
+    def display_message(message, size=24, button="OK"):
+        gui.add_step(message, size, button)
+
+    def wait_for_input(*args, **kwargs):
+        gui.run()
+
+    try:
+        calib_dict = run_arm_manual_calibration_core(
+            arm, robot_type, arm_name, arm_type, display_message, wait_for_input
+        )
+    except ValueError as e:
+        display_message(e)
+        wait_for_input()
+        calib_dict = None
+    finally:
+        gui.terminate()
+    return calib_dict
+
+
+def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
+    if os.getenv("LEROBOT_GUI", "False").lower() in ["true", "1", "t"]:
+        return run_arm_manual_calibration_with_gui(arm, robot_type, arm_name, arm_type)
+    else:
+        return run_arm_manual_calibration_with_console(arm, robot_type, arm_name, arm_type)
