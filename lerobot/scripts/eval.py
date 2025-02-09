@@ -155,7 +155,7 @@ def rollout(
             all_observations.append(deepcopy(observation))
 
         observation = {
-            key: observation[key].contiguous().to(device, non_blocking=device.type == "cuda")
+            key: observation[key].to(device, non_blocking=device.type == "cuda")
             for key in observation
         }
 
