@@ -92,6 +92,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
             local_files_only=cfg.dataset.local_files_only,
+            root=cfg.root,
         )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
