@@ -71,7 +71,11 @@ pyserial = {version = ">=3.5", optional = true}
 jsonlines = ">=4.0.0"
 transformers = ">=4.48.0"
 draccus = {git = "https://github.com/dlwh/draccus.git"} # replace with draccus = ">=0.9.4" when https://github.com/dlwh/draccus/pull/29 is in release
-
+websockets = ">=14.2"
+msgpack = ">=1.1.0"
+rpi-libcamera = {version = ">=0.1a8", optional = true}
+rpi-kms = {version = ">=0.1a1", optional = true}
+picamera2 = {version = ">=0.3.24", optional = true}
 
 [tool.poetry.extras]
 dora = ["gym-dora"]
@@ -87,6 +91,7 @@ feetech = ["feetech-servo-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
 stretch = ["hello-robot-stretch-body", "pyrender", "pyrealsense2", "pynput"]
 pi0 = ["transformers"]
+rpi = ["rpi-libcamera","rpi-kms","picamera2"]
 
 [tool.ruff]
 line-length = 110
