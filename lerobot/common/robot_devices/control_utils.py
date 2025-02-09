@@ -2,17 +2,22 @@
 # Utilities
 ########################################################################################
 
-
+import asyncio
 import logging
+import queue
 import time
 import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
+from threading import Thread
 
 import cv2
+import msgpack
+import numpy as np
 import torch
 import tqdm
+import websockets
 from deepdiff import DeepDiff
 from termcolor import colored
 
@@ -21,6 +26,8 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import get_features_from_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
+from lerobot.common.utils.gui import PromptGUI, check_gui_env
+from lerobot.common.utils.rpi import is_raspberry_pi
 from lerobot.common.utils.utils import get_safe_torch_device, has_method
 
 
@@ -87,29 +94,53 @@ def is_headless():
         return True
 
 
-def predict_action(observation, policy, device, use_amp):
-    observation = copy(observation)
-    with (
-        torch.inference_mode(),
-        torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
-    ):
-        # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
-        for name in observation:
-            if "image" in name:
-                observation[name] = observation[name].type(torch.float32) / 255
-                observation[name] = observation[name].permute(2, 0, 1).contiguous()
-            observation[name] = observation[name].unsqueeze(0)
-            observation[name] = observation[name].to(device)
+async def predict_action(
+    observation, policy, device, use_amp, server_address, server_port, remote_device, websocket
+):
+    if server_address is None:
+        observation = copy(observation)
+        with (
+            torch.inference_mode(),
+            torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
+        ):
+            # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
+            for name in observation:
+                if "image" in name:
+                    observation[name] = observation[name].type(torch.float32) / 255
+                    observation[name] = observation[name].permute(2, 0, 1).contiguous()
+                observation[name] = observation[name].unsqueeze(0)
+                observation[name] = observation[name].to(device)
 
-        # Compute the next action with the policy
-        # based on the current observation
-        action = policy.select_action(observation)
+            # Compute the next action with the policy
+            # based on the current observation
+            action = policy.select_action(observation)
 
-        # Remove batch dimension
-        action = action.squeeze(0)
+            # Remove batch dimension
+            action = action.squeeze(0)
 
-        # Move to cpu, if not already the case
-        action = action.to("cpu")
+            # Move to cpu, if not already the case
+            action = action.to("cpu")
+    else:
+        # Bare bones serialization
+        packed_observation = {}
+        packed_observation["device"] = remote_device
+        for key, value in observation.items():
+            if isinstance(value, torch.Tensor):
+                value_np = value.numpy()
+            elif isinstance(value, np.ndarray):
+                value_np = value
+            else:
+                raise RuntimeError(f"Unsupported type: {type(value)} for server serialization")
+            shape_key = key + "_shape"
+            value_shape = value_np.shape
+            packed_observation[shape_key] = value_shape
+            packed_observation[key] = value_np.flatten().tobytes()
+
+        # Send POST request to remote server
+        await websocket.send(msgpack.packb(packed_observation))
+        response = await websocket.recv()
+        response = np.frombuffer(response, dtype=np.float32)
+        action = torch.tensor(response)
 
     return action
 
@@ -170,6 +201,7 @@ def warmup_record(
         events=events,
         fps=fps,
         teleoperate=enable_teleoperation,
+        is_recording=True,
     )
 
 
@@ -183,6 +215,9 @@ def record_episode(
     device,
     use_amp,
     fps,
+    server_address,
+    server_port,
+    remote_device,
 ):
     control_loop(
         robot=robot,
@@ -194,7 +229,11 @@ def record_episode(
         device=device,
         use_amp=use_amp,
         fps=fps,
-        teleoperate=policy is None,
+        teleoperate=(policy is None) and (server_address is None),
+        is_recording=True,
+        server_address=server_address,
+        server_port=server_port,
+        remote_device=remote_device,
     )
 
 
@@ -210,13 +249,27 @@ def control_loop(
     device: torch.device | str | None = None,
     use_amp: bool | None = None,
     fps: int | None = None,
+    is_recording=False,
+    server_address: str | None = None,
+    server_port=9000,
+    remote_device="cuda:0",
 ):
+    if check_gui_env():
+        if not is_recording and teleoperate:
+            gui = PromptGUI("Teleoperation")
+            gui.add_step("Press 'OK' to start teleoperation")
+            gui.run()
+        else:
+            gui = None
+    else:
+        gui = None
+
     # TODO(rcadene): Add option to record logs
     if not robot.is_connected:
         robot.connect()
 
-    if events is None:
-        events = {"exit_early": False}
+    if events is None or not is_recording:
+        events = {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
 
     if control_time_s is None:
         control_time_s = float("inf")
@@ -230,44 +283,135 @@ def control_loop(
     if isinstance(device, str):
         device = get_safe_torch_device(device)
 
-    timestamp = 0
-    start_episode_t = time.perf_counter()
-    while timestamp < control_time_s:
-        start_loop_t = time.perf_counter()
+    # Set up queues for communication between threads
+    observation_queue = queue.Queue()
+    action_queue = queue.Queue()
+    last_observation = None
+    episode_finished = False
 
-        if teleoperate:
-            observation, action = robot.teleop_step(record_data=True)
-        else:
-            observation = robot.capture_observation()
+    def capture_thread():
+        nonlocal last_observation, episode_finished
+        while not episode_finished:
+            start_loop_t = time.perf_counter()
+            try:
+                observation = robot.capture_observation()
+                observation_queue.put(observation)
+                last_observation = observation
+            except Exception:
+                pass
+            finally:
+                dt_s = time.perf_counter() - start_loop_t
+                busy_wait(1 / fps - dt_s)
 
-            if policy is not None:
-                pred_action = predict_action(observation, policy, device, use_amp)
-                # Action can eventually be clipped using `max_relative_target`,
-                # so action actually sent is saved in the dataset.
-                action = robot.send_action(pred_action)
-                action = {"action": action}
+    async def predict_process():
+        nonlocal episode_finished
+        async with websockets.connect(f"ws://{server_address}:{server_port}") as websocket:
+            while not episode_finished:
+                try:
+                    observation = observation_queue.get(timeout=1 / fps)
+                    pred_action = await predict_action(
+                        observation,
+                        policy,
+                        device,
+                        use_amp,
+                        server_address,
+                        server_port,
+                        remote_device,
+                        websocket,
+                    )
+                    action_queue.put(pred_action)
+                except queue.Empty:
+                    continue
 
-        if dataset is not None:
-            frame = {**observation, **action}
-            dataset.add_frame(frame)
+    def control_thread():
+        nonlocal last_observation, episode_finished
+        timestamp = 0
+        start_episode_t = time.perf_counter()
+        retry_sending_action = False
+        while timestamp < control_time_s:
+            start_loop_t = time.perf_counter()
 
-        if display_cameras and not is_headless():
-            image_keys = [key for key in observation if "image" in key]
-            for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+            if teleoperate:
+                last_observation, action = robot.teleop_step(record_data=True)
+                if gui and gui.done:
+                    break
+            else:
+                if policy is not None or server_address is not None:
+                    try:
+                        if not retry_sending_action:
+                            pending_action = action_queue.get(timeout=1 / fps)
+                        action = robot.send_action(pending_action)
+                        retry_sending_action = False
+                        action = {"action": action}
+                        if dataset is not None and last_observation is not None:
+                            frame = {**last_observation, **action}
+                            dataset.add_frame(frame)
+                    except ConnectionError:
+                        retry_sending_action = True
+                    except queue.Empty:
+                        continue
 
-        if fps is not None:
+            if policy is None and server_address is None and dataset is not None:
+                frame = {**last_observation, **action}
+                dataset.add_frame(frame)
+
+            if display_cameras and not is_headless() and not is_raspberry_pi():
+                image_keys = [key for key in last_observation if "image" in key]
+                for key in image_keys:
+                    cv2.imshow(
+                        f"Camera {key}", cv2.cvtColor(last_observation[key].numpy(), cv2.COLOR_RGB2BGR)
+                    )
+                cv2.waitKey(1)
+
+            if fps is not None:
+                dt_s = time.perf_counter() - start_loop_t
+                busy_wait(1 / fps - dt_s)
+
             dt_s = time.perf_counter() - start_loop_t
-            busy_wait(1 / fps - dt_s)
+            log_control_info(robot, dt_s, fps=fps)
 
-        dt_s = time.perf_counter() - start_loop_t
-        log_control_info(robot, dt_s, fps=fps)
+            timestamp = time.perf_counter() - start_episode_t
+            if events["exit_early"] or events["rerecord_episode"] or events["stop_recording"]:
+                break
 
-        timestamp = time.perf_counter() - start_episode_t
-        if events["exit_early"]:
-            events["exit_early"] = False
-            break
+        episode_finished = True
+
+        if gui and gui.done:
+            gui.terminate()
+
+    if gui:
+        gui.add_step(
+            "Move leader arm to control follower arm.\nPress 'Exit' to stop",
+            button_text="Exit",
+            is_final=True,
+        )
+        thread = Thread(target=control_thread)
+        thread.daemon = True
+        thread.start()
+        gui.run()
+        thread.join()
+    else:
+        control_th = Thread(target=control_thread)
+        control_th.daemon = True
+        if server_address is not None:
+
+            def build_async_loop():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(predict_process())
+                loop.close()
+
+            predict_th = Thread(target=build_async_loop)
+            capture_th = Thread(target=capture_thread)
+            capture_th.start()
+            predict_th.start()
+
+        control_th.start()
+
+        if server_address is not None:
+            capture_th.join()
+            predict_th.join()
+        control_th.join()
 
 
 def reset_environment(robot, events, reset_time_s):
@@ -285,9 +429,6 @@ def reset_environment(robot, events, reset_time_s):
             time.sleep(1)
             timestamp = time.perf_counter() - start_vencod_t
             pbar.update(1)
-            if events["exit_early"]:
-                events["exit_early"] = False
-                break
 
 
 def stop_recording(robot, listener, display_cameras):

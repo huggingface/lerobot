@@ -27,6 +27,8 @@ from typing import Any, Generator
 import numpy as np
 import torch
 
+from lerobot.common.utils.rpi import is_raspberry_pi
+
 
 def none_or_int(value):
     if value == "None":
@@ -227,9 +229,12 @@ def say(text, blocking=False):
         if not blocking:
             cmd += " &"
     elif platform.system() == "Linux":
-        cmd = f'spd-say "{text}"'
-        if blocking:
-            cmd += "  --wait"
+        if is_raspberry_pi():
+            cmd = f'espeak "{text}"'
+        else:
+            cmd = f'spd-say "{text}"'
+            if blocking:
+                cmd += "  --wait"
     elif platform.system() == "Windows":
         # TODO(rcadene): Make blocking option work for Windows
         cmd = (
