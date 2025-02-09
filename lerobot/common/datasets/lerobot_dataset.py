@@ -318,6 +318,14 @@ class LeRobotDatasetMetadata:
             # TODO(aliberts, rcadene): implement sanity check for features
             features = {**features, **DEFAULT_FEATURES}
 
+            # check if none of the features contains a "/" in their names,
+            # as this would break the dict flattening in the stats computation, which uses '/' as separator
+            for key in features:
+                if "/" in key:
+                    raise ValueError(f"Feature names should not contain '/'. Found '/' in feature '{key}'.")
+
+            features = {**features, **DEFAULT_FEATURES}
+
         obj.tasks, obj.stats, obj.episodes, obj.episodes_stats = {}, {}, {}, {}
         obj.info = create_empty_dataset_info(CODEBASE_VERSION, fps, robot_type, features, use_videos)
         if len(obj.video_keys) > 0 and not use_videos:
@@ -676,6 +684,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             for cam in image_keys:
                 item[cam] = self.image_transforms(item[cam])
 
+        # Add task as a string
+        task_idx = item["task_index"].item()
+        item["task"] = self.meta.tasks[task_idx]
+
         return item
 
     def __repr__(self):
@@ -815,6 +827,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 episode_buffer[key] = np.full((episode_length, 1), task_index)
             elif ft["dtype"] in ["image", "video"]:
                 continue
+            elif len(ft["shape"]) == 1 and ft["shape"][0] == 1:  # TODO(aliberts, rcadene): FIX here
+                episode_buffer[key] = np.array(episode_buffer[key], dtype=ft["dtype"])
             elif len(ft["shape"]) == 1 and ft["shape"][0] > 1:
                 episode_buffer[key] = np.stack(episode_buffer[key])
             else:

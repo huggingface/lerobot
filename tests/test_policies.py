@@ -167,14 +167,16 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     batch = next(dl_iter)
 
     for key in batch:
-        batch[key] = batch[key].to(DEVICE, non_blocking=True)
+        if isinstance(batch[key], torch.Tensor):
+            batch[key] = batch[key].to(DEVICE, non_blocking=True)
 
     # Test updating the policy (and test that it does not mutate the batch)
     batch_ = deepcopy(batch)
     policy.forward(batch)
     assert set(batch) == set(batch_), "Batch keys are not the same after a forward pass."
     assert all(
-        torch.equal(batch[k], batch_[k]) for k in batch
+        torch.equal(batch[k], batch_[k]) if isinstance(batch[k], torch.Tensor) else batch[k] == batch_[k]
+        for k in batch
     ), "Batch values are not the same after a forward pass."
 
     # reset the policy and environment
@@ -214,6 +216,7 @@ def test_act_backbone_lr():
         policy=make_policy_config("act", optimizer_lr=0.01, optimizer_lr_backbone=0.001),
         device=DEVICE,
     )
+    cfg.validate()  # Needed for auto-setting some parameters
 
     assert cfg.policy.optimizer_lr == 0.01
     assert cfg.policy.optimizer_lr_backbone == 0.001

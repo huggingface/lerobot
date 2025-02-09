@@ -14,7 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import gymnasium as gym
+import logging
+
+import torch
 from torch import nn
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
@@ -23,6 +25,7 @@ from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.envs.utils import env_to_policy_features
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
@@ -48,6 +51,10 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
         return VQBeTPolicy
+    elif name == "pi0":
+        from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
+
+        return PI0Policy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -61,29 +68,40 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return ACTConfig(**kwargs)
     elif policy_type == "vqbet":
         return VQBeTConfig(**kwargs)
+    elif policy_type == "pi0":
+        return PI0Config(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
 
 def make_policy(
     cfg: PreTrainedConfig,
-    device: str,
+    device: str | torch.device,
     ds_meta: LeRobotDatasetMetadata | None = None,
-    env: gym.Env | None = None,
     env_cfg: EnvConfig | None = None,
 ) -> PreTrainedPolicy:
     """Make an instance of a policy class.
 
+    This function exists because (for now) we need to parse features from either a dataset or an environment
+    in order to properly dimension and instantiate a policy for that dataset or environment.
+
     Args:
-        cfg (MainConfig): A MainConfig instance (see scripts). If `pretrained_policy_name_or_path` is
-            provided, only `cfg.policy.type` is used while everything else is ignored.
-        ds_meta (LeRobotDatasetMetadata): Dataset metadata to take input/output shapes and statistics to use
-            for (un)normalization of inputs/outputs in the policy.
-        pretrained_policy_name_or_path: Either the repo ID of a model hosted on the Hub or a path to a
-            directory containing weights saved using `Policy.save_pretrained`. Note that providing this
-            argument overrides everything in `hydra_cfg.policy` apart from `hydra_cfg.policy.type`.
+        cfg (PreTrainedConfig): The config of the policy to make. If `pretrained_path` is set, the policy will
+            be loaded with the weights from that path.
+        device (str): the device to load the policy onto.
+        ds_meta (LeRobotDatasetMetadata | None, optional): Dataset metadata to take input/output shapes and
+            statistics to use for (un)normalization of inputs/outputs in the policy. Defaults to None.
+        env_cfg (EnvConfig | None, optional): The config of a gym environment to parse features from. Must be
+            provided if ds_meta is not. Defaults to None.
+
+    Raises:
+        ValueError: Either ds_meta or env and env_cfg must be provided.
+        NotImplementedError: if the policy.type is 'vqbet' and the device 'mps' (due to an incompatibility)
+
+    Returns:
+        PreTrainedPolicy: _description_
     """
-    if not (ds_meta is None) ^ (env is None and env_cfg is None):
+    if bool(ds_meta) == bool(env_cfg):
         raise ValueError("Either one of a dataset metadata or a sim env must be provided.")
 
     # NOTE: Currently, if you try to run vqbet with mps backend, you'll get this error.
@@ -93,7 +111,7 @@ def make_policy(
     # https://github.com/pytorch/pytorch/issues/77764. As a temporary fix, you can set the environment
     # variable `PYTORCH_ENABLE_MPS_FALLBACK=1` to use the CPU as a fallback for this op. WARNING: this will be
     # slower than running natively on MPS.
-    if cfg.type == "vqbet" and device == "mps":
+    if cfg.type == "vqbet" and str(device) == "mps":
         raise NotImplementedError(
             "Current implementation of VQBeT does not support `mps` backend. "
             "Please use `cpu` or `cuda` backend."
@@ -106,10 +124,11 @@ def make_policy(
         features = dataset_to_policy_features(ds_meta.features)
         kwargs["dataset_stats"] = ds_meta.stats
     else:
-        if not cfg.pretrained_path or not cfg.output_features or not cfg.input_features:
-            raise NotImplementedError(
-                "The policy must have already existing features in its config when initializing it "
-                "with an environment."
+        if not cfg.pretrained_path:
+            logging.warning(
+                "You are instantiating a policy from scratch and its features are parsed from an environment "
+                "rather than a dataset. Normalization modules inside the policy will have infinite values "
+                "by default without stats from a dataset."
             )
         features = env_to_policy_features(env_cfg)
 
@@ -128,5 +147,7 @@ def make_policy(
 
     policy.to(device)
     assert isinstance(policy, nn.Module)
+
+    # policy = torch.compile(policy, mode="reduce-overhead")
 
     return policy

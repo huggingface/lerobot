@@ -125,6 +125,9 @@ def rollout(
     # Reset the policy and environments.
     policy.reset()
 
+    if hasattr(policy, "use_ema_modules"):
+        policy.use_ema_modules()
+
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
@@ -205,6 +208,9 @@ def rollout(
             stacked_observations[key] = torch.stack([obs[key] for obs in all_observations], dim=1)
         ret["observation"] = stacked_observations
 
+    if hasattr(policy, "use_original_modules"):
+        policy.use_original_modules()
+
     return ret
 
 
@@ -234,7 +240,11 @@ def eval_policy(
     if max_episodes_rendered > 0 and not videos_dir:
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
 
-    assert isinstance(policy, PreTrainedPolicy)
+    if not isinstance(policy, PreTrainedPolicy):
+        raise ValueError(
+            f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
+        )
+
     start = time.time()
     policy.eval()
 
@@ -446,7 +456,6 @@ def _compile_episode_data(
 
 @parser.wrap()
 def eval(cfg: EvalPipelineConfig):
-    init_logging()
     logging.info(pformat(asdict(cfg)))
 
     # Check device is available
@@ -465,7 +474,6 @@ def eval(cfg: EvalPipelineConfig):
     policy = make_policy(
         cfg=cfg.policy,
         device=device,
-        env=env,
         env_cfg=cfg.env,
     )
     policy.eval()
@@ -491,4 +499,5 @@ def eval(cfg: EvalPipelineConfig):
 
 
 if __name__ == "__main__":
+    init_logging()
     eval()

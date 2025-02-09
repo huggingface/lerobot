@@ -38,6 +38,7 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.utils import (
     format_big_number,
+    get_safe_dtype,
     get_safe_torch_device,
     has_method,
     init_logging,
@@ -86,6 +87,10 @@ def update_policy(
 
     optimizer.zero_grad()
 
+    if hasattr(policy, "update_ema_modules"):
+        policy.update_ema_modules()
+
+    # Step through pytorch scheduler at every batch instead of epoch
     if lr_scheduler is not None:
         lr_scheduler.step()
 
@@ -182,7 +187,8 @@ def log_eval_info(logger, info, step, cfg, dataset, is_online):
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
-    init_logging()
+    cfg.validate()
+
     logging.info(pformat(asdict(cfg)))
 
     # log metrics to terminal and wandb
@@ -204,7 +210,7 @@ def train(cfg: TrainPipelineConfig):
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
-    if cfg.eval_freq > 0 or cfg.env is None:
+    if cfg.eval_freq > 0 and cfg.env is not None:
         logging.info("Creating env")
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size)
 
@@ -227,7 +233,8 @@ def train(cfg: TrainPipelineConfig):
     num_total_params = sum(p.numel() for p in policy.parameters())
 
     log_output_dir(cfg.output_dir)
-    logging.info(f"{cfg.env.task=}")
+    if cfg.env is not None:
+        logging.info(f"{cfg.env.task=}")
     logging.info(f"{cfg.offline.steps=} ({format_big_number(cfg.offline.steps)})")
     logging.info(f"{cfg.online.steps=}")
     logging.info(f"{offline_dataset.num_frames=} ({format_big_number(offline_dataset.num_frames)})")
@@ -240,10 +247,9 @@ def train(cfg: TrainPipelineConfig):
         _num_digits = max(6, len(str(cfg.offline.steps + cfg.online.steps)))
         step_identifier = f"{step:0{_num_digits}d}"
 
-        if cfg.eval_freq > 0 and step % cfg.eval_freq == 0:
+        if cfg.env is not None and cfg.eval_freq > 0 and step % cfg.eval_freq == 0:
             logging.info(f"Eval policy at step {step}")
             with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
-                assert eval_env is not None
                 eval_info = eval_policy(
                     eval_env,
                     policy,
@@ -295,6 +301,10 @@ def train(cfg: TrainPipelineConfig):
     dl_iter = cycle(dataloader)
 
     policy.train()
+
+    if hasattr(policy, "init_ema_modules"):
+        policy.init_ema_modules()
+
     offline_step = 0
     for _ in range(step, cfg.offline.steps):
         if offline_step == 0:
@@ -305,7 +315,8 @@ def train(cfg: TrainPipelineConfig):
         dataloading_s = time.perf_counter() - start_time
 
         for key in batch:
-            batch[key] = batch[key].to(device, non_blocking=True)
+            if isinstance(batch[key], torch.Tensor):
+                batch[key] = batch[key].to(device, non_blocking=True)
 
         train_info = update_policy(
             policy,
@@ -364,6 +375,8 @@ def train(cfg: TrainPipelineConfig):
             "next.reward": {"shape": (), "dtype": np.dtype("float32")},
             "next.done": {"shape": (), "dtype": np.dtype("?")},
             "task_index": {"shape": (), "dtype": np.dtype("int64")},
+            # FIXME: 'task' is a string
+            # "task": {"shape": (), "dtype": np.dtype("?")},
             # FIXME: 'next.success' is expected by pusht env but not xarm
             "next.success": {"shape": (), "dtype": np.dtype("?")},
         },
@@ -450,9 +463,10 @@ def train(cfg: TrainPipelineConfig):
             if len(offline_dataset.meta.tasks) > 1:
                 raise NotImplementedError("Add support for multi task.")
 
-            # Hack to add a task to the online_dataset (0 is the first task of the offline_dataset)
+            # TODO(rcadene, aliberts): Hack to add a task to the online_dataset (0 is the first task of the offline_dataset)
             total_num_frames = eval_info["episodes"]["index"].shape[0]
             eval_info["episodes"]["task_index"] = torch.tensor([0] * total_num_frames, dtype=torch.int64)
+            eval_info["episodes"]["task"] = ["do the thing"] * total_num_frames
 
             with lock if lock is not None else nullcontext():
                 start_update_buffer_time = time.perf_counter()
@@ -498,7 +512,9 @@ def train(cfg: TrainPipelineConfig):
                 dataloading_s = time.perf_counter() - start_time
 
             for key in batch:
-                batch[key] = batch[key].to(device, non_blocking=True)
+                if isinstance(batch[key], torch.Tensor):
+                    dtype = get_safe_dtype(batch[key].dtype, device)
+                    batch[key] = batch[key].to(device=device, dtype=dtype, non_blocking=True)
 
             train_info = update_policy(
                 policy,
@@ -544,4 +560,5 @@ def train(cfg: TrainPipelineConfig):
 
 
 if __name__ == "__main__":
+    init_logging()
     train()

@@ -4,7 +4,6 @@ import math
 import time
 import traceback
 from copy import deepcopy
-from dataclasses import replace
 
 import numpy as np
 import tqdm
@@ -254,7 +253,6 @@ class JointOutOfRangeError(Exception):
 
 
 class DynamixelMotorsBus:
-    # TODO(rcadene): Add a script to find the motor indices without DynamixelWizzard2
     """
     The DynamixelMotorsBus class allows to efficiently read and write to the attached motors. It relies on
     the python dynamixel sdk to communicate with the motors. For more info, see the [Dynamixel SDK Documentation](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
@@ -276,10 +274,11 @@ class DynamixelMotorsBus:
     motor_index = 6
     motor_model = "xl330-m288"
 
-    motors_bus = DynamixelMotorsBus(
+    config = DynamixelMotorsBusConfig(
         port="/dev/tty.usbmodem575E0031751",
         motors={motor_name: (motor_index, motor_model)},
     )
+    motors_bus = DynamixelMotorsBus(config)
     motors_bus.connect()
 
     position = motors_bus.read("Present_Position")
@@ -295,24 +294,14 @@ class DynamixelMotorsBus:
 
     def __init__(
         self,
-        config: DynamixelMotorsBusConfig | None = None,
-        extra_model_control_table: dict[str, list[tuple]] | None = None,
-        extra_model_resolution: dict[str, int] | None = None,
-        **kwargs,
+        config: DynamixelMotorsBusConfig,
     ):
-        config = DynamixelMotorsBusConfig(**kwargs) if config is None else replace(config, **kwargs)
-
         self.port = config.port
         self.motors = config.motors
         self.mock = config.mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-        if extra_model_control_table:
-            self.model_ctrl_table.update(extra_model_control_table)
-
         self.model_resolution = deepcopy(MODEL_RESOLUTION)
-        if extra_model_resolution:
-            self.model_resolution.update(extra_model_resolution)
 
         self.port_handler = None
         self.packet_handler = None

@@ -253,6 +253,13 @@ def test_backward_compatibility(repo_id):
         # TODO (michel-aractingi): transform language obs to langauge embeddings via tokenizer
         new_frame.pop("language_instruction", None)
         old_frame.pop("language_instruction", None)
+        new_frame.pop("task", None)
+        old_frame.pop("task", None)
+
+        # Remove task_index to allow for backward compatibility
+        # TODO(rcadene): remove when new features have been generated
+        if "task_index" not in old_frame:
+            del new_frame["task_index"]
 
         # Remove task_index to allow for backward compatibility
         # TODO(rcadene): remove when new features have been generated
@@ -326,3 +333,20 @@ def test_create_branch():
 
     # Clean
     api.delete_repo(repo_id, repo_type=repo_type)
+
+
+def test_dataset_feature_with_forward_slash_raises_error():
+    # make sure dir does not exist
+    from lerobot.common.datasets.lerobot_dataset import LEROBOT_HOME
+
+    dataset_dir = LEROBOT_HOME / "lerobot/test/with/slash"
+    # make sure does not exist
+    if dataset_dir.exists():
+        dataset_dir.rmdir()
+
+    with pytest.raises(ValueError):
+        LeRobotDataset.create(
+            repo_id="lerobot/test/with/slash",
+            fps=30,
+            features={"a/b": {"dtype": "float32", "shape": 2, "names": None}},
+        )

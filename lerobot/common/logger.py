@@ -75,7 +75,6 @@ class Logger:
     The logger creates the following directory structure:
 
     provided_log_dir
-    ├── .hydra  # hydra's configuration cache
     ├── checkpoints
     │   ├── specific_checkpoint_name
     │   │   ├── pretrained_model  # Hugging Face pretrained model directory

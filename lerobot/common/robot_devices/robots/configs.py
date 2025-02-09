@@ -85,7 +85,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
     # Also, everything is expected to work safely out-of-the-box, but we highly advise to
     # first try to teleoperate the grippers only (by commenting out the rest of the motors in this yaml),
     # then to gradually add more motors (by uncommenting), until you can teleoperate both arms fully
-    max_relative_target: int = 5
+    max_relative_target: int | None = 5
 
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {

@@ -23,7 +23,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 def create_stats_buffers(
     features: dict[str, PolicyFeature],
     norm_map: dict[str, NormalizationMode],
-    stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    stats: dict[str, dict[str, Tensor]] | None = None,
 ) -> dict[str, dict[str, nn.ParameterDict]]:
     """
     Create buffers per modality (e.g. "observation.image", "action") containing their mean, std, min, max
@@ -78,6 +78,7 @@ def create_stats_buffers(
                 }
             )
 
+        # TODO(aliberts, rcadene): harmonize this to only use one framework (np or torch)
         if stats:
             if isinstance(stats[key]["mean"], np.ndarray):
                 if norm_mode is NormalizationMode.MEAN_STD:
@@ -152,6 +153,10 @@ class Normalize(nn.Module):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = dict(batch)  # shallow copy avoids mutating the input batch
         for key, ft in self.features.items():
+            if key not in batch:
+                # FIXME(aliberts, rcadene): This might lead to silent fail!
+                continue
+
             norm_mode = self.norm_map.get(ft.type, NormalizationMode.IDENTITY)
             if norm_mode is NormalizationMode.IDENTITY:
                 continue
@@ -222,6 +227,9 @@ class Unnormalize(nn.Module):
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = dict(batch)  # shallow copy avoids mutating the input batch
         for key, ft in self.features.items():
+            if key not in batch:
+                continue
+
             norm_mode = self.norm_map.get(ft.type, NormalizationMode.IDENTITY)
             if norm_mode is NormalizationMode.IDENTITY:
                 continue

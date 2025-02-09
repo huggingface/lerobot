@@ -38,6 +38,7 @@ def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs, train_kwa
         device="cpu",
         **train_kwargs,
     )
+    train_cfg.validate()  # Needed for auto-setting some parameters
 
     dataset = make_dataset(train_cfg)
     policy = make_policy(train_cfg.policy, ds_meta=dataset.meta, device=train_cfg.device)
@@ -81,7 +82,12 @@ def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs, train_kwa
     batch = next(iter(dataloader))
     obs = {}
     for k in batch:
+        # TODO: regenerate the safetensors
+        # for backward compatibility
         if k.endswith("_is_pad"):
+            continue
+        # for backward compatibility
+        if k == "task":
             continue
         if k.startswith("observation"):
             obs[k] = batch[k]

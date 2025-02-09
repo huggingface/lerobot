@@ -29,6 +29,15 @@ from lerobot.configs.train import TrainPipelineConfig
 def make_optimizer_and_scheduler(
     cfg: TrainPipelineConfig, policy: PreTrainedPolicy
 ) -> tuple[Optimizer, LRScheduler | None]:
+    """Generates the optimizer and scheduler based on configs.
+
+    Args:
+        cfg (TrainPipelineConfig): The training config that contains optimizer and scheduler configs
+        policy (PreTrainedPolicy): The policy config from which parameters and presets must be taken from.
+
+    Returns:
+        tuple[Optimizer, LRScheduler | None]: The couple (Optimizer, Scheduler). Scheduler can be `None`.
+    """
     params = policy.get_optim_params() if cfg.use_policy_training_preset else policy.parameters()
     optimizer = cfg.optimizer.build(params)
     lr_scheduler = cfg.scheduler.build(optimizer, cfg.offline.steps) if cfg.scheduler is not None else None
@@ -40,7 +49,8 @@ def load_training_state(checkpoint_dir: Path, optimizer: Optimizer, scheduler: L
     Given the checkpoint directory, load the optimizer state, scheduler state, and random state, and
     return the global training step.
     """
-    training_state = torch.load(checkpoint_dir / TRAINING_STATE)
+    # TODO(aliberts): use safetensors instead as weights_only=False is unsafe
+    training_state = torch.load(checkpoint_dir / TRAINING_STATE, weights_only=False)
     optimizer.load_state_dict(training_state["optimizer"])
     if scheduler is not None:
         scheduler.load_state_dict(training_state["scheduler"])

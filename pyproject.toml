@@ -39,7 +39,7 @@ numba = ">=0.59.0"
 torch = ">=2.2.1"
 opencv-python = ">=4.9.0"
 diffusers = ">=0.27.2"
-torchvision = ">=0.17.1"
+torchvision = ">=0.21.0"
 h5py = ">=3.10.0"
 huggingface-hub = {extras = ["hf-transfer", "cli"], version = ">=0.27.1"}
 gymnasium = "==0.29.1" # TODO(rcadene, aliberts): Make gym 1.0.0 work
@@ -69,6 +69,7 @@ pyrender = {git = "https://github.com/mmatl/pyrender.git", markers = "sys_platfo
 hello-robot-stretch-body = {version = ">=0.7.27", markers = "sys_platform == 'linux'", optional = true}
 pyserial = {version = ">=3.5", optional = true}
 jsonlines = ">=4.0.0"
+transformers = ">=4.48.0"
 draccus = {git = "https://github.com/dlwh/draccus.git"} # replace with draccus = ">=0.9.4" when https://github.com/dlwh/draccus/pull/29 is in release
 
 
@@ -85,6 +86,7 @@ dynamixel = ["dynamixel-sdk", "pynput"]
 feetech = ["feetech-servo-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
 stretch = ["hello-robot-stretch-body", "pyrender", "pyrealsense2", "pynput"]
+pi0 = ["transformers"]
 
 [tool.ruff]
 line-length = 110
