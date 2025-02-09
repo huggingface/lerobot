@@ -35,6 +35,7 @@ from lerobot.common.envs.factory import make_env
 from lerobot.common.logger import Logger, log_output_dir
 from lerobot.common.optim.factory import load_training_state, make_optimizer_and_scheduler
 from lerobot.common.policies.factory import make_policy
+from lerobot.common.policies.pretrained import PolicyWithRolloutUpdate
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.utils import (
     format_big_number,
@@ -380,6 +381,7 @@ def train(cfg: TrainPipelineConfig):
             # "task": {"shape": (), "dtype": np.dtype("?")},
             # FIXME: 'next.success' is expected by pusht env but not xarm
             "next.success": {"shape": (), "dtype": np.dtype("?")},
+            **getattr(policy, "rollout_tensor_spec", {}),
         },
         buffer_capacity=cfg.online.buffer_capacity,
         fps=online_env.unwrapped.metadata["render_fps"],
@@ -468,6 +470,9 @@ def train(cfg: TrainPipelineConfig):
             total_num_frames = eval_info["episodes"]["index"].shape[0]
             eval_info["episodes"]["task_index"] = torch.tensor([0] * total_num_frames, dtype=torch.int64)
             eval_info["episodes"]["task"] = ["do the thing"] * total_num_frames
+            if isinstance(policy, PolicyWithRolloutUpdate):
+                additional_rollout_tensors = policy.update_from_rollouts(eval_info["episodes"])
+                eval_info["episodes"].update(additional_rollout_tensors)
 
             with lock if lock is not None else nullcontext():
                 start_update_buffer_time = time.perf_counter()

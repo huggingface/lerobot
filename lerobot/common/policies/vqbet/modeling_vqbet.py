@@ -18,7 +18,7 @@
 
 import warnings
 from collections import deque
-from typing import Callable, List
+from typing import Callable
 
 import einops
 import numpy as np
@@ -27,6 +27,7 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor, nn
 
+from lerobot.common.policies.mlp import MLP
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
@@ -891,21 +892,3 @@ class FocalLoss(nn.Module):
             return loss.mean()
         else:
             return loss.sum()
-
-
-class MLP(torch.nn.Sequential):
-    def __init__(
-        self,
-        in_channels: int,
-        hidden_channels: List[int],
-    ):
-        layers = []
-        in_dim = in_channels
-        for hidden_dim in hidden_channels[:-1]:
-            layers.append(torch.nn.Linear(in_dim, hidden_dim))
-            layers.append(torch.nn.ReLU())
-            in_dim = hidden_dim
-
-        layers.append(torch.nn.Linear(in_dim, hidden_channels[-1]))
-
-        super().__init__(*layers)
