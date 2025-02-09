@@ -86,6 +86,12 @@ class RecordControlConfig(ControlConfig):
     # TODO(rcadene, aliberts): remove local_files_only when refactor with dataset as argument
     # Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.
     local_files_only: bool = False
+    # remote server address
+    server_address: str = None
+    # remote server port number
+    server_port: int = 9000
+    # remote server device to use for inference
+    remote_device: str = "cuda:0"
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
