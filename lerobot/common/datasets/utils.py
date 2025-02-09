@@ -232,12 +232,14 @@ def backward_compatible_episodes_stats(stats, episodes: list[int]):
     return {ep_idx: stats for ep_idx in episodes}
 
 
-def load_image_as_numpy(fpath: str | Path, dtype="float32", channel_first: bool = True) -> np.ndarray:
+def load_image_as_numpy(
+    fpath: str | Path, dtype: np.dtype = np.float32, channel_first: bool = True
+) -> np.ndarray:
     img = PILImage.open(fpath).convert("RGB")
     img_array = np.array(img, dtype=dtype)
     if channel_first:  # (H, W, C) -> (C, H, W)
         img_array = np.transpose(img_array, (2, 0, 1))
-    if "float" in dtype:
+    if np.issubdtype(dtype, np.floating):
         img_array /= 255.0
     return img_array
 

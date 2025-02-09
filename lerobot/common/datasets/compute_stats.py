@@ -57,19 +57,25 @@ def compute_image_stats(image_paths: list[str], num_samples: int | None = None) 
     step_size = len(image_paths) / num_samples
     sampled_indices = np.arange(0, len(image_paths), step_size).astype(int).tolist()
 
+    if sampled_indices[-1] == len(image_paths):
+        # in rare cases due to float approximations, the last element exceeds image_paths indices
+        sampled_indices[-1] -= 1
+
     images = []
     for idx in sampled_indices:
         path = image_paths[idx]
-        img = load_image_as_numpy(path, channel_first=True)
+        # we load as uint8 to reduce memory usage
+        img = load_image_as_numpy(path, dtype=np.uint8, channel_first=True)
         images.append(img)
 
     images = np.stack(images)
     axes_to_reduce = (0, 2, 3)  # keep channel dim
+    # we then divide by 255 to get values between [0, 1]
     image_stats = {
-        "min": np.min(images, axis=axes_to_reduce, keepdims=True),
-        "max": np.max(images, axis=axes_to_reduce, keepdims=True),
-        "mean": np.mean(images, axis=axes_to_reduce, keepdims=True),
-        "std": np.std(images, axis=axes_to_reduce, keepdims=True),
+        "min": np.min(images, axis=axes_to_reduce, keepdims=True) / 255.0,
+        "max": np.max(images, axis=axes_to_reduce, keepdims=True) / 255.0,
+        "mean": np.mean(images, axis=axes_to_reduce, keepdims=True) / 255.0,
+        "std": np.std(images, axis=axes_to_reduce, keepdims=True) / 255.0,
     }
     for key in image_stats:  # squeeze batch dim
         image_stats[key] = np.squeeze(image_stats[key], axis=0)
