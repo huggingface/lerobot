@@ -21,6 +21,7 @@ from lerobot.common.robot_devices.utils import (
     RobotDeviceNotConnectedError,
     busy_wait,
 )
+from lerobot.common.utils.rpi import check_csi_cam, is_raspberry_pi
 from lerobot.common.utils.utils import capture_timestamp_utc
 
 # The maximum opencv device index depends on your operating system. For instance,
@@ -34,7 +35,18 @@ MAX_OPENCV_INDEX = 60
 def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, mock=False) -> list[dict]:
     cameras = []
     if platform.system() == "Linux":
-        print("Linux detected. Finding available camera indices through scanning '/dev/video*' ports")
+        print("Linux detected.")
+        if is_raspberry_pi():
+            print("RaspberryPi detected. Checking for CSI camera")
+            if check_csi_cam():
+                print("CSI camera available")
+                cameras.append(
+                    {
+                        "port": "csi_cam",
+                        "index": "csi_cam",
+                    }
+                )
+        print("Finding available camera indices through scanning '/dev/video*' ports")
         possible_ports = [str(port) for port in Path("/dev").glob("video*")]
         ports = _find_cameras(possible_ports, mock=mock)
         for port in ports:
@@ -44,6 +56,7 @@ def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX
                     "index": int(port.removeprefix("/dev/video")),
                 }
             )
+
     else:
         print(
             "Mac or Windows detected. Finding available camera indices through "
@@ -70,22 +83,50 @@ def _find_cameras(
     else:
         import cv2
 
-    camera_ids = []
-    for camera_idx in possible_camera_ids:
-        camera = cv2.VideoCapture(camera_idx)
+    print(f"Possible ports: {possible_camera_ids}")
+
+    def _is_camera_open(camera_idx: int | str) -> bool:
+        """Try opening the camera at the specified index."""
+        if camera_idx != "csi_cam":
+            # Note: For some unknown reason, calling `isOpened` blocks the camera which then
+            # needs to be re-created.
+            camera = cv2.VideoCapture(camera_idx)
+        else:
+            camera = cv2.VideoCapture(0, cv2.CAP_V4L2)
+
         is_open = camera.isOpened()
         camera.release()
+        return is_open
 
-        if is_open:
-            print(f"Camera found at index {camera_idx}")
-            camera_ids.append(camera_idx)
+    camera_ids = []
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = {executor.submit(_is_camera_open, idx): idx for idx in possible_camera_ids}
+
+        done, not_done = concurrent.futures.wait(futures, timeout=5)
+
+        # Process completed futures
+        for future in done:
+            camera_idx = futures[future]
+            try:
+                is_open = future.result()
+            except Exception as e:
+                print(f"Error checking camera {camera_idx}: {e}")
+            else:
+                if is_open:
+                    camera_ids.append(camera_idx)
+
+        # Cancel any remaining futures
+        for future in not_done:
+            camera_idx = futures[future]
+            print(f"Timeout: Camera {camera_idx} did not respond within 5 seconds.")
+            future.cancel()
 
     if raise_when_empty and len(camera_ids) == 0:
         raise OSError(
             "Not a single camera was detected. Try re-plugging, or re-installing `opencv2`, "
             "or your camera driver, or make sure your camera is compatible with opencv2."
         )
-
     return camera_ids
 
 
@@ -101,7 +142,10 @@ def get_camera_index_from_unix_port(port: Path) -> int:
 
 def save_image(img_array, camera_index, frame_index, images_dir):
     img = Image.fromarray(img_array)
-    path = images_dir / f"camera_{camera_index:02d}_frame_{frame_index:06d}.png"
+    if isinstance(camera_index, int):
+        path = images_dir / f"camera_{camera_index:02d}_frame_{frame_index:06d}.png"
+    else:
+        path = images_dir / f"camera_{camera_index}_frame_{frame_index:06d}.png"
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(path), quality=100)
 
@@ -223,6 +267,8 @@ class OpenCVCamera:
         if platform.system() == "Linux":
             if isinstance(self.camera_index, int):
                 self.port = Path(f"/dev/video{self.camera_index}")
+            elif self.camera_index == "csi_cam":
+                pass
             elif isinstance(self.camera_index, str) and is_valid_unix_path(self.camera_index):
                 self.port = Path(self.camera_index)
                 # Retrieve the camera index from a potentially symlinked path
@@ -271,14 +317,20 @@ class OpenCVCamera:
             # when other threads are used to save the images.
             cv2.setNumThreads(1)
 
-        camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
-        # First create a temporary camera trying to access `camera_index`,
-        # and verify it is a valid camera by calling `isOpened`.
-        tmp_camera = cv2.VideoCapture(camera_idx)
-        is_camera_open = tmp_camera.isOpened()
-        # Release camera to make it accessible for `find_camera_indices`
-        tmp_camera.release()
-        del tmp_camera
+        if self.camera_index == "csi_cam":
+            is_camera_open = check_csi_cam()
+
+        else:
+            camera_idx = (
+                f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
+            )
+            # First create a temporary camera trying to access `camera_index`,
+            # and verify it is a valid camera by calling `isOpened`.
+            tmp_camera = cv2.VideoCapture(camera_idx)
+            is_camera_open = tmp_camera.isOpened()
+            # Release camera to make it accessible for `find_camera_indices`
+            tmp_camera.release()
+            del tmp_camera
 
         # If the camera doesn't work, display the camera indices corresponding to
         # valid cameras.
@@ -295,20 +347,38 @@ class OpenCVCamera:
             raise OSError(f"Can't access OpenCVCamera({camera_idx}).")
 
         # Secondly, create the camera that will be used downstream.
-        # Note: For some unknown reason, calling `isOpened` blocks the camera which then
-        # needs to be re-created.
-        self.camera = cv2.VideoCapture(camera_idx)
+        if self.camera_index != "csi_cam":
+            # Note: For some unknown reason, calling `isOpened` blocks the camera which then
+            # needs to be re-created.
+            self.camera = cv2.VideoCapture(self.camera_index)
 
-        if self.fps is not None:
-            self.camera.set(cv2.CAP_PROP_FPS, self.fps)
-        if self.width is not None:
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        if self.height is not None:
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            if self.fps is not None:
+                self.camera.set(cv2.CAP_PROP_FPS, self.fps)
+            if self.width is not None:
+                self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            if self.height is not None:
+                self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
 
-        actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
-        actual_width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
-        actual_height = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
+            actual_width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
+            actual_height = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        else:
+            from picamera2 import Picamera2
+
+            self.camera = Picamera2()
+            config = self.camera.create_video_configuration(
+                main={"size": (self.width, self.height), "format": "XRGB8888"}
+            )
+            self.camera.configure(config)
+            self.camera.set_controls({"FrameRate": self.fps})
+
+            # start the camera and check its configuration
+            self.camera.start()
+            capture_metadata = self.camera.capture_metadata()
+
+            actual_fps = 1e6 / capture_metadata["FrameDuration"]
+            cam_config = self.camera.camera_configuration()
+            actual_width, actual_height = cam_config["main"]["size"]
 
         # Using `math.isclose` since actual fps can be a float (e.g. 29.9 instead of 30)
         if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
@@ -343,19 +413,22 @@ class OpenCVCamera:
                 f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
-        start_time = time.perf_counter()
-
-        ret, color_image = self.camera.read()
-
-        if not ret:
-            raise OSError(f"Can't capture color image from camera {self.camera_index}.")
-
         requested_color_mode = self.color_mode if temporary_color_mode is None else temporary_color_mode
 
         if requested_color_mode not in ["rgb", "bgr"]:
             raise ValueError(
                 f"Expected color values are 'rgb' or 'bgr', but {requested_color_mode} is provided."
             )
+
+        start_time = time.perf_counter()
+
+        if self.camera_index != "csi_cam":
+            ret, color_image = self.camera.read()
+
+            if not ret:
+                raise OSError(f"Can't capture color image from camera {self.camera_index}.")
+        else:
+            color_image = self.camera.capture_array()  # (H,W,C)
 
         # OpenCV uses BGR format as default (blue, green, red) for all operations, including displaying images.
         # However, Deep Learning framework such as LeRobot uses RGB format as default to train neural networks,
@@ -428,7 +501,10 @@ class OpenCVCamera:
             self.thread = None
             self.stop_event = None
 
-        self.camera.release()
+        if self.camera_index != "csi_cam":
+            self.camera.release()
+        else:
+            self.camera.stop()
         self.camera = None
         self.is_connected = False
 
@@ -443,7 +519,6 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--camera-ids",
-        type=int,
         nargs="*",
         default=None,
         help="List of camera indices used to instantiate the `OpenCVCamera`. If not provided, find and use all available camera indices.",
@@ -456,13 +531,13 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--width",
-        type=str,
+        type=int,
         default=None,
         help="Set the width for all cameras. If not provided, use the default width of each camera.",
     )
     parser.add_argument(
         "--height",
-        type=str,
+        type=int,
         default=None,
         help="Set the height for all cameras. If not provided, use the default height of each camera.",
     )
