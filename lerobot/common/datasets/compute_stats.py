@@ -20,6 +20,8 @@ import einops
 import torch
 import tqdm
 
+from lerobot.common.utils.rpi import is_raspberry_pi
+
 
 def get_stats_einops_patterns(dataset, num_workers=0):
     """These einops patterns will be used to aggregate batches and compute statistics.
@@ -67,6 +69,10 @@ def compute_stats(dataset, batch_size=8, num_workers=8, max_num_samples=None):
     """Compute mean/std and min/max statistics of all data keys in a LeRobotDataset."""
     if max_num_samples is None:
         max_num_samples = len(dataset)
+
+    if is_raspberry_pi and num_workers > 4:
+        num_workers = 4
+        print("Lowered num_workers to 4 to avoid excessive strain on RaspberryPi")
 
     # for more info on why we need to set the same number of workers, see `load_from_videos`
     stats_patterns = get_stats_einops_patterns(dataset, num_workers)
