@@ -24,12 +24,13 @@ def compute_episode_stats(episode_buffer: dict, features: dict, num_image_sample
         if features[key]["dtype"] in ["image", "video"]:
             stats[key] = compute_image_stats(data, num_samples=num_image_samples)
         else:
-            axes_to_reduce = 0  # Compute stats over the first axis
+            axes_to_reduce = 0  # compute stats over the first axis
+            keepdims = data.ndim == 1  # keep as np.array
             stats[key] = {
-                "min": np.min(data, axis=axes_to_reduce),
-                "max": np.max(data, axis=axes_to_reduce),
-                "mean": np.mean(data, axis=axes_to_reduce),
-                "std": np.std(data, axis=axes_to_reduce),
+                "min": np.min(data, axis=axes_to_reduce, keepdims=keepdims),
+                "max": np.max(data, axis=axes_to_reduce, keepdims=keepdims),
+                "mean": np.mean(data, axis=axes_to_reduce, keepdims=keepdims),
+                "std": np.std(data, axis=axes_to_reduce, keepdims=keepdims),
                 "count": np.array([data.shape[0]]),
             }
     return stats
