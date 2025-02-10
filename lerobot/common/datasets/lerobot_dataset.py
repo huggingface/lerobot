@@ -58,7 +58,6 @@ from lerobot.common.datasets.utils import (
     write_info,
     write_json,
     write_parquet,
-    write_stats,
     write_task,
 )
 from lerobot.common.datasets.video_utils import (
@@ -799,7 +798,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # TODO(aliberts): Add option to use existing episode_index
             raise NotImplementedError(
                 "You might have manually provided the episode_buffer with an episode_index that doesn't "
-                "match the total number of episodes in the dataset. This is not supported for now."
+                "match the total number of episodes already in the dataset. This is not supported for now."
             )
 
         if episode_length == 0:
@@ -914,7 +913,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         return video_paths
 
-    def consolidate(self, run_compute_stats: bool = True, keep_image_files: bool = False) -> None:
+    def consolidate(self, keep_image_files: bool = False) -> None:
         self.hf_dataset = self.load_hf_dataset()
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
         check_timestamps_sync(self.hf_dataset, self.episode_data_index, self.fps, self.tolerance_s)
@@ -934,15 +933,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         parquet_files = list(self.root.rglob("*.parquet"))
         assert len(parquet_files) == self.num_episodes
 
-        if run_compute_stats:
-            self.stop_image_writer()
-            self.meta.stats = aggregate_stats(list(self.meta.episodes_stats.values()))
-            write_stats(self.meta.stats, self.root)
-            self.consolidated = True
-        else:
-            logging.warning(
-                "Skipping computation of the dataset statistics, dataset is not fully consolidated."
-            )
+        self.consolidated = True
 
     @classmethod
     def create(
