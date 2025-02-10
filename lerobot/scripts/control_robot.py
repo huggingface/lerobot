@@ -305,6 +305,9 @@ def record(
             dataset.clear_episode_buffer()
             continue
 
+        task = cfg.single_task
+        if task is None:
+            task = tasks_by_episodes[recorded_episodes]
         dataset.save_episode(cfg.single_task)
         recorded_episodes += 1
 
