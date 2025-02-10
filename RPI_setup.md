@@ -50,6 +50,8 @@ You can use a CSI camera such as this [one](https://www.raspberrypi.com/products
 sudo apt install cmake build-essential libcap-dev libatlas-base-dev ffmpeg libopenjp2-7 libcamera-dev libkms++-dev libfmt-dev libdrm-dev
 ```
 
+To use the CSI camera in your config, you need to set `camera_index` to `csi_cam`
+
 Also, when using miniconda, make sure to use the same gcc version as the system's gcc. This will avoid any binary compatibility issues.
 
 ```bash
