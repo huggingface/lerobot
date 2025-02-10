@@ -395,7 +395,12 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
 
         att_weights = torch.matmul(query_states, key_states.transpose(2, 3))
         att_weights *= head_dim**-0.5
-        big_neg = -2.3819763e38  # See gemma/modules.py
+        
+        if att_weights.dtype in (torch.float16, torch.bfloat16):
+            big_neg_val = -10000.0
+        else:
+            big_neg_val = -2.3819763e38
+        big_neg = torch.tensor(big_neg_val, dtype=att_weights.dtype, device=att_weights.device)
 
         masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
 
