@@ -1,5 +1,7 @@
 import base64
 import json
+import logging
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -7,8 +9,31 @@ import torch
 import zmq
 from pynput import keyboard
 
+from lerobot.common.robot_devices.motors.feetech import TorqueMode
+from lerobot.common.robot_devices.motors.utils import MotorsBus, make_motors_buses_from_configs
 from lerobot.common.robot_devices.robots.configs import MobileSO100RobotConfig
+from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import RobotDeviceNotConnectedError
+
+
+def ensure_safe_goal_position(
+    goal_pos: torch.Tensor, present_pos: torch.Tensor, max_relative_target: float | list[float]
+):
+    # Cap relative action target magnitude for safety.
+    diff = goal_pos - present_pos
+    max_relative_target = torch.tensor(max_relative_target)
+    safe_diff = torch.minimum(diff, max_relative_target)
+    safe_diff = torch.maximum(safe_diff, -max_relative_target)
+    safe_goal_pos = present_pos + safe_diff
+
+    if not torch.allclose(goal_pos, safe_goal_pos):
+        logging.warning(
+            "Relative goal position magnitude had to be clamped to be safe.\n"
+            f"  requested relative goal position target: {diff}\n"
+            f"    clamped relative goal position target: {safe_diff}"
+        )
+
+    return safe_goal_pos
 
 
 class MobileCamera:
@@ -21,43 +46,52 @@ class MobileCamera:
         self.fps = 30
 
     def async_read(self):
-        frame, _ = self.mobile_robot._get_video_frame(timeout=1)
+        # The remote camera frame is received via the video socket.
+        frame, _, _ = self.mobile_robot._get_video_frame(timeout=1)
         if frame is None:
-            # Return a black frame if no frame was received
+            # Return a black frame if no frame was received.
             frame = np.zeros((self.height, self.width, self.channels), dtype=np.uint8)
         return frame
 
 
 class MobileManipulator:
     """
-    MobileManipulator is a new class for connecting to and controlling a remote robot such as Mobile-SO100.
+    MobileManipulator is a class for connecting to and controlling a remote mobile manipulator robot.
+    The robot includes a three omniwheel mobile base and a remote follower arm.
+    The leader arm is connected locally (on the laptop) and its joint positions are recorded and then
+    forwarded to the remote follower arm (after applying a safety clamp).
+    In parallel, keyboard teleoperation is used to generate raw velocity commands for the wheels.
     """
 
-    def __init__(
-        self, config: MobileSO100RobotConfig
-    ):  # TODO: change this to generic MobileManipulator class
+    def __init__(self, config: MobileSO100RobotConfig):
         """
-        Initialize the MobileManipulator with the provided configuration.
-
         Expected keys in config:
-          - "ip": IP address of the remote robot.
-          - "port": Port number for the remote connection (e.g. 5555).
-          - "video_port": Port number for the remote connection for recieving images (e.g. 5556).
-
-        Also, initializes a dictionary for tracking key states and starts
-        a keyboard listener in a background thread.
+          - ip, port, video_port for the remote connection.
+          - calibration_dir, leader_arms, follower_arms, max_relative_target, etc.
         """
         self.robot_type = config.type
         self.config = config
         self.remote_ip = config.ip
         self.remote_port = config.port
         self.remote_port_video = config.video_port
+        self.calibration_dir = Path(self.config.calibration_dir)
+
+        # For teleoperation, the leader arm (local) is used to record the desired arm pose.
+        self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
+        # Although follower arms are configured, on the laptop we do not read them locally.
+        self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
+
+        # The mobile camera interface.
+        self._mobile_camera = MobileCamera(self)
         self.is_connected = False
+
+        # ZeroMQ context and sockets.
         self.context = None
         self.cmd_socket = None
         self.video_socket = None
-        self.running = True
 
+        # Keyboard state for base teleoperation.
+        self.running = True
         self.pressed_keys = {
             "forward": False,
             "backward": False,
@@ -66,28 +100,22 @@ class MobileManipulator:
             "rotate_left": False,
             "rotate_right": False,
         }
-
-        # Start the keyboard listener.
         self.listener = keyboard.Listener(
             on_press=self.on_press,
             on_release=self.on_release,
         )
         self.listener.start()
 
-        self._mobile_camera = MobileCamera(self)
+    def get_motor_names(self, arms: dict[str, MotorsBus]) -> list:
+        return [f"{arm}_{motor}" for arm, bus in arms.items() for motor in bus.motors]
 
     @property
     def cameras(self):
-        """
-        Provide a dictionary mimicking the camera interface expected by the recording pipeline.
-        """
+        # Provide a dictionary mimicking the camera interface expected by the recording pipeline.
         return {"mobile": self._mobile_camera}
 
     @property
     def camera_features(self) -> dict:
-        """
-        Similar to ManipulatorRobot, define a property for the camera features.
-        """
         cam_ft = {}
         for cam_key, cam in self.cameras.items():
             key = f"observation.images.{cam_key}"
@@ -100,27 +128,37 @@ class MobileManipulator:
 
     @property
     def motor_features(self) -> dict:
-        """
-        Define motor features for the mobile manipulator.
-        In this example, we assume the robot is a controlled via three omniwheels.
-        """
-        motor_names = ["wheel_1", "wheel_2", "wheel_3"]
+        # For mobile teleop we assume the “action” has two parts:
+        #   (i) Arm positions (to be set remotely)
+        #  (ii) Wheel velocity commands (for wheel_1, wheel_2, wheel_3)
+        follower_arm_names = self.get_motor_names(self.follower_arms)
+        wheel_names = ["wheel_1", "wheel_2", "wheel_3"]
+        combined_names = follower_arm_names + wheel_names
         return {
             "action": {
                 "dtype": "float32",
-                "shape": (len(motor_names),),
-                "names": motor_names,
+                "shape": (len(combined_names),),
+                "names": combined_names,
             },
             "observation.state": {
                 "dtype": "float32",
-                "shape": (len(motor_names),),
-                "names": motor_names,
+                "shape": (len(combined_names),),
+                "names": combined_names,
             },
         }
 
     @property
     def features(self) -> dict:
         return {**self.motor_features, **self.camera_features}
+
+    @property
+    def available_arms(self):
+        available = []
+        for name in self.follower_arms:
+            available.append(get_arm_id(name, "follower"))
+        for name in self.leader_arms:
+            available.append(get_arm_id(name, "leader"))
+        return available
 
     def on_press(self, key):
         try:
@@ -163,40 +201,44 @@ class MobileManipulator:
             pass
 
     def connect(self):
-        """
-        Connect to the remote robot.
-        """
+        if not self.leader_arms:
+            raise ValueError("MobileManipulator has no leader arm to connect.")
+        for name in self.leader_arms:
+            print(f"Connecting {name} leader arm.")
+            self.leader_arms[name].connect()
+            self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+
+        # Set up ZeroMQ sockets to communicate with the remote mobile robot.
         self.context = zmq.Context()
         self.cmd_socket = self.context.socket(zmq.PUSH)
         connection_string = f"tcp://{self.remote_ip}:{self.remote_port}"
         self.cmd_socket.connect(connection_string)
         self.cmd_socket.setsockopt(zmq.CONFLATE, 1)
-        self.is_connected = True
-        print(f"[INFO] Connected to remote robot at {connection_string}.")
-
         self.video_socket = self.context.socket(zmq.SUB)
         self.video_socket.setsockopt_string(zmq.SUBSCRIBE, "")
         video_connection = f"tcp://{self.remote_ip}:{self.remote_port_video}"
         self.video_socket.connect(video_connection)
         self.video_socket.setsockopt(zmq.RCVHWM, 1)
-        print(f"[INFO] Connected to remote video stream at {video_connection}.")
+        print(
+            f"[INFO] Connected to remote robot at {connection_string} and video stream at {video_connection}."
+        )
+        self.is_connected = True
 
-    def _get_video_frame(self):
+    def _get_video_frame(self, timeout=1):
         """
-        Always read (and discard) all buffered messages from the SUB socket,
-        decoding only the latest one so we have the freshest frame/speed data.
+        Receives messages from the video socket and extracts:
+          - The JPEG image frame,
+          - The present wheel speed (as provided by the remote),
+          - The remote follower arm state (arm positions) if available.
         """
-        frame, present_speed = None, {}
-
+        frame, present_speed, remote_arm_state = None, {}, None
         while True:
             try:
                 obs_string = self.video_socket.recv_string(flags=zmq.NOBLOCK)
                 observation = json.loads(obs_string)
-
                 image_b64 = observation.get("image", "")
                 speed_data = observation.get("present_speed", {})
-
-                # Attempt to decode the latest image
+                remote_arm_state = observation.get("follower_arm_state", None)
                 if image_b64:
                     jpg_original = base64.b64decode(image_b64)
                     np_arr = np.frombuffer(jpg_original, dtype=np.uint8)
@@ -204,223 +246,194 @@ class MobileManipulator:
                     if frame_candidate is not None:
                         frame = frame_candidate
                 present_speed = speed_data
-
             except zmq.Again:
-                # No more messages in the queue, so break
                 break
             except Exception as e:
-                print(f"[DEBUG] Error decoding message: {e}")
-                pass
+                print(f"[DEBUG] Error decoding video message: {e}")
+                break
+        return frame, present_speed, remote_arm_state
 
-        return frame, present_speed
+    def _process_present_speed(self, present_speed: dict) -> torch.Tensor:
+        state_tensor = torch.zeros(3, dtype=torch.int32)
+        if present_speed:
+            decoded = {key: MobileManipulator.raw_to_degps(value) for key, value in present_speed.items()}
+            if "1" in decoded:
+                state_tensor[0] = decoded["1"]
+            if "2" in decoded:
+                state_tensor[1] = decoded["2"]
+            if "3" in decoded:
+                state_tensor[2] = decoded["3"]
+        return state_tensor
 
     def teleop_step(
         self, record_data: bool = False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
-        """
-        Perform one teleoperation step using keyboard input.
-        Instead of sending the intermediate x/y/θ command, this version converts the command
-        into raw wheel velocities (encoded as 16-bit integers) and sends those to the remote robot.
-        When record_data is True, the raw wheel commands are stored in the action dict.
-        """
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
-                "MobileManipulatorRobot is not connected. You need to run `robot.connect()`."
-            )
+            raise RobotDeviceNotConnectedError("MobileManipulator is not connected. Run `connect()` first.")
 
-        x_cmd = 0.0  # m/s
-        y_cmd = 0.0  # m/s
-        theta_cmd = 0.0  # deg/s
+        # 1. Read leader arm positions.
+        leader_pos = {}
+        for name, arm in self.leader_arms.items():
+            pos = arm.read("Present_Position")
+            leader_pos[name] = torch.from_numpy(pos)
 
-        if self.pressed_keys["forward"]:  # w
-            x_cmd -= 0.1  # move forward
-        if self.pressed_keys["backward"]:  # s
-            x_cmd += 0.1  # move backward
-        if self.pressed_keys["left"]:  # a
-            y_cmd -= 0.1  # move left
-        if self.pressed_keys["right"]:  # d
-            y_cmd += 0.1  # move right
+        # 2. Compute follower arm command from the leader arm.
+        # Since the laptop does not have a local follower arm, we use the leader arm positions.
+        arm_commands = {}
+        for name in self.follower_arms:
+            goal_pos = torch.tensor(0.0)
+            if name in leader_pos:
+                goal_pos = leader_pos[name]
+            if self.config.max_relative_target is not None:
+                # With no local feedback, we use the leader value as the “present” position.
+                goal_pos = ensure_safe_goal_position(goal_pos, goal_pos, self.config.max_relative_target)
+            if goal_pos.numel() == 1:
+                arm_commands[name] = int(goal_pos.item())
+            else:
+                arm_commands[name] = goal_pos.numpy().tolist()
+
+        # 3. Process keyboard input to generate wheel velocity commands.
+        x_cmd = 0.0  # m/s (forward/backward)
+        y_cmd = 0.0  # m/s (lateral)
+        theta_cmd = 0.0  # deg/s (rotation)
+        if self.pressed_keys["forward"]:
+            x_cmd -= 0.1
+        if self.pressed_keys["backward"]:
+            x_cmd += 0.1
+        if self.pressed_keys["left"]:
+            y_cmd -= 0.1
+        if self.pressed_keys["right"]:
+            y_cmd += 0.1
         if self.pressed_keys["rotate_left"]:
-            theta_cmd += 90  # Rotate counterclockwise (deg/s)
+            theta_cmd += 90
         if self.pressed_keys["rotate_right"]:
-            theta_cmd -= 90  # Rotate clockwise (deg/s)
+            theta_cmd -= 90
 
-        # Convert rotational command from deg/s to rad/s ---
-        theta_rad = theta_cmd * (np.pi / 180)  # rad/s
-
-        wheel_radius = 0.05  # in meters
-        base_radius = 0.125  # distance from robot center to wheel (in meters)
-
-        # The wheels are mounted at 0°, 120°, and 240° relative to the robot frame.
+        theta_rad = theta_cmd * (np.pi / 180)
+        wheel_radius = 0.05  # meters
+        base_radius = 0.125  # meters
         angles = np.radians([0, 120, 240])
-
-        # Use the standard inverse kinematics matrix:
-        #   For each wheel i:
-        #      wheel_speed_i (m/s) = cos(alpha_i)*v_x + sin(alpha_i)*v_y + base_radius*omega
         kinematic_matrix = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
-
-        # The robot velocity vector:
-        #   v_x is forward (m/s), v_y is lateral (m/s), and omega is rotation (rad/s)
-        # TODO(pepijn): swap y_cmd and x_cmd, and figure out what wheel should be placed where in intructions, so which id where
         velocity_vector = np.array([y_cmd, x_cmd, theta_rad])
-
-        # Compute the required wheel linear speeds (in m/s)
         wheel_linear_speeds = kinematic_matrix.dot(velocity_vector)
-
-        # Convert wheel linear speeds (m/s) to wheel angular speeds (rad/s)
-        #         using: wheel_angular_speed = wheel_linear_speed / wheel_radius
         wheel_angular_speeds = wheel_linear_speeds / wheel_radius
-
-        # Convert motor angular speed (rad/s) to ticks/s.
-        #         One full rotation (2π rad) equals 4096 ticks.
         ticks_per_second = wheel_angular_speeds * (4096 / (2 * np.pi))
-
-        # Limit the Motor Speed
-        max_ticks = 3000  # equals 3000 ticks/s
-
-        # Scale the ticks/s values if any exceed the maximum.
+        max_ticks = 3000
         max_abs_ticks = max(abs(tick) for tick in ticks_per_second)
         if max_abs_ticks > max_ticks:
             scale = max_ticks / max_abs_ticks
             ticks_limited = [tick * scale for tick in ticks_per_second]
         else:
             ticks_limited = ticks_per_second
-
         motor_ticks = [int(round(tick)) for tick in ticks_limited]
-
-        # Encode Each Tick Speed into a 16-bit Command
-        # The encoding format is:
-        #   - Lower 15 bits: absolute tick value.
-        #   - MSB (bit 15): set (i.e. OR with 0x8000) if the tick value is negative.
         command_speeds = [(abs(tick) | 0x8000) if tick < 0 else (tick & 0x7FFF) for tick in motor_ticks]
-
         raw_velocity_command = {
             "wheel_1": command_speeds[0],
             "wheel_2": command_speeds[1],
             "wheel_3": command_speeds[2],
         }
-        message = {"raw_velocity": raw_velocity_command}
+
+        # 4. Combine the arm and wheel commands into one message and send it.
+        message = {"raw_velocity": raw_velocity_command, "arm_positions": arm_commands}
         self.cmd_socket.send_string(json.dumps(message))
-
-        # TODO(pepijn): remove this?
-        decoded_speed = {
-            wheel: MobileManipulator.raw_to_degps(raw_value)
-            for wheel, raw_value in raw_velocity_command.items()
-        }
-        print(f"[DEBUG] Sent raw velocity command (decoded): {decoded_speed} deg/s")
-
-        frame, present_speed = self._get_video_frame()
+        print(f"[DEBUG] Sent command: {message}")
 
         if not record_data:
             return
 
-        obs_dict, action_dict = {}, {}
-
-        if present_speed is None:
-            state_tensor = torch.zeros(3, dtype=torch.int32)
+        # 5. Retrieve remote observation from the video socket.
+        frame, present_speed, remote_arm_state = self._get_video_frame()
+        if remote_arm_state is not None:
+            remote_arm_state_tensor = torch.tensor(remote_arm_state)
         else:
-            state_tensor = torch.zeros(3, dtype=torch.int32)
-            decoded_present_speed = {
-                key: MobileManipulator.raw_to_degps(value) for key, value in present_speed.items()
-            }
-            if "1" in decoded_present_speed:
-                state_tensor[0] = decoded_present_speed["1"]
-            if "2" in decoded_present_speed:
-                state_tensor[1] = decoded_present_speed["2"]
-            if "3" in decoded_present_speed:
-                state_tensor[2] = decoded_present_speed["3"]
+            remote_arm_state_tensor = torch.tensor([])
+
+        state_tensor = self._process_present_speed(present_speed)
 
         decoded_action = [MobileManipulator.raw_to_degps(raw) for raw in command_speeds]
         action_tensor = torch.tensor(decoded_action, dtype=torch.int32)
 
-        obs_dict["observation.state"] = state_tensor
-        action_dict["action"] = action_tensor
-
+        # Build observation and action dictionaries.
+        obs_dict = {"observation.state": state_tensor, "observation.arm_state": remote_arm_state_tensor}
+        action_dict = {"action": action_tensor}
         if frame is not None:
-            frame_tensor = torch.from_numpy(frame)
-            obs_dict["observation.images.mobile"] = frame_tensor
-
+            obs_dict["observation.images.mobile"] = torch.from_numpy(frame)
         return obs_dict, action_dict
 
     def capture_observation(self) -> dict:
         """
-        Retrieve sensor data (observations) from the remote robot.
+        Capture observations from the remote robot: current follower arm positions,
+        present wheel speed, and a camera frame.
         """
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError("Not connected. Run `connect()` first.")
+
         obs_dict = {}
+        frame, present_speed, remote_arm_state = self._get_video_frame()
 
-        frame, present_speed = self._get_video_frame()
+        state_tensor = self._process_present_speed(present_speed)
 
-        if present_speed is None:
-            state_tensor = torch.zeros(3, dtype=torch.int32)
-            print("[DEBUG] No velocity command received! Using zeros.")
+        if remote_arm_state is not None:
+            obs_dict["observation.arm_state"] = torch.tensor(remote_arm_state)
         else:
-            state_tensor = torch.zeros(3, dtype=torch.int32)
-            decoded_present_speed = {
-                key: MobileManipulator.raw_to_degps(value) for key, value in present_speed.items()
-            }
-            if "1" in decoded_present_speed:
-                state_tensor[0] = decoded_present_speed["1"]
-            if "2" in decoded_present_speed:
-                state_tensor[1] = decoded_present_speed["2"]
-            if "3" in decoded_present_speed:
-                state_tensor[2] = decoded_present_speed["3"]
+            obs_dict["observation.arm_state"] = torch.tensor([])
 
-        obs_dict["observation.speed"] = state_tensor
+        obs_dict["observation.state"] = state_tensor
 
         if frame is not None:
-            frame_tensor = torch.from_numpy(frame)
-            obs_dict["observation.images.mobile"] = frame_tensor
-
+            obs_dict["observation.images.mobile"] = torch.from_numpy(frame)
         return obs_dict
 
     def send_action(self, action: torch.Tensor) -> torch.Tensor:
         """
-        Send a raw velocity command to the remote robot.
-        Here we assume the action tensor contains three elements corresponding to
-        the raw motor commands (already encoded as 16-bit integers) for:
-          - wheel_1
-          - wheel_2
-          - wheel_3
+        If an external policy sends a composite action containing wheel commands (and possibly arm commands),
+        here we assume that the action tensor contains three values for the wheels and optionally additional
+        values for follower arm positions.
         """
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
-                "MobileManipulatorRobot is not connected. You need to run `robot.connect()`."
-            )
+            raise RobotDeviceNotConnectedError("Not connected. Run `connect()` first.")
 
-        # Construct the raw velocity command dictionary.
+        # Process wheel commands.
+        motor_ticks = [int(action[i].item()) for i in range(3)]
         raw_velocity_command = {
-            "wheel_1": self.degps_to_raw(int(action[0].item())),
-            "wheel_2": self.degps_to_raw(int(action[1].item())),
-            "wheel_3": self.degps_to_raw(int(action[2].item())),
+            "wheel_1": self.degps_to_raw(motor_ticks[0]),
+            "wheel_2": self.degps_to_raw(motor_ticks[1]),
+            "wheel_3": self.degps_to_raw(motor_ticks[2]),
         }
-
-        # Wrap it in a dictionary with key "raw_velocity"
         message = {"raw_velocity": raw_velocity_command}
 
-        self.cmd_socket.send_string(json.dumps(message))
-        print(f"[DEBUG] Sent raw velocity command: {raw_velocity_command} deg/s")
+        # If the action tensor contains more than three elements, assume they are follower arm commands.
+        if action.numel() > 3:
+            arm_positions = {}
+            extra = action[3:]
+            i = 0
+            for name in sorted(self.follower_arms.keys()):
+                if i < extra.numel():
+                    arm_positions[name] = int(extra[i].item())
+                    i += 1
+            message["arm_positions"] = arm_positions
 
-        action_sent = [action]
-        return torch.cat(action_sent)
+        self.cmd_socket.send_string(json.dumps(message))
+        return action
 
     def print_logs(self):
         pass
 
     def disconnect(self):
-        """
-        Disconnect from the remote robot.
-        """
-        if self.is_connected and self.cmd_socket:
-            stop_cmd = {"x": 0, "y": 0, "theta": 0}
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError("Not connected.")
+        if self.cmd_socket:
+            # Send a “stop” command before disconnecting.
+            stop_cmd = {"raw_velocity": {"wheel_1": 0, "wheel_2": 0, "wheel_3": 0}, "arm_positions": {}}
             self.cmd_socket.send_string(json.dumps(stop_cmd))
             self.cmd_socket.close()
-            if self.video_socket:
-                self.video_socket.close()
+        if self.video_socket:
+            self.video_socket.close()
+        if self.context:
             self.context.term()
-            self.is_connected = False
-            print("[INFO] Disconnected from remote robot.")
-
         self.listener.stop()
+        self.is_connected = False
+        print("[INFO] Disconnected from remote robot.")
 
     def __del__(self):
         if getattr(self, "is_connected", False):
@@ -430,40 +443,21 @@ class MobileManipulator:
 
     @staticmethod
     def degps_to_raw(degps: float) -> int:
-        """
-        Convert speed in degrees/s to a 16-bit signed raw command,
-        where the lower 15 bits store the speed in steps/s (4096 steps per 360°),
-        and bit 15 is the sign bit (1 = negative).
-        """
         steps_per_deg = 4096.0 / 360.0
-        # Convert deg/s to steps/s
         speed_in_steps = abs(degps) * steps_per_deg
-
-        # Round and clamp to the 15-bit maximum (0x7FFF = 32767)
         speed_int = int(round(speed_in_steps))
         if speed_int > 0x7FFF:
             speed_int = 0x7FFF
-
-        # Set the sign bit if negative
         if degps < 0:
-            return speed_int | 0x8000  # 0x8000 sets bit 15
+            return speed_int | 0x8000
         else:
-            return speed_int & 0x7FFF  # Ensure bit 15 is cleared
+            return speed_int & 0x7FFF
 
     @staticmethod
     def raw_to_degps(raw_speed: int) -> float:
-        """
-        Convert a 16-bit signed raw speed (steps/s in lower 15 bits, sign in bit 15)
-        back to degrees/s (°/s). 4096 steps = 360°.
-        """
         steps_per_deg = 4096.0 / 360.0
-        # Extract the magnitude (lower 15 bits)
         magnitude = raw_speed & 0x7FFF
-        # Convert steps/s -> deg/s
         degps = magnitude / steps_per_deg
-
-        # Check bit 15 for sign
-        if raw_speed & 0x8000:  # negative speed
+        if raw_speed & 0x8000:
             degps = -degps
-
         return degps
