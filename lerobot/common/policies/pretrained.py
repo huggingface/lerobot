@@ -2,7 +2,7 @@ import abc
 import logging
 import os
 from pathlib import Path
-from typing import Type, TypeVar
+from typing import Protocol, Type, TypeVar, runtime_checkable
 
 import packaging
 import safetensors
@@ -180,3 +180,37 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         with caching.
         """
         raise NotImplementedError
+
+
+@runtime_checkable
+class PolicyWithRolloutUpdate(Protocol):
+    """An extended interface for policies that can perform updates or data collection from rollout batches.
+    An example use case is calculating generalized advantage estimates (GAE) from a batch of rollouts,
+    rather than using the raw rewards, or calculating log probabilities of actions which should be stored
+    in the rollout buffer (e.g. for PPO).
+
+    Policies implementing this protocol must be able to provide tensor shapes and dtypes for additional data
+    they produce. The dictionary should map each tensor name to its specification, for example:
+
+        rollout_tensor_spec = {
+            "value": {"shape": (), "dtype": np.dtype("float32")},
+            "action.log_prob": {"shape": (), "dtype": np.dtype("float32")},
+            "advantage": {"shape": (), "dtype": np.dtype("float32")},
+            "return": {"shape": (), "dtype": np.dtype("float32")},
+        }
+    """
+
+    rollout_tensor_spec: dict[str, dict]
+
+    def update_from_rollouts(self, rollouts: dict[str, Tensor]) -> dict[str, Tensor]:
+        """
+        Processes a batch of trajectory rollouts and performs updates or collects additional data.
+
+        Args:
+            rollouts (dict[str, Tensor]): A dictionary of tensors representing trajectory rollouts,
+                including e.g. "observation.state", "reward", "next.done", and any other
+                tensors needed for the update.
+
+        Returns:
+            dict[str, Tensor]: A dictionary of additional tensors (if any) to be logged or stored.
+        """

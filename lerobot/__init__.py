@@ -173,6 +173,7 @@ available_policies = [
     "diffusion",
     "tdmpc",
     "vqbet",
+    "ppo",
 ]
 
 # lists all available robots from `lerobot/common/robot_devices/robots`
