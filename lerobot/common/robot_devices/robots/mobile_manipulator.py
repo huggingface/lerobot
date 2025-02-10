@@ -1,6 +1,5 @@
 import base64
 import json
-import logging
 from pathlib import Path
 
 import cv2
@@ -12,28 +11,9 @@ from pynput import keyboard
 from lerobot.common.robot_devices.motors.feetech import TorqueMode
 from lerobot.common.robot_devices.motors.utils import MotorsBus, make_motors_buses_from_configs
 from lerobot.common.robot_devices.robots.configs import MobileSO100RobotConfig
+from lerobot.common.robot_devices.robots.feetech_calibration import run_arm_manual_calibration
 from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import RobotDeviceNotConnectedError
-
-
-def ensure_safe_goal_position(
-    goal_pos: torch.Tensor, present_pos: torch.Tensor, max_relative_target: float | list[float]
-):
-    # Cap relative action target magnitude for safety.
-    diff = goal_pos - present_pos
-    max_relative_target = torch.tensor(max_relative_target)
-    safe_diff = torch.minimum(diff, max_relative_target)
-    safe_diff = torch.maximum(safe_diff, -max_relative_target)
-    safe_goal_pos = present_pos + safe_diff
-
-    if not torch.allclose(goal_pos, safe_goal_pos):
-        logging.warning(
-            "Relative goal position magnitude had to be clamped to be safe.\n"
-            f"  requested relative goal position target: {diff}\n"
-            f"    clamped relative goal position target: {safe_diff}"
-        )
-
-    return safe_goal_pos
 
 
 class MobileCamera:
@@ -224,6 +204,35 @@ class MobileManipulator:
         )
         self.is_connected = True
 
+        self.activate_calibration()
+
+    def activate_calibration(self):
+        """After calibration all motors function in human interpretable ranges.
+        Rotations are expressed in degrees in nominal range of [-180, 180],
+        and linear motions (like gripper of Aloha) in nominal range of [0, 100].
+        """
+
+        def load_or_run_calibration_(name, arm, arm_type):
+            arm_id = get_arm_id(name, arm_type)
+            arm_calib_path = self.calibration_dir / f"{arm_id}.json"
+
+            if arm_calib_path.exists():
+                with open(arm_calib_path) as f:
+                    calibration = json.load(f)
+            else:
+                print(f"Missing calibration file '{arm_calib_path}'")
+                calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
+                print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
+                arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(arm_calib_path, "w") as f:
+                    json.dump(calibration, f)
+
+            return calibration
+
+        for name, arm in self.leader_arms.items():
+            calibration = load_or_run_calibration_(name, arm, "leader")
+            arm.set_calibration(calibration)
+
     def _get_video_frame(self, timeout=1):
         """
         Receives messages from the video socket and extracts:
@@ -245,6 +254,7 @@ class MobileManipulator:
                     frame_candidate = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
                     if frame_candidate is not None:
                         frame = frame_candidate
+                        frame = cv2.rotate(frame, cv2.ROTATE_180)
                 present_speed = speed_data
             except zmq.Again:
                 break
@@ -271,31 +281,18 @@ class MobileManipulator:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError("MobileManipulator is not connected. Run `connect()` first.")
 
-        # 1. Read leader arm positions.
-        leader_pos = {}
-        for name, arm in self.leader_arms.items():
-            pos = arm.read("Present_Position")
-            leader_pos[name] = torch.from_numpy(pos)
+        # Prepare to assign the position of the leader to the follower
+        arm_positions = []
+        for name in self.leader_arms:
+            pos = self.leader_arms[name].read("Present_Position")
+            pos_tensor = torch.from_numpy(pos)
+            # Instead of pos_tensor.item(), use tolist() to convert the entire tensor to a list
+            arm_positions.extend(pos_tensor.tolist())
 
-        # 2. Compute follower arm command from the leader arm.
-        # Since the laptop does not have a local follower arm, we use the leader arm positions.
-        arm_commands = {}
-        for name in self.follower_arms:
-            goal_pos = torch.tensor(0.0)
-            if name in leader_pos:
-                goal_pos = leader_pos[name]
-            if self.config.max_relative_target is not None:
-                # With no local feedback, we use the leader value as the “present” position.
-                goal_pos = ensure_safe_goal_position(goal_pos, goal_pos, self.config.max_relative_target)
-            if goal_pos.numel() == 1:
-                arm_commands[name] = int(goal_pos.item())
-            else:
-                arm_commands[name] = goal_pos.numpy().tolist()
-
-        # 3. Process keyboard input to generate wheel velocity commands.
-        x_cmd = 0.0  # m/s (forward/backward)
-        y_cmd = 0.0  # m/s (lateral)
-        theta_cmd = 0.0  # deg/s (rotation)
+        # (The rest of your code for generating wheel commands remains unchanged)
+        x_cmd = 0.0  # m/s forward/backward
+        y_cmd = 0.0  # m/s lateral
+        theta_cmd = 0.0  # deg/s rotation
         if self.pressed_keys["forward"]:
             x_cmd -= 0.1
         if self.pressed_keys["backward"]:
@@ -314,7 +311,7 @@ class MobileManipulator:
         base_radius = 0.125  # meters
         angles = np.radians([0, 120, 240])
         kinematic_matrix = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
-        velocity_vector = np.array([y_cmd, x_cmd, theta_rad])
+        velocity_vector = np.array([x_cmd, y_cmd, theta_rad])
         wheel_linear_speeds = kinematic_matrix.dot(velocity_vector)
         wheel_angular_speeds = wheel_linear_speeds / wheel_radius
         ticks_per_second = wheel_angular_speeds * (4096 / (2 * np.pi))
@@ -333,15 +330,14 @@ class MobileManipulator:
             "wheel_3": command_speeds[2],
         }
 
-        # 4. Combine the arm and wheel commands into one message and send it.
-        message = {"raw_velocity": raw_velocity_command, "arm_positions": arm_commands}
+        message = {"raw_velocity": raw_velocity_command, "arm_positions": arm_positions}
         self.cmd_socket.send_string(json.dumps(message))
         print(f"[DEBUG] Sent command: {message}")
 
         if not record_data:
             return
 
-        # 5. Retrieve remote observation from the video socket.
+        # Retrieve remote observation.
         frame, present_speed, remote_arm_state = self._get_video_frame()
         if remote_arm_state is not None:
             remote_arm_state_tensor = torch.tensor(remote_arm_state)
@@ -349,11 +345,9 @@ class MobileManipulator:
             remote_arm_state_tensor = torch.tensor([])
 
         state_tensor = self._process_present_speed(present_speed)
-
         decoded_action = [MobileManipulator.raw_to_degps(raw) for raw in command_speeds]
         action_tensor = torch.tensor(decoded_action, dtype=torch.int32)
 
-        # Build observation and action dictionaries.
         obs_dict = {"observation.state": state_tensor, "observation.arm_state": remote_arm_state_tensor}
         action_dict = {"action": action_tensor}
         if frame is not None:
@@ -406,11 +400,15 @@ class MobileManipulator:
         if action.numel() > 3:
             arm_positions = {}
             extra = action[3:]
-            i = 0
-            for name in sorted(self.follower_arms.keys()):
+            # Create a flat list of motor names from all follower arm buses.
+            motor_list = []
+            for bus_key in sorted(self.follower_arms.keys()):
+                bus = self.follower_arms[bus_key]
+                motor_list.extend(bus.motors)
+            # Iterate over the flat motor list.
+            for i, motor in enumerate(motor_list):
                 if i < extra.numel():
-                    arm_positions[name] = int(extra[i].item())
-                    i += 1
+                    arm_positions[motor] = int(extra[i].item())
             message["arm_positions"] = arm_positions
 
         self.cmd_socket.send_string(json.dumps(message))
