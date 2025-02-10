@@ -1,6 +1,5 @@
 import random
 from typing import Callable
-from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -13,7 +12,6 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.utils.utils import (
     get_global_random_state,
-    init_hydra_config,
     seeded_context,
     set_global_random_state,
     set_global_seed,
@@ -70,10 +68,3 @@ def test_calculate_episode_data_index():
     episode_data_index = calculate_episode_data_index(dataset)
     assert torch.equal(episode_data_index["from"], torch.tensor([0, 2, 3]))
     assert torch.equal(episode_data_index["to"], torch.tensor([2, 3, 6]))
-
-
-def test_init_hydra_config_empty():
-    test_file = f"/tmp/test_init_hydra_config_empty_{uuid4().hex}.yaml"
-    with open(test_file, "w") as f:
-        f.write("\n")
-    init_hydra_config(test_file)

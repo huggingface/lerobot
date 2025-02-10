@@ -6,6 +6,7 @@ from copy import deepcopy
 import numpy as np
 import tqdm
 
+from lerobot.common.robot_devices.motors.configs import FeetechMotorsBusConfig
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
 
@@ -322,10 +323,11 @@ class FeetechMotorsBus:
     motor_index = 6
     motor_model = "sts3215"
 
-    motors_bus = FeetechMotorsBus(
+    config = FeetechMotorsBusConfig(
         port="/dev/tty.usbmodem575E0031751",
         motors={motor_name: (motor_index, motor_model)},
     )
+    motors_bus = FeetechMotorsBus(config)
     motors_bus.connect()
 
     position = motors_bus.read("Present_Position")
@@ -341,23 +343,14 @@ class FeetechMotorsBus:
 
     def __init__(
         self,
-        port: str,
-        motors: dict[str, tuple[int, str]],
-        extra_model_control_table: dict[str, list[tuple]] | None = None,
-        extra_model_resolution: dict[str, int] | None = None,
-        mock=False,
+        config: FeetechMotorsBusConfig,
     ):
-        self.port = port
-        self.motors = motors
-        self.mock = mock
+        self.port = config.port
+        self.motors = config.motors
+        self.mock = config.mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-        if extra_model_control_table:
-            self.model_ctrl_table.update(extra_model_control_table)
-
         self.model_resolution = deepcopy(MODEL_RESOLUTION)
-        if extra_model_resolution:
-            self.model_resolution.update(extra_model_resolution)
 
         self.port_handler = None
         self.packet_handler = None
@@ -367,8 +360,8 @@ class FeetechMotorsBus:
         self.group_writers = {}
         self.logs = {}
 
-        self.multi_turn_index = self.multi_turn_index = [0] * len(motors)
-        self.previous_value = self.previous_value = [0] * len(motors)
+        self.multi_turn_index = self.multi_turn_index = [0] * len(self.motors)
+        self.previous_value = self.previous_value = [0] * len(self.motors)
 
     def connect(self):
         if self.is_connected:
