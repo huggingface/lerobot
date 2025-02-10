@@ -39,14 +39,19 @@ for running training on the real robot.
 import argparse
 import logging
 import time
+from torchvision import transforms
+from copy import deepcopy
+
 
 import cv2
 import numpy as np
 import torch
 from tqdm import trange
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
 
 from lerobot.common.policies.policy_protocol import Policy
-from lerobot.common.robot_devices.control_utils import busy_wait, is_headless, reset_follower_position
+from lerobot.common.robot_devices.control_utils import busy_wait, is_headless, reset_follower_position, predict_action
 from lerobot.common.robot_devices.robots.factory import Robot, make_robot
 from lerobot.common.utils.utils import (
     init_hydra_config,
@@ -54,8 +59,17 @@ from lerobot.common.utils.utils import (
     log_say,
 )
 
+def manual_reset(robot, manual_reset_time_s):
+    timestamp = 0
+    start_vencod_t = time.perf_counter()
+    # Wait if necessary
+    pbar = trange(total=manual_reset_time_s, desc="Manual reset")
+    while timestamp < manual_reset_time_s:
+        timestamp = time.perf_counter() - start_vencod_t
+        _ = robot.teleop_step(record_data=False)
+        pbar.update(1)
 
-def get_classifier(pretrained_path, config_path):
+def get_classifier(pretrained_path, config_path, device):
     if pretrained_path is None or config_path is None:
         return
 
@@ -69,7 +83,7 @@ def get_classifier(pretrained_path, config_path):
     classifier_config.num_cameras = len(cfg.training.image_keys)  # TODO automate these paths
     model = Classifier(classifier_config)
     model.load_state_dict(Classifier.from_pretrained(pretrained_path).state_dict())
-    model = model.to("mps")
+    model = model.to(device)
     return model
 
 
@@ -81,6 +95,9 @@ def rollout(
     control_time_s: float = 20,
     use_amp: bool = True,
     display_cameras: bool = False,
+    manual_reset_time_s: float | None = None,
+    image_transforms: transforms.Compose | None = None,
+    online_dataset: LeRobotDataset | None = None,
 ) -> dict:
     """Run a batched policy rollout on the real robot.
 
@@ -105,10 +122,6 @@ def rollout(
     Returns:
         The dictionary described above.
     """
-    # TODO (michel-aractingi): Infer the device from policy parameters when policy is added
-    # assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
-    # device = get_device_from_parameters(policy)
-
     # define keyboard listener
     listener, events = init_keyboard_listener()
 
@@ -120,9 +133,11 @@ def rollout(
     image_keys = [key for key in observation if "image" in key]
     image_keys.sort()
 
+    all_observations = []
     all_actions = []
     all_rewards = []
     all_successes = []
+    online_dataset_frames = []
 
     start_episode_t = time.perf_counter()
     init_pos = robot.follower_arms["main"].read("Present_Position")
@@ -142,26 +157,30 @@ def rollout(
             # explore with policy
             with torch.inference_mode():
                 # TODO (michel-aractingi) replace this part with policy (predict_action)
-                action = robot.follower_arms["main"].read("Present_Position")
-                action = torch.from_numpy(action)
+                # action = robot.follower_arms["main"].read("Present_Position")
+                # action = policy(observation)
+                observation = robot.capture_observation()
+                action = predict_action(observation, policy, policy.device, use_amp=False)
                 robot.send_action(action)
-                # action = predict_action(observation, policy, device, use_amp)
 
-        observation = robot.capture_observation()
-        images = []
+        all_observations.append(observation)
+        if online_dataset is not None:
+            intervention = 1 if events["human_intervention_step"] else 0
+            online_dataset_frames.append({**observation, **{"intervention": intervention}, **{"action": action}})
+        
+        all_actions.append(action)
+        all_successes.append(torch.tensor([False]))
+        
+        # observation = robot.capture_observation()
+        # images = []
         for key in image_keys:
             if display_cameras:
                 cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
                 cv2.waitKey(1)
-            images.append(observation[key].to("mps"))
+            # images.append(observation[key].to("mps"))
 
-        reward = reward_classifier.predict_reward(images) if reward_classifier is not None else 0.0
-        all_rewards.append(reward)
-
-        # print("REWARD : ", reward)
-
-        all_actions.append(action)
-        all_successes.append(torch.tensor([False]))
+        # reward = reward_classifier.predict_reward(images) if reward_classifier is not None else 0.0
+        # all_rewards.append(reward)
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
@@ -172,7 +191,39 @@ def rollout(
             events["pause_policy"] = False
             break
 
-    reset_follower_position(robot, target_position=init_pos)
+    if manual_reset_time_s is not None:
+        log_say("Manual environment reset.", play_sounds=True)
+        manual_reset(robot, manual_reset_time_s)
+    else:
+        log_say("Automatic environment reset.", play_sounds=True)
+        reset_follower_position(robot, target_position=init_pos)
+    
+    # Compute rewards separately so inference speed is 
+    log_say("Comuputing rewards")
+    reward_progbar = trange(len(all_observations), desc="Comuputing rewards")
+    for i in reward_progbar:
+        with torch.inference_mode():
+            # Preprocess images
+            images = []
+            for img_key in image_keys:
+                img = deepcopy(observation[img_key])
+                
+                # Ensure correct shape (C, H, W)
+                if img.dim() == 3 and img.shape[-1] == 3:
+                    img = img.permute(2, 0, 1)
+                img = img.unsqueeze(0)
+                
+                # Apply transforms (including normalization)
+                if image_transforms:
+                    img = image_transforms(img)
+
+                images.append(img.to(reward_classifier.device))
+            
+            reward = reward_classifier.predict_reward(images) if reward_classifier is not None else 0.0
+            all_rewards.append(reward)
+        if online_dataset is not None:  
+            online_dataset_frames[i]["next.reward"] = reward
+            online_dataset.add_frame(online_dataset_frames[i])
 
     dones = torch.tensor([False] * len(all_actions))
     dones[-1] = True
@@ -186,7 +237,7 @@ def rollout(
 
     listener.stop()
 
-    return ret
+    return ret, online_dataset
 
 
 def eval_policy(
@@ -199,6 +250,10 @@ def eval_policy(
     display_cameras: bool = False,
     reward_classifier_pretrained_path: str | None = None,
     reward_classifier_config_file: str | None = None,
+    device: str = "mps",
+    manual_reset_time_s: float | None = None,
+    image_transforms: transforms.Compose | None = None,
+    online_dataset: LeRobotDataset | None = None,
 ) -> dict:
     """
     Args:
@@ -209,24 +264,22 @@ def eval_policy(
         Dictionary with metrics and data regarding the rollouts.
     """
     # TODO (michel-aractingi) comment this out for testing with a fixed policy
-    # assert isinstance(policy, Policy)
-    # policy.eval()
+    assert isinstance(policy, Policy)
+    policy.eval()
 
     sum_rewards = []
     max_rewards = []
     successes = []
-    rollouts = []
 
     start_eval = time.perf_counter()
     progbar = trange(n_episodes, desc="Evaluating policy on real robot")
-    reward_classifier = get_classifier(reward_classifier_pretrained_path, reward_classifier_config_file)
+    reward_classifier = get_classifier(reward_classifier_pretrained_path, reward_classifier_config_file, device)
 
     for _ in progbar:
-        rollout_data = rollout(
-            robot, policy, reward_classifier, fps, control_time_s, use_amp, display_cameras
+        rollout_data, online_dataset = rollout(
+            robot, policy, reward_classifier, fps, control_time_s, use_amp, display_cameras, manual_reset_time_s=manual_reset_time_s, image_transforms=image_transforms, online_dataset=online_dataset
         )
 
-        rollouts.append(rollout_data)
         sum_rewards.append(sum(rollout_data["next.reward"]))
         max_rewards.append(max(rollout_data["next.reward"]))
         successes.append(rollout_data["next.success"][-1])
@@ -260,7 +313,7 @@ def eval_policy(
     if robot.is_connected:
         robot.disconnect()
 
-    return info
+    return info, online_dataset
 
 
 def init_keyboard_listener():
