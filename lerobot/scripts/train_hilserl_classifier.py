@@ -279,8 +279,10 @@ def train(cfg: DictConfig) -> None:
     logging.info(f"Dataset size: {len(dataset)}")
 
     train_size = int(cfg.train_split_proportion * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+    # val_size = len(dataset) - train_size
+    # train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+    train_dataset = dataset[:train_size]
+    val_dataset = dataset[train_size:]
 
     sampler = create_balanced_sampler(train_dataset, cfg)
     train_loader = DataLoader(

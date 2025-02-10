@@ -2,6 +2,7 @@ defaults:
   - _self_
   - env: pusht
   - policy: diffusion
+  - robot: so100
 
 hydra:
   run:

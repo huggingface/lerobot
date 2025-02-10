@@ -4,7 +4,6 @@ import time
 from threading import Lock
 from typing import Annotated, Any, Callable, Dict, Optional, Tuple
 
-import cv2
 import gymnasium as gym
 import numpy as np
 import torch
@@ -20,10 +19,15 @@ logging.basicConfig(level=logging.INFO)
 
 class HILSerlRobotEnv(gym.Env):
     """
-    Gym-like environment wrapper for robot policy evaluation.
+    Gym-compatible environment for evaluating robotic control policies with integrated human intervention.
 
-    This wrapper provides a consistent interface for interacting with the robot,
-    following the OpenAI Gym environment conventions.
+    This environment wraps a robot interface to provide a consistent API for policy evaluation. It supports both relative (delta)
+    and absolute joint position commands and automatically configures its observation and action spaces based on the robot's
+    sensors and configuration.
+
+    The environment can switch between executing actions from a policy or using teleoperated actions (human intervention) during
+    each step. When teleoperation is used, the override action is captured and returned in the `info` dict along with a flag
+    `is_intervention`.
     """
 
     def __init__(
@@ -31,32 +35,34 @@ class HILSerlRobotEnv(gym.Env):
         robot,
         use_delta_action_space: bool = True,
         delta: float | None = None,
-        display_cameras=False,
+        display_cameras: bool = False,
     ):
         """
-        Initialize the robot environment.
+        Initialize the HILSerlRobotEnv environment.
+
+        The environment is set up with a robot interface, which is used to capture observations and send joint commands. The setup
+        supports both relative (delta) adjustments and absolute joint positions for controlling the robot.
 
         Args:
-            robot: The robot interface object
-            reward_classifier: Optional reward classifier
-            fps: Frames per second for control
-            control_time_s: Total control time for each episode
-            display_cameras: Whether to display camera feeds
-            output_normalization_params_action: Bound parameters for the action space
-            delta: The delta for the relative joint position action space
+            robot: The robot interface object used to connect and interact with the physical robot.
+            use_delta_action_space (bool): If True, uses a delta (relative) action space for joint control. Otherwise, absolute
+                joint positions are used.
+            delta (float or None): A scaling factor for the relative adjustments applied to joint positions. Should be a value between
+                0 and 1 when using a delta action space.
+            display_cameras (bool): If True, the robot's camera feeds will be displayed during execution.
         """
         super().__init__()
 
         self.robot = robot
         self.display_cameras = display_cameras
 
-        # connect robot
+        # Connect to the robot if not already connected.
         if not self.robot.is_connected:
             self.robot.connect()
 
         self.initial_follower_position = robot.follower_arms["main"].read("Present_Position")
 
-        # Episode tracking
+        # Episode tracking.
         self.current_step = 0
         self.episode_data = None
 
@@ -64,6 +70,7 @@ class HILSerlRobotEnv(gym.Env):
         self.use_delta_action_space = use_delta_action_space
         self.current_joint_positions = self.robot.follower_arms["main"].read("Present_Position")
 
+        # Retrieve the size of the joint position interval bound.
         self.relative_bounds_size = (
             self.robot.config.joint_position_relative_bounds["max"]
             - self.robot.config.joint_position_relative_bounds["min"]
@@ -73,20 +80,26 @@ class HILSerlRobotEnv(gym.Env):
 
         self.robot.config.max_relative_target = self.delta_relative_bounds_size.float()
 
-        # Dynamically determine observation and action spaces
+        # Dynamically configure the observation and action spaces.
         self._setup_spaces()
 
     def _setup_spaces(self):
         """
-        Dynamically determine observation and action spaces based on robot capabilities.
+        Dynamically configure the observation and action spaces based on the robot's capabilities.
 
-        This method should be customized based on the specific robot's observation
-        and action representations.
+        Observation Space:
+            - For keys with "image": A Box space with pixel values ranging from 0 to 255.
+            - For non-image keys: A nested Dict space is created under 'observation.state' with a suitable range.
+
+        Action Space:
+            - The action space is defined as a Tuple where:
+                • The first element is a Box space representing joint position commands. It is defined as relative (delta)
+                  or absolute, based on the configuration.
+                • The second element is a Discrete space (with 2 values) serving as a flag for intervention (teleoperation).
         """
-        # Example space setup - you'll need to adapt this to your specific robot
         example_obs = self.robot.capture_observation()
 
-        # Observation space (assuming image-based observations)
+        # Define observation spaces for images and other states.
         image_keys = [key for key in example_obs if "image" in key]
         state_keys = [key for key in example_obs if "image" not in key]
         observation_spaces = {
@@ -102,7 +115,7 @@ class HILSerlRobotEnv(gym.Env):
 
         self.observation_space = gym.spaces.Dict(observation_spaces)
 
-        # Action space (assuming joint positions)
+        # Define the action space for joint positions along with setting an intervention flag.
         action_dim = len(self.robot.follower_arms["main"].read("Present_Position"))
         if self.use_delta_action_space:
             action_space_robot = gym.spaces.Box(
@@ -128,18 +141,24 @@ class HILSerlRobotEnv(gym.Env):
 
     def reset(self, seed=None, options=None) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
         """
-        Reset the environment to initial state.
+        Reset the environment to its initial state.
+        This method resets the step counter and clears any episodic data.
+
+        Args:
+            seed (Optional[int]): A seed for random number generation to ensure reproducibility.
+            options (Optional[dict]): Additional options to influence the reset behavior.
 
         Returns:
-            observation (dict): Initial observation
-            info (dict): Additional information
+            A tuple containing:
+                - observation (dict): The initial sensor observation.
+                - info (dict): A dictionary with supplementary information, including the key "initial_position".
         """
         super().reset(seed=seed, options=options)
 
-        # Capture initial observation
+        # Capture the initial observation.
         observation = self.robot.capture_observation()
 
-        # Reset tracking variables
+        # Reset episode tracking variables.
         self.current_step = 0
         self.episode_data = None
 
@@ -149,28 +168,38 @@ class HILSerlRobotEnv(gym.Env):
         self, action: Tuple[np.ndarray, bool]
     ) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict[str, Any]]:
         """
-        Take a step in the environment.
+        Execute a single step within the environment using the specified action.
+
+        The provided action is a tuple comprised of:
+            • A policy action (joint position commands) that may be either in absolute values or as a delta.
+            • A boolean flag indicating whether teleoperation (human intervention) should be used for this step.
+
+        Behavior:
+            - When the intervention flag is False, the environment processes and sends the policy action to the robot.
+            - When True, a teleoperation step is executed. If using a delta action space, an absolute teleop action is converted
+              to relative change based on the current joint positions.
 
         Args:
-            action tuple(np.ndarray, bool):
-                    Policy action to be executed on the robot and boolean to determine
-                    whether to choose policy action or expert action.
+            action (tuple): A tuple with two elements:
+                - policy_action (np.ndarray or torch.Tensor): The commanded joint positions.
+                - intervention_bool (bool): True if the human operator intervenes by providing a teleoperation input.
 
         Returns:
-            observation (dict): Next observation
-            reward (float): Reward for this step
-            terminated (bool): Whether the episode has terminated
-            truncated (bool): Whether the episode was truncated
-            info (dict): Additional information
+            tuple: A tuple containing:
+                - observation (dict): The new sensor observation after taking the step.
+                - reward (float): The step reward (default is 0.0 within this wrapper).
+                - terminated (bool): True if the episode has reached a terminal state.
+                - truncated (bool): True if the episode was truncated (e.g., time constraints).
+                - info (dict): Additional debugging information including:
+                    ◦ "action_intervention": The teleop action if intervention was used.
+                    ◦ "is_intervention": Flag indicating whether teleoperation was employed.
         """
-        # The actions recieved are the in form of a tuple containing the policy action and an intervention bool
-        # The boolean inidicated whether we will use the expert's actions (through teleoperation) or the policy actions
         policy_action, intervention_bool = action
         teleop_action = None
         self.current_joint_positions = self.robot.follower_arms["main"].read("Present_Position")
         if isinstance(policy_action, torch.Tensor):
             policy_action = policy_action.cpu().numpy()
-            olicy_action = np.clip(policy_action, self.action_space[0].low, self.action_space[0].high)
+            policy_action = np.clip(policy_action, self.action_space[0].low, self.action_space[0].high)
         if not intervention_bool:
             if self.use_delta_action_space:
                 target_joint_positions = self.current_joint_positions + self.delta * policy_action
@@ -180,26 +209,26 @@ class HILSerlRobotEnv(gym.Env):
             observation = self.robot.capture_observation()
         else:
             observation, teleop_action = self.robot.teleop_step(record_data=True)
-            teleop_action = teleop_action["action"]  # teleop step returns torch tensors but in a dict
+            teleop_action = teleop_action["action"]  # Convert tensor to appropriate format
 
-            # teleop actions are returned in absolute joint space
-            # If we are using a relative joint position action space,
-            # there will be a mismatch between the spaces of the policy and teleop actions
-            # Solution is to transform the teleop actions into relative space.
-            # teleop relative action is:
+            # When applying the delta action space, convert teleop absolute values to relative differences.
             if self.use_delta_action_space:
                 teleop_action = teleop_action - self.current_joint_positions
                 if torch.any(teleop_action < -self.delta_relative_bounds_size * self.delta) and torch.any(
                     teleop_action > self.delta_relative_bounds_size
                 ):
                     print(
-                        f"relative teleop delta exceeded bounds {self.delta_relative_bounds_size}, teleop_action {teleop_action}\n"
+                        f"Relative teleop delta exceeded bounds {self.delta_relative_bounds_size}, teleop_action {teleop_action}\n"
                         f"lower bounds condition {teleop_action < -self.delta_relative_bounds_size}\n"
                         f"upper bounds condition {teleop_action > self.delta_relative_bounds_size}"
                     )
+
                     teleop_action = torch.clamp(
                         teleop_action, -self.delta_relative_bounds_size, self.delta_relative_bounds_size
                     )
+            # NOTE: To mimic the shape of a neural network output, we add a batch dimension to the teleop action.
+            if teleop_action.dim() == 1:
+                teleop_action = teleop_action.unsqueeze(0)
 
         self.current_step += 1
 
@@ -217,7 +246,7 @@ class HILSerlRobotEnv(gym.Env):
 
     def render(self):
         """
-        Render the environment (in this case, display camera feeds).
+        Render the current state of the environment by displaying the robot's camera feeds.
         """
         import cv2
 
@@ -231,7 +260,10 @@ class HILSerlRobotEnv(gym.Env):
 
     def close(self):
         """
-        Close the environment and disconnect the robot.
+        Close the environment and clean up resources by disconnecting the robot.
+
+        If the robot is currently connected, this method properly terminates the connection to ensure that all
+        associated resources are released.
         """
         if self.robot.is_connected:
             self.robot.disconnect()
@@ -250,48 +282,19 @@ class ActionRepeatWrapper(gym.Wrapper):
         return obs, reward, done, truncated, info
 
 
-class RelativeJointPositionActionWrapper(gym.Wrapper):
-    def __init__(
-        self,
-        env: HILSerlRobotEnv,
-        # output_normalization_params_action: dict[str, list[float]],
-        delta: float = 0.1,
-    ):
-        super().__init__(env)
-        self.joint_positions = self.unwrapped.robot.follower_arms["main"].read("Present_Position")
-        self.delta = delta
-        if delta > 1:
-            raise ValueError("Delta should be less than 1")
-
-    def step(self, action):
-        action_joint = action
-        self.joint_positions = self.unwrapped.robot.follower_arms["main"].read("Present_Position")
-        if isinstance(self.env.action_space, gym.spaces.Tuple):
-            action_joint = action[0]
-        joint_positions = self.joint_positions + (self.delta * action_joint)
-        # clip the joint positions to the joint limits with the action space
-        joint_positions = np.clip(joint_positions, self.action_space.low, self.action_space.high)
-
-        if isinstance(self.env.action_space, gym.spaces.Tuple):
-            return self.env.step((joint_positions, action[1]))
-
-        obs, reward, terminated, truncated, info = self.env.step(joint_positions)
-        if info["is_intervention"]:
-            # teleop actions are returned in absolute joint space
-            # If we are using a relative joint position action space,
-            # there will be a mismatch between the spaces of the policy and teleop actions
-            # Solution is to transform the teleop actions into relative space.
-            self.joint_positions = self.unwrapped.robot.follower_arms["main"].read("Present_Position")
-            teleop_action = info["action_intervention"]  # teleop actions are in absolute joint space
-            relative_teleop_action = (teleop_action - self.joint_positions) / self.delta
-            info["action_intervention"] = relative_teleop_action
-
-        return self.env.step(joint_positions)
-
-
 class RewardWrapper(gym.Wrapper):
-    def __init__(self, env, reward_classifier: Optional[None], device: torch.device = "cuda"):
+    def __init__(self, env, reward_classifier, device: torch.device = "cuda"):
+        """
+        Wrapper to add reward prediction to the environment, it use a trained classifer.
+
+        Args:
+            env: The environment to wrap
+            reward_classifier: The reward classifier model
+            device: The device to run the model on
+        """
         self.env = env
+
+        # NOTE: We got 15% speedup by compiling the model
         self.reward_classifier = torch.compile(reward_classifier)
         self.device = device
 
@@ -305,9 +308,7 @@ class RewardWrapper(gym.Wrapper):
             reward = (
                 self.reward_classifier.predict_reward(images) if self.reward_classifier is not None else 0.0
             )
-        # print(f"fps for reward classifier {1/(time.perf_counter() - start_time)}")
-        reward = reward.item()
-        # print(f"Reward from reward classifier {reward}")
+        info["Reward classifer frequency"] = 1 / (time.perf_counter() - start_time)
         return observation, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
@@ -323,17 +324,23 @@ class TimeLimitWrapper(gym.Wrapper):
         self.last_timestamp = 0.0
         self.episode_time_in_s = 0.0
 
+        self.max_episode_steps = int(self.control_time_s * self.fps)
+
+        self.current_step = 0
+
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
         time_since_last_step = time.perf_counter() - self.last_timestamp
+        # logging.warning(f"Current timestep is lower than the expected fps {self.fps}")
         self.episode_time_in_s += time_since_last_step
         self.last_timestamp = time.perf_counter()
-
+        self.current_step += 1
         # check if last timestep took more time than the expected fps
-        if 1.0 / time_since_last_step < self.fps:
-            logging.warning(f"Current timestep is lower than the expected fps {self.fps}")
+        # if 1.0 / time_since_last_step < self.fps:
+        #     logging.warning(f"Current timestep exceeded expected fps {self.fps}")
 
         if self.episode_time_in_s > self.control_time_s:
+            # if self.current_step >= self.max_episode_steps:
             # Terminated = True
             terminated = True
         return obs, reward, terminated, truncated, info
@@ -341,11 +348,13 @@ class TimeLimitWrapper(gym.Wrapper):
     def reset(self, seed=None, options=None):
         self.episode_time_in_s = 0.0
         self.last_timestamp = time.perf_counter()
+        self.current_step = 0
         return self.env.reset(seed=seed, options=options)
 
 
 class ImageCropResizeWrapper(gym.Wrapper):
     def __init__(self, env, crop_params_dict: Dict[str, Annotated[Tuple[int], 4]], resize_size=None):
+        super().__init__(env)
         self.env = env
         self.crop_params_dict = crop_params_dict
         print(f"obs_keys , {self.env.observation_space}")
@@ -372,9 +381,20 @@ class ImageCropResizeWrapper(gym.Wrapper):
             obs[k] = F.resize(obs[k], self.resize_size)
             obs[k] = obs[k].to(device)
             # print(f"observation with key {k} with size {obs[k].size()}")
-            cv2.imshow(k, cv2.cvtColor(obs[k].cpu().squeeze(0).permute(1, 2, 0).numpy(), cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+            # cv2.imshow(k, cv2.cvtColor(obs[k].cpu().squeeze(0).permute(1, 2, 0).numpy(), cv2.COLOR_RGB2BGR))
+            # cv2.waitKey(1)
         return obs, reward, terminated, truncated, info
+
+    def reset(self, seed=None, options=None):
+        obs, info = self.env.reset(seed=seed, options=options)
+        for k in self.crop_params_dict:
+            device = obs[k].device
+            if device == torch.device("mps:0"):
+                obs[k] = obs[k].cpu()
+            obs[k] = F.crop(obs[k], *self.crop_params_dict[k])
+            obs[k] = F.resize(obs[k], self.resize_size)
+            obs[k] = obs[k].to(device)
+        return obs, info
 
 
 class ConvertToLeRobotObservation(gym.ObservationWrapper):
@@ -515,41 +535,63 @@ class ResetWrapper(gym.Wrapper):
         return super().reset(seed=seed, options=options)
 
 
+class BatchCompitableWrapper(gym.ObservationWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+
+    def observation(self, observation: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        for key in observation:
+            if "image" in key and observation[key].dim() == 3:
+                observation[key] = observation[key].unsqueeze(0)
+            if "state" in key and observation[key].dim() == 1:
+                observation[key] = observation[key].unsqueeze(0)
+        return observation
+
+
 def make_robot_env(
     robot,
     reward_classifier,
-    crop_params_dict=None,
-    fps=30,
-    control_time_s=20,
-    reset_follower_pos=True,
-    display_cameras=False,
-    device="cuda:0",
-    resize_size=None,
-    reset_time_s=10,
-    delta_action=0.1,
-    nb_repeats=1,
-    use_relative_joint_positions=False,
-):
+    cfg,
+    n_envs: int = 1,
+) -> gym.vector.VectorEnv:
     """
-    Factory function to create the robot environment.
+    Factory function to create a vectorized robot environment.
 
-    Mimics gym.make() for consistent environment creation.
+    Args:
+        robot: Robot instance to control
+        reward_classifier: Classifier model for computing rewards
+        cfg: Configuration object containing environment parameters
+        n_envs: Number of environments to create in parallel. Defaults to 1.
+
+    Returns:
+        A vectorized gym environment with all the necessary wrappers applied.
     """
+
+    # Create base environment
     env = HILSerlRobotEnv(
-        robot,
-        display_cameras=display_cameras,
-        delta=delta_action,
-        use_delta_action_space=use_relative_joint_positions,
+        robot=robot,
+        display_cameras=cfg.wrapper.display_cameras,
+        delta=cfg.wrapper.delta_action,
+        use_delta_action_space=cfg.wrapper.use_relative_joint_positions,
     )
-    env = ConvertToLeRobotObservation(env, device)
-    if crop_params_dict is not None:
-        env = ImageCropResizeWrapper(env, crop_params_dict, resize_size=resize_size)
-    env = RewardWrapper(env, reward_classifier, device=device)
-    env = TimeLimitWrapper(env, control_time_s, fps)
-    # env = ActionRepeatWrapper(env, nb_repeat=nb_repeats)
-    env = KeyboardInterfaceWrapper(env)
-    env = ResetWrapper(env, reset_fn=None, reset_time_s=reset_time_s)
+
+    # Add observation and image processing
+    env = ConvertToLeRobotObservation(env=env, device=cfg.device)
+    if cfg.wrapper.crop_params_dict is not None:
+        env = ImageCropResizeWrapper(
+            env=env, crop_params_dict=cfg.wrapper.crop_params_dict, resize_size=cfg.wrapper.resize_size
+        )
+
+    # Add reward computation and control wrappers
+    env = RewardWrapper(env=env, reward_classifier=reward_classifier, device=cfg.device)
+    env = TimeLimitWrapper(env=env, control_time_s=cfg.wrapper.control_time_s, fps=cfg.fps)
+    env = KeyboardInterfaceWrapper(env=env)
+    env = ResetWrapper(env=env, reset_fn=None, reset_time_s=cfg.wrapper.reset_time_s)
+    env = BatchCompitableWrapper(env=env)
+
     return env
+
+    # batched version of the env that returns an observation of shape (b, c)
 
 
 def get_classifier(pretrained_path, config_path, device="mps"):
@@ -616,6 +658,8 @@ if __name__ == "__main__":
         default=None,
         help="Path to a yaml config file that is necessary to build the reward classifier model.",
     )
+    parser.add_argument("--env-path", type=str, default=None, help="Path to the env yaml file")
+    parser.add_argument("--env-overrides", type=str, default=None, help="Overrides for the env yaml file")
     parser.add_argument("--control-time-s", type=float, default=20, help="Maximum episode length in seconds")
     parser.add_argument("--reset-follower-pos", type=int, default=1, help="Reset follower between episodes")
     args = parser.parse_args()
@@ -626,72 +670,38 @@ if __name__ == "__main__":
     reward_classifier = get_classifier(
         args.reward_classifier_pretrained_path, args.reward_classifier_config_file
     )
-
-    crop_parameters = {
-        "observation.images.laptop": (58, 89, 357, 455),
-        "observation.images.phone": (3, 4, 471, 633),
-    }
-
     user_relative_joint_positions = True
 
+    cfg = init_hydra_config(args.env_path, args.env_overrides)
     env = make_robot_env(
         robot,
         reward_classifier,
-        crop_parameters,
-        args.fps,
-        args.control_time_s,
-        args.reset_follower_pos,
-        args.display_cameras,
-        device="mps",
-        resize_size=None,
-        reset_time_s=10,
-        delta_action=0.1,
-        nb_repeats=1,
-        use_relative_joint_positions=user_relative_joint_positions,
+        cfg.wrapper,
     )
 
     env.reset()
-    init_pos = env.unwrapped.initial_follower_position
 
-    right_goal = init_pos.copy()
-    right_goal[0] += 50
+    # Retrieve the robot's action space for joint commands.
+    action_space_robot = env.action_space.spaces[0]
 
-    left_goal = init_pos.copy()
-    left_goal[0] -= 50
+    # Initialize the smoothed action as a random sample.
+    smoothed_action = action_space_robot.sample()
 
-    pitch_angle = np.linspace(left_goal[0], right_goal[0], 1000)
-
-    delta_angle = np.concatenate((-np.ones(50), np.ones(50))) * 100
+    # Smoothing coefficient (alpha) defines how much of the new random sample to mix in.
+    # A value close to 0 makes the trajectory very smooth (slow to change), while a value close to 1 is less smooth.
+    alpha = 0.4
 
     while True:
-        action = np.zeros(len(init_pos))
-        for i in range(len(delta_angle)):
-            start_loop_s = time.perf_counter()
-            action[0] = delta_angle[i]
-            obs, reward, terminated, truncated, info = env.step((torch.from_numpy(action), False))
-            if terminated or truncated:
-                env.reset()
+        start_loop_s = time.perf_counter()
+        # Sample a new random action from the robot's action space.
+        new_random_action = action_space_robot.sample()
+        # Update the smoothed action using an exponential moving average.
+        smoothed_action = alpha * new_random_action + (1 - alpha) * smoothed_action
 
-            dt_s = time.perf_counter() - start_loop_s
-            busy_wait(1 / args.fps - dt_s)
-        # action = np.zeros(len(init_pos)) if user_relative_joint_positions else init_pos
-        # for i in range(len(pitch_angle)):
-        #     if user_relative_joint_positions:
-        #         action[0] = delta_angle[i]
-        #     else:
-        #         action[0] = pitch_angle[i]
-        #     obs, reward, terminated, truncated, info = env.step((torch.from_numpy(action), False))
-        #     if terminated or truncated:
-        #         logging.info("Max control time reached, reset environment.")
-        #         env.reset()
+        # Execute the step: wrap the NumPy action in a torch tensor.
+        obs, reward, terminated, truncated, info = env.step((torch.from_numpy(smoothed_action), False))
+        if terminated or truncated:
+            env.reset()
 
-        # for i in reversed(range(len(pitch_angle))):
-        #     if user_relative_joint_positions:
-        #         action[0] = delta_angle[i]
-        #     else:
-        #         action[0] = pitch_angle[i]
-        #     obs, reward, terminated, truncated, info = env.step((torch.from_numpy(action), False))
-
-        #     if terminated or truncated:
-        #         logging.info("Max control time reached, reset environment.")
-        #         env.reset()
+        dt_s = time.perf_counter() - start_loop_s
+        busy_wait(1 / args.fps - dt_s)
