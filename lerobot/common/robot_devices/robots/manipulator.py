@@ -32,7 +32,7 @@ def ensure_safe_goal_position(
     safe_goal_pos = present_pos + safe_diff
 
     if not torch.allclose(goal_pos, safe_goal_pos):
-        logging.warning(
+        logging.debug(
             "Relative goal position magnitude had to be clamped to be safe.\n"
             f"  requested relative goal position target: {diff}\n"
             f"    clamped relative goal position target: {safe_diff}"
@@ -67,6 +67,8 @@ class ManipulatorRobotConfig:
     # gripper is not put in torque mode.
     gripper_open_degree: float | None = None
 
+    joint_position_relative_bounds: dict[np.ndarray] | None = None
+
     def __setattr__(self, prop: str, val):
         if prop == "max_relative_target" and val is not None and isinstance(val, Sequence):
             for name in self.follower_arms:
@@ -78,6 +80,9 @@ class ManipulatorRobotConfig:
                         "Note: This feature does not yet work with robots where different follower arms have "
                         "different numbers of motors."
                     )
+        if prop == "joint_position_relative_bounds" and val is not None:
+            for key in val:
+                val[key] = torch.tensor(val[key])
         super().__setattr__(prop, val)
 
     def __post_init__(self):
@@ -523,6 +528,14 @@ class ManipulatorRobot:
             before_fwrite_t = time.perf_counter()
             goal_pos = leader_pos[name]
 
+            # If specified, clip the goal positions within predefined bounds specified in the config of the robot
+            if self.config.joint_position_relative_bounds is not None:
+                goal_pos = torch.clamp(
+                    goal_pos,
+                    self.config.joint_position_relative_bounds["min"],
+                    self.config.joint_position_relative_bounds["max"],
+                )
+
             # Cap goal position when too far away from present position.
             # Slower fps expected due to reading from the follower.
             if self.config.max_relative_target is not None:
@@ -644,6 +657,14 @@ class ManipulatorRobot:
             goal_pos = action[from_idx:to_idx]
             from_idx = to_idx
 
+            # If specified, clip the goal positions within predefined bounds specified in the config of the robot
+            if self.config.joint_position_relative_bounds is not None:
+                goal_pos = torch.clamp(
+                    goal_pos,
+                    self.config.joint_position_relative_bounds["min"],
+                    self.config.joint_position_relative_bounds["max"],
+                )
+
             # Cap goal position when too far away from present position.
             # Slower fps expected due to reading from the follower.
             if self.config.max_relative_target is not None:
@@ -656,6 +677,7 @@ class ManipulatorRobot:
 
             # Send goal position to each follower
             goal_pos = goal_pos.numpy().astype(np.int32)
+
             self.follower_arms[name].write("Goal_Position", goal_pos)
 
         return torch.cat(action_sent)

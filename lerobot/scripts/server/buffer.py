@@ -14,56 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import functools
-import logging
 import random
-from pprint import pformat
-from typing import Callable, Optional, Sequence, TypedDict
+from typing import Any, Callable, Optional, Sequence, TypedDict
 
-import hydra
 import torch
-import torch.nn.functional as F
-from deepdiff import DeepDiff
-from omegaconf import DictConfig, OmegaConf
-from torch import nn
+import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
 
-# TODO: Remove the import of maniskill
-from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.envs.factory import make_env, make_maniskill_env
-from lerobot.common.envs.utils import preprocess_maniskill_observation, preprocess_observation
-from lerobot.common.logger import Logger, log_output_dir
-from lerobot.common.policies.factory import make_policy
-from lerobot.common.policies.sac.modeling_sac import SACPolicy
-from lerobot.common.policies.utils import get_device_from_parameters
-from lerobot.common.utils.utils import (
-    format_big_number,
-    get_safe_torch_device,
-    init_hydra_config,
-    init_logging,
-    set_global_seed,
-)
-from lerobot.scripts.eval import eval_policy
-
-
-def make_optimizers_and_scheduler(cfg, policy):
-    optimizer_actor = torch.optim.Adam(
-        # NOTE: Handle the case of shared encoder where the encoder weights are not optimized with the gradient of the actor
-        params=policy.actor.parameters_to_optimize,
-        lr=policy.config.actor_lr,
-    )
-    optimizer_critic = torch.optim.Adam(
-        params=policy.critic_ensemble.parameters(), lr=policy.config.critic_lr
-    )
-    # We wrap policy log temperature in list because this is a torch tensor and not a nn.Module
-    optimizer_temperature = torch.optim.Adam(params=[policy.log_alpha], lr=policy.config.critic_lr)
-    lr_scheduler = None
-    optimizers = {
-        "actor": optimizer_actor,
-        "critic": optimizer_critic,
-        "temperature": optimizer_temperature,
-    }
-    return optimizers, lr_scheduler
 
 
 class Transition(TypedDict):
@@ -72,7 +30,7 @@ class Transition(TypedDict):
     reward: float
     next_state: dict[str, torch.Tensor]
     done: bool
-    complementary_info: dict[str, torch.Tensor] = None
+    complementary_info: dict[str, Any] = None
 
 
 class BatchTransition(TypedDict):
@@ -83,12 +41,51 @@ class BatchTransition(TypedDict):
     done: torch.Tensor
 
 
+def move_transition_to_device(transition: Transition, device: str = "cpu") -> Transition:
+    # Move state tensors to CPU
+    transition["state"] = {key: val.to(device, non_blocking=True) for key, val in transition["state"].items()}
+
+    # Move action to CPU
+    transition["action"] = transition["action"].to(device, non_blocking=True)
+
+    # No need to move reward or done, as they are float and bool
+
+    # Move next_state tensors to CPU
+    transition["next_state"] = {
+        key: val.to(device, non_blocking=True) for key, val in transition["next_state"].items()
+    }
+
+    # If complementary_info is present, move its tensors to CPU
+    if transition["complementary_info"] is not None:
+        transition["complementary_info"] = {
+            key: val.to(device, non_blocking=True) for key, val in transition["complementary_info"].items()
+        }
+    return transition
+
+
+def move_state_dict_to_device(state_dict, device):
+    """
+    Recursively move all tensors in a (potentially) nested
+    dict/list/tuple structure to the CPU.
+    """
+    if isinstance(state_dict, torch.Tensor):
+        return state_dict.to(device)
+    elif isinstance(state_dict, dict):
+        return {k: move_state_dict_to_device(v, device=device) for k, v in state_dict.items()}
+    elif isinstance(state_dict, list):
+        return [move_state_dict_to_device(v, device=device) for v in state_dict]
+    elif isinstance(state_dict, tuple):
+        return tuple(move_state_dict_to_device(v, device=device) for v in state_dict)
+    else:
+        return state_dict
+
+
 def random_crop_vectorized(images: torch.Tensor, output_size: tuple) -> torch.Tensor:
     """
     Perform a per-image random crop over a batch of images in a vectorized way.
     (Same as shown previously.)
     """
-    B, C, H, W = images.shape
+    B, C, H, W = images.shape  # noqa: N806
     crop_h, crop_w = output_size
 
     if crop_h > H or crop_w > W:
@@ -152,6 +149,9 @@ class ReplayBuffer:
             self.image_augmentation_function = functools.partial(random_shift, pad=4)
         self.use_drq = use_drq
 
+    def __len__(self):
+        return len(self.memory)
+
     def add(
         self,
         state: dict[str, torch.Tensor],
@@ -183,6 +183,7 @@ class ReplayBuffer:
         lerobot_dataset: LeRobotDataset,
         device: str = "cuda:0",
         state_keys: Optional[Sequence[str]] = None,
+        capacity: Optional[int] = None,
     ) -> "ReplayBuffer":
         """
         Convert a LeRobotDataset into a ReplayBuffer.
@@ -198,10 +199,25 @@ class ReplayBuffer:
         """
         # We convert the LeRobotDataset into a replay buffer, because it is more efficient to sample from
         # a replay buffer than from a lerobot dataset.
-        replay_buffer = cls(capacity=len(lerobot_dataset), device=device, state_keys=state_keys)
+        if capacity is None:
+            capacity = len(lerobot_dataset)
+
+        if capacity < len(lerobot_dataset):
+            raise ValueError(
+                "The capacity of the ReplayBuffer must be greater than or equal to the length of the LeRobotDataset."
+            )
+
+        replay_buffer = cls(capacity=capacity, device=device, state_keys=state_keys)
         list_transition = cls._lerobotdataset_to_transitions(dataset=lerobot_dataset, state_keys=state_keys)
         # Fill the replay buffer with the lerobot dataset transitions
         for data in list_transition:
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    for key, tensor in v.items():
+                        v[key] = tensor.to(device)
+                elif isinstance(v, torch.Tensor):
+                    data[k] = v.to(device)
+
             replay_buffer.add(
                 state=data["state"],
                 action=data["action"],
@@ -338,6 +354,155 @@ class ReplayBuffer:
             done=batch_dones,
         )
 
+    def to_lerobot_dataset(
+        self,
+        repo_id: str,
+        fps=1,  # If you have real timestamps, adjust this
+        root=None,
+        task_name="from_replay_buffer",
+    ) -> LeRobotDataset:
+        """
+        Converts all transitions in this ReplayBuffer into a single LeRobotDataset object,
+        splitting episodes by transitions where 'done=True'.
+
+        Returns:
+            LeRobotDataset: The resulting offline dataset.
+        """
+        if len(self.memory) == 0:
+            raise ValueError("The replay buffer is empty. Cannot convert to a dataset.")
+
+        # Infer the shapes and dtypes of your features
+        #    We'll create a features dict that is suitable for LeRobotDataset
+        # --------------------------------------------------------------------------------------------
+        # First, grab one transition to inspect shapes
+        first_transition = self.memory[0]
+
+        # We'll store default metadata for every episode: indexes, timestamps, etc.
+        features = {
+            "index": {"dtype": "int64", "shape": [1]},  # global index across episodes
+            "episode_index": {"dtype": "int64", "shape": [1]},  # which episode
+            "frame_index": {"dtype": "int64", "shape": [1]},  # index inside an episode
+            "timestamp": {"dtype": "float32", "shape": [1]},  # for now we store dummy
+            "task_index": {"dtype": "int64", "shape": [1]},
+        }
+
+        # Add "action"
+        act_info = guess_feature_info(
+            first_transition["action"].squeeze(dim=0), "action"
+        )  # Remove batch dimension
+        features["action"] = act_info
+
+        # Add "reward" (scalars)
+        features["next.reward"] = {"dtype": "float32", "shape": (1,)}
+
+        # Add "done" (boolean scalars)
+        features["next.done"] = {"dtype": "bool", "shape": (1,)}
+
+        # Add state keys
+        for key in self.state_keys:
+            sample_val = first_transition["state"][key].squeeze(dim=0)  # Remove batch dimension
+            if not isinstance(sample_val, torch.Tensor):
+                raise ValueError(
+                    f"State key '{key}' is not a torch.Tensor. Please ensure your states are stored as torch.Tensors."
+                )
+            f_info = guess_feature_info(sample_val, key)
+            features[key] = f_info
+
+        # --------------------------------------------------------------------------------------------
+        # Create an empty LeRobotDataset
+        #    We'll store all frames as separate images only if we detect shape = (3, H, W) or (1, H, W).
+        #    By default we won't do videos, but feel free to adapt if you have them.
+        # --------------------------------------------------------------------------------------------
+        lerobot_dataset = LeRobotDataset.create(
+            repo_id=repo_id,
+            fps=fps,  # If you have real timestamps, adjust this
+            root=root,  # Or some local path where you'd like the dataset files to go
+            robot=None,
+            robot_type=None,
+            features=features,
+            use_videos=True,  # We won't do actual video encoding for a replay buffer
+        )
+
+        # Start writing images if needed. If you have no image features, this is harmless.
+        # Set num_processes or num_threads if you want concurrency.
+        lerobot_dataset.start_image_writer(num_processes=0, num_threads=2)
+
+        # --------------------------------------------------------------------------------------------
+        # Convert transitions into episodes and frames
+        #    We detect episode boundaries by `done == True`.
+        # --------------------------------------------------------------------------------------------
+        episode_index = 0
+        lerobot_dataset.episode_buffer = lerobot_dataset.create_episode_buffer(episode_index)
+
+        frame_idx_in_episode = 0
+        for global_frame_idx, transition in enumerate(self.memory):
+            frame_dict = {}
+
+            # Fill the data for state keys
+            for key in self.state_keys:
+                # Expand dimension to match what the dataset expects (the dataset wants the raw shape)
+                # We assume your buffer has shape [C, H, W] (if image) or [D] if vector
+                # This is typically already correct, but if needed you can reshape below.
+                frame_dict[key] = transition["state"][key].cpu().squeeze(dim=0)  # Remove batch dimension
+
+            # Fill action, reward, done
+            # Make sure they are shape (X,) or (X,Y,...) as needed.
+            frame_dict["action"] = transition["action"].cpu().squeeze(dim=0)  # Remove batch dimension
+            frame_dict["next.reward"] = (
+                torch.tensor([transition["reward"]], dtype=torch.float32).cpu().squeeze(dim=0)
+            )
+            frame_dict["next.done"] = (
+                torch.tensor([transition["done"]], dtype=torch.bool).cpu().squeeze(dim=0)
+            )
+            # Add to the dataset's buffer
+            lerobot_dataset.add_frame(frame_dict)
+
+            # Move to next frame
+            frame_idx_in_episode += 1
+
+            # If we reached an episode boundary, call save_episode, reset counters
+            if transition["done"]:
+                # Use some placeholder name for the task
+                lerobot_dataset.save_episode(task="from_replay_buffer")
+                episode_index += 1
+                frame_idx_in_episode = 0
+                # Start a new buffer for the next episode
+                lerobot_dataset.episode_buffer = lerobot_dataset.create_episode_buffer(episode_index)
+
+        # We are done adding frames
+        # If the last transition wasn't done=True, we still have an open buffer with frames.
+        # We'll consider that an incomplete episode and still save it:
+        if lerobot_dataset.episode_buffer["size"] > 0:
+            lerobot_dataset.save_episode(task=task_name)
+
+        lerobot_dataset.stop_image_writer()
+
+        lerobot_dataset.consolidate(run_compute_stats=False, keep_image_files=False)
+
+        return lerobot_dataset
+
+
+# Utility function to guess shapes/dtypes from a tensor
+def guess_feature_info(t: torch.Tensor, name: str):
+    """
+    Return a dictionary with the 'dtype' and 'shape' for a given tensor or array.
+    If it looks like a 3D (C,H,W) shape, we might consider it an 'image'.
+    Otherwise default to 'float32' for numeric. You can customize as needed.
+    """
+    shape = tuple(t.shape)
+    # Basic guess: if we have exactly 3 dims and shape[0] in {1, 3}, guess 'image'
+    if len(shape) == 3 and shape[0] in [1, 3]:
+        return {
+            "dtype": "image",
+            "shape": shape,
+        }
+    else:
+        # Otherwise treat as numeric
+        return {
+            "dtype": "float32",
+            "shape": shape,
+        }
+
 
 def concatenate_batch_transitions(
     left_batch_transitions: BatchTransition, right_batch_transition: BatchTransition
@@ -365,222 +530,31 @@ def concatenate_batch_transitions(
     return left_batch_transitions
 
 
-def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
-    if out_dir is None:
-        raise NotImplementedError()
-    if job_name is None:
-        raise NotImplementedError()
+# if __name__ == "__main__":
+#     dataset_name = "lerobot/pusht_image"
+#     dataset = LeRobotDataset(repo_id=dataset_name, episodes=range(1, 3))
+#     replay_buffer = ReplayBuffer.from_lerobot_dataset(
+#         lerobot_dataset=dataset, state_keys=["observation.image", "observation.state"]
+#     )
+#     replay_buffer_converted = replay_buffer.to_lerobot_dataset(repo_id="AdilZtn/pusht_image_converted")
+#     for i in range(len(replay_buffer_converted)):
+#         replay_convert = replay_buffer_converted[i]
+#         dataset_convert = dataset[i]
+#         for key in replay_convert.keys():
+#             if key in {"index", "episode_index", "frame_index", "timestamp", "task_index"}:
+#                 continue
+#             if key in dataset_convert.keys():
+#                 assert torch.equal(replay_convert[key], dataset_convert[key])
+#                 print(f"Key {key} is equal : {replay_convert[key].size()}, {dataset_convert[key].size()}")
+#     re_reconverted_dataset = ReplayBuffer.from_lerobot_dataset(
+#         replay_buffer_converted, state_keys=["observation.image", "observation.state"], device="cpu"
+#     )
+#     for _ in range(20):
+#         batch = re_reconverted_dataset.sample(32)
 
-    init_logging()
-    logging.info(pformat(OmegaConf.to_container(cfg)))
-
-    # Create an env dedicated to online episodes collection from policy rollout.
-    # online_env = make_env(cfg, n_envs=cfg.training.online_rollout_batch_size)
-    # NOTE: Off policy algorithm are efficient enought to use a single environment
-    logging.info("make_env online")
-    # online_env = make_env(cfg, n_envs=1)
-    # TODO: Remove the import of maniskill and unifiy with make env
-    online_env = make_maniskill_env(cfg, n_envs=1)
-    if cfg.training.eval_freq > 0:
-        logging.info("make_env eval")
-        # eval_env = make_env(cfg, n_envs=1)
-        # TODO: Remove the import of maniskill and unifiy with make env
-        eval_env = make_maniskill_env(cfg, n_envs=1)
-
-    # TODO: Add a way to resume training
-
-    # log metrics to terminal and wandb
-    logger = Logger(cfg, out_dir, wandb_job_name=job_name)
-
-    set_global_seed(cfg.seed)
-
-    # Check device is available
-    device = get_safe_torch_device(cfg.device, log=True)
-
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
-
-    logging.info("make_policy")
-    # TODO: At some point we should just need make sac policy
-    policy: SACPolicy = make_policy(
-        hydra_cfg=cfg,
-        # dataset_stats=offline_dataset.meta.stats if not cfg.resume else None,
-        # Hack: But if we do online traning, we do not need dataset_stats
-        dataset_stats=None,
-        pretrained_policy_name_or_path=str(logger.last_pretrained_model_dir) if cfg.resume else None,
-        device=device,
-    )
-    assert isinstance(policy, nn.Module)
-
-    optimizers, lr_scheduler = make_optimizers_and_scheduler(cfg, policy)
-
-    # TODO: Handle resume
-
-    num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
-    num_total_params = sum(p.numel() for p in policy.parameters())
-
-    log_output_dir(out_dir)
-    logging.info(f"{cfg.env.task=}")
-    logging.info(f"{cfg.training.online_steps=}")
-    logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
-    logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
-
-    obs, info = online_env.reset()
-
-    # HACK for maniskill
-    # obs = preprocess_observation(obs)
-    obs = preprocess_maniskill_observation(obs)
-    obs = {key: obs[key].to(device, non_blocking=True) for key in obs}
-
-    replay_buffer = ReplayBuffer(
-        capacity=cfg.training.online_buffer_capacity, device=device, state_keys=cfg.policy.input_shapes.keys()
-    )
-
-    batch_size = cfg.training.batch_size
-
-    if cfg.dataset_repo_id is not None:
-        logging.info("make_dataset offline buffer")
-        offline_dataset = make_dataset(cfg)
-        logging.info("Convertion to a offline replay buffer")
-        offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
-            offline_dataset, device=device, state_keys=cfg.policy.input_shapes.keys()
-        )
-        batch_size: int = batch_size // 2  # We will sample from both replay buffer
-
-    # NOTE: For the moment we will solely handle the case of a single environment
-    sum_reward_episode = 0
-
-    for interaction_step in range(cfg.training.online_steps):
-        # NOTE: At some point we should use a  wrapper to handle the observation
-
-        if interaction_step >= cfg.training.online_step_before_learning:
-            action = policy.select_action(batch=obs)
-            next_obs, reward, done, truncated, info = online_env.step(action.cpu().numpy())
-        else:
-            action = online_env.action_space.sample()
-            next_obs, reward, done, truncated, info = online_env.step(action)
-            # HACK
-            action = torch.tensor(action, dtype=torch.float32).to(device, non_blocking=True)
-
-        # HACK: For maniskill
-        # next_obs = preprocess_observation(next_obs)
-        next_obs = preprocess_maniskill_observation(next_obs)
-        next_obs = {key: next_obs[key].to(device, non_blocking=True) for key in obs}
-        sum_reward_episode += float(reward[0])
-        # Because we are using a single environment
-        # we can safely assume that the episode is done
-        if done[0] or truncated[0]:
-            logging.info(f"Global step {interaction_step}: Episode reward: {sum_reward_episode}")
-            logger.log_dict({"Sum episode reward": sum_reward_episode}, interaction_step)
-            sum_reward_episode = 0
-            # HACK: This is for maniskill
-            logging.info(
-                f"global step {interaction_step}: episode success: {info['success'].float().item()} \n"
-            )
-            logger.log_dict({"Episode success": info["success"].float().item()}, interaction_step)
-
-        replay_buffer.add(
-            state=obs,
-            action=action,
-            reward=float(reward[0]),
-            next_state=next_obs,
-            done=done[0],
-        )
-        obs = next_obs
-
-        if interaction_step < cfg.training.online_step_before_learning:
-            continue
-        for _ in range(cfg.policy.utd_ratio - 1):
-            batch = replay_buffer.sample(batch_size)
-            if cfg.dataset_repo_id is not None:
-                batch_offline = offline_replay_buffer.sample(batch_size)
-                batch = concatenate_batch_transitions(batch, batch_offline)
-
-            actions = batch["action"]
-            rewards = batch["reward"]
-            observations = batch["state"]
-            next_observations = batch["next_state"]
-            done = batch["done"]
-
-            loss_critic = policy.compute_loss_critic(
-                observations=observations,
-                actions=actions,
-                rewards=rewards,
-                next_observations=next_observations,
-                done=done,
-            )
-            optimizers["critic"].zero_grad()
-            loss_critic.backward()
-            optimizers["critic"].step()
-
-        batch = replay_buffer.sample(batch_size)
-        if cfg.dataset_repo_id is not None:
-            batch_offline = offline_replay_buffer.sample(batch_size)
-            batch = concatenate_batch_transitions(
-                left_batch_transitions=batch, right_batch_transition=batch_offline
-            )
-
-        actions = batch["action"]
-        rewards = batch["reward"]
-        observations = batch["state"]
-        next_observations = batch["next_state"]
-        done = batch["done"]
-
-        loss_critic = policy.compute_loss_critic(
-            observations=observations,
-            actions=actions,
-            rewards=rewards,
-            next_observations=next_observations,
-            done=done,
-        )
-        optimizers["critic"].zero_grad()
-        loss_critic.backward()
-        optimizers["critic"].step()
-
-        training_infos = {}
-        training_infos["loss_critic"] = loss_critic.item()
-
-        if interaction_step % cfg.training.policy_update_freq == 0:
-            # TD3 Trick
-            for _ in range(cfg.training.policy_update_freq):
-                loss_actor = policy.compute_loss_actor(observations=observations)
-
-                optimizers["actor"].zero_grad()
-                loss_actor.backward()
-                optimizers["actor"].step()
-
-                training_infos["loss_actor"] = loss_actor.item()
-
-                loss_temperature = policy.compute_loss_temperature(observations=observations)
-                optimizers["temperature"].zero_grad()
-                loss_temperature.backward()
-                optimizers["temperature"].step()
-
-                training_infos["loss_temperature"] = loss_temperature.item()
-
-        if interaction_step % cfg.training.log_freq == 0:
-            logger.log_dict(training_infos, interaction_step, mode="train")
-
-        policy.update_target_networks()
-
-
-@hydra.main(version_base="1.2", config_name="default", config_path="../configs")
-def train_cli(cfg: dict):
-    train(
-        cfg,
-        out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
-        job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
-    )
-
-
-def train_notebook(out_dir=None, job_name=None, config_name="default", config_path="../configs"):
-    from hydra import compose, initialize
-
-    hydra.core.global_hydra.GlobalHydra.instance().clear()
-    initialize(config_path=config_path)
-    cfg = compose(config_name=config_name)
-    train(cfg, out_dir=out_dir, job_name=job_name)
-
-
-if __name__ == "__main__":
-    train_cli()
+#         for key in batch.keys():
+#             if key in {"state", "next_state"}:
+#                 for key_state in batch[key].keys():
+#                     print(key_state, batch[key][key_state].size())
+#                 continue
+#             print(key, batch[key].size())

@@ -11,6 +11,7 @@ from copy import copy
 from functools import cache
 
 import cv2
+import numpy as np
 import torch
 import tqdm
 from deepdiff import DeepDiff
@@ -35,7 +36,7 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
 
     def log_dt(shortname, dt_val_s):
         nonlocal log_items, fps
-        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"
+        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1 / dt_val_s:3.1f}hz)"
         if fps is not None:
             actual_fps = 1 / dt_val_s
             if actual_fps < fps - 1:
@@ -332,6 +333,16 @@ def reset_environment(robot, events, reset_time_s):
                 break
 
 
+def reset_follower_position(robot: Robot, target_position):
+    current_position = robot.follower_arms["main"].read("Present_Position")
+    trajectory = torch.from_numpy(
+        np.linspace(current_position, target_position, 30)
+    )  # NOTE: 30 is just an aribtrary number
+    for pose in trajectory:
+        robot.send_action(pose)
+        busy_wait(0.015)
+
+
 def stop_recording(robot, listener, display_cameras):
     robot.disconnect()
 
@@ -362,12 +373,16 @@ def sanity_check_dataset_name(repo_id, policy):
 
 
 def sanity_check_dataset_robot_compatibility(
-    dataset: LeRobotDataset, robot: Robot, fps: int, use_videos: bool
+    dataset: LeRobotDataset, robot: Robot, fps: int, use_videos: bool, extra_features: dict = None
 ) -> None:
+    features_from_robot = get_features_from_robot(robot, use_videos)
+    if extra_features is not None:
+        features_from_robot.update(extra_features)
+
     fields = [
         ("robot_type", dataset.meta.robot_type, robot.robot_type),
         ("fps", dataset.fps, fps),
-        ("features", dataset.features, get_features_from_robot(robot, use_videos)),
+        ("features", dataset.features, features_from_robot),
     ]
 
     mismatches = []

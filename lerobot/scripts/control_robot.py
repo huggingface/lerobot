@@ -109,6 +109,7 @@ from lerobot.common.robot_devices.control_utils import (
     log_control_info,
     record_episode,
     reset_environment,
+    reset_follower_position,
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
     stop_recording,
@@ -205,6 +206,7 @@ def record(
     num_image_writer_threads_per_camera: int = 4,
     display_cameras: bool = True,
     play_sounds: bool = True,
+    reset_follower: bool = False, 
     resume: bool = False,
     # TODO(rcadene, aliberts): remove local_files_only when refactor with dataset as argument
     local_files_only: bool = False,
@@ -246,7 +248,7 @@ def record(
             num_processes=num_image_writer_processes,
             num_threads=num_image_writer_threads_per_camera * len(robot.cameras),
         )
-        sanity_check_dataset_robot_compatibility(dataset, robot, fps, video)
+        sanity_check_dataset_robot_compatibility(dataset, robot, fps, video, extra_features)
     else:
         # Create empty dataset or load existing saved episodes
         sanity_check_dataset_name(repo_id, policy)
@@ -265,6 +267,9 @@ def record(
         robot.connect()
     listener, events = init_keyboard_listener(assign_rewards=assign_rewards)
 
+    if reset_follower:
+        initial_position = robot.follower_arms["main"].read("Present_Position")
+        
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
     # 2. give times to the robot devices to connect and start synchronizing,
@@ -304,9 +309,11 @@ def record(
         # TODO(rcadene): add an option to enable teleoperation during reset
         # Skip reset for the last episode to be recorded
         if not events["stop_recording"] and (
-            (dataset.num_episodes < num_episodes - 1) or events["rerecord_episode"]
+            (recorded_episodes < num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", play_sounds)
+            if reset_follower:
+                reset_follower_position(robot, initial_position)
             reset_environment(robot, events, reset_time_s)
 
         if events["rerecord_episode"]:
@@ -526,6 +533,12 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="Enables the assignation of rewards to frames (by default no assignation). When enabled, assign a 0 reward to frames until the space bar is pressed which assign a 1 reward. Press the space bar a second time to assign a 0 reward. The reward assigned is reset to 0 when the episode ends.",
+    )
+    parser_record.add_argument(
+        "--reset-follower",
+        type=int,
+        default=0,
+        help="Resets the follower to the initial position during while reseting the evironment, this is to avoid having the follower start at an awkward position in the next episode",
     )
 
     parser_replay = subparsers.add_parser("replay", parents=[base_parser])

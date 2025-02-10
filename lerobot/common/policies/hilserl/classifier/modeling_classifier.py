@@ -4,7 +4,6 @@ from typing import Optional
 import torch
 from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
-from transformers import AutoImageProcessor, AutoModel
 
 from .configuration_classifier import ClassifierConfig
 
@@ -44,9 +43,11 @@ class Classifier(
     name = "classifier"
 
     def __init__(self, config: ClassifierConfig):
+        from transformers import AutoImageProcessor, AutoModel
+
         super().__init__()
         self.config = config
-        self.processor = AutoImageProcessor.from_pretrained(self.config.model_name, trust_remote_code=True)
+        # self.processor = AutoImageProcessor.from_pretrained(self.config.model_name, trust_remote_code=True)
         encoder = AutoModel.from_pretrained(self.config.model_name, trust_remote_code=True)
         # Extract vision model if we're given a multimodal model
         if hasattr(encoder, "vision_model"):
@@ -96,7 +97,7 @@ class Classifier(
                 raise ValueError("Unsupported transformer architecture since hidden_size is not found")
 
         self.classifier_head = nn.Sequential(
-            nn.Linear(input_dim, self.config.hidden_dim),
+            nn.Linear(input_dim * self.config.num_cameras, self.config.hidden_dim),
             nn.Dropout(self.config.dropout_rate),
             nn.LayerNorm(self.config.hidden_dim),
             nn.ReLU(),
@@ -107,11 +108,12 @@ class Classifier(
     def _get_encoder_output(self, x: torch.Tensor) -> torch.Tensor:
         """Extract the appropriate output from the encoder."""
         # Process images with the processor (handles resizing and normalization)
-        processed = self.processor(
-            images=x,  # LeRobotDataset already provides proper tensor format
-            return_tensors="pt",
-        )
-        processed = processed["pixel_values"].to(x.device)
+        # processed = self.processor(
+        #     images=x,  # LeRobotDataset already provides proper tensor format
+        #     return_tensors="pt",
+        # )
+        # processed = processed["pixel_values"].to(x.device)
+        processed = x
 
         with torch.no_grad():
             if self.is_cnn:
@@ -129,11 +131,11 @@ class Classifier(
                     return outputs.pooler_output
                 return outputs.last_hidden_state[:, 0, :]
 
-    def forward(self, x: torch.Tensor) -> ClassifierOutput:
+    def forward(self, xs: torch.Tensor) -> ClassifierOutput:
         """Forward pass of the classifier."""
         # For training, we expect input to be a tensor directly from LeRobotDataset
-        encoder_output = self._get_encoder_output(x)
-        logits = self.classifier_head(encoder_output)
+        encoder_outputs = torch.hstack([self._get_encoder_output(x) for x in xs])
+        logits = self.classifier_head(encoder_outputs)
 
         if self.config.num_classes == 2:
             logits = logits.squeeze(-1)
@@ -141,4 +143,10 @@ class Classifier(
         else:
             probabilities = torch.softmax(logits, dim=-1)
 
-        return ClassifierOutput(logits=logits, probabilities=probabilities, hidden_states=encoder_output)
+        return ClassifierOutput(logits=logits, probabilities=probabilities, hidden_states=encoder_outputs)
+
+    def predict_reward(self, x):
+        if self.config.num_classes == 2:
+            return (self.forward(x).probabilities > 0.6).float()
+        else:
+            return torch.argmax(self.forward(x).probabilities, dim=1)

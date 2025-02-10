@@ -1,0 +1,101 @@
+# @package _global_
+
+# Train with:
+#
+# python lerobot/scripts/train.py \
+#   +dataset=lerobot/pusht_keypoints
+#   env=pusht \
+#   env.gym.obs_type=environment_state_agent_pos \
+
+seed: 1
+dataset_repo_id: aractingi/hil-serl-maniskill-pushcube
+
+training:
+  # Offline training dataloader
+  num_workers: 4
+
+  # batch_size: 256
+  batch_size: 512
+  grad_clip_norm: 10.0
+  lr: 3e-4
+
+  eval_freq: 2500
+  log_freq: 500
+  save_freq: 2000000
+
+  online_steps: 1000000
+  online_rollout_n_episodes: 10
+  online_rollout_batch_size: 10
+  online_steps_between_rollouts: 1000
+  online_sampling_ratio: 1.0
+  online_env_seed: 10000
+  online_buffer_capacity: 1000000
+  online_buffer_seed_size: 0
+  online_step_before_learning: 5000
+  do_online_rollout_async: false
+  policy_update_freq: 1
+
+  # delta_timestamps:
+  #   observation.environment_state: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+  #   observation.state: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+  #   action: "[i / ${fps} for i in range(${policy.horizon})]"
+  #   next.reward: "[i / ${fps} for i in range(${policy.horizon})]"
+
+policy:
+  name: sac
+
+  pretrained_model_path:
+
+  # Input / output structure.
+  n_action_repeats: 1
+  horizon: 1
+  n_action_steps: 1
+
+  shared_encoder: true
+  # vision_encoder_name: null
+  freeze_vision_encoder: false
+  input_shapes:
+    # # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
+    observation.state: ["${env.state_dim}"]
+    observation.image: [3, 64, 64]
+  output_shapes:
+    action: ["${env.action_dim}"]
+
+  # Normalization / Unnormalization
+  input_normalization_modes: null
+  output_normalization_modes:
+    action: min_max
+  output_normalization_params:
+    action:
+      min: [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0]
+      max: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+  # Architecture / modeling.
+  # Neural networks.
+  image_encoder_hidden_dim: 32
+  # discount: 0.99
+  discount: 0.80
+  temperature_init: 1.0
+  num_critics: 2 #10
+  num_subsample_critics: null
+  critic_lr: 3e-4
+  actor_lr: 3e-4
+  temperature_lr: 3e-4
+  # critic_target_update_weight: 0.005
+  critic_target_update_weight: 0.01
+  utd_ratio: 2 # 10
+
+actor_learner_config:
+  actor_ip: "127.0.0.1"
+  port: 50051
+
+  # # Loss coefficients.
+  # reward_coeff: 0.5
+  # expectile_weight: 0.9
+  # value_coeff: 0.1
+  # consistency_coeff: 20.0
+  # advantage_scaling: 3.0
+  # pi_coeff: 0.5
+  # temporal_decay_coeff: 0.5
+  # # Target model.
+  # target_model_momentum: 0.995
