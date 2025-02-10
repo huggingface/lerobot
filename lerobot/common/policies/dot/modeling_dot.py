@@ -27,8 +27,10 @@ class DOT(nn.Module):
         self.projections = nn.ModuleDict()
         self.n_features = 0
 
+        self.image_names = sorted(config.image_features.keys())
+
         # I use one backbone for all cameras and simply project the output to the model dimension
-        if len(self.config.image_features) > 0:
+        if len(self.image_names) > 0:
             backbone = getattr(torchvision.models, self.config.vision_backbone)(
                 weights=self.config.pretrained_backbone_weights,
                 norm_layer=FrozenBatchNorm2d,
@@ -36,7 +38,7 @@ class DOT(nn.Module):
             backbone.fc = nn.Linear(backbone.fc.in_features, self.config.dim_model)
 
             self.projections["images"] = add_lora_to_backbone(backbone, rank=config.lora_rank)
-            self.n_features += len(self.config.image_features) * self.config.n_obs_steps
+            self.n_features += len(self.image_names) * self.config.n_obs_steps
 
         if self.config.robot_state_feature:
             self.projections["state"] = nn.Linear(
@@ -154,6 +156,8 @@ class DOTPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
+        self.image_names = sorted(config.image_features.keys())
+
         if config.override_dataset_stats:
             if dataset_stats is None:
                 dataset_stats = {}
@@ -243,9 +247,9 @@ class DOTPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
 
         # Resize and stack all images
-        if len(self.config.image_features) > 0:
+        if len(self.image_names) > 0:
             batch["observation.images"] = torch.stack(
-                [self.resize_transform(batch[k]) for k in self.config.image_features],
+                [self.resize_transform(batch[k]) for k in self.image_names],
                 dim=1,
             )  # bs, n_cam, c, h, w
 
@@ -301,11 +305,7 @@ class DOTPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         lookback_ind = torch.randint(0, 2 * self.config.lookback_aug + 1, (1,)).item()
-        for k in (
-            list(self.model.obs_mapping.values())
-            + list(self.config.image_features.keys())
-            + ["action", "action_is_pad"]
-        ):
+        for k in list(self.model.obs_mapping.values()) + list(self.image_names) + ["action", "action_is_pad"]:
             if k != "observation.images":
                 batch[k] = torch.cat(
                     [
@@ -325,14 +325,14 @@ class DOTPolicy(PreTrainedPolicy):
             )
             crop_transform = transforms.RandomCrop(new_shape)
 
-            for k in self.config.image_features:
+            for k in self.image_names:
                 bs, n_obs, c, h, w = batch[k].shape
                 batch[k] = batch[k].view(bs * n_obs, c, h, w)
                 batch[k] = crop_transform(self.resize_transform(batch[k]))
                 batch[k] = batch[k].view(bs, n_obs, c, *batch[k].shape[-2:])
-            batch["observation.images"] = torch.stack(
-                [batch[k] for k in self.config.image_features], dim=2
-            ).flatten(1, 2)  # bs, n_obs * n_cam, c, h, w
+            batch["observation.images"] = torch.stack([batch[k] for k in self.image_names], dim=2).flatten(
+                1, 2
+            )  # bs, n_obs * n_cam, c, h, w
 
         # Add random noise to states during training
         # TODO: it should be done in the dataloader
@@ -379,10 +379,8 @@ class LoRAConv2d(nn.Module):
         self.weight_shape = (out_channels, in_channels, kh, kw)
         fan_in = in_channels * kh * kw
 
-        # LoRA parameters
-        std = 1 / math.sqrt(fan_in)
-        self.lora_A = nn.Parameter(torch.normal(0, std, (out_channels, rank)))
-        self.lora_B = nn.Parameter(torch.normal(0, std, (rank, fan_in)))
+        self.lora_A = nn.Parameter(torch.normal(0, 0.02, (out_channels, rank)))
+        self.lora_B = nn.Parameter(torch.normal(0, 0.02, (rank, fan_in)))
 
     def forward(self, x):
         lora_update = torch.matmul(self.lora_A, self.lora_B).view(self.weight_shape)
