@@ -39,6 +39,12 @@ class SACConfig:
             "observation.environment_state": "min_max",
         }
     )
+    input_normalization_params: dict[str, dict[str, list[float]]] = field(
+        default_factory=lambda: {
+            "observation.image": {"mean": [[0.485, 0.456, 0.406]], "std": [[0.229, 0.224, 0.225]]},
+            "observation.state": {"min": [-1, -1, -1, -1], "max": [1, 1, 1, 1]},
+        }
+    )
     output_normalization_modes: dict[str, str] = field(default_factory=lambda: {"action": "min_max"})
     output_normalization_params: dict[str, dict[str, list[float]]] = field(
         default_factory=lambda: {
