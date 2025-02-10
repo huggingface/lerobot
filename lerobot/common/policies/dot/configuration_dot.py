@@ -64,7 +64,7 @@ class DOTConfig(PreTrainedConfig):
     rescale_shape: tuple[int, int] = (96, 96)
 
     # Augmentation.
-    crop_scale: float = 1.0
+    crop_scale: float = 0.8
     state_noise: float = 0.01
     noise_decay: float = 0.999995
 
