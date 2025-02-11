@@ -153,6 +153,7 @@ class DiffusionPolicy(PreTrainedPolicy):
             )
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
+        # no output_dict so returning None
         return loss, None
 
 
