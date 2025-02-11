@@ -254,7 +254,8 @@ class MobileManipulator:
                     frame_candidate = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
                     if frame_candidate is not None:
                         frame = frame_candidate
-                        frame = cv2.rotate(frame, cv2.ROTATE_180)
+                        # frame = cv2.rotate(frame, cv2.ROTATE_180)
+                        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 present_speed = speed_data
             except zmq.Again:
                 break
@@ -285,7 +286,7 @@ class MobileManipulator:
         arm_positions = []
         for name in self.leader_arms:
             pos = self.leader_arms[name].read("Present_Position")
-            pos_tensor = torch.from_numpy(pos)
+            pos_tensor = torch.from_numpy(pos).float()
             # Instead of pos_tensor.item(), use tolist() to convert the entire tensor to a list
             arm_positions.extend(pos_tensor.tolist())
 
@@ -294,118 +295,100 @@ class MobileManipulator:
         y_cmd = 0.0  # m/s lateral
         theta_cmd = 0.0  # deg/s rotation
         if self.pressed_keys["forward"]:
-            x_cmd -= 0.1
+            x_cmd -= 0.4
         if self.pressed_keys["backward"]:
-            x_cmd += 0.1
+            x_cmd += 0.4
         if self.pressed_keys["left"]:
-            y_cmd -= 0.1
+            y_cmd -= 0.4
         if self.pressed_keys["right"]:
-            y_cmd += 0.1
+            y_cmd += 0.4
         if self.pressed_keys["rotate_left"]:
             theta_cmd += 90
         if self.pressed_keys["rotate_right"]:
             theta_cmd -= 90
 
-        theta_rad = theta_cmd * (np.pi / 180)
-        wheel_radius = 0.05  # meters
-        base_radius = 0.125  # meters
-        angles = np.radians([0, 120, 240])
-        kinematic_matrix = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
-        velocity_vector = np.array([x_cmd, y_cmd, theta_rad])
-        wheel_linear_speeds = kinematic_matrix.dot(velocity_vector)
-        wheel_angular_speeds = wheel_linear_speeds / wheel_radius
-        ticks_per_second = wheel_angular_speeds * (4096 / (2 * np.pi))
-        max_ticks = 3000
-        max_abs_ticks = max(abs(tick) for tick in ticks_per_second)
-        if max_abs_ticks > max_ticks:
-            scale = max_ticks / max_abs_ticks
-            ticks_limited = [tick * scale for tick in ticks_per_second]
-        else:
-            ticks_limited = ticks_per_second
-        motor_ticks = [int(round(tick)) for tick in ticks_limited]
-        command_speeds = [(abs(tick) | 0x8000) if tick < 0 else (tick & 0x7FFF) for tick in motor_ticks]
-        raw_velocity_command = {
-            "wheel_1": command_speeds[0],
-            "wheel_2": command_speeds[1],
-            "wheel_3": command_speeds[2],
-        }
+        wheel_commands = self.body_to_wheel_raw(x_cmd, y_cmd, theta_cmd)
 
-        message = {"raw_velocity": raw_velocity_command, "arm_positions": arm_positions}
+        message = {"raw_velocity": wheel_commands, "arm_positions": arm_positions}
+
+        # TODO(pepijn): Remove this
         self.cmd_socket.send_string(json.dumps(message))
         print(f"[DEBUG] Sent command: {message}")
 
         if not record_data:
             return
 
-        # Retrieve remote observation.
-        frame, present_speed, remote_arm_state = self._get_video_frame()
-        if remote_arm_state is not None:
-            remote_arm_state_tensor = torch.tensor(remote_arm_state)
-        else:
-            remote_arm_state_tensor = torch.tensor([])
+        obs_dict = self.capture_observation()
 
-        state_tensor = self._process_present_speed(present_speed)
-        decoded_action = [MobileManipulator.raw_to_degps(raw) for raw in command_speeds]
-        action_tensor = torch.tensor(decoded_action, dtype=torch.int32)
-
-        obs_dict = {"observation.state": state_tensor, "observation.arm_state": remote_arm_state_tensor}
+        arm_state_tensor = torch.tensor(arm_positions, dtype=torch.float32)
+        wheel_tensor = torch.tensor([x_cmd, y_cmd, theta_cmd], dtype=torch.float32)
+        action_tensor = torch.cat([arm_state_tensor, wheel_tensor])
         action_dict = {"action": action_tensor}
-        if frame is not None:
-            obs_dict["observation.images.mobile"] = torch.from_numpy(frame)
+
         return obs_dict, action_dict
 
     def capture_observation(self) -> dict:
         """
         Capture observations from the remote robot: current follower arm positions,
-        present wheel speed, and a camera frame.
+        present wheel speeds (converted to body-frame velocities: x, y, theta),
+        and a camera frame.
         """
         if not self.is_connected:
             raise RobotDeviceNotConnectedError("Not connected. Run `connect()` first.")
 
-        obs_dict = {}
         frame, present_speed, remote_arm_state = self._get_video_frame()
-
-        state_tensor = self._process_present_speed(present_speed)
-
         if remote_arm_state is not None:
-            obs_dict["observation.arm_state"] = torch.tensor(remote_arm_state)
+            remote_arm_state_tensor = torch.tensor(remote_arm_state, dtype=torch.float32)
         else:
-            obs_dict["observation.arm_state"] = torch.tensor([])
+            # Instead of an empty tensor, create a default tensor of the expected shape.
+            remote_arm_state_tensor = torch.zeros(6, dtype=torch.float32)
 
-        obs_dict["observation.state"] = state_tensor
+        present_speed_dict = {
+            "wheel_1": int(present_speed.get("1", 0)),
+            "wheel_2": int(present_speed.get("2", 0)),
+            "wheel_3": int(present_speed.get("3", 0)),
+        }
+
+        body_state = self.wheel_raw_to_body(present_speed_dict)
+        wheel_state_tensor = torch.tensor(body_state, dtype=torch.float32)
+        combined_state_tensor = torch.cat((wheel_state_tensor, remote_arm_state_tensor), dim=0)
+
+        obs_dict = {"observation.state": combined_state_tensor}
 
         if frame is not None:
             obs_dict["observation.images.mobile"] = torch.from_numpy(frame)
+
         return obs_dict
 
     def send_action(self, action: torch.Tensor) -> torch.Tensor:
         """
-        If an external policy sends a composite action containing wheel commands (and possibly arm commands),
-        here we assume that the action tensor contains three values for the wheels and optionally additional
-        values for follower arm positions.
+        If an external policy sends a composite action containing body commands (x, y, theta)
+        for the mobile base and optionally additional commands for follower arms,
+        this method converts the body commands into raw wheel commands and sends the complete message.
+
+        The action tensor is expected to have:
+        - The first three values as [x_cmd, y_cmd, theta_cmd],
+            where x_cmd and y_cmd are in m/s and theta_cmd is in deg/s.å
+        - Any additional values are treated as follower arm commands.
         """
         if not self.is_connected:
             raise RobotDeviceNotConnectedError("Not connected. Run `connect()` first.")
 
-        # Process wheel commands.
-        motor_ticks = [int(action[i].item()) for i in range(3)]
-        raw_velocity_command = {
-            "wheel_1": self.degps_to_raw(motor_ticks[0]),
-            "wheel_2": self.degps_to_raw(motor_ticks[1]),
-            "wheel_3": self.degps_to_raw(motor_ticks[2]),
-        }
-        message = {"raw_velocity": raw_velocity_command}
+        x_cmd = action[0].item()  # m/s forward/backward
+        y_cmd = action[1].item()  # m/s lateral
+        theta_cmd = action[2].item()  # deg/s rotation
 
-        # If the action tensor contains more than three elements, assume they are follower arm commands.
+        wheel_commands = self.body_to_wheel_raw(x_cmd, y_cmd, theta_cmd)
+        message = {"raw_velocity": wheel_commands}
+
+        # Process arm commands if additional elements exist.
         if action.numel() > 3:
             arm_positions = {}
             extra = action[3:]
-            # Create a flat list of motor names from all follower arm buses.
             motor_list = []
             for bus_key in sorted(self.follower_arms.keys()):
                 bus = self.follower_arms[bus_key]
                 motor_list.extend(bus.motors)
-            # Iterate over the flat motor list.
             for i, motor in enumerate(motor_list):
                 if i < extra.numel():
                     arm_positions[motor] = int(extra[i].item())
@@ -459,3 +442,103 @@ class MobileManipulator:
         if raw_speed & 0x8000:
             degps = -degps
         return degps
+
+    def body_to_wheel_raw(
+        self,
+        x_cmd: float,
+        y_cmd: float,
+        theta_cmd: float,
+        wheel_radius: float = 0.05,
+        base_radius: float = 0.125,
+        max_raw: int = 3000,
+    ) -> dict:
+        """
+        Convert desired body-frame velocities into wheel raw commands.
+
+        Parameters:
+          x_cmd      : Linear velocity in x (m/s).
+          y_cmd      : Linear velocity in y (m/s).
+          theta_cmd  : Rotational velocity (deg/s).
+          wheel_radius: Radius of each wheel (meters).
+          base_radius : Distance from the center of rotation to each wheel (meters).
+          max_raw    : Maximum allowed raw command (ticks) per wheel.
+
+        Returns:
+          A dictionary with wheel raw commands:
+             {"wheel_1": value, "wheel_2": value, "wheel_3": value}.
+
+        Notes:
+          - Internally, the method converts theta_cmd to rad/s for the kinematics.
+          - The raw command is computed from the wheels angular speed in deg/s
+            using degps_to_raw(). If any command exceeds max_raw, all commands
+            are scaled down proportionally.
+        """
+        # Convert rotational velocity from deg/s to rad/s.
+        theta_rad = theta_cmd * (np.pi / 180.0)
+        # Create the body velocity vector [x, y, theta_rad].
+        velocity_vector = np.array([x_cmd, y_cmd, theta_rad])
+
+        # Define the wheel mounting angles with a -45° offset.
+        angles = np.radians(np.array([0, 120, 240]) - 30)
+        # Build the kinematic matrix: each row maps body velocities to a wheel’s linear speed.
+        # The third column (base_radius) accounts for the effect of rotation.
+        m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
+
+        # Compute each wheel’s linear speed (m/s) and then its angular speed (rad/s).
+        wheel_linear_speeds = m.dot(velocity_vector)
+        wheel_angular_speeds = wheel_linear_speeds / wheel_radius
+
+        # Convert wheel angular speeds from rad/s to deg/s.
+        wheel_degps = wheel_angular_speeds * (180.0 / np.pi)
+
+        # --- Scaling (Saturation) ---
+        # Compute the tentative raw command for each wheel (before integer encoding).
+        steps_per_deg = 4096.0 / 360.0
+        raw_floats = [abs(degps) * steps_per_deg for degps in wheel_degps]
+        max_raw_computed = max(raw_floats)
+        if max_raw_computed > max_raw:
+            scale = max_raw / max_raw_computed
+            wheel_degps = wheel_degps * scale
+
+        # Convert each wheel’s (possibly scaled) angular speed (deg/s) to a raw integer.
+        wheel_raw = [MobileManipulator.degps_to_raw(deg) for deg in wheel_degps]
+
+        return {"wheel_1": wheel_raw[0], "wheel_2": wheel_raw[1], "wheel_3": wheel_raw[2]}
+
+    def wheel_raw_to_body(
+        self, wheel_raw: dict, wheel_radius: float = 0.05, base_radius: float = 0.125
+    ) -> tuple:
+        """
+        Convert wheel raw command feedback back into body-frame velocities.
+
+        Parameters:
+          wheel_raw   : Dictionary with raw wheel commands (keys: "wheel_1", "wheel_2", "wheel_3").
+          wheel_radius: Radius of each wheel (meters).
+          base_radius : Distance from the robot center to each wheel (meters).
+
+        Returns:
+          A tuple (x_cmd, y_cmd, theta_cmd) where:
+             x_cmd      : Linear velocity in x (m/s).
+             y_cmd      : Linear velocity in y (m/s).
+             theta_cmd  : Rotational velocity in deg/s.
+        """
+        # Extract the raw values in order.
+        raw_list = [wheel_raw["wheel_1"], wheel_raw["wheel_2"], wheel_raw["wheel_3"]]
+
+        # Convert each raw command back to an angular speed in deg/s.
+        wheel_degps = np.array([MobileManipulator.raw_to_degps(r) for r in raw_list])
+        # Convert from deg/s to rad/s.
+        wheel_radps = wheel_degps * (np.pi / 180.0)
+        # Compute each wheel’s linear speed (m/s) from its angular speed.
+        wheel_linear_speeds = wheel_radps * wheel_radius
+
+        # Define the wheel mounting angles with a -45° offset.
+        angles = np.radians(np.array([0, 120, 240]) - 30)
+        m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
+
+        # Solve the inverse kinematics: body_velocity = M⁻¹ · wheel_linear_speeds.
+        m_inv = np.linalg.inv(m)
+        velocity_vector = m_inv.dot(wheel_linear_speeds)
+        x_cmd, y_cmd, theta_rad = velocity_vector
+        theta_cmd = theta_rad * (180.0 / np.pi)
+        return (x_cmd, y_cmd, theta_cmd)
