@@ -214,18 +214,20 @@ class LeRobotDatasetMetadata:
         task_index = self.task_to_task_index.get(task, None)
         return task_index if task_index is not None else self.total_tasks
 
-    def save_episode(self, episode_index: int, episode_length: int, task: str, task_index: int) -> None:
+    def save_episode(self, episode_index: int, episode_length: int, tasks: list[str]) -> None:
         self.info["total_episodes"] += 1
         self.info["total_frames"] += episode_length
 
-        if task_index not in self.tasks:
-            self.info["total_tasks"] += 1
-            self.tasks[task_index] = task
-            task_dict = {
-                "task_index": task_index,
-                "task": task,
-            }
-            append_jsonlines(task_dict, self.root / TASKS_PATH)
+        for task in tasks:
+            task_index = self.get_task_index(task)
+            if task_index not in self.tasks:
+                self.info["total_tasks"] += 1
+                self.tasks[task_index] = task
+                task_dict = {
+                    "task_index": task_index,
+                    "task": task,
+                }
+                append_jsonlines(task_dict, self.root / TASKS_PATH)
 
         chunk = self.get_episode_chunk(episode_index)
         if chunk >= self.total_chunks:
@@ -237,7 +239,7 @@ class LeRobotDatasetMetadata:
 
         episode_dict = {
             "episode_index": episode_index,
-            "tasks": [task],
+            "tasks": tasks,
             "length": episode_length,
         }
         self.episodes.append(episode_dict)
@@ -691,10 +693,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self.meta.total_episodes if episode_index is None else episode_index
-        return {
-            "size": 0,
-            **{key: current_ep_idx if key == "episode_index" else [] for key in self.features},
-        }
+        ep_buffer = {}
+        # size and task are special cases that are not in self.features
+        ep_buffer["size"] = 0
+        ep_buffer["task"] = []
+        for key in self.features:
+            ep_buffer[key] = current_ep_idx if key == "episode_index" else []
+        return ep_buffer
 
     def _get_image_file_path(self, episode_index: int, image_key: str, frame_index: int) -> Path:
         fpath = DEFAULT_IMAGE_PATH.format(
@@ -718,6 +723,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         # TODO(aliberts, rcadene): Add sanity check for the input, check it's numpy or torch,
         # check the dtype and shape matches, etc.
+        if "task" not in frame:
+            raise ValueError("The mandatory feature 'task' wasn't found in `frame` dictionnary.")
 
         if self.episode_buffer is None:
             self.episode_buffer = self.create_episode_buffer()
@@ -728,13 +735,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.episode_buffer["timestamp"].append(timestamp)
 
         for key in frame:
-            if key not in self.features:
-                raise ValueError(key)
+            # Special case with task
+            if key == "task":
+                self.episode_buffer["task"].append(frame["task"])
+                continue
 
-            if self.features[key]["dtype"] not in ["image", "video"]:
-                item = frame[key].numpy() if isinstance(frame[key], torch.Tensor) else frame[key]
-                self.episode_buffer[key].append(item)
-            elif self.features[key]["dtype"] in ["image", "video"]:
+            if key not in self.features:
+                raise ValueError(
+                    f"An element of the frame is not in the features. '{key}' not in '{self.features.keys()}'."
+                )
+
+            if self.features[key]["dtype"] in ["image", "video"]:
                 img_path = self._get_image_file_path(
                     episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
                 )
@@ -742,10 +753,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     img_path.parent.mkdir(parents=True, exist_ok=True)
                 self._save_image(frame[key], img_path)
                 self.episode_buffer[key].append(str(img_path))
+            else:
+                item = frame[key].numpy() if isinstance(frame[key], torch.Tensor) else frame[key]
+                self.episode_buffer[key].append(item)
 
         self.episode_buffer["size"] += 1
 
-    def save_episode(self, task: str, encode_videos: bool = True, episode_data: dict | None = None) -> None:
+    def save_episode(self, encode_videos: bool = True, episode_data: dict | None = None) -> None:
         """
         This will save to disk the current episode in self.episode_buffer. Note that since it affects files on
         disk, it sets self.consolidated to False to ensure proper consolidation later on before uploading to
@@ -758,7 +772,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if not episode_data:
             episode_buffer = self.episode_buffer
 
+        # size and task are special cases that won't be added to hf_dataset
         episode_length = episode_buffer.pop("size")
+        tasks = episode_buffer.pop("task")
+
         episode_index = episode_buffer["episode_index"]
         if episode_index != self.meta.total_episodes:
             # TODO(aliberts): Add option to use existing episode_index
@@ -772,21 +789,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 "You must add one or several frames with `add_frame` before calling `add_episode`."
             )
 
-        task_index = self.meta.get_task_index(task)
-
         if not set(episode_buffer.keys()) == set(self.features):
-            raise ValueError()
+            raise ValueError(
+                f"Features from `episode_buffer` don't match the ones in `self.features`: '{set(episode_buffer.keys())}' vs '{set(self.features)}'"
+            )
+
+        episode_buffer["index"] = np.arange(self.meta.total_frames, self.meta.total_frames + episode_length)
+        episode_buffer["episode_index"] = np.full((episode_length,), episode_index)
+
+        unique_tasks = list(set(tasks))
+        task_indices = [self.meta.get_task_index(task) for task in tasks]
+        episode_buffer["task_index"] = np.array(task_indices)
 
         for key, ft in self.features.items():
-            if key == "index":
-                episode_buffer[key] = np.arange(
-                    self.meta.total_frames, self.meta.total_frames + episode_length
-                )
-            elif key == "episode_index":
-                episode_buffer[key] = np.full((episode_length,), episode_index)
-            elif key == "task_index":
-                episode_buffer[key] = np.full((episode_length,), task_index)
-            elif ft["dtype"] in ["image", "video"]:
+            # index, episode_index, task_index are already processed above, and image and video
+            # are processed separately by storing image path and frame info as meta data
+            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
                 continue
             elif len(ft["shape"]) == 1 and ft["shape"][0] == 1:
                 episode_buffer[key] = np.array(episode_buffer[key], dtype=ft["dtype"])
@@ -798,7 +816,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._wait_image_writer()
         self._save_episode_table(episode_buffer, episode_index)
 
-        self.meta.save_episode(episode_index, episode_length, task, task_index)
+        self.meta.save_episode(episode_index, episode_length, unique_tasks)
 
         if encode_videos and len(self.meta.video_keys) > 0:
             video_paths = self.encode_episode_videos(episode_index)
