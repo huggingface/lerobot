@@ -86,8 +86,7 @@ def main():
     while not done:
         for batch in dataloader:
             batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
-            output_dict = policy.forward(batch)
-            loss = output_dict["loss"]
+            loss, _ = policy.forward(batch)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()

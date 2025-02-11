@@ -163,12 +163,17 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         raise NotImplementedError
 
+    # TODO(aliberts, rcadene): split into 'forward' and 'compute_loss'?
     @abc.abstractmethod
-    def forward(self, batch: dict[str, Tensor]) -> dict:
-        """Run the batch through the model and compute the loss for training or validation.
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
+        """_summary_
 
-        Returns a dictionary with "loss" and potentially other information. Apart from "loss" which is a Tensor, all
-        other items should be logging-friendly, native Python types.
+        Args:
+            batch (dict[str, Tensor]): _description_
+
+        Returns:
+            tuple[Tensor, dict | None]: The loss and potentially other information. Apart from the loss which
+                is a Tensor, all other items should be logging-friendly, native Python types.
         """
         raise NotImplementedError
 
