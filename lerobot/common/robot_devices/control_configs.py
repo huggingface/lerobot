@@ -60,8 +60,6 @@ class RecordControlConfig(ControlConfig):
     num_episodes: int = 50
     # Encode frames in the dataset into video
     video: bool = True
-    # By default, run the computation of the data statistics at the end of data collection. Compute intensive and not required to just replay an episode.
-    run_compute_stats: bool = True
     # Upload dataset to Hugging Face hub.
     push_to_hub: bool = True
     # Upload on private repository on the Hugging Face hub.

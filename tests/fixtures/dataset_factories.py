@@ -28,7 +28,7 @@ from tests.fixtures.constants import (
 
 
 def get_task_index(task_dicts: dict, task: str) -> int:
-    tasks = {d["task_index"]: d["task"] for d in task_dicts}
+    tasks = {d["task_index"]: d["task"] for d in task_dicts.values()}
     task_to_task_index = {task: task_idx for task_idx, task in tasks.items()}
     return task_to_task_index[task]
 
@@ -155,13 +155,30 @@ def stats_factory():
 
 
 @pytest.fixture(scope="session")
+def episodes_stats_factory(stats_factory):
+    def _create_episodes_stats(
+        features: dict[str],
+        total_episodes: int = 3,
+    ) -> dict:
+        episodes_stats = {}
+        for episode_index in range(total_episodes):
+            episodes_stats[episode_index] = {
+                "episode_index": episode_index,
+                "stats": stats_factory(features),
+            }
+        return episodes_stats
+
+    return _create_episodes_stats
+
+
+@pytest.fixture(scope="session")
 def tasks_factory():
     def _create_tasks(total_tasks: int = 3) -> int:
-        tasks_list = []
-        for i in range(total_tasks):
-            task_dict = {"task_index": i, "task": f"Perform action {i}."}
-            tasks_list.append(task_dict)
-        return tasks_list
+        tasks = {}
+        for task_index in range(total_tasks):
+            task_dict = {"task_index": task_index, "task": f"Perform action {task_index}."}
+            tasks[task_index] = task_dict
+        return tasks
 
     return _create_tasks
 
@@ -190,10 +207,10 @@ def episodes_factory(tasks_factory):
         # Generate random lengths that sum up to total_length
         lengths = np.random.multinomial(total_frames, [1 / total_episodes] * total_episodes).tolist()
 
-        tasks_list = [task_dict["task"] for task_dict in tasks]
+        tasks_list = [task_dict["task"] for task_dict in tasks.values()]
         num_tasks_available = len(tasks_list)
 
-        episodes_list = []
+        episodes = {}
         remaining_tasks = tasks_list.copy()
         for ep_idx in range(total_episodes):
             num_tasks_in_episode = random.randint(1, min(3, num_tasks_available)) if multi_task else 1
@@ -203,15 +220,13 @@ def episodes_factory(tasks_factory):
                 for task in episode_tasks:
                     remaining_tasks.remove(task)
 
-            episodes_list.append(
-                {
-                    "episode_index": ep_idx,
-                    "tasks": episode_tasks,
-                    "length": lengths[ep_idx],
-                }
-            )
+            episodes[ep_idx] = {
+                "episode_index": ep_idx,
+                "tasks": episode_tasks,
+                "length": lengths[ep_idx],
+            }
 
-        return episodes_list
+        return episodes
 
     return _create_episodes
 
@@ -235,7 +250,7 @@ def hf_dataset_factory(features_factory, tasks_factory, episodes_factory, img_ar
         frame_index_col = np.array([], dtype=np.int64)
         episode_index_col = np.array([], dtype=np.int64)
         task_index = np.array([], dtype=np.int64)
-        for ep_dict in episodes:
+        for ep_dict in episodes.values():
             timestamp_col = np.concatenate((timestamp_col, np.arange(ep_dict["length"]) / fps))
             frame_index_col = np.concatenate((frame_index_col, np.arange(ep_dict["length"], dtype=int)))
             episode_index_col = np.concatenate(
@@ -287,6 +302,7 @@ def lerobot_dataset_metadata_factory(
         repo_id: str = DUMMY_REPO_ID,
         info: dict | None = None,
         stats: dict | None = None,
+        episodes_stats: list[dict] | None = None,
         tasks: list[dict] | None = None,
         episodes: list[dict] | None = None,
         local_files_only: bool = False,
@@ -295,6 +311,10 @@ def lerobot_dataset_metadata_factory(
             info = info_factory()
         if not stats:
             stats = stats_factory(features=info["features"])
+        if not episodes_stats:
+            episodes_stats = episodes_stats_factory(
+                features=info["features"], total_episodes=info["total_episodes"]
+            )
         if not tasks:
             tasks = tasks_factory(total_tasks=info["total_tasks"])
         if not episodes:
@@ -305,6 +325,7 @@ def lerobot_dataset_metadata_factory(
         mock_snapshot_download = mock_snapshot_download_factory(
             info=info,
             stats=stats,
+            episodes_stats=episodes_stats,
             tasks=tasks,
             episodes=episodes,
         )
@@ -328,6 +349,7 @@ def lerobot_dataset_metadata_factory(
 def lerobot_dataset_factory(
     info_factory,
     stats_factory,
+    episodes_stats_factory,
     tasks_factory,
     episodes_factory,
     hf_dataset_factory,
@@ -343,6 +365,7 @@ def lerobot_dataset_factory(
         multi_task: bool = False,
         info: dict | None = None,
         stats: dict | None = None,
+        episodes_stats: list[dict] | None = None,
         tasks: list[dict] | None = None,
         episode_dicts: list[dict] | None = None,
         hf_dataset: datasets.Dataset | None = None,
@@ -354,6 +377,8 @@ def lerobot_dataset_factory(
             )
         if not stats:
             stats = stats_factory(features=info["features"])
+        if not episodes_stats:
+            episodes_stats = episodes_stats_factory(features=info["features"], total_episodes=total_episodes)
         if not tasks:
             tasks = tasks_factory(total_tasks=info["total_tasks"])
         if not episode_dicts:
@@ -369,6 +394,7 @@ def lerobot_dataset_factory(
         mock_snapshot_download = mock_snapshot_download_factory(
             info=info,
             stats=stats,
+            episodes_stats=episodes_stats,
             tasks=tasks,
             episodes=episode_dicts,
             hf_dataset=hf_dataset,
@@ -378,6 +404,7 @@ def lerobot_dataset_factory(
             repo_id=repo_id,
             info=info,
             stats=stats,
+            episodes_stats=episodes_stats,
             tasks=tasks,
             episodes=episode_dicts,
             local_files_only=kwargs.get("local_files_only", False),

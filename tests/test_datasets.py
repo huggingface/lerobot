@@ -19,19 +19,12 @@ from copy import deepcopy
 from itertools import chain
 from pathlib import Path
 
-import einops
 import pytest
 import torch
-from datasets import Dataset
 from huggingface_hub import HfApi
 from safetensors.torch import load_file
 
 import lerobot
-from lerobot.common.datasets.compute_stats import (
-    aggregate_stats,
-    compute_stats,
-    get_stats_einops_patterns,
-)
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.lerobot_dataset import (
     LeRobotDataset,
@@ -40,13 +33,11 @@ from lerobot.common.datasets.lerobot_dataset import (
 from lerobot.common.datasets.utils import (
     create_branch,
     flatten_dict,
-    hf_transform_to_torch,
     unflatten_dict,
 )
 from lerobot.common.envs.factory import make_env_config
 from lerobot.common.policies.factory import make_policy_config
 from lerobot.common.robot_devices.robots.utils import make_robot
-from lerobot.common.utils.random_utils import seeded_context
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from tests.fixtures.constants import DUMMY_REPO_ID
@@ -210,67 +201,6 @@ def test_multidataset_frames():
             assert torch.equal(sub_dataset_item[k], dataset_item[k])
 
 
-# TODO(aliberts, rcadene): Refactor and move this to a tests/test_compute_stats.py
-def test_compute_stats_on_xarm():
-    """Check that the statistics are computed correctly according to the stats_patterns property.
-
-    We compare with taking a straight min, mean, max, std of all the data in one pass (which we can do
-    because we are working with a small dataset).
-    """
-    # TODO(rcadene, aliberts): remove dataset download
-    dataset = LeRobotDataset("lerobot/xarm_lift_medium", episodes=[0])
-
-    # reduce size of dataset sample on which stats compute is tested to 10 frames
-    dataset.hf_dataset = dataset.hf_dataset.select(range(10))
-
-    # Note: we set the batch size to be smaller than the whole dataset to make sure we are testing batched
-    # computation of the statistics. While doing this, we also make sure it works when we don't divide the
-    # dataset into even batches.
-    computed_stats = compute_stats(dataset, batch_size=int(len(dataset) * 0.25), num_workers=0)
-
-    # get einops patterns to aggregate batches and compute statistics
-    stats_patterns = get_stats_einops_patterns(dataset)
-
-    # get all frames from the dataset in the same dtype and range as during compute_stats
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        num_workers=0,
-        batch_size=len(dataset),
-        shuffle=False,
-    )
-    full_batch = next(iter(dataloader))
-
-    # compute stats based on all frames from the dataset without any batching
-    expected_stats = {}
-    for k, pattern in stats_patterns.items():
-        full_batch[k] = full_batch[k].float()
-        expected_stats[k] = {}
-        expected_stats[k]["mean"] = einops.reduce(full_batch[k], pattern, "mean")
-        expected_stats[k]["std"] = torch.sqrt(
-            einops.reduce((full_batch[k] - expected_stats[k]["mean"]) ** 2, pattern, "mean")
-        )
-        expected_stats[k]["min"] = einops.reduce(full_batch[k], pattern, "min")
-        expected_stats[k]["max"] = einops.reduce(full_batch[k], pattern, "max")
-
-    # test computed stats match expected stats
-    for k in stats_patterns:
-        assert torch.allclose(computed_stats[k]["mean"], expected_stats[k]["mean"])
-        assert torch.allclose(computed_stats[k]["std"], expected_stats[k]["std"])
-        assert torch.allclose(computed_stats[k]["min"], expected_stats[k]["min"])
-        assert torch.allclose(computed_stats[k]["max"], expected_stats[k]["max"])
-
-    # load stats used during training which are expected to match the ones returned by computed_stats
-    loaded_stats = dataset.meta.stats  # noqa: F841
-
-    # TODO(rcadene): we can't test this because expected_stats is computed on a subset
-    # # test loaded stats match expected stats
-    # for k in stats_patterns:
-    #     assert torch.allclose(loaded_stats[k]["mean"], expected_stats[k]["mean"])
-    #     assert torch.allclose(loaded_stats[k]["std"], expected_stats[k]["std"])
-    #     assert torch.allclose(loaded_stats[k]["min"], expected_stats[k]["min"])
-    #     assert torch.allclose(loaded_stats[k]["max"], expected_stats[k]["max"])
-
-
 # TODO(aliberts): Move to more appropriate location
 def test_flatten_unflatten_dict():
     d = {
@@ -331,6 +261,11 @@ def test_backward_compatibility(repo_id):
         if "task_index" not in old_frame:
             del new_frame["task_index"]
 
+        # Remove task_index to allow for backward compatibility
+        # TODO(rcadene): remove when new features have been generated
+        if "task_index" not in old_frame:
+            del new_frame["task_index"]
+
         new_keys = set(new_frame.keys())
         old_keys = set(old_frame.keys())
         assert new_keys == old_keys, f"{new_keys=} and {old_keys=} are not the same"
@@ -372,35 +307,6 @@ def test_backward_compatibility(repo_id):
     # i = dataset.episode_data_index["to"][-1].item()
     # load_and_compare(i - 2)
     # load_and_compare(i - 1)
-
-
-@pytest.mark.skip("TODO after fix multidataset")
-def test_multidataset_aggregate_stats():
-    """Makes 3 basic datasets and checks that aggregate stats are computed correctly."""
-    with seeded_context(0):
-        data_a = torch.rand(30, dtype=torch.float32)
-        data_b = torch.rand(20, dtype=torch.float32)
-        data_c = torch.rand(20, dtype=torch.float32)
-
-    hf_dataset_1 = Dataset.from_dict(
-        {"a": data_a[:10], "b": data_b[:10], "c": data_c[:10], "index": torch.arange(10)}
-    )
-    hf_dataset_1.set_transform(hf_transform_to_torch)
-    hf_dataset_2 = Dataset.from_dict({"a": data_a[10:20], "b": data_b[10:], "index": torch.arange(10)})
-    hf_dataset_2.set_transform(hf_transform_to_torch)
-    hf_dataset_3 = Dataset.from_dict({"a": data_a[20:], "c": data_c[10:], "index": torch.arange(10)})
-    hf_dataset_3.set_transform(hf_transform_to_torch)
-    dataset_1 = LeRobotDataset.from_preloaded("d1", hf_dataset=hf_dataset_1)
-    dataset_1.stats = compute_stats(dataset_1, batch_size=len(hf_dataset_1), num_workers=0)
-    dataset_2 = LeRobotDataset.from_preloaded("d2", hf_dataset=hf_dataset_2)
-    dataset_2.stats = compute_stats(dataset_2, batch_size=len(hf_dataset_2), num_workers=0)
-    dataset_3 = LeRobotDataset.from_preloaded("d3", hf_dataset=hf_dataset_3)
-    dataset_3.stats = compute_stats(dataset_3, batch_size=len(hf_dataset_3), num_workers=0)
-    stats = aggregate_stats([dataset_1, dataset_2, dataset_3])
-    for data_key, data in zip(["a", "b", "c"], [data_a, data_b, data_c], strict=True):
-        for agg_fn in ["mean", "min", "max"]:
-            assert torch.allclose(stats[data_key][agg_fn], einops.reduce(data, "n -> 1", agg_fn))
-        assert torch.allclose(stats[data_key]["std"], torch.std(data, correction=0))
 
 
 @pytest.mark.skip("Requires internet access")
