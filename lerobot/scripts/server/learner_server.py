@@ -278,10 +278,21 @@ def learner_push_parameters(
         torch.save(params_dict, buf)
         params_bytes = buf.getvalue()
 
-        # Push them to the Actor’s "SendParameters" method
+        # Push them to the Actor's "SendParameters" method
         logging.info("[LEARNER] Publishing parameters to the Actor")
         response = actor_stub.SendParameters(hilserl_pb2.Parameters(parameter_bytes=params_bytes))  # noqa: F841
         time.sleep(seconds_between_pushes)
+
+
+def check_nan_in_transition(observations: torch.Tensor, actions: torch.Tensor, next_state: torch.Tensor):
+    for k in observations:
+        if torch.isnan(observations[k]).any():
+            logging.error(f"observations[{k}] contains NaN values")
+    for k in next_state:
+        if torch.isnan(next_state[k]).any():
+            logging.error(f"next_state[{k}] contains NaN values")
+    if torch.isnan(actions).any():
+        logging.error("actions contains NaN values")
 
 
 def add_actor_information_and_train(
@@ -372,6 +383,7 @@ def add_actor_information_and_train(
             observations = batch["state"]
             next_observations = batch["next_state"]
             done = batch["done"]
+            check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
 
             with policy_lock:
                 loss_critic = policy.compute_loss_critic(
@@ -398,6 +410,8 @@ def add_actor_information_and_train(
         observations = batch["state"]
         next_observations = batch["next_state"]
         done = batch["done"]
+
+        assert_and_breakpoint(observations=observations, actions=actions, next_state=next_observations)
 
         with policy_lock:
             loss_critic = policy.compute_loss_critic(
@@ -497,8 +511,8 @@ def make_optimizers_and_scheduler(cfg, policy: nn.Module):
     It also initializes a learning rate scheduler, though currently, it is set to `None`.
 
     **NOTE:**
-    - If the encoder is shared, its parameters are excluded from the actor’s optimization process.
-    - The policy’s log temperature (`log_alpha`) is wrapped in a list to ensure proper optimization as a standalone tensor.
+    - If the encoder is shared, its parameters are excluded from the actor's optimization process.
+    - The policy's log temperature (`log_alpha`) is wrapped in a list to ensure proper optimization as a standalone tensor.
 
     Args:
         cfg: Configuration object containing hyperparameters.

@@ -296,12 +296,17 @@ class RewardWrapper(gym.Wrapper):
 
         # NOTE: We got 15% speedup by compiling the model
         self.reward_classifier = torch.compile(reward_classifier)
+
+        if isinstance(device, str):
+            device = torch.device(device)
         self.device = device
 
     def step(self, action):
         observation, _, terminated, truncated, info = self.env.step(action)
         images = [
-            observation[key].to(self.device, non_blocking=True) for key in observation if "image" in key
+            observation[key].to(self.device, non_blocking=self.device.type == "cuda")
+            for key in observation
+            if "image" in key
         ]
         start_time = time.perf_counter()
         with torch.inference_mode():
@@ -309,10 +314,74 @@ class RewardWrapper(gym.Wrapper):
                 self.reward_classifier.predict_reward(images) if self.reward_classifier is not None else 0.0
             )
         info["Reward classifer frequency"] = 1 / (time.perf_counter() - start_time)
+
+        if reward == 1.0:
+            terminated = True
         return observation, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
         return self.env.reset(seed=seed, options=options)
+
+
+class JointMaskingActionSpace(gym.ActionWrapper):
+    def __init__(self, env, mask):
+        """
+        Wrapper to mask out dimensions of the action space.
+
+        Args:
+            env: The environment to wrap
+            mask: Binary mask array where 0 indicates dimensions to remove
+        """
+        super().__init__(env)
+
+        # Validate mask matches action space
+
+        # Keep only dimensions where mask is 1
+        self.active_dims = np.where(mask)[0]
+
+        if isinstance(env.action_space, gym.spaces.Box):
+            if len(mask) != env.action_space.shape[0]:
+                raise ValueError("Mask length must match action space dimensions")
+            low = env.action_space.low[self.active_dims]
+            high = env.action_space.high[self.active_dims]
+            self.action_space = gym.spaces.Box(low=low, high=high, dtype=env.action_space.dtype)
+
+        if isinstance(env.action_space, gym.spaces.Tuple):
+            if len(mask) != env.action_space[0].shape[0]:
+                raise ValueError("Mask length must match action space 0 dimensions")
+
+            low = env.action_space[0].low[self.active_dims]
+            high = env.action_space[0].high[self.active_dims]
+            action_space_masked = gym.spaces.Box(low=low, high=high, dtype=env.action_space[0].dtype)
+            self.action_space = gym.spaces.Tuple((action_space_masked, env.action_space[1]))
+            # Create new action space with masked dimensions
+
+    def action(self, action):
+        """
+        Convert masked action back to full action space.
+
+        Args:
+            action: Action in masked space. For Tuple spaces, the first element is masked.
+
+        Returns:
+            Action in original space with masked dims set to 0.
+        """
+
+        # Determine whether we are handling a Tuple space or a Box.
+        if isinstance(self.env.action_space, gym.spaces.Tuple):
+            # Extract the masked component from the tuple.
+            masked_action = action[0] if isinstance(action, tuple) else action
+            # Create a full action for the Box element.
+            full_box_action = np.zeros(self.env.action_space[0].shape, dtype=self.env.action_space[0].dtype)
+            full_box_action[self.active_dims] = masked_action
+            # Return a tuple with the reconstructed Box action and the unchanged remainder.
+            return (full_box_action, action[1])
+        else:
+            # For Box action spaces.
+            masked_action = action if not isinstance(action, tuple) else action[0]
+            full_action = np.zeros(self.env.action_space.shape, dtype=self.env.action_space.dtype)
+            full_action[self.active_dims] = masked_action
+            return full_action
 
 
 class TimeLimitWrapper(gym.Wrapper):
@@ -331,13 +400,12 @@ class TimeLimitWrapper(gym.Wrapper):
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
         time_since_last_step = time.perf_counter() - self.last_timestamp
-        # logging.warning(f"Current timestep is lower than the expected fps {self.fps}")
         self.episode_time_in_s += time_since_last_step
         self.last_timestamp = time.perf_counter()
         self.current_step += 1
         # check if last timestep took more time than the expected fps
-        # if 1.0 / time_since_last_step < self.fps:
-        #     logging.warning(f"Current timestep exceeded expected fps {self.fps}")
+        if 1.0 / time_since_last_step < self.fps:
+            logging.debug(f"Current timestep exceeded expected fps {self.fps}")
 
         if self.episode_time_in_s > self.control_time_s:
             # if self.current_step >= self.max_episode_steps:
@@ -360,7 +428,7 @@ class ImageCropResizeWrapper(gym.Wrapper):
         print(f"obs_keys , {self.env.observation_space}")
         print(f"crop params dict {crop_params_dict.keys()}")
         for key_crop in crop_params_dict:
-            if key_crop not in self.env.observation_space.keys():
+            if key_crop not in self.env.observation_space.keys():  # noqa: SIM118
                 raise ValueError(f"Key {key_crop} not in observation space")
         for key in crop_params_dict:
             top, left, height, width = crop_params_dict[key]
@@ -375,14 +443,23 @@ class ImageCropResizeWrapper(gym.Wrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
         for k in self.crop_params_dict:
             device = obs[k].device
+
+            # Check for NaNs before processing
+            if torch.isnan(obs[k]).any():
+                logging.error(f"NaN values detected in observation {k} before crop and resize")
+
             if device == torch.device("mps:0"):
                 obs[k] = obs[k].cpu()
+
             obs[k] = F.crop(obs[k], *self.crop_params_dict[k])
             obs[k] = F.resize(obs[k], self.resize_size)
+
+            # Check for NaNs after processing
+            if torch.isnan(obs[k]).any():
+                logging.error(f"NaN values detected in observation {k} after crop and resize")
+
             obs[k] = obs[k].to(device)
-            # print(f"observation with key {k} with size {obs[k].size()}")
-            # cv2.imshow(k, cv2.cvtColor(obs[k].cpu().squeeze(0).permute(1, 2, 0).numpy(), cv2.COLOR_RGB2BGR))
-            # cv2.waitKey(1)
+
         return obs, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
@@ -400,12 +477,18 @@ class ImageCropResizeWrapper(gym.Wrapper):
 class ConvertToLeRobotObservation(gym.ObservationWrapper):
     def __init__(self, env, device):
         super().__init__(env)
+
+        if isinstance(device, str):
+            device = torch.device(device)
         self.device = device
 
     def observation(self, observation):
         observation = preprocess_observation(observation)
 
-        observation = {key: observation[key].to(self.device, non_blocking=True) for key in observation}
+        observation = {
+            key: observation[key].to(self.device, non_blocking=self.device.type == "cuda")
+            for key in observation
+        }
         observation = {k: torch.tensor(v, device=self.device) for k, v in observation.items()}
         return observation
 
@@ -440,7 +523,7 @@ class KeyboardInterfaceWrapper(gym.Wrapper):
                         if key == keyboard.Key.right or key == keyboard.Key.esc:
                             print("Right arrow key pressed. Exiting loop...")
                             self.events["exit_early"] = True
-                        elif key == keyboard.Key.space:
+                        elif key == keyboard.Key.space and not self.events["exit_early"]:
                             if not self.events["pause_policy"]:
                                 print(
                                     "Space key pressed. Human intervention required.\n"
@@ -587,6 +670,7 @@ def make_robot_env(
     env = TimeLimitWrapper(env=env, control_time_s=cfg.wrapper.control_time_s, fps=cfg.fps)
     env = KeyboardInterfaceWrapper(env=env)
     env = ResetWrapper(env=env, reset_fn=None, reset_time_s=cfg.wrapper.reset_time_s)
+    env = JointMaskingActionSpace(env=env, mask=cfg.wrapper.joint_masking_action_space)
     env = BatchCompitableWrapper(env=env)
 
     return env
@@ -596,7 +680,7 @@ def make_robot_env(
 
 def get_classifier(pretrained_path, config_path, device="mps"):
     if pretrained_path is None or config_path is None:
-        return
+        return None
 
     from lerobot.common.policies.factory import _policy_cfg_from_hydra_cfg
     from lerobot.common.policies.hilserl.classifier.configuration_classifier import ClassifierConfig
