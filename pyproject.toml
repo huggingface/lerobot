@@ -69,8 +69,8 @@ pyrender = {git = "https://github.com/mmatl/pyrender.git", markers = "sys_platfo
 hello-robot-stretch-body = {version = ">=0.7.27", markers = "sys_platform == 'linux'", optional = true}
 pyserial = {version = ">=3.5", optional = true}
 jsonlines = ">=4.0.0"
-transformers = ">=4.48.0"
-draccus = {git = "https://github.com/dlwh/draccus.git"} # replace with draccus = ">=0.9.4" when https://github.com/dlwh/draccus/pull/29 is in release
+transformers = {version = ">=4.48.0", optional = true}
+draccus = ">=0.10.0"
 
 
 [tool.poetry.extras]

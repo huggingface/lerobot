@@ -28,7 +28,7 @@ from lerobot.common.datasets.transforms import (
     SharpnessJitter,
     make_transform_from_config,
 )
-from lerobot.common.utils.utils import seeded_context
+from lerobot.common.utils.random_utils import seeded_context
 from lerobot.scripts.visualize_image_transforms import (
     save_all_transforms,
     save_each_transform,

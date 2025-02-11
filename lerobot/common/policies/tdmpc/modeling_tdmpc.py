@@ -302,7 +302,7 @@ class TDMPCPolicy(PreTrainedPolicy):
             G -= running_discount * self.config.uncertainty_regularizer_coeff * terminal_values.std(0)
         return G
 
-    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor | float]:
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss.
 
         Returns a dictionary with loss as a tensor, and other information as native floats.
@@ -495,7 +495,6 @@ class TDMPCPolicy(PreTrainedPolicy):
                 "Q_value_loss": q_value_loss.item(),
                 "V_value_loss": v_value_loss.item(),
                 "pi_loss": pi_loss.item(),
-                "loss": loss,
                 "sum_loss": loss.item() * self.config.horizon,
             }
         )
@@ -505,7 +504,7 @@ class TDMPCPolicy(PreTrainedPolicy):
             if isinstance(batch[key], torch.Tensor) and batch[key].ndim > 1:
                 batch[key] = batch[key].transpose(1, 0)
 
-        return info
+        return loss, info
 
     def update(self):
         """Update the target model's parameters with an EMA step."""
