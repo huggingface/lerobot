@@ -1257,12 +1257,14 @@ pyarrow = "*"
 
 [[package]]
 name = "draccus"
-version = "0.9.3"
+version = "0.10.0"
 description = "A slightly opinionated framework for simple dataclass-based configurations based on Pyrallis."
 optional = false
-python-versions = ">=3.8"
-files = []
-develop = false
+python-versions = ">=3.9"
+files = [
+    {file = "draccus-0.10.0-py3-none-any.whl", hash = "sha256:90243418ae0e9271c390a59cafb6acfd37001193696ed36fcc8525f791a83282"},
+    {file = "draccus-0.10.0.tar.gz", hash = "sha256:8dd08304219becdcd66cd16058ba98e9c3e6b7bfe48ccb9579dae39f8d37ae19"},
+]
 
 [package.dependencies]
 mergedeep = ">=1.3,<2.0"
@@ -1273,12 +1275,6 @@ typing-inspect = ">=0.9.0,<0.10.0"
 
 [package.extras]
 dev = ["black", "mypy", "pre-commit", "pytest", "ruff"]
-
-[package.source]
-type = "git"
-url = "https://github.com/dlwh/draccus.git"
-reference = "HEAD"
-resolved_reference = "9b690730ca108930519f48cc5dead72a72fd27cb"
 
 [[package]]
 name = "drawnow"
@@ -4911,8 +4907,6 @@ files = [
     {file = "PyAudio-0.2.14-cp311-cp311-win_amd64.whl", hash = "sha256:bbeb01d36a2f472ae5ee5e1451cacc42112986abe622f735bb870a5db77cf903"},
     {file = "PyAudio-0.2.14-cp312-cp312-win32.whl", hash = "sha256:5fce4bcdd2e0e8c063d835dbe2860dac46437506af509353c7f8114d4bacbd5b"},
     {file = "PyAudio-0.2.14-cp312-cp312-win_amd64.whl", hash = "sha256:12f2f1ba04e06ff95d80700a78967897a489c05e093e3bffa05a84ed9c0a7fa3"},
-    {file = "PyAudio-0.2.14-cp313-cp313-win32.whl", hash = "sha256:95328285b4dab57ea8c52a4a996cb52be6d629353315be5bfda403d15932a497"},
-    {file = "PyAudio-0.2.14-cp313-cp313-win_amd64.whl", hash = "sha256:692d8c1446f52ed2662120bcd9ddcb5aa2b71f38bda31e58b19fb4672fffba69"},
     {file = "PyAudio-0.2.14-cp38-cp38-win32.whl", hash = "sha256:858caf35b05c26d8fc62f1efa2e8f53d5fa1a01164842bd622f70ddc41f55000"},
     {file = "PyAudio-0.2.14-cp38-cp38-win_amd64.whl", hash = "sha256:2dac0d6d675fe7e181ba88f2de88d321059b69abd52e3f4934a8878e03a7a074"},
     {file = "PyAudio-0.2.14-cp39-cp39-win32.whl", hash = "sha256:f745109634a7c19fa4d6b8b7d6967c3123d988c9ade0cd35d4295ee1acdb53e9"},
@@ -6934,7 +6928,7 @@ test = ["pytest", "ruff"]
 name = "tokenizers"
 version = "0.21.0"
 description = ""
-optional = false
+optional = true
 python-versions = ">=3.7"
 files = [
     {file = "tokenizers-0.21.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:3c4c93eae637e7d2aaae3d376f06085164e1660f89304c0ab2b1d08a406636b2"},
@@ -7168,7 +7162,7 @@ test = ["argcomplete (>=3.0.3)", "mypy (>=1.7.0)", "pre-commit", "pytest (>=7.0,
 name = "transformers"
 version = "4.48.0"
 description = "State-of-the-art Machine Learning for JAX, PyTorch and TensorFlow"
-optional = false
+optional = true
 python-versions = ">=3.9.0"
 files = [
     {file = "transformers-4.48.0-py3-none-any.whl", hash = "sha256:6d3de6d71cb5f2a10f9775ccc17abce9620195caaf32ec96542bd2a6937f25b0"},
@@ -7936,4 +7930,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "089df92a0455bb58d2f600ad645b99362c9ff2b800a0c6108edc09f51509c716"
+content-hash = "3df78b6f373b1e4ee79530932f386fb4cfd302c1ceffe26617d26fb1a7e751ce"

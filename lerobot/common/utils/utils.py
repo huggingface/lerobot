@@ -17,14 +17,10 @@ import logging
 import os
 import os.path as osp
 import platform
-import random
-from contextlib import contextmanager
 from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Generator
 
-import numpy as np
 import torch
 
 
@@ -104,59 +100,6 @@ def is_amp_available(device: str):
         return False
     else:
         raise ValueError(f"Unknown device '{device}.")
-
-
-def get_global_random_state() -> dict[str, Any]:
-    """Get the random state for `random`, `numpy`, and `torch`."""
-    random_state_dict = {
-        "random_state": random.getstate(),
-        "numpy_random_state": np.random.get_state(),
-        "torch_random_state": torch.random.get_rng_state(),
-    }
-    if torch.cuda.is_available():
-        random_state_dict["torch_cuda_random_state"] = torch.cuda.random.get_rng_state()
-    return random_state_dict
-
-
-def set_global_random_state(random_state_dict: dict[str, Any]):
-    """Set the random state for `random`, `numpy`, and `torch`.
-
-    Args:
-        random_state_dict: A dictionary of the form returned by `get_global_random_state`.
-    """
-    random.setstate(random_state_dict["random_state"])
-    np.random.set_state(random_state_dict["numpy_random_state"])
-    torch.random.set_rng_state(random_state_dict["torch_random_state"])
-    if torch.cuda.is_available():
-        torch.cuda.random.set_rng_state(random_state_dict["torch_cuda_random_state"])
-
-
-def set_global_seed(seed):
-    """Set seed for reproducibility."""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-@contextmanager
-def seeded_context(seed: int) -> Generator[None, None, None]:
-    """Set the seed when entering a context, and restore the prior random state at exit.
-
-    Example usage:
-
-    ```
-    a = random.random()  # produces some random number
-    with seeded_context(1337):
-        b = random.random()  # produces some other random number
-    c = random.random()  # produces yet another random number, but the same it would have if we never made `b`
-    ```
-    """
-    random_state_dict = get_global_random_state()
-    set_global_seed(seed)
-    yield None
-    set_global_random_state(random_state_dict)
 
 
 def init_logging():

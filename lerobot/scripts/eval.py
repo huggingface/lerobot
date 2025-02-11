@@ -61,21 +61,21 @@ import einops
 import gymnasium as gym
 import numpy as np
 import torch
+from termcolor import colored
 from torch import Tensor, nn
 from tqdm import trange
 
 from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.utils import preprocess_observation
-from lerobot.common.logger import log_output_dir
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
+from lerobot.common.utils.random_utils import set_seed
 from lerobot.common.utils.utils import (
     get_safe_torch_device,
     init_logging,
     inside_slurm,
-    set_global_seed,
 )
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
@@ -124,9 +124,6 @@ def rollout(
 
     # Reset the policy and environments.
     policy.reset()
-
-    if hasattr(policy, "use_ema_modules"):
-        policy.use_ema_modules()
 
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
@@ -463,9 +460,9 @@ def eval(cfg: EvalPipelineConfig):
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    set_global_seed(cfg.seed)
+    set_seed(cfg.seed)
 
-    log_output_dir(cfg.output_dir)
+    logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
 
     logging.info("Making environment.")
     env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
