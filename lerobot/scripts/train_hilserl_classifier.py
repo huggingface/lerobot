@@ -61,9 +61,22 @@ def get_model(cfg, logger):  # noqa I001
 
 
 def create_balanced_sampler(dataset, cfg):
-    # Creates a weighted sampler to handle class imbalance
+    # Get underlying dataset if using Subset
+    original_dataset = dataset.dataset if isinstance(dataset, torch.utils.data.Subset) else dataset
+    
+    # Get indices if using Subset (for slicing)
+    indices = dataset.indices if isinstance(dataset, torch.utils.data.Subset) else None
 
-    labels = torch.tensor([item[cfg.training.label_key] for item in dataset])
+    # Get labels from Hugging Face dataset
+    if indices is not None:
+        # Get subset of labels using Hugging Face's select()
+        hf_subset = original_dataset.hf_dataset.select(indices)
+        labels = hf_subset[cfg.training.label_key]
+    else:
+        # Get all labels directly
+        labels = original_dataset.hf_dataset[cfg.training.label_key]
+
+    labels = torch.stack(labels)
     _, counts = torch.unique(labels, return_counts=True)
     class_weights = 1.0 / counts.float()
     sample_weights = class_weights[labels]
