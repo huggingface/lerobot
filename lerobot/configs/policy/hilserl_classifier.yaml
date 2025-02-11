@@ -36,7 +36,7 @@ eval:
 
 policy:
   name: "hilserl/classifier/push_green_cube_hf_cropped_resized" #"hilserl/classifier/pick_place_lego_cube_1"
-  model_name: "facebook/convnext-base-224"
+  model_name: "helper2424/resnet10"
   model_type: "cnn"
   num_cameras: 2 # Has to be len(training.image_keys)
 
