@@ -90,9 +90,6 @@ def update_policy(
 
     optimizer.zero_grad()
 
-    if hasattr(policy, "update_ema_modules"):
-        policy.update_ema_modules()
-
     # Step through pytorch scheduler at every batch instead of epoch
     if lr_scheduler is not None:
         lr_scheduler.step()
@@ -190,8 +187,6 @@ def train(cfg: TrainPipelineConfig):
     dl_iter = cycle(dataloader)
 
     policy.train()
-    if hasattr(policy, "init_ema_modules"):
-        policy.init_ema_modules()
 
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f"),

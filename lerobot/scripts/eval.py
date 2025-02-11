@@ -125,9 +125,6 @@ def rollout(
     # Reset the policy and environments.
     policy.reset()
 
-    if hasattr(policy, "use_ema_modules"):
-        policy.use_ema_modules()
-
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
