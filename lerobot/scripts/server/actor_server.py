@@ -101,10 +101,14 @@ class ActorServiceServicer(hilserl_pb2_grpc.ActorServiceServicer):
             message = message_queue.get(block=True)
 
             if message.transition is not None:
-                transition_to_send_to_learner = [
-                    move_transition_to_device(T, device="cpu") for T in message.transition
+                transition_to_send_to_learner: list[Transition] = [
+                    move_transition_to_device(transition=T, device="cpu") for T in message.transition
                 ]
-
+                # Check for NaNs in transitions before sending to learner
+                for transition in transition_to_send_to_learner:
+                    for key, value in transition["state"].items():
+                        if torch.isnan(value).any():
+                            logging.warning(f"Found NaN values in transition {key}")
                 buf = io.BytesIO()
                 torch.save(transition_to_send_to_learner, buf)
                 transition_bytes = buf.getvalue()
@@ -226,7 +230,7 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
             with TimerManager(
                 elapsed_time_list=list_policy_time, label="Policy inference time", log=False
             ) as timer:  # noqa: F841
-                action = policy.select_action(batch=obs) * 0.0
+                action = policy.select_action(batch=obs)
             policy_fps = 1.0 / (list_policy_time[-1] + 1e-9)
 
             log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
@@ -238,7 +242,9 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
             next_obs, reward, done, truncated, info = online_env.step(action)
 
             # HACK: We have only one env but we want to batch it, it will be resolved with the torch box
-            action = torch.from_numpy(action[0]).to(device, non_blocking=True).unsqueeze(dim=0)
+            action = (
+                torch.from_numpy(action[0]).to(device, non_blocking=device.type == "cuda").unsqueeze(dim=0)
+            )
 
         sum_reward_episode += float(reward)
 
@@ -246,6 +252,11 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
         if info["is_intervention"]:
             # TODO: Check the shape
             action = info["action_intervention"]
+
+        # Check for NaN values in observations
+        for key, tensor in obs.items():
+            if torch.isnan(tensor).any():
+                logging.error(f"[ACTOR] NaN values found in obs[{key}] at step {interaction_step}")
 
         list_transition_to_send_to_learner.append(
             Transition(

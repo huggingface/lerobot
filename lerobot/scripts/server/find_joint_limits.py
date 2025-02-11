@@ -40,6 +40,7 @@ def find_joint_bounds(
             min = np.min(np.stack(pos_list), 0)
             print(f"Max angle position per joint {max}")
             print(f"Min angle position per joint {min}")
+            break
 
 
 if __name__ == "__main__":
