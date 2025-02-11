@@ -43,16 +43,27 @@ class BatchTransition(TypedDict):
 
 def move_transition_to_device(transition: Transition, device: str = "cpu") -> Transition:
     # Move state tensors to CPU
-    transition["state"] = {key: val.to(device, non_blocking=True) for key, val in transition["state"].items()}
+    device = torch.device(device)
+    transition["state"] = {
+        key: val.to(device, non_blocking=device.type == "cuda") for key, val in transition["state"].items()
+    }
 
     # Move action to CPU
-    transition["action"] = transition["action"].to(device, non_blocking=True)
+    transition["action"] = transition["action"].to(device, non_blocking=device.type == "cuda")
 
     # No need to move reward or done, as they are float and bool
 
+    # No need to move reward or done, as they are float and bool
+    if isinstance(transition["reward"], torch.Tensor):
+        transition["reward"] = transition["reward"].to(device=device, non_blocking=device.type == "cuda")
+
+    if isinstance(transition["done"], torch.Tensor):
+        transition["done"] = transition["done"].to(device, non_blocking=device.type == "cuda")
+
     # Move next_state tensors to CPU
     transition["next_state"] = {
-        key: val.to(device, non_blocking=True) for key, val in transition["next_state"].items()
+        key: val.to(device, non_blocking=device.type == "cuda")
+        for key, val in transition["next_state"].items()
     }
 
     # If complementary_info is present, move its tensors to CPU

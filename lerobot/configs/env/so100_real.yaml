@@ -18,10 +18,12 @@ env:
     control_time_s: 20
     reset_follower_pos: true
     use_relative_joint_positions: true
-    reset_time_s: 10
+    reset_time_s: 5
     display_cameras: false
     delta_action: 0.1
+    joint_masking_action_space: [1, 1, 1, 1, 0, 0] # disable wrist and gripper
 
   reward_classifier:
     pretrained_path: outputs/classifier/checkpoints/best/pretrained_model
     config_path: lerobot/configs/policy/hilserl_classifier.yaml
+    

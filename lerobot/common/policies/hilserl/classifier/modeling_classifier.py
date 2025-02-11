@@ -145,8 +145,8 @@ class Classifier(
 
         return ClassifierOutput(logits=logits, probabilities=probabilities, hidden_states=encoder_outputs)
 
-    def predict_reward(self, x):
+    def predict_reward(self, x, threshold=0.6):
         if self.config.num_classes == 2:
-            return (self.forward(x).probabilities > 0.6).float()
+            return (self.forward(x).probabilities > threshold).float()
         else:
             return torch.argmax(self.forward(x).probabilities, dim=1)
