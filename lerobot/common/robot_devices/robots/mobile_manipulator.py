@@ -108,12 +108,9 @@ class MobileManipulator:
 
     @property
     def motor_features(self) -> dict:
-        # For mobile teleop we assume the “action” has two parts:
-        #   (i) Arm positions (to be set remotely)
-        #  (ii) Wheel velocity commands (for wheel_1, wheel_2, wheel_3)
         follower_arm_names = self.get_motor_names(self.follower_arms)
-        wheel_names = ["wheel_1", "wheel_2", "wheel_3"]
-        combined_names = follower_arm_names + wheel_names
+        observations = ["x", "y", "theta"]
+        combined_names = follower_arm_names + observations
         return {
             "action": {
                 "dtype": "float32",
@@ -310,10 +307,7 @@ class MobileManipulator:
         wheel_commands = self.body_to_wheel_raw(x_cmd, y_cmd, theta_cmd)
 
         message = {"raw_velocity": wheel_commands, "arm_positions": arm_positions}
-
-        # TODO(pepijn): Remove this
         self.cmd_socket.send_string(json.dumps(message))
-        print(f"[DEBUG] Sent command: {message}")
 
         if not record_data:
             return
@@ -321,7 +315,10 @@ class MobileManipulator:
         obs_dict = self.capture_observation()
 
         arm_state_tensor = torch.tensor(arm_positions, dtype=torch.float32)
-        wheel_tensor = torch.tensor([x_cmd, y_cmd, theta_cmd], dtype=torch.float32)
+
+        wheel_velocity_tuple = self.wheel_raw_to_body(wheel_commands)
+        wheel_tensor = torch.tensor(wheel_velocity_tuple, dtype=torch.float32)
+
         action_tensor = torch.cat([arm_state_tensor, wheel_tensor])
         action_dict = {"action": action_tensor}
 
@@ -351,12 +348,19 @@ class MobileManipulator:
 
         body_state = self.wheel_raw_to_body(present_speed_dict)
         wheel_state_tensor = torch.tensor(body_state, dtype=torch.float32)
-        combined_state_tensor = torch.cat((wheel_state_tensor, remote_arm_state_tensor), dim=0)
+        combined_state_tensor = torch.cat((remote_arm_state_tensor, wheel_state_tensor), dim=0)
 
         obs_dict = {"observation.state": combined_state_tensor}
 
         if frame is not None:
             obs_dict["observation.images.mobile"] = torch.from_numpy(frame)
+        # else:
+        # Create a white frame (all pixel values set to 255).
+        # height = 480  # or use your camera's height
+        # width = 640  # or use your camera's width
+        # channels = 3  # typically 3 for color images
+        # white_frame = np.full((height, width, channels), 255, dtype=np.uint8)
+        # obs_dict["observation.images.mobile"] = torch.from_numpy(white_frame)
 
         return obs_dict
 
