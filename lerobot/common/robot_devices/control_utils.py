@@ -225,6 +225,7 @@ def record_episode(
     device,
     use_amp,
     fps,
+    record_delta_actions,
 ):
     control_loop(
         robot=robot,
@@ -236,6 +237,7 @@ def record_episode(
         device=device,
         use_amp=use_amp,
         fps=fps,
+        record_delta_actions=record_delta_actions,
         teleoperate=policy is None,
     )
 
@@ -252,6 +254,7 @@ def control_loop(
     device=None,
     use_amp=None,
     fps=None,
+    record_delta_actions=False,
 ):
     # TODO(rcadene): Add option to record logs
     if not robot.is_connected:
@@ -274,8 +277,12 @@ def control_loop(
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
+        current_joint_positions = robot.follower_arms["main"].read("Present_Position")
+
         if teleoperate:
             observation, action = robot.teleop_step(record_data=True)
+            if record_delta_actions:
+                action["action"] = action["action"] - current_joint_positions
         else:
             observation = robot.capture_observation()
 
@@ -290,7 +297,11 @@ def control_loop(
             frame = {**observation, **action}
             if "next.reward" in events:
                 frame["next.reward"] = events["next.reward"]
+                frame["next.done"] = (events["next.reward"] == 1) or (events["exit_early"])
             dataset.add_frame(frame)
+
+            # if frame["next.done"]:
+            # break
 
         if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]

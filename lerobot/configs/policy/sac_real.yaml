@@ -57,22 +57,22 @@ policy:
   input_shapes:
     # # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
     observation.state: ["${env.state_dim}"]
-    observation.images.laptop: [3, 128, 128]
-    observation.images.phone: [3, 128, 128]
+    observation.images.front: [3, 128, 128]
+    observation.images.side: [3, 128, 128]
     # observation.image: [3, 128, 128]
   output_shapes:
     action: ["${env.action_dim}"]
 
   # Normalization / Unnormalization
   input_normalization_modes: 
-    observation.images.laptop: mean_std
-    observation.images.phone: mean_std
+    observation.images.front: mean_std
+    observation.images.side: mean_std
     observation.state: min_max
   input_normalization_params:
-    observation.images.laptop:
+    observation.images.front:
       mean: [0.485, 0.456, 0.406]
       std: [0.229, 0.224, 0.225]
-    observation.images.phone:
+    observation.images.side:
       mean: [0.485, 0.456, 0.406]
       std: [0.229, 0.224, 0.225]
     observation.state:

@@ -239,13 +239,17 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    dataset = LeRobotDataset(repo_id=args.repo_id, root=args.root)
+    dataset = LeRobotDataset(repo_id=args.repo_id, root=args.root, local_files_only=True)
 
     images = get_image_from_lerobot_dataset(dataset)
     images = {k: v.cpu().permute(1, 2, 0).numpy() for k, v in images.items()}
     images = {k: (v * 255).astype("uint8") for k, v in images.items()}
 
     rois = select_square_roi_for_images(images)
+    # rois = {
+    #   "observation.images.front": [126, 43, 329, 518],
+    #   "observation.images.side": [93, 69, 381, 434],
+    # }
 
     # Print the selected rectangular ROIs
     print("\nSelected Rectangular Regions of Interest (top, left, height, width):")

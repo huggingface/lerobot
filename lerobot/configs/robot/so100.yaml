@@ -50,13 +50,13 @@ follower_arms:
       gripper: [6, "sts3215"]
 
 cameras:
-  laptop:
+  front:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
     camera_index: 0
     fps: 30
     width: 640
     height: 480
-  phone:
+  side:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
     camera_index: 1
     fps: 30

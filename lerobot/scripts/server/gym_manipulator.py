@@ -230,6 +230,8 @@ class HILSerlRobotEnv(gym.Env):
             if teleop_action.dim() == 1:
                 teleop_action = teleop_action.unsqueeze(0)
 
+        # self.render()
+
         self.current_step += 1
 
         reward = 0.0
@@ -255,8 +257,7 @@ class HILSerlRobotEnv(gym.Env):
 
         for key in image_keys:
             cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-
-        cv2.waitKey(1)
+            cv2.waitKey(1)
 
     def close(self):
         """
@@ -311,9 +312,13 @@ class RewardWrapper(gym.Wrapper):
         start_time = time.perf_counter()
         with torch.inference_mode():
             reward = (
-                self.reward_classifier.predict_reward(images) if self.reward_classifier is not None else 0.0
+                self.reward_classifier.predict_reward(images, threshold=0.5)
+                if self.reward_classifier is not None
+                else 0.0
             )
         info["Reward classifer frequency"] = 1 / (time.perf_counter() - start_time)
+
+        logging.info(f"Reward: {reward}")
 
         if reward == 1.0:
             terminated = True
@@ -760,7 +765,7 @@ if __name__ == "__main__":
     env = make_robot_env(
         robot,
         reward_classifier,
-        cfg.wrapper,
+        cfg.env,  # .wrapper,
     )
 
     env.reset()

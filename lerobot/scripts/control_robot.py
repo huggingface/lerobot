@@ -206,7 +206,8 @@ def record(
     num_image_writer_threads_per_camera: int = 4,
     display_cameras: bool = True,
     play_sounds: bool = True,
-    reset_follower: bool = False, 
+    reset_follower: bool = False,
+    record_delta_actions: bool = False,
     resume: bool = False,
     # TODO(rcadene, aliberts): remove local_files_only when refactor with dataset as argument
     local_files_only: bool = False,
@@ -218,7 +219,12 @@ def record(
     device = None
     use_amp = None
     extra_features = (
-        {"next.reward": {"dtype": "int64", "shape": (1,), "names": None}} if assign_rewards else None
+        {
+            "next.reward": {"dtype": "int64", "shape": (1,), "names": None},
+            "next.done": {"dtype": "bool", "shape": (1,), "names": None},
+        }
+        if assign_rewards
+        else None
     )
 
     if single_task:
@@ -269,7 +275,7 @@ def record(
 
     if reset_follower:
         initial_position = robot.follower_arms["main"].read("Present_Position")
-        
+
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
     # 2. give times to the robot devices to connect and start synchronizing,
@@ -302,6 +308,7 @@ def record(
             device=device,
             use_amp=use_amp,
             fps=fps,
+            record_delta_actions=record_delta_actions,
         )
 
         # Execute a few seconds without recording to give time to manually reset the environment
@@ -353,21 +360,24 @@ def replay(
     fps: int | None = None,
     play_sounds: bool = True,
     local_files_only: bool = False,
+    replay_delta_actions: bool = False,
 ):
     # TODO(rcadene, aliberts): refactor with control_loop, once `dataset` is an instance of LeRobotDataset
     # TODO(rcadene): Add option to record logs
 
     dataset = LeRobotDataset(repo_id, root=root, episodes=[episode], local_files_only=local_files_only)
     actions = dataset.hf_dataset.select_columns("action")
-
     if not robot.is_connected:
         robot.connect()
 
     log_say("Replaying episode", play_sounds, blocking=True)
     for idx in range(dataset.num_frames):
+        current_joint_positions = robot.follower_arms["main"].read("Present_Position")
         start_episode_t = time.perf_counter()
 
         action = actions[idx]["action"]
+        if replay_delta_actions:
+            action = action + current_joint_positions
         robot.send_action(action)
 
         dt_s = time.perf_counter() - start_episode_t
@@ -535,6 +545,12 @@ if __name__ == "__main__":
         help="Enables the assignation of rewards to frames (by default no assignation). When enabled, assign a 0 reward to frames until the space bar is pressed which assign a 1 reward. Press the space bar a second time to assign a 0 reward. The reward assigned is reset to 0 when the episode ends.",
     )
     parser_record.add_argument(
+        "--record-delta-actions",
+        type=int,
+        default=0,
+        help="Enables the recording of delta actions instead of absolute actions.",
+    )
+    parser_record.add_argument(
         "--reset-follower",
         type=int,
         default=0,
@@ -562,6 +578,12 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
+    )
+    parser_replay.add_argument(
+        "--replay-delta-actions",
+        type=int,
+        default=0,
+        help="Enables the replay of delta actions instead of absolute actions.",
     )
     parser_replay.add_argument("--episode", type=int, default=0, help="Index of the episode to replay.")
 
