@@ -25,6 +25,7 @@ class MobileCamera:
         self.logs = {}
         self.fps = 30
 
+    # TODO(pepijn): Integrate this with _get_video_frame or remove this, and test
     def async_read(self):
         # The remote camera frame is received via the video socket.
         frame, _, _ = self.mobile_robot._get_video_frame(timeout=1)
@@ -109,7 +110,7 @@ class MobileManipulator:
     @property
     def motor_features(self) -> dict:
         follower_arm_names = self.get_motor_names(self.follower_arms)
-        observations = ["x", "y", "theta"]
+        observations = ["x_mm", "y_mm", "theta"]
         combined_names = follower_arm_names + observations
         return {
             "action": {
@@ -196,6 +197,7 @@ class MobileManipulator:
         video_connection = f"tcp://{self.remote_ip}:{self.remote_port_video}"
         self.video_socket.connect(video_connection)
         self.video_socket.setsockopt(zmq.RCVHWM, 1)
+        self.video_socket.setsockopt(zmq.RCVTIMEO, 5)
         print(
             f"[INFO] Connected to remote robot at {connection_string} and video stream at {video_connection}."
         )
@@ -240,7 +242,7 @@ class MobileManipulator:
         frame, present_speed, remote_arm_state = None, {}, None
         while True:
             try:
-                obs_string = self.video_socket.recv_string(flags=zmq.NOBLOCK)
+                obs_string = self.video_socket.recv_string()
                 observation = json.loads(obs_string)
                 image_b64 = observation.get("image", "")
                 speed_data = observation.get("present_speed", {})
@@ -251,7 +253,6 @@ class MobileManipulator:
                     frame_candidate = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
                     if frame_candidate is not None:
                         frame = frame_candidate
-                        # frame = cv2.rotate(frame, cv2.ROTATE_180)
                         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 present_speed = speed_data
             except zmq.Again:
@@ -317,8 +318,12 @@ class MobileManipulator:
         arm_state_tensor = torch.tensor(arm_positions, dtype=torch.float32)
 
         wheel_velocity_tuple = self.wheel_raw_to_body(wheel_commands)
-        wheel_tensor = torch.tensor(wheel_velocity_tuple, dtype=torch.float32)
-
+        wheel_velocity_mm = (
+            wheel_velocity_tuple[0] * 1000.0,
+            wheel_velocity_tuple[1] * 1000.0,
+            wheel_velocity_tuple[2],
+        )
+        wheel_tensor = torch.tensor(wheel_velocity_mm, dtype=torch.float32)
         action_tensor = torch.cat([arm_state_tensor, wheel_tensor])
         action_dict = {"action": action_tensor}
 
@@ -347,58 +352,62 @@ class MobileManipulator:
         }
 
         body_state = self.wheel_raw_to_body(present_speed_dict)
-        wheel_state_tensor = torch.tensor(body_state, dtype=torch.float32)
+
+        body_state_mm = (body_state[0] * 1000.0, body_state[1] * 1000.0, body_state[2])
+        wheel_state_tensor = torch.tensor(body_state_mm, dtype=torch.float32)
         combined_state_tensor = torch.cat((remote_arm_state_tensor, wheel_state_tensor), dim=0)
 
         obs_dict = {"observation.state": combined_state_tensor}
 
-        if frame is not None:
-            obs_dict["observation.images.mobile"] = torch.from_numpy(frame)
-        # else:
-        # Create a white frame (all pixel values set to 255).
-        # height = 480  # or use your camera's height
-        # width = 640  # or use your camera's width
-        # channels = 3  # typically 3 for color images
-        # white_frame = np.full((height, width, channels), 255, dtype=np.uint8)
-        # obs_dict["observation.images.mobile"] = torch.from_numpy(white_frame)
+        if frame is None:
+            frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+        obs_dict["observation.images.mobile"] = torch.from_numpy(frame)
 
         return obs_dict
 
     def send_action(self, action: torch.Tensor) -> torch.Tensor:
-        """
-        If an external policy sends a composite action containing body commands (x, y, theta)
-        for the mobile base and optionally additional commands for follower arms,
-        this method converts the body commands into raw wheel commands and sends the complete message.
-
-        The action tensor is expected to have:
-        - The first three values as [x_cmd, y_cmd, theta_cmd],
-            where x_cmd and y_cmd are in m/s and theta_cmd is in deg/s.å
-        - Any additional values are treated as follower arm commands.
-        """
         if not self.is_connected:
             raise RobotDeviceNotConnectedError("Not connected. Run `connect()` first.")
 
-        x_cmd = action[0].item()  # m/s forward/backward
-        y_cmd = action[1].item()  # m/s lateral
-        theta_cmd = action[2].item()  # deg/s rotation
+        # Ensure the action tensor has at least 9 elements:
+        #   - First 6: arm positions.
+        #   - Last 3: base commands.
+        if action.numel() < 9:
+            # Pad with zeros if there are not enough elements.
+            padded = torch.zeros(9, dtype=action.dtype)
+            padded[: action.numel()] = action
+            action = padded
 
+        # Extract arm and base actions.
+        arm_actions = action[:6].flatten()
+        base_actions = action[6:].flatten()
+
+        x_cmd_mm = base_actions[0].item()  # mm/s
+        y_cmd_mm = base_actions[1].item()  # mm/s
+        theta_cmd = base_actions[2].item()  # deg/s
+
+        # Convert mm/s to m/s for the kinematics calculations.
+        x_cmd = x_cmd_mm / 1000.0  # m/s
+        y_cmd = y_cmd_mm / 1000.0  # m/s
+
+        # Compute wheel commands from body commands.
         wheel_commands = self.body_to_wheel_raw(x_cmd, y_cmd, theta_cmd)
-        message = {"raw_velocity": wheel_commands}
 
-        # Process arm commands if additional elements exist.
-        if action.numel() > 3:
-            arm_positions = {}
-            extra = action[3:]
-            motor_list = []
-            for bus_key in sorted(self.follower_arms.keys()):
-                bus = self.follower_arms[bus_key]
-                motor_list.extend(bus.motors)
-            for i, motor in enumerate(motor_list):
-                if i < extra.numel():
-                    arm_positions[motor] = int(extra[i].item())
-            message["arm_positions"] = arm_positions
+        # TODO(pepijn): Remove this?
+        # Ensure arm_actions contains exactly 6 elements.
+        if arm_actions.numel() < 6:
+            padded_arm = torch.zeros(6, dtype=arm_actions.dtype)
+            padded_arm[: arm_actions.numel()] = arm_actions
+            arm_actions = padded_arm
+        elif arm_actions.numel() > 6:
+            arm_actions = arm_actions[:6]
 
+        arm_positions_list = arm_actions.tolist()
+
+        message = {"raw_velocity": wheel_commands, "arm_positions": arm_positions_list}
         self.cmd_socket.send_string(json.dumps(message))
+
         return action
 
     def print_logs(self):
@@ -408,7 +417,6 @@ class MobileManipulator:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError("Not connected.")
         if self.cmd_socket:
-            # Send a “stop” command before disconnecting.
             stop_cmd = {"raw_velocity": {"wheel_1": 0, "wheel_2": 0, "wheel_3": 0}, "arm_positions": {}}
             self.cmd_socket.send_string(json.dumps(stop_cmd))
             self.cmd_socket.close()
@@ -495,8 +503,7 @@ class MobileManipulator:
         # Convert wheel angular speeds from rad/s to deg/s.
         wheel_degps = wheel_angular_speeds * (180.0 / np.pi)
 
-        # --- Scaling (Saturation) ---
-        # Compute the tentative raw command for each wheel (before integer encoding).
+        # Scaling
         steps_per_deg = 4096.0 / 360.0
         raw_floats = [abs(degps) * steps_per_deg for degps in wheel_degps]
         max_raw_computed = max(raw_floats)
@@ -504,7 +511,7 @@ class MobileManipulator:
             scale = max_raw / max_raw_computed
             wheel_degps = wheel_degps * scale
 
-        # Convert each wheel’s (possibly scaled) angular speed (deg/s) to a raw integer.
+        # Convert each wheel’s angular speed (deg/s) to a raw integer.
         wheel_raw = [MobileManipulator.degps_to_raw(deg) for deg in wheel_degps]
 
         return {"wheel_1": wheel_raw[0], "wheel_2": wheel_raw[1], "wheel_3": wheel_raw[2]}
