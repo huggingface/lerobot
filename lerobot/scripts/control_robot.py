@@ -284,7 +284,7 @@ def record(
 
     if reset_follower:
         initial_position = robot.follower_arms["main"].read("Present_Position")
-        
+
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
     # 2. give times to the robot devices to connect and start synchronizing,
@@ -356,15 +356,17 @@ def replay(
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root, episodes=[cfg.episode])
     actions = dataset.hf_dataset.select_columns("action")
-
     if not robot.is_connected:
         robot.connect()
 
     log_say("Replaying episode", cfg.play_sounds, blocking=True)
     for idx in range(dataset.num_frames):
+        current_joint_positions = robot.follower_arms["main"].read("Present_Position")
         start_episode_t = time.perf_counter()
 
         action = actions[idx]["action"]
+        if replay_delta_actions:
+            action = action + current_joint_positions
         robot.send_action(action)
 
         dt_s = time.perf_counter() - start_episode_t
