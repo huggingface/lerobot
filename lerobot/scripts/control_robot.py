@@ -263,8 +263,8 @@ def record(
 
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
         record_episode(
-            dataset=dataset,
             robot=robot,
+            dataset=dataset,
             events=events,
             episode_time_s=cfg.episode_time_s,
             display_cameras=cfg.display_cameras,
@@ -272,6 +272,7 @@ def record(
             device=cfg.device,
             use_amp=cfg.use_amp,
             fps=cfg.fps,
+            single_task=cfg.single_task,
         )
 
         # Execute a few seconds without recording to give time to manually reset the environment
@@ -291,7 +292,7 @@ def record(
             dataset.clear_episode_buffer()
             continue
 
-        dataset.save_episode(cfg.single_task)
+        dataset.save_episode()
         recorded_episodes += 1
 
         if events["stop_recording"]:
