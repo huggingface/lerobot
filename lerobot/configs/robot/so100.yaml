@@ -14,6 +14,14 @@ calibration_dir: .cache/calibration/so100
 # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
 # the number of motors in your follower arms.
 max_relative_target: null
+joint_position_relative_bounds: 
+   min: [-87.09961,     62.402344,    67.23633,     36.035156,    77.34375,
+   0.53691274] 
+   max: [58.183594,   131.83594,    145.98633,     82.08984,     78.22266,
+   0.60402685]
+   
+  # min: [-88.50586,  23.81836, 0.87890625, -32.16797, 78.66211,   0.53691274]
+  # max: [84.55078, 187.11914, 145.98633, 101.60156, 146.60156,  88.18792]
 
 leader_arms:
   main:
@@ -42,13 +50,13 @@ follower_arms:
       gripper: [6, "sts3215"]
 
 cameras:
-  laptop:
+  front:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
     camera_index: 0
     fps: 30
     width: 640
     height: 480
-  phone:
+  side:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
     camera_index: 1
     fps: 30

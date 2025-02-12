@@ -71,13 +71,16 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
         from lerobot.common.policies.sac.modeling_sac import SACPolicy
 
         return SACPolicy, SACConfig
-
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
 
 def make_policy(
-    hydra_cfg: DictConfig, pretrained_policy_name_or_path: str | None = None, dataset_stats=None
+    hydra_cfg: DictConfig,
+    pretrained_policy_name_or_path: str | None = None,
+    dataset_stats=None,
+    *args,
+    **kwargs,
 ) -> Policy:
     """Make an instance of a policy class.
 
@@ -91,17 +94,19 @@ def make_policy(
             be provided when initializing a new policy, and must not be provided when loading a pretrained
             policy. Therefore, this argument is mutually exclusive with `pretrained_policy_name_or_path`.
     """
-    if not (pretrained_policy_name_or_path is None) ^ (dataset_stats is None):
-        raise ValueError(
-            "Exactly one of `pretrained_policy_name_or_path` and `dataset_stats` must be provided."
-        )
+    # if not (pretrained_policy_name_or_path is None) ^ (dataset_stats is None):
+    #     raise ValueError(
+    #         "Exactly one of `pretrained_policy_name_or_path` and `dataset_stats` must be provided."
+    #     )
 
     policy_cls, policy_cfg_class = get_policy_and_config_classes(hydra_cfg.policy.name)
 
     policy_cfg = _policy_cfg_from_hydra_cfg(policy_cfg_class, hydra_cfg)
     if pretrained_policy_name_or_path is None:
         # Make a fresh policy.
-        policy = policy_cls(policy_cfg, dataset_stats)
+        # HACK: We pass *args and **kwargs to the policy constructor to allow for additional arguments
+        # for example device for the sac policy.
+        policy = policy_cls(config=policy_cfg, dataset_stats=dataset_stats)
     else:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).

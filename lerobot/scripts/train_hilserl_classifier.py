@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +18,7 @@ from pathlib import Path
 from pprint import pformat
 
 import hydra
+import numpy as np
 import torch
 import torch.nn as nn
 import wandb
@@ -27,8 +26,9 @@ from deepdiff import DeepDiff
 from omegaconf import DictConfig, OmegaConf
 from termcolor import colored
 from torch import optim
+from torch.autograd import profiler
 from torch.cuda.amp import GradScaler
-from torch.utils.data import DataLoader, WeightedRandomSampler, random_split
+from torch.utils.data import DataLoader, RandomSampler, WeightedRandomSampler, random_split
 from tqdm import tqdm
 
 from lerobot.common.datasets.factory import resolve_delta_timestamps
@@ -43,6 +43,7 @@ from lerobot.common.utils.utils import (
     init_hydra_config,
     set_global_seed,
 )
+from lerobot.scripts.server.buffer import random_shift
 
 
 def get_model(cfg, logger):  # noqa I001
@@ -80,6 +81,7 @@ def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, 
     for batch_idx, batch in enumerate(pbar):
         start_time = time.perf_counter()
         images = [batch[img_key].to(device) for img_key in cfg.training.image_keys]
+        images = [random_shift(img, 4) for img in images]
         labels = batch[cfg.training.label_key].float().to(device)
 
         # Forward pass with optional AMP
@@ -116,7 +118,7 @@ def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, 
         pbar.set_postfix({"loss": f"{loss.item():.4f}", "acc": f"{current_acc:.2f}%"})
 
 
-def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_log=8):
+def validate(model, val_loader, criterion, device, logger, cfg):
     # Validation loop with metric tracking and sample logging
     model.eval()
     correct = 0
@@ -124,6 +126,7 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
     batch_start_time = time.perf_counter()
     samples = []
     running_loss = 0
+    inference_times = []
 
     with (
         torch.no_grad(),
@@ -133,7 +136,18 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
             images = [batch[img_key].to(device) for img_key in cfg.training.image_keys]
             labels = batch[cfg.training.label_key].float().to(device)
 
-            outputs = model(images)
+            if cfg.training.profile_inference_time and logger._cfg.wandb.enable:
+                with (
+                    profiler.profile(record_shapes=True) as prof,
+                    profiler.record_function("model_inference"),
+                ):
+                    outputs = model(images)
+                inference_times.append(
+                    next(x for x in prof.key_averages() if x.key == "model_inference").cpu_time
+                )
+            else:
+                outputs = model(images)
+
             loss = criterion(outputs.logits, labels)
 
             # Track metrics
@@ -146,15 +160,18 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
             running_loss += loss.item()
 
             # Log sample predictions for visualization
-            if len(samples) < num_samples_to_log:
-                for i in range(min(num_samples_to_log - len(samples), len(images))):
+            if len(samples) < cfg.eval.num_samples_to_log:
+                for i in range(min(cfg.eval.num_samples_to_log - len(samples), len(images))):
                     if model.config.num_classes == 2:
                         confidence = round(outputs.probabilities[i].item(), 3)
                     else:
                         confidence = [round(prob, 3) for prob in outputs.probabilities[i].tolist()]
                     samples.append(
                         {
-                            "image": wandb.Image(images[i].cpu()),
+                            **{
+                                f"image_{img_key}": wandb.Image(images[img_idx][i].cpu())
+                                for img_idx, img_key in enumerate(cfg.training.image_keys)
+                            },
                             "true_label": labels[i].item(),
                             "predicted": predictions[i].item(),
                             "confidence": confidence,
@@ -170,14 +187,81 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
         "accuracy": accuracy,
         "eval_s": time.perf_counter() - batch_start_time,
         "eval/prediction_samples": wandb.Table(
-            data=[[s["image"], s["true_label"], s["predicted"], f"{s['confidence']}"] for s in samples],
-            columns=["Image", "True Label", "Predicted", "Confidence"],
+            data=[list(s.values()) for s in samples],
+            columns=list(samples[0].keys()),
         )
         if logger._cfg.wandb.enable
         else None,
     }
 
+    if len(inference_times) > 0:
+        eval_info["inference_time_avg"] = np.mean(inference_times)
+        eval_info["inference_time_median"] = np.median(inference_times)
+        eval_info["inference_time_std"] = np.std(inference_times)
+        eval_info["inference_time_batch_size"] = val_loader.batch_size
+
+        print(
+            f"Inference mean time: {eval_info['inference_time_avg']:.2f} us, median: {eval_info['inference_time_median']:.2f} us, std: {eval_info['inference_time_std']:.2f} us, with {len(inference_times)} iterations on {device.type} device, batch size: {eval_info['inference_time_batch_size']}"
+        )
+
     return accuracy, eval_info
+
+
+def benchmark_inference_time(model, dataset, logger, cfg, device, step):
+    if not cfg.training.profile_inference_time:
+        return
+
+    iters = cfg.training.profile_inference_time_iters
+    inference_times = []
+
+    loader = DataLoader(
+        dataset,
+        batch_size=1,
+        num_workers=cfg.training.num_workers,
+        sampler=RandomSampler(dataset),
+        pin_memory=True,
+    )
+
+    model.eval()
+    with torch.no_grad():
+        for _ in tqdm(range(iters), desc="Benchmarking inference time"):
+            x = next(iter(loader))
+            x = [x[img_key].to(device) for img_key in cfg.training.image_keys]
+
+            # Warm up
+            for _ in range(10):
+                _ = model(x)
+
+            # sync the device
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            elif device.type == "mps":
+                torch.mps.synchronize()
+
+            with profiler.profile(record_shapes=True) as prof, profiler.record_function("model_inference"):
+                _ = model(x)
+
+            inference_times.append(
+                next(x for x in prof.key_averages() if x.key == "model_inference").cpu_time
+            )
+
+    inference_times = np.array(inference_times)
+    avg, median, std = inference_times.mean(), np.median(inference_times), inference_times.std()
+    print(
+        f"Inference time mean: {avg:.2f} us, median: {median:.2f} us, std: {std:.2f} us, with {iters} iterations on {device.type} device"
+    )
+    if logger._cfg.wandb.enable:
+        logger.log_dict(
+            {
+                "inference_time_benchmark_avg": avg,
+                "inference_time_benchmark_median": median,
+                "inference_time_benchmark_std": std,
+            },
+            step + 1,
+            mode="eval",
+        )
+
+    return avg, median, std
 
 
 @hydra.main(version_base="1.2", config_path="../configs/policy", config_name="hilserl_classifier")
@@ -189,17 +273,19 @@ def train(cfg: DictConfig) -> None:
     device = get_safe_torch_device(cfg.device, log=True)
     set_global_seed(cfg.seed)
 
-    out_dir = Path(cfg.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = hydra.core.hydra_config.HydraConfig.get().run.dir + "frozen_resnet10_2"
     logger = Logger(cfg, out_dir, cfg.wandb.job_name if cfg.wandb.enable else None)
 
     # Setup dataset and dataloaders
-    dataset = LeRobotDataset(cfg.dataset_repo_id)
+    dataset = LeRobotDataset(
+        cfg.dataset_repo_id, root=cfg.dataset_root, local_files_only=cfg.local_files_only
+    )
     logging.info(f"Dataset size: {len(dataset)}")
 
-    train_size = int(cfg.train_split_proportion * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+    n_total = len(dataset)
+    n_train = int(cfg.train_split_proportion * len(dataset))
+    train_dataset = torch.utils.data.Subset(dataset, range(0, n_train))
+    val_dataset = torch.utils.data.Subset(dataset, range(n_train, n_total))
 
     sampler = create_balanced_sampler(train_dataset, cfg)
     train_loader = DataLoader(
@@ -207,7 +293,7 @@ def train(cfg: DictConfig) -> None:
         batch_size=cfg.training.batch_size,
         num_workers=cfg.training.num_workers,
         sampler=sampler,
-        pin_memory=True,
+        pin_memory=device.type == "cuda",
     )
 
     val_loader = DataLoader(
@@ -215,7 +301,7 @@ def train(cfg: DictConfig) -> None:
         batch_size=cfg.eval.batch_size,
         shuffle=False,
         num_workers=cfg.training.num_workers,
-        pin_memory=True,
+        pin_memory=device.type == "cuda",
     )
 
     # Resume training if requested
@@ -312,6 +398,8 @@ def train(cfg: DictConfig) -> None:
             )
 
         step += len(train_loader)
+
+    benchmark_inference_time(model, dataset, logger, cfg, device, step)
 
     logging.info("Training completed")
 
