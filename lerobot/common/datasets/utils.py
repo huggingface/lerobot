@@ -35,6 +35,7 @@ from PIL import Image as PILImage
 from torchvision import transforms
 
 from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.common.utils.utils import is_numpy_dtype
 from lerobot.configs.types import DictLike, FeatureType, PolicyFeature
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of episodes per chunk
@@ -283,11 +284,20 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
             hf_features[key] = datasets.Image()
         elif ft["shape"] == (1,):
             hf_features[key] = datasets.Value(dtype=ft["dtype"])
-        else:
-            assert len(ft["shape"]) == 1
+        elif len(ft["shape"]) == 1:
             hf_features[key] = datasets.Sequence(
                 length=ft["shape"][0], feature=datasets.Value(dtype=ft["dtype"])
             )
+        elif len(ft["shape"]) == 2:
+            hf_features[key] = datasets.Array2D(shape=ft["shape"], dtype=ft["dtype"])
+        elif len(ft["shape"]) == 3:
+            hf_features[key] = datasets.Array3D(shape=ft["shape"], dtype=ft["dtype"])
+        elif len(ft["shape"]) == 4:
+            hf_features[key] = datasets.Array4D(shape=ft["shape"], dtype=ft["dtype"])
+        elif len(ft["shape"]) == 5:
+            hf_features[key] = datasets.Array5D(shape=ft["shape"], dtype=ft["dtype"])
+        else:
+            raise ValueError(f"Corresponding feature is not valid: {ft}")
 
     return datasets.Features(hf_features)
 
@@ -604,3 +614,70 @@ class IterableNamespace(SimpleNamespace):
 
     def keys(self):
         return vars(self).keys()
+
+
+def check_feature_presence(actual_features, expected_features, optional_features):
+    error_message = ""
+    missing_features = expected_features - actual_features
+    extra_features = actual_features - (expected_features | optional_features)
+
+    if missing_features or extra_features:
+        error_message += "Feature mismatch in `frame` dictionary:\n"
+        if missing_features:
+            error_message += f"Missing features: {missing_features}\n"
+        if extra_features:
+            error_message += f"Extra features: {extra_features}\n"
+
+    return error_message
+
+
+def validate_dtype_and_shape(name, feature, value):
+    expected_dtype = feature["dtype"]
+    expected_shape = feature["shape"]
+    if is_numpy_dtype(expected_dtype):
+        return validate_numpy_array(name, expected_dtype, expected_shape, value)
+    elif expected_dtype in ["image", "video"]:
+        return validate_image_or_video(name, expected_shape, value)
+    elif expected_dtype == "string":
+        return validate_string(name, value)
+    else:
+        raise NotImplementedError(f"The feature dtype '{expected_dtype}' is not implemented yet.")
+
+
+def validate_numpy_array(name, expected_dtype, expected_shape, value):
+    error_message = ""
+    if isinstance(value, np.ndarray):
+        actual_dtype = value.dtype
+        actual_shape = value.shape
+
+        if actual_dtype != np.dtype(expected_dtype):
+            error_message += f"The feature '{name}' of dtype '{actual_dtype}' is not of the expected dtype '{expected_dtype}'.\n"
+
+        if actual_shape != expected_shape:
+            error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{expected_shape}'.\n"
+    else:
+        error_message += f"The feature '{name}' is not a 'np.ndarray'. Expected type is '{expected_dtype}', but type '{type(value)}' provided instead.\n"
+
+    return error_message
+
+
+def validate_image_or_video(name, expected_shape, value):
+    # TODO(rcadene, aliberts): check range? [0,1] for float or [0,255] for uint8
+    error_message = ""
+    if isinstance(value, np.ndarray):
+        actual_shape = value.shape
+        c, h, w = expected_shape
+        if len(actual_shape) != 3 or (actual_shape != (c, h, w) and actual_shape != (h, w, c)):
+            error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(c, h, w)}' or '{(h, w, c)}'.\n"
+    elif isinstance(value, PILImage.Image):
+        pass
+    else:
+        error_message += f"The feature '{name}' is expected to be of type 'PIL.Image' or 'np.ndarray' channel first or channel last, but type '{type(value)}' provided instead.\n"
+
+    return error_message
+
+
+def validate_string(name, value):
+    if not isinstance(value, str):
+        return f"The feature '{name}' is expected to be of type 'str', but type '{type(value)}' provided instead.\n"
+    return ""

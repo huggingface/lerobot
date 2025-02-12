@@ -15,15 +15,18 @@
 # limitations under the License.
 import json
 import logging
+import re
 from copy import deepcopy
 from itertools import chain
 from pathlib import Path
 
 import einops
+import numpy as np
 import pytest
 import torch
 from datasets import Dataset
 from huggingface_hub import HfApi
+from PIL import Image
 from safetensors.torch import load_file
 
 import lerobot
@@ -49,8 +52,34 @@ from lerobot.common.robot_devices.robots.utils import make_robot
 from lerobot.common.utils.random_utils import seeded_context
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
-from tests.fixtures.constants import DUMMY_REPO_ID
+from tests.fixtures.constants import DEFAULT_FPS, DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
 from tests.utils import DEVICE, require_x86_64_kernel
+
+
+@pytest.fixture
+def create_dataset(tmp_path):
+    def _create_dataset(features):
+        return LeRobotDataset.create(
+            repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, root=tmp_path / "test", features=features
+        )
+
+    return _create_dataset
+
+
+@pytest.fixture
+def image_dataset(create_dataset):
+    features = {
+        "image": {
+            "dtype": "image",
+            "shape": DUMMY_CHW,
+            "names": [
+                "channels",
+                "height",
+                "width",
+            ],
+        }
+    }
+    return create_dataset(features)
 
 
 def test_same_attributes_defined(lerobot_dataset_factory, tmp_path):
@@ -93,28 +122,222 @@ def test_dataset_initialization(lerobot_dataset_factory, tmp_path):
     assert dataset.num_frames == len(dataset)
 
 
-def test_add_frame_no_task(tmp_path):
-    features = {"1d": {"dtype": "float32", "shape": (1,), "names": None}}
-    dataset = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=30, root=tmp_path / "test", features=features)
-    with pytest.raises(ValueError, match="The mandatory feature 'task' wasn't found in `frame` dictionnary."):
-        dataset.add_frame({"1d": torch.randn(1)})
+def test_add_frame_missing_task(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = create_dataset(features)
+    with pytest.raises(
+        ValueError, match="Feature mismatch in `frame` dictionary:\nMissing features: {'task'}\n"
+    ):
+        dataset.add_frame({"state": torch.randn(1)})
 
 
-def test_add_frame(tmp_path):
-    features = {"1d": {"dtype": "float32", "shape": (1,), "names": None}}
-    dataset = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=30, root=tmp_path / "test", features=features)
-    dataset.add_frame({"1d": torch.randn(1), "task": "dummy"})
+def test_add_frame_missing_feature(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = create_dataset(features)
+    with pytest.raises(
+        ValueError, match="Feature mismatch in `frame` dictionary:\nMissing features: {'state'}\n"
+    ):
+        dataset.add_frame({"task": "dummy_task"})
+
+
+def test_add_frame_extra_feature(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = create_dataset(features)
+    with pytest.raises(
+        ValueError, match="Feature mismatch in `frame` dictionary:\nExtra features: {'extra'}\n"
+    ):
+        dataset.add_frame({"state": torch.randn(1), "task": "dummy_task", "extra": "dummy_extra"})
+
+
+def test_add_frame_wrong_type(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = create_dataset(features)
+    with pytest.raises(
+        ValueError, match="The feature 'state' of dtype 'float16' is not of the expected dtype 'float32'.\n"
+    ):
+        dataset.add_frame({"state": torch.randn(1, dtype=torch.float16), "task": "dummy_task"})
+
+
+def test_add_frame_wrong_shape(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (2,), "names": None}}
+    dataset = create_dataset(features)
+    with pytest.raises(
+        ValueError,
+        match=re.escape("The feature 'state' of shape '(1,)' does not have the expected shape '(2,)'.\n"),
+    ):
+        dataset.add_frame({"state": torch.randn(1), "task": "dummy_task"})
+
+
+def test_add_frame_wrong_shape_python_float(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = create_dataset(features)
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "The feature 'state' is not a 'np.ndarray'. Expected type is 'float32', but type '<class 'float'>' provided instead.\n"
+        ),
+    ):
+        dataset.add_frame({"state": 1.0, "task": "dummy_task"})
+
+
+def test_add_frame_wrong_shape_torch_ndim_0(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = create_dataset(features)
+    with pytest.raises(
+        ValueError,
+        match=re.escape("The feature 'state' of shape '()' does not have the expected shape '(1,)'.\n"),
+    ):
+        dataset.add_frame({"state": torch.tensor(1.0), "task": "dummy_task"})
+
+
+def test_add_frame_wrong_shape_numpy_ndim_0(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = create_dataset(features)
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "The feature 'state' is not a 'np.ndarray'. Expected type is 'float32', but type '<class 'numpy.float32'>' provided instead.\n"
+        ),
+    ):
+        dataset.add_frame({"state": np.float32(1.0), "task": "dummy_task"})
+
+
+def test_add_frame(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = create_dataset(features)
+    dataset.add_frame({"state": torch.randn(1), "task": "dummy"})
     dataset.save_episode(encode_videos=False)
     dataset.consolidate(run_compute_stats=False)
+
     assert len(dataset) == 1
     assert dataset[0]["task"] == "dummy"
     assert dataset[0]["task_index"] == 0
+    assert dataset[0]["state"].ndim == 0
+
+
+def test_add_frame_state_1d(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (2,), "names": None}}
+    dataset = create_dataset(features)
+    dataset.add_frame({"state": torch.randn(2), "task": "dummy"})
+    dataset.save_episode(encode_videos=False)
+    dataset.consolidate(run_compute_stats=False)
+
+    assert dataset[0]["state"].shape == torch.Size([2])
+
+
+def test_add_frame_state_2d(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (2, 4), "names": None}}
+    dataset = create_dataset(features)
+    dataset.add_frame({"state": torch.randn(2, 4), "task": "dummy"})
+    dataset.save_episode(encode_videos=False)
+    dataset.consolidate(run_compute_stats=False)
+
+    assert dataset[0]["state"].shape == torch.Size([2, 4])
+
+
+def test_add_frame_state_3d(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (2, 4, 3), "names": None}}
+    dataset = create_dataset(features)
+    dataset.add_frame({"state": torch.randn(2, 4, 3), "task": "dummy"})
+    dataset.save_episode(encode_videos=False)
+    dataset.consolidate(run_compute_stats=False)
+
+    assert dataset[0]["state"].shape == torch.Size([2, 4, 3])
+
+
+def test_add_frame_state_4d(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (2, 4, 3, 5), "names": None}}
+    dataset = create_dataset(features)
+    dataset.add_frame({"state": torch.randn(2, 4, 3, 5), "task": "dummy"})
+    dataset.save_episode(encode_videos=False)
+    dataset.consolidate(run_compute_stats=False)
+
+    assert dataset[0]["state"].shape == torch.Size([2, 4, 3, 5])
+
+
+def test_add_frame_state_5d(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (2, 4, 3, 5, 1), "names": None}}
+    dataset = create_dataset(features)
+    dataset.add_frame({"state": torch.randn(2, 4, 3, 5, 1), "task": "dummy"})
+    dataset.save_episode(encode_videos=False)
+    dataset.consolidate(run_compute_stats=False)
+
+    assert dataset[0]["state"].shape == torch.Size([2, 4, 3, 5, 1])
+
+
+def test_add_frame_numpy(create_dataset):
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = create_dataset(features)
+    dataset.add_frame({"state": np.array([1], dtype=np.float32), "task": "dummy_task"})
+    dataset.save_episode(encode_videos=False)
+    dataset.consolidate(run_compute_stats=False)
+
+    assert dataset[0]["state"].ndim == 0
+
+
+def test_add_frame_image_wrong_shape(image_dataset):
+    dataset = image_dataset
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "The feature 'image' of shape '(3, 128, 96)' does not have the expected shape '(3, 96, 128)' or '(96, 128, 3)'.\n"
+        ),
+    ):
+        c, h, w = DUMMY_CHW
+        dataset.add_frame({"image": torch.randn(c, w, h), "task": "dummy_task"})
+
+
+def test_add_frame_image_wrong_type(image_dataset):
+    dataset = image_dataset
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "The feature 'image' is expected to be of type 'PIL.Image' or 'np.ndarray' channel first or channel last, but type '<class 'str'>' provided instead.\n"
+        ),
+    ):
+        dataset.add_frame({"image": "wrong_type", "task": "dummy_task"})
+
+
+def test_add_frame_image(image_dataset):
+    dataset = image_dataset
+    dataset.add_frame({"image": torch.randn(*DUMMY_CHW), "task": "dummy_task"})
+    dataset.save_episode(encode_videos=False)
+    dataset.consolidate(run_compute_stats=False)
+
+    assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
+
+
+def test_add_frame_image_h_w_c(image_dataset):
+    dataset = image_dataset
+    dataset.add_frame({"image": torch.randn(*DUMMY_HWC), "task": "dummy_task"})
+    dataset.save_episode(encode_videos=False)
+    dataset.consolidate(run_compute_stats=False)
+
+    assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
+
+
+def test_add_frame_image_uint8(image_dataset):
+    dataset = image_dataset
+    dataset.add_frame({"image": torch.zeros(*DUMMY_CHW, dtype=torch.uint8), "task": "dummy_task"})
+    dataset.save_episode(encode_videos=False)
+    dataset.consolidate(run_compute_stats=False)
+
+    assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
+
+
+def test_add_frame_image_pil(image_dataset):
+    dataset = image_dataset
+    img_array = np.random.randint(0, 256, DUMMY_HWC, dtype=np.uint8)
+    dataset.add_frame({"image": Image.fromarray(img_array), "task": "dummy_task"})
+    dataset.save_episode(encode_videos=False)
+    dataset.consolidate(run_compute_stats=False)
+
+    assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
 
 
 # TODO(aliberts):
 # - [ ] test various attributes & state from init and create
 # - [ ] test init with episodes and check num_frames
-# - [ ] test add_frame
 # - [ ] test add_episode
 # - [ ] test consolidate
 # - [ ] test push_to_hub

@@ -21,6 +21,7 @@ from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import torch
 
 
@@ -202,3 +203,13 @@ def get_channel_first_image_shape(image_shape: tuple) -> tuple:
 
 def has_method(cls: object, method_name: str):
     return hasattr(cls, method_name) and callable(getattr(cls, method_name))
+
+
+def is_numpy_dtype(dtype_str):
+    try:
+        # Attempt to convert the string to a numpy dtype
+        np.dtype(dtype_str)
+        return True
+    except TypeError:
+        # If a TypeError is raised, the string is not a valid dtype
+        return False
