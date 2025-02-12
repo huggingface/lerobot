@@ -265,7 +265,7 @@ def test_add_frame_state_5d(create_dataset):
     assert dataset[0]["state"].shape == torch.Size([2, 4, 3, 5, 1])
 
 
-def test_add_frame_numpy(create_dataset):
+def test_add_frame_state_numpy(create_dataset):
     features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
     dataset = create_dataset(features)
     dataset.add_frame({"state": np.array([1], dtype=np.float32), "task": "dummy_task"})
@@ -333,6 +333,17 @@ def test_add_frame_image_pil(image_dataset):
     dataset.consolidate(run_compute_stats=False)
 
     assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
+
+
+def test_add_frame_string(create_dataset):
+    features = {"caption": {"dtype": "string", "shape": (1,), "names": None}}
+    dataset = create_dataset(features)
+    dataset.add_frame({"caption": "dummy_caption", "task": "dummy_task"})
+
+    dataset.save_episode(encode_videos=False)
+    dataset.consolidate(run_compute_stats=False)
+
+    assert dataset[0]["caption"] == "dummy_caption"
 
 
 # TODO(aliberts):
