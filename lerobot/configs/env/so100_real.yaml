@@ -12,8 +12,10 @@ env:
   
   wrapper:
     crop_params_dict:
-      observation.images.laptop: [58, 89, 357, 455]
-      observation.images.phone: [3, 4, 471, 633]
+      observation.images.front: [126, 43, 329, 518]
+      observation.images.side: [93, 69, 381, 434]
+      # observation.images.front: [135, 59, 331, 527]
+      # observation.images.side: [79, 47, 397, 450]
     resize_size: [128, 128]
     control_time_s: 20
     reset_follower_pos: true
