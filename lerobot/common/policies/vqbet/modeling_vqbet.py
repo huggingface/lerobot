@@ -156,7 +156,7 @@ class VQBeTPolicy(PreTrainedPolicy):
         action = self._queues["action"].popleft()
         return action
 
-    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
@@ -170,16 +170,16 @@ class VQBeTPolicy(PreTrainedPolicy):
             loss, n_different_codes, n_different_combinations, recon_l1_error = (
                 self.vqbet.action_head.discretize(self.config.n_vqvae_training_steps, batch["action"])
             )
-            return {
-                "loss": loss,
+            return loss, {
                 "n_different_codes": n_different_codes,
                 "n_different_combinations": n_different_combinations,
                 "recon_l1_error": recon_l1_error,
             }
         # if Residual VQ is already trained, VQ-BeT trains its GPT and bin prediction head / offset prediction head parts.
         _, loss_dict = self.vqbet(batch, rollout=False)
+        loss = loss_dict.pop("loss")
 
-        return loss_dict
+        return loss, loss_dict
 
 
 class SpatialSoftmax(nn.Module):
@@ -342,7 +342,7 @@ class VQBeTModel(nn.Module):
             torch.row_stack([torch.arange(i, i + self.config.action_chunk_size) for i in range(num_tokens)]),
         )
 
-    def forward(self, batch: dict[str, Tensor], rollout: bool) -> Tensor:
+    def forward(self, batch: dict[str, Tensor], rollout: bool) -> tuple[dict, dict]:
         # Input validation.
         assert set(batch).issuperset({"observation.state", "observation.images"})
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
@@ -482,7 +482,7 @@ class VQBeTHead(nn.Module):
                 param.requires_grad = False
         return loss, n_different_codes, n_different_combinations, recon_l1_error
 
-    def forward(self, x, **kwargs):
+    def forward(self, x, **kwargs) -> dict:
         # N is the batch size, and T is number of action query tokens, which are process through same GPT
         N, T, _ = x.shape
         # we calculate N and T side parallely. Thus, the dimensions would be
