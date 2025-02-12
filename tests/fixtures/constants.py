@@ -27,3 +27,5 @@ DUMMY_VIDEO_INFO = {
     "video.is_depth_map": False,
     "has_audio": False,
 }
+DUMMY_CHW = (3, 96, 128)
+DUMMY_HWC = (96, 128, 3)

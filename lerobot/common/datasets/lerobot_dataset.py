@@ -39,6 +39,7 @@ from lerobot.common.datasets.utils import (
     TASKS_PATH,
     append_jsonlines,
     check_delta_timestamps,
+    check_feature_presence,
     check_timestamps_sync,
     check_version_compatibility,
     create_branch,
@@ -55,6 +56,8 @@ from lerobot.common.datasets.utils import (
     load_stats,
     load_tasks,
     serialize_dict,
+    validate_dtype_and_shape,
+    validate_string,
     write_json,
     write_parquet,
 )
@@ -715,16 +718,35 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             self.image_writer.save_image(image=image, fpath=fpath)
 
+    def _validate_frame(self, frame):
+        optional_features = {"timestamp"}
+        expected_features = (set(self.features) - set(DEFAULT_FEATURES.keys())) | {"task"}
+        actual_features = set(frame.keys())
+
+        error_message = check_feature_presence(actual_features, expected_features, optional_features)
+
+        if "task" in frame:
+            error_message += validate_string("task", frame["task"])
+
+        common_features = actual_features & (expected_features | optional_features)
+        for name in common_features - {"task"}:
+            error_message += validate_dtype_and_shape(name, self.features[name], frame[name])
+
+        if error_message:
+            raise ValueError(error_message)
+
     def add_frame(self, frame: dict) -> None:
         """
         This function only adds the frame to the episode_buffer. Apart from images — which are written in a
         temporary directory — nothing is written to disk. To save those frames, the 'save_episode()' method
         then needs to be called.
         """
-        # TODO(aliberts, rcadene): Add sanity check for the input, check it's numpy or torch,
-        # check the dtype and shape matches, etc.
-        if "task" not in frame:
-            raise ValueError("The mandatory feature 'task' wasn't found in `frame` dictionnary.")
+        # Convert torch to numpy if needed
+        for name in frame:
+            if isinstance(frame[name], torch.Tensor):
+                frame[name] = frame[name].numpy()
+
+        self._validate_frame(frame)
 
         if self.episode_buffer is None:
             self.episode_buffer = self.create_episode_buffer()
@@ -737,7 +759,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         for key in frame:
             # Special case with task
             if key == "task":
-                self.episode_buffer["task"].append(frame["task"])
+                task = frame["task"]
+                if not isinstance(task, str):
+                    raise ValueError(f"'task' is expected to be a string, but '{type(task)}' given instead.")
+                self.episode_buffer["task"].append(task)
                 continue
 
             if key not in self.features:
@@ -754,8 +779,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self._save_image(frame[key], img_path)
                 self.episode_buffer[key].append(str(img_path))
             else:
-                item = frame[key].numpy() if isinstance(frame[key], torch.Tensor) else frame[key]
-                self.episode_buffer[key].append(item)
+                self.episode_buffer[key].append(frame[key])
 
         self.episode_buffer["size"] += 1
 
@@ -806,12 +830,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # are processed separately by storing image path and frame info as meta data
             if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
                 continue
-            elif len(ft["shape"]) == 1 and ft["shape"][0] == 1:
-                episode_buffer[key] = np.array(episode_buffer[key], dtype=ft["dtype"])
-            elif len(ft["shape"]) == 1 and ft["shape"][0] > 1:
-                episode_buffer[key] = np.stack(episode_buffer[key])
-            else:
-                raise ValueError(key)
+            episode_buffer[key] = np.stack(episode_buffer[key])
 
         self._wait_image_writer()
         self._save_episode_table(episode_buffer, episode_index)
