@@ -179,12 +179,12 @@ def write_stats(stats: dict, local_dir: Path):
     write_json(serialized_stats, local_dir / STATS_PATH)
 
 
-def cast_stats_to_numpy(stats):
+def cast_stats_to_numpy(stats) -> dict[str, dict[str, np.ndarray]]:
     stats = {key: np.array(value) for key, value in flatten_dict(stats).items()}
     return unflatten_dict(stats)
 
 
-def load_stats(local_dir: Path) -> dict:
+def load_stats(local_dir: Path) -> dict[str, dict[str, np.ndarray]]:
     if not (local_dir / STATS_PATH).exists():
         return None
     stats = load_json(local_dir / STATS_PATH)
