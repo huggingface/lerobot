@@ -201,6 +201,7 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
         "action": {"min": min_action_space, "max": max_action_space}
     }
     cfg.policy.output_normalization_params = output_normalization_params
+    cfg.policy.output_shapes["action"] = online_env.action_space.spaces[0].shape
 
     ### Instantiate the policy in both the actor and learner processes
     ### To avoid sending a SACPolicy object through the port, we create a policy intance
@@ -252,6 +253,8 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
         # NOTE: We overide the action if the intervention is True, because the action applied is the intervention action
         if info["is_intervention"]:
             # TODO: Check the shape
+            # NOTE: The action space for demonstration before hand is with the full action space
+            # but sometimes for example we want to deactivate the gripper
             action = info["action_intervention"]
             episode_intervention = True
 
