@@ -141,6 +141,7 @@ def stats_factory():
                     "mean": np.full((3, 1, 1), 0.5, dtype=np.float32).tolist(),
                     "min": np.full((3, 1, 1), 0, dtype=np.float32).tolist(),
                     "std": np.full((3, 1, 1), 0.25, dtype=np.float32).tolist(),
+                    "count": [10],
                 }
             else:
                 stats[key] = {
@@ -148,6 +149,7 @@ def stats_factory():
                     "mean": np.full(shape, 0.5, dtype=dtype).tolist(),
                     "min": np.full(shape, 0, dtype=dtype).tolist(),
                     "std": np.full(shape, 0.25, dtype=dtype).tolist(),
+                    "count": [10],
                 }
         return stats
 
