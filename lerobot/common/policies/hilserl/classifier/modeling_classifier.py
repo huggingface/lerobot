@@ -148,7 +148,7 @@ class Classifier(
     def predict_reward(self, x, threshold=0.6):
         if self.config.num_classes == 2:
             probs = self.forward(x).probabilities
-            logging.info(f"Predicted reward images: {probs}")
+            logging.debug(f"Predicted reward images: {probs}")
             return (probs > threshold).float()
         else:
             return torch.argmax(self.forward(x).probabilities, dim=1)
