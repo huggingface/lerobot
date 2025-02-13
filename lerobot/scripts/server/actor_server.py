@@ -327,7 +327,7 @@ def send_transitions_in_chunks(transitions: list, message_queue, chunk_size: int
 def get_frequency_stats(list_policy_time: list[float]) -> dict[str, float]:
     stats = {}
     list_policy_fps = [1.0 / t for t in list_policy_time]
-    if len(list_policy_fps) > 0:
+    if len(list_policy_fps) > 1:
         policy_fps = mean(list_policy_fps)
         quantiles_90 = quantiles(list_policy_fps, n=10)[-1]
         logging.debug(f"[ACTOR] Average policy frame rate: {policy_fps}")
