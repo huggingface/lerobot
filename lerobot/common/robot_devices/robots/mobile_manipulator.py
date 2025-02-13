@@ -8,31 +8,13 @@ import torch
 import zmq
 from pynput import keyboard
 
+from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
 from lerobot.common.robot_devices.motors.feetech import TorqueMode
 from lerobot.common.robot_devices.motors.utils import MotorsBus, make_motors_buses_from_configs
 from lerobot.common.robot_devices.robots.configs import MobileSO100RobotConfig
 from lerobot.common.robot_devices.robots.feetech_calibration import run_arm_manual_calibration
 from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import RobotDeviceNotConnectedError
-
-
-class MobileCamera:
-    def __init__(self, mobile_robot):
-        self.mobile_robot = mobile_robot
-        self.width = 640
-        self.height = 480
-        self.channels = 3
-        self.logs = {}
-        self.fps = 30
-
-    # TODO(pepijn): Integrate this with _get_video_frame or remove this, and make sure number of camera's are configurable in config and read by socket etc, and test
-    def async_read(self):
-        # The remote camera frame is received via the video socket.
-        frame, _, _ = self.mobile_robot._get_video_frame(timeout=1)
-        if frame is None:
-            # Return a black frame if no frame was received.
-            frame = np.zeros((self.height, self.width, self.channels), dtype=np.uint8)
-        return frame
 
 
 class MobileManipulator:
@@ -62,8 +44,8 @@ class MobileManipulator:
         # Although follower arms are configured, on the laptop we do not read them locally.
         self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
 
-        # The mobile camera interface.
-        self._mobile_camera = MobileCamera(self)
+        self.cameras = make_cameras_from_configs(self.config.cameras)
+
         self.is_connected = False
 
         # ZeroMQ context and sockets.
@@ -89,11 +71,6 @@ class MobileManipulator:
 
     def get_motor_names(self, arms: dict[str, MotorsBus]) -> list:
         return [f"{arm}_{motor}" for arm, bus in arms.items() for motor in bus.motors]
-
-    @property
-    def cameras(self):
-        # Provide a dictionary mimicking the camera interface expected by the recording pipeline.
-        return {"mobile": self._mobile_camera}
 
     @property
     def camera_features(self) -> dict:
@@ -126,8 +103,16 @@ class MobileManipulator:
         }
 
     @property
-    def features(self) -> dict:
+    def features(self):
         return {**self.motor_features, **self.camera_features}
+
+    @property
+    def has_camera(self):
+        return len(self.cameras) > 0
+
+    @property
+    def num_cameras(self):
+        return len(self.cameras)
 
     @property
     def available_arms(self):
@@ -232,35 +217,38 @@ class MobileManipulator:
             calibration = load_or_run_calibration_(name, arm, "leader")
             arm.set_calibration(calibration)
 
-    def _get_video_frame(self, timeout=1):
+    def _get_video_frames(self, timeout=1):
         """
         Receives messages from the video socket and extracts:
-          - The JPEG image frame,
-          - The present wheel speed (as provided by the remote),
-          - The remote follower arm state (arm positions) if available.
+        - A dict of JPEG image frames (one per camera),
+        - The present wheel speed,
+        - The remote follower arm state.
         """
-        frame, present_speed, remote_arm_state = None, {}, None
+        frames = {}
+        present_speed = {}
+        remote_arm_state = None
         while True:
             try:
                 obs_string = self.video_socket.recv_string()
                 observation = json.loads(obs_string)
-                image_b64 = observation.get("image", "")
+                images_dict = observation.get("images", {})
                 speed_data = observation.get("present_speed", {})
                 remote_arm_state = observation.get("follower_arm_state", None)
-                if image_b64:
-                    jpg_original = base64.b64decode(image_b64)
-                    np_arr = np.frombuffer(jpg_original, dtype=np.uint8)
-                    frame_candidate = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-                    if frame_candidate is not None:
-                        frame = frame_candidate
-                        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                for cam_name, image_b64 in images_dict.items():
+                    if image_b64:
+                        jpg_original = base64.b64decode(image_b64)
+                        np_arr = np.frombuffer(jpg_original, dtype=np.uint8)
+                        frame_candidate = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                        if frame_candidate is not None:
+                            frame = cv2.cvtColor(frame_candidate, cv2.COLOR_BGR2RGB)
+                            frames[cam_name] = frame
                 present_speed = speed_data
             except zmq.Again:
                 break
             except Exception as e:
                 print(f"[DEBUG] Error decoding video message: {e}")
                 break
-        return frame, present_speed, remote_arm_state
+        return frames, present_speed, remote_arm_state
 
     def _process_present_speed(self, present_speed: dict) -> torch.Tensor:
         state_tensor = torch.zeros(3, dtype=torch.int32)
@@ -293,17 +281,17 @@ class MobileManipulator:
         y_cmd = 0.0  # m/s lateral
         theta_cmd = 0.0  # deg/s rotation
         if self.pressed_keys["forward"]:
-            x_cmd -= 0.4
+            x_cmd -= 0.1  # TODO(pepijn): Increase back (max 0.4)
         if self.pressed_keys["backward"]:
-            x_cmd += 0.4
+            x_cmd += 0.1
         if self.pressed_keys["left"]:
-            y_cmd -= 0.4
+            y_cmd -= 0.1
         if self.pressed_keys["right"]:
-            y_cmd += 0.4
+            y_cmd += 0.1
         if self.pressed_keys["rotate_left"]:
-            theta_cmd += 90
+            theta_cmd += 30  # TODO(pepijn): Increase back (max 90)
         if self.pressed_keys["rotate_right"]:
-            theta_cmd -= 90
+            theta_cmd -= 30
 
         wheel_commands = self.body_to_wheel_raw(x_cmd, y_cmd, theta_cmd)
 
@@ -338,7 +326,7 @@ class MobileManipulator:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError("Not connected. Run `connect()` first.")
 
-        frame, present_speed, remote_arm_state = self._get_video_frame()
+        frames, present_speed, remote_arm_state = self._get_video_frames()
         if remote_arm_state is not None:
             remote_arm_state_tensor = torch.tensor(remote_arm_state, dtype=torch.float32)
         else:
@@ -359,10 +347,14 @@ class MobileManipulator:
 
         obs_dict = {"observation.state": combined_state_tensor}
 
-        if frame is None:
-            frame = np.zeros((480, 640, 3), dtype=np.uint8)
-
-        obs_dict["observation.images.mobile"] = torch.from_numpy(frame)
+        # Loop over each configured camera
+        for cam_name, cam in self.cameras.items():
+            # Try to get the frame received for this camera
+            frame = frames.get(cam_name, None)
+            if frame is None:
+                # Create a black image using the camera's configured width, height, and channels
+                frame = np.zeros((cam.height, cam.width, cam.channels), dtype=np.uint8)
+            obs_dict[f"observation.images.{cam_name}"] = torch.from_numpy(frame)
 
         return obs_dict
 

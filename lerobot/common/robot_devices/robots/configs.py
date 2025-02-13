@@ -529,7 +529,13 @@ class MobileSO100RobotConfig(RobotConfig):
     port: int = 5555
     video_port: int = 5556
 
-    cameras: dict[str, CameraConfig] = field(default_factory=lambda: {})
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "mobile_wrist": OpenCVCameraConfig(
+                camera_index="/dev/video0", fps=30, width=640, height=480, color_mode="bgr"
+            ),
+        }
+    )
 
     calibration_dir: str = ".cache/calibration/so100"
 

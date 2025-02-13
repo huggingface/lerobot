@@ -1,18 +1,22 @@
 import base64
 import json
-import sys
 import time
 from pathlib import Path
-from queue import Empty, Queue
-from threading import Thread
 
 import cv2
+import numpy as np
 import torch
 import zmq
 
+from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
 from lerobot.common.robot_devices.motors.configs import FeetechMotorsBusConfig
 from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus, TorqueMode
+from lerobot.common.robot_devices.robots.configs import MobileSO100RobotConfig
 from lerobot.common.robot_devices.robots.mobileso100 import MobileSO100
+
+cameras = make_cameras_from_configs(MobileSO100RobotConfig.cameras)
+for _, cam in cameras.items():
+    cam.connect()
 
 # Setup Motors Bus, Calibration, and Robot
 motor_config = FeetechMotorsBusConfig(
@@ -50,15 +54,6 @@ video_socket.setsockopt(zmq.SNDHWM, 1)
 video_socket.bind("tcp://*:5556")
 
 print("Robot server started, waiting for commands and streaming video...")
-
-# Setup Camera
-cap = cv2.VideoCapture("/dev/video0")  # Use: v4l2-ctl --list-devices
-if not cap.isOpened():
-    print("Error: Could not open camera.")
-    sys.exit(1)
-
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
 # Define list of arm motor ids
 arm_motor_ids = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
@@ -104,36 +99,6 @@ calibrate_follower_arm(motors_bus, calibration_dir)
 
 for motor in arm_motor_ids:
     motors_bus.write("Torque_Enable", TorqueMode.DISABLED.value, motor)
-
-# Camera Capture and Encoding Thread
-# Create a queue to hold the latest encoded frame.
-frame_queue = Queue(maxsize=1)
-
-
-def camera_capture(cap, frame_queue):
-    """Continuously capture and encode frames, storing the latest encoded JPEG (base64) in a queue."""
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Failed to capture frame from camera.")
-            time.sleep(0.005)
-            continue
-
-        ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-        if not ret:
-            print("Failed to encode image.")
-            continue
-
-        jpg_as_text = base64.b64encode(buffer).decode("utf-8")
-        if not frame_queue.empty():
-            frame_queue.get_nowait()
-        frame_queue.put(jpg_as_text)
-        time.sleep(0.005)
-
-
-# Start the camera capture thread.
-capture_thread = Thread(target=camera_capture, args=(cap, frame_queue), daemon=True)
-capture_thread.start()
 
 # Main Loop
 start_time = time.perf_counter()
@@ -197,22 +162,21 @@ try:
         follower_arm_state = torch.cat(follower_arm_state) if follower_arm_state else torch.tensor([])
         arm_state_list = follower_arm_state.tolist() if follower_arm_state.numel() > 0 else []
 
-        try:
-            # Try to get a new frame; wait up to 5ms
-            jpg_as_text = frame_queue.get(timeout=0.005)
-            last_jpg_as_text = jpg_as_text
-        except Empty:
-            # If no new frame is available, use the previous one if available
-            if last_jpg_as_text is not None:
-                jpg_as_text = last_jpg_as_text
+        images_dict = {}
+        for cam_name, cam in cameras.items():
+            frame = cam.async_read()
+            # Ensure frame is valid
+            if frame is None:
+                frame = np.zeros((cam.height, cam.width, cam.channels), dtype=np.uint8)
+            ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+            if ret:
+                images_dict[cam_name] = base64.b64encode(buffer).decode("utf-8")
             else:
-                # Or—if no frame has ever been captured—block until one arrives.
-                jpg_as_text = frame_queue.get()
-                last_jpg_as_text = jpg_as_text
+                images_dict[cam_name] = ""
 
         # Prepare and send the observation message.
         observation = {
-            "image": jpg_as_text,
+            "images": images_dict,  # A dict with multiple camera images
             "present_speed": {
                 "1": int(current_velocity.get("1", 0)),
                 "2": int(current_velocity.get("2", 0)),
@@ -243,4 +207,3 @@ finally:
     cmd_socket.close()
     video_socket.close()
     context.term()
-    cap.release()
