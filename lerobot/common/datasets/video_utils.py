@@ -69,8 +69,8 @@ def decode_video_frames_torchvision(
 
     # set the first and last requested timestamps
     # Note: previous timestamps are usually loaded, since we need to access the previous key frame
-    first_ts = timestamps[0]
-    last_ts = timestamps[-1]
+    first_ts = min(timestamps)
+    last_ts = max(timestamps)
 
     # access closest key frame of the first requested frame
     # Note: closest key frame timestamp is usally smaller than `first_ts` (e.g. key frame can be the first frame of the video)
