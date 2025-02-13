@@ -288,20 +288,24 @@ def test_add_frame_image_wrong_shape(image_dataset):
         dataset.add_frame({"image": torch.randn(c, w, h), "task": "dummy_task"})
 
 
-def test_add_frame_image_wrong_type(image_dataset):
+def test_add_frame_image_wrong_range(image_dataset):
+    """This test will display the following error message from a thread:
+    ```
+    Error writing image ...test_add_frame_image_wrong_ran0/test/images/image/episode_000000/frame_000000.png:
+    The image data type is float, which requires values in the range [0.0, 1.0]. However, the provided range is [0.009678772038470007, 254.9776492089887].
+    Please adjust the range or provide a uint8 image with values in the range [0, 255]
+    ```
+    Hence the image won't be saved on disk and save_episode will raise `FileNotFoundError`.
+    """
     dataset = image_dataset
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            "The feature 'image' is expected to be of type 'PIL.Image' or 'np.ndarray' channel first or channel last, but type '<class 'str'>' provided instead.\n"
-        ),
-    ):
-        dataset.add_frame({"image": "wrong_type", "task": "dummy_task"})
+    dataset.add_frame({"image": np.random.rand(*DUMMY_CHW) * 255, "task": "dummy_task"})
+    with pytest.raises(FileNotFoundError):
+        dataset.save_episode(encode_videos=False)
 
 
 def test_add_frame_image(image_dataset):
     dataset = image_dataset
-    dataset.add_frame({"image": torch.randn(*DUMMY_CHW), "task": "dummy_task"})
+    dataset.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "dummy_task"})
     dataset.save_episode(encode_videos=False)
     dataset.consolidate(run_compute_stats=False)
 
@@ -310,7 +314,7 @@ def test_add_frame_image(image_dataset):
 
 def test_add_frame_image_h_w_c(image_dataset):
     dataset = image_dataset
-    dataset.add_frame({"image": torch.randn(*DUMMY_HWC), "task": "dummy_task"})
+    dataset.add_frame({"image": np.random.rand(*DUMMY_HWC), "task": "dummy_task"})
     dataset.save_episode(encode_videos=False)
     dataset.consolidate(run_compute_stats=False)
 
@@ -319,7 +323,8 @@ def test_add_frame_image_h_w_c(image_dataset):
 
 def test_add_frame_image_uint8(image_dataset):
     dataset = image_dataset
-    dataset.add_frame({"image": torch.zeros(*DUMMY_CHW, dtype=torch.uint8), "task": "dummy_task"})
+    image = np.random.randint(0, 256, DUMMY_HWC, dtype=np.uint8)
+    dataset.add_frame({"image": image, "task": "dummy_task"})
     dataset.save_episode(encode_videos=False)
     dataset.consolidate(run_compute_stats=False)
 
@@ -328,8 +333,8 @@ def test_add_frame_image_uint8(image_dataset):
 
 def test_add_frame_image_pil(image_dataset):
     dataset = image_dataset
-    img_array = np.random.randint(0, 256, DUMMY_HWC, dtype=np.uint8)
-    dataset.add_frame({"image": Image.fromarray(img_array), "task": "dummy_task"})
+    image = np.random.randint(0, 256, DUMMY_HWC, dtype=np.uint8)
+    dataset.add_frame({"image": Image.fromarray(image), "task": "dummy_task"})
     dataset.save_episode(encode_videos=False)
     dataset.consolidate(run_compute_stats=False)
 
@@ -351,22 +356,6 @@ def test_image_array_to_pil_image_wrong_range_float_0_255():
     image = np.random.rand(*DUMMY_HWC) * 255
     with pytest.raises(ValueError):
         image_array_to_pil_image(image)
-
-
-def test_image_array_to_pil_image_wrong_range_float_neg_1_1():
-    image = np.random.rand(*DUMMY_HWC) * 2 - 1
-    with pytest.raises(ValueError):
-        image_array_to_pil_image(image)
-
-
-def test_image_array_to_pil_image_float():
-    image = np.random.rand(*DUMMY_HWC)
-    image_array_to_pil_image(image)
-
-
-def test_image_array_to_pil_image_uint8():
-    image = (np.random.rand(*DUMMY_HWC) * 255).astype(np.uint8)
-    image_array_to_pil_image(image)
 
 
 # TODO(aliberts):
