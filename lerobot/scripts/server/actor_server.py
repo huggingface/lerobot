@@ -223,6 +223,7 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
     sum_reward_episode = 0
     list_transition_to_send_to_learner = []
     list_policy_time = []
+    episode_intervention = False
 
     for interaction_step in range(cfg.training.online_steps):
         if interaction_step >= cfg.training.online_step_before_learning:
@@ -252,6 +253,7 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
         if info["is_intervention"]:
             # TODO: Check the shape
             action = info["action_intervention"]
+            episode_intervention = True
 
         # Check for NaN values in observations
         for key, tensor in obs.items():
@@ -295,11 +297,13 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
                     interaction_message={
                         "Episodic reward": sum_reward_episode,
                         "Interaction step": interaction_step,
+                        "Episode intervention": int(episode_intervention),
                         **stats,
                     }
                 )
             )
             sum_reward_episode = 0.0
+            episode_intervention = False
             obs, info = online_env.reset()
 
 

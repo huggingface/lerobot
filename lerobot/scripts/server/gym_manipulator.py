@@ -312,7 +312,7 @@ class RewardWrapper(gym.Wrapper):
         start_time = time.perf_counter()
         with torch.inference_mode():
             reward = (
-                self.reward_classifier.predict_reward(images, threshold=0.5)
+                self.reward_classifier.predict_reward(images, threshold=0.6)
                 if self.reward_classifier is not None
                 else 0.0
             )
@@ -507,6 +507,7 @@ class KeyboardInterfaceWrapper(gym.Wrapper):
             "pause_policy": False,
             "reset_env": False,
             "human_intervention_step": False,
+            "episode_success": False,
         }
         self.event_lock = Lock()  # Thread-safe access to events
         self._init_keyboard_listener()
@@ -528,7 +529,12 @@ class KeyboardInterfaceWrapper(gym.Wrapper):
                         if key == keyboard.Key.right or key == keyboard.Key.esc:
                             print("Right arrow key pressed. Exiting loop...")
                             self.events["exit_early"] = True
-                        elif key == keyboard.Key.space and not self.events["exit_early"]:
+                            return
+                        if hasattr(key, "char") and key.char == "s":
+                            print("Key 's' pressed. Episode success triggered.")
+                            self.events["episode_success"] = True
+                            return
+                        if key == keyboard.Key.space and not self.events["exit_early"]:
                             if not self.events["pause_policy"]:
                                 print(
                                     "Space key pressed. Human intervention required.\n"
@@ -536,15 +542,18 @@ class KeyboardInterfaceWrapper(gym.Wrapper):
                                 )
                                 self.events["pause_policy"] = True
                                 log_say("Human intervention stage. Get ready to take over.", play_sounds=True)
-                            elif self.events["pause_policy"] and not self.events["human_intervention_step"]:
+                                return
+                            if self.events["pause_policy"] and not self.events["human_intervention_step"]:
                                 self.events["human_intervention_step"] = True
                                 print("Space key pressed. Human intervention starting.")
                                 log_say("Starting human intervention.", play_sounds=True)
-                            else:
+                                return
+                            if self.events["pause_policy"] and self.events["human_intervention_step"]:
                                 self.events["pause_policy"] = False
                                 self.events["human_intervention_step"] = False
                                 print("Space key pressed for a third time.")
                                 log_say("Continuing with policy actions.", play_sounds=True)
+                                return
                     except Exception as e:
                         print(f"Error handling key press: {e}")
 
@@ -566,7 +575,6 @@ class KeyboardInterfaceWrapper(gym.Wrapper):
         with self.event_lock:
             if self.events["exit_early"]:
                 terminated_by_keyboard = True
-            # If we need to wait for human intervention, we note that outside the lock.
             pause_policy = self.events["pause_policy"]
 
         if pause_policy:
@@ -580,6 +588,13 @@ class KeyboardInterfaceWrapper(gym.Wrapper):
 
         # Execute the step in the underlying environment
         obs, reward, terminated, truncated, info = self.env.step((policy_action, is_intervention))
+
+        # Override reward and termination if episode success event triggered
+        with self.event_lock:
+            if self.events["episode_success"]:
+                reward = 1
+                terminated_by_keyboard = True
+
         return obs, reward, terminated or terminated_by_keyboard, truncated, info
 
     def reset(self, **kwargs) -> Tuple[Any, Dict]:
