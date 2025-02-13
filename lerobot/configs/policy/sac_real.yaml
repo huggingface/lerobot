@@ -31,7 +31,7 @@ training:
   online_env_seed: 10000
   online_buffer_capacity: 1000000
   online_buffer_seed_size: 0
-  online_step_before_learning: 1000 #5000
+  online_step_before_learning: 100 #5000
   do_online_rollout_async: false
   policy_update_freq: 1
 
@@ -61,7 +61,7 @@ policy:
     observation.images.side: [3, 128, 128]
     # observation.image: [3, 128, 128]
   output_shapes:
-    action: ["${env.action_dim}"]
+    action: [4] # ["${env.action_dim}"]
 
   # Normalization / Unnormalization
   input_normalization_modes: 
@@ -84,9 +84,12 @@ policy:
   output_normalization_modes:
     action: min_max
   output_normalization_params:
+    # action:
+    #   min: [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0]
+    #   max: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
     action:
-      min: [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0]
-      max: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      min: [-145.283203125, -69.43359375, -78.75, -46.0546875]
+      max: [145.283203125, 69.43359375, 78.75, 46.0546875]
 
   # Architecture / modeling.
   # Neural networks.

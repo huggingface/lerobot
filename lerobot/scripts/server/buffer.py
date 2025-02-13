@@ -195,6 +195,7 @@ class ReplayBuffer:
         device: str = "cuda:0",
         state_keys: Optional[Sequence[str]] = None,
         capacity: Optional[int] = None,
+        action_mask: Optional[Sequence[int]] = None,
     ) -> "ReplayBuffer":
         """
         Convert a LeRobotDataset into a ReplayBuffer.
@@ -228,6 +229,12 @@ class ReplayBuffer:
                         v[key] = tensor.to(device)
                 elif isinstance(v, torch.Tensor):
                     data[k] = v.to(device)
+
+            if action_mask is not None:
+                if data["action"].dim() == 1:
+                    data["action"] = data["action"][action_mask]
+                else:
+                    data["action"] = data["action"][:, action_mask]
 
             replay_buffer.add(
                 state=data["state"],

@@ -328,7 +328,7 @@ class RewardWrapper(gym.Wrapper):
         return self.env.reset(seed=seed, options=options)
 
 
-class JointMaskingActionSpace(gym.ActionWrapper):
+class JointMaskingActionSpace(gym.Wrapper):
     def __init__(self, env, mask):
         """
         Wrapper to mask out dimensions of the action space.
@@ -387,6 +387,16 @@ class JointMaskingActionSpace(gym.ActionWrapper):
             full_action = np.zeros(self.env.action_space.shape, dtype=self.env.action_space.dtype)
             full_action[self.active_dims] = masked_action
             return full_action
+
+    def step(self, action):
+        action = self.action(action)
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        if "action_intervention" in info and info["action_intervention"] is not None:
+            if info["action_intervention"].dim() == 1:
+                info["action_intervention"] = info["action_intervention"][self.active_dims]
+            else:
+                info["action_intervention"] = info["action_intervention"][:, self.active_dims]
+        return obs, reward, terminated, truncated, info
 
 
 class TimeLimitWrapper(gym.Wrapper):

@@ -137,7 +137,7 @@ class SACPolicy(
         """Override .to(device) method to involve moving the log_alpha fixed_std"""
         if self.actor.fixed_std is not None:
             self.actor.fixed_std = self.actor.fixed_std.to(*args, **kwargs)
-        self.log_alpha = self.log_alpha.to(*args, **kwargs)
+        # self.log_alpha = self.log_alpha.to(*args, **kwargs)
         super().to(*args, **kwargs)
 
     @torch.no_grad()
