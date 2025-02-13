@@ -25,7 +25,7 @@ class MobileCamera:
         self.logs = {}
         self.fps = 30
 
-    # TODO(pepijn): Integrate this with _get_video_frame or remove this, and test
+    # TODO(pepijn): Integrate this with _get_video_frame or remove this, and make sure number of camera's are configurable in config and read by socket etc, and test
     def async_read(self):
         # The remote camera frame is received via the video socket.
         frame, _, _ = self.mobile_robot._get_video_frame(timeout=1)
@@ -393,15 +393,6 @@ class MobileManipulator:
 
         # Compute wheel commands from body commands.
         wheel_commands = self.body_to_wheel_raw(x_cmd, y_cmd, theta_cmd)
-
-        # TODO(pepijn): Remove this?
-        # Ensure arm_actions contains exactly 6 elements.
-        if arm_actions.numel() < 6:
-            padded_arm = torch.zeros(6, dtype=arm_actions.dtype)
-            padded_arm[: arm_actions.numel()] = arm_actions
-            arm_actions = padded_arm
-        elif arm_actions.numel() > 6:
-            arm_actions = arm_actions[:6]
 
         arm_positions_list = arm_actions.tolist()
 
