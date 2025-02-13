@@ -163,10 +163,10 @@ def serve_actor_service(port=50052):
 
 def update_policy_parameters(policy: SACPolicy, parameters_queue: queue.Queue, device):
     if not parameters_queue.empty():
-        logging.debug("[ACTOR] Load new parameters from Learner.")
+        logging.info("[ACTOR] Load new parameters from Learner.")
         state_dict = parameters_queue.get()
         state_dict = move_state_dict_to_device(state_dict, device=device)
-        policy.load_state_dict(state_dict)
+        policy.load_state_dict(state_dict, strict=False)
 
 
 def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module):
