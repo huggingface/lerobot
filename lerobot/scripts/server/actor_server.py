@@ -283,7 +283,7 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
             # TODO: Handle logging for episode information
             logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
 
-            # update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
+            update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
 
             if len(list_transition_to_send_to_learner) > 0:
                 send_transitions_in_chunks(
