@@ -95,7 +95,7 @@ def test_dataset_initialization(lerobot_dataset_factory, tmp_path):
 
 def test_add_frame_no_task(tmp_path):
     features = {"1d": {"dtype": "float32", "shape": (1,), "names": None}}
-    dataset = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=30, root=tmp_path, features=features)
+    dataset = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=30, root=tmp_path / "test", features=features)
     with pytest.raises(ValueError, match="The mandatory feature 'task' wasn't found in `frame` dictionnary."):
         dataset.add_frame({"1d": torch.randn(1)})
 
