@@ -12,10 +12,10 @@ env:
   
   wrapper:
     crop_params_dict:
-      observation.images.front: [126, 43, 329, 518]
-      observation.images.side: [93, 69, 381, 434]
-      # observation.images.front: [135, 59, 331, 527]
-      # observation.images.side: [79, 47, 397, 450]
+      observation.images.front: [102, 43, 358, 523]
+      observation.images.side: [92, 123, 379, 349]
+      # observation.images.front: [109, 37, 361, 557]
+      # observation.images.side: [94, 161, 372, 315]
     resize_size: [128, 128]
     control_time_s: 20
     reset_follower_pos: true

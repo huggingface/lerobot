@@ -245,10 +245,18 @@ if __name__ == "__main__":
     images = {k: v.cpu().permute(1, 2, 0).numpy() for k, v in images.items()}
     images = {k: (v * 255).astype("uint8") for k, v in images.items()}
 
-    rois = select_square_roi_for_images(images)
+    # rois = select_square_roi_for_images(images)
+    rois = {
+        "observation.images.front": [102, 43, 358, 523],
+        "observation.images.side": [92, 123, 379, 349],
+    }
     # rois = {
-    #   "observation.images.front": [126, 43, 329, 518],
-    #   "observation.images.side": [93, 69, 381, 434],
+    #     "observation.images.side": (92, 123, 379, 349),
+    #     "observation.images.front": (109, 37, 361, 557),
+    # }
+    # rois = {
+    #   "observation.images.front": [109, 37, 361, 557],
+    #   "observation.images.side": [94, 161, 372, 315],
     # }
 
     # Print the selected rectangular ROIs
