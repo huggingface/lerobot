@@ -4,8 +4,6 @@ name: Test Dockerfiles
 
 on:
   pull_request:
-    branches:
-      - main
     paths:
       # Run only when DockerFile files are modified
       - "docker/**"
