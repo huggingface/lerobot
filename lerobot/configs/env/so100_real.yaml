@@ -1,6 +1,6 @@
 # @package _global_
 
-fps: 30
+fps: 10
 
 env:
   name: real_world
@@ -26,6 +26,6 @@ env:
     joint_masking_action_space: [1, 1, 1, 1, 0, 0] # disable wrist and gripper
 
   reward_classifier:
-    pretrained_path: outputs/classifier/checkpoints/best/pretrained_model
+    pretrained_path:  outputs/classifier/13-02-random-sample-resnet10-frozen/checkpoints/best/pretrained_model
     config_path: lerobot/configs/policy/hilserl_classifier.yaml
     

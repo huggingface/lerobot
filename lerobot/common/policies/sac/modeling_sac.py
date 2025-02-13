@@ -126,7 +126,7 @@ class SACPolicy(
         # TODO (azouitine): Handle the case where the temparameter is a fixed
         # TODO (michel-aractingi): Put the log_alpha in cuda by default because otherwise
         # it triggers "can't optimize a non-leaf Tensor"
-        self.log_alpha = torch.tensor([0.0], requires_grad=True, device=torch.device("mps"))
+        self.log_alpha = nn.Parameter(torch.tensor([0.0]))
         self.temperature = self.log_alpha.exp().item()
 
     def reset(self):
@@ -634,7 +634,7 @@ class PretrainedImageEncoder(nn.Module):
         """Set up CNN encoder"""
         from transformers import AutoModel
 
-        self.image_enc_layers = AutoModel.from_pretrained(config.vision_encoder_name)
+        self.image_enc_layers = AutoModel.from_pretrained(config.vision_encoder_name, trust_remote_code=True)
         # self.image_enc_layers.pooler = Identity()
 
         if hasattr(self.image_enc_layers.config, "hidden_sizes"):

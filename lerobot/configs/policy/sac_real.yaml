@@ -8,7 +8,7 @@
 #   env.gym.obs_type=environment_state_agent_pos \
 
 seed: 1
-dataset_repo_id: null # aractingi/push_green_cube_hf_cropped_resized
+dataset_repo_id: aractingi/push_cube_square_light_offline_demo_cropped_resized
 
 training:
   # Offline training dataloader
@@ -52,7 +52,7 @@ policy:
   n_action_steps: 1
 
   shared_encoder: true
-  # vision_encoder_name: null
+  vision_encoder_name: "helper2424/resnet10"
   freeze_vision_encoder: true
   input_shapes:
     # # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
