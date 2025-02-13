@@ -18,27 +18,10 @@ import numpy as np
 from lerobot.common.datasets.utils import load_image_as_numpy
 
 
-def compute_episode_stats(episode_buffer: dict, features: dict, num_image_samples: int | None = None) -> dict:
-    stats = {}
-    for key, data in episode_buffer.items():
-        if features[key]["dtype"] in ["image", "video"]:
-            stats[key] = compute_image_stats(data, num_samples=num_image_samples)
-        else:
-            axes_to_reduce = 0  # compute stats over the first axis
-            keepdims = data.ndim == 1  # keep as np.array
-            stats[key] = {
-                "min": np.min(data, axis=axes_to_reduce, keepdims=keepdims),
-                "max": np.max(data, axis=axes_to_reduce, keepdims=keepdims),
-                "mean": np.mean(data, axis=axes_to_reduce, keepdims=keepdims),
-                "std": np.std(data, axis=axes_to_reduce, keepdims=keepdims),
-                "count": np.array([data.shape[0]]),
-            }
-    return stats
-
-
 def estimate_num_samples(dataset_len: int, min_num_samples=100, max_num_samples=10_000, power=0.75) -> int:
     """Heuristic to estimate the number of samples based on dataset size.
-    The power controls the sample growth relative to dataset sizelower the power for less number of samples.
+    The power controls the sample growth relative to dataset size.
+    Lower the power for less number of samples.
 
     For default arguments, we have:
     - from 1 to ~500, num_samples=100
@@ -48,20 +31,21 @@ def estimate_num_samples(dataset_len: int, min_num_samples=100, max_num_samples=
     - at 10000, num_samples=1000
     - at 20000, num_samples=1681
     """
+    if dataset_len < min_num_samples:
+        min_num_samples = dataset_len
     return max(min_num_samples, min(dataset_len**power, max_num_samples))
 
 
-def compute_image_stats(image_paths: list[str], num_samples: int | None = None) -> dict:
-    num_samples = estimate_num_samples(len(image_paths)) if num_samples is None else num_samples
-    num_samples = min(num_samples, len(image_paths))
+def sample_indices(data_len: int) -> list[int]:
+    num_samples = estimate_num_samples(data_len)
+    return np.round(np.linspace(0, data_len - 1, num_samples)).astype(int).tolist()
+    # if sampled_indices[-1] == data_len:
+    #         # in rare cases due to float approximations, the last element exceeds image_paths indices
+    #         sampled_indices[-1] -= 1
 
-    step_size = len(image_paths) / num_samples
-    sampled_indices = np.arange(0, len(image_paths), step_size).astype(int).tolist()
 
-    if sampled_indices[-1] == len(image_paths):
-        # in rare cases due to float approximations, the last element exceeds image_paths indices
-        sampled_indices[-1] -= 1
-
+def sample_images(image_paths: list[str]) -> np.ndarray:
+    sampled_indices = sample_indices(len(image_paths))
     images = []
     for idx in sampled_indices:
         path = image_paths[idx]
@@ -70,22 +54,43 @@ def compute_image_stats(image_paths: list[str], num_samples: int | None = None) 
         images.append(img)
 
     images = np.stack(images)
-    axes_to_reduce = (0, 2, 3)  # keep channel dim
-    # we then divide by 255 to get values between [0, 1]
-    image_stats = {
-        "min": np.min(images, axis=axes_to_reduce, keepdims=True) / 255.0,
-        "max": np.max(images, axis=axes_to_reduce, keepdims=True) / 255.0,
-        "mean": np.mean(images, axis=axes_to_reduce, keepdims=True) / 255.0,
-        "std": np.std(images, axis=axes_to_reduce, keepdims=True) / 255.0,
+    return images
+
+
+def get_feature_stats(array: np.ndarray, axis: tuple, keepdims: bool) -> dict[str, np.ndarray]:
+    return {
+        "min": np.min(array, axis=axis, keepdims=keepdims),
+        "max": np.max(array, axis=axis, keepdims=keepdims),
+        "mean": np.mean(array, axis=axis, keepdims=keepdims),
+        "std": np.std(array, axis=axis, keepdims=keepdims),
+        "count": np.array([len(array)]),
     }
-    for key in image_stats:  # squeeze batch dim
-        image_stats[key] = np.squeeze(image_stats[key], axis=0)
-
-    image_stats["count"] = np.array([len(images)])
-    return image_stats
 
 
-def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict:
+def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], features: dict) -> dict:
+    ep_stats = {}
+    for key, data in episode_data.items():
+        if features[key]["dtype"] in ["image", "video"]:
+            ep_ft_array = sample_images(data)  # data is a list of image paths
+            axes_to_reduce = (0, 2, 3)  # keep channel dim
+            keepdims = True
+        else:
+            ep_ft_array = data  # data is alreay a np.ndarray
+            axes_to_reduce = 0  # compute stats over the first axis
+            keepdims = data.ndim == 1  # keep as np.array
+
+        ep_stats[key] = get_feature_stats(ep_ft_array, axis=axes_to_reduce, keepdims=keepdims)
+
+        # finally, we normalize and remove batch dim for images
+        if features[key]["dtype"] in ["image", "video"]:
+            ep_stats[key] = {
+                k: v if k == "count" else np.squeeze(v / 255.0, axis=0) for k, v in ep_stats[key].items()
+            }
+
+    return ep_stats
+
+
+def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np.ndarray]]:
     """Aggregate stats from multiple compute_stats outputs into a single set of stats.
 
     The final stats will have the union of all data keys from each of the stats dicts.
@@ -109,7 +114,7 @@ def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict:
                         raise ValueError("Number of dimensions must be at least 1, and is 0 instead.")
                     if k == "count" and v.shape != (1,):
                         raise ValueError(f"Shape of 'count' must be (1), but is {v.shape} instead.")
-                    if "image" in k and v.shape != (3, 1, 1):
+                    if "image" in fkey and k != "count" and v.shape != (3, 1, 1):
                         raise ValueError(f"Shape of '{k}' must be (3,1,1), but is {v.shape} instead.")
 
     _assert_type_and_shape(stats_list)
