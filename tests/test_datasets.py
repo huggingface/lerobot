@@ -102,7 +102,7 @@ def test_add_frame_no_task(tmp_path):
 
 def test_add_frame(tmp_path):
     features = {"1d": {"dtype": "float32", "shape": (1,), "names": None}}
-    dataset = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=30, root=tmp_path / "test", features=features)
+    dataset = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=30, root=tmp_path, features=features)
     dataset.add_frame({"1d": torch.randn(1), "task": "dummy"})
     dataset.save_episode(encode_videos=False)
     dataset.consolidate(run_compute_stats=False)
