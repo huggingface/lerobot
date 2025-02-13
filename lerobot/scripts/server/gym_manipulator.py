@@ -217,7 +217,7 @@ class HILSerlRobotEnv(gym.Env):
                 if torch.any(teleop_action < -self.delta_relative_bounds_size * self.delta) and torch.any(
                     teleop_action > self.delta_relative_bounds_size
                 ):
-                    print(
+                    logging.debug(
                         f"Relative teleop delta exceeded bounds {self.delta_relative_bounds_size}, teleop_action {teleop_action}\n"
                         f"lower bounds condition {teleop_action < -self.delta_relative_bounds_size}\n"
                         f"upper bounds condition {teleop_action > self.delta_relative_bounds_size}"
@@ -318,7 +318,7 @@ class RewardWrapper(gym.Wrapper):
             )
         info["Reward classifer frequency"] = 1 / (time.perf_counter() - start_time)
 
-        logging.info(f"Reward: {reward}")
+        # logging.info(f"Reward: {reward}")
 
         if reward == 1.0:
             terminated = True
