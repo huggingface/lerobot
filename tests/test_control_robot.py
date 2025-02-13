@@ -121,7 +121,6 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
         episode_time_s=1,
         reset_time_s=0.1,
         num_episodes=2,
-        run_compute_stats=False,
         push_to_hub=False,
         video=False,
         play_sounds=False,
@@ -218,7 +217,6 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         episode_time_s=1,
         reset_time_s=0.1,
         num_episodes=2,
-        run_compute_stats=False,
         push_to_hub=False,
         video=False,
         display_cameras=False,
@@ -272,7 +270,6 @@ def test_resume_record(tmpdir, request, robot_type, mock):
         video=False,
         display_cameras=False,
         play_sounds=False,
-        run_compute_stats=False,
         local_files_only=True,
         num_episodes=1,
     )
@@ -331,7 +328,6 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
             video=False,
             display_cameras=False,
             play_sounds=False,
-            run_compute_stats=False,
         )
         dataset = record(robot, rec_cfg)
 
@@ -382,7 +378,6 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
             video=False,
             display_cameras=False,
             play_sounds=False,
-            run_compute_stats=False,
         )
 
         dataset = record(robot, rec_cfg)
@@ -436,7 +431,6 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
             video=False,
             display_cameras=False,
             play_sounds=False,
-            run_compute_stats=False,
             num_image_writer_processes=num_image_writer_processes,
         )
 
