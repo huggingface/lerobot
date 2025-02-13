@@ -88,7 +88,7 @@ class TrainPipelineConfig(HubMixin):
             if not Path(config_path).resolve().exists():
                 raise NotADirectoryError(
                     f"{config_path=} is expected to be a local path. "
-                    "Resuming from the hub is not supported for now"
+                    "Resuming from the hub is not supported for now."
                 )
             policy_path = Path(config_path).parent
             self.policy.pretrained_path = policy_path
