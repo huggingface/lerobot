@@ -9,7 +9,7 @@ from PIL import Image
 
 from lerobot.common.datasets.image_writer import (
     AsyncImageWriter,
-    image_array_to_image,
+    image_array_to_pil_image,
     safe_stop_image_writer,
     write_image,
 )
@@ -50,7 +50,7 @@ def test_zero_threads():
 
 def test_image_array_to_image_rgb(img_array_factory):
     img_array = img_array_factory(100, 100)
-    result_image = image_array_to_image(img_array)
+    result_image = image_array_to_pil_image(img_array)
     assert isinstance(result_image, Image.Image)
     assert result_image.size == (100, 100)
     assert result_image.mode == "RGB"
@@ -58,7 +58,7 @@ def test_image_array_to_image_rgb(img_array_factory):
 
 def test_image_array_to_image_pytorch_format(img_array_factory):
     img_array = img_array_factory(100, 100).transpose(2, 0, 1)
-    result_image = image_array_to_image(img_array)
+    result_image = image_array_to_pil_image(img_array)
     assert isinstance(result_image, Image.Image)
     assert result_image.size == (100, 100)
     assert result_image.mode == "RGB"
@@ -67,7 +67,7 @@ def test_image_array_to_image_pytorch_format(img_array_factory):
 @pytest.mark.skip("TODO: implement")
 def test_image_array_to_image_single_channel(img_array_factory):
     img_array = img_array_factory(channels=1)
-    result_image = image_array_to_image(img_array)
+    result_image = image_array_to_pil_image(img_array)
     assert isinstance(result_image, Image.Image)
     assert result_image.size == (100, 100)
     assert result_image.mode == "L"
@@ -75,7 +75,7 @@ def test_image_array_to_image_single_channel(img_array_factory):
 
 def test_image_array_to_image_float_array(img_array_factory):
     img_array = img_array_factory(dtype=np.float32)
-    result_image = image_array_to_image(img_array)
+    result_image = image_array_to_pil_image(img_array)
     assert isinstance(result_image, Image.Image)
     assert result_image.size == (100, 100)
     assert result_image.mode == "RGB"
@@ -85,7 +85,7 @@ def test_image_array_to_image_float_array(img_array_factory):
 def test_image_array_to_image_out_of_bounds_float():
     # Float array with values out of [0, 1]
     img_array = np.random.uniform(-1, 2, size=(100, 100, 3)).astype(np.float32)
-    result_image = image_array_to_image(img_array)
+    result_image = image_array_to_pil_image(img_array)
     assert isinstance(result_image, Image.Image)
     assert result_image.size == (100, 100)
     assert result_image.mode == "RGB"

@@ -36,6 +36,7 @@ from lerobot.common.datasets.compute_stats import (
     get_stats_einops_patterns,
 )
 from lerobot.common.datasets.factory import make_dataset
+from lerobot.common.datasets.image_writer import image_array_to_pil_image
 from lerobot.common.datasets.lerobot_dataset import (
     LeRobotDataset,
     MultiLeRobotDataset,
@@ -344,6 +345,28 @@ def test_add_frame_string(create_dataset):
     dataset.consolidate(run_compute_stats=False)
 
     assert dataset[0]["caption"] == "dummy_caption"
+
+
+def test_image_array_to_pil_image_wrong_range_float_0_255():
+    image = np.random.rand(*DUMMY_HWC) * 255
+    with pytest.raises(ValueError):
+        image_array_to_pil_image(image)
+
+
+def test_image_array_to_pil_image_wrong_range_float_neg_1_1():
+    image = np.random.rand(*DUMMY_HWC) * 2 - 1
+    with pytest.raises(ValueError):
+        image_array_to_pil_image(image)
+
+
+def test_image_array_to_pil_image_float():
+    image = np.random.rand(*DUMMY_HWC)
+    image_array_to_pil_image(image)
+
+
+def test_image_array_to_pil_image_uint8():
+    image = (np.random.rand(*DUMMY_HWC) * 255).astype(np.uint8)
+    image_array_to_pil_image(image)
 
 
 # TODO(aliberts):
