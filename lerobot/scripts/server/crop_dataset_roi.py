@@ -239,7 +239,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    dataset = LeRobotDataset(repo_id=args.repo_id, root=args.root, local_files_only=True)
+    dataset = LeRobotDataset(repo_id=args.repo_id, root=args.root, local_files_only=False)
 
     images = get_image_from_lerobot_dataset(dataset)
     images = {k: v.cpu().permute(1, 2, 0).numpy() for k, v in images.items()}
