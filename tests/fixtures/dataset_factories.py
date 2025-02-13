@@ -293,6 +293,7 @@ def hf_dataset_factory(features_factory, tasks_factory, episodes_factory, img_ar
 def lerobot_dataset_metadata_factory(
     info_factory,
     stats_factory,
+    episodes_stats_factory,
     tasks_factory,
     episodes_factory,
     mock_snapshot_download_factory,
