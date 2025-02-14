@@ -201,11 +201,14 @@ def get_channel_first_image_shape(image_shape: tuple) -> tuple:
     return shape
 
 
-def has_method(cls: object, method_name: str):
+def has_method(cls: object, method_name: str) -> bool:
     return hasattr(cls, method_name) and callable(getattr(cls, method_name))
 
 
-def is_numpy_dtype(dtype_str):
+def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
+    """
+    Return True if a given string can be converted to a numpy dtype.
+    """
     try:
         # Attempt to convert the string to a numpy dtype
         np.dtype(dtype_str)

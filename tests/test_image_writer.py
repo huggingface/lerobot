@@ -77,13 +77,16 @@ def test_image_array_to_pil_image_pytorch_format(img_array_factory):
     assert result_image.mode == "RGB"
 
 
-@pytest.mark.skip("TODO: implement")
 def test_image_array_to_pil_image_single_channel(img_array_factory):
     img_array = img_array_factory(channels=1)
-    result_image = image_array_to_pil_image(img_array)
-    assert isinstance(result_image, Image.Image)
-    assert result_image.size == (100, 100)
-    assert result_image.mode == "L"
+    with pytest.raises(NotImplementedError):
+        image_array_to_pil_image(img_array)
+
+
+def test_image_array_to_pil_image_4_channels(img_array_factory):
+    img_array = img_array_factory(channels=4)
+    with pytest.raises(NotImplementedError):
+        image_array_to_pil_image(img_array)
 
 
 def test_image_array_to_pil_image_float_array(img_array_factory):

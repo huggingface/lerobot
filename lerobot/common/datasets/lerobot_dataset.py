@@ -39,7 +39,7 @@ from lerobot.common.datasets.utils import (
     TASKS_PATH,
     append_jsonlines,
     check_delta_timestamps,
-    check_feature_presence,
+    check_frame_features,
     check_timestamps_sync,
     check_version_compatibility,
     create_branch,
@@ -56,8 +56,6 @@ from lerobot.common.datasets.utils import (
     load_stats,
     load_tasks,
     serialize_dict,
-    validate_dtype_and_shape,
-    validate_string,
     write_json,
     write_parquet,
 )
@@ -721,23 +719,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             self.image_writer.save_image(image=image, fpath=fpath)
 
-    def _validate_frame(self, frame):
-        optional_features = {"timestamp"}
-        expected_features = (set(self.features) - set(DEFAULT_FEATURES.keys())) | {"task"}
-        actual_features = set(frame.keys())
-
-        error_message = check_feature_presence(actual_features, expected_features, optional_features)
-
-        if "task" in frame:
-            error_message += validate_string("task", frame["task"])
-
-        common_features = actual_features & (expected_features | optional_features)
-        for name in common_features - {"task"}:
-            error_message += validate_dtype_and_shape(name, self.features[name], frame[name])
-
-        if error_message:
-            raise ValueError(error_message)
-
     def add_frame(self, frame: dict) -> None:
         """
         This function only adds the frame to the episode_buffer. Apart from images — which are written in a
@@ -749,7 +730,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if isinstance(frame[name], torch.Tensor):
                 frame[name] = frame[name].numpy()
 
-        self._validate_frame(frame)
+        check_frame_features(frame, self.features)
 
         if self.episode_buffer is None:
             self.episode_buffer = self.create_episode_buffer()
