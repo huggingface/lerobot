@@ -16,7 +16,6 @@
 import logging
 import os
 import shutil
-import warnings
 from functools import cached_property
 from pathlib import Path
 from typing import Callable
@@ -97,9 +96,10 @@ class LeRobotDatasetMetadata:
             self.stats = aggregate_stats(list(self.episodes_stats.values()))
         except FileNotFoundError:
             # TODO(rcadene, aliberts): ideally update CODEBASE_VERSION to v2.1 and trigger when it is v2.0
-            warnings.warn(
-                "'episodes_stats.jsonl' not found. Use global dataset stats for each episode instead.",
-                stacklevel=1,
+            logging.warning(
+                f"""'episodes_stats.jsonl' not found. Using global dataset stats for each episode instead.
+                Convert your dataset stats to the new format using this command:
+                python lerobot/common/datasets/v21/convert_dataset_v20_to_v21.py --repo-id={self.repo_id} """
             )
             self.stats = load_stats(self.root)
             self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
