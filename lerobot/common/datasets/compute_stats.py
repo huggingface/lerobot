@@ -27,7 +27,7 @@ def estimate_num_samples(
 
     For default arguments, we have:
     - from 1 to ~500, num_samples=100
-    - at 1000, num_samples=178
+    - at 1000, num_samples=177
     - at 2000, num_samples=299
     - at 5000, num_samples=594
     - at 10000, num_samples=1000
@@ -89,6 +89,51 @@ def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], featu
     return ep_stats
 
 
+def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
+    for i in range(len(stats_list)):
+        for fkey in stats_list[i]:
+            for k, v in stats_list[i][fkey].items():
+                if not isinstance(v, np.ndarray):
+                    raise ValueError(
+                        f"Stats must be composed of numpy array, but key '{k}' of feature '{fkey}' is of type '{type(v)}' instead."
+                    )
+                if v.ndim == 0:
+                    raise ValueError("Number of dimensions must be at least 1, and is 0 instead.")
+                if k == "count" and v.shape != (1,):
+                    raise ValueError(f"Shape of 'count' must be (1), but is {v.shape} instead.")
+                if "image" in fkey and k != "count" and v.shape != (3, 1, 1):
+                    raise ValueError(f"Shape of '{k}' must be (3,1,1), but is {v.shape} instead.")
+
+
+def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, dict[str, np.ndarray]]:
+    """Aggregates stats for a single feature."""
+    means = np.stack([s["mean"] for s in stats_ft_list])
+    variances = np.stack([s["std"] ** 2 for s in stats_ft_list])
+    counts = np.stack([s["count"] for s in stats_ft_list])
+    total_count = counts.sum(axis=0)
+
+    # Prepare weighted mean by matching number of dimensions
+    while counts.ndim < means.ndim:
+        counts = np.expand_dims(counts, axis=-1)
+
+    # Compute the weighted mean
+    weighted_means = means * counts
+    total_mean = weighted_means.sum(axis=0) / total_count
+
+    # Compute the variance using the parallel algorithm
+    delta_means = means - total_mean
+    weighted_variances = (variances + delta_means**2) * counts
+    total_variance = weighted_variances.sum(axis=0) / total_count
+
+    return {
+        "min": np.min(np.stack([s["min"] for s in stats_ft_list]), axis=0),
+        "max": np.max(np.stack([s["max"] for s in stats_ft_list]), axis=0),
+        "mean": total_mean,
+        "std": np.sqrt(total_variance),
+        "count": total_count,
+    }
+
+
 def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np.ndarray]]:
     """Aggregate stats from multiple compute_stats outputs into a single set of stats.
 
@@ -101,58 +146,13 @@ def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np
     - new_std = (std of all data)
     """
 
-    def _assert_type_and_shape(stats_list):
-        for i in range(len(stats_list)):
-            for fkey in stats_list[i]:
-                for k, v in stats_list[i][fkey].items():
-                    if not isinstance(v, np.ndarray):
-                        raise ValueError(
-                            f"Stats must be composed of numpy array, but key '{k}' of feature '{fkey}' is of type '{type(v)}' instead."
-                        )
-                    if v.ndim == 0:
-                        raise ValueError("Number of dimensions must be at least 1, and is 0 instead.")
-                    if k == "count" and v.shape != (1,):
-                        raise ValueError(f"Shape of 'count' must be (1), but is {v.shape} instead.")
-                    if "image" in fkey and k != "count" and v.shape != (3, 1, 1):
-                        raise ValueError(f"Shape of '{k}' must be (3,1,1), but is {v.shape} instead.")
-
     _assert_type_and_shape(stats_list)
 
     data_keys = {key for stats in stats_list for key in stats}
     aggregated_stats = {key: {} for key in data_keys}
 
     for key in data_keys:
-        # Collect stats for the current key from all datasets where it exists
         stats_with_key = [stats[key] for stats in stats_list if key in stats]
-
-        # Aggregate 'min' and 'max' using np.minimum and np.maximum
-        aggregated_stats[key]["min"] = np.min(np.stack([s["min"] for s in stats_with_key]), axis=0)
-        aggregated_stats[key]["max"] = np.max(np.stack([s["max"] for s in stats_with_key]), axis=0)
-
-        # Extract means, variances (std^2), and counts
-        means = np.stack([s["mean"] for s in stats_with_key])
-        variances = np.stack([s["std"] ** 2 for s in stats_with_key])
-        counts = np.stack([s["count"] for s in stats_with_key])
-
-        # Compute total counts
-        total_count = counts.sum(axis=0)
-
-        # Prepare weighted mean by matching number of dimensions
-        while counts.ndim < means.ndim:
-            counts = np.expand_dims(counts, axis=-1)
-
-        # Compute the weighted mean
-        weighted_means = means * counts
-        total_mean = weighted_means.sum(axis=0) / total_count
-
-        # Compute the variance using the parallel algorithm
-        delta_means = means - total_mean
-        weighted_variances = (variances + delta_means**2) * counts
-        total_variance = weighted_variances.sum(axis=0) / total_count
-
-        # Store the aggregated stats
-        aggregated_stats[key]["mean"] = total_mean
-        aggregated_stats[key]["std"] = np.sqrt(total_variance)
-        aggregated_stats[key]["count"] = total_count
+        aggregated_stats[key] = aggregate_feature_stats(stats_with_key)
 
     return aggregated_stats
