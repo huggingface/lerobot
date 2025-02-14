@@ -7,7 +7,7 @@ description = "Abseil Python Common Libraries, see https://github.com/abseil/abs
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "(extra == \"xarm\" or extra == \"aloha\") and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(extra == \"xarm\" or extra == \"aloha\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\")"
 files = [
     {file = "absl-py-2.1.0.tar.gz", hash = "sha256:7820790efbb316739cde8b4e19357243fc3608a152024288513dd968d7d959ff"},
     {file = "absl_py-2.1.0-py3-none-any.whl", hash = "sha256:526a04eadab8b4ee719ce68f204172ead1027549089702d99b9059f129ff1308"},
@@ -282,6 +282,29 @@ dev = ["cogapp", "pre-commit", "pytest", "wheel"]
 tests = ["pytest"]
 
 [[package]]
+name = "arm-pytorch-utilities"
+version = "0.4.3"
+description = "Utilities for working with pytorch"
+optional = true
+python-versions = ">=3.6"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "arm_pytorch_utilities-0.4.3-py3-none-any.whl", hash = "sha256:39b0e1080c66614d446a25219787e656fee142817d8aac2d9eb153239707fbd1"},
+    {file = "arm_pytorch_utilities-0.4.3.tar.gz", hash = "sha256:508125d6610aac7b93596a2b546f458d3c31fcc4c9ae87869269a3a8aa53f7a8"},
+]
+
+[package.dependencies]
+matplotlib = "*"
+numpy = "*"
+pytorch-seed = "*"
+scipy = "*"
+torch = "*"
+
+[package.extras]
+test = ["pytest"]
+
+[[package]]
 name = "arrow"
 version = "1.3.0"
 description = "Better dates & times for Python"
@@ -321,7 +344,7 @@ description = "Annotate AST trees with source code positions"
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "asttokens-2.4.1-py2.py3-none-any.whl", hash = "sha256:051ed49c3dcae8913ea7cd08e46a606dba30b79993209636c4875bc1d637bc24"},
     {file = "asttokens-2.4.1.tar.gz", hash = "sha256:b03869718ba9a6eb027e134bfdf69f38a236d681c83c160d510768af11254ba0"},
@@ -779,7 +802,7 @@ description = "Cross-platform colored terminal text."
 optional = false
 python-versions = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,!=3.5.*,!=3.6.*,>=2.7"
 groups = ["main"]
-markers = "(extra == \"test\" or platform_system == \"Windows\" or sys_platform == \"linux\") and (extra == \"test\" or platform_system != \"Darwin\" or sys_platform == \"linux\" or sys_platform == \"win32\") and (extra == \"test\" or extra == \"stretch\" or platform_system == \"Windows\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (sys_platform == \"win32\" or sys_platform == \"linux\" or platform_system == \"Windows\") and (sys_platform == \"win32\" or extra == \"stretch\" or platform_system == \"Windows\")"
+markers = "(extra == \"test\" or extra == \"mani-skill\" or platform_system == \"Windows\" or sys_platform == \"linux\") and (extra == \"test\" or platform_system != \"Darwin\" or extra == \"mani-skill\" or sys_platform == \"linux\" or sys_platform == \"win32\") and (extra == \"test\" or extra == \"mani-skill\" or extra == \"stretch\" or platform_system == \"Windows\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (sys_platform == \"win32\" or sys_platform == \"linux\" or platform_system == \"Windows\") and (sys_platform == \"win32\" or extra == \"stretch\" or platform_system == \"Windows\")"
 files = [
     {file = "colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"},
     {file = "colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"},
@@ -828,7 +851,7 @@ description = "Python library for calculating contours of 2D quadrilateral grids
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "contourpy-1.3.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:880ea32e5c774634f9fcd46504bf9f080a41ad855f4fef54f5380f5133d343c7"},
     {file = "contourpy-1.3.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:76c905ef940a4474a6289c71d53122a4f77766eef23c03cd57016ce19d0f7b42"},
@@ -993,7 +1016,7 @@ description = "Composable style cycles"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "cycler-0.12.1-py3-none-any.whl", hash = "sha256:85cef7cff222d8644161529808465972e51340599459b8ac3ccbac5a854e0d30"},
     {file = "cycler-0.12.1.tar.gz", hash = "sha256:88bb128f02ba341da8ef447245a9e138fae777f6a23943da4540077d3601eb1c"},
@@ -1002,6 +1025,22 @@ files = [
 [package.extras]
 docs = ["ipython", "matplotlib", "numpydoc", "sphinx"]
 tests = ["pytest", "pytest-cov", "pytest-xdist"]
+
+[[package]]
+name = "dacite"
+version = "1.9.2"
+description = "Simple creation of data classes from dictionaries."
+optional = true
+python-versions = ">=3.7"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "dacite-1.9.2-py3-none-any.whl", hash = "sha256:053f7c3f5128ca2e9aceb66892b1a3c8936d02c686e707bee96e19deef4bc4a0"},
+    {file = "dacite-1.9.2.tar.gz", hash = "sha256:6ccc3b299727c7aa17582f0021f6ae14d5de47c7227932c47fec4cdfefd26f09"},
+]
+
+[package.extras]
+dev = ["black", "coveralls", "mypy", "pre-commit", "pylint", "pytest (>=5)", "pytest-benchmark", "pytest-cov"]
 
 [[package]]
 name = "dash"
@@ -1158,7 +1197,7 @@ description = "Decorators for Humans"
 optional = true
 python-versions = ">=3.5"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "decorator-5.1.1-py3-none-any.whl", hash = "sha256:b8c3f85900b9dc423225913c5aace94729fe1fa9763b38939a95226f02d37186"},
     {file = "decorator-5.1.1.tar.gz", hash = "sha256:637996211036b6385ef91435e4fae22989472f9d571faba8927ba8253acbc330"},
@@ -1384,6 +1423,19 @@ files = [
 six = ">=1.4.0"
 
 [[package]]
+name = "docstring-parser"
+version = "0.16"
+description = "Parse Python docstrings in reST, Google and Numpydoc format"
+optional = true
+python-versions = ">=3.6,<4.0"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "docstring_parser-0.16-py3-none-any.whl", hash = "sha256:bf0a1387354d3691d102edef7ec124f219ef639982d096e26e3b60aeffa90637"},
+    {file = "docstring_parser-0.16.tar.gz", hash = "sha256:538beabd0af1e2db0146b6bd3caa526c35a34d61af9fd2887f3a8a27a739aa6e"},
+]
+
+[[package]]
 name = "dora-rs"
 version = "0.3.6"
 description = "`dora` goal is to be a low latency, composable, and distributed data flow."
@@ -1398,6 +1450,10 @@ files = [
     {file = "dora_rs-0.3.6-cp37-abi3-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:78656d3ae1282a142a5fed410ec3a6f725fdf8d9f9192ed673e336ea3b083e12"},
     {file = "dora_rs-0.3.6-cp37-abi3-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:681e22c8ecb3b48d11cb9019f8a32d4ae1e353e20d4ce3a0f0eedd0ccbd95e5f"},
     {file = "dora_rs-0.3.6-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4598572bab6f726ec41fabb43bf0f7e3cf8082ea0f6f8f4e57845a6c919f31b3"},
+    {file = "dora_rs-0.3.6-cp37-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:157fc1fed50946646f09df75c6d52198735a5973e53d252199bbb1c65e1594d2"},
+    {file = "dora_rs-0.3.6-cp37-abi3-manylinux_2_28_armv7l.whl", hash = "sha256:7ae2724c181be10692c24fb8d9ce2a99a9afc57237332c3658e2ea6f4f33c091"},
+    {file = "dora_rs-0.3.6-cp37-abi3-manylinux_2_28_i686.whl", hash = "sha256:3d324835f292edd81b962f8c0df44f7f47c0a6f8fe6f7d081951aeb1f5ba57d2"},
+    {file = "dora_rs-0.3.6-cp37-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:474c087b5e584293685a7d4837165b2ead96dc74fb435ae50d5fa0ac168a0de0"},
     {file = "dora_rs-0.3.6-cp37-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:297350f05f5f87a0bf647a1e5b4446728e5f800788c6bb28b462bcd167f1de7f"},
     {file = "dora_rs-0.3.6-cp37-abi3-musllinux_1_2_i686.whl", hash = "sha256:b1870a8e30f0ac298d17fd546224348d13a648bcfa0cbc51dba7e5136c1af928"},
     {file = "dora_rs-0.3.6-cp37-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:182a189212d41be0c960fd3299bf6731af2e771f8858cfb1be7ebcc17d60a254"},
@@ -1470,7 +1526,7 @@ description = "Backport of PEP 654 (exception groups)"
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "python_version < \"3.11\" and (extra == \"test\" or sys_platform == \"linux\") and (extra == \"test\" or extra == \"stretch\")"
+markers = "python_version < \"3.11\" and (extra == \"test\" or sys_platform == \"linux\" or extra == \"mani-skill\") and (extra == \"test\" or extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "exceptiongroup-1.2.2-py3-none-any.whl", hash = "sha256:3111b9d131c238bec2f8f516e123e14ba243563fb135d3fe885990585aa7795b"},
     {file = "exceptiongroup-1.2.2.tar.gz", hash = "sha256:47c2edf7c6738fafb49fd34290706d1a1a2f4d1c6df275526b62cbb4aa5393cc"},
@@ -1486,7 +1542,7 @@ description = "Get the currently executing AST node of a frame, and other inform
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "executing-2.1.0-py2.py3-none-any.whl", hash = "sha256:8d63781349375b5ebccc3142f4b30350c0cd9c79f921cde38be2be4637e98eaf"},
     {file = "executing-2.1.0.tar.gz", hash = "sha256:8ea27ddd260da8150fa5a708269c4a10e76161e2496ec3e587da9e3c0fe4b9ab"},
@@ -1506,6 +1562,22 @@ markers = "python_version >= \"3.12\" or python_version <= \"3.11\""
 files = [
     {file = "Farama-Notifications-0.0.4.tar.gz", hash = "sha256:13fceff2d14314cf80703c8266462ebf3733c7d165336eee998fc58e545efd18"},
     {file = "Farama_Notifications-0.0.4-py3-none-any.whl", hash = "sha256:14de931035a41961f7c056361dc7f980762a143d05791ef5794a751a2caf05ae"},
+]
+
+[[package]]
+name = "fast-kinematics"
+version = "0.2.2"
+description = "A fast kinematics library for robotics"
+optional = true
+python-versions = ">=3.8"
+groups = ["main"]
+markers = "extra == \"mani-skill\" and platform_system == \"Linux\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+files = [
+    {file = "fast_kinematics-0.2.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:908f7ec94dfd947028170c0a37b326b3dde1b8c0a14417646e874f3e81b2cd71"},
+    {file = "fast_kinematics-0.2.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d2e24e736944aa7723f7445c8630d421eb61a6fcd2c23822e9bf4c6bc2d5bf69"},
+    {file = "fast_kinematics-0.2.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0500a63494e69d1e51d9770f4fa429e1d50dbbe27e5c448f8daca32bc4e03bb6"},
+    {file = "fast_kinematics-0.2.2-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8c31be181899b0ad2600f00899810496a829b54819cc59d012c32ad0d0b32854"},
+    {file = "fast_kinematics-0.2.2-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c01274f03fda3660c45816a86a5db820ec3d2ebc19abfac66a49451701a308f4"},
 ]
 
 [[package]]
@@ -1601,7 +1673,7 @@ description = "Tools to manipulate font files"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "fonttools-4.54.1-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:7ed7ee041ff7b34cc62f07545e55e1468808691dddfd315d51dd82a6b37ddef2"},
     {file = "fonttools-4.54.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:41bb0b250c8132b2fcac148e2e9198e62ff06f3cc472065dff839327945c5882"},
@@ -2776,13 +2848,14 @@ description = "IPython: Productive Interactive Computing"
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "ipython-8.28.0-py3-none-any.whl", hash = "sha256:530ef1e7bb693724d3cdc37287c80b07ad9b25986c007a53aa1857272dac3f35"},
     {file = "ipython-8.28.0.tar.gz", hash = "sha256:0d0d15ca1e01faeb868ef56bc7ee5a0de5bd66885735682e8a322ae289a13d1a"},
 ]
 
 [package.dependencies]
+colorama = {version = "*", markers = "sys_platform == \"win32\""}
 decorator = "*"
 exceptiongroup = {version = "*", markers = "python_version < \"3.11\""}
 jedi = ">=0.16"
@@ -2867,7 +2940,7 @@ description = "An autocompletion tool for Python that can be used for text edito
 optional = true
 python-versions = ">=3.6"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "jedi-0.19.1-py2.py3-none-any.whl", hash = "sha256:e983c654fe5c02867aef4cdfce5a2fbb4a50adc0af145f70504238f18ef5e7e0"},
     {file = "jedi-0.19.1.tar.gz", hash = "sha256:cf0496f3651bc65d7174ac1b7d043eff454892c708a87d1b683e57b569927ffd"},
@@ -3279,7 +3352,7 @@ description = "A fast implementation of the Cassowary constraint solver"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "kiwisolver-1.4.7-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:8a9c83f75223d5e48b0bc9cb1bf2776cf01563e00ade8775ffe13b0b6e1af3a6"},
     {file = "kiwisolver-1.4.7-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:58370b1ffbd35407444d57057b57da5d6549d2d854fa30249771775c63b5fe17"},
@@ -3526,7 +3599,7 @@ description = "Powerful and Pythonic XML processing library combining libxml2/li
 optional = true
 python-versions = ">=3.6"
 groups = ["main"]
-markers = "(sys_platform == \"linux\" or extra == \"aloha\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"aloha\")"
+markers = "(sys_platform == \"linux\" or extra == \"aloha\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"aloha\" or extra == \"mani-skill\")"
 files = [
     {file = "lxml-5.3.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:dd36439be765e2dde7660212b5275641edbc813e7b24668831a5c8ac91180656"},
     {file = "lxml-5.3.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:ae5fe5c4b525aa82b8076c1a59d642c17b6e8739ecf852522c6321852178119d"},
@@ -3676,13 +3749,55 @@ htmlsoup = ["BeautifulSoup4"]
 source = ["Cython (>=3.0.11)"]
 
 [[package]]
+name = "mani-skill"
+version = "3.0.0b18"
+description = "ManiSkill3: A Unified Benchmark for Generalizable Manipulation Skills"
+optional = true
+python-versions = ">=3.9"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "mani_skill-3.0.0b18-py3-none-any.whl", hash = "sha256:bf968fc391e5acfc67cd1fb4fbaade6e796d088961500f28cc5ecc1de33618e6"},
+    {file = "mani_skill-3.0.0b18.tar.gz", hash = "sha256:75a2cbfa8539b2f5d0422179a44b0d843ffe570c6e840331927ff2e8369acd07"},
+]
+
+[package.dependencies]
+dacite = "*"
+fast_kinematics = {version = "0.2.2", markers = "platform_system == \"Linux\""}
+GitPython = "*"
+gymnasium = "0.29.1"
+h5py = "*"
+huggingface_hub = "*"
+imageio = [
+    {version = "*"},
+    {version = "*", extras = ["ffmpeg"]},
+]
+IPython = "*"
+mplib = {version = "0.1.1", markers = "platform_system == \"Linux\""}
+numpy = ">=1.22,<2.0.0"
+pynvml = "*"
+pytorch_kinematics = "0.7.4"
+pyyaml = "*"
+sapien = "3.0.0.b1"
+scipy = "*"
+tabulate = "*"
+tqdm = "*"
+transforms3d = "*"
+trimesh = "*"
+tyro = ">=0.8.5"
+
+[package.extras]
+dev = ["black", "build", "isort", "pre-commit", "pynvml", "pytest", "pytest-forked", "pytest-xdist[psutil]", "stable_baselines3", "twine"]
+docs = ["myst-parser", "pydata_sphinx_theme", "sphinx (==6.2.1)", "sphinx-autobuild", "sphinx-autodoc-typehints", "sphinx-subfigure", "sphinx-togglebutton", "sphinx_copybutton", "sphinx_design", "sphinxcontrib-video", "sphinxcontrib.spelling"]
+
+[[package]]
 name = "markdown-it-py"
 version = "3.0.0"
 description = "Python port of markdown-it. Markdown parsing, done right!"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "markdown-it-py-3.0.0.tar.gz", hash = "sha256:e3f60a94fa066dc52ec76661e37c851cb232d92f9886b15cb560aaada2df8feb"},
     {file = "markdown_it_py-3.0.0-py3-none-any.whl", hash = "sha256:355216845c60bd96232cd8d8c40e8f9765cc86f46880e43a8fd22dc1a1a8cab1"},
@@ -3780,7 +3895,7 @@ description = "Python plotting package"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "matplotlib-3.9.2-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:9d78bbc0cbc891ad55b4f39a48c22182e9bdaea7fc0e5dbd364f49f729ca1bbb"},
     {file = "matplotlib-3.9.2-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:c375cc72229614632c87355366bdf2570c2dac01ac66b8ad048d2dabadf2d0d4"},
@@ -3845,7 +3960,7 @@ description = "Inline Matplotlib backend for Jupyter"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "matplotlib_inline-0.1.7-py3-none-any.whl", hash = "sha256:df192d39a4ff8f21b1895d72e6a13f5fcc5099f00fa84384e0ea28c2cc0653ca"},
     {file = "matplotlib_inline-0.1.7.tar.gz", hash = "sha256:8423b23ec666be3d16e16b60bdd8ac4e86e840ebd1dd11a30b9f117f2fa0ab90"},
@@ -3861,7 +3976,7 @@ description = "Markdown URL utilities"
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"},
     {file = "mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba"},
@@ -3899,6 +4014,28 @@ files = [
     {file = "mistune-3.0.2-py3-none-any.whl", hash = "sha256:71481854c30fdbc938963d3605b72501f5c10a9320ecd412c121c163a1c7d205"},
     {file = "mistune-3.0.2.tar.gz", hash = "sha256:fc7f93ded930c92394ef2cb6f04a8aabab4117a91449e72dcc8dfa646a508be8"},
 ]
+
+[[package]]
+name = "mplib"
+version = "0.1.1"
+description = "A lightweight motion planning library"
+optional = true
+python-versions = ">=3.7"
+groups = ["main"]
+markers = "extra == \"mani-skill\" and platform_system == \"Linux\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+files = [
+    {file = "mplib-0.1.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3e320ec9e77b19ada2d4ae854fac16938916aaedbed3822f4e698adbcdb6a3e6"},
+    {file = "mplib-0.1.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:06c045092eb03c376cc75abc7c82fa583dc10757b9f0b6e863627aafe14d6d95"},
+    {file = "mplib-0.1.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3ee54fe2528bd468094b8344977dee351332d7cddafb6f42ffa1c288df889694"},
+    {file = "mplib-0.1.1-cp37-cp37m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3035db7b16ffca685b547fbd56cffa3f93cf4ce63c9348f16c5c11d998cb1367"},
+    {file = "mplib-0.1.1-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:064f769117d7b7503a9c69c99c5f1b5b061bb4bd1d6c5e2f4f920a095e7e9b11"},
+    {file = "mplib-0.1.1-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9a1cd6754421cd1274734bc8baa33b009aba55059869796592957c0a696e675f"},
+]
+
+[package.dependencies]
+numpy = "*"
+toppra = ">=0.4.0"
+transforms3d = ">=0.3.1"
 
 [[package]]
 name = "mpmath"
@@ -4552,6 +4689,19 @@ files = [
 nvidia-nvjitlink-cu12 = "*"
 
 [[package]]
+name = "nvidia-ml-py"
+version = "12.570.86"
+description = "Python Bindings for the NVIDIA Management Library"
+optional = true
+python-versions = "*"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "nvidia_ml_py-12.570.86-py3-none-any.whl", hash = "sha256:58907de35a845abd13dcb227f18298f3b5dd94a72d04c9e594e77711e95c0b51"},
+    {file = "nvidia_ml_py-12.570.86.tar.gz", hash = "sha256:0508d4a0c7b6d015cf574530b95a62ed4fc89da3b8b47e1aefe6777db170ec8b"},
+]
+
+[[package]]
 name = "nvidia-nccl-cu12"
 version = "2.20.5"
 description = "NVIDIA Collective Communication Library (NCCL) Runtime"
@@ -4845,7 +4995,7 @@ description = "A Python Parser"
 optional = true
 python-versions = ">=3.6"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "parso-0.8.4-py2.py3-none-any.whl", hash = "sha256:a418670a20291dacd2dddc80c377c5c3791378ee1e8d12bffc35420643d43f18"},
     {file = "parso-0.8.4.tar.gz", hash = "sha256:eb3a7b58240fb99099a345571deecc0f9540ea5f4dd2fe14c2a99d6b281ab92d"},
@@ -4902,7 +5052,7 @@ description = "Pexpect allows easy control of interactive console applications."
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(extra == \"mani-skill\" or sys_platform == \"linux\") and (sys_platform != \"win32\" and sys_platform != \"emscripten\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "pexpect-4.9.0-py2.py3-none-any.whl", hash = "sha256:7236d1e080e4936be2dc3e326cec0af72acf9212a7e1d060210e70a47e253523"},
     {file = "pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f"},
@@ -5316,7 +5466,7 @@ description = "Run a subprocess in a pseudo terminal"
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(extra == \"mani-skill\" or sys_platform == \"linux\") and (sys_platform != \"win32\" and sys_platform != \"emscripten\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "ptyprocess-0.7.0-py2.py3-none-any.whl", hash = "sha256:4b41f3967fce3af57cc7e94b888626c18bf37a083e3651ca8feeb66d492fef35"},
     {file = "ptyprocess-0.7.0.tar.gz", hash = "sha256:5c5d0a3b48ceee0b48485e0c26037c0acd7d29765ca3fbb5cb3831d347423220"},
@@ -5329,7 +5479,7 @@ description = "Safely evaluate AST nodes without side effects"
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "pure_eval-0.2.3-py3-none-any.whl", hash = "sha256:1db8e35b67b3d218d818ae653e27f06c3aa420901fa7b081ca98cbedc874e0d0"},
     {file = "pure_eval-0.2.3.tar.gz", hash = "sha256:5f4e983f40564c576c7c8635ae88db5956bb2229d7e9237d03b3c0b0190eaf42"},
@@ -5406,6 +5556,8 @@ files = [
     {file = "PyAudio-0.2.14-cp311-cp311-win_amd64.whl", hash = "sha256:bbeb01d36a2f472ae5ee5e1451cacc42112986abe622f735bb870a5db77cf903"},
     {file = "PyAudio-0.2.14-cp312-cp312-win32.whl", hash = "sha256:5fce4bcdd2e0e8c063d835dbe2860dac46437506af509353c7f8114d4bacbd5b"},
     {file = "PyAudio-0.2.14-cp312-cp312-win_amd64.whl", hash = "sha256:12f2f1ba04e06ff95d80700a78967897a489c05e093e3bffa05a84ed9c0a7fa3"},
+    {file = "PyAudio-0.2.14-cp313-cp313-win32.whl", hash = "sha256:95328285b4dab57ea8c52a4a996cb52be6d629353315be5bfda403d15932a497"},
+    {file = "PyAudio-0.2.14-cp313-cp313-win_amd64.whl", hash = "sha256:692d8c1446f52ed2662120bcd9ddcb5aa2b71f38bda31e58b19fb4672fffba69"},
     {file = "PyAudio-0.2.14-cp38-cp38-win32.whl", hash = "sha256:858caf35b05c26d8fc62f1efa2e8f53d5fa1a01164842bd622f70ddc41f55000"},
     {file = "PyAudio-0.2.14-cp38-cp38-win_amd64.whl", hash = "sha256:2dac0d6d675fe7e181ba88f2de88d321059b69abd52e3f4934a8878e03a7a074"},
     {file = "PyAudio-0.2.14-cp39-cp39-win32.whl", hash = "sha256:f745109634a7c19fa4d6b8b7d6967c3123d988c9ade0cd35d4295ee1acdb53e9"},
@@ -5577,7 +5729,7 @@ description = "Pygments is a syntax highlighting package written in Python."
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "pygments-2.18.0-py3-none-any.whl", hash = "sha256:b8e6aca0523f3ab76fee51799c488e38782ac06eafcf95e7ba832985c8e7b13a"},
     {file = "pygments-2.18.0.tar.gz", hash = "sha256:786ff802f32e91311bff3889f6e9a86e81505fe99f2735bb6d60ae0c5004f199"},
@@ -5679,6 +5831,25 @@ pyobjc-framework-ApplicationServices = {version = ">=8.0", markers = "sys_platfo
 pyobjc-framework-Quartz = {version = ">=8.0", markers = "sys_platform == \"darwin\""}
 python-xlib = {version = ">=0.17", markers = "sys_platform in \"linux\""}
 six = "*"
+
+[[package]]
+name = "pynvml"
+version = "12.0.0"
+description = "Python utilities for the NVIDIA Management Library"
+optional = true
+python-versions = ">=3.9"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "pynvml-12.0.0-py3-none-any.whl", hash = "sha256:fdff84b62a27dbe98e08e1a647eb77342bef1aebe0878bcd15e99a83fcbecb9e"},
+    {file = "pynvml-12.0.0.tar.gz", hash = "sha256:299ce2451a6a17e6822d6faee750103e25b415f06f59abb8db65d30f794166f5"},
+]
+
+[package.dependencies]
+nvidia-ml-py = ">=12.0.0,<13.0.0a0"
+
+[package.extras]
+test = ["pytest (>=3.6)", "pytest-cov", "pytest-runner"]
 
 [[package]]
 name = "pyobjc-core"
@@ -5813,7 +5984,7 @@ description = "pyparsing module - Classes and methods to define and execute pars
 optional = true
 python-versions = ">=3.6.8"
 groups = ["main"]
-markers = "(sys_platform == \"linux\" or extra == \"aloha\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"aloha\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\" or extra == \"aloha\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\" or extra == \"aloha\")"
 files = [
     {file = "pyparsing-3.1.4-py3-none-any.whl", hash = "sha256:a6a7ee4235a3f944aa1fa2249307708f893fe5717dc603503c6c7969c070fb7c"},
     {file = "pyparsing-3.1.4.tar.gz", hash = "sha256:f86ec8d1a83f11977c9a6ea7598e8c27fc5cddfa5b07ea2241edbbde1d7bc032"},
@@ -5821,6 +5992,18 @@ files = [
 
 [package.extras]
 diagrams = ["jinja2", "railroad-diagrams"]
+
+[[package]]
+name = "pyperclip"
+version = "1.9.0"
+description = "A cross-platform clipboard module for Python. (Only handles plain text for now.)"
+optional = true
+python-versions = "*"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "pyperclip-1.9.0.tar.gz", hash = "sha256:b7de0142ddc81bfc5c7507eea19da920b92252b548b96186caf94a5e2527d310"},
+]
 
 [[package]]
 name = "pyrealsense2"
@@ -6048,6 +6231,52 @@ files = [
 
 [package.dependencies]
 six = ">=1.10.0"
+
+[[package]]
+name = "pytorch-kinematics"
+version = "0.7.4"
+description = "Robot kinematics implemented in pytorch"
+optional = true
+python-versions = ">=3.6"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "pytorch_kinematics-0.7.4-py3-none-any.whl", hash = "sha256:753fb81091d0692d763fef960305f6a0d5a343ec714da8d630f8479ab04f47aa"},
+    {file = "pytorch_kinematics-0.7.4.tar.gz", hash = "sha256:34d45b51c1ead384b0a420a49d5bb92c2d838aa9a76cfc239369485bdcd65bd1"},
+]
+
+[package.dependencies]
+absl-py = "*"
+arm-pytorch-utilities = "*"
+lxml = "*"
+matplotlib = "*"
+numpy = "<2"
+pytorch-seed = "*"
+pyyaml = "*"
+torch = "*"
+
+[package.extras]
+test = ["pybullet", "pytest"]
+
+[[package]]
+name = "pytorch-seed"
+version = "0.2.0"
+description = "RNG seeding and context management for pytorch"
+optional = true
+python-versions = ">=3.6"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "pytorch_seed-0.2.0-py3-none-any.whl", hash = "sha256:50a1ee2f62e55f88c20069849aa12265a007aeaea6893f3d23ad4e40173c5c89"},
+    {file = "pytorch_seed-0.2.0.tar.gz", hash = "sha256:096edd3404f8a00f3df2bab41024945806baf1f64b05678c82373b780458e1a3"},
+]
+
+[package.dependencies]
+numpy = "*"
+torch = "*"
+
+[package.extras]
+test = ["pytest"]
 
 [[package]]
 name = "pytz"
@@ -6503,7 +6732,7 @@ description = "Render rich text, tables, progress bars, syntax highlighting, mar
 optional = true
 python-versions = ">=3.8.0"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "rich-13.9.2-py3-none-any.whl", hash = "sha256:8c82a3d3f8dcfe9e734771313e606b39d8247bb6b826e196f4914b333b743cf1"},
     {file = "rich-13.9.2.tar.gz", hash = "sha256:51a2c62057461aaf7152b4d611168f93a9fc73068f8ded2790f29fe2b5366d0c"},
@@ -6781,6 +7010,36 @@ testing = ["h5py (>=3.7.0)", "huggingface-hub (>=0.12.1)", "hypothesis (>=6.70.2
 torch = ["safetensors[numpy]", "torch (>=1.10)"]
 
 [[package]]
+name = "sapien"
+version = "3.0.0b1"
+description = "['SAPIEN: A SimulAted Parted based Interactive ENvironment']"
+optional = true
+python-versions = ">=3.7"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "sapien-3.0.0b1-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:9763215d52374e48db16d8c2e89fb385a5625690c0c88cf2c636c1abe99aef6c"},
+    {file = "sapien-3.0.0b1-cp310-cp310-win_amd64.whl", hash = "sha256:b050bf7c7cbd2d825e0a62a40262de474596bc1df653f8e1aa9fd99aaec42962"},
+    {file = "sapien-3.0.0b1-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:d9497375c9dc26f07b82ba08f347f7ff5df063c057d2744aec0521568ffeb096"},
+    {file = "sapien-3.0.0b1-cp311-cp311-win_amd64.whl", hash = "sha256:6357d3cf6c062cf9a5799252887c37dd29100ecbe8d052566da77b7c4d25d486"},
+    {file = "sapien-3.0.0b1-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:a064c4e3e33140c38464163155942bd710923cc3f9365f78c6ac5d58a97433a1"},
+    {file = "sapien-3.0.0b1-cp312-cp312-win_amd64.whl", hash = "sha256:293ec283ef3f790f13569cff9b54fda92e278bae943e214b7dad4f0579c6bd84"},
+    {file = "sapien-3.0.0b1-cp38-cp38-manylinux2014_x86_64.whl", hash = "sha256:64bcab386cac14b827356c7d8f77986142e8142d903d6625c1c4a06fd915a550"},
+    {file = "sapien-3.0.0b1-cp38-cp38-win_amd64.whl", hash = "sha256:0f8101a10e6db3a4ca8bf54c197ff5eefcd5e5aa7e74e5f9948c3e379a197702"},
+    {file = "sapien-3.0.0b1-cp39-cp39-manylinux2014_x86_64.whl", hash = "sha256:c77f7a5877dde8edc40bb9faaf5ff9420f064e04bb899b73600cd910d762c18d"},
+    {file = "sapien-3.0.0b1-cp39-cp39-win_amd64.whl", hash = "sha256:28f858831c11c6f9f5c80f873c9de1ff23bd7c14f6477bbf82dbba3b77a4da26"},
+]
+
+[package.dependencies]
+lxml = "*"
+networkx = "*"
+numpy = ">=1.17"
+opencv-python = ">=4.0"
+pyperclip = "*"
+requests = ">=2.22"
+transforms3d = ">=0.3"
+
+[[package]]
 name = "scikit-image"
 version = "0.24.0"
 description = "Image processing in Python"
@@ -6837,7 +7096,7 @@ description = "Fundamental algorithms for scientific computing in Python"
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "(extra == \"pusht\" or extra == \"video-benchmark\" or sys_platform == \"linux\" or extra == \"aloha\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"pusht\" or extra == \"video-benchmark\" or extra == \"stretch\" or extra == \"aloha\")"
+markers = "(extra == \"pusht\" or extra == \"video-benchmark\" or sys_platform == \"linux\" or extra == \"aloha\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"pusht\" or extra == \"video-benchmark\" or extra == \"stretch\" or extra == \"aloha\" or extra == \"mani-skill\")"
 files = [
     {file = "scipy-1.14.1-cp310-cp310-macosx_10_13_x86_64.whl", hash = "sha256:b28d2ca4add7ac16ae8bb6632a3c86e4b9e4d52d3e34267f6e1b0c1f8d87e389"},
     {file = "scipy-1.14.1-cp310-cp310-macosx_12_0_arm64.whl", hash = "sha256:d0d2821003174de06b69e58cef2316a6622b60ee613121199cb2852a873f8cf3"},
@@ -7152,6 +7411,22 @@ docs = ["matplotlib", "numpydoc (==1.1.*)", "sphinx", "sphinx-book-theme", "sphi
 test = ["pytest", "pytest-cov"]
 
 [[package]]
+name = "shtab"
+version = "1.7.1"
+description = "Automagic shell tab completion for Python CLI applications"
+optional = true
+python-versions = ">=3.7"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "shtab-1.7.1-py3-none-any.whl", hash = "sha256:32d3d2ff9022d4c77a62492b6ec875527883891e33c6b479ba4d41a51e259983"},
+    {file = "shtab-1.7.1.tar.gz", hash = "sha256:4e4bcb02eeb82ec45920a5d0add92eac9c9b63b2804c9196c1f1fdc2d039243c"},
+]
+
+[package.extras]
+dev = ["pytest (>=6)", "pytest-cov", "pytest-timeout"]
+
+[[package]]
 name = "six"
 version = "1.16.0"
 description = "Python 2 and 3 compatibility utilities"
@@ -7261,7 +7536,7 @@ description = "Extract data from python stack frames and tracebacks for informat
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "stack_data-0.6.3-py3-none-any.whl", hash = "sha256:d5558e0c25a4cb0853cddad3d77da9891a08cb85dd9f9f91b9f8cd66e511e695"},
     {file = "stack_data-0.6.3.tar.gz", hash = "sha256:836a778de4fec4dcd1dcd89ed8abff8a221f58308462e1c4aa2a3cf30148f0b9"},
@@ -7301,7 +7576,7 @@ description = "Pretty-print tabular data"
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "tabulate-0.9.0-py3-none-any.whl", hash = "sha256:024ca478df22e9340661486f85298cff5f6dcdba14f3813e8830015b9ed1948f"},
     {file = "tabulate-0.9.0.tar.gz", hash = "sha256:0095b12bf5966de529c0feb1fa08671671b3368eec77d7ef7ab114be2c068b3c"},
@@ -7456,6 +7731,38 @@ files = [
     {file = "tomli-2.0.2-py3-none-any.whl", hash = "sha256:2ebe24485c53d303f690b0ec092806a085f07af5a5aa1464f3931eec36caaa38"},
     {file = "tomli-2.0.2.tar.gz", hash = "sha256:d46d457a85337051c36524bc5349dd91b1877838e2979ac5ced3e710ed8a60ed"},
 ]
+
+[[package]]
+name = "toppra"
+version = "0.6.0"
+description = "toppra: time-optimal parametrization of trajectories for robots subject to constraints."
+optional = true
+python-versions = "*"
+groups = ["main"]
+markers = "extra == \"mani-skill\" and platform_system == \"Linux\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+files = [
+    {file = "toppra-0.6.0-cp310-cp310-manylinux_2_5_i686.manylinux1_i686.manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:fdb86ff990b9043649de7421225702be336905631ac63705b346f80474202068"},
+    {file = "toppra-0.6.0-cp310-cp310-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:251acba452e4093e5552048f1a7abd8b77033281889e15420ef7058cd8dc139b"},
+    {file = "toppra-0.6.0-cp36-cp36m-manylinux_2_5_i686.manylinux1_i686.manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:9ebad7f1323d48e971c7c58dda97cb06b2aa97e1b102d4074a6877995c7a4e51"},
+    {file = "toppra-0.6.0-cp36-cp36m-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:8f86b6b9d4f6205a6adb38849a3e81e4de8e4c30a8e60c37c3f7fd4daea6e7e9"},
+    {file = "toppra-0.6.0-cp37-cp37m-manylinux_2_5_i686.manylinux1_i686.manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:fec5a4b8fdbd3b0017425d85c989a4457905c963368f127cefe7a4287c5a9dd4"},
+    {file = "toppra-0.6.0-cp37-cp37m-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:73ac5b0e6d7aa58a59c339afe547adc769964dfceb6b5aa18b3ba958fd1bb01e"},
+    {file = "toppra-0.6.0-cp38-cp38-manylinux_2_5_i686.manylinux1_i686.manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:7aaae509d3dd99b9d3487109a418563988ef422e8cd2027043b9f2d76fea3816"},
+    {file = "toppra-0.6.0-cp38-cp38-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:429e4f40a7676e6ed07b3703ebc14cc0866a8d437c84e6fac77dbfa490a5f484"},
+    {file = "toppra-0.6.0-cp39-cp39-manylinux_2_5_i686.manylinux1_i686.manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:af412ecdeaf6e4cf29fb89d296b3fe5351e61190cb5d9101720bf2dab1387581"},
+    {file = "toppra-0.6.0-cp39-cp39-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:c50713044c7b76e215311100d9a8895940dfb22b779057d83d8710ce940622a9"},
+    {file = "toppra-0.6.0-pp37-pypy37_pp73-manylinux_2_5_i686.manylinux1_i686.manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:02683c04ea64326045ff6ac01a19ab0e9113d7fc22ef98bd60fb6c4ba3666c76"},
+    {file = "toppra-0.6.0-pp37-pypy37_pp73-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:1280ad9988bb224574b36b3af62db14b7d023685f574ea37a9c8a3039e973923"},
+    {file = "toppra-0.6.0.tar.gz", hash = "sha256:7822e802c809ba3bc3525857985c9fd1577d49a95a5531baabb739aa3d7fc5c4"},
+]
+
+[package.dependencies]
+matplotlib = "*"
+numpy = "*"
+scipy = ">0.18"
+
+[package.extras]
+dev = ["PyYAML (<=5.3.1)", "cvxopt", "cvxpy", "cython", "invoke", "ipdb", "ipython", "msgpack (<=1.0.1)", "mypy", "numpy", "pandas", "pylint", "pytest", "strip-hints", "tabulate"]
 
 [[package]]
 name = "torch"
@@ -7634,7 +7941,7 @@ description = "Traitlets Python configuration system"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "traitlets-5.14.3-py3-none-any.whl", hash = "sha256:b74e89e397b1ed28cc831db7aea759ba6640cb3de13090ca145426688ff1ac4f"},
     {file = "traitlets-5.14.3.tar.gz", hash = "sha256:9ed0579d3502c94b4b3732ac120375cda96f923114522847de4b3bb98b96b6b7"},
@@ -7722,7 +8029,7 @@ description = "Functions for 3D coordinate transformations"
 optional = true
 python-versions = ">=3.6"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "transforms3d-0.4.2-py3-none-any.whl", hash = "sha256:1c70399d9e9473ecc23311fd947f727f7c69ed0b063244828c383aa1aefa5941"},
     {file = "transforms3d-0.4.2.tar.gz", hash = "sha256:e8b5df30eaedbee556e81c6938e55aab5365894e47d0a17615d7db7fd2393680"},
@@ -7738,7 +8045,7 @@ description = "Import, export, process, analyze and view triangular meshes."
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and extra == \"stretch\" and (python_version >= \"3.12\" or python_version <= \"3.11\")"
+markers = "(sys_platform == \"linux\" or extra == \"mani-skill\") and (python_version >= \"3.12\" or python_version <= \"3.11\") and (extra == \"stretch\" or extra == \"mani-skill\")"
 files = [
     {file = "trimesh-4.4.7-py3-none-any.whl", hash = "sha256:6df98f3f5b971945b416f567b7ff6ee0c51b70f01b80a16a990fdcceb8dbd114"},
     {file = "trimesh-4.4.7.tar.gz", hash = "sha256:e6619c70c99006d41f175bd5e1ba2c8c3dfdb00c2b41d65059917942e2f6971a"},
@@ -7779,6 +8086,26 @@ tests = ["autopep8", "flake8", "isort", "llnl-hatchet", "numpy", "pytest", "scip
 tutorials = ["matplotlib", "pandas", "tabulate"]
 
 [[package]]
+name = "typeguard"
+version = "4.4.1"
+description = "Run-time type checker for Python"
+optional = true
+python-versions = ">=3.9"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "typeguard-4.4.1-py3-none-any.whl", hash = "sha256:9324ec07a27ec67fc54a9c063020ca4c0ae6abad5e9f0f9804ca59aee68c6e21"},
+    {file = "typeguard-4.4.1.tar.gz", hash = "sha256:0d22a89d00b453b47c49875f42b6601b961757541a2e1e0ef517b6e24213c21b"},
+]
+
+[package.dependencies]
+typing-extensions = ">=4.10.0"
+
+[package.extras]
+doc = ["Sphinx (>=7)", "packaging", "sphinx-autodoc-typehints (>=1.2.0)", "sphinx-rtd-theme (>=1.3.0)"]
+test = ["coverage[toml] (>=7)", "mypy (>=1.2.0)", "pytest (>=7)"]
+
+[[package]]
 name = "types-python-dateutil"
 version = "2.9.0.20241003"
 description = "Typing stubs for python-dateutil"
@@ -7803,6 +8130,30 @@ files = [
     {file = "typing_extensions-4.12.2-py3-none-any.whl", hash = "sha256:04e5ca0351e0f3f85c6853954072df659d0d13fac324d0072316b67d7794700d"},
     {file = "typing_extensions-4.12.2.tar.gz", hash = "sha256:1a7ead55c7e559dd4dee8856e3a88b41225abfe1ce8df57b7c13915fe121ffb8"},
 ]
+
+[[package]]
+name = "tyro"
+version = "0.9.14"
+description = "CLI interfaces & config objects, from types"
+optional = true
+python-versions = ">=3.7"
+groups = ["main"]
+markers = "(python_version >= \"3.12\" or python_version <= \"3.11\") and extra == \"mani-skill\""
+files = [
+    {file = "tyro-0.9.14-py3-none-any.whl", hash = "sha256:043a65306137b72b87f1a3e906874b25d0cf2f36add520d12b82a9c93dc5234c"},
+    {file = "tyro-0.9.14.tar.gz", hash = "sha256:9addf4caaefbe00c2059178151ca003f3ae07b90cc8e777c16f6e5a21ef16ef1"},
+]
+
+[package.dependencies]
+colorama = {version = ">=0.4.0", markers = "platform_system == \"Windows\""}
+docstring-parser = ">=0.15"
+rich = ">=11.1.0"
+shtab = ">=1.5.6"
+typeguard = ">=4.0.0"
+typing-extensions = {version = ">=4.9.0", markers = "python_version >= \"3.8\""}
+
+[package.extras]
+dev = ["attrs (>=21.4.0)", "coverage[toml] (>=6.5.0)", "eval-type-backport (>=0.1.3)", "flax (>=0.6.9)", "mypy (>=1.4.1)", "numpy (>=1.20.0)", "omegaconf (>=2.2.2)", "pydantic (>=2.5.2,!=2.10.0)", "pyright (>=1.1.349,!=1.1.379)", "pytest (>=7.1.2)", "pytest-cov (>=3.0.0)", "pyyaml (>=6.0)", "ruff (>=0.1.13)", "torch (>=1.10.0)"]
 
 [[package]]
 name = "tzdata"
@@ -8365,6 +8716,7 @@ dynamixel = ["dynamixel-sdk", "pynput"]
 feetech = ["feetech-servo-sdk", "pynput"]
 hilserl = ["grpcio", "protobuf", "torchmetrics", "transformers"]
 intelrealsense = ["pyrealsense2"]
+mani-skill = ["mani-skill"]
 pusht = ["gym-pusht"]
 stretch = ["hello-robot-stretch-body", "pynput", "pyrealsense2", "pyrender"]
 test = ["pyserial", "pytest", "pytest-cov"]
@@ -8375,4 +8727,4 @@ xarm = ["gym-xarm"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.13"
-content-hash = "d6b75f0394b2b41a2d7c703fb713373f50f5fde94d4a412b842b9d110f37ad59"
+content-hash = "6170a86166e0bbfa618505bca966b87dec439707c5de339883a49d77edbf8c2c"
