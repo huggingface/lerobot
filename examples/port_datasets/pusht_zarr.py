@@ -180,6 +180,7 @@ def main(raw_dir: Path, repo_id: str, mode: str = "video", push_to_hub: bool = T
                 # Shift reward and success by +1 until the last item of the episode
                 "next.reward": reward[i + (frame_idx < num_frames - 1)],
                 "next.success": success[i + (frame_idx < num_frames - 1)],
+                "task": PUSHT_TASK,
             }
 
             frame["observation.state"] = torch.from_numpy(agent_pos[i])
@@ -191,7 +192,7 @@ def main(raw_dir: Path, repo_id: str, mode: str = "video", push_to_hub: bool = T
 
             dataset.add_frame(frame)
 
-        dataset.save_episode(task=PUSHT_TASK)
+        dataset.save_episode()
 
     dataset.consolidate()
 
