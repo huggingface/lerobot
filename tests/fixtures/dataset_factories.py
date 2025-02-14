@@ -436,7 +436,7 @@ def empty_lerobot_dataset_factory():
         robot: Robot | None = None,
         robot_type: str | None = None,
         features: dict | None = None,
-    ):
+    ) -> LeRobotDataset:
         return LeRobotDataset.create(
             repo_id=repo_id, fps=fps, root=root, robot=robot, robot_type=robot_type, features=features
         )

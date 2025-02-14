@@ -187,9 +187,9 @@ def test_add_frame_wrong_shape_numpy_ndim_0(tmp_path, empty_lerobot_dataset_fact
 def test_add_frame(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
-    dataset.add_frame({"state": torch.randn(1), "task": "dummy"})
+    dataset.add_frame({"state": torch.randn(1), "task": "Dummy task"})
     dataset.save_episode(encode_videos=False)
-    dataset.consolidate(run_compute_stats=False)
+    dataset.consolidate()
 
     assert len(dataset) == 1
     assert dataset[0]["task"] == "Dummy task"
@@ -200,9 +200,9 @@ def test_add_frame(tmp_path, empty_lerobot_dataset_factory):
 def test_add_frame_state_1d(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (2,), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
-    dataset.add_frame({"state": torch.randn(2), "task": "dummy"})
+    dataset.add_frame({"state": torch.randn(2), "task": "Dummy task"})
     dataset.save_episode(encode_videos=False)
-    dataset.consolidate(run_compute_stats=False)
+    dataset.consolidate()
 
     assert dataset[0]["state"].shape == torch.Size([2])
 
@@ -210,9 +210,9 @@ def test_add_frame_state_1d(tmp_path, empty_lerobot_dataset_factory):
 def test_add_frame_state_2d(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (2, 4), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
-    dataset.add_frame({"state": torch.randn(2, 4), "task": "dummy"})
+    dataset.add_frame({"state": torch.randn(2, 4), "task": "Dummy task"})
     dataset.save_episode(encode_videos=False)
-    dataset.consolidate(run_compute_stats=False)
+    dataset.consolidate()
 
     assert dataset[0]["state"].shape == torch.Size([2, 4])
 
@@ -220,9 +220,9 @@ def test_add_frame_state_2d(tmp_path, empty_lerobot_dataset_factory):
 def test_add_frame_state_3d(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (2, 4, 3), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
-    dataset.add_frame({"state": torch.randn(2, 4, 3), "task": "dummy"})
+    dataset.add_frame({"state": torch.randn(2, 4, 3), "task": "Dummy task"})
     dataset.save_episode(encode_videos=False)
-    dataset.consolidate(run_compute_stats=False)
+    dataset.consolidate()
 
     assert dataset[0]["state"].shape == torch.Size([2, 4, 3])
 
@@ -230,9 +230,9 @@ def test_add_frame_state_3d(tmp_path, empty_lerobot_dataset_factory):
 def test_add_frame_state_4d(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (2, 4, 3, 5), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
-    dataset.add_frame({"state": torch.randn(2, 4, 3, 5), "task": "dummy"})
+    dataset.add_frame({"state": torch.randn(2, 4, 3, 5), "task": "Dummy task"})
     dataset.save_episode(encode_videos=False)
-    dataset.consolidate(run_compute_stats=False)
+    dataset.consolidate()
 
     assert dataset[0]["state"].shape == torch.Size([2, 4, 3, 5])
 
@@ -240,9 +240,9 @@ def test_add_frame_state_4d(tmp_path, empty_lerobot_dataset_factory):
 def test_add_frame_state_5d(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (2, 4, 3, 5, 1), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
-    dataset.add_frame({"state": torch.randn(2, 4, 3, 5, 1), "task": "dummy"})
+    dataset.add_frame({"state": torch.randn(2, 4, 3, 5, 1), "task": "Dummy task"})
     dataset.save_episode(encode_videos=False)
-    dataset.consolidate(run_compute_stats=False)
+    dataset.consolidate()
 
     assert dataset[0]["state"].shape == torch.Size([2, 4, 3, 5, 1])
 
@@ -252,7 +252,7 @@ def test_add_frame_state_numpy(tmp_path, empty_lerobot_dataset_factory):
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
     dataset.add_frame({"state": np.array([1], dtype=np.float32), "task": "Dummy task"})
     dataset.save_episode(encode_videos=False)
-    dataset.consolidate(run_compute_stats=False)
+    dataset.consolidate()
 
     assert dataset[0]["state"].ndim == 0
 
@@ -262,7 +262,7 @@ def test_add_frame_string(tmp_path, empty_lerobot_dataset_factory):
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
     dataset.add_frame({"caption": "Dummy caption", "task": "Dummy task"})
     dataset.save_episode(encode_videos=False)
-    dataset.consolidate(run_compute_stats=False)
+    dataset.consolidate()
 
     assert dataset[0]["caption"] == "Dummy caption"
 
@@ -298,7 +298,7 @@ def test_add_frame_image(image_dataset):
     dataset = image_dataset
     dataset.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
     dataset.save_episode(encode_videos=False)
-    dataset.consolidate(run_compute_stats=False)
+    dataset.consolidate()
 
     assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
 
@@ -307,7 +307,7 @@ def test_add_frame_image_h_w_c(image_dataset):
     dataset = image_dataset
     dataset.add_frame({"image": np.random.rand(*DUMMY_HWC), "task": "Dummy task"})
     dataset.save_episode(encode_videos=False)
-    dataset.consolidate(run_compute_stats=False)
+    dataset.consolidate()
 
     assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
 
@@ -317,7 +317,7 @@ def test_add_frame_image_uint8(image_dataset):
     image = np.random.randint(0, 256, DUMMY_HWC, dtype=np.uint8)
     dataset.add_frame({"image": image, "task": "Dummy task"})
     dataset.save_episode(encode_videos=False)
-    dataset.consolidate(run_compute_stats=False)
+    dataset.consolidate()
 
     assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
 
@@ -327,7 +327,7 @@ def test_add_frame_image_pil(image_dataset):
     image = np.random.randint(0, 256, DUMMY_HWC, dtype=np.uint8)
     dataset.add_frame({"image": Image.fromarray(image), "task": "Dummy task"})
     dataset.save_episode(encode_videos=False)
-    dataset.consolidate(run_compute_stats=False)
+    dataset.consolidate()
 
     assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
 
