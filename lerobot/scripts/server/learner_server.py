@@ -362,7 +362,7 @@ def add_actor_information_and_train(
             # If cfg.resume, shift the interaction step with the last checkpointed step in order to not break the logging
             interaction_message["Interaction step"] += interaction_step_shift
             logger.log_dict(interaction_message, mode="train", custom_step_key="Interaction step")
-            logging.info(f"Interaction message: {interaction_message}")
+            # logging.info(f"Interaction message: {interaction_message}")
 
         if len(replay_buffer) < cfg.training.online_step_before_learning:
             continue

@@ -5,11 +5,16 @@ fps: 20
 env:
   name: maniskill/pushcube
   task:  PushCube-v1
-  image_size: 64
+  image_size: 128
   control_mode: pd_ee_delta_pose
   state_dim: 25
   action_dim: 7
   fps: ${fps}
   obs: rgb
   render_mode: rgb_array
-  render_size: 64
+  render_size: 128
+  device: cuda
+
+  reward_classifier:
+    pretrained_path: null
+    config_path: null
