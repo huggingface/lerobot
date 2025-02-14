@@ -251,7 +251,7 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
         sum_reward_episode += float(reward)
 
         # NOTE: We overide the action if the intervention is True, because the action applied is the intervention action
-        if info["is_intervention"]:
+        if "is_intervention" in info and info["is_intervention"]:
             # TODO: Check the shape
             # NOTE: The action space for demonstration before hand is with the full action space
             # but sometimes for example we want to deactivate the gripper
@@ -348,10 +348,18 @@ def actor_cli(cfg: dict):
     robot = make_robot(cfg=cfg.robot)
 
     server_thread = Thread(target=serve_actor_service, args=(cfg.actor_learner_config.port,), daemon=True)
-    reward_classifier = get_classifier(
-        pretrained_path=cfg.env.reward_classifier.pretrained_path,
-        config_path=cfg.env.reward_classifier.config_path,
-    )
+
+    # HACK: FOR MANISKILL we do not have a reward classifier
+    # TODO: Remove this once we merge into main
+    reward_classifier = None
+    if (
+        cfg.env.reward_classifier.pretrained_path is not None
+        and cfg.env.reward_classifier.config_path is not None
+    ):
+        reward_classifier = get_classifier(
+            pretrained_path=cfg.env.reward_classifier.pretrained_path,
+            config_path=cfg.env.reward_classifier.config_path,
+        )
     policy_thread = Thread(
         target=act_with_policy,
         daemon=True,

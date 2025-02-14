@@ -13,6 +13,8 @@ from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.robot_devices.control_utils import busy_wait, is_headless, reset_follower_position
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.utils.utils import init_hydra_config, log_say
+from lerobot.scripts.server.maniskill_manipulator import make_maniskill
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -661,6 +663,9 @@ class BatchCompitableWrapper(gym.ObservationWrapper):
         return observation
 
 
+# TODO: REMOVE TH
+
+
 def make_robot_env(
     robot,
     reward_classifier,
@@ -679,7 +684,17 @@ def make_robot_env(
     Returns:
         A vectorized gym environment with all the necessary wrappers applied.
     """
-
+    if "maniskill" in cfg.name:
+        logging.warning("WE SHOULD REMOVE THE MANISKILL BEFORE THE MERGE INTO MAIN")
+        env = make_maniskill(
+            task=cfg.task,
+            obs_mode=cfg.obs,
+            control_mode=cfg.control_mode,
+            render_mode=cfg.render_mode,
+            sensor_configs={"width": cfg.render_size, "height": cfg.render_size},
+            device=cfg.device,
+        )
+        return env
     # Create base environment
     env = HILSerlRobotEnv(
         robot=robot,
