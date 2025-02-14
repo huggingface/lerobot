@@ -209,6 +209,7 @@ class ReplayBuffer:
         state_keys: Optional[Sequence[str]] = None,
         capacity: Optional[int] = None,
         action_mask: Optional[Sequence[int]] = None,
+        action_delta: Optional[float] = None,
     ) -> "ReplayBuffer":
         """
         Convert a LeRobotDataset into a ReplayBuffer.
@@ -248,6 +249,9 @@ class ReplayBuffer:
                     data["action"] = data["action"][action_mask]
                 else:
                     data["action"] = data["action"][:, action_mask]
+
+            if action_delta is not None:
+                data["action"] = data["action"] / action_delta
 
             replay_buffer.add(
                 state=data["state"],

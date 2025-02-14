@@ -260,12 +260,8 @@ if __name__ == "__main__":
             rois = json.load(f)
 
     # rois = {
-    #     "observation.images.side": (92, 123, 379, 349),
-    #     "observation.images.front": (109, 37, 361, 557),
-    # }
-    # rois = {
-    #   "observation.images.front": [109, 37, 361, 557],
-    #   "observation.images.side": [94, 161, 372, 315],
+    #     "observation.images.front": [102, 43, 358, 523],
+    #     "observation.images.side": [92, 123, 379, 349],
     # }
 
     # Print the selected rectangular ROIs

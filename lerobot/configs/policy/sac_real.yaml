@@ -8,8 +8,8 @@
 #   env.gym.obs_type=environment_state_agent_pos \
 
 seed: 1
-dataset_repo_id: aractingi/push_cube_square_offline_demo_cropped_resized
-#aractingi/push_cube_square_light_offline_demo_cropped_resized
+dataset_repo_id: aractingi/push_cube_overfit_cropped_resized
+#aractingi/push_cube_square_offline_demo_cropped_resized
 
 training:
   # Offline training dataloader
