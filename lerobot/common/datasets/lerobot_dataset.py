@@ -260,6 +260,7 @@ class LeRobotDatasetMetadata:
         write_episode(episode_dict, self.root)
 
         self.episodes_stats[episode_index] = episode_stats
+        self.stats = aggregate_stats([self.stats, episode_stats]) if self.stats else episode_stats
         write_episode_stats(episode_index, episode_stats, self.root)
 
     def write_video_info(self) -> None:
