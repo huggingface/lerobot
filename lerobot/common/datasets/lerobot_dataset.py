@@ -337,7 +337,7 @@ class LeRobotDatasetMetadata:
             features = {**features, **DEFAULT_FEATURES}
 
         obj.tasks, obj.task_to_task_index = {}, {}
-        obj.stats, obj.episodes = {}, []
+        obj.episodes_stats, obj.stats, obj.episodes = {}, {}, {}
         obj.info = create_empty_dataset_info(CODEBASE_VERSION, fps, robot_type, features, use_videos)
         if len(obj.video_keys) > 0 and not use_videos:
             raise ValueError()

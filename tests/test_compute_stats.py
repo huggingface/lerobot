@@ -23,7 +23,7 @@ from tests.fixtures.constants import DUMMY_REPO_ID
 
 
 @pytest.fixture
-def empty_state_dataset(tmp_path):
+def empty_state_dataset(tmp_path) -> LeRobotDataset:
     features = {
         "state": {
             "dtype": "float32",
@@ -36,7 +36,7 @@ def empty_state_dataset(tmp_path):
 
 
 @pytest.fixture
-def empty_image_dataset(tmp_path):
+def empty_image_dataset(tmp_path) -> LeRobotDataset:
     features = {
         "image": {
             "dtype": "video",
@@ -54,34 +54,34 @@ def empty_image_dataset(tmp_path):
 
 # TODO: simplify these tests by using `compute_episode_stats` instead of `save_episode`
 def test_compute_episode_stats_one_state(empty_state_dataset):
-    ds = empty_state_dataset
-    ds.add_frame({"state": torch.tensor([1, 2])})
-    ds.save_episode(task="lol")
+    dataset = empty_state_dataset
+    dataset.add_frame({"state": torch.tensor([1, 2]), "task": "Dummy task"})
+    dataset.save_episode()
     # stats = compute_episode_stats(ds.episode_buffer, ds.features)
     # TODO: assert state min, max, mean, std
 
 
 def test_compute_episode_stats_two_states(empty_state_dataset):
     ds = empty_state_dataset
-    ds.add_frame({"state": torch.tensor([1, 2])})
-    ds.add_frame({"state": torch.tensor([4, 5])})
-    ds.save_episode(task="lol")
+    ds.add_frame({"state": torch.tensor([1, 2]), "task": "Dummy task"})
+    ds.add_frame({"state": torch.tensor([4, 5]), "task": "Dummy task"})
+    ds.save_episode()
     # stats = compute_episode_stats(ds.episode_buffer, ds.features)
     # TODO: assert state min, max, mean, std
 
 
 def test_compute_episode_stats_one_image(empty_image_dataset):
     ds = empty_image_dataset
-    ds.add_frame({"image": torch.ones(3, 96, 128)})
-    ds.save_episode(task="lol")
+    ds.add_frame({"image": torch.ones(3, 96, 128), "task": "Dummy task"})
+    ds.save_episode()
     # TODO: assert state min, max, mean, std
 
 
 def test_compute_episode_stats_two_images(empty_image_dataset):
     ds = empty_image_dataset
-    ds.add_frame({"image": torch.ones(3, 96, 128)})
-    ds.add_frame({"image": torch.ones(3, 96, 128) * 0.5})
-    ds.save_episode(task="lol")
+    ds.add_frame({"image": torch.ones(3, 96, 128), "task": "Dummy task"})
+    ds.add_frame({"image": torch.ones(3, 96, 128) * 0.5, "task": "Dummy task"})
+    ds.save_episode()
     # TODO: assert state min, max, mean, std
 
 
