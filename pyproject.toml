@@ -74,6 +74,7 @@ jsonlines = ">=4.0.0"
 transformers = {version = ">=4.47.0", optional = true}
 torchmetrics = {version = ">=1.6.0", optional = true}
 grpcio = { version = "^1.70.0", optional = true }
+protobuf = { version = "^5.29.3", optional = true }
 
 
 [tool.poetry.extras]
@@ -89,7 +90,7 @@ dynamixel = ["dynamixel-sdk", "pynput"]
 feetech = ["feetech-servo-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
 stretch = ["hello-robot-stretch-body", "pyrender", "pyrealsense2", "pynput"]
-hilserl = ["transformers", "torchmetrics", "grpcio"]
+hilserl = ["transformers", "torchmetrics", "grpcio", "protobuf"]
 
 [tool.ruff]
 line-length = 110
@@ -117,6 +118,8 @@ exclude = [
     "dist",
     "node_modules",
     "venv",
+    "*_pb2.py",
+    "*_pb2_grpc.py",
 ]
 
 
