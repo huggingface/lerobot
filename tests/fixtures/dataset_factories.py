@@ -17,6 +17,7 @@ from lerobot.common.datasets.utils import (
     get_hf_features_from_features,
     hf_transform_to_torch,
 )
+from lerobot.common.robot_devices.robots.utils import Robot
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,
@@ -394,3 +395,20 @@ def lerobot_dataset_factory(
             return LeRobotDataset(repo_id=repo_id, root=root, **kwargs)
 
     return _create_lerobot_dataset
+
+
+@pytest.fixture(scope="session")
+def empty_lerobot_dataset_factory():
+    def _create_empty_lerobot_dataset(
+        root: Path,
+        repo_id: str = DUMMY_REPO_ID,
+        fps: int = DEFAULT_FPS,
+        robot: Robot | None = None,
+        robot_type: str | None = None,
+        features: dict | None = None,
+    ):
+        return LeRobotDataset.create(
+            repo_id=repo_id, fps=fps, root=root, robot=robot, robot_type=robot_type, features=features
+        )
+
+    return _create_empty_lerobot_dataset
