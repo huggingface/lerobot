@@ -181,10 +181,10 @@ class ReplayBuffer:
         state = {key: tensor.to(self.storage_device) for key, tensor in state.items()}
         next_state = {key: tensor.to(self.storage_device) for key, tensor in next_state.items()}
         action = action.to(self.storage_device)
-        if complementary_info is not None:
-            complementary_info = {
-                key: tensor.to(self.storage_device) for key, tensor in complementary_info.items()
-            }
+        # if complementary_info is not None:
+        #     complementary_info = {
+        #         key: tensor.to(self.storage_device) for key, tensor in complementary_info.items()
+        #     }
 
         if len(self.memory) < self.capacity:
             self.memory.append(None)
