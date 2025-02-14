@@ -279,11 +279,6 @@ def test_backward_compatibility(repo_id):
         if "task_index" not in old_frame:
             del new_frame["task_index"]
 
-        # Remove task_index to allow for backward compatibility
-        # TODO(rcadene): remove when new features have been generated
-        if "task_index" not in old_frame:
-            del new_frame["task_index"]
-
         new_keys = set(new_frame.keys())
         old_keys = set(old_frame.keys())
         assert new_keys == old_keys, f"{new_keys=} and {old_keys=} are not the same"
