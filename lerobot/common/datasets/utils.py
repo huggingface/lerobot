@@ -201,7 +201,9 @@ def write_task(task_index: int, task: dict, local_dir: Path):
 
 def load_tasks(local_dir: Path) -> dict:
     tasks = load_jsonlines(local_dir / TASKS_PATH)
-    return {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
+    tasks = {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
+    task_to_task_index = {task: task_index for task_index, task in tasks.items()}
+    return tasks, task_to_task_index
 
 
 def write_episode(episode: dict, local_dir: Path):
