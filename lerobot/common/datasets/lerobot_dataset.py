@@ -95,7 +95,6 @@ class LeRobotDatasetMetadata:
             self.episodes_stats = load_episodes_stats(self.root)
             self.stats = aggregate_stats(list(self.episodes_stats.values()))
         except FileNotFoundError:
-            # TODO(rcadene, aliberts): ideally update CODEBASE_VERSION to v2.1 and trigger when it is v2.0
             logging.warning(
                 f"""'episodes_stats.jsonl' not found. Using global dataset stats for each episode instead.
                 Convert your dataset stats to the new format using this command:
@@ -849,7 +848,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # are processed separately by storing image path and frame info as meta data
             if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
                 continue
-            elif len(ft["shape"]) == 1 and ft["shape"][0] == 1:  # TODO(aliberts, rcadene): FIX here
+            elif len(ft["shape"]) == 1 and ft["shape"][0] == 1:
                 episode_buffer[key] = np.array(episode_buffer[key], dtype=ft["dtype"])
             elif len(ft["shape"]) == 1 and ft["shape"][0] > 1:
                 episode_buffer[key] = np.stack(episode_buffer[key])

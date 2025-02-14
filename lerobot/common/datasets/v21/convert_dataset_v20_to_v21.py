@@ -14,6 +14,7 @@ python lerobot/common/datasets/v21/convert_dataset_v20_to_v21.py \
 ```
 
 """
+# TODO(rcadene, aliberts): ensure this script works for any other changes for the final v2.1
 
 import argparse
 

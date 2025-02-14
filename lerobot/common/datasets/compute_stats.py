@@ -41,9 +41,6 @@ def estimate_num_samples(
 def sample_indices(data_len: int) -> list[int]:
     num_samples = estimate_num_samples(data_len)
     return np.round(np.linspace(0, data_len - 1, num_samples)).astype(int).tolist()
-    # if sampled_indices[-1] == data_len:
-    #         # in rare cases due to float approximations, the last element exceeds image_paths indices
-    #         sampled_indices[-1] -= 1
 
 
 def sample_images(image_paths: list[str]) -> np.ndarray:
