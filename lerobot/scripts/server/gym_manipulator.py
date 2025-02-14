@@ -213,18 +213,18 @@ class HILSerlRobotEnv(gym.Env):
 
             # When applying the delta action space, convert teleop absolute values to relative differences.
             if self.use_delta_action_space:
-                teleop_action = teleop_action - self.current_joint_positions
-                if torch.any(teleop_action < -self.delta_relative_bounds_size * self.delta) and torch.any(
-                    teleop_action > self.delta_relative_bounds_size
+                teleop_action = (teleop_action - self.current_joint_positions) / self.delta
+                if torch.any(teleop_action < -self.relative_bounds_size) and torch.any(
+                    teleop_action > self.relative_bounds_size
                 ):
                     logging.debug(
-                        f"Relative teleop delta exceeded bounds {self.delta_relative_bounds_size}, teleop_action {teleop_action}\n"
-                        f"lower bounds condition {teleop_action < -self.delta_relative_bounds_size}\n"
-                        f"upper bounds condition {teleop_action > self.delta_relative_bounds_size}"
+                        f"Relative teleop delta exceeded bounds {self.relative_bounds_size}, teleop_action {teleop_action}\n"
+                        f"lower bounds condition {teleop_action < -self.relative_bounds_size}\n"
+                        f"upper bounds condition {teleop_action > self.relative_bounds_size}"
                     )
 
                     teleop_action = torch.clamp(
-                        teleop_action, -self.delta_relative_bounds_size, self.delta_relative_bounds_size
+                        teleop_action, -self.relative_bounds_size, self.relative_bounds_size
                     )
             # NOTE: To mimic the shape of a neural network output, we add a batch dimension to the teleop action.
             if teleop_action.dim() == 1:
@@ -312,7 +312,7 @@ class RewardWrapper(gym.Wrapper):
         start_time = time.perf_counter()
         with torch.inference_mode():
             reward = (
-                self.reward_classifier.predict_reward(images, threshold=0.6)
+                self.reward_classifier.predict_reward(images, threshold=0.8)
                 if self.reward_classifier is not None
                 else 0.0
             )
@@ -726,6 +726,24 @@ def get_classifier(pretrained_path, config_path, device="mps"):
     return model
 
 
+def replay_episode(env, repo_id, root=None, episode=0):
+    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
+    local_files_only = root is not None
+    dataset = LeRobotDataset(repo_id, root=root, episodes=[episode], local_files_only=local_files_only)
+    actions = dataset.hf_dataset.select_columns("action")
+
+    for idx in range(dataset.num_frames):
+        start_episode_t = time.perf_counter()
+
+        action = actions[idx]["action"][:4]
+        print(action)
+        env.step((action / env.unwrapped.delta, False))
+
+        dt_s = time.perf_counter() - start_episode_t
+        busy_wait(1 / 10 - dt_s)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--fps", type=int, default=30, help="control frequency")
@@ -776,6 +794,9 @@ if __name__ == "__main__":
     parser.add_argument("--env-overrides", type=str, default=None, help="Overrides for the env yaml file")
     parser.add_argument("--control-time-s", type=float, default=20, help="Maximum episode length in seconds")
     parser.add_argument("--reset-follower-pos", type=int, default=1, help="Reset follower between episodes")
+    parser.add_argument("--replay-repo-id", type=str, default=None, help="Repo ID of the episode to replay")
+    parser.add_argument("--replay-root", type=str, default=None, help="Root of the dataset to replay")
+    parser.add_argument("--replay-episode", type=int, default=0, help="Episode to replay")
     args = parser.parse_args()
 
     robot_cfg = init_hydra_config(args.robot_path, args.robot_overrides)
@@ -794,6 +815,10 @@ if __name__ == "__main__":
     )
 
     env.reset()
+
+    if args.replay_repo_id is not None:
+        replay_episode(env, args.replay_repo_id, root=args.replay_root, episode=args.replay_episode)
+        exit()
 
     # Retrieve the robot's action space for joint commands.
     action_space_robot = env.action_space.spaces[0]
