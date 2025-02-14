@@ -672,6 +672,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             for cam in image_keys:
                 item[cam] = self.image_transforms(item[cam])
 
+        # Add task as a string
+        task_idx = item["task_index"].item()
+        item["task"] = self.meta.tasks[task_idx]
+
         return item
 
     def __repr__(self):

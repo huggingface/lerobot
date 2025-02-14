@@ -36,7 +36,7 @@ from lerobot.common.policies.factory import (
 )
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.utils.utils import seeded_context
+from lerobot.common.utils.random_utils import seeded_context
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -167,14 +167,16 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     batch = next(dl_iter)
 
     for key in batch:
-        batch[key] = batch[key].to(DEVICE, non_blocking=True)
+        if isinstance(batch[key], torch.Tensor):
+            batch[key] = batch[key].to(DEVICE, non_blocking=True)
 
     # Test updating the policy (and test that it does not mutate the batch)
     batch_ = deepcopy(batch)
     policy.forward(batch)
     assert set(batch) == set(batch_), "Batch keys are not the same after a forward pass."
     assert all(
-        torch.equal(batch[k], batch_[k]) for k in batch
+        torch.equal(batch[k], batch_[k]) if isinstance(batch[k], torch.Tensor) else batch[k] == batch_[k]
+        for k in batch
     ), "Batch values are not the same after a forward pass."
 
     # reset the policy and environment

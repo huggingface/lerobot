@@ -46,7 +46,7 @@ from lerobot.common.datasets.utils import (
 from lerobot.common.envs.factory import make_env_config
 from lerobot.common.policies.factory import make_policy_config
 from lerobot.common.robot_devices.robots.utils import make_robot
-from lerobot.common.utils.utils import seeded_context
+from lerobot.common.utils.random_utils import seeded_context
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from tests.fixtures.constants import DUMMY_REPO_ID
@@ -323,6 +323,8 @@ def test_backward_compatibility(repo_id):
         # TODO (michel-aractingi): transform language obs to langauge embeddings via tokenizer
         new_frame.pop("language_instruction", None)
         old_frame.pop("language_instruction", None)
+        new_frame.pop("task", None)
+        old_frame.pop("task", None)
 
         # Remove task_index to allow for backward compatibility
         # TODO(rcadene): remove when new features have been generated
