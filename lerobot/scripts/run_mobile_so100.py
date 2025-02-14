@@ -14,7 +14,8 @@ from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus, Torque
 from lerobot.common.robot_devices.robots.configs import MobileSO100RobotConfig
 from lerobot.common.robot_devices.robots.mobileso100 import MobileSO100
 
-cameras = make_cameras_from_configs(MobileSO100RobotConfig.cameras)
+config = MobileSO100RobotConfig()
+cameras = make_cameras_from_configs(config.cameras)
 for _, cam in cameras.items():
     cam.connect()
 
@@ -47,7 +48,7 @@ context = zmq.Context()
 
 cmd_socket = context.socket(zmq.PULL)
 cmd_socket.setsockopt(zmq.CONFLATE, 1)
-cmd_socket.bind("tcp://*:5555")
+cmd_socket.bind("tcp://*:5555")  # TODO:(pepijn) Get these from config
 
 video_socket = context.socket(zmq.PUB)
 video_socket.setsockopt(zmq.SNDHWM, 1)
