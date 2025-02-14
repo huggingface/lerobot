@@ -2,7 +2,9 @@
 This script will help you convert any LeRobot dataset already pushed to the hub from codebase version 2.0 to
 2.1. It performs the following:
 
-- Convert per-episodes stats
+- Generates per-episodes stats and writes them in `episodes_stats.jsonl`
+- Removes the deprecated `stats.json` (by default)
+- Updates codebase_version in `info.json`
 
 Usage:
 
