@@ -18,7 +18,9 @@ import numpy as np
 from lerobot.common.datasets.utils import load_image_as_numpy
 
 
-def estimate_num_samples(dataset_len: int, min_num_samples=100, max_num_samples=10_000, power=0.75) -> int:
+def estimate_num_samples(
+    dataset_len: int, min_num_samples: int = 100, max_num_samples: int = 10_000, power: float = 0.75
+) -> int:
     """Heuristic to estimate the number of samples based on dataset size.
     The power controls the sample growth relative to dataset size.
     Lower the power for less number of samples.
@@ -33,7 +35,7 @@ def estimate_num_samples(dataset_len: int, min_num_samples=100, max_num_samples=
     """
     if dataset_len < min_num_samples:
         min_num_samples = dataset_len
-    return max(min_num_samples, min(dataset_len**power, max_num_samples))
+    return max(min_num_samples, min(int(dataset_len**power), max_num_samples))
 
 
 def sample_indices(data_len: int) -> list[int]:

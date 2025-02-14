@@ -27,7 +27,7 @@ import PIL.Image
 import torch
 import torch.utils
 from datasets import load_dataset
-from huggingface_hub import create_repo, snapshot_download, upload_folder
+from huggingface_hub import HfApi, snapshot_download
 
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
@@ -93,12 +93,14 @@ class LeRobotDatasetMetadata:
         self.episodes = load_episodes(self.root)
         try:
             self.episodes_stats = load_episodes_stats(self.root)
+            self.stats = aggregate_stats(list(self.episodes_stats.values()))
         except FileNotFoundError:
             # TODO(rcadene, aliberts): ideally update CODEBASE_VERSION to v2.1 and trigger when it is v2.0
             warnings.warn(
                 "'episodes_stats.jsonl' not found. Use global dataset stats for each episode instead.",
                 stacklevel=1,
             )
+            self.stats = load_stats(self.root)
             self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
 
     def pull_from_repo(
@@ -463,6 +465,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(self.repo_id, self.root, self.local_files_only)
+        if self.episodes is not None and self.meta._version == CODEBASE_VERSION:
+            episodes_stats = [self.meta.episodes_stats[ep_idx] for ep_idx in self.episodes]
+            self.stats = aggregate_stats(episodes_stats)
 
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
@@ -485,10 +490,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def push_to_hub(
         self,
+        branch: str | None = None,
+        create_card: bool = True,
         tags: list | None = None,
         license: str | None = "apache-2.0",
         push_videos: bool = True,
         private: bool = False,
+        allow_patterns: list[str] | str | None = None,
         **card_kwargs,
     ) -> None:
         if not self.consolidated:
@@ -502,24 +510,32 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if not push_videos:
             ignore_patterns.append("videos/")
 
-        create_repo(
+        hub_api = HfApi()
+        hub_api.create_repo(
             repo_id=self.repo_id,
             private=private,
             repo_type="dataset",
             exist_ok=True,
         )
+        if branch:
+            create_branch(repo_id=self.repo_id, branch=branch, repo_type="dataset")
 
-        upload_folder(
+        hub_api.upload_folder(
             repo_id=self.repo_id,
             folder_path=self.root,
             repo_type="dataset",
+            revision=branch,
+            allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
         )
-        card = create_lerobot_dataset_card(
-            tags=tags, dataset_info=self.meta.info, license=license, **card_kwargs
-        )
-        card.push_to_hub(repo_id=self.repo_id, repo_type="dataset")
-        create_branch(repo_id=self.repo_id, branch=CODEBASE_VERSION, repo_type="dataset")
+        if create_card:
+            card = create_lerobot_dataset_card(
+                tags=tags, dataset_info=self.meta.info, license=license, **card_kwargs
+            )
+            card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=branch)
+
+        if not branch:
+            create_branch(repo_id=self.repo_id, branch=CODEBASE_VERSION, repo_type="dataset")
 
     def pull_from_repo(
         self,
