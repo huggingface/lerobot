@@ -84,7 +84,8 @@ class LeRobotDatasetMetadata:
 
         # Load metadata
         (self.root / "meta").mkdir(exist_ok=True, parents=True)
-        self.pull_from_repo(allow_patterns="meta/")
+        if not self.local_files_only:
+            self.pull_from_repo(allow_patterns="meta/")
         self.info = load_info(self.root)
         self.stats = load_stats(self.root)
         self.tasks = load_tasks(self.root)
@@ -537,9 +538,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 ]
                 files += video_files
 
-        # HACK: UNCOMMENT IF YOU REVIEW THAT, PLEASE SUGGEST TO UNCOMMENT
-        logging.warning("HACK: WE COMMENT THIS LINE, IF SOMETHING IS WEIRD WITH DATASETS UNCOMMENT")
-        self.pull_from_repo(allow_patterns=files, ignore_patterns=ignore_patterns)
+        if not self.local_files_only:
+            self.pull_from_repo(allow_patterns=files, ignore_patterns=ignore_patterns)
 
     def load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""

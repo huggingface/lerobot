@@ -1,7 +1,8 @@
 import argparse  # noqa: I001
+import json
 from copy import deepcopy
 from typing import Dict, Tuple
-
+from pathlib import Path
 import cv2
 
 # import torch.nn.functional as F  # noqa: N812
@@ -237,19 +238,27 @@ if __name__ == "__main__":
         default=None,
         help="The root directory of the LeRobot dataset.",
     )
+    parser.add_argument(
+        "--crop-params-path",
+        type=str,
+        default=None,
+        help="The path to the JSON file containing the ROIs.",
+    )
     args = parser.parse_args()
 
-    dataset = LeRobotDataset(repo_id=args.repo_id, root=args.root, local_files_only=False)
+    local_files_only = args.root is not None
+    dataset = LeRobotDataset(repo_id=args.repo_id, root=args.root, local_files_only=local_files_only)
 
     images = get_image_from_lerobot_dataset(dataset)
     images = {k: v.cpu().permute(1, 2, 0).numpy() for k, v in images.items()}
     images = {k: (v * 255).astype("uint8") for k, v in images.items()}
 
-    # rois = select_square_roi_for_images(images)
-    rois = {
-        "observation.images.front": [102, 43, 358, 523],
-        "observation.images.side": [92, 123, 379, 349],
-    }
+    if args.crop_params_path is None:
+        rois = select_square_roi_for_images(images)
+    else:
+        with open(args.crop_params_path, "r") as f:
+            rois = json.load(f)
+
     # rois = {
     #     "observation.images.side": (92, 123, 379, 349),
     #     "observation.images.front": (109, 37, 361, 557),
@@ -263,10 +272,20 @@ if __name__ == "__main__":
     print("\nSelected Rectangular Regions of Interest (top, left, height, width):")
     for key, roi in rois.items():
         print(f"{key}: {roi}")
+
+    new_repo_id = args.repo_id + "_cropped_resized"
+    new_dataset_root = Path(str(dataset.root) + "_cropped_resized")
+
     croped_resized_dataset = convert_lerobot_dataset_to_cropper_lerobot_dataset(
         original_dataset=dataset,
         crop_params_dict=rois,
-        new_repo_id=args.repo_id + "_cropped_resized",
-        new_dataset_root="data/" + args.repo_id + "_cropped_resized",
+        new_repo_id=new_repo_id,
+        new_dataset_root=new_dataset_root,
         resize_size=(128, 128),
     )
+
+    meta_dir = new_dataset_root / "meta"
+    meta_dir.mkdir(exist_ok=True)
+
+    with open(meta_dir / "crop_params.json", "w") as f:
+        json.dump(rois, f, indent=4)
