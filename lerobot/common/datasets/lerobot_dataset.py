@@ -87,7 +87,7 @@ class LeRobotDatasetMetadata:
         self.pull_from_repo(allow_patterns="meta/")
         self.info = load_info(self.root)
         self.stats = load_stats(self.root)
-        self.tasks = load_tasks(self.root)
+        self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
 
     def pull_from_repo(
@@ -202,32 +202,34 @@ class LeRobotDatasetMetadata:
         """Max number of episodes per chunk."""
         return self.info["chunks_size"]
 
-    @property
-    def task_to_task_index(self) -> dict:
-        return {task: task_idx for task_idx, task in self.tasks.items()}
-
-    def get_task_index(self, task: str) -> int:
+    def get_task_index(self, task: str) -> int | None:
         """
         Given a task in natural language, returns its task_index if the task already exists in the dataset,
-        otherwise creates a new task_index.
+        otherwise return None.
         """
-        task_index = self.task_to_task_index.get(task, None)
-        return task_index if task_index is not None else self.total_tasks
+        return self.task_to_task_index.get(task, None)
 
-    def save_episode(self, episode_index: int, episode_length: int, tasks: list[str]) -> None:
+    def add_task(self, task: str):
+        """
+        Given a task in natural language, add it to the dictionnary of tasks.
+        """
+        if task in self.task_to_task_index:
+            raise ValueError(f"The task '{task}' already exists and can't be added twice.")
+
+        task_index = self.info["total_tasks"]
+        self.task_to_task_index[task] = task_index
+        self.tasks[task_index] = task
+        self.info["total_tasks"] += 1
+
+        task_dict = {
+            "task_index": task_index,
+            "task": task,
+        }
+        append_jsonlines(task_dict, self.root / TASKS_PATH)
+
+    def save_episode(self, episode_index: int, episode_length: int, episode_tasks: list[str]) -> None:
         self.info["total_episodes"] += 1
         self.info["total_frames"] += episode_length
-
-        for task in tasks:
-            task_index = self.get_task_index(task)
-            if task_index not in self.tasks:
-                self.info["total_tasks"] += 1
-                self.tasks[task_index] = task
-                task_dict = {
-                    "task_index": task_index,
-                    "task": task,
-                }
-                append_jsonlines(task_dict, self.root / TASKS_PATH)
 
         chunk = self.get_episode_chunk(episode_index)
         if chunk >= self.total_chunks:
@@ -239,7 +241,7 @@ class LeRobotDatasetMetadata:
 
         episode_dict = {
             "episode_index": episode_index,
-            "tasks": tasks,
+            "tasks": episode_tasks,
             "length": episode_length,
         }
         self.episodes.append(episode_dict)
@@ -315,7 +317,8 @@ class LeRobotDatasetMetadata:
 
             features = {**features, **DEFAULT_FEATURES}
 
-        obj.tasks, obj.stats, obj.episodes = {}, {}, []
+        obj.tasks, obj.task_to_task_index = {}, {}
+        obj.stats, obj.episodes = {}, []
         obj.info = create_empty_dataset_info(CODEBASE_VERSION, fps, robot_type, features, use_videos)
         if len(obj.video_keys) > 0 and not use_videos:
             raise ValueError()
@@ -735,8 +738,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.episode_buffer["timestamp"].append(timestamp)
 
         for key in frame:
-            # Special case with task
             if key == "task":
+                # Note: we associate the task in natural language to its task index during `save_episode`
                 self.episode_buffer["task"].append(frame["task"])
                 continue
 
@@ -775,6 +778,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # size and task are special cases that won't be added to hf_dataset
         episode_length = episode_buffer.pop("size")
         tasks = episode_buffer.pop("task")
+        episode_tasks = list(set(tasks))
 
         episode_index = episode_buffer["episode_index"]
         if episode_index != self.meta.total_episodes:
@@ -797,9 +801,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_buffer["index"] = np.arange(self.meta.total_frames, self.meta.total_frames + episode_length)
         episode_buffer["episode_index"] = np.full((episode_length,), episode_index)
 
-        unique_tasks = list(set(tasks))
-        task_indices = [self.meta.get_task_index(task) for task in tasks]
-        episode_buffer["task_index"] = np.array(task_indices)
+        # Add new tasks to the tasks dictionnary
+        for task in episode_tasks:
+            task_index = self.meta.get_task_index(task)
+            if task_index is None:
+                self.meta.add_task(task)
+
+        # Given tasks in natural language, find their corresponding task indices
+        episode_buffer["task_index"] = np.array([self.meta.get_task_index(task) for task in tasks])
 
         for key, ft in self.features.items():
             # index, episode_index, task_index are already processed above, and image and video
@@ -816,7 +825,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._wait_image_writer()
         self._save_episode_table(episode_buffer, episode_index)
 
-        self.meta.save_episode(episode_index, episode_length, unique_tasks)
+        self.meta.save_episode(episode_index, episode_length, episode_tasks)
 
         if encode_videos and len(self.meta.video_keys) > 0:
             video_paths = self.encode_episode_videos(episode_index)
