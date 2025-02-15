@@ -336,9 +336,9 @@ def test_backward_compatibility(repo_id):
         assert new_keys == old_keys, f"{new_keys=} and {old_keys=} are not the same"
 
         for key in new_frame:
-            assert torch.isclose(
-                new_frame[key], old_frame[key]
-            ).all(), f"{key=} for index={i} does not contain the same value"
+            assert torch.isclose(new_frame[key], old_frame[key]).all(), (
+                f"{key=} for index={i} does not contain the same value"
+            )
 
     # test2 first frames of first episode
     i = dataset.episode_data_index["from"][0].item()
