@@ -43,6 +43,7 @@ DEFAULT_CHUNK_SIZE = 1000  # Max number of episodes per chunk
 INFO_PATH = "meta/info.json"
 EPISODES_PATH = "meta/episodes.jsonl"
 STATS_PATH = "meta/stats.json"
+EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
 TASKS_PATH = "meta/tasks.jsonl"
 
 DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
@@ -113,7 +114,16 @@ def get_nested_item(obj: DictLike, flattened_key: str, sep: str = "/") -> Any:
 
 
 def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
-    serialized_dict = {key: value.tolist() for key, value in flatten_dict(stats).items()}
+    serialized_dict = {}
+    for key, value in flatten_dict(stats).items():
+        if isinstance(value, (torch.Tensor, np.ndarray)):
+            serialized_dict[key] = value.tolist()
+        elif isinstance(value, np.generic):
+            serialized_dict[key] = value.item()
+        elif isinstance(value, (int, float)):
+            serialized_dict[key] = value
+        else:
+            raise NotImplementedError(f"The value '{value}' of type '{type(value)}' is not supported.")
     return unflatten_dict(serialized_dict)
 
 
@@ -154,6 +164,10 @@ def append_jsonlines(data: dict, fpath: Path) -> None:
         writer.write(data)
 
 
+def write_info(info: dict, local_dir: Path):
+    write_json(info, local_dir / INFO_PATH)
+
+
 def load_info(local_dir: Path) -> dict:
     info = load_json(local_dir / INFO_PATH)
     for ft in info["features"].values():
@@ -161,12 +175,29 @@ def load_info(local_dir: Path) -> dict:
     return info
 
 
-def load_stats(local_dir: Path) -> dict:
+def write_stats(stats: dict, local_dir: Path):
+    serialized_stats = serialize_dict(stats)
+    write_json(serialized_stats, local_dir / STATS_PATH)
+
+
+def cast_stats_to_numpy(stats) -> dict[str, dict[str, np.ndarray]]:
+    stats = {key: np.array(value) for key, value in flatten_dict(stats).items()}
+    return unflatten_dict(stats)
+
+
+def load_stats(local_dir: Path) -> dict[str, dict[str, np.ndarray]]:
     if not (local_dir / STATS_PATH).exists():
         return None
     stats = load_json(local_dir / STATS_PATH)
-    stats = {key: torch.tensor(value) for key, value in flatten_dict(stats).items()}
-    return unflatten_dict(stats)
+    return cast_stats_to_numpy(stats)
+
+
+def write_task(task_index: int, task: dict, local_dir: Path):
+    task_dict = {
+        "task_index": task_index,
+        "task": task,
+    }
+    append_jsonlines(task_dict, local_dir / TASKS_PATH)
 
 
 def load_tasks(local_dir: Path) -> dict:
@@ -176,16 +207,42 @@ def load_tasks(local_dir: Path) -> dict:
     return tasks, task_to_task_index
 
 
+def write_episode(episode: dict, local_dir: Path):
+    append_jsonlines(episode, local_dir / EPISODES_PATH)
+
+
 def load_episodes(local_dir: Path) -> dict:
-    return load_jsonlines(local_dir / EPISODES_PATH)
+    episodes = load_jsonlines(local_dir / EPISODES_PATH)
+    return {item["episode_index"]: item for item in sorted(episodes, key=lambda x: x["episode_index"])}
 
 
-def load_image_as_numpy(fpath: str | Path, dtype="float32", channel_first: bool = True) -> np.ndarray:
+def write_episode_stats(episode_index: int, episode_stats: dict, local_dir: Path):
+    # We wrap episode_stats in a dictionnary since `episode_stats["episode_index"]`
+    # is a dictionary of stats and not an integer.
+    episode_stats = {"episode_index": episode_index, "stats": serialize_dict(episode_stats)}
+    append_jsonlines(episode_stats, local_dir / EPISODES_STATS_PATH)
+
+
+def load_episodes_stats(local_dir: Path) -> dict:
+    episodes_stats = load_jsonlines(local_dir / EPISODES_STATS_PATH)
+    return {
+        item["episode_index"]: cast_stats_to_numpy(item["stats"])
+        for item in sorted(episodes_stats, key=lambda x: x["episode_index"])
+    }
+
+
+def backward_compatible_episodes_stats(stats, episodes: list[int]) -> dict[str, dict[str, np.ndarray]]:
+    return {ep_idx: stats for ep_idx in episodes}
+
+
+def load_image_as_numpy(
+    fpath: str | Path, dtype: np.dtype = np.float32, channel_first: bool = True
+) -> np.ndarray:
     img = PILImage.open(fpath).convert("RGB")
     img_array = np.array(img, dtype=dtype)
     if channel_first:  # (H, W, C) -> (C, H, W)
         img_array = np.transpose(img_array, (2, 0, 1))
-    if "float" in dtype:
+    if np.issubdtype(dtype, np.floating):
         img_array /= 255.0
     return img_array
 
@@ -370,9 +427,9 @@ def create_empty_dataset_info(
 
 
 def get_episode_data_index(
-    episode_dicts: list[dict], episodes: list[int] | None = None
+    episode_dicts: dict[dict], episodes: list[int] | None = None
 ) -> dict[str, torch.Tensor]:
-    episode_lengths = {ep_idx: ep_dict["length"] for ep_idx, ep_dict in enumerate(episode_dicts)}
+    episode_lengths = {ep_idx: ep_dict["length"] for ep_idx, ep_dict in episode_dicts.items()}
     if episodes is not None:
         episode_lengths = {ep_idx: episode_lengths[ep_idx] for ep_idx in episodes}
 

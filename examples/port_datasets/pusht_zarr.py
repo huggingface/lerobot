@@ -148,6 +148,10 @@ def main(raw_dir: Path, repo_id: str, mode: str = "video", push_to_hub: bool = T
     action = zarr_data["action"][:]
     image = zarr_data["img"]  # (b, h, w, c)
 
+    if image.dtype == np.float32 and image.max() == np.float32(255):
+        # HACK: images are loaded as float32 but they actually encode uint8 data
+        image = image.astype(np.uint8)
+
     episode_data_index = {
         "from": np.concatenate(([0], zarr_data.meta["episode_ends"][:-1])),
         "to": zarr_data.meta["episode_ends"],
