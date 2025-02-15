@@ -16,7 +16,6 @@
 import logging
 import os
 import shutil
-from functools import cached_property
 from pathlib import Path
 from typing import Callable
 
@@ -49,7 +48,6 @@ from lerobot.common.datasets.utils import (
     get_episode_data_index,
     get_features_from_robot,
     get_hf_features_from_features,
-    get_hub_safe_version,
     hf_transform_to_torch,
     load_episodes,
     load_info,
@@ -77,15 +75,21 @@ class LeRobotDatasetMetadata:
         self,
         repo_id: str,
         root: str | Path | None = None,
-        local_files_only: bool = False,
+        revision: str | None = None,
     ):
         self.repo_id = repo_id
+        self.revision = revision
         self.root = Path(root) if root is not None else LEROBOT_HOME / repo_id
-        self.local_files_only = local_files_only
 
         # Load metadata
-        (self.root / "meta").mkdir(exist_ok=True, parents=True)
-        self.pull_from_repo(allow_patterns="meta/")
+        try:
+            self.load_metadata()
+        except (FileNotFoundError, NotADirectoryError):
+            (self.root / "meta").mkdir(exist_ok=True, parents=True)
+            self.pull_from_repo(allow_patterns="meta/")
+            self.load_metadata()
+
+    def load_metadata(self):
         self.info = load_info(self.root)
         self.stats = load_stats(self.root)
         self.tasks, self.task_to_task_index = load_tasks(self.root)
@@ -99,16 +103,11 @@ class LeRobotDatasetMetadata:
         snapshot_download(
             self.repo_id,
             repo_type="dataset",
-            revision=self._hub_version,
+            revision=self.revision,
             local_dir=self.root,
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
-            local_files_only=self.local_files_only,
         )
-
-    @cached_property
-    def _hub_version(self) -> str | None:
-        return None if self.local_files_only else get_hub_safe_version(self.repo_id, CODEBASE_VERSION)
 
     @property
     def _version(self) -> str:
@@ -324,7 +323,7 @@ class LeRobotDatasetMetadata:
         if len(obj.video_keys) > 0 and not use_videos:
             raise ValueError()
         write_json(obj.info, obj.root / INFO_PATH)
-        obj.local_files_only = True
+        obj.revision = None
         return obj
 
 
@@ -337,8 +336,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
         tolerance_s: float = 1e-4,
+        revision: str | None = None,
         download_videos: bool = True,
-        local_files_only: bool = False,
         video_backend: str | None = None,
     ):
         """
@@ -348,7 +347,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             - On your local disk in the 'root' folder. This is typically the case when you recorded your
               dataset locally and you may or may not have pushed it to the hub yet. Instantiating this class
               with 'root' will load your dataset directly from disk. This can happen while you're offline (no
-              internet connection), in that case, use local_files_only=True.
+              internet connection).
 
             - On the Hugging Face Hub at the address https://huggingface.co/datasets/{repo_id} and not on
               your local disk in the 'root' folder. Instantiating this class with this 'repo_id' will download
@@ -430,11 +429,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 timestamps is separated to the next by 1/fps +/- tolerance_s. This also applies to frames
                 decoded from video files. It is also used to check that `delta_timestamps` (when provided) are
                 multiples of 1/fps. Defaults to 1e-4.
+            revision (str, optional): An optional Git revision id which can be a branch name, a tag, or a
+                commit hash.
             download_videos (bool, optional): Flag to download the videos. Note that when set to True but the
                 video files are already present on local disk, they won't be downloaded again. Defaults to
                 True.
-            local_files_only (bool, optional): Flag to use local files only. If True, no requests to the hub
-                will be made. Defaults to False.
             video_backend (str | None, optional): Video backend to use for decoding videos. There is currently
                 a single option which is the pyav decoder used by Torchvision. Defaults to pyav.
         """
@@ -445,9 +444,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
         self.tolerance_s = tolerance_s
+        self.revision = revision
         self.video_backend = video_backend if video_backend else "pyav"
         self.delta_indices = None
-        self.local_files_only = local_files_only
 
         # Unused attributes
         self.image_writer = None
@@ -456,14 +455,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
-        self.meta = LeRobotDatasetMetadata(self.repo_id, self.root, self.local_files_only)
+        self.meta = LeRobotDatasetMetadata(self.repo_id, self.root, self.revision)
 
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
 
         # Load actual data
-        self.download_episodes(download_videos)
-        self.hf_dataset = self.load_hf_dataset()
+        try:
+            assert all((self.root / fpath).is_file() for fpath in self.get_episodes_file_paths())
+            self.hf_dataset = self.load_hf_dataset()
+        except (AssertionError, FileNotFoundError, NotADirectoryError):
+            self.download_episodes(download_videos)
+            self.hf_dataset = self.load_hf_dataset()
+
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
 
         # Check timestamps
@@ -523,11 +527,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         snapshot_download(
             self.repo_id,
             repo_type="dataset",
-            revision=self.meta._hub_version,
+            revision=self.revision,
             local_dir=self.root,
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
-            local_files_only=self.local_files_only,
         )
 
     def download_episodes(self, download_videos: bool = True) -> None:
@@ -541,16 +544,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
         files = None
         ignore_patterns = None if download_videos else "videos/"
         if self.episodes is not None:
-            files = [str(self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes]
-            if len(self.meta.video_keys) > 0 and download_videos:
-                video_files = [
-                    str(self.meta.get_video_file_path(ep_idx, vid_key))
-                    for vid_key in self.meta.video_keys
-                    for ep_idx in self.episodes
-                ]
-                files += video_files
+            files = self.get_episodes_file_paths()
 
         self.pull_from_repo(allow_patterns=files, ignore_patterns=ignore_patterns)
+
+    def get_episodes_file_paths(self) -> list[Path]:
+        episodes = self.episodes if self.episodes is not None else list(range(self.meta.total_episodes))
+        fpaths = [str(self.meta.get_data_file_path(ep_idx)) for ep_idx in episodes]
+        if len(self.meta.video_keys) > 0:
+            video_files = [
+                str(self.meta.get_video_file_path(ep_idx, vid_key))
+                for vid_key in self.meta.video_keys
+                for ep_idx in episodes
+            ]
+            fpaths += video_files
+
+        return fpaths
 
     def load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
@@ -968,7 +977,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
         obj.repo_id = obj.meta.repo_id
         obj.root = obj.meta.root
-        obj.local_files_only = obj.meta.local_files_only
+        obj.revision = None
         obj.tolerance_s = tolerance_s
         obj.image_writer = None
 
@@ -1010,7 +1019,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         delta_timestamps: dict[list[float]] | None = None,
         tolerances_s: dict | None = None,
         download_videos: bool = True,
-        local_files_only: bool = False,
         video_backend: str | None = None,
     ):
         super().__init__()
@@ -1028,7 +1036,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 delta_timestamps=delta_timestamps,
                 tolerance_s=self.tolerances_s[repo_id],
                 download_videos=download_videos,
-                local_files_only=local_files_only,
                 video_backend=video_backend,
             )
             for repo_id in repo_ids
