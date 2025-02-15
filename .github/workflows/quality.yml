@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
   workflow_call:
   pull_request:
-    branches:
-      - main
   push:
     branches:
       - main
+
+permissions: {}
 
 env:
   PYTHON_VERSION: "3.10"
@@ -19,7 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -47,10 +49,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install poetry
-        run: pipx install poetry
+        run: pipx install "poetry<2.0.0"
 
       - name: Poetry check
         run: poetry check
@@ -61,10 +65,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install poetry
-        run: pipx install poetry
+        run: pipx install "poetry<2.0.0"
 
       - name: Install poetry-relax
         run: poetry self add poetry-relax

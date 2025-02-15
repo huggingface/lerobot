@@ -31,35 +31,32 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 
+from lerobot.common.constants import OBS_ENV, OBS_ROBOT
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import (
     get_device_from_parameters,
     get_dtype_from_parameters,
+    get_output_shape,
     populate_queues,
 )
 
 
-class DiffusionPolicy(
-    nn.Module,
-    PyTorchModelHubMixin,
-    library_name="lerobot",
-    repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "diffusion-policy"],
-):
+class DiffusionPolicy(PreTrainedPolicy):
     """
     Diffusion Policy as per "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion"
     (paper: https://arxiv.org/abs/2303.04137, code: https://github.com/real-stanford/diffusion_policy).
     """
 
+    config_class = DiffusionConfig
     name = "diffusion"
 
     def __init__(
         self,
-        config: DiffusionConfig | None = None,
+        config: DiffusionConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
@@ -69,18 +66,16 @@ class DiffusionPolicy(
             dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
-        super().__init__()
-        if config is None:
-            config = DiffusionConfig()
+        super().__init__(config)
+        config.validate_features()
         self.config = config
-        self.normalize_inputs = Normalize(
-            config.input_shapes, config.input_normalization_modes, dataset_stats
-        )
+
+        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
         self.normalize_targets = Normalize(
-            config.output_shapes, config.output_normalization_modes, dataset_stats
+            config.output_features, config.normalization_mapping, dataset_stats
         )
         self.unnormalize_outputs = Unnormalize(
-            config.output_shapes, config.output_normalization_modes, dataset_stats
+            config.output_features, config.normalization_mapping, dataset_stats
         )
 
         # queues are populated during rollout of the policy, they contain the n latest observations and actions
@@ -88,10 +83,10 @@ class DiffusionPolicy(
 
         self.diffusion = DiffusionModel(config)
 
-        self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
-        self.use_env_state = "observation.environment_state" in config.input_shapes
-
         self.reset()
+
+    def get_optim_params(self) -> dict:
+        return self.diffusion.parameters()
 
     def reset(self):
         """Clear observation and action queues. Should be called on `env.reset()`"""
@@ -99,9 +94,9 @@ class DiffusionPolicy(
             "observation.state": deque(maxlen=self.config.n_obs_steps),
             "action": deque(maxlen=self.config.n_action_steps),
         }
-        if len(self.expected_image_keys) > 0:
+        if self.config.image_features:
             self._queues["observation.images"] = deque(maxlen=self.config.n_obs_steps)
-        if self.use_env_state:
+        if self.config.env_state_feature:
             self._queues["observation.environment_state"] = deque(maxlen=self.config.n_obs_steps)
 
     @torch.no_grad
@@ -127,9 +122,11 @@ class DiffusionPolicy(
         actually measured from the first observation which (if `n_obs_steps` > 1) happened in the past.
         """
         batch = self.normalize_inputs(batch)
-        if len(self.expected_image_keys) > 0:
+        if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+            batch["observation.images"] = torch.stack(
+                [batch[key] for key in self.config.image_features], dim=-4
+            )
         # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
 
@@ -146,15 +143,18 @@ class DiffusionPolicy(
         action = self._queues["action"].popleft()
         return action
 
-    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, None]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
-        if len(self.expected_image_keys) > 0:
+        if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+            batch["observation.images"] = torch.stack(
+                [batch[key] for key in self.config.image_features], dim=-4
+            )
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
-        return {"loss": loss}
+        # no output_dict so returning None
+        return loss, None
 
 
 def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
@@ -176,12 +176,9 @@ class DiffusionModel(nn.Module):
         self.config = config
 
         # Build observation encoders (depending on which observations are provided).
-        global_cond_dim = config.input_shapes["observation.state"][0]
-        num_images = len([k for k in config.input_shapes if k.startswith("observation.image")])
-        self._use_images = False
-        self._use_env_state = False
-        if num_images > 0:
-            self._use_images = True
+        global_cond_dim = self.config.robot_state_feature.shape[0]
+        if self.config.image_features:
+            num_images = len(self.config.image_features)
             if self.config.use_separate_rgb_encoder_per_camera:
                 encoders = [DiffusionRgbEncoder(config) for _ in range(num_images)]
                 self.rgb_encoder = nn.ModuleList(encoders)
@@ -189,9 +186,8 @@ class DiffusionModel(nn.Module):
             else:
                 self.rgb_encoder = DiffusionRgbEncoder(config)
                 global_cond_dim += self.rgb_encoder.feature_dim * num_images
-        if "observation.environment_state" in config.input_shapes:
-            self._use_env_state = True
-            global_cond_dim += config.input_shapes["observation.environment_state"][0]
+        if self.config.env_state_feature:
+            global_cond_dim += self.config.env_state_feature.shape[0]
 
         self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim * config.n_obs_steps)
 
@@ -220,7 +216,7 @@ class DiffusionModel(nn.Module):
 
         # Sample prior.
         sample = torch.randn(
-            size=(batch_size, self.config.horizon, self.config.output_shapes["action"][0]),
+            size=(batch_size, self.config.horizon, self.config.action_feature.shape[0]),
             dtype=dtype,
             device=device,
             generator=generator,
@@ -242,10 +238,10 @@ class DiffusionModel(nn.Module):
 
     def _prepare_global_conditioning(self, batch: dict[str, Tensor]) -> Tensor:
         """Encode image features and concatenate them all together along with the state vector."""
-        batch_size, n_obs_steps = batch["observation.state"].shape[:2]
-        global_cond_feats = [batch["observation.state"]]
+        batch_size, n_obs_steps = batch[OBS_ROBOT].shape[:2]
+        global_cond_feats = [batch[OBS_ROBOT]]
         # Extract image features.
-        if self._use_images:
+        if self.config.image_features:
             if self.config.use_separate_rgb_encoder_per_camera:
                 # Combine batch and sequence dims while rearranging to make the camera index dimension first.
                 images_per_camera = einops.rearrange(batch["observation.images"], "b s n ... -> n (b s) ...")
@@ -272,8 +268,8 @@ class DiffusionModel(nn.Module):
                 )
             global_cond_feats.append(img_features)
 
-        if self._use_env_state:
-            global_cond_feats.append(batch["observation.environment_state"])
+        if self.config.env_state_feature:
+            global_cond_feats.append(batch[OBS_ENV])
 
         # Concatenate features then flatten to (B, global_cond_dim).
         return torch.cat(global_cond_feats, dim=-1).flatten(start_dim=1)
@@ -443,7 +439,7 @@ class SpatialSoftmax(nn.Module):
 
 
 class DiffusionRgbEncoder(nn.Module):
-    """Encoder an RGB image into a 1D feature vector.
+    """Encodes an RGB image into a 1D feature vector.
 
     Includes the ability to normalize and crop the image first.
     """
@@ -482,19 +478,16 @@ class DiffusionRgbEncoder(nn.Module):
 
         # Set up pooling and final layers.
         # Use a dry run to get the feature map shape.
-        # The dummy input should take the number of image channels from `config.input_shapes` and it should
+        # The dummy input should take the number of image channels from `config.image_features` and it should
         # use the height and width from `config.crop_shape` if it is provided, otherwise it should use the
-        # height and width from `config.input_shapes`.
-        image_keys = [k for k in config.input_shapes if k.startswith("observation.image")]
+        # height and width from `config.image_features`.
+
         # Note: we have a check in the config class to make sure all images have the same shape.
-        image_key = image_keys[0]
-        dummy_input_h_w = (
-            config.crop_shape if config.crop_shape is not None else config.input_shapes[image_key][1:]
-        )
-        dummy_input = torch.zeros(size=(1, config.input_shapes[image_key][0], *dummy_input_h_w))
-        with torch.inference_mode():
-            dummy_feature_map = self.backbone(dummy_input)
-        feature_map_shape = tuple(dummy_feature_map.shape[1:])
+        images_shape = next(iter(config.image_features.values())).shape
+        dummy_shape_h_w = config.crop_shape if config.crop_shape is not None else images_shape[1:]
+        dummy_shape = (1, images_shape[0], *dummy_shape_h_w)
+        feature_map_shape = get_output_shape(self.backbone, dummy_shape)[1:]
+
         self.pool = SpatialSoftmax(feature_map_shape, num_kp=config.spatial_softmax_num_keypoints)
         self.feature_dim = config.spatial_softmax_num_keypoints * 2
         self.out = nn.Linear(config.spatial_softmax_num_keypoints * 2, self.feature_dim)
@@ -611,7 +604,7 @@ class DiffusionConditionalUnet1d(nn.Module):
 
         # In channels / out channels for each downsampling block in the Unet's encoder. For the decoder, we
         # just reverse these.
-        in_out = [(config.output_shapes["action"][0], config.down_dims[0])] + list(
+        in_out = [(config.action_feature.shape[0], config.down_dims[0])] + list(
             zip(config.down_dims[:-1], config.down_dims[1:], strict=True)
         )
 
@@ -666,7 +659,7 @@ class DiffusionConditionalUnet1d(nn.Module):
 
         self.final_conv = nn.Sequential(
             DiffusionConv1dBlock(config.down_dims[0], config.down_dims[0], kernel_size=config.kernel_size),
-            nn.Conv1d(config.down_dims[0], config.output_shapes["action"][0], 1),
+            nn.Conv1d(config.down_dims[0], config.action_feature.shape[0], 1),
         )
 
     def forward(self, x: Tensor, timestep: Tensor | int, global_cond=None) -> Tensor:

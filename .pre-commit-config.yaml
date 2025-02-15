@@ -18,16 +18,20 @@ repos:
     hooks:
     -   id: pyupgrade
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.6
+    rev: v0.9.6
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
   - repo: https://github.com/python-poetry/poetry
-    rev: 2.0.0
+    rev: 2.1.0
     hooks:
       - id: poetry-check
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.22.1
+    rev: v8.23.3
     hooks:
       - id: gitleaks
+  - repo: https://github.com/woodruffw/zizmor-pre-commit
+    rev: v1.3.1
+    hooks:
+      - id: zizmor
