@@ -414,7 +414,7 @@ def actor_cli(cfg: dict):
 
     server_thread = Thread(
         target=serve_actor_service,
-        args=(cfg.actor_learner_config.port, shutdown_event),
+        args=(shutdown_event, cfg.actor_learner_config.port),
         daemon=True,
     )
 
