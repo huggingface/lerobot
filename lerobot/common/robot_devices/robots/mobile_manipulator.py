@@ -48,6 +48,8 @@ class MobileManipulator:
 
         self.is_connected = False
 
+        self.last_frames = {}
+
         # ZeroMQ context and sockets.
         self.context = None
         self.cmd_socket = None
@@ -177,12 +179,10 @@ class MobileManipulator:
         connection_string = f"tcp://{self.remote_ip}:{self.remote_port}"
         self.cmd_socket.connect(connection_string)
         self.cmd_socket.setsockopt(zmq.CONFLATE, 1)
-        self.video_socket = self.context.socket(zmq.SUB)
-        self.video_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+        self.video_socket = self.context.socket(zmq.PULL)
         video_connection = f"tcp://{self.remote_ip}:{self.remote_port_video}"
         self.video_socket.connect(video_connection)
-        self.video_socket.setsockopt(zmq.RCVHWM, 1)
-        self.video_socket.setsockopt(zmq.RCVTIMEO, 5)
+        self.video_socket.setsockopt(zmq.CONFLATE, 1)
         print(
             f"[INFO] Connected to remote robot at {connection_string} and video stream at {video_connection}."
         )
@@ -217,37 +217,54 @@ class MobileManipulator:
             calibration = load_or_run_calibration_(name, arm, "leader")
             arm.set_calibration(calibration)
 
-    def _get_video_frames(self, timeout=1):
+    def _get_video_frames(self):
         """
-        Receives messages from the video socket and extracts:
-        - A dict of JPEG image frames (one per camera),
-        - The present wheel speed,
-        - The remote follower arm state.
+        Polls the video socket for up to 15 ms. If data arrives, we decode only
+        the *latest* message (discard older ones), returning frames, speeds, etc.
         """
         frames = {}
         present_speed = {}
         remote_arm_state = None
+
+        # Poll for up to 15 ms
+        poller = zmq.Poller()
+        poller.register(self.video_socket, zmq.POLLIN)
+        socks = dict(poller.poll(15))
+        if self.video_socket not in socks or socks[self.video_socket] != zmq.POLLIN:
+            # Nothing arrived
+            return frames, present_speed, remote_arm_state
+
+        # Receive all messages, keep only the last
+        last_msg = None
         while True:
             try:
-                obs_string = self.video_socket.recv_string()
-                observation = json.loads(obs_string)
-                images_dict = observation.get("images", {})
-                speed_data = observation.get("present_speed", {})
-                remote_arm_state = observation.get("follower_arm_state", None)
-                for cam_name, image_b64 in images_dict.items():
-                    if image_b64:
-                        jpg_original = base64.b64decode(image_b64)
-                        np_arr = np.frombuffer(jpg_original, dtype=np.uint8)
-                        frame_candidate = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-                        if frame_candidate is not None:
-                            frame = cv2.cvtColor(frame_candidate, cv2.COLOR_BGR2RGB)
-                            frames[cam_name] = frame
-                present_speed = speed_data
+                obs_string = self.video_socket.recv_string(zmq.NOBLOCK)
+                last_msg = obs_string
             except zmq.Again:
                 break
-            except Exception as e:
-                print(f"[DEBUG] Error decoding video message: {e}")
-                break
+
+        # If we never set last_msg, no data was read
+        if not last_msg:
+            return frames, present_speed, remote_arm_state
+
+        # Decode only the final message
+        try:
+            observation = json.loads(last_msg)
+            images_dict = observation.get("images", {})
+            present_speed = observation.get("present_speed", {})
+            remote_arm_state = observation.get("follower_arm_state", None)
+
+            for cam_name, image_b64 in images_dict.items():
+                if image_b64:
+                    jpg_data = base64.b64decode(image_b64)
+                    np_arr = np.frombuffer(jpg_data, dtype=np.uint8)
+                    frame_candidate = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                    if frame_candidate is not None:
+                        frames[cam_name] = frame_candidate
+
+        except Exception as e:
+            print(f"[DEBUG] Error decoding video message: {e}")
+
         return frames, present_speed, remote_arm_state
 
     def _process_present_speed(self, present_speed: dict) -> torch.Tensor:
@@ -346,6 +363,11 @@ class MobileManipulator:
         combined_state_tensor = torch.cat((remote_arm_state_tensor, wheel_state_tensor), dim=0)
 
         obs_dict = {"observation.state": combined_state_tensor}
+
+        if not frames:
+            frames = self.last_frames
+        else:
+            self.last_frames = frames
 
         # Loop over each configured camera
         for cam_name, cam in self.cameras.items():
