@@ -172,9 +172,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     assert dataset.meta.total_episodes == 2
     assert len(dataset) == 2
 
-    replay_cfg = ReplayControlConfig(
-        episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False, local_files_only=True
-    )
+    replay_cfg = ReplayControlConfig(episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False)
     replay(robot, replay_cfg)
 
     policy_cfg = ACTConfig()
@@ -273,7 +271,6 @@ def test_resume_record(tmpdir, request, robot_type, mock):
         display_cameras=False,
         play_sounds=False,
         run_compute_stats=False,
-        local_files_only=True,
         num_episodes=1,
     )
 

@@ -85,7 +85,6 @@ python lerobot/scripts/control_robot.py record \
 This might require a sudo permission to allow your terminal to monitor keyboard events.
 
 **NOTE**: You can resume/continue data recording by running the same data recording command and adding `--control.resume=true`.
-If the dataset you want to extend is not on the hub, you also need to add `--control.local_files_only=true`.
 
 - Train on this dataset with the ACT policy:
 ```bash
@@ -216,7 +215,6 @@ def record(
         dataset = LeRobotDataset(
             cfg.repo_id,
             root=cfg.root,
-            local_files_only=cfg.local_files_only,
         )
         if len(robot.cameras) > 0:
             dataset.start_image_writer(
@@ -321,9 +319,7 @@ def replay(
     # TODO(rcadene, aliberts): refactor with control_loop, once `dataset` is an instance of LeRobotDataset
     # TODO(rcadene): Add option to record logs
 
-    dataset = LeRobotDataset(
-        cfg.repo_id, root=cfg.root, episodes=[cfg.episode], local_files_only=cfg.local_files_only
-    )
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root, episodes=[cfg.episode])
     actions = dataset.hf_dataset.select_columns("action")
 
     if not robot.is_connected:

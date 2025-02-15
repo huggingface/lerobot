@@ -290,7 +290,6 @@ def lerobot_dataset_metadata_factory(
         stats: dict | None = None,
         tasks: list[dict] | None = None,
         episodes: list[dict] | None = None,
-        local_files_only: bool = False,
     ) -> LeRobotDatasetMetadata:
         if not info:
             info = info_factory()
@@ -311,16 +310,12 @@ def lerobot_dataset_metadata_factory(
         )
         with (
             patch(
-                "lerobot.common.datasets.lerobot_dataset.get_hub_safe_version"
-            ) as mock_get_hub_safe_version_patch,
-            patch(
                 "lerobot.common.datasets.lerobot_dataset.snapshot_download"
             ) as mock_snapshot_download_patch,
         ):
-            mock_get_hub_safe_version_patch.side_effect = lambda repo_id, version: version
             mock_snapshot_download_patch.side_effect = mock_snapshot_download
 
-            return LeRobotDatasetMetadata(repo_id=repo_id, root=root, local_files_only=local_files_only)
+            return LeRobotDatasetMetadata(repo_id=repo_id, root=root)
 
     return _create_lerobot_dataset_metadata
 
@@ -381,7 +376,6 @@ def lerobot_dataset_factory(
             stats=stats,
             tasks=tasks,
             episodes=episode_dicts,
-            local_files_only=kwargs.get("local_files_only", False),
         )
         with (
             patch("lerobot.common.datasets.lerobot_dataset.LeRobotDatasetMetadata") as mock_metadata_patch,

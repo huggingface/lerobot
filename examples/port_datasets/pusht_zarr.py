@@ -219,5 +219,5 @@ if __name__ == "__main__":
         main(raw_dir, repo_id=repo_id, mode=mode)
 
         # Uncomment if you want to load the local dataset and explore it
-        # dataset = LeRobotDataset(repo_id=repo_id, local_files_only=True)
+        # dataset = LeRobotDataset(repo_id=repo_id)
         # breakpoint()

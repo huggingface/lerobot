@@ -87,8 +87,8 @@ def test_same_attributes_defined(tmp_path, lerobot_dataset_factory):
     dataset_init = lerobot_dataset_factory(root=root_init)
 
     # Access the '_hub_version' cached_property in both instances to force its creation
-    _ = dataset_init.meta._hub_version
-    _ = dataset_create.meta._hub_version
+    # _ = dataset_init.meta._hub_version
+    # _ = dataset_create.meta._hub_version
 
     init_attr = set(vars(dataset_init).keys())
     create_attr = set(vars(dataset_create).keys())
