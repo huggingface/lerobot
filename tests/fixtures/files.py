@@ -7,7 +7,13 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
 
-from lerobot.common.datasets.utils import EPISODES_PATH, INFO_PATH, STATS_PATH, TASKS_PATH
+from lerobot.common.datasets.utils import (
+    EPISODES_PATH,
+    EPISODES_STATS_PATH,
+    INFO_PATH,
+    STATS_PATH,
+    TASKS_PATH,
+)
 
 
 @pytest.fixture(scope="session")
@@ -39,6 +45,20 @@ def stats_path(stats_factory):
 
 
 @pytest.fixture(scope="session")
+def episodes_stats_path(episodes_stats_factory):
+    def _create_episodes_stats_jsonl_file(dir: Path, episodes_stats: list[dict] | None = None) -> Path:
+        if not episodes_stats:
+            episodes_stats = episodes_stats_factory()
+        fpath = dir / EPISODES_STATS_PATH
+        fpath.parent.mkdir(parents=True, exist_ok=True)
+        with jsonlines.open(fpath, "w") as writer:
+            writer.write_all(episodes_stats.values())
+        return fpath
+
+    return _create_episodes_stats_jsonl_file
+
+
+@pytest.fixture(scope="session")
 def tasks_path(tasks_factory):
     def _create_tasks_jsonl_file(dir: Path, tasks: list | None = None) -> Path:
         if not tasks:
@@ -46,7 +66,7 @@ def tasks_path(tasks_factory):
         fpath = dir / TASKS_PATH
         fpath.parent.mkdir(parents=True, exist_ok=True)
         with jsonlines.open(fpath, "w") as writer:
-            writer.write_all(tasks)
+            writer.write_all(tasks.values())
         return fpath
 
     return _create_tasks_jsonl_file
@@ -60,7 +80,7 @@ def episode_path(episodes_factory):
         fpath = dir / EPISODES_PATH
         fpath.parent.mkdir(parents=True, exist_ok=True)
         with jsonlines.open(fpath, "w") as writer:
-            writer.write_all(episodes)
+            writer.write_all(episodes.values())
         return fpath
 
     return _create_episodes_jsonl_file

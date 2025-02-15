@@ -299,10 +299,7 @@ def record(
     log_say("Stop recording", cfg.play_sounds, blocking=True)
     stop_recording(robot, listener, cfg.display_cameras)
 
-    if cfg.run_compute_stats:
-        logging.info("Computing dataset statistics")
-
-    dataset.consolidate(cfg.run_compute_stats)
+    dataset.consolidate()
 
     if cfg.push_to_hub:
         dataset.push_to_hub(tags=cfg.tags, private=cfg.private)
