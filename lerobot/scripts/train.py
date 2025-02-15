@@ -75,7 +75,7 @@ def make_optimizer_and_scheduler(cfg, policy):
         )
         lr_scheduler = None
     elif cfg.policy.name == "diffusion":
-        if cfg.policy.use_transformer:
+        if "use_transformer" in cfg.policy:
             optimizer = policy.diffusion.get_optimizer(
                 transformer_weight_decay=cfg.training.transformer_weight_decay,
                 rgb_encoder_weight_decay=cfg.training.adam_weight_decay,

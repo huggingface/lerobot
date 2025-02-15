@@ -98,7 +98,7 @@ class DiffusionConfig:
 
     # Inputs / output structure.
     n_obs_steps: int = 2
-    horizon: int = 10
+    horizon: int = 16
     n_action_steps: int = 8
 
     input_shapes: dict[str, list[int]] = field(
@@ -134,7 +134,6 @@ class DiffusionConfig:
     down_dims: tuple[int, ...] = (512, 1024, 2048)
     kernel_size: int = 5
     n_groups: int = 8
-    diffusion_step_embed_dim: int = 256
     use_film_scale_modulation: bool = True
     # Noise scheduler.
     noise_scheduler_type: str = "DDPM"
@@ -146,13 +145,15 @@ class DiffusionConfig:
     clip_sample: bool = True
     clip_sample_range: float = 1.0
     # Transformer
-    use_transformer: bool = True
+    use_transformer: bool = False
     n_layer: int = 8
     n_head: int = 4
     p_drop_emb: float = 0.0
     p_drop_attn: float = 0.3
     causal_attn: bool = True
     n_cond_layers: int = 0
+    # Architecture shared params
+    diffusion_step_embed_dim: int = 128
 
     # Inference
     num_inference_steps: int | None = None

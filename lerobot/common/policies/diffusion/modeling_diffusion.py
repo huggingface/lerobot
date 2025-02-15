@@ -187,7 +187,6 @@ class DiffusionModel(nn.Module):
         if "observation.environment_state" in config.input_shapes:
             self._use_env_state = True
             global_cond_dim += config.input_shapes["observation.environment_state"][0]
-
         if config.use_transformer:
             self.net = TransformerForDiffusion(config, cond_dim=global_cond_dim)
         else:
@@ -775,29 +774,21 @@ class TransformerForDiffusion(nn.Module):
         super().__init__()
         self.config = config
 
-        # compute number of tokens for main trunk and condition encoder
-        if config.n_obs_steps is None:
-            config.n_obs_steps = config.horizon
-
-        t = config.horizon
-        t_cond = 1
-        t_cond += config.n_obs_steps
+        # conditioning dimension used for positional embeddings
+        # conditioning over input observation steps (n_obs_steps) + time (1)
+        t_cond = 1 + config.n_obs_steps
 
         input_dim = config.output_shapes["action"][0]
         # input embedding stem
         self.input_emb = nn.Linear(input_dim, config.diffusion_step_embed_dim)
-        self.pos_emb = nn.Parameter(torch.zeros(1, t, config.diffusion_step_embed_dim))
+        self.pos_emb = nn.Parameter(torch.zeros(1, config.horizon, config.diffusion_step_embed_dim))
         self.drop = nn.Dropout(config.p_drop_emb)
 
         # cond encoder
         self.time_emb = DiffusionSinusoidalPosEmb(config.diffusion_step_embed_dim)
-        self.cond_obs_emb = None
 
         self.cond_obs_emb = nn.Linear(cond_dim, config.diffusion_step_embed_dim)
-
-        self.cond_pos_emb = None
         self.encoder = None
-        self.decoder = None
 
         self.cond_pos_emb = nn.Parameter(torch.zeros(1, t_cond, config.diffusion_step_embed_dim))
         if config.n_cond_layers > 0:
@@ -834,13 +825,13 @@ class TransformerForDiffusion(nn.Module):
             # causal mask to ensure that attention is only applied to the left in the input sequence
             # torch.nn.Transformer uses additive mask as opposed to multiplicative mask in minGPT
             # therefore, the upper triangle should be -inf and others (including diag) should be 0.
-            sz = t
+            sz = config.horizon
             mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
             mask = mask.float().masked_fill(mask == 0, float("-inf")).masked_fill(mask == 1, float(0.0))
             self.register_buffer("mask", mask)
 
             # assume conditioning over time and observation both
-            p, q = torch.meshgrid(torch.arange(t), torch.arange(t_cond), indexing="ij")
+            p, q = torch.meshgrid(torch.arange(config.horizon), torch.arange(t_cond), indexing="ij")
             mask = p >= (q - 1)  # add one dimension since time is the first token in cond
             mask = mask.float().masked_fill(mask == 0, float("-inf")).masked_fill(mask == 1, float(0.0))
             self.register_buffer("memory_mask", mask)
@@ -853,18 +844,24 @@ class TransformerForDiffusion(nn.Module):
         self.head = nn.Linear(config.diffusion_step_embed_dim, input_dim)
 
         # constants
-        self.t = t
         self.t_cond = t_cond
         self.horizon = config.horizon
         self.n_obs_steps = config.n_obs_steps
 
         # init
         self.apply(self._init_weights)
-        # logger.info(
-        #     "number of parameters: %e", sum(p.numel() for p in self.parameters())
-        # )
 
     def _init_weights(self, module):
+        """
+        Initializes weights for different network layers in the module.
+            - nn.Linear and nn.Embedding: Normal(0, 0.02) for weights, zero for bias.
+            - nn.MultiheadAttention: Normal(0, 0.02) for projection weights, zero for biases.
+            - nn.LayerNorm: Ones for weights, zeros for biases.
+            - Normal(0, 0.02) for positional embeddings module.pos_emb.
+            - Predefined layers are ignored.
+        Args:
+            module (torch.nn.Module): The module to initialize.
+        """
         ignore_types = (
             nn.Dropout,
             DiffusionSinusoidalPosEmb,
@@ -980,52 +977,46 @@ class TransformerForDiffusion(nn.Module):
 
     def forward(self, sample: torch.Tensor, timestep: torch.Tensor, global_cond: torch.Tensor, **kwargs):
         """
-        x: (B,T,input_dim)
-        timestep: (B,)
-        global_cond: (B, global_cond_dim)
-        output: (B,T,input_dim)
+        Args:
+            sample: (B, T, input_dim) tensor for input to the decoder after embedding.
+            timestep: (B,) tensor of (timestep_we_are_denoising_from - 1).
+            global_cond: (B, global_cond_dim)
+            output: (B, T, input_dim)
+        Returns:
+            (B, T, input_dim) diffusion model prediction.
         """
         # 1. time
-        timesteps = timestep
         batch_size = sample.shape[0]
-        # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-        timesteps = timesteps.expand(batch_size)
-        time_emb = self.time_emb(timesteps).unsqueeze(1)
-        # (B,1,n_emb)
+        time_emb = self.time_emb(timestep).unsqueeze(1)  # (B,1,n_emb)
 
-        cond = einops.rearrange(global_cond, "b (s n) ... -> b s (n ...)", b=batch_size, s=self.n_obs_steps)
-        # (B,To,n_cond)
+        cond = einops.rearrange(
+            global_cond, "b (s n) ... -> b s (n ...)", b=batch_size, s=self.n_obs_steps
+        )  # (B,To,n_cond)
 
         # process input
         input_emb = self.input_emb(sample)
 
         # encoder
-        cond_embeddings = time_emb
-        # (B,1,n_emb)
+        cond_obs_emb = self.cond_obs_emb(cond)  # (B,To,n_emb)
+        cond_embeddings = torch.cat([time_emb, cond_obs_emb], dim=1)  # (B,To + 1,n_emb)
 
-        cond_obs_emb = self.cond_obs_emb(cond)
-        # (B,To,n_emb)
-        cond_embeddings = torch.cat([cond_embeddings, cond_obs_emb], dim=1)
-        # (B,To + 1,n_emb)
-
-        tc = cond_embeddings.shape[1]
-        position_embeddings = self.cond_pos_emb[:, :tc, :]  # each position maps to a (learnable) vector
-        x = self.drop(cond_embeddings + position_embeddings)
-        x = self.encoder(x)
-        memory = x
-        # (B,T_cond,n_emb)
+        position_embeddings = self.cond_pos_emb[
+            :, : cond_embeddings.shape[1], :
+        ]  # each position maps to a (learnable) vector
+        memory = self.drop(cond_embeddings + position_embeddings)
+        memory = self.encoder(memory)  # (B,T_cond,n_emb)
 
         # decoder
-        token_embeddings = input_emb
-        t = token_embeddings.shape[1]
-        position_embeddings = self.pos_emb[:, :t, :]  # each position maps to a (learnable) vector
-        x = self.drop(token_embeddings + position_embeddings)
-        # (B,T,n_emb)
-        x = self.decoder(tgt=x, memory=memory, tgt_mask=self.mask, memory_mask=self.memory_mask)
-        # (B,T,n_emb)
+        position_embeddings = self.pos_emb[
+            :, : input_emb.shape[1], :
+        ]  # each position maps to a (learnable) vector
+        x = self.drop(input_emb + position_embeddings)  # (B,T,n_emb)
+        x = self.decoder(
+            tgt=x, memory=memory, tgt_mask=self.mask, memory_mask=self.memory_mask
+        )  # (B,T,n_emb)
 
         # head
         x = self.ln_f(x)
-        x = self.head(x)
-        # (B,T,n_inp)
+        x = self.head(x)  # (B,T,n_inp)
+
         return x
