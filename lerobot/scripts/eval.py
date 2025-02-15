@@ -151,7 +151,9 @@ def rollout(
         if return_observations:
             all_observations.append(deepcopy(observation))
 
-        observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
+        observation = {
+            key: observation[key].to(device, non_blocking=device.type == "cuda") for key in observation
+        }
 
         with torch.inference_mode():
             action = policy.select_action(observation)

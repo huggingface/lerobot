@@ -232,8 +232,10 @@ def train(cfg: TrainPipelineConfig):
         if is_log_step:
             logging.info(train_tracker)
             if wandb_logger:
-                wandb_log_dict = {**train_tracker.to_dict(), **output_dict}
-                wandb_logger.log_dict(wandb_log_dict)
+                wandb_log_dict = train_tracker.to_dict()
+                if output_dict:
+                    wandb_log_dict.update(output_dict)
+                wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
@@ -271,6 +273,7 @@ def train(cfg: TrainPipelineConfig):
             logging.info(eval_tracker)
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
+                wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                 wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
 
     if eval_env:

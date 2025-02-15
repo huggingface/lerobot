@@ -111,9 +111,9 @@ def visualize_dataset(
     output_dir: Path | None = None,
 ) -> Path | None:
     if save:
-        assert (
-            output_dir is not None
-        ), "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
+        assert output_dir is not None, (
+            "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
+        )
 
     repo_id = dataset.repo_id
 
