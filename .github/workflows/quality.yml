@@ -8,6 +8,8 @@ on:
     branches:
       - main
 
+permissions: {}
+
 env:
   PYTHON_VERSION: "3.10"
 
@@ -17,7 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -45,7 +49,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install poetry
         run: pipx install "poetry<2.0.0"
@@ -59,7 +65,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install poetry
         run: pipx install "poetry<2.0.0"
