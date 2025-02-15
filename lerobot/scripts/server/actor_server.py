@@ -17,9 +17,9 @@ import io
 import logging
 import pickle
 import queue
-import time
 from concurrent import futures
 from statistics import mean, quantiles
+import signal
 
 # from lerobot.scripts.eval import eval_policy
 from threading import Thread
@@ -35,7 +35,6 @@ from torch import nn
 # from lerobot.common.envs.utils import preprocess_maniskill_observation
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.sac.modeling_sac import SACPolicy
-from lerobot.common.robot_devices.control_utils import busy_wait
 from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.utils.utils import (
@@ -44,13 +43,21 @@ from lerobot.common.utils.utils import (
     set_global_seed,
 )
 from lerobot.scripts.server import hilserl_pb2, hilserl_pb2_grpc
-from lerobot.scripts.server.buffer import Transition, move_state_dict_to_device, move_transition_to_device
+from lerobot.scripts.server.buffer import (
+    Transition,
+    move_state_dict_to_device,
+    move_transition_to_device,
+)
 from lerobot.scripts.server.gym_manipulator import get_classifier, make_robot_env
+
+from threading import Event
 
 logging.basicConfig(level=logging.INFO)
 
 parameters_queue = queue.Queue(maxsize=1)
 message_queue = queue.Queue(maxsize=1_000_000)
+
+ACTOR_SHUTDOWN_TIMEOUT = 30
 
 
 class ActorInformation:
@@ -102,7 +109,8 @@ class ActorServiceServicer(hilserl_pb2_grpc.ActorServiceServicer):
 
             if message.transition is not None:
                 transition_to_send_to_learner: list[Transition] = [
-                    move_transition_to_device(transition=T, device="cpu") for T in message.transition
+                    move_transition_to_device(transition=T, device="cpu")
+                    for T in message.transition
                 ]
                 # Check for NaNs in transitions before sending to learner
                 for transition in transition_to_send_to_learner:
@@ -113,7 +121,9 @@ class ActorServiceServicer(hilserl_pb2_grpc.ActorServiceServicer):
                 torch.save(transition_to_send_to_learner, buf)
                 transition_bytes = buf.getvalue()
 
-                transition_message = hilserl_pb2.Transition(transition_bytes=transition_bytes)
+                transition_message = hilserl_pb2.Transition(
+                    transition_bytes=transition_bytes
+                )
 
                 response = hilserl_pb2.ActorInformation(transition=transition_message)
 
@@ -145,20 +155,26 @@ class ActorServiceServicer(hilserl_pb2_grpc.ActorServiceServicer):
         return hilserl_pb2.Empty()
 
 
-def serve_actor_service(port=50052):
+def serve_actor_service(shutdown_event: Event, port=50052):
     """
     Runs a gRPC server to start streaming the data from the actor to the learner.
      Throught this server the learner can push parameters to the Actor as well.
     """
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=20),
-        options=[("grpc.max_send_message_length", -1), ("grpc.max_receive_message_length", -1)],
+        options=[
+            ("grpc.max_send_message_length", -1),
+            ("grpc.max_receive_message_length", -1),
+        ],
     )
     hilserl_pb2_grpc.add_ActorServiceServicer_to_server(ActorServiceServicer(), server)
     server.add_insecure_port(f"[::]:{port}")
     server.start()
     logging.info(f"[ACTOR] gRPC server listening on port {port}")
-    server.wait_for_termination()
+
+    shutdown_event.wait()
+    server.stop(ACTOR_SHUTDOWN_TIMEOUT)
+    logging.info("[ACTOR] gRPC server stopped")
 
 
 def update_policy_parameters(policy: SACPolicy, parameters_queue: queue.Queue, device):
@@ -169,7 +185,9 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: queue.Queue, d
         policy.load_state_dict(state_dict)
 
 
-def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module):
+def act_with_policy(
+    cfg: DictConfig, robot: Robot, reward_classifier: nn.Module, shutdown_event: Event
+):
     """
     Executes policy interaction within the environment.
 
@@ -182,7 +200,13 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
 
     logging.info("make_env online")
 
+<<<<<<< HEAD
     online_env = make_robot_env(robot=robot, reward_classifier=reward_classifier, cfg=cfg)
+=======
+    online_env = make_robot_env(
+        robot=robot, reward_classifier=reward_classifier, cfg=cfg.env
+    )
+>>>>>>> 06dd863d (Add mani-skill for docker)
 
     set_global_seed(cfg.seed)
     device = get_safe_torch_device(cfg.device, log=True)
@@ -227,17 +251,27 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
     episode_intervention = False
 
     for interaction_step in range(cfg.training.online_steps):
+        if shutdown_event.is_set():
+            logging.info("[ACTOR] Shutdown signal received. Exiting...")
+            break
+
         if interaction_step >= cfg.training.online_step_before_learning:
             # Time policy inference and check if it meets FPS requirement
             with TimerManager(
-                elapsed_time_list=list_policy_time, label="Policy inference time", log=False
+                elapsed_time_list=list_policy_time,
+                label="Policy inference time",
+                log=False,
             ) as timer:  # noqa: F841
                 action = policy.select_action(batch=obs)
             policy_fps = 1.0 / (list_policy_time[-1] + 1e-9)
 
-            log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
+            log_policy_frequency_issue(
+                policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step
+            )
 
-            next_obs, reward, done, truncated, info = online_env.step(action.squeeze(dim=0).cpu().numpy())
+            next_obs, reward, done, truncated, info = online_env.step(
+                action.squeeze(dim=0).cpu().numpy()
+            )
         else:
             # TODO (azouitine): Make a custom space for torch tensor
             action = online_env.action_space.sample()
@@ -245,7 +279,9 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
 
             # HACK: We have only one env but we want to batch it, it will be resolved with the torch box
             action = (
-                torch.from_numpy(action[0]).to(device, non_blocking=device.type == "cuda").unsqueeze(dim=0)
+                torch.from_numpy(action[0])
+                .to(device, non_blocking=device.type == "cuda")
+                .unsqueeze(dim=0)
             )
 
         sum_reward_episode += float(reward)
@@ -261,7 +297,9 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
         # Check for NaN values in observations
         for key, tensor in obs.items():
             if torch.isnan(tensor).any():
-                logging.error(f"[ACTOR] NaN values found in obs[{key}] at step {interaction_step}")
+                logging.error(
+                    f"[ACTOR] NaN values found in obs[{key}] at step {interaction_step}"
+                )
 
         list_transition_to_send_to_learner.append(
             Transition(
@@ -281,13 +319,23 @@ def act_with_policy(cfg: DictConfig, robot: Robot, reward_classifier: nn.Module)
         # Because we are using a single environment we can index at zero
         if done or truncated:
             # TODO: Handle logging for episode information
-            logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
+            logging.info(
+                f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}"
+            )
 
+<<<<<<< HEAD
             update_policy_parameters(policy=policy.actor, parameters_queue=parameters_queue, device=device)
+=======
+            update_policy_parameters(
+                policy=policy, parameters_queue=parameters_queue, device=device
+            )
+>>>>>>> 06dd863d (Add mani-skill for docker)
 
             if len(list_transition_to_send_to_learner) > 0:
                 send_transitions_in_chunks(
-                    transitions=list_transition_to_send_to_learner, message_queue=message_queue, chunk_size=4
+                    transitions=list_transition_to_send_to_learner,
+                    message_queue=message_queue,
+                    chunk_size=4,
                 )
                 list_transition_to_send_to_learner = []
 
@@ -332,11 +380,16 @@ def get_frequency_stats(list_policy_time: list[float]) -> dict[str, float]:
         quantiles_90 = quantiles(list_policy_fps, n=10)[-1]
         logging.debug(f"[ACTOR] Average policy frame rate: {policy_fps}")
         logging.debug(f"[ACTOR] Policy frame rate 90th percentile: {quantiles_90}")
-        stats = {"Policy frequency [Hz]": policy_fps, "Policy frequency 90th-p [Hz]": quantiles_90}
+        stats = {
+            "Policy frequency [Hz]": policy_fps,
+            "Policy frequency 90th-p [Hz]": quantiles_90,
+        }
     return stats
 
 
-def log_policy_frequency_issue(policy_fps: float, cfg: DictConfig, interaction_step: int):
+def log_policy_frequency_issue(
+    policy_fps: float, cfg: DictConfig, interaction_step: int
+):
     if policy_fps < cfg.fps:
         logging.warning(
             f"[ACTOR] Policy FPS {policy_fps:.1f} below required {cfg.fps} at step {interaction_step}"
@@ -347,7 +400,23 @@ def log_policy_frequency_issue(policy_fps: float, cfg: DictConfig, interaction_s
 def actor_cli(cfg: dict):
     robot = make_robot(cfg=cfg.robot)
 
-    server_thread = Thread(target=serve_actor_service, args=(cfg.actor_learner_config.port,), daemon=True)
+    shutdown_event = Event()
+
+    # Define signal handler
+    def signal_handler(signum, frame):
+        logging.info("Shutdown signal received. Cleaning up...")
+        shutdown_event.set()
+
+    signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # Termination request (kill)
+    signal.signal(signal.SIGHUP, signal_handler)  # Terminal closed/Hangup
+    signal.signal(signal.SIGQUIT, signal_handler)  # Ctrl+\
+
+    server_thread = Thread(
+        target=serve_actor_service,
+        args=(cfg.actor_learner_config.port, shutdown_event),
+        daemon=True,
+    )
 
     # HACK: FOR MANISKILL we do not have a reward classifier
     # TODO: Remove this once we merge into main
@@ -363,7 +432,7 @@ def actor_cli(cfg: dict):
     policy_thread = Thread(
         target=act_with_policy,
         daemon=True,
-        args=(cfg, robot, reward_classifier),
+        args=(cfg, robot, reward_classifier, shutdown_event),
     )
     server_thread.start()
     policy_thread.start()

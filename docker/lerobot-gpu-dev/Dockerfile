@@ -42,8 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfdk-aac-dev \
     libopus-dev \
     libsvtav1-dev libsvtav1enc-dev libsvtav1dec-dev \
-    libdav1d-dev \
-    libvulkan1
+    libdav1d-dev
 
 # Install gh cli tool
 RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
