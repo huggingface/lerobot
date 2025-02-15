@@ -54,7 +54,7 @@ jobs:
           persist-credentials: false
 
       - name: Install poetry
-        run: pipx install "poetry<2.0.0"
+        run: pipx install "poetry>=2.1"
 
       - name: Poetry check
         run: poetry check
@@ -70,7 +70,7 @@ jobs:
           persist-credentials: false
 
       - name: Install poetry
-        run: pipx install "poetry<2.0.0"
+        run: pipx install "poetry>=2.1"
 
       - name: Install poetry-relax
         run: poetry self add poetry-relax
