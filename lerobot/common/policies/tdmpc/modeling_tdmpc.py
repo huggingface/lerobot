@@ -594,9 +594,9 @@ class TDMPCTOLD(nn.Module):
 
         self.apply(_apply_fn)
         for m in [self._reward, *self._Qs]:
-            assert isinstance(
-                m[-1], nn.Linear
-            ), "Sanity check. The last linear layer needs 0 initialization on weights."
+            assert isinstance(m[-1], nn.Linear), (
+                "Sanity check. The last linear layer needs 0 initialization on weights."
+            )
             nn.init.zeros_(m[-1].weight)
             nn.init.zeros_(m[-1].bias)  # this has already been done, but keep this line here for good measure
 
