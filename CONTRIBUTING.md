@@ -129,7 +129,7 @@ Follow these steps to start contributing:
 
    🚨 **Do not** work on the `main` branch.
 
-4. for development, we use advise to use a tool like `poetry` or `uv` instead of just `pip` to easily track our dependencies.
+4. for development, we advise to use a tool like `poetry` or `uv` instead of just `pip` to easily track our dependencies.
    Follow the instructions to [install poetry](https://python-poetry.org/docs/#installation) (use a version >=2.1.0) or to [install uv](https://docs.astral.sh/uv/getting-started/installation/#installation-methods) if you don't have one of them already.
 
    Set up a development environment with conda or miniconda:
@@ -137,7 +137,7 @@ Follow these steps to start contributing:
    conda create -y -n lerobot-dev python=3.10 && conda activate lerobot-dev
    ```
 
-   If you're using `uv`, it can manage python versions so you can instead do
+   If you're using `uv`, it can manage python versions so you can instead do:
    ```bash
    uv venv --python 3.10 && source .venv/bin/activate
    ```
