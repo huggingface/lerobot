@@ -17,9 +17,9 @@ import io
 import logging
 import pickle
 import queue
-from concurrent import futures
 from statistics import mean, quantiles
 import signal
+from functools import lru_cache
 
 # from lerobot.scripts.eval import eval_policy
 from threading import Thread
@@ -49,6 +49,7 @@ from lerobot.scripts.server.buffer import (
     move_transition_to_device,
 )
 from lerobot.scripts.server.gym_manipulator import get_classifier, make_robot_env
+from lerobot.scripts.server import learner_service
 
 from threading import Event
 
@@ -77,104 +78,152 @@ class ActorInformation:
         self.interaction_message = interaction_message
 
 
-class ActorServiceServicer(hilserl_pb2_grpc.ActorServiceServicer):
+def receive_policy(
+    learner_client: hilserl_pb2_grpc.LearnerServiceStub,
+    shutdown_event: Event,
+    parameters_queue: queue.Queue,
+):
+    while not shutdown_event.is_set():
+        bytes_buffer = io.BytesIO()
+        step = 0
+        try:
+            for model_update in learner_client.StreamParameters(hilserl_pb2.Empty()):
+                if (
+                    model_update.transfer_state
+                    == hilserl_pb2.TransferState.TRANSFER_BEGIN
+                ):
+                    bytes_buffer.seek(0)
+                    bytes_buffer.truncate(0)
+                    bytes_buffer.write(model_update.data)
+                    logging.info("Received model update at step 0")
+                    step = 0
+                    continue
+                elif (
+                    model_update.transfer_state
+                    == hilserl_pb2.TransferState.TRANSFER_MIDDLE
+                ):
+                    bytes_buffer.write(model_update.data)
+                    step += 1
+                    logging.info(f"Received model update at step {step}")
+                elif (
+                    model_update.transfer_state
+                    == hilserl_pb2.TransferState.TRANSFER_END
+                ):
+                    bytes_buffer.write(model_update.data)
+                    logging.info("Received model update at step end")
+
+                    state_dict = torch.load(bytes_buffer, weights_only=True)
+
+                    bytes_buffer.seek(0)
+                    bytes_buffer.truncate(0)
+
+                    logging.info("Model updated")
+
+                    parameters_queue.put(state_dict)
+
+        except grpc.RpcError as e:
+            logging.error(f"[ACTOR] gRPC error: {e}")
+
+
+def transitions_stream(shutdown_event: Event, message_queue: queue.Queue):
+    while not shutdown_event.is_set():
+        message = message_queue.get(block=True)
+
+        if message.transition is not None:
+            transition_to_send_to_learner: list[Transition] = [
+                move_transition_to_device(transition=T, device="cpu")
+                for T in message.transition
+            ]
+            # Check for NaNs in transitions before sending to learner
+            for transition in transition_to_send_to_learner:
+                for key, value in transition["state"].items():
+                    if torch.isnan(value).any():
+                        logging.warning(f"Found NaN values in transition {key}")
+            buf = io.BytesIO()
+            torch.save(transition_to_send_to_learner, buf)
+            transition_bytes = buf.getvalue()
+
+            transition_message = hilserl_pb2.Transition(
+                transition_bytes=transition_bytes
+            )
+
+            response = hilserl_pb2.ActorInformation(transition=transition_message)
+
+        elif message.interaction_message is not None:
+            content = hilserl_pb2.InteractionMessage(
+                interaction_message_bytes=pickle.dumps(message.interaction_message)
+            )
+            response = hilserl_pb2.ActorInformation(interaction_message=content)
+
+        yield response
+
+
+def send_transitions(
+    learner_client: hilserl_pb2_grpc.LearnerServiceStub,
+    shutdown_event: Event,
+    transition_queue: queue.Queue,
+):
     """
-    gRPC service for actor-learner communication in reinforcement learning.
+    Streams data from the actor to the learner.
 
-    This service is responsible for:
-    1. Streaming batches of transition data and statistical metrics from the actor to the learner.
-    2. Receiving updated network parameters from the learner.
+    This function continuously retrieves messages from the queue and processes them based on their type:
+
+    - **Transition Data:**
+        - A batch of transitions (observation, action, reward, next observation) is collected.
+        - Transitions are moved to the CPU and serialized using PyTorch.
+        - The serialized data is wrapped in a `hilserl_pb2.Transition` message and sent to the learner.
+
+    - **Interaction Messages:**
+        - Contains useful statistics about episodic rewards and policy timings.
+        - The message is serialized using `pickle` and sent to the learner.
+
+    Yields:
+        hilserl_pb2.ActorInformation: The response message containing either transition data or an interaction message.
+    """
+    learner_client.StreamTransitions(transitions_stream(shutdown_event, message_queue))
+
+    logging.info("[ACTOR] Finished streaming transitions")
+
+
+@lru_cache(maxsize=1)
+def learner_service_client(host="127.0.0.1", port=50051):
+    """
+    Returns a client for the learner service.
+
+    GRPC uses HTTP/2, which is a binary protocol and multiplexes requests over a single connection.
+    So we need to create only one client and reuse it.
     """
 
-    def StreamTransition(self, request, context):  # noqa: N802
-        """
-        Streams data from the actor to the learner.
+    service_config = {
+        "methodConfig": [
+            {
+                "name": [{}],  # Applies to ALL methods in ALL services
+                "retryPolicy": {
+                    "maxAttempts": 5,  # Max retries (total attempts = 5)
+                    "initialBackoff": "0.1s",  # First retry after 0.1s
+                    "maxBackoff": "2s",  # Max wait time between retries
+                    "backoffMultiplier": 2,  # Exponential backoff factor
+                    "retryableStatusCodes": [
+                        "UNAVAILABLE",
+                        "DEADLINE_EXCEEDED",
+                    ],  # Retries on network failures
+                },
+            }
+        ]
+    }
 
-        This function continuously retrieves messages from the queue and processes them based on their type:
-
-        - **Transition Data:**
-          - A batch of transitions (observation, action, reward, next observation) is collected.
-          - Transitions are moved to the CPU and serialized using PyTorch.
-          - The serialized data is wrapped in a `hilserl_pb2.Transition` message and sent to the learner.
-
-        - **Interaction Messages:**
-          - Contains useful statistics about episodic rewards and policy timings.
-          - The message is serialized using `pickle` and sent to the learner.
-
-        Yields:
-            hilserl_pb2.ActorInformation: The response message containing either transition data or an interaction message.
-        """
-        while True:
-            message = message_queue.get(block=True)
-
-            if message.transition is not None:
-                transition_to_send_to_learner: list[Transition] = [
-                    move_transition_to_device(transition=T, device="cpu")
-                    for T in message.transition
-                ]
-                # Check for NaNs in transitions before sending to learner
-                for transition in transition_to_send_to_learner:
-                    for key, value in transition["state"].items():
-                        if torch.isnan(value).any():
-                            logging.warning(f"Found NaN values in transition {key}")
-                buf = io.BytesIO()
-                torch.save(transition_to_send_to_learner, buf)
-                transition_bytes = buf.getvalue()
-
-                transition_message = hilserl_pb2.Transition(
-                    transition_bytes=transition_bytes
-                )
-
-                response = hilserl_pb2.ActorInformation(transition=transition_message)
-
-            elif message.interaction_message is not None:
-                content = hilserl_pb2.InteractionMessage(
-                    interaction_message_bytes=pickle.dumps(message.interaction_message)
-                )
-                response = hilserl_pb2.ActorInformation(interaction_message=content)
-
-            yield response
-
-    def SendParameters(self, request, context):  # noqa: N802
-        """
-        Receives updated parameters from the learner and updates the actor.
-
-        The learner calls this method to send new model parameters. The received parameters are deserialized
-        and placed in a queue to be consumed by the actor.
-
-        Args:
-            request (hilserl_pb2.ParameterUpdate): The request containing serialized network parameters.
-            context (grpc.ServicerContext): The gRPC context.
-
-        Returns:
-            hilserl_pb2.Empty: An empty response to acknowledge receipt.
-        """
-        buffer = io.BytesIO(request.parameter_bytes)
-        params = torch.load(buffer)
-        parameters_queue.put(params)
-        return hilserl_pb2.Empty()
-
-
-def serve_actor_service(shutdown_event: Event, port=50052):
-    """
-    Runs a gRPC server to start streaming the data from the actor to the learner.
-     Throught this server the learner can push parameters to the Actor as well.
-    """
-    server = grpc.server(
-        futures.ThreadPoolExecutor(max_workers=20),
+    channel = grpc.insecure_channel(
+        f"{host}:{port}",
         options=[
-            ("grpc.max_send_message_length", -1),
-            ("grpc.max_receive_message_length", -1),
+            ("grpc.max_receive_message_length", learner_service.MAX_MESSAGE_SIZE),
+            ("grpc.max_send_message_length", learner_service.MAX_MESSAGE_SIZE),
+            ("grpc.enable_retries", 1),
+            ("grpc.service_config", service_config),
         ],
     )
-    hilserl_pb2_grpc.add_ActorServiceServicer_to_server(ActorServiceServicer(), server)
-    server.add_insecure_port(f"[::]:{port}")
-    server.start()
-    logging.info(f"[ACTOR] gRPC server listening on port {port}")
-
-    shutdown_event.wait()
-    server.stop(ACTOR_SHUTDOWN_TIMEOUT)
-    logging.info("[ACTOR] gRPC server stopped")
+    result = hilserl_pb2_grpc.LearnerServiceStub(channel)
+    logging.info("[LEARNER] Learner service client created")
+    return result
 
 
 def update_policy_parameters(policy: SACPolicy, parameters_queue: queue.Queue, device):
@@ -412,9 +461,17 @@ def actor_cli(cfg: dict):
     signal.signal(signal.SIGHUP, signal_handler)  # Terminal closed/Hangup
     signal.signal(signal.SIGQUIT, signal_handler)  # Ctrl+\
 
-    server_thread = Thread(
-        target=serve_actor_service,
-        args=(shutdown_event, cfg.actor_learner_config.port),
+    learner_client = learner_service_client()
+
+    receive_policy_thread = Thread(
+        target=receive_policy,
+        args=(learner_client, shutdown_event),
+        daemon=True,
+    )
+
+    transitions_thread = Thread(
+        target=send_transitions,
+        args=(learner_client, shutdown_event, message_queue),
         daemon=True,
     )
 
@@ -429,15 +486,20 @@ def actor_cli(cfg: dict):
             pretrained_path=cfg.env.reward_classifier.pretrained_path,
             config_path=cfg.env.reward_classifier.config_path,
         )
+
     policy_thread = Thread(
         target=act_with_policy,
         daemon=True,
         args=(cfg, robot, reward_classifier, shutdown_event),
     )
-    server_thread.start()
+
+    transitions_thread.start()
     policy_thread.start()
+    receive_policy_thread.start()
+
     policy_thread.join()
-    server_thread.join()
+    transitions_thread.join()
+    receive_policy_thread.join()
 
 
 if __name__ == "__main__":
