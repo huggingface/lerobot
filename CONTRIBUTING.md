@@ -137,31 +137,31 @@ Follow these steps to start contributing:
    conda create -y -n lerobot-dev python=3.10 && conda activate lerobot-dev
    ```
 
-   If you're using uv, it can manage python versions so you can instead do
+   If you're using `uv`, it can manage python versions so you can instead do
    ```bash
    uv venv --python 3.10 && source .venv/bin/activate
    ```
 
    To develop on 🤗 LeRobot, you will at least need to install the `dev` and `test` extras dependencies along with the core library:
 
-   using poetry
+   using `poetry`
    ```bash
    poetry sync --extras "dev test"
    ```
 
-   using uv
+   using `uv`
    ```bash
    uv sync --extra dev --extra test
    ```
 
    You can also install the project with all its dependencies (including environments):
 
-   using poetry
+   using `poetry`
    ```bash
    poetry sync --all-extras
    ```
 
-   using uv
+   using `uv`
    ```bash
    uv sync --all-extras
    ```
@@ -172,29 +172,26 @@ Follow these steps to start contributing:
 
    The equivalent of `pip install some-package`, would just be:
 
-   using poetry
+   using `poetry`
    ```bash
    poetry add some-package
    ```
 
-   using uv
+   using `uv`
    ```bash
    uv add some-package
    ```
 
    When making changes to the poetry sections of the `pyproject.toml`, you should run the following command to lock dependencies.
-   using poetry
+   using `poetry`
    ```bash
    poetry lock
    ```
 
-   using uv
+   using `uv`
    ```bash
    uv lock
    ```
-
-   **Using uv**
-   uv can manage virtual environments and python versions on its own.
 
 
 5. Develop the features on your branch.
