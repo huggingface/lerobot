@@ -1,5 +1,15 @@
 .PHONY: tests
 
+PYTHON_PATH := $(shell which python)
+
+# If uv is installed and a virtual environment exists, use it
+UV_CHECK := $(shell command -v uv)
+ifneq ($(UV_CHECK),)
+	PYTHON_PATH := $(shell .venv/bin/python)
+endif
+
+export PATH := $(dir $(PYTHON_PATH)):$(PATH)
+
 DEVICE ?= cpu
 
 build-cpu:
