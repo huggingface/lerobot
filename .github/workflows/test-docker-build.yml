@@ -32,13 +32,21 @@ jobs:
           files: docker/**
           json: "true"
 
+      - name: debug
+        if: steps.changed-files.outputs.any_changed == 'true'
+        id: debug
+        env:
+          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+        run: echo ${ALL_CHANGED_FILES}
+
       - name: Run step if only the files listed above change
         if: steps.changed-files.outputs.any_changed == 'true'
         id: set-matrix
         env:
           ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         run: |
-          echo "matrix=$(echo '${ALL_CHANGED_FILES}' | jq -R -s 'split("\n") | map(select(. != ""))')" >> $GITHUB_OUTPUT
+          JSON_MATRIX=$(echo "$ALL_CHANGED_FILES" | jq -R -s 'split("\n") | map(select(. != "")) | @json')
+          echo "matrix=$JSON_MATRIX" >> $GITHUB_OUTPUT
 
 
   build_modified_dockerfiles:
