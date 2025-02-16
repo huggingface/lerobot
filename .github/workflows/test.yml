@@ -33,15 +33,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       MUJOCO_GL: egl
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version:
-          - "3.10"
-          # TODO(aliberts): Test on more python versions when tests are faster and don't donwload stuff
-          # - "3.11"
-          # - "3.12"
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,7 +49,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.10"
 
       - name: Install lerobot (all extras)
         run: uv sync --all-extras
