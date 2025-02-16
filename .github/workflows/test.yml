@@ -126,9 +126,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install lerobot (all extras)
-        run: uv sync --all-extras
+        run: |
+          uv venv
+          uv sync --all-extras
+
+      - name: venv
+        run: |
+          echo "PYTHON_PATH=${{ github.workspace }}/.venv/bin/python" >> $GITHUB_ENV
 
       - name: Test end-to-end
         run: |
-          make test-end-to-end \
+          $PYTHON_PATH -m make test-end-to-end \
             && rm -rf outputs

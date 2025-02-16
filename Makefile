@@ -1,15 +1,5 @@
 .PHONY: tests
 
-PYTHON_PATH := $(shell which python)
-
-# If Poetry is installed, redefine PYTHON_PATH to use the Poetry-managed Python
-POETRY_CHECK := $(shell command -v poetry)
-ifneq ($(POETRY_CHECK),)
-	PYTHON_PATH := $(shell poetry run which python)
-endif
-
-export PATH := $(dir $(PYTHON_PATH)):$(PATH)
-
 DEVICE ?= cpu
 
 build-cpu:
