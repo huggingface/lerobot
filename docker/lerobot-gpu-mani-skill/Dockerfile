@@ -1,7 +1,7 @@
 FROM huggingface/lerobot-gpu:latest
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libvulkan1 \
+    libvulkan1 vulkan-tools \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --upgrade --no-cache-dir pip
